@@ -42,6 +42,14 @@ impl Default for ContactShadows {
 }
 
 impl ContactShadows {
+    /// What a world without these settings reads as: no contact shadows.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("length", self.length, 0.05..=4.0)?;

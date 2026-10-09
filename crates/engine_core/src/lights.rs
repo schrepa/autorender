@@ -162,6 +162,14 @@ impl Default for LocalLights {
 }
 
 impl LocalLights {
+    /// What a world without these settings reads as: no local lights.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// Ok for budgets of at least one light, an intensity in `[0, 100]` and
     /// a distance in `[1, 100000]`.
     pub fn validate(&self) -> Result<(), InvalidSetting> {

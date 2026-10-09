@@ -48,6 +48,14 @@ impl Default for Occupancy {
 }
 
 impl Occupancy {
+    /// What a world without these settings reads as: no darkening under cover.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("radius", self.radius, 64.0..=4096.0)?;

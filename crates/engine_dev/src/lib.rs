@@ -29,6 +29,9 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 pub const MAX_INSPECTOR_BYTES: usize = 16 * 1024;
+/// Inspectors a game may register beside the engine's own.
 pub const MAX_INSPECTORS: usize = 64;
+/// Bytes of an inspector's description.
+pub const MAX_DESCRIPTION_BYTES: usize = 512;
 pub const MAX_SCAN_ENTITIES: usize = 10_000;
 pub const MAX_PAGE_SIZE: usize = 100;

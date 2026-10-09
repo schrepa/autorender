@@ -32,9 +32,8 @@ pub use document::{
     MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
     SceneSurface, SceneTransform, SceneVertex, schema_path,
 };
-pub use environment::{
-    AtmospherePreset, EnvironmentSection, SceneAtmosphere, SceneEnvironment, SectionVisitor,
-};
+pub use engine_core::EnvironmentSection;
+pub use environment::{AtmospherePreset, SceneAtmosphere, SceneEnvironment, SectionVisitor};
 pub use error::SceneError;
 pub use files::{
     ANIMATION_BUFFER_MAGIC, MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile,

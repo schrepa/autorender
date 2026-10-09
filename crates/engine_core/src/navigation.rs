@@ -47,6 +47,14 @@ impl Default for Navigation {
 }
 
 impl Navigation {
+    /// What a world without these settings reads as: no agents walking.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         if self.samples_per_tick < 1024 {

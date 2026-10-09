@@ -60,6 +60,14 @@ impl Default for VirtualGeometry {
 }
 
 impl VirtualGeometry {
+    /// What a world without these settings reads as: fallback cuts.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// Ok for a pixel error in `[0.25, 64]` and a budget of at least one
     /// page.
     pub fn validate(&self) -> Result<(), InvalidSetting> {

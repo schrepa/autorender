@@ -5,9 +5,9 @@
 //! atmosphere; renderers skip the work of disabled effects.
 //!
 //! Each effect is its own resource: disable one with its settings, or remove
-//! the resource to remove the effect. Shadows, ambient occlusion and bloom
-//! are inserted by default; sun shafts, reflections and refraction are
-//! opt-in: insert them (their defaults are on). Without an `Atmosphere`
+//! the resource to remove the effect. The environment section list
+//! (`environment_sections!`) says which are inserted by default and which
+//! are opt-in, inserted to turn them on. Without an `Atmosphere`
 //! frames use the default one. Each is also a scene environment section in
 //! the same JSON shape and checks itself with `validate`;
 //! their docs are the sections' schema descriptions, written for authors.
@@ -185,6 +185,14 @@ impl Default for Shadows {
 }
 
 impl Shadows {
+    /// What a world without these settings reads as: no sun shadows.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// Usable settings: unusable bounds are dropped, a resolution rounds up
     /// to the next accepted power of two, cascades clamp to their range, and
     /// unusable distances (or a near distance beyond the shadow distance)
@@ -316,6 +324,14 @@ impl Default for AmbientOcclusion {
 }
 
 impl AmbientOcclusion {
+    /// What a world without these settings reads as: no ambient occlusion.
+    pub fn off() -> Self {
+        Self {
+            intensity: 0.0,
+            ..Self::default()
+        }
+    }
+
     /// Ok for an intensity in `[0, 1]` and a finite, positive radius.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("intensity", self.intensity, 0.0..=1.0)?;
@@ -373,6 +389,14 @@ impl Default for Bloom {
 }
 
 impl Bloom {
+    /// What a world without these settings reads as: no bloom.
+    pub fn off() -> Self {
+        Self {
+            intensity: 0.0,
+            ..Self::default()
+        }
+    }
+
     /// Ok for an intensity in `[0, 4]` and a finite, nonnegative threshold.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("intensity", self.intensity, 0.0..=4.0)?;
@@ -450,6 +474,14 @@ impl Default for SunShafts {
 }
 
 impl SunShafts {
+    /// What a world without these settings reads as: no sun shafts.
+    pub fn off() -> Self {
+        Self {
+            intensity: 0.0,
+            ..Self::default()
+        }
+    }
+
     /// Ok for an intensity in `[0, 4]`, an anisotropy in `[0, 0.95]` and a
     /// distance that is positive and at most 100 000.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
@@ -516,6 +548,14 @@ impl Default for Reflections {
 }
 
 impl Reflections {
+    /// What a world without these settings reads as: no screen-space reflections.
+    pub fn off() -> Self {
+        Self {
+            intensity: 0.0,
+            ..Self::default()
+        }
+    }
+
     /// Ok for an intensity in `[0, 1]`, a maximum roughness in `[0.05, 1]`
     /// and a distance that is positive and at most 100 000.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
@@ -579,6 +619,14 @@ impl Default for Refraction {
 }
 
 impl Refraction {
+    /// What a world without these settings reads as: no refraction.
+    pub fn off() -> Self {
+        Self {
+            strength: 0.0,
+            ..Self::default()
+        }
+    }
+
     /// Ok for a strength in `[0, 4]` and a blur in `[0, 64]`.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("strength", self.strength, 0.0..=4.0)?;

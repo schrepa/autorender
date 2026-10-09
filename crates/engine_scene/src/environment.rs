@@ -2,7 +2,7 @@
 //! rendering effects
 //! and terrain settings as authored data.
 //! Version 5 documents with an `environment` apply it when instantiated
-//! (local lights, particles, sun shafts and reflections need version 6);
+//! (each section needs the scene version its settings type declares);
 //! development controls apply the same sections temporarily, and inspection
 //! reports the current resources in the same shape.
 //!
@@ -11,12 +11,7 @@
 //! atmosphere is authored differently, as a preset with overrides.
 
 use engine_core::{
-    AmbientOcclusion, Atmosphere, Bloom, Clouds, ContactShadows, Decals, Deformation, Environment,
-    GroundCover, InvalidSetting, LevelOfDetail, LocalLights, Navigation, OcclusionCulling,
-    Occupancy, Ocean, Particles, ReflectionProbes, Reflections, Refraction, Shadows, Sky,
-    SubpixelCulling, SunShafts, TemporalAntialiasing, TerrainSettings, TimeOfDay, VirtualGeometry,
-    Water, Wind, WorldStreaming,
-    bevy_ecs::prelude::{Resource, World},
+    Atmosphere, Environment, EnvironmentSection, InvalidSetting, Shadows, bevy_ecs::prelude::World,
     glam::Vec3,
 };
 use serde::{Deserialize, Serialize};
@@ -230,231 +225,57 @@ fn section_error(path: &str, invalid: InvalidSetting) -> SceneError {
     )
 }
 
-/// An effect section of a scene environment: the engine's
-/// settings resource, which checks itself; the scene version that first
-/// authors it; and whether it is opt-in (off unless named), which a
-/// document's environment removes when it omits the section instead of
-/// setting its default.
-pub trait EnvironmentSection: Resource + Copy + Default + serde::Serialize {
-    /// The settings type's name, which development tools inspect it by.
-    const NAME: &'static str;
-    const SINCE: u32;
-    const OPT_IN: bool;
-    /// The first invalid field and the rule it breaks, if any.
-    fn check(&self) -> Result<(), InvalidSetting>;
-    /// The section's JSON schema.
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema;
-}
-
-macro_rules! section {
-    ($settings:ident, since $since:literal, opt_in $opt_in:literal) => {
-        impl EnvironmentSection for $settings {
-            const NAME: &'static str = stringify!($settings);
-            const SINCE: u32 = $since;
-            const OPT_IN: bool = $opt_in;
-            fn check(&self) -> Result<(), InvalidSetting> {
-                self.validate()
-            }
-            #[cfg(feature = "schema")]
-            fn schema() -> schemars::Schema {
-                schemars::schema_for!($settings)
-            }
-        }
-    };
-}
-
-section!(Shadows, since 5, opt_in false);
-section!(AmbientOcclusion, since 5, opt_in false);
-section!(Bloom, since 5, opt_in false);
-section!(LocalLights, since 6, opt_in false);
-section!(SunShafts, since 6, opt_in true);
-section!(Reflections, since 6, opt_in true);
-section!(Particles, since 6, opt_in false);
-section!(Refraction, since 8, opt_in true);
-section!(Decals, since 8, opt_in false);
-section!(ReflectionProbes, since 8, opt_in false);
-section!(VirtualGeometry, since 8, opt_in false);
-section!(LevelOfDetail, since 8, opt_in false);
-section!(TerrainSettings, since 9, opt_in false);
-section!(GroundCover, since 9, opt_in false);
-section!(Wind, since 9, opt_in false);
-section!(Occupancy, since 9, opt_in false);
-section!(ContactShadows, since 9, opt_in false);
-section!(Water, since 9, opt_in false);
-section!(Ocean, since 9, opt_in false);
-section!(Deformation, since 9, opt_in false);
-section!(Clouds, since 9, opt_in true);
-section!(WorldStreaming, since 9, opt_in false);
-section!(Sky, since 9, opt_in true);
-section!(TimeOfDay, since 9, opt_in true);
-section!(Navigation, since 9, opt_in false);
-section!(OcclusionCulling, since 9, opt_in false);
-section!(SubpixelCulling, since 9, opt_in false);
-section!(TemporalAntialiasing, since 9, opt_in false);
-
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
 pub trait SectionVisitor {
     fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>);
 }
 
-/// A scene's look. In a document, every omitted section takes
-/// the engine's default state (sun shafts, reflections and refraction: off);
-/// in a development control, omitted sections stay as they are.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct SceneEnvironment {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub atmosphere: Option<SceneAtmosphere>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub shadows: Option<Shadows>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ambient_occlusion: Option<AmbientOcclusion>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bloom: Option<Bloom>,
-    /// Version 6 sections.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub local_lights: Option<LocalLights>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sun_shafts: Option<SunShafts>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reflections: Option<Reflections>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub particles: Option<Particles>,
-    /// Version 8 sections.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub refraction: Option<Refraction>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub decals: Option<Decals>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reflection_probes: Option<ReflectionProbes>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub virtual_geometry: Option<VirtualGeometry>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub level_of_detail: Option<LevelOfDetail>,
-    /// Version 9: terrain streaming and level of detail,
-    /// and ground cover.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub terrain: Option<TerrainSettings>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ground_cover: Option<GroundCover>,
-    /// The wind ground cover and placed objects sway in.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub wind: Option<Wind>,
-    /// What placed objects cover darkens the sky light under them.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub occupancy: Option<Occupancy>,
-    /// Short rays toward the sun shade what shadow maps cannot hold.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contact_shadows: Option<ContactShadows>,
-    /// How terrains' lakes and rivers look.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub water: Option<Water>,
-    /// The sea.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ocean: Option<Ocean>,
-    /// Tracks deformers press into deformable ground.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub deformation: Option<Deformation>,
-    /// A layer of clouds over the world.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub clouds: Option<Clouds>,
-    /// How streamed content loads around the camera.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub world_streaming: Option<WorldStreaming>,
-    /// A physically based sky, and the time of day moving the sun.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sky: Option<Sky>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub time_of_day: Option<TimeOfDay>,
-    /// How agents search their walks.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub navigation: Option<Navigation>,
-    /// What GPU-presented frames leave undrawn beyond the frustum: what the
-    /// last frame's depths hide, and what covers no pixel center.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub occlusion_culling: Option<OcclusionCulling>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subpixel_culling: Option<SubpixelCulling>,
-    /// Whether ordinary GPU-presented frames antialias temporally.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temporal_antialiasing: Option<TemporalAntialiasing>,
+/// engine_scene's part of [`engine_core::environment_sections`]: the
+/// authored [`SceneEnvironment`], read back from a world, and the visit of
+/// its sections.
+macro_rules! scene_sections {
+    ($($key:ident: $settings:ident { since: $since:literal, opt_in: $opt_in:literal }),* $(,)?) => {
+        /// A scene's look. In a document, every omitted section takes the
+        /// engine's default state (opt-in sections: off); in a development
+        /// control, omitted sections stay as they are. Each section is the
+        /// engine's settings type, which documents its fields.
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+        #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+        #[serde(default, deny_unknown_fields)]
+        pub struct SceneEnvironment {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            pub atmosphere: Option<SceneAtmosphere>,
+            $(
+                #[serde(skip_serializing_if = "Option::is_none")]
+                pub $key: Option<engine_core::$settings>,
+            )*
+        }
+
+        impl SceneEnvironment {
+            /// Every section, from `world`'s current resources
+            /// ([`Environment::current`]): resolving it reproduces them.
+            /// Absent section resources read as off.
+            pub fn current(world: &World) -> Self {
+                let environment = Environment::current(world);
+                Self {
+                    atmosphere: Some(SceneAtmosphere::from(&environment.atmosphere)),
+                    $($key: Some(environment.$key),)*
+                }
+            }
+
+            /// Hands every section but the atmosphere to `visitor`, in
+            /// authored order.
+            pub fn visit(&self, visitor: &mut impl SectionVisitor) {
+                $(visitor.section(stringify!($key), self.$key);)*
+            }
+        }
+    };
 }
 
+engine_core::environment_sections!(scene_sections);
+
 impl SceneEnvironment {
-    /// Every section, from `world`'s current resources
-    /// ([`Environment::current`]): resolving it reproduces them. Absent
-    /// effect resources read as off.
-    pub fn current(world: &World) -> Self {
-        let environment = Environment::current(world);
-        Self {
-            atmosphere: Some(SceneAtmosphere::from(&environment.atmosphere)),
-            shadows: Some(environment.shadows),
-            ambient_occlusion: Some(environment.ambient_occlusion),
-            bloom: Some(environment.bloom),
-            local_lights: Some(environment.local_lights),
-            sun_shafts: Some(environment.sun_shafts),
-            reflections: Some(environment.reflections),
-            particles: Some(environment.particles),
-            refraction: Some(environment.refraction),
-            decals: Some(environment.decals),
-            reflection_probes: Some(environment.reflection_probes),
-            virtual_geometry: Some(environment.virtual_geometry),
-            level_of_detail: Some(environment.level_of_detail),
-            terrain: Some(environment.terrain),
-            ground_cover: Some(environment.ground_cover),
-            wind: Some(environment.wind),
-            occupancy: Some(environment.occupancy),
-            contact_shadows: Some(environment.contact_shadows),
-            water: Some(environment.water),
-            ocean: Some(environment.ocean),
-            deformation: Some(environment.deformation),
-            clouds: Some(environment.clouds),
-            world_streaming: Some(environment.world_streaming),
-            sky: Some(environment.sky),
-            time_of_day: Some(environment.time_of_day),
-            navigation: Some(environment.navigation),
-            occlusion_culling: Some(environment.occlusion_culling),
-            subpixel_culling: Some(environment.subpixel_culling),
-            temporal_antialiasing: Some(environment.temporal_antialiasing),
-        }
-    }
-
-    /// Hands every effect section (all but the atmosphere) to `visitor`, in
-    /// authored order: the one list of them.
-    pub fn visit(&self, visitor: &mut impl SectionVisitor) {
-        visitor.section("shadows", self.shadows);
-        visitor.section("ambient_occlusion", self.ambient_occlusion);
-        visitor.section("bloom", self.bloom);
-        visitor.section("local_lights", self.local_lights);
-        visitor.section("sun_shafts", self.sun_shafts);
-        visitor.section("reflections", self.reflections);
-        visitor.section("particles", self.particles);
-        visitor.section("refraction", self.refraction);
-        visitor.section("decals", self.decals);
-        visitor.section("reflection_probes", self.reflection_probes);
-        visitor.section("virtual_geometry", self.virtual_geometry);
-        visitor.section("level_of_detail", self.level_of_detail);
-        visitor.section("terrain", self.terrain);
-        visitor.section("ground_cover", self.ground_cover);
-        visitor.section("wind", self.wind);
-        visitor.section("occupancy", self.occupancy);
-        visitor.section("contact_shadows", self.contact_shadows);
-        visitor.section("water", self.water);
-        visitor.section("ocean", self.ocean);
-        visitor.section("deformation", self.deformation);
-        visitor.section("clouds", self.clouds);
-        visitor.section("world_streaming", self.world_streaming);
-        visitor.section("sky", self.sky);
-        visitor.section("time_of_day", self.time_of_day);
-        visitor.section("navigation", self.navigation);
-        visitor.section("occlusion_culling", self.occlusion_culling);
-        visitor.section("subpixel_culling", self.subpixel_culling);
-        visitor.section("temporal_antialiasing", self.temporal_antialiasing);
-    }
-
     /// The names of the sections present, the atmosphere first.
     pub fn sections(&self) -> Vec<&'static str> {
         struct Names(Vec<&'static str>);
@@ -473,26 +294,53 @@ impl SceneEnvironment {
         names.0
     }
 
-    /// The first effect section present that scene version `version`
-    /// introduced.
-    pub(crate) fn section_since(&self, version: u32) -> Option<&'static str> {
-        struct Since(u32, Option<&'static str>);
-        impl SectionVisitor for Since {
+    /// The first section present that a scene version after `version`
+    /// introduced, and that version.
+    pub(crate) fn section_after(&self, version: u32) -> Option<(&'static str, u32)> {
+        struct After(u32, Option<(&'static str, u32)>);
+        impl SectionVisitor for After {
             fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>) {
-                if self.1.is_none() && section.is_some() && T::SINCE == self.0 {
-                    self.1 = Some(name);
+                if self.1.is_none() && section.is_some() && T::SINCE > self.0 {
+                    self.1 = Some((name, T::SINCE));
                 }
             }
         }
-        let mut since = Since(version, None);
-        self.visit(&mut since);
-        since.1
+        let mut after = After(version, None);
+        self.visit(&mut after);
+        after.1
+    }
+
+    /// The keys of the sections that are off unless a scene names them.
+    pub fn opt_in_sections() -> Vec<&'static str> {
+        struct OptIn(Vec<&'static str>);
+        impl SectionVisitor for OptIn {
+            fn section<T: EnvironmentSection>(&mut self, name: &'static str, _: Option<T>) {
+                if T::OPT_IN {
+                    self.0.push(name);
+                }
+            }
+        }
+        let mut keys = OptIn(Vec::new());
+        Self::default().visit(&mut keys);
+        keys.0
+    }
+
+    /// Every section's key with the scene version that introduced it.
+    pub(crate) fn section_versions() -> Vec<(u32, &'static str)> {
+        struct Versions(Vec<(u32, &'static str)>);
+        impl SectionVisitor for Versions {
+            fn section<T: EnvironmentSection>(&mut self, name: &'static str, _: Option<T>) {
+                self.0.push((T::SINCE, name));
+            }
+        }
+        let mut versions = Versions(Vec::new());
+        Self::default().visit(&mut versions);
+        versions.0
     }
 
     /// The first version 6 field present, as its path below the environment:
-    /// the grade's contrast, vibrance and tints, a shadow cascade count other
-    /// than the default, and the local light, sun shaft, reflection and
-    /// particle sections.
+    /// the grade's contrast, vibrance and tints, and a shadow cascade count
+    /// other than the default.
     pub(crate) fn version_six_field(&self) -> Option<&'static str> {
         let atmosphere = self.atmosphere.unwrap_or_default();
         let cascades = self
@@ -510,11 +358,10 @@ impl SceneEnvironment {
         ]
         .into_iter()
         .find_map(|(name, present)| present.then_some(name))
-        .or_else(|| self.section_since(6))
     }
 
     /// The first version 9 field present, as its path below the environment:
-    /// aerial perspective or terrain settings.
+    /// aerial perspective.
     pub(crate) fn version_nine_field(&self) -> Option<&'static str> {
         let atmosphere = self.atmosphere.unwrap_or_default();
         [
@@ -532,7 +379,6 @@ impl SceneEnvironment {
         ]
         .into_iter()
         .find_map(|(name, present)| present.then_some(name))
-        .or_else(|| self.section_since(9))
     }
 
     /// Checks every section present at authored path `path`.
@@ -541,7 +387,7 @@ impl SceneEnvironment {
         impl SectionVisitor for FirstInvalid<'_> {
             fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>) {
                 if self.1.is_none()
-                    && let Some(Err(invalid)) = section.map(|section| section.check())
+                    && let Some(Err(invalid)) = section.map(|section| section.section_check())
                 {
                     self.1 = Some(section_error(&format!("{}.{name}", self.0), invalid));
                 }
@@ -573,9 +419,8 @@ impl SceneEnvironment {
     }
 
     /// Sets every section in `world`, omitted ones to the engine's default
-    /// state: a document's environment owns the whole look. Opt-in effects
-    /// (sun shafts, reflections and refraction) are off by default, so
-    /// omitting them removes them. Call on an environment
+    /// state: a document's environment owns the whole look. Opt-in sections
+    /// are off by default, so omitting them removes them. Call on an environment
     /// [`Self::validate`] accepted.
     pub fn apply_all(&self, world: &mut World) {
         struct Own<'w>(&'w mut World);

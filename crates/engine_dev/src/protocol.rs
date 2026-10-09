@@ -1,11 +1,4 @@
-use engine_core::{
-    AmbientOcclusion, Bloom, Clouds, ContactShadows, Decals, Deformation, GroundCover,
-    LevelOfDetail, LocalLights, Navigation, Occupancy, Ocean, Particles, ReflectionProbes,
-    Reflections, Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay, VirtualGeometry,
-    Water, Wind, WorldStreaming,
-};
-use engine_core::{OcclusionCulling, SubpixelCulling, TemporalAntialiasing};
-use engine_scene::SceneAtmosphere;
+use engine_scene::{SceneAtmosphere, SceneEnvironment};
 use serde::{Deserialize, Serialize};
 
 /// Versioned, read-only requests processed synchronously between frames.
@@ -39,6 +32,11 @@ pub enum DevRequest {
         version: u32,
         #[serde(default)]
         name: Option<String>,
+        /// With `SceneDocument`: one definition of the scene schema, which
+        /// is too large for one response; without it, the schema's top
+        /// level and the names of its definitions.
+        #[serde(default)]
+        definition: Option<String>,
     },
     /// Closest authoritative hit; rejects incomplete native candidate scans.
     Raycast {
@@ -341,71 +339,11 @@ pub enum BrowserControl {
         version: u32,
         enabled: bool,
     },
-    /// Temporarily replace environment sections and render
-    /// while paused. Sections are a v5 scene `environment`'s, validated alike;
-    /// omitted sections stay. A v5 scene with an environment restores its own
-    /// on reload; persist a look by saving it there.
-    Environment {
-        version: u32,
-        #[serde(default)]
-        atmosphere: Option<SceneAtmosphere>,
-        #[serde(default)]
-        shadows: Option<Shadows>,
-        #[serde(default)]
-        ambient_occlusion: Option<AmbientOcclusion>,
-        #[serde(default)]
-        bloom: Option<Bloom>,
-        #[serde(default)]
-        local_lights: Option<LocalLights>,
-        #[serde(default)]
-        sun_shafts: Option<SunShafts>,
-        #[serde(default)]
-        reflections: Option<Reflections>,
-        #[serde(default)]
-        particles: Option<Particles>,
-        #[serde(default)]
-        refraction: Option<Refraction>,
-        #[serde(default)]
-        decals: Option<Decals>,
-        #[serde(default)]
-        reflection_probes: Option<ReflectionProbes>,
-        #[serde(default)]
-        virtual_geometry: Option<VirtualGeometry>,
-        #[serde(default)]
-        level_of_detail: Option<LevelOfDetail>,
-        #[serde(default)]
-        terrain: Option<TerrainSettings>,
-        #[serde(default)]
-        ground_cover: Option<GroundCover>,
-        #[serde(default)]
-        wind: Option<Wind>,
-        #[serde(default)]
-        occupancy: Option<Occupancy>,
-        #[serde(default)]
-        contact_shadows: Option<ContactShadows>,
-        #[serde(default)]
-        water: Option<Water>,
-        #[serde(default)]
-        ocean: Option<Ocean>,
-        #[serde(default)]
-        deformation: Option<Deformation>,
-        #[serde(default)]
-        clouds: Option<Clouds>,
-        #[serde(default)]
-        world_streaming: Option<WorldStreaming>,
-        #[serde(default)]
-        sky: Option<Sky>,
-        #[serde(default)]
-        time_of_day: Option<TimeOfDay>,
-        #[serde(default)]
-        navigation: Option<Navigation>,
-        #[serde(default)]
-        occlusion_culling: Option<OcclusionCulling>,
-        #[serde(default)]
-        subpixel_culling: Option<SubpixelCulling>,
-        #[serde(default)]
-        temporal_antialiasing: Option<TemporalAntialiasing>,
-    },
+    /// Temporarily replace environment sections and render while paused.
+    /// Sections are a scene `environment`'s, validated alike; omitted
+    /// sections stay. A scene with an environment restores its own on
+    /// reload; persist a look by saving it there.
+    Environment(EnvironmentControl),
     /// Temporarily set terrain's level of detail and view and
     /// render while paused: `pixel_error` replaces the settings' (1 to
     /// 64), `freeze` keeps streaming and patches following the camera's
@@ -644,7 +582,6 @@ impl BrowserControl {
         match self {
             Self::Present { version, .. }
             | Self::Culling { version, .. }
-            | Self::Environment { version, .. }
             | Self::Terrain { version, .. }
             | Self::TerrainEdit { version, .. }
             | Self::TerrainUndo { version, .. }
@@ -661,9 +598,43 @@ impl BrowserControl {
             | Self::Resume { version }
             | Self::Capture { version, .. }
             | Self::Reload { version, .. } => *version,
+            Self::Environment(control) => control.version,
         }
     }
 }
+
+/// engine_dev's part of [`engine_core::environment_sections`]: the
+/// environment control's request.
+macro_rules! control_sections {
+    ($($key:ident: $settings:ident { since: $since:literal, opt_in: $opt_in:literal }),* $(,)?) => {
+        /// The environment control: the protocol version and the sections it
+        /// replaces, each in its scene environment shape.
+        #[derive(Debug, Deserialize, Serialize)]
+        #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+        #[serde(deny_unknown_fields)]
+        pub struct EnvironmentControl {
+            pub version: u32,
+            #[serde(default)]
+            pub atmosphere: Option<SceneAtmosphere>,
+            $(
+                #[serde(default)]
+                pub $key: Option<engine_core::$settings>,
+            )*
+        }
+
+        impl EnvironmentControl {
+            /// The sections it names, as a scene environment.
+            pub fn sections(&self) -> SceneEnvironment {
+                SceneEnvironment {
+                    atmosphere: self.atmosphere,
+                    $($key: self.$key,)*
+                }
+            }
+        }
+    };
+}
+
+engine_core::environment_sections!(control_sections);
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]

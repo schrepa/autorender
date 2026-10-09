@@ -170,6 +170,14 @@ impl Default for Particles {
 }
 
 impl Particles {
+    /// What a world without these settings reads as: no particles.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// Ok for a budget of at least one particle.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_budget("max_particles", self.max_particles)

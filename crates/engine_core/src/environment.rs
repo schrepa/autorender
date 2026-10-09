@@ -8,13 +8,7 @@ use std::borrow::Cow;
 
 use bevy_ecs::prelude::{Resource, World};
 
-use crate::{
-    AmbientOcclusion, Atmosphere, Bloom, Clouds, ContactShadows, Decals, Deformation, GroundCover,
-    LevelOfDetail, LocalLights, Navigation, Occupancy, Ocean, Particles, ReflectionProbes,
-    Reflections, Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay, VirtualGeometry,
-    Water, Wind, WorldStreaming,
-};
-use crate::{OcclusionCulling, SubpixelCulling, TemporalAntialiasing};
+use crate::Atmosphere;
 
 /// A settings field outside its valid values: its name and the rule it
 /// breaks, such as `must be in [0, 1]`.
@@ -41,266 +35,156 @@ impl std::fmt::Display for InvalidSetting {
 
 impl std::error::Error for InvalidSetting {}
 
-/// Every look setting of a world: its atmosphere and each effect's settings.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Environment {
-    pub atmosphere: Atmosphere,
-    pub shadows: Shadows,
-    pub ambient_occlusion: AmbientOcclusion,
-    pub bloom: Bloom,
-    pub local_lights: LocalLights,
-    pub sun_shafts: SunShafts,
-    pub reflections: Reflections,
-    pub particles: Particles,
-    pub refraction: Refraction,
-    pub decals: Decals,
-    pub reflection_probes: ReflectionProbes,
-    pub virtual_geometry: VirtualGeometry,
-    pub level_of_detail: LevelOfDetail,
-    pub terrain: TerrainSettings,
-    pub ground_cover: GroundCover,
-    pub wind: Wind,
-    pub occupancy: Occupancy,
-    pub contact_shadows: ContactShadows,
-    pub water: Water,
-    pub ocean: Ocean,
-    pub deformation: Deformation,
-    pub clouds: Clouds,
-    pub world_streaming: WorldStreaming,
-    pub sky: Sky,
-    pub time_of_day: TimeOfDay,
-    pub navigation: Navigation,
-    pub occlusion_culling: OcclusionCulling,
-    pub subpixel_culling: SubpixelCulling,
-    pub temporal_antialiasing: TemporalAntialiasing,
+/// An environment section: the settings of one engine feature, a resource
+/// that is section [`Self::KEY`] of a scene `environment` (from scene version
+/// [`Self::SINCE`]), of the environment control and of inspection, in the
+/// same JSON shape. A world without the resource reads as
+/// [`Self::section_off`]; opt-in sections are off unless a scene names them,
+/// the others start at their defaults. [`environment_sections`] implements it
+/// for every type it lists, from each type's own `off`, `validate` and
+/// `sanitized`.
+pub trait EnvironmentSection:
+    Resource + Copy + Default + PartialEq + serde::Serialize + std::fmt::Debug
+{
+    /// The section's key in a scene environment, the environment control and
+    /// inspection.
+    const KEY: &'static str;
+    /// The settings type's name.
+    const NAME: &'static str;
+    /// The scene version that first authors the section.
+    const SINCE: u32;
+    /// Whether the section is off unless a scene names it.
+    const OPT_IN: bool;
+    /// What a world without the resource reads as: the feature off.
+    fn section_off() -> Self;
+    /// The first invalid field and the rule it breaks, if any.
+    fn section_check(&self) -> Result<(), InvalidSetting>;
+    /// Every value usable: out-of-range values clamp, unusable ones fall back.
+    fn section_sanitized(self) -> Self;
+    /// The section's JSON schema.
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema;
 }
 
-impl Environment {
-    /// `world`'s settings as its resources hold them. A missing atmosphere
-    /// reads as the default one, and a missing effect resource as that
-    /// effect turned off. An enabled time of day sets the
-    /// atmosphere's sun direction.
-    pub fn current(world: &World) -> Self {
-        fn read<T: Resource + Copy>(world: &World, off: T) -> T {
-            world.get_resource::<T>().copied().unwrap_or(off)
+/// Every environment section in authored order: the one list of them. Each
+/// entry is `key: Settings { since: VERSION, opt_in: BOOL }`, the section's
+/// key, its settings type in this crate (which has `off`, `validate` and
+/// `sanitized`), the scene version that first authors it, and whether it is
+/// off unless a scene names it. Code listing sections passes a macro that
+/// receives this list (`environment_sections!(callback)`) instead of
+/// writing them out, so a section added here reaches the environment
+/// snapshot, resource registration, scenes, the environment control and
+/// inspection at once.
+#[macro_export]
+macro_rules! environment_sections {
+    ($then:ident) => {
+        $then! {
+            shadows: Shadows { since: 5, opt_in: false },
+            ambient_occlusion: AmbientOcclusion { since: 5, opt_in: false },
+            bloom: Bloom { since: 5, opt_in: false },
+            local_lights: LocalLights { since: 6, opt_in: false },
+            sun_shafts: SunShafts { since: 6, opt_in: true },
+            reflections: Reflections { since: 6, opt_in: true },
+            particles: Particles { since: 6, opt_in: false },
+            refraction: Refraction { since: 8, opt_in: true },
+            decals: Decals { since: 8, opt_in: false },
+            reflection_probes: ReflectionProbes { since: 8, opt_in: false },
+            virtual_geometry: VirtualGeometry { since: 8, opt_in: false },
+            level_of_detail: LevelOfDetail { since: 8, opt_in: false },
+            terrain: TerrainSettings { since: 9, opt_in: false },
+            ground_cover: GroundCover { since: 9, opt_in: false },
+            wind: Wind { since: 9, opt_in: false },
+            occupancy: Occupancy { since: 9, opt_in: false },
+            contact_shadows: ContactShadows { since: 9, opt_in: false },
+            water: Water { since: 9, opt_in: false },
+            ocean: Ocean { since: 9, opt_in: false },
+            deformation: Deformation { since: 9, opt_in: false },
+            clouds: Clouds { since: 9, opt_in: true },
+            world_streaming: WorldStreaming { since: 9, opt_in: false },
+            sky: Sky { since: 9, opt_in: true },
+            time_of_day: TimeOfDay { since: 9, opt_in: true },
+            navigation: Navigation { since: 9, opt_in: false },
+            occlusion_culling: OcclusionCulling { since: 9, opt_in: false },
+            subpixel_culling: SubpixelCulling { since: 9, opt_in: false },
+            temporal_antialiasing: TemporalAntialiasing { since: 9, opt_in: false },
         }
-        let time_of_day = read(
-            world,
-            TimeOfDay {
-                enabled: false,
-                ..TimeOfDay::default()
-            },
-        );
-        let mut atmosphere = read(world, Atmosphere::default());
-        if time_of_day.enabled {
-            atmosphere.sun_direction = time_of_day.sanitized().sun_direction();
-        }
-        Self {
-            atmosphere,
-            shadows: read(
-                world,
-                Shadows {
-                    enabled: false,
-                    ..Shadows::default()
-                },
-            ),
-            ambient_occlusion: read(
-                world,
-                AmbientOcclusion {
-                    intensity: 0.0,
-                    ..AmbientOcclusion::default()
-                },
-            ),
-            bloom: read(
-                world,
-                Bloom {
-                    intensity: 0.0,
-                    ..Bloom::default()
-                },
-            ),
-            local_lights: read(
-                world,
-                LocalLights {
-                    enabled: false,
-                    ..LocalLights::default()
-                },
-            ),
-            sun_shafts: read(
-                world,
-                SunShafts {
-                    intensity: 0.0,
-                    ..SunShafts::default()
-                },
-            ),
-            reflections: read(
-                world,
-                Reflections {
-                    intensity: 0.0,
-                    ..Reflections::default()
-                },
-            ),
-            particles: read(
-                world,
-                Particles {
-                    enabled: false,
-                    ..Particles::default()
-                },
-            ),
-            refraction: read(
-                world,
-                Refraction {
-                    strength: 0.0,
-                    ..Refraction::default()
-                },
-            ),
-            decals: read(
-                world,
-                Decals {
-                    enabled: false,
-                    ..Decals::default()
-                },
-            ),
-            reflection_probes: read(
-                world,
-                ReflectionProbes {
-                    enabled: false,
-                    ..ReflectionProbes::default()
-                },
-            ),
-            virtual_geometry: read(
-                world,
-                VirtualGeometry {
-                    enabled: false,
-                    ..VirtualGeometry::default()
-                },
-            ),
-            level_of_detail: read(
-                world,
-                LevelOfDetail {
-                    enabled: false,
-                    ..LevelOfDetail::default()
-                },
-            ),
-            terrain: read(
-                world,
-                TerrainSettings {
-                    enabled: false,
-                    ..TerrainSettings::default()
-                },
-            ),
-            ground_cover: read(
-                world,
-                GroundCover {
-                    enabled: false,
-                    ..GroundCover::default()
-                },
-            ),
-            wind: read(world, Wind::STILL),
-            occupancy: read(
-                world,
-                Occupancy {
-                    enabled: false,
-                    ..Occupancy::default()
-                },
-            ),
-            contact_shadows: read(
-                world,
-                ContactShadows {
-                    enabled: false,
-                    ..ContactShadows::default()
-                },
-            ),
-            water: read(
-                world,
-                Water {
-                    enabled: false,
-                    ..Water::default()
-                },
-            ),
-            ocean: read(
-                world,
-                Ocean {
-                    enabled: false,
-                    ..Ocean::default()
-                },
-            ),
-            deformation: read(
-                world,
-                Deformation {
-                    enabled: false,
-                    ..Deformation::default()
-                },
-            ),
-            clouds: read(
-                world,
-                Clouds {
-                    enabled: false,
-                    ..Clouds::default()
-                },
-            ),
-            world_streaming: read(
-                world,
-                WorldStreaming {
-                    enabled: false,
-                    ..WorldStreaming::default()
-                },
-            ),
-            sky: read(
-                world,
-                Sky {
-                    enabled: false,
-                    ..Sky::default()
-                },
-            ),
-            time_of_day,
-            navigation: read(
-                world,
-                Navigation {
-                    enabled: false,
-                    ..Navigation::default()
-                },
-            ),
-            occlusion_culling: read(world, OcclusionCulling { enabled: false }),
-            subpixel_culling: read(world, SubpixelCulling { enabled: false }),
-            temporal_antialiasing: read(world, TemporalAntialiasing { enabled: false }),
-        }
-    }
-
-    /// Every section sanitized: usable for rendering whatever it held.
-    pub fn sanitized(self) -> Self {
-        Self {
-            atmosphere: self.atmosphere.sanitized(),
-            shadows: self.shadows.sanitized(),
-            ambient_occlusion: self.ambient_occlusion.sanitized(),
-            bloom: self.bloom.sanitized(),
-            local_lights: self.local_lights.sanitized(),
-            sun_shafts: self.sun_shafts.sanitized(),
-            reflections: self.reflections.sanitized(),
-            particles: self.particles.sanitized(),
-            refraction: self.refraction.sanitized(),
-            decals: self.decals.sanitized(),
-            reflection_probes: self.reflection_probes.sanitized(),
-            virtual_geometry: self.virtual_geometry.sanitized(),
-            level_of_detail: self.level_of_detail.sanitized(),
-            terrain: self.terrain.sanitized(),
-            ground_cover: self.ground_cover.sanitized(),
-            wind: self.wind.sanitized(),
-            occupancy: self.occupancy.sanitized(),
-            contact_shadows: self.contact_shadows.sanitized(),
-            water: self.water.sanitized(),
-            ocean: self.ocean.sanitized(),
-            deformation: self.deformation.sanitized(),
-            clouds: self.clouds.sanitized(),
-            world_streaming: self.world_streaming.sanitized(),
-            sky: self.sky.sanitized(),
-            time_of_day: self.time_of_day.sanitized(),
-            navigation: self.navigation.sanitized(),
-            occlusion_culling: self.occlusion_culling.sanitized(),
-            subpixel_culling: self.subpixel_culling.sanitized(),
-            temporal_antialiasing: self.temporal_antialiasing.sanitized(),
-        }
-    }
+    };
 }
+
+/// engine_core's part: each section's [`EnvironmentSection`], the
+/// [`Environment`] snapshot and the registration of default settings.
+macro_rules! core_sections {
+    ($($key:ident: $settings:ident { since: $since:literal, opt_in: $opt_in:literal }),* $(,)?) => {
+        $(
+            impl EnvironmentSection for crate::$settings {
+                const KEY: &'static str = stringify!($key);
+                const NAME: &'static str = stringify!($settings);
+                const SINCE: u32 = $since;
+                const OPT_IN: bool = $opt_in;
+                fn section_off() -> Self {
+                    crate::$settings::off()
+                }
+                fn section_check(&self) -> Result<(), InvalidSetting> {
+                    self.validate()
+                }
+                fn section_sanitized(self) -> Self {
+                    self.sanitized()
+                }
+                #[cfg(feature = "schema")]
+                fn schema() -> schemars::Schema {
+                    schemars::schema_for!(crate::$settings)
+                }
+            }
+        )*
+
+        /// Every look setting of a world: its atmosphere and each section's
+        /// settings, by section key.
+        #[derive(Clone, Copy, Debug, Default, PartialEq)]
+        pub struct Environment {
+            pub atmosphere: Atmosphere,
+            $(pub $key: crate::$settings,)*
+        }
+
+        impl Environment {
+            /// `world`'s settings as its resources hold them. A missing
+            /// atmosphere reads as the default one, and a missing section
+            /// resource as its feature off. An enabled time of day sets the
+            /// atmosphere's sun direction.
+            pub fn current(world: &World) -> Self {
+                let mut environment = Self {
+                    atmosphere: world.get_resource::<Atmosphere>().copied().unwrap_or_default(),
+                    $($key: world
+                        .get_resource::<crate::$settings>()
+                        .copied()
+                        .unwrap_or_else(<crate::$settings as EnvironmentSection>::section_off),)*
+                };
+                if environment.time_of_day.enabled {
+                    environment.atmosphere.sun_direction =
+                        environment.time_of_day.sanitized().sun_direction();
+                }
+                environment
+            }
+
+            /// Every section sanitized: usable for rendering whatever it held.
+            pub fn sanitized(self) -> Self {
+                Self {
+                    atmosphere: self.atmosphere.sanitized(),
+                    $($key: self.$key.sanitized(),)*
+                }
+            }
+        }
+
+        /// Inserts the default settings of every section that is on unless a
+        /// scene turns it off: all but the opt-in ones.
+        pub(crate) fn init_sections(world: &mut World) {
+            $(if !$opt_in {
+                world.init_resource::<crate::$settings>();
+            })*
+        }
+    };
+}
+
+environment_sections!(core_sections);
 
 /// The rule of a value that must lie in `range`, as `must be in [a, b]`.
 pub(crate) fn within(range: &std::ops::RangeInclusive<f32>) -> String {

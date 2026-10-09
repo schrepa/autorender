@@ -54,6 +54,14 @@ impl Default for Water {
 }
 
 impl Water {
+    /// What a world without these settings reads as: no water.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         for value in self.color {

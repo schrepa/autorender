@@ -147,6 +147,14 @@ pub struct OceanSurface {
 }
 
 impl Ocean {
+    /// What a world without these settings reads as: no sea.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("level", self.level, -10_000.0..=10_000.0)?;

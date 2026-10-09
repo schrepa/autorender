@@ -16,8 +16,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{
-    DevError, DevRequest, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE, MAX_REQUEST_BYTES,
-    MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
+    DevError, DevRequest, MAX_DESCRIPTION_BYTES, MAX_INSPECTOR_BYTES, MAX_INSPECTORS,
+    MAX_PAGE_SIZE, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
         AnimationPlayerView, CameraView, DecalView, GlobalTransformView, HierarchyView,
         InterpolateTransformView, Mesh3dView, MeshBoundsView, PresentationModeView,
@@ -85,6 +85,9 @@ struct InspectSelector<'a> {
 /// game code: keep their work and allocations bounded and never scan the world.
 pub struct DevTools {
     inspectors: BTreeMap<String, Inspector>,
+    // The engine's own inspectors, once registered: games register up to
+    // MAX_INSPECTORS beyond them.
+    builtins: Option<usize>,
 }
 
 impl Default for DevTools {
@@ -94,11 +97,13 @@ impl Default for DevTools {
                 .expect("build-generated schemas are valid JSON");
         let mut tools = Self {
             inspectors: BTreeMap::new(),
+            builtins: None,
         };
         tools.register_poses(&schemas);
         tools.register_components(&schemas);
         tools.register_animation(&schemas);
         tools.register_environment(&schemas);
+        tools.builtins = Some(tools.inspectors.len());
         tools
     }
 }
@@ -639,11 +644,17 @@ impl DevTools {
             schemas: &'t Value,
         }
         impl SectionVisitor for Sections<'_> {
-            fn section<T: EnvironmentSection>(&mut self, name: &'static str, _: Option<T>) {
+            fn section<T: EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
                 let schema = self.schemas[T::NAME].clone();
+                // The settings type's doc comment, whole in the schema.
+                let description = summary(
+                    schema["description"]
+                        .as_str()
+                        .expect("every environment section's settings type documents itself"),
+                );
                 self.tools
                     .register_resource::<T>(
-                        InspectorDescriptor::new(T::NAME, section_description(name), schema)
+                        InspectorDescriptor::new(T::NAME, description, schema)
                             .with_default(json!(T::default())),
                         |settings| json!(settings),
                     )
@@ -699,93 +710,51 @@ fn sections_schema() -> Value {
     })
 }
 
-/// What the inspector of environment section `name` reports.
-fn section_description(name: &str) -> &'static str {
-    match name {
-        "shadows" => {
-            "Sun shadows: kept-map bounds, fade distance, near-map distance and resolution. Missing means no shadows. The rendering observation reports per-map casters and kept-map redraws."
+/// The scene schema, which exceeds one response: with `definition`, that
+/// definition; without, the top level with its definitions' names in place
+/// of their bodies.
+fn scene_schema(definition: Option<&str>) -> Result<Value, DevError> {
+    let mut schema: Value =
+        serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json")))
+            .expect("generated scene schema is JSON");
+    let definitions = schema
+        .as_object_mut()
+        .and_then(|schema| schema.remove("$defs"))
+        .unwrap_or_default();
+    match definition {
+        Some(name) => definitions.get(name).cloned().ok_or_else(|| {
+            DevError::new(
+                "unknown_definition",
+                "$.definition",
+                "not a definition of the scene schema; describe SceneDocument lists them",
+            )
+        }),
+        None => {
+            let names: Vec<&String> = definitions
+                .as_object()
+                .map(|definitions| definitions.keys().collect())
+                .unwrap_or_default();
+            schema["definitions"] = json!(names);
+            Ok(schema)
         }
-        "ambient_occlusion" => {
-            "Screen-space ambient occlusion; intensity 0 or a missing resource turns it off."
-        }
-        "bloom" => "Glow beyond bright pixels; intensity 0 or a missing resource turns it off.",
-        "local_lights" => {
-            "Local lighting settings: whether point and spot lights shade, the per-frame light budget (nearest to the camera win) and an intensity scale. Missing means no local lights. The rendering observation reports lights shaded, visible and cluster overflow."
-        }
-        "sun_shafts" => {
-            "Sunlight scattered by the fog between shadow casters. Opt-in: missing or intensity 0 means off; it needs shadows."
-        }
-        "reflections" => {
-            "Screen-space reflections in glossy surfaces, falling back to the sky off screen. Opt-in: missing or intensity 0 means off."
-        }
-        "particles" => {
-            "Particle settings: whether emitters draw and the per-frame particle budget. Missing means no particles."
-        }
-        "refraction" => {
-            "Refraction through glass: transmissive materials show the opaque scene behind them, bent by their index of refraction through their thickness and blurred by their roughness. Opt-in: missing or strength 0 means glass blends as plain transparency."
-        }
-        "decals" => {
-            "Decal settings: whether decals draw and the per-frame decal budget (nearest to the camera win). Missing means no decals. The rendering observation reports decals drawn and dropped."
-        }
-        "reflection_probes" => {
-            "Reflection probe settings: whether probes capture and reflect, the texels across each environment map face, the budget of probes kept captured (nearest to the camera win) and the cube faces captured per frame. Missing means no probes. The rendering observation reports probes reflected, faces captured and probes dropped."
-        }
-        "virtual_geometry" => {
-            "Virtual geometry settings: whether meshes built as cluster hierarchies draw the clusters each view needs (otherwise their fallback cut), and the largest simplification error a drawn cluster may show in pixels of the viewport height. Missing means fallback cuts. The rendering observation reports clusters and triangles drawn for the camera and shadow maps, occluded clusters and dropped selections."
-        }
-        "terrain" => {
-            "Terrain settings: whether terrains draw, their level of detail's pixel error, the coarsest levels kept resident everywhere, an optional tile budget, per-frame tile work, and the collision radius around the camera and focus entities. Missing means no terrain draws. The rendering observation reports terrain patches, triangles and shadow patches, and resident, loading and dropped tiles."
-        }
-        "ground_cover" => {
-            "Ground cover settings: whether surface materials' covers grow, the radius they grow densest within, the on-screen height in pixels where sparser tiers of wider blades past it end (0: none; ground beyond shows as canopy), a density scale, and an optional per-frame blade budget (farthest drop first). Blades sway in the wind section. Missing means no cover. Rendering reports blades drawn, dropped, reach and tiers."
-        }
-        "occupancy" => {
-            "Occupancy settings: a top-down map around the camera of what placed objects cover, their tops and bottoms, which darkens the sky light of what lies under or within them: forest floors, the lower crowns of trees and the ground at a boulder's foot. Its reach from the camera, texels a side, and how much sky light full cover takes away. Missing means no darkening. The rendering observation reports the map's redraws and the objects drawn into it."
-        }
-        "contact_shadows" => {
-            "Contact shadow settings: short rays toward the sun through the depth buffer shade what shadow maps are too coarse to hold, such as grass on the ground, the feet of small objects and the gaps between stones. Whether they trace, each ray's reach in meters, how much of the sun's light a hit takes away, and the distance from the camera within which surfaces trace. Missing means none. The rendering observation reports whether a frame traced them."
-        }
-        "water" => {
-            "Water settings: terrains' lakes and rivers, which their hydrology bakes find, drawn where they stand. Whether water draws, the color deep water scatters back, the meters of water through which half the light passes, how strongly ripples tilt the surface and the meters across the largest ripples. Missing means none. The rendering observation reports water chunks drawn."
-        }
-        "ocean" => {
-            "The sea: an endless surface at its still level raised by Gerstner waves, the same on the CPU and the GPU. Whether it draws, its level, the wind that raised it (its speed sets the waves' height and length), how sharply crests stand, its waves and their seed, deep water's color, the meters through which half the light passes, foam, and its reach. Missing or disabled means none. water_query reports its surface; the rendering observation, sectors and triangles drawn."
-        }
-        "clouds" => {
-            "Clouds: a layer of cumulus over the world, drifting with the wind. Whether it draws, how much of the sky it covers, its base height and thickness, density, wind, the meters across its largest shapes, seed, how much sun its shadows take, the dome's texels around the horizon and the frames over which ordinary frames march the dome (exact frames march all of it). Opt-in: missing means a clear sky. The rendering observation reports the dome's rows marched."
-        }
-        "deformation" => {
-            "Runtime deformation: deformers press tracks into terrain surface materials with a deform depth. Whether they press, the meters the map around the camera spans and its texels along a side, the seconds tracks take to refill (0 never), the rim's height for a track's depth, an optional budget of stamps the log keeps, and whether the log keeps tracks the map leaves. Missing or disabled means none. deformation_query reads the log; the rendering observation reports stamps pressed into the map."
-        }
-        "sky" => {
-            "Physically based sky: air over a planet, Rayleigh and Mie scattering and ozone absorption integrated into lookup tables the sky, reflections and aerial perspective read; the sun's color after its path through the air and the sky's ambient color light the scene. Radii in km, coefficients per km, ground albedo, sun intensity and angular radius, aerial distance scale, the origin's altitude. Opt-in: missing keeps the atmosphere's colors and haze."
-        }
-        "navigation" => {
-            "Navigation: whether navigation agents walk, and the samples of search work each fixed tick does at most over every agent's walk being searched (long walks take several ticks). Inspect NavAgents for what the last tick did."
-        }
-        "time_of_day" => {
-            "Time of day: the sun's direction from the hour for a latitude and day of the year, north's yaw in the world, advancing `speed` hours a second in steps of `step` minutes (kept shadows redraw once a step). Opt-in: missing keeps the atmosphere's sun direction."
-        }
-        "world_streaming" => {
-            "World streaming: streamed items spawn in cells near the camera, terrain focus entities and where the camera's motion leads in `prefetch` seconds, and despawn past `unload` times the range. Grids by reach: 256 m cells within 512 m, 1 km within 2 km, 4 km within 8 km, scaled by `distance`. Off unloads all; `spawns_per_frame` paces loads (cells spawn whole); `frozen` holds cells as they are. See WorldCells and the rendering observation's cell counts."
-        }
-        "wind" => {
-            "The wind: its horizontal velocity in meters per second and how strongly gusts traveling with it vary its push. Ground cover's blades and placed objects with a sway bend in it; temporal frames move them by the previous frame's time. Missing means still air."
-        }
-        "level_of_detail" => {
-            "Level of detail settings: GPU-presented frames draw each instance at the coarsest level of its mesh whose error stays within the pixel error of the viewport height, the coarsest being its draw group's impostor unless impostors are off; max_impostors budgets baked impostors. Missing means every instance draws its mesh. The rendering observation reports instances per level, impostors baked and those left out."
-        }
-        "occlusion_culling" => {
-            "Occlusion culling of GPU-presented frames: whether they draw what the last frame showed, test every other frustum-visible instance against a depth pyramid of those depths, then draw only what it does not hide. Output is unchanged. Runs where culling runs without an instance budget; the rendering observation reports occlusion_culling (whether the frame ran it), occluded_instances and the occlusion_test pass."
-        }
-        "subpixel_culling" => {
-            "Sub-pixel culling of GPU-presented frames: whether visible instances whose projected bounds cover no pixel center stay undrawn. Output is unchanged. Runs where culling runs without an instance budget; the rendering observation reports subpixel_culling (whether the frame ran it) and subpixel_instances."
-        }
-        "temporal_antialiasing" => {
-            "Temporal antialiasing: whether ordinary GPU-presented frames jitter and blend with the previous frame reprojected by motion; steps, renders, previews and captures stay exact. Its targets cost 16 bytes per canvas pixel. The rendering observation reports temporal_antialiasing (whether the frame resolved temporally) and the temporal_resolve pass."
-        }
-        _ => "An environment section.",
     }
+}
+
+/// The first sentence of `doc`, within an inspector description's bytes.
+fn summary(doc: &str) -> String {
+    let sentence = doc
+        .find(". ")
+        .map_or(doc, |end| &doc[..=end])
+        .replace('\n', " ");
+    if sentence.len() <= MAX_DESCRIPTION_BYTES {
+        return sentence;
+    }
+    let mut end = MAX_DESCRIPTION_BYTES - 3;
+    while !sentence.is_char_boundary(end) {
+        end -= 1;
+    }
+    let cut = sentence[..end].rfind(' ').unwrap_or(end);
+    format!("{}...", &sentence[..cut])
 }
 
 impl DevTools {
@@ -831,20 +800,24 @@ impl DevTools {
                 "inspector name is already registered or reserved",
             ));
         }
-        if self.inspectors.len() == MAX_INSPECTORS {
+        if let Some(builtins) = self.builtins
+            && self.inspectors.len() >= builtins + MAX_INSPECTORS
+        {
             return Err(DevError::new(
                 "inspector_limit",
                 "$.name",
-                "at most 64 inspectors may be registered",
+                format!("a game may register at most {MAX_INSPECTORS} inspectors"),
             ));
         }
-        if inspector.descriptor.description.len() > 512
+        if inspector.descriptor.description.len() > MAX_DESCRIPTION_BYTES
             || encode(&inspector.descriptor, MAX_INSPECTOR_BYTES).is_err()
         {
             return Err(DevError::new(
                 "inspector_too_large",
                 "$.schema",
-                "descriptor must fit 16384 bytes and description 512 bytes",
+                format!(
+                    "descriptor must fit {MAX_INSPECTOR_BYTES} bytes and description {MAX_DESCRIPTION_BYTES} bytes"
+                ),
             ));
         }
         self.inspectors.insert(name.clone(), inspector);
@@ -983,7 +956,9 @@ impl DevTools {
                     "readiness": "synchronous", "ownership": "library payload excludes retained snapshots and allocator metadata"}),
                 )
             }
-            DevRequest::Describe { name, .. } => self.describe(name.as_deref()),
+            DevRequest::Describe {
+                name, definition, ..
+            } => self.describe(name.as_deref(), definition.as_deref()),
             DevRequest::Inspect {
                 entity,
                 parent,
@@ -1015,7 +990,7 @@ impl DevTools {
         }
     }
 
-    fn describe(&self, name: Option<&str>) -> Result<Value, DevError> {
+    fn describe(&self, name: Option<&str>, definition: Option<&str>) -> Result<Value, DevError> {
         let Some(name) = name else {
             let mut types: Vec<Value> = self.inspectors.values().map(|inspector| json!({"name": inspector.descriptor.name, "kind": inspector.kind, "description": inspector.descriptor.description})).collect();
             types.push(json!({"name": "SceneDocument", "kind": "authoring", "source": engine_scene::schema_path()}));
@@ -1025,7 +1000,7 @@ impl DevTools {
         };
         match name {
             "SceneDocument" => Ok(
-                json!({"name": name, "kind": "authoring", "source": engine_scene::schema_path(), "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": format!("Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Fields newer than version 1 require the version that introduced them: {}. Every older version stays accepted with its own semantics. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state (sun shafts, reflections and refraction off; decals and reflection probes on).", engine_scene::version_features())}),
+                json!({"name": name, "kind": "authoring", "source": engine_scene::schema_path(), "schema": scene_schema(definition)?, "constraints": format!("Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Fields newer than version 1 require the version that introduced them: {}. Every older version stays accepted with its own semantics. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state; the opt-in ones ({}) are then off.", engine_scene::version_features(), SceneEnvironment::opt_in_sections().join(", "))}),
             ),
             "protocol" | "BrowserControl" => {
                 let schemas: Value = serde_json::from_str(include_str!(concat!(

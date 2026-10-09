@@ -23,6 +23,11 @@ pub struct TemporalAntialiasing {
 }
 
 impl TemporalAntialiasing {
+    /// What a world without these settings reads as: no temporal antialiasing.
+    pub fn off() -> Self {
+        Self { enabled: false }
+    }
+
     /// Every value is valid.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         Ok(())

@@ -90,6 +90,14 @@ impl Default for Deformation {
 }
 
 impl Deformation {
+    /// What a world without these settings reads as: no tracks.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("extent", self.extent, 8.0..=1024.0)?;

@@ -162,71 +162,10 @@ impl DevBrowser {
                 rendered(app.dev_render(width, height), "camera changed")?;
                 Ok(json!({"temporary":true,"camera_changed":true}))
             }
-            BrowserControl::Environment {
-                atmosphere,
-                shadows,
-                ambient_occlusion,
-                bloom,
-                local_lights,
-                sun_shafts,
-                reflections,
-                particles,
-                refraction,
-                decals,
-                reflection_probes,
-                virtual_geometry,
-                level_of_detail,
-                terrain,
-                ground_cover,
-                wind,
-                occupancy,
-                contact_shadows,
-                water,
-                ocean,
-                deformation,
-                clouds,
-                world_streaming,
-                sky,
-                time_of_day,
-                navigation,
-                occlusion_culling,
-                subpixel_culling,
-                temporal_antialiasing,
-                ..
-            } => {
+            BrowserControl::Environment(control) => {
                 // The sections of a scene environment, validated alike; the
                 // named ones replace their resources, the others stay.
-                let environment = engine_scene::SceneEnvironment {
-                    atmosphere,
-                    shadows,
-                    ambient_occlusion,
-                    bloom,
-                    local_lights,
-                    sun_shafts,
-                    reflections,
-                    particles,
-                    refraction,
-                    decals,
-                    reflection_probes,
-                    virtual_geometry,
-                    level_of_detail,
-                    terrain,
-                    ground_cover,
-                    wind,
-                    occupancy,
-                    contact_shadows,
-                    water,
-                    ocean,
-                    deformation,
-                    clouds,
-                    world_streaming,
-                    sky,
-                    time_of_day,
-                    navigation,
-                    occlusion_culling,
-                    subpixel_culling,
-                    temporal_antialiasing,
-                };
+                let environment = control.sections();
                 environment.validate("$")?;
                 environment.apply_sections(app.engine.app.world_mut());
                 rendered(app.dev_render(width, height), "environment changed")?;

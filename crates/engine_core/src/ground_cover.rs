@@ -109,6 +109,14 @@ impl Default for GroundCover {
 }
 
 impl GroundCover {
+    /// What a world without these settings reads as: no ground cover.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("radius", self.radius, 2.0..=200.0)?;

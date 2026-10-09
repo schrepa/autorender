@@ -83,8 +83,11 @@ try {
   assert.equal(status.observation.scene.revision, String(source.revision));
   const descriptor = await cli("describe", { name: "Transform" });
   assert.ok(descriptor.result.descriptor.schema);
+  // The scene schema arrives in parts: its top level, then any definition.
   const sceneDescriptor = await cli("describe", { name: "SceneDocument" });
-  assert.ok(sceneDescriptor.result.schema);
+  assert.ok(sceneDescriptor.result.schema.definitions.includes("SceneEnvironment"));
+  const environmentSchema = await cli("describe", { name: "SceneDocument", definition: "SceneEnvironment" });
+  assert.ok(environmentSchema.result.schema.properties.terrain);
   const inspectPlayer = () => cli("inspect", { entity: playerId, component: "Transform" });
   const before = await inspectPlayer();
   const invalid = await cli("inspect", { limit: 101 }, false);
@@ -110,9 +113,10 @@ try {
   for (const name of ["Atmosphere", "Shadows", "AmbientOcclusion", "Bloom", "Environment"]) {
     assert.ok(listing.result.types.some(type => type.name === name), name);
   }
+  // The inspection holds every section the environment's schema names.
   const look = await cli("inspect", { component: "Environment" });
-  assert.deepEqual(Object.keys(look.result.value).sort(),
-    ["ambient_occlusion", "atmosphere", "bloom", "decals", "level_of_detail", "local_lights", "particles", "reflection_probes", "reflections", "refraction", "shadows", "sun_shafts", "terrain", "virtual_geometry"]);
+  const sections = (await cli("describe", { name: "Environment" })).result.descriptor.schema.properties;
+  assert.deepEqual(Object.keys(look.result.value).sort(), Object.keys(sections).sort());
   const mesh = await cli("inspect", { entity: playerId, component: "Mesh3d" });
   assert.equal(typeof mesh.result.entity.components.Mesh3d.surface.roughness, "number");
   const invalidLook = await cli("environment", { shadows: { resolution: 3000 } }, false);

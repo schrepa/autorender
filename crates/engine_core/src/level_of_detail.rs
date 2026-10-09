@@ -58,6 +58,14 @@ impl Default for LevelOfDetail {
 }
 
 impl LevelOfDetail {
+    /// What a world without these settings reads as: every instance at full detail.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// Ok for a pixel error in `[0.25, 64]` and a fade in `[0, 4]` seconds.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("pixel_error", self.pixel_error, 0.25..=64.0)?;

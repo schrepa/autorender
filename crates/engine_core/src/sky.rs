@@ -96,6 +96,14 @@ impl Default for Sky {
 }
 
 impl Sky {
+    /// What a world without these settings reads as: the atmosphere's sky.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("planet_radius", self.planet_radius, 100.0..=100_000.0)?;
@@ -209,6 +217,14 @@ impl Default for TimeOfDay {
 }
 
 impl TimeOfDay {
+    /// What a world without these settings reads as: the atmosphere's sun.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("hours", self.hours, 0.0..=24.0)?;

@@ -138,6 +138,14 @@ impl Default for ReflectionProbes {
 }
 
 impl ReflectionProbes {
+    /// What a world without these settings reads as: no reflection probes.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// Ok for a resolution that is a power of two from 16 to 1024, a budget
     /// of at least one probe and at least one face per frame.
     pub fn validate(&self) -> Result<(), InvalidSetting> {

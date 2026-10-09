@@ -90,7 +90,7 @@ pub use engine_terrain::{
     PathProfile, PathStage, PathStats, Placed, PlacementChoice, PlacementLayer, Pyramid,
     PyramidError, Remap, Route, RouteOptions, Stamp, StampOp, Tile, TileKey, WaterGrid,
 };
-pub use environment::{Environment, InvalidSetting};
+pub use environment::{Environment, EnvironmentSection, InvalidSetting};
 pub use glam;
 pub use gpu_culling::{OcclusionCulling, SubpixelCulling};
 pub use ground_cover::{Cover, GroundCover};
@@ -340,31 +340,9 @@ impl Engine {
             .init_resource::<PresentedTime>()
             .init_resource::<Camera>()
             .init_resource::<Atmosphere>()
-            .init_resource::<Shadows>()
-            .init_resource::<AmbientOcclusion>()
-            .init_resource::<Bloom>()
-            .init_resource::<LocalLights>()
-            .init_resource::<Particles>()
-            .init_resource::<Decals>()
-            .init_resource::<ReflectionProbes>()
-            .init_resource::<VirtualGeometry>()
-            .init_resource::<LevelOfDetail>()
-            .init_resource::<TerrainSettings>()
-            .init_resource::<GroundCover>()
-            .init_resource::<Wind>()
-            .init_resource::<Occupancy>()
-            .init_resource::<ContactShadows>()
-            .init_resource::<Water>()
-            .init_resource::<Ocean>()
-            .init_resource::<Deformation>()
             .init_resource::<Tracks>()
-            .init_resource::<WorldStreaming>()
             .init_resource::<WorldCells>()
             .init_resource::<WorldChanges>()
-            .init_resource::<Navigation>()
-            .init_resource::<OcclusionCulling>()
-            .init_resource::<SubpixelCulling>()
-            .init_resource::<TemporalAntialiasing>()
             .init_resource::<NavAgents>()
             .init_resource::<Jobs>()
             .init_resource::<Terrains>()
@@ -376,6 +354,7 @@ impl Engine {
             .insert_resource(TransformNodeLimit(config.max_transform_nodes))
             .init_resource::<GlobalTransforms>()
             .insert_resource(assets);
+        environment::init_sections(app.world_mut());
         let render_query = app.world_mut().query_filtered::<(
             Entity,
             Has<Transform>,

@@ -2212,7 +2212,7 @@
       "additionalProperties": false
     },
     "SceneEnvironment": {
-      "description": "A scene's look. In a document, every omitted section takes\nthe engine's default state (sun shafts, reflections and refraction: off);\nin a development control, omitted sections stay as they are.",
+      "description": "A scene's look. In a document, every omitted section takes the\nengine's default state (opt-in sections: off); in a development\ncontrol, omitted sections stay as they are. Each section is the\nengine's settings type, which documents its fields.",
       "type": "object",
       "properties": {
         "ambient_occlusion": {
@@ -2246,7 +2246,6 @@
           ]
         },
         "clouds": {
-          "description": "A layer of clouds over the world.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneClouds"
@@ -2257,7 +2256,6 @@
           ]
         },
         "contact_shadows": {
-          "description": "Short rays toward the sun shade what shadow maps cannot hold.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneContactShadows"
@@ -2278,7 +2276,6 @@
           ]
         },
         "deformation": {
-          "description": "Tracks deformers press into deformable ground.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneDeformation"
@@ -2309,7 +2306,6 @@
           ]
         },
         "local_lights": {
-          "description": "Version 6 sections.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneLocalLights"
@@ -2320,7 +2316,6 @@
           ]
         },
         "navigation": {
-          "description": "How agents search their walks.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneNavigation"
@@ -2331,7 +2326,6 @@
           ]
         },
         "occlusion_culling": {
-          "description": "What GPU-presented frames leave undrawn beyond the frustum: what the\nlast frame's depths hide, and what covers no pixel center.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneOcclusionCulling"
@@ -2342,7 +2336,6 @@
           ]
         },
         "occupancy": {
-          "description": "What placed objects cover darkens the sky light under them.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneOccupancy"
@@ -2353,7 +2346,6 @@
           ]
         },
         "ocean": {
-          "description": "The sea.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneOcean"
@@ -2394,7 +2386,6 @@
           ]
         },
         "refraction": {
-          "description": "Version 8 sections.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneRefraction"
@@ -2415,7 +2406,6 @@
           ]
         },
         "sky": {
-          "description": "A physically based sky, and the time of day moving the sun.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSky"
@@ -2446,7 +2436,6 @@
           ]
         },
         "temporal_antialiasing": {
-          "description": "Whether ordinary GPU-presented frames antialias temporally.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTemporalAntialiasing"
@@ -2457,7 +2446,6 @@
           ]
         },
         "terrain": {
-          "description": "Version 9: terrain streaming and level of detail,\nand ground cover.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrainSettings"
@@ -2488,7 +2476,6 @@
           ]
         },
         "water": {
-          "description": "How terrains' lakes and rivers look.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneWater"
@@ -2499,7 +2486,6 @@
           ]
         },
         "wind": {
-          "description": "The wind ground cover and placed objects sway in.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneWind"
@@ -2510,7 +2496,6 @@
           ]
         },
         "world_streaming": {
-          "description": "How streamed content loads around the camera.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneWorldStreaming"

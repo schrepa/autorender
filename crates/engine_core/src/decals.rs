@@ -121,6 +121,14 @@ impl Default for Decals {
 }
 
 impl Decals {
+    /// What a world without these settings reads as: no decals.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// Ok for a budget of at least one decal.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_budget("max_decals", self.max_decals)

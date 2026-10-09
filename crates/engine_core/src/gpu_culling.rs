@@ -31,6 +31,11 @@ impl Default for OcclusionCulling {
 }
 
 impl OcclusionCulling {
+    /// What a world without these settings reads as: no occlusion culling.
+    pub fn off() -> Self {
+        Self { enabled: false }
+    }
+
     /// Every value is valid.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         Ok(())
@@ -63,6 +68,11 @@ impl Default for SubpixelCulling {
 }
 
 impl SubpixelCulling {
+    /// What a world without these settings reads as: no sub-pixel culling.
+    pub fn off() -> Self {
+        Self { enabled: false }
+    }
+
     /// Every value is valid.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         Ok(())

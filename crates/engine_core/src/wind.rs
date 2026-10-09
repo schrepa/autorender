@@ -34,6 +34,11 @@ impl Default for Wind {
 }
 
 impl Wind {
+    /// What a world without these settings reads as: still air.
+    pub fn off() -> Self {
+        Self::STILL
+    }
+
     /// Still air: what a world without the resource reads.
     pub const STILL: Self = Self {
         velocity: [0.0; 2],

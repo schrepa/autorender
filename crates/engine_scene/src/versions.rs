@@ -5,7 +5,7 @@
 //! (compressed textures, buffer files' vertex extras) are checked where the
 //! files are read, with [`version_required`].
 
-use crate::{MeshSource, SCENE_VERSION, SceneDocument, SceneError, SceneObject};
+use crate::{MeshSource, SCENE_VERSION, SceneDocument, SceneEnvironment, SceneError, SceneObject};
 
 /// A feature a scene version introduced: the version, what it is (as
 /// messages and descriptions name it) and the authored path of a
@@ -17,7 +17,7 @@ struct Rule {
 }
 
 /// The rules, newest version first: the order validation checks them in.
-fn rules() -> [Rule; 28] {
+fn rules() -> [Rule; 27] {
     [
         Rule {
             since: 9,
@@ -47,7 +47,7 @@ fn rules() -> [Rule; 28] {
         },
         Rule {
             since: 9,
-            what: "terrain settings, ground cover and aerial perspective",
+            what: "aerial perspective",
             first_use: |document| {
                 document
                     .environment
@@ -176,17 +176,6 @@ fn rules() -> [Rule; 28] {
         },
         Rule {
             since: 8,
-            what: "refraction, decal, reflection probe, virtual geometry and level of detail settings",
-            first_use: |document| {
-                document
-                    .environment
-                    .as_ref()?
-                    .section_since(8)
-                    .map(|section| format!("$.environment.{section}"))
-            },
-        },
-        Rule {
-            since: 8,
             what: "animations and skins",
             first_use: |document| {
                 if !document.animations.is_empty() {
@@ -224,7 +213,7 @@ fn rules() -> [Rule; 28] {
         },
         Rule {
             since: 6,
-            what: "grading, shadow cascade, local light, particle, sun shaft and reflection settings",
+            what: "grading and shadow cascade settings",
             first_use: |document| {
                 document
                     .environment
@@ -345,16 +334,26 @@ pub(crate) fn version_required(path: impl Into<String>, what: &str, since: u32) 
 }
 
 /// What each scene version after the first introduced, oldest first:
-/// `2 textures and UV data; 3 …`.
+/// `2 textures and UV data; 3 …`, with the environment sections each
+/// version introduced.
 pub fn version_features() -> String {
     let rules = rules();
+    let sections = SceneEnvironment::section_versions();
     (2..=SCENE_VERSION)
         .filter_map(|version| {
-            let features: Vec<&str> = rules
+            let mut features: Vec<String> = rules
                 .iter()
                 .filter(|rule| rule.since == version)
-                .map(|rule| rule.what)
+                .map(|rule| rule.what.to_owned())
                 .collect();
+            let keys: Vec<&str> = sections
+                .iter()
+                .filter(|(since, _)| *since == version)
+                .map(|(_, key)| *key)
+                .collect();
+            if !keys.is_empty() {
+                features.push(format!("environment sections {}", keys.join(", ")));
+            }
             (!features.is_empty()).then(|| format!("{version} {}", features.join(", ")))
         })
         .collect::<Vec<_>>()
@@ -380,6 +379,18 @@ impl SceneDocument {
             {
                 return Err(version_required(path, rule.what, rule.since));
             }
+        }
+        // Each environment section names the version that introduced it.
+        if let Some((key, since)) = self
+            .environment
+            .as_ref()
+            .and_then(|environment| environment.section_after(self.version))
+        {
+            return Err(version_required(
+                format!("$.environment.{key}"),
+                "environment sections",
+                since,
+            ));
         }
         Ok(())
     }

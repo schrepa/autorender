@@ -113,6 +113,14 @@ impl Default for WorldStreaming {
 }
 
 impl WorldStreaming {
+    /// What a world without these settings reads as: nothing streamed.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("distance", self.distance, 0.05..=20.0)?;

@@ -940,6 +940,14 @@ impl Default for TerrainSettings {
 }
 
 impl TerrainSettings {
+    /// What a world without these settings reads as: no terrain draws.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("pixel_error", self.pixel_error, 1.0..=64.0)?;
         if !(1..=8).contains(&self.pinned_levels) {

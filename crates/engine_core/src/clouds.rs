@@ -83,6 +83,14 @@ impl Default for Clouds {
 }
 
 impl Clouds {
+    /// What a world without these settings reads as: a clear sky.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("coverage", self.coverage, 0.0..=1.0)?;
