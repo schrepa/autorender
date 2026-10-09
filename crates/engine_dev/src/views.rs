@@ -1,6 +1,9 @@
 use serde::Serialize;
 
-/// A terrain as its inspector reports it.
+/// A heightfield terrain on this entity as a scene version 9 `terrain` field:
+/// its origin, tiles, spacing, layers or file, material, collision and
+/// surroundings, with its streaming state: resident tiles by level, and its
+/// surroundings' once they stream.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainView {
@@ -103,7 +106,9 @@ pub struct HydrologyView {
     pub falls: Option<usize>,
 }
 
-/// The log of runtime deformation's stamps.
+/// The log of runtime deformation's stamps: stamps held, pressed and dropped by
+/// the deformation budget, and the newest. Read tracks with deformation_query;
+/// press one with the deform control.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TracksView {
@@ -114,11 +119,11 @@ pub struct TracksView {
     pub latest: Option<engine_core::Track>,
 }
 
-/// World streaming at the last extraction: cells holding
-/// items and those loaded, cells within range still waiting, items,
-/// entities streamed items hold spawned, the frame's spawns and despawns,
-/// the camera velocity prefetch followed, each grid's cells, and the
-/// cells nearest a streaming source.
+/// World streaming at the last extraction: cells holding streamed items, loaded
+/// and pending (within range, waiting), items, entities streamed items hold,
+/// the frame's spawns and despawns, the camera velocity prefetch followed, each
+/// grid's cells and the 32 cells nearest a streaming source. Settings: the
+/// world_streaming environment section.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct WorldCellsView {
@@ -161,10 +166,11 @@ pub struct StreamedCellView {
     pub distance: f32,
 }
 
-/// A navigation agent in the shape of a scene version 9
-/// `nav_agent` field, with its walk: its status, the destination it was
-/// searched for, its length and points, the next point it walks to, the
-/// meters left and the samples its search took.
+/// A navigation agent as a scene version 9 `nav_agent` field: it walks over the
+/// terrain to its destination (world x, z) at its speed, on the ground, around
+/// obstacles widened by its radius, no steeper than max_slope, wading no deeper
+/// than max_water; with its walk's status, length, points, next point, meters
+/// left and samples searched. Send it with nav_go.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct NavAgentView {
@@ -178,9 +184,11 @@ pub struct NavAgentView {
     pub searched: usize,
 }
 
-/// What navigation did at the last fixed tick, and the
-/// first 16 agents: each one's authored ID if a scene spawned it, status,
-/// position, destination and meters left.
+/// What navigation did at the last fixed tick: agents, those searching,
+/// walking, arrived and unable to reach their destination, the samples of
+/// search work the tick did, and the first 16 agents with their status,
+/// position, destination and meters left. Settings: the navigation environment
+/// section.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct NavAgentsView {
@@ -193,10 +201,11 @@ pub struct NavAgentsView {
     pub first: Vec<NavAgentRow>,
 }
 
-/// The host's job workers: workers running jobs, jobs handed
-/// out and not done, jobs submitted, completed, failed and cancelled while
-/// running since the engine started, and keys shared with
-/// every worker and their bytes.
+/// The host's job workers: workers (none keeps bakes, tiles and walks on the
+/// engine's thread), jobs in flight, submitted, completed, failed and
+/// cancelled, parts handed back early, keys shared and their bytes, and the
+/// page's output cache. Workers run their most urgent job a slice at a time.
+/// Pages take ?workers=N or off, and ?jobcache=off, verify or a budget in MiB.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct JobsView {
@@ -231,8 +240,10 @@ pub struct NavAgentRow {
     pub left: f32,
 }
 
-/// What gameplay changed of the streamed world: how many
-/// items are removed for good, and the first 64 of their IDs in order.
+/// What gameplay changed of the streamed world, which games save: items removed
+/// for good (an item is removed when gameplay despawns its root), by ID
+/// (`scene/root` for scenes), which their cells no longer spawn. The count and
+/// the first 64 IDs. Change it with the world_changes control.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct WorldChangesView {
@@ -240,17 +251,19 @@ pub struct WorldChangesView {
     pub ids: Vec<String>,
 }
 
-/// The streamed item whose root this entity is: its ID,
-/// which despawning the entity removes for good.
+/// The streamed item whose root this entity is: its ID. Despawning the entity
+/// removes the item for good (WorldChanges); its cell no longer spawns it.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct StreamedIdView {
     pub id: String,
 }
 
-/// A grounded entity in the shape of a scene version 9
-/// `grounded` field, with the level of the terrain tile it last stood on
-/// (`None` before it sampled, or while no tile answered).
+/// Stands on the terrain as a scene version 9 `grounded` field: the entity's
+/// translation's y is kept `offset` meters above the ground under it, from the
+/// finest terrain tile resident there, sampling again as finer tiles arrive and
+/// when its x, z or offset changes; with the level of the tile it last stood
+/// on. Unparented entities only.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct GroundedView {
@@ -258,7 +271,11 @@ pub struct GroundedView {
     pub level: Option<u32>,
 }
 
-/// Terrain streaming at the last extraction.
+/// Terrain streaming at the last extraction: terrains; resident, loading,
+/// shape-only, waiting, kept, restored and idle, banded and dropped tiles;
+/// patches drawn and those standing in for finer levels; and the surroundings'.
+/// Query heights with terrain_height, compare queries, collision and layers
+/// with terrain_sweep, and find routes for path layers with terrain_route.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainsView {
@@ -296,8 +313,10 @@ pub struct TerrainsView {
     pub surroundings_patches: u32,
 }
 
-/// An animation player in the shape of a scene version 8
-/// `animation` field, with its clip's duration and its targets.
+/// An animation player as a scene version 8 `animation` field with its clip's
+/// duration and its targets: every fixed tick it advances `time` by the tick
+/// times `speed`, wrapping when `loop` is set, and poses its targets'
+/// transforms.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct AnimationPlayerView {
@@ -316,9 +335,9 @@ pub struct AnimationPlayerView {
     pub targets: Vec<Option<String>>,
 }
 
-/// A decal in the shape of a scene version 8 `decal` field
-/// (`engine_scene::SceneDecal::from_runtime`), with whether its material is
-/// resident.
+/// A decal on this entity as a scene version 8 `decal` field: its material
+/// projected down the entity's local y onto the opaque surfaces inside its unit
+/// box, fading on surfaces turning away beyond `fade_degrees`.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct DecalView {
@@ -331,10 +350,12 @@ pub struct DecalView {
     pub fade_degrees: f32,
 }
 
-/// A spline mesh in the shape of a scene version 9 `spline`
-/// field (`engine_scene::SceneSpline::from_runtime`), and what it built:
-/// the curve's length in meters, the copies of its mesh along it, its
-/// chunks and their vertices, or why it built nothing.
+/// A mesh bent along a curve on this entity as a scene version 9 `spline`
+/// field: copies of the mesh end to end along a centripetal Catmull-Rom curve
+/// through `points` (entity space), its x along the curve, y up and z across,
+/// drawn by child entities a chunk of at most 256 m each; with the curve's
+/// length, copies, chunks and vertices once built, or the error that stopped
+/// it.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct SplineMeshView {
@@ -350,7 +371,9 @@ pub struct SplineMeshView {
     pub error: Option<String>,
 }
 
-/// A skin: its joints' authored entity IDs.
+/// The joints deforming this entity's mesh, as a scene version 8 `skin` names
+/// them: each vertex moves by its weighted joints' displayed world matrices
+/// times their inverse bind matrices.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct SkinView {
@@ -358,7 +381,8 @@ pub struct SkinView {
     pub joints: Vec<Option<String>>,
 }
 
-/// Serializable development view, separate from the gameplay component.
+/// Local transform relative to Parent, or world transform for a root.
+/// Quaternion is normalized XYZW; authored scale is positive and nonsingular.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TransformView {
@@ -368,6 +392,9 @@ pub struct TransformView {
     pub scale: [f32; 3],
 }
 
+/// Derived world transform, refreshed before inspection. Column-major matrix
+/// preserves shear; invalid hierarchies return null matrix and translation and
+/// skip rendering.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct GlobalTransformView {
@@ -377,6 +404,9 @@ pub struct GlobalTransformView {
     pub translation: Option<[f32; 3]>,
 }
 
+/// Opt-in marker for fixed-tick interpolation of this local transform.
+/// Descendants inherit the presented parent matrix. Gameplay and authored
+/// transforms remain authoritative.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct InterpolateTransformView {
@@ -384,6 +414,11 @@ pub struct InterpolateTransformView {
     pub enabled: bool,
 }
 
+/// Last extracted world matrix, including interpolated ancestors; column-major
+/// and preserves shear. Inspection does not recompute it, except to materialize
+/// the exact CPU reference of a GPU-presented frame while its inputs are
+/// unchanged. Null until extracted or when the presented branch is invalid. See
+/// PresentationState for actual mode, alpha and gpu_pending.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct PresentedTransformView {
@@ -402,6 +437,12 @@ pub enum PresentationModeView {
     Interpolated,
 }
 
+/// Last prepared extraction's frame/tick and actual mode/fraction; null
+/// frame/tick before extraction. Current mode uses alpha one. History counters
+/// measure bounded storage. gpu_pending marks a GPU-presented extraction whose
+/// CPU poses are not materialized. Inspection prepares presentation only to
+/// materialize such a frame; this is not GPU submission/completion or total
+/// process memory.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct PresentationStateView {
@@ -428,6 +469,8 @@ pub struct PresentationStateView {
     pub presented_store_bytes: usize,
 }
 
+/// Current parent and source prefab metadata. IDs are authored IDs, never
+/// runtime handles. Use inspect with parent to page direct children.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct HierarchyView {
@@ -445,6 +488,8 @@ pub struct HierarchyView {
     pub prefab_local_id: Option<String>,
 }
 
+/// Right-handed Y-up perspective. Lens distances use world units; 0 < near <
+/// far; FOV is in radians.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct CameraView {
@@ -455,6 +500,8 @@ pub struct CameraView {
     pub far: f32,
 }
 
+/// Resolved immutable mesh/material readiness. Missing assets skip rendering.
+/// This view contains no persistent runtime handles.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct Mesh3dView {
@@ -501,6 +548,9 @@ pub enum ColliderShapeView {
     Sphere { radius: f32 },
 }
 
+/// Local cuboid/sphere, symmetric layer filters and sensor flag. Current
+/// authoritative world admission and refreshed collision-cache status are
+/// independent of visibility and interpolation.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct ColliderView {
@@ -526,6 +576,10 @@ pub struct CollisionLimitsView {
     pub max_query_hits: usize,
 }
 
+/// Authoritative spatial cache refreshed for inspection without advancing
+/// clocks or committing sensor events. Includes source frame/tick, cache
+/// revision, completeness, invalid/overflow counts and query budgets. Memory
+/// counts are cache payload, not process totals.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct CollisionWorldView {
@@ -545,3 +599,11 @@ pub struct CollisionWorldView {
     pub placed_colliders: usize,
     pub limits: CollisionLimitsView,
 }
+
+/// Per-object color factors as a scene version 8 `tint` field: red, green, blue
+/// and opacity multiply this object's material or cube color, each in [0, 1].
+/// Changing it uploads only this object's colors.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(transparent)]
+pub struct TintView(pub [f32; 4]);

@@ -19,7 +19,7 @@ pub use controls::{validated_camera, validated_presentation_alpha};
 pub use error::DevError;
 pub use inspect::{DevTools, InspectorDescriptor, InspectorKind};
 pub use protocol::bounds;
-pub use protocol::bounds::MAX_PAGE_SIZE;
+pub use protocol::bounds::{MAX_DESCRIPTION_BYTES, MAX_PAGE_SIZE};
 pub use protocol::{
     BenchmarkMode, BrowserControl, CollisionFilterRequest, CollisionSensorFilter,
     CollisionShapeRequest, DevRequest, Handler, MAX_REQUEST_BYTES, PROTOCOL_VERSION,
@@ -48,8 +48,6 @@ pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 pub const MAX_INSPECTOR_BYTES: usize = 16 * 1024;
 /// Inspectors a game may register beside the engine's own.
 pub const MAX_INSPECTORS: usize = 64;
-/// Bytes of an inspector's description.
-pub const MAX_DESCRIPTION_BYTES: usize = 512;
 pub const MAX_SCAN_ENTITIES: usize = 10_000;
 
 /// `value` checked against request bound `rule`: an error of code `code`

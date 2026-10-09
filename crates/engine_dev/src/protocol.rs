@@ -11,6 +11,8 @@ pub mod bounds {
 
     /// Entries a page holds at most.
     pub const MAX_PAGE_SIZE: usize = 100;
+    /// Bytes of an inspector's description at most: its type's doc comment.
+    pub const MAX_DESCRIPTION_BYTES: usize = 512;
     /// A page's size.
     pub const PAGE: Rule = Rule::Range(1.0, MAX_PAGE_SIZE as f64);
     /// Points a height, water or deformation query names at most.

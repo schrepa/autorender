@@ -46,7 +46,7 @@ fn main() {
         "Terrains": schemars::schema_for!(views::TerrainsView),
         "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
-        "Tint": schemars::schema_for!([f32; 4]),
+        "Tint": schemars::schema_for!(views::TintView),
         "Floating": schemars::schema_for!(engine_core::Floating),
         "Deformer": schemars::schema_for!(engine_core::Deformer),
         "Tracks": schemars::schema_for!(views::TracksView),
@@ -64,6 +64,19 @@ fn main() {
         "BrowserControl": schemars::schema_for!(protocol::BrowserControl),
         "FrameStats": frame_stats(),
     });
+    // Inspectors describe themselves by their types' doc comments.
+    for (name, schema) in schemas.as_object().expect("schemas are an object") {
+        if ["protocol", "BrowserControl", "FrameStats"].contains(&name.as_str()) {
+            continue;
+        }
+        let description = schema["description"].as_str().unwrap_or_default();
+        if description.is_empty() || description.len() > protocol::bounds::MAX_DESCRIPTION_BYTES {
+            panic!(
+                "{name} needs a doc comment of at most {} bytes: inspectors describe themselves",
+                protocol::bounds::MAX_DESCRIPTION_BYTES
+            );
+        }
+    }
     let mut sections = Sections(serde_json::Map::new());
     engine_scene::SceneEnvironment::default().visit(&mut sections);
     schemas
