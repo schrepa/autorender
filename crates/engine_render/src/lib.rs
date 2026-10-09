@@ -91,6 +91,14 @@ pub struct RenderStats {
     /// Whether the frame traced contact shadows.
     pub contact_shadows: bool,
     pub bloom: bool,
+    /// Whether this frame ran occlusion culling (two drawing phases around
+    /// the occlusion test) and sub-pixel culling, and whether it resolved
+    /// temporally: what the `OcclusionCulling`, `SubpixelCulling` and
+    /// `TemporalAntialiasing` settings asked of a GPU-presented display
+    /// frame, where its culling ran without an instance budget.
+    pub occlusion_culling: bool,
+    pub subpixel_culling: bool,
+    pub temporal_antialiasing: bool,
     /// Local lights the frame shaded within the budget, and
     /// usable lights beyond it or without a valid pose.
     pub local_lights: u32,

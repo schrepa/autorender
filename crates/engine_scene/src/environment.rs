@@ -12,9 +12,10 @@
 
 use engine_core::{
     AmbientOcclusion, Atmosphere, Bloom, Clouds, ContactShadows, Decals, Deformation, Environment,
-    GroundCover, InvalidSetting, LevelOfDetail, LocalLights, Navigation, Occupancy, Ocean,
-    Particles, ReflectionProbes, Reflections, Refraction, Shadows, Sky, SunShafts, TerrainSettings,
-    TimeOfDay, VirtualGeometry, Water, Wind, WorldStreaming,
+    GroundCover, InvalidSetting, LevelOfDetail, LocalLights, Navigation, OcclusionCulling,
+    Occupancy, Ocean, Particles, ReflectionProbes, Reflections, Refraction, Shadows, Sky,
+    SubpixelCulling, SunShafts, TemporalAntialiasing, TerrainSettings, TimeOfDay, VirtualGeometry,
+    Water, Wind, WorldStreaming,
     bevy_ecs::prelude::{Resource, World},
     glam::Vec3,
 };
@@ -288,6 +289,9 @@ section!(WorldStreaming, since 9, opt_in false);
 section!(Sky, since 9, opt_in true);
 section!(TimeOfDay, since 9, opt_in true);
 section!(Navigation, since 9, opt_in false);
+section!(OcclusionCulling, since 9, opt_in false);
+section!(SubpixelCulling, since 9, opt_in false);
+section!(TemporalAntialiasing, since 9, opt_in false);
 
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
@@ -368,6 +372,15 @@ pub struct SceneEnvironment {
     /// How agents search their walks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub navigation: Option<Navigation>,
+    /// What GPU-presented frames leave undrawn beyond the frustum: what the
+    /// last frame's depths hide, and what covers no pixel center.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub occlusion_culling: Option<OcclusionCulling>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subpixel_culling: Option<SubpixelCulling>,
+    /// Whether ordinary GPU-presented frames antialias temporally.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporal_antialiasing: Option<TemporalAntialiasing>,
 }
 
 impl SceneEnvironment {
@@ -403,6 +416,9 @@ impl SceneEnvironment {
             sky: Some(environment.sky),
             time_of_day: Some(environment.time_of_day),
             navigation: Some(environment.navigation),
+            occlusion_culling: Some(environment.occlusion_culling),
+            subpixel_culling: Some(environment.subpixel_culling),
+            temporal_antialiasing: Some(environment.temporal_antialiasing),
         }
     }
 
@@ -434,6 +450,9 @@ impl SceneEnvironment {
         visitor.section("sky", self.sky);
         visitor.section("time_of_day", self.time_of_day);
         visitor.section("navigation", self.navigation);
+        visitor.section("occlusion_culling", self.occlusion_culling);
+        visitor.section("subpixel_culling", self.subpixel_culling);
+        visitor.section("temporal_antialiasing", self.temporal_antialiasing);
     }
 
     /// The names of the sections present, the atmosphere first.

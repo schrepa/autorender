@@ -1,4 +1,6 @@
-/** GPU presentation against the exact CPU reference in real Chrome. */
+/** GPU presentation against the exact CPU reference in real Chrome, and its
+ * occlusion and sub-pixel culling settings: inspected, changed by the
+ * paused environment control and observed in GPU-presented frames. */
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "./harness.mjs";
@@ -14,7 +16,7 @@ const config = {
 // A still workload settles first: GPU frames then shadow it from the kept map,
 // CPU references from the map redrawn every frame.
 const workloads = [
-  { label: "interpolated", config, fractional: true },
+  { label: "interpolated", config, fractional: true, culling: true },
   { label: "authoritative", config: { ...config, interpolation: false }, fractional: false },
   { label: "still", config: { ...config, moving_percent: 0 }, fractional: false, settle: true },
 ];
@@ -62,6 +64,34 @@ async function compare(label, alpha) {
   return { label, alpha, candidates, cpu_visible: reference.visible_instances, gpu_visible: gpu.rendering.visible_instances, changed_pixels: pixels.changed, cpu: cpu.png };
 }
 
+// Occlusion and sub-pixel culling are environment sections: on by default,
+// run by GPU-presented frames (two drawing phases around the occlusion test),
+// and turned off and on again by the paused environment control without
+// changing what the frame shows.
+async function cullingSettings(label) {
+  const inspect = async component => (await command("inspect", { component })).result.value;
+  assert.deepEqual(await inspect("OcclusionCulling"), { enabled: true });
+  assert.deepEqual(await inspect("SubpixelCulling"), { enabled: true });
+  const preview = async name => (await capture(name, { alpha: 0.5, gpu: true })).reply.result.rendering;
+  const on = await preview(`${label}-culling-on`);
+  assert.equal(on.occlusion_culling, true, "GPU frames run occlusion culling by default");
+  assert.equal(on.subpixel_culling, true, "GPU frames run sub-pixel culling by default");
+  assert.ok(on.render_passes.includes("occlusion_test"), "occlusion culling runs its test pass");
+  const off = await command("environment", { occlusion_culling: { enabled: false }, subpixel_culling: { enabled: false } });
+  assert.deepEqual(off.result.environment_changed, ["occlusion_culling", "subpixel_culling"]);
+  assert.deepEqual(await inspect("OcclusionCulling"), { enabled: false });
+  const without = await preview(`${label}-culling-off`);
+  assert.equal(without.occlusion_culling, false, "turned off, GPU frames skip occlusion culling");
+  assert.equal(without.subpixel_culling, false, "turned off, GPU frames skip sub-pixel culling");
+  assert.equal(without.occluded_instances, null);
+  assert.equal(without.subpixel_instances, null);
+  assert.ok(!without.render_passes.includes("occlusion_test"), "no occlusion test runs while it is off");
+  const invalid = await command("environment", { occlusion_culling: { enabled: true, phases: 2 } }, false);
+  assert.equal(invalid.error.code, "invalid_request", "unknown occlusion culling fields are rejected");
+  await command("environment", { occlusion_culling: { enabled: true }, subpixel_culling: { enabled: true } });
+  assert.equal((await preview(`${label}-culling-again`)).occlusion_culling, true);
+}
+
 async function verify(workload) {
   const url = devUrl("stress.html", { config: workload.config });
   await openPaused(page, url);
@@ -89,6 +119,7 @@ async function verify(workload) {
   }
   const after = await command("status");
   assert.equal(after.observation.tick, overview.observation.tick, "Previews must not advance simulation.");
+  if (workload.culling) await cullingSettings(workload.label);
 
   // Inspection materializes the pending GPU frame's exact CPU reference.
   const state = await command("inspect", { component: "PresentationState" });
@@ -112,7 +143,7 @@ try {
   console.log(JSON.stringify({
     ok: true, urls: results.map(result => result.url), artifact: output,
     cases: results.flatMap(result => result.cases),
-    checks: ["gpu_cpu_pixel_equivalence", "authoritative_gpu_composition", "gpu_visible_count", "gpu_culling_exercised", "fractional_motion", "previews_keep_ticks", "inspection_materializes", "ordinary_frames_gpu", "clean_browser_diagnostics"],
+    checks: ["gpu_cpu_pixel_equivalence", "authoritative_gpu_composition", "gpu_visible_count", "gpu_culling_exercised", "fractional_motion", "previews_keep_ticks", "culling_settings_inspected", "culling_settings_controlled", "culling_settings_observed", "culling_settings_validated", "inspection_materializes", "ordinary_frames_gpu", "clean_browser_diagnostics"],
   }));
 } finally {
   await browser.close();

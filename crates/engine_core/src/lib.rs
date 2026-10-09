@@ -5,6 +5,7 @@
 //! from the platform event loop. Bevy's default `Main` schedules are not run.
 
 mod animation;
+mod antialiasing;
 mod atmosphere;
 mod bridges;
 mod clock;
@@ -17,6 +18,7 @@ mod effects;
 mod entity_indices;
 mod environment;
 mod extraction;
+mod gpu_culling;
 mod ground_cover;
 mod grounded;
 mod hierarchy;
@@ -46,6 +48,7 @@ mod waterfalls;
 mod wind;
 
 pub use animation::{AnimationPlayer, AnimationSystems};
+pub use antialiasing::TemporalAntialiasing;
 pub use atmosphere::Atmosphere;
 pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
@@ -89,6 +92,7 @@ pub use engine_terrain::{
 };
 pub use environment::{Environment, InvalidSetting};
 pub use glam;
+pub use gpu_culling::{OcclusionCulling, SubpixelCulling};
 pub use ground_cover::{Cover, GroundCover};
 pub use grounded::{Grounded, GroundedAt};
 pub use hierarchy::{
@@ -358,6 +362,9 @@ impl Engine {
             .init_resource::<WorldCells>()
             .init_resource::<WorldChanges>()
             .init_resource::<Navigation>()
+            .init_resource::<OcclusionCulling>()
+            .init_resource::<SubpixelCulling>()
+            .init_resource::<TemporalAntialiasing>()
             .init_resource::<NavAgents>()
             .init_resource::<Jobs>()
             .init_resource::<Terrains>()
@@ -973,6 +980,7 @@ pub mod prelude {
         Reflections, Refraction, RenderEmitter, RenderLight, Spot, SunShafts, Transmission,
     };
     pub use crate::{NavAgent, NavStatus, NavSystems, NavWalk, Navigation, Sky, TimeOfDay};
+    pub use crate::{OcclusionCulling, SubpixelCulling, TemporalAntialiasing};
     pub use crate::{SplineChunks, SplineMesh};
     pub use crate::{TransformEditError, edit_transform};
     // Bevy derives resolve this name in client scope when only the engine

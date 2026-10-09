@@ -103,8 +103,10 @@ pub fn create_workload_with(
         StressScene::Dense => dense::populate(world, &config, files)?,
     };
     // A brisk wind sways the highlands' grass and spruces,
-    // and drives clouds over them twice as fast aloft.
+    // and drives clouds over them twice as fast aloft; their blades and far
+    // trees, thinner than pixels, resolve over frames.
     if config.scene == StressScene::Highlands {
+        world.insert_resource(TemporalAntialiasing { enabled: true });
         world.insert_resource(Wind {
             velocity: [5.5, 2.0],
             gusts: 0.55,

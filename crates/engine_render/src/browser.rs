@@ -151,12 +151,9 @@ fn lod_chain(source: &engine_core::Mesh, levels: usize) -> (Vec<u32>, Vec<(u32, 
 /// grid the camera groups bind.
 type CameraGroupsKey = (u64, u64, u64, u64, u64);
 
-/// GPU culling of GPU-presented frames: occlusion culling,
-/// on unless turned off, with its depth pyramid, and sub-pixel culling,
-/// on unless turned off.
+/// Occlusion culling's depth pyramid, kept while the `OcclusionCulling`
+/// settings have it run.
 struct Culling {
-    occlusion: bool,
-    subpixel: bool,
     pyramid: Option<DepthPyramid>,
 }
 
@@ -519,11 +516,7 @@ impl Renderer {
             mesh_pipelines,
             pipeline_counts: PipelineCounts::default(),
             gpu_presentation,
-            culling: Culling {
-                occlusion: true,
-                subpixel: true,
-                pyramid: None,
-            },
+            culling: Culling { pyramid: None },
             shadows,
             lights: None,
             environment,
@@ -602,10 +595,11 @@ impl Renderer {
         self.render_inner(frame, true)
     }
 
-    /// Enables temporal antialiasing of GPU-presented display frames, creating
-    /// its pipelines now; disabling releases its targets and pose buffer.
-    /// Frame targets follow the surface size, 16 bytes per pixel.
-    pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
+    /// Follows the `TemporalAntialiasing` settings: enabling creates the
+    /// pipelines of temporally antialiased display frames, disabling releases
+    /// their targets and pose buffer. Frame targets follow the surface size,
+    /// 16 bytes per pixel.
+    fn apply_temporal_antialiasing(&mut self, enabled: bool) {
         if enabled == self.temporal.is_some() {
             return;
         }
@@ -631,38 +625,6 @@ impl Renderer {
                 .forget_sky(SkyTargets::Frame(Targets::Temporal));
             self.instances.release_alternate();
         }
-    }
-
-    /// Enables occlusion culling of GPU-presented frames, on
-    /// by default: frames that cull without an instance budget draw what the
-    /// last frame found visible, test every other visible candidate against
-    /// a depth pyramid of those depths, then draw what it does not hide.
-    /// Disabling releases the pyramid.
-    pub fn set_occlusion_culling(&mut self, enabled: bool) {
-        self.culling.occlusion = enabled;
-        if !enabled {
-            self.culling.pyramid = None;
-        }
-    }
-
-    pub fn occlusion_culling(&self) -> bool {
-        self.culling.occlusion
-    }
-
-    /// Enables sub-pixel culling of GPU-presented frames, on
-    /// by default: frames that cull without an instance budget leave
-    /// visible instances whose projected bounds cover no pixel center
-    /// undrawn. They could produce no fragments, so output is unchanged.
-    pub fn set_subpixel_culling(&mut self, enabled: bool) {
-        self.culling.subpixel = enabled;
-    }
-
-    pub fn subpixel_culling(&self) -> bool {
-        self.culling.subpixel
-    }
-
-    pub fn temporal_antialiasing(&self) -> bool {
-        self.temporal.is_some()
     }
 
     /// Copies GPU presentation's current poses into a staging buffer between

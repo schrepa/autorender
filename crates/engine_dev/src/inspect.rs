@@ -775,6 +775,15 @@ fn section_description(name: &str) -> &'static str {
         "level_of_detail" => {
             "Level of detail settings: GPU-presented frames draw each instance at the coarsest level of its mesh whose error stays within the pixel error of the viewport height, the coarsest being its draw group's impostor unless impostors are off; max_impostors budgets baked impostors. Missing means every instance draws its mesh. The rendering observation reports instances per level, impostors baked and those left out."
         }
+        "occlusion_culling" => {
+            "Occlusion culling of GPU-presented frames: whether they draw what the last frame showed, test every other frustum-visible instance against a depth pyramid of those depths, then draw only what it does not hide. Output is unchanged. Runs where culling runs without an instance budget; the rendering observation reports occlusion_culling (whether the frame ran it), occluded_instances and the occlusion_test pass."
+        }
+        "subpixel_culling" => {
+            "Sub-pixel culling of GPU-presented frames: whether visible instances whose projected bounds cover no pixel center stay undrawn. Output is unchanged. Runs where culling runs without an instance budget; the rendering observation reports subpixel_culling (whether the frame ran it) and subpixel_instances."
+        }
+        "temporal_antialiasing" => {
+            "Temporal antialiasing: whether ordinary GPU-presented frames jitter and blend with the previous frame reprojected by motion; steps, renders, previews and captures stay exact. Its targets cost 16 bytes per canvas pixel. The rendering observation reports temporal_antialiasing (whether the frame resolved temporally) and the temporal_resolve pass."
+        }
         _ => "An environment section.",
     }
 }

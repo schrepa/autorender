@@ -394,43 +394,60 @@ impl BrowserApp {
         self.tick_pipelining
     }
 
-    /// Temporally antialiases ordinary GPU-presented frames:
-    /// each rasterizes with a sub-pixel jitter and blends with the previous
-    /// frame's output, reprojected by per-pixel motion. Off by default.
-    /// Development steps, renders, previews and captures stay exact, as do
-    /// CPU-presented frames. Enabling creates its pipelines; disabling
-    /// releases its targets.
+    /// Temporally antialiases ordinary GPU-presented frames: sets the
+    /// world's [`engine_core::TemporalAntialiasing`] settings (a scene
+    /// environment's `temporal_antialiasing` section), which the next frame
+    /// follows, creating or releasing its pipelines and targets. Off by
+    /// default.
     pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
-        self.renderer.set_temporal_antialiasing(enabled);
+        self.engine
+            .app
+            .world_mut()
+            .insert_resource(engine_core::TemporalAntialiasing { enabled });
     }
 
     pub fn temporal_antialiasing(&self) -> bool {
-        self.renderer.temporal_antialiasing()
+        self.engine
+            .app
+            .world()
+            .get_resource::<engine_core::TemporalAntialiasing>()
+            .is_some_and(|settings| settings.enabled)
     }
 
-    /// Occlusion culling of GPU-presented frames, on by
-    /// default: frames that cull without an instance budget draw what the
-    /// last frame showed, test every other frustum-visible instance against
-    /// a depth pyramid of those depths, then draw only what it does not hide.
-    /// Output is unchanged; hidden instances cost no drawing.
+    /// Occlusion culling of GPU-presented frames: sets the world's
+    /// [`engine_core::OcclusionCulling`] settings (a scene environment's
+    /// `occlusion_culling` section). On by default.
     pub fn set_occlusion_culling(&mut self, enabled: bool) {
-        self.renderer.set_occlusion_culling(enabled);
+        self.engine
+            .app
+            .world_mut()
+            .insert_resource(engine_core::OcclusionCulling { enabled });
     }
 
     pub fn occlusion_culling(&self) -> bool {
-        self.renderer.occlusion_culling()
+        self.engine
+            .app
+            .world()
+            .get_resource::<engine_core::OcclusionCulling>()
+            .is_some_and(|settings| settings.enabled)
     }
 
-    /// Sub-pixel culling of GPU-presented frames, on by
-    /// default: frames that cull without an instance budget leave visible
-    /// instances whose projected bounds cover no pixel center undrawn.
-    /// Output is unchanged; they could produce no fragments.
+    /// Sub-pixel culling of GPU-presented frames: sets the world's
+    /// [`engine_core::SubpixelCulling`] settings (a scene environment's
+    /// `subpixel_culling` section). On by default.
     pub fn set_subpixel_culling(&mut self, enabled: bool) {
-        self.renderer.set_subpixel_culling(enabled);
+        self.engine
+            .app
+            .world_mut()
+            .insert_resource(engine_core::SubpixelCulling { enabled });
     }
 
     pub fn subpixel_culling(&self) -> bool {
-        self.renderer.subpixel_culling()
+        self.engine
+            .app
+            .world()
+            .get_resource::<engine_core::SubpixelCulling>()
+            .is_some_and(|settings| settings.enabled)
     }
 
     /// Streams terrains for a frame's work time on a `width` × `height`

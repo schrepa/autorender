@@ -189,6 +189,9 @@ impl DevBrowser {
                 sky,
                 time_of_day,
                 navigation,
+                occlusion_culling,
+                subpixel_culling,
+                temporal_antialiasing,
                 ..
             } => {
                 // The sections of a scene environment, validated alike; the
@@ -220,6 +223,9 @@ impl DevBrowser {
                     sky,
                     time_of_day,
                     navigation,
+                    occlusion_culling,
+                    subpixel_culling,
+                    temporal_antialiasing,
                 };
                 environment.validate("$")?;
                 environment.apply_sections(app.engine.app.world_mut());

@@ -200,12 +200,12 @@ impl Renderer {
                 _ => instance_count as u32,
             },
             gpu_visible,
-            occluded_instances: if gpu_mode && self.culling.occlusion {
+            occluded_instances: if gpu_mode && snapshot.environment.occlusion_culling.enabled {
                 self.gpu_presentation.occluded()
             } else {
                 None
             },
-            subpixel_instances: if gpu_mode && self.culling.subpixel {
+            subpixel_instances: if gpu_mode && snapshot.environment.subpixel_culling.enabled {
                 self.gpu_presentation.subpixel()
             } else {
                 None
@@ -262,6 +262,9 @@ impl Renderer {
             ambient_occlusion: post_frame.is_some_and(|frame| frame.occlusion),
             contact_shadows: post_frame.is_some_and(|frame| frame.contact),
             bloom: post_frame.is_some_and(|frame| frame.bloom),
+            occlusion_culling: gpu_mode && self.gpu_presentation.occlusion(),
+            subpixel_culling: gpu_mode && self.gpu_presentation.culls_subpixel(),
+            temporal_antialiasing: state.packing.temporal_frame.is_some(),
             local_lights: if lit { snapshot.lights.len() as u32 } else { 0 },
             dropped_lights: if lit {
                 snapshot.dropped_lights.min(u32::MAX as usize) as u32

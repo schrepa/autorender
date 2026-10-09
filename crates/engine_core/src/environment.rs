@@ -14,6 +14,7 @@ use crate::{
     Reflections, Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay, VirtualGeometry,
     Water, Wind, WorldStreaming,
 };
+use crate::{OcclusionCulling, SubpixelCulling, TemporalAntialiasing};
 
 /// A settings field outside its valid values: its name and the rule it
 /// breaks, such as `must be in [0, 1]`.
@@ -69,6 +70,9 @@ pub struct Environment {
     pub sky: Sky,
     pub time_of_day: TimeOfDay,
     pub navigation: Navigation,
+    pub occlusion_culling: OcclusionCulling,
+    pub subpixel_culling: SubpixelCulling,
+    pub temporal_antialiasing: TemporalAntialiasing,
 }
 
 impl Environment {
@@ -256,6 +260,9 @@ impl Environment {
                     ..Navigation::default()
                 },
             ),
+            occlusion_culling: read(world, OcclusionCulling { enabled: false }),
+            subpixel_culling: read(world, SubpixelCulling { enabled: false }),
+            temporal_antialiasing: read(world, TemporalAntialiasing { enabled: false }),
         }
     }
 
@@ -288,6 +295,9 @@ impl Environment {
             sky: self.sky.sanitized(),
             time_of_day: self.time_of_day.sanitized(),
             navigation: self.navigation.sanitized(),
+            occlusion_culling: self.occlusion_culling.sanitized(),
+            subpixel_culling: self.subpixel_culling.sanitized(),
+            temporal_antialiasing: self.temporal_antialiasing.sanitized(),
         }
     }
 }

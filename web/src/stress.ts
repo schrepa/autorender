@@ -138,7 +138,9 @@ function snapshot(runtime: StressGame): Snapshot { return JSON.parse(runtime.str
 /** What a recording or a detailed profile notes about the run it measures, on a `canvas` sized canvas. */
 function runMetadata(data: Snapshot, canvas: [number, number]) {
   return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-    culling: data.config.culling, resolution_scale: number("resolution"), canvas, presentation, pipeline, taa: temporal(data.config), occlusion, subpixel, visibility, lod, impostors,
+    culling: data.config.culling, resolution_scale: number("resolution"), canvas, presentation, pipeline,
+    taa: game?.temporal_antialiasing() ? "on" : "off", occlusion: game?.occlusion_culling() ? "on" : "off",
+    subpixel: game?.subpixel_culling() ? "on" : "off", visibility, lod, impostors,
     look: choice("look").value, effects: choice("effects").value,
     build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
     start_frame: data.frame, start_tick: data.tick, workload: activeTitle, wasm: wasmIdentity, scroll: [scrollX, scrollY] };
@@ -242,7 +244,6 @@ async function apply(requested: Config, title: string) {
   try {
     controls.mutate(runtime => {
       runtime.configure(JSON.stringify(config), files);
-      runtime.set_temporal_antialiasing(temporal(config) === "on");
     });
     activeConfig = config; activeTitle = title;
     choice("view").value = "overview";
@@ -306,22 +307,22 @@ function poll(runtime: StressGame) {
 }
 
 const params = new URLSearchParams(location.search);
+/** A ?name=on|off choice over each workload's own setting, or null. */
+function toggle(name: string): "on" | "off" | null {
+  const value = params.get(name);
+  return value === "on" || value === "off" ? value : null;
+}
 // Ordinary frames blend, compose and cull on the GPU unless ?presentation=cpu,
-// GPU-presented frames split fixed ticks across frames unless ?pipeline=off,
-// and ?taa=on temporally antialiases them, as the highlands' do unless
-// ?taa=off.
+// and GPU-presented frames split fixed ticks across frames unless
+// ?pipeline=off. ?taa=on|off temporally antialiases them or not (the
+// highlands' do), ?occlusion=off draws every frustum-visible object, and
+// ?subpixel=off also those covering no pixel center, for A/B; each sets the
+// world's settings over every workload's own.
 const presentation = params.get("presentation") === "cpu" ? "cpu" : "gpu";
 const pipeline = params.get("pipeline") === "off" ? "off" : "on";
-const taa = params.get("taa");
-/** Whether `config`'s frames antialias temporally. */
-function temporal(config: Config): "on" | "off" {
-  if (taa === "on" || taa === "off") return taa;
-  return config.scene === "highlands" ? "on" : "off";
-}
-// ?occlusion=off draws every frustum-visible object, and
-// ?subpixel=off also those covering no pixel center, for A/B.
-const occlusion = params.get("occlusion") === "off" ? "off" : "on";
-const subpixel = params.get("subpixel") === "off" ? "off" : "on";
+const taa = toggle("taa");
+const occlusion = toggle("occlusion");
+const subpixel = toggle("subpixel");
 // ?visibility=on shades virtual geometry through the visibility buffer
 // instead of as it draws, for A/B.
 const visibility = params.get("visibility") === "on" ? "on" : "off";
@@ -389,9 +390,9 @@ boot({
     game = runtime; controls = host;
     runtime.set_gpu_presentation(presentation === "gpu");
     runtime.set_tick_pipelining(pipeline === "on");
-    runtime.set_temporal_antialiasing(temporal(activeConfig) === "on");
-    runtime.set_occlusion_culling(occlusion === "on");
-    runtime.set_subpixel_culling(subpixel === "on");
+    if (taa) runtime.set_temporal_antialiasing(taa === "on");
+    if (occlusion) runtime.set_occlusion_culling(occlusion === "on");
+    if (subpixel) runtime.set_subpixel_culling(subpixel === "on");
     runtime.set_visibility_buffer(visibility === "on");
     runtime.set_level_of_detail(lod === "on");
     runtime.set_impostors(impostors === "on");

@@ -6,6 +6,9 @@ use wasm_bindgen::prelude::*;
 pub struct PlaygroundGame {
     app: BrowserApp,
     game: Playground,
+    // Temporal antialiasing the page chose over the scene's own settings,
+    // kept across reloads.
+    temporal_antialiasing: Option<bool>,
     #[cfg(feature = "dev")]
     development: engine::dev_browser::DevBrowser,
 }
@@ -26,6 +29,7 @@ impl PlaygroundGame {
         Ok(Self {
             app: starting.finish(engine).await?,
             game,
+            temporal_antialiasing: None,
             #[cfg(feature = "dev")]
             development: development_tools(),
         })
@@ -72,9 +76,11 @@ impl PlaygroundGame {
         self.app.set_tick_pipelining(enabled);
     }
 
-    /// Temporal antialiasing of ordinary GPU-presented frames;
-    /// see `BrowserApp::set_temporal_antialiasing`.
+    /// Temporal antialiasing of ordinary GPU-presented frames over the
+    /// scene's own settings, kept across reloads; see
+    /// `BrowserApp::set_temporal_antialiasing`.
     pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
+        self.temporal_antialiasing = Some(enabled);
         self.app.set_temporal_antialiasing(enabled);
     }
 
@@ -140,6 +146,9 @@ impl PlaygroundGame {
         self.game
             .reload(&mut self.app.engine, source, files.files())
             .map_err(scene_error)?;
+        if let Some(enabled) = self.temporal_antialiasing {
+            self.app.set_temporal_antialiasing(enabled);
+        }
         self.app.suspend();
         #[cfg(feature = "dev")]
         self.development.clear_input();

@@ -335,6 +335,7 @@ impl Renderer {
             self.instances.slot_revision = None;
         }
         self.gpu_frame = gpu_mode;
+        self.apply_temporal_antialiasing(snapshot.environment.temporal_antialiasing.enabled);
         let temporal = display && gpu_mode && self.temporal.is_some();
         if !temporal && let Some(pass) = &mut self.temporal {
             pass.reset();
@@ -923,8 +924,13 @@ impl Renderer {
 
         let mut input_copies = None;
         // Occlusion culling: the depth pyramid of this frame's
-        // depth buffer, sized before presentation plans two phases.
-        let occlusion = if gpu_mode && self.culling.occlusion {
+        // depth buffer, sized before presentation plans two phases; turning
+        // it off releases the pyramid.
+        let occlusion_enabled = snapshot.environment.occlusion_culling.enabled;
+        if !occlusion_enabled {
+            self.culling.pyramid = None;
+        }
+        let occlusion = if gpu_mode && occlusion_enabled {
             let device = &self.device;
             let pyramid = self
                 .culling
@@ -1002,7 +1008,7 @@ impl Renderer {
                     .as_ref()
                     .is_some_and(|temporal| temporal.motion_valid),
                 occlusion: occlusion.map(|(_, _, levels)| levels),
-                subpixel: self.culling.subpixel,
+                subpixel: snapshot.environment.subpixel_culling.enabled,
                 lod_error: if snapshot.environment.level_of_detail.enabled {
                     snapshot.environment.level_of_detail.pixel_error
                 } else {

@@ -1,6 +1,7 @@
 /** Temporal antialiasing in real Chrome: ordinary GPU-presented
  * frames converge to a stable, smoother image, while captures and CPU-presented
- * frames stay exact. */
+ * frames stay exact; its settings are inspected, changed by the paused
+ * environment control and observed in ordinary frames. */
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
@@ -120,8 +121,10 @@ async function compare(images, tolerances = [0, 8, 24]) {
 try {
   const results = {};
 
-  // Exact captures do not depend on the setting.
+  // Exact captures do not depend on the setting, which is off by default.
   results.exact_url = await open(still, {});
+  const inspect = async () => (await command("inspect", { component: "TemporalAntialiasing" })).result.value;
+  assert.deepEqual(await inspect(), { enabled: false }, "temporal antialiasing is off by default");
   const exactOff = await capture("exact-taa-off");
 
   results.taa_url = await open(still, { taa: "on" });
@@ -142,6 +145,26 @@ try {
   const stable = await compare([first, second]);
   results.stable = stable;
   assert.ok(stable.changed[24] < stable.total * 0.005, `a still view must not flicker: ${JSON.stringify(stable)}`);
+
+  // The page's ?taa=on set the world's settings; ordinary frames report what
+  // they ran, and the paused environment control turns it off and on.
+  const observed = async () => (await command("status")).result.rendering;
+  assert.deepEqual(await inspect(), { enabled: true });
+  const temporalFrame = await observed();
+  assert.equal(temporalFrame.temporal_antialiasing, true, "ordinary frames resolve temporally");
+  assert.ok(temporalFrame.render_passes.includes("temporal_resolve"));
+  const off = await command("environment", { temporal_antialiasing: { enabled: false } });
+  assert.deepEqual(off.result.environment_changed, ["temporal_antialiasing"]);
+  assert.deepEqual(await inspect(), { enabled: false });
+  await run("taa-off", 500);
+  const plainFrame = await observed();
+  assert.equal(plainFrame.temporal_antialiasing, false, "turned off, ordinary frames do not resolve temporally");
+  assert.ok(!plainFrame.render_passes.includes("temporal_resolve"));
+  const invalid = await command("environment", { temporal_antialiasing: { enabled: true, samples: 8 } }, false);
+  assert.equal(invalid.error.code, "invalid_request", "unknown temporal antialiasing fields are rejected");
+  await command("environment", { temporal_antialiasing: { enabled: true } });
+  await run("taa-again", 500);
+  assert.equal((await observed()).temporal_antialiasing, true, "turned on again, ordinary frames resolve temporally");
 
   // Captures after temporal frames are still exact.
   const after = await capture("exact-after-taa");
@@ -168,7 +191,7 @@ try {
   await writeFile(`${output}/results.json`, JSON.stringify(results, null, 2));
   console.log(JSON.stringify({
     ok: true, artifact: output, ...results,
-    checks: ["captures_independent_of_setting", "edges_smoothed", "content_preserved", "still_view_stable", "captures_exact_after_temporal_frames", "cpu_presentation_exact", "moving_frames_draw", "clean_browser_diagnostics"],
+    checks: ["captures_independent_of_setting", "edges_smoothed", "content_preserved", "still_view_stable", "settings_inspected", "settings_controlled", "settings_observed", "settings_validated", "captures_exact_after_temporal_frames", "cpu_presentation_exact", "moving_frames_draw", "clean_browser_diagnostics"],
   }));
 } finally {
   await browser.close();

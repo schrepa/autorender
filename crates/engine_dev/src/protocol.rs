@@ -4,6 +4,7 @@ use engine_core::{
     Reflections, Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay, VirtualGeometry,
     Water, Wind, WorldStreaming,
 };
+use engine_core::{OcclusionCulling, SubpixelCulling, TemporalAntialiasing};
 use engine_scene::SceneAtmosphere;
 use serde::{Deserialize, Serialize};
 
@@ -398,6 +399,12 @@ pub enum BrowserControl {
         time_of_day: Option<TimeOfDay>,
         #[serde(default)]
         navigation: Option<Navigation>,
+        #[serde(default)]
+        occlusion_culling: Option<OcclusionCulling>,
+        #[serde(default)]
+        subpixel_culling: Option<SubpixelCulling>,
+        #[serde(default)]
+        temporal_antialiasing: Option<TemporalAntialiasing>,
     },
     /// Temporarily set terrain's level of detail and view and
     /// render while paused: `pixel_error` replaces the settings' (1 to

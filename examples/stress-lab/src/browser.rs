@@ -84,6 +84,11 @@ pub struct StressGame {
     level_of_detail: bool,
     impostors: bool,
     visibility_buffer: bool,
+    // Culling and antialiasing the page chose over each workload's own
+    // settings; unset, a workload keeps its own.
+    occlusion_culling: Option<bool>,
+    subpixel_culling: Option<bool>,
+    temporal_antialiasing: Option<bool>,
     #[cfg(feature = "dev")]
     development: engine::dev_browser::DevBrowser,
 }
@@ -111,6 +116,9 @@ impl StressGame {
             level_of_detail: true,
             impostors: true,
             visibility_buffer: false,
+            occlusion_culling: None,
+            subpixel_culling: None,
+            temporal_antialiasing: None,
             #[cfg(feature = "dev")]
             development: development_tools(),
         })
@@ -363,17 +371,32 @@ impl StressGame {
     pub fn set_tick_pipelining(&mut self, enabled: bool) {
         self.app.set_tick_pipelining(enabled);
     }
-    /// Temporal antialiasing of GPU-presented frames (off by default).
+    /// Temporal antialiasing of GPU-presented frames in this and later
+    /// workloads, over their own settings (the highlands' is on).
     pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
-        self.app.set_temporal_antialiasing(enabled);
+        self.temporal_antialiasing = Some(enabled);
+        self.apply_world_settings();
     }
-    /// Occlusion culling of GPU-presented frames (on by default).
+    pub fn temporal_antialiasing(&self) -> bool {
+        self.app.temporal_antialiasing()
+    }
+    /// Occlusion culling of GPU-presented frames in this and later
+    /// workloads, over their own settings (on).
     pub fn set_occlusion_culling(&mut self, enabled: bool) {
-        self.app.set_occlusion_culling(enabled);
+        self.occlusion_culling = Some(enabled);
+        self.apply_world_settings();
     }
-    /// Sub-pixel culling of GPU-presented frames (on by default).
+    pub fn occlusion_culling(&self) -> bool {
+        self.app.occlusion_culling()
+    }
+    /// Sub-pixel culling of GPU-presented frames in this and later
+    /// workloads, over their own settings (on).
     pub fn set_subpixel_culling(&mut self, enabled: bool) {
-        self.app.set_subpixel_culling(enabled);
+        self.subpixel_culling = Some(enabled);
+        self.apply_world_settings();
+    }
+    pub fn subpixel_culling(&self) -> bool {
+        self.app.subpixel_culling()
     }
     /// Whether instances draw at levels of detail (on by
     /// default) or always as their mesh, in this and later workloads.
@@ -558,6 +581,15 @@ impl StressGame {
         }
         if let Some(mut settings) = world.get_resource_mut::<VirtualGeometry>() {
             settings.visibility_buffer = self.visibility_buffer;
+        }
+        if let Some(enabled) = self.occlusion_culling {
+            self.app.set_occlusion_culling(enabled);
+        }
+        if let Some(enabled) = self.subpixel_culling {
+            self.app.set_subpixel_culling(enabled);
+        }
+        if let Some(enabled) = self.temporal_antialiasing {
+            self.app.set_temporal_antialiasing(enabled);
         }
     }
 }

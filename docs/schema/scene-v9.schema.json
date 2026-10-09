@@ -2330,6 +2330,17 @@
             }
           ]
         },
+        "occlusion_culling": {
+          "description": "What GPU-presented frames leave undrawn beyond the frustum: what the\nlast frame's depths hide, and what covers no pixel center.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneOcclusionCulling"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "occupancy": {
           "description": "What placed objects cover darkens the sky light under them.",
           "anyOf": [
@@ -2414,10 +2425,31 @@
             }
           ]
         },
+        "subpixel_culling": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSubpixelCulling"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "sun_shafts": {
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSunShafts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "temporal_antialiasing": {
+          "description": "Whether ordinary GPU-presented frames antialias temporally.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTemporalAntialiasing"
             },
             {
               "type": "null"
@@ -3357,6 +3389,17 @@
         "id"
       ]
     },
+    "SceneOcclusionCulling": {
+      "description": "Occlusion culling settings: whether GPU-presented frames draw what the\nlast frame showed, test every other frustum-visible instance against a\ndepth pyramid of those depths, then draw only what it does not hide.\nOutput is unchanged; hidden instances cost no drawing. On by default.\nRequires version 9.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneOccupancy": {
       "description": "Occupancy settings: whether the map is drawn, the meters around the\ncamera within which covers darken, less over the outer two fifths\n(64 to 4096), the map's texels a side (128 to 4096), how\nmuch of the sky light full cover takes away (0 to 1), and the meters\nthe coarser far map reaches (0, none, or the radius to\n65536), its texels as many. Requires version 9.",
       "type": "object",
@@ -4021,6 +4064,17 @@
       },
       "additionalProperties": false
     },
+    "SceneSubpixelCulling": {
+      "description": "Sub-pixel culling settings: whether GPU-presented frames leave visible\ninstances whose projected bounds cover no pixel center undrawn. They\ncould produce no fragments, so output is unchanged. On by default.\nRequires version 9.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneSunShafts": {
       "description": "Sun shafts: sunlight scattered by the fog between shadow\ncasters. Requires version 6 and shadows; an intensity of 0 turns them off.",
       "type": "object",
@@ -4111,6 +4165,17 @@
       "required": [
         "reach"
       ]
+    },
+    "SceneTemporalAntialiasing": {
+      "description": "Temporal antialiasing settings: whether ordinary GPU-presented frames\njitter and resolve against their history. Its targets cost 16 bytes per\ncanvas pixel while it runs. Off by default. Requires version 9.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
     },
     "SceneTerrain": {
       "description": "A heightfield terrain on this entity. Requires version 9.\n\nIts first corner (least x and z) lies at `origin` in world space,\nwhatever the entity's transform; heights rise from the origin's y. Its\nheights come from `layers`, applied in order to every sample (later\nlayers win), or from an `ETR1` `file` beside the scene, whose tiles\nstream by byte range. Level-0 tiles span 256 samples `spacing` meters\napart; coarser levels halve the tiles up to one.",
