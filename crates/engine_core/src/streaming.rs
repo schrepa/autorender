@@ -269,18 +269,23 @@ impl WorldChanges {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct StreamSet(u64);
 
-/// World streaming's state after the last extraction:
-/// cells holding items and those loaded; cells within range still waiting
-/// to load; items registered; entities streamed items hold spawned; and
-/// the entities the frame spawned and despawned.
+/// World streaming's state after the last extraction.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CellStats {
+    /// Cells holding items.
     pub cells: u32,
+    /// Cells loaded.
     pub loaded: u32,
+    /// Cells within range still waiting to load.
     pub pending: u32,
+    /// Items registered.
     pub items: u32,
+    /// Entities streamed items hold spawned.
     pub entities: u32,
+    /// Entities the frame spawned.
     pub spawned: u32,
+    /// Entities the frame despawned.
     pub despawned: u32,
 }
 

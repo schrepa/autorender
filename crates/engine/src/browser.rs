@@ -1,7 +1,6 @@
 //! Coarse frame boundary between the TypeScript host and Rust engine.
 use engine_core::{Engine, FrameReport, InputState, PresentationMode};
 use engine_render::{Renderer, StartingRenderer};
-use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
@@ -233,39 +232,9 @@ fn fetch_tile(
     });
 }
 
-/// CPU observations from the last submitted frame and the renderer's report
-/// of it. Render time is not GPU time.
-///
-/// Hosts and agents read it as the flat JSON object [`BrowserApp::stats_json`]
-/// returns: these fields and the renderer's [`engine_render::RenderStats`],
-/// under their own names.
-#[derive(Clone, Copy, Debug, Default, Serialize)]
-pub struct FrameStats {
-    pub simulation_ms: f64,
-    pub extraction_ms: f64,
-    pub render_ms: f64,
-    pub invalid_transforms: u32,
-    pub render_candidates: u32,
-    pub visible_instances: u32,
-    pub culled_instances: u32,
-    pub dropped_instances: u32,
-    pub missing_assets: u32,
-    pub culling_enabled: bool,
-    pub fixed_steps: u32,
-    /// Total simulation time discarded by the fixed-step budget in this session.
-    pub dropped_seconds: f64,
-    /// Whether the GPU may still be compiling pipelines earlier frames
-    /// created, read when the stats are.
-    pub pipelines_compiling: bool,
-    /// Whether terrains have yet to load the camera's view whole, read
-    /// when the stats are: hosts keep preparing meanwhile.
-    pub loading: bool,
-    /// The host's workers and their jobs, read when the
-    /// stats are.
-    pub jobs: engine_core::JobStats,
-    #[serde(flatten)]
-    pub render: engine_render::RenderStats,
-}
+/// What a frame observed, as hosts and agents read it: the JSON object
+/// [`BrowserApp::stats_json`] returns.
+pub use engine_core::FrameStats;
 
 /// Owns the runtime, extracted data, and GPU state for one canvas.
 pub struct BrowserApp {

@@ -151,20 +151,20 @@ try {
   const observed = async () => (await command("status")).result.rendering;
   assert.deepEqual(await inspect(), { enabled: true });
   const temporalFrame = await observed();
-  assert.equal(temporalFrame.temporal_antialiasing, true, "ordinary frames resolve temporally");
+  assert.equal(temporalFrame.temporal_antialiasing.active, true, "ordinary frames resolve temporally");
   assert.ok(temporalFrame.render_passes.includes("temporal_resolve"));
   const off = await command("environment", { temporal_antialiasing: { enabled: false } });
   assert.deepEqual(off.result.environment_changed, ["temporal_antialiasing"]);
   assert.deepEqual(await inspect(), { enabled: false });
   await run("taa-off", 500);
   const plainFrame = await observed();
-  assert.equal(plainFrame.temporal_antialiasing, false, "turned off, ordinary frames do not resolve temporally");
+  assert.equal(plainFrame.temporal_antialiasing.active, false, "turned off, ordinary frames do not resolve temporally");
   assert.ok(!plainFrame.render_passes.includes("temporal_resolve"));
   const invalid = await command("environment", { temporal_antialiasing: { enabled: true, samples: 8 } }, false);
   assert.equal(invalid.error.code, "invalid_request", "unknown temporal antialiasing fields are rejected");
   await command("environment", { temporal_antialiasing: { enabled: true } });
   await run("taa-again", 500);
-  assert.equal((await observed()).temporal_antialiasing, true, "turned on again, ordinary frames resolve temporally");
+  assert.equal((await observed()).temporal_antialiasing.active, true, "turned on again, ordinary frames resolve temporally");
 
   // Captures after temporal frames are still exact.
   const after = await capture("exact-after-taa");

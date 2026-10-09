@@ -139,27 +139,35 @@ pub enum JobShare {
     Remove { key: String },
 }
 
-/// Workers and their jobs: workers running them, jobs
-/// handed out and not done, jobs submitted, completed, failed and cancelled
-/// while running, parts handed back early,
-/// keys shared and their bytes; and the host's output cache:
-/// outputs it handed back instead of running their jobs, jobs it
-/// lacked, the bytes it holds and, verifying, outputs differing from a
-/// fresh run.
+/// Workers, their jobs and the host's output cache.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct JobStats {
+    /// Workers the host runs.
     pub workers: u32,
+    /// Jobs handed out and not done.
     pub running: u32,
+    /// Jobs submitted.
     pub submitted: u64,
+    /// Jobs completed.
     pub completed: u64,
+    /// Jobs failed.
     pub failed: u64,
+    /// Jobs cancelled while running.
     pub cancelled: u64,
+    /// Parts handed back early.
     pub parts: u64,
+    /// Keys shared.
     pub shares: u32,
+    /// Bytes of the keys shared.
     pub shared_bytes: u64,
+    /// Outputs the host's cache handed back instead of running their jobs.
     pub cache_hits: u64,
+    /// Jobs the host's cache lacked.
     pub cache_misses: u64,
+    /// Bytes the host's cache holds.
     pub cache_bytes: u64,
+    /// Verifying, cached outputs differing from a fresh run.
     pub cache_mismatches: u64,
 }
 

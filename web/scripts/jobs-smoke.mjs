@@ -17,7 +17,10 @@ import { artifacts, commander, devUrl, developmentReady, launch } from "./harnes
 const output = await artifacts("jobs-smoke");
 const { browser, page, errors } = await launch({ width: 960, height: 540, timeout: 600_000 });
 // What an exact frame draws of the terrain, which time leaves alone.
-const drawn = ["terrain_tiles", "terrain_patches", "terrain_triangles", "terrain_shadow_patches", "placed_objects", "placed_far_objects", "water_chunks"];
+const drawn = ({ terrain, water }) => ({
+  tiles: terrain.tiles, patches: terrain.patches, triangles: terrain.triangles, shadow_patches: terrain.shadow_patches,
+  placed_objects: terrain.placed_objects, placed_far_objects: terrain.placed_far_objects, water_chunks: water.chunks,
+});
 const command = commander(page, { deadline: 600_000 });
 const view = { position: [-120, 0, 260], target: [380, 0, -340], vertical_fov_radians: 1.0, near: 0.2, far: 40000 };
 // Points across the view, world x and z.
@@ -80,7 +83,7 @@ async function session(name, query, walk) {
   const rendering = (await command("render")).result.rendering;
   await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
   const jobs = await inspect("Jobs");
-  return { shown, terrains, samples, drawn: Object.fromEntries(drawn.map(field => [field, rendering[field]])), jobs, agents };
+  return { shown, terrains, samples, drawn: drawn(rendering), jobs, agents };
 }
 
 const checks = [];

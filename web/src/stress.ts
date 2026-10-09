@@ -1,5 +1,5 @@
 import { stressBindings } from "./bindings";
-import { boot, readStats, type HostControls, type RuntimeStats } from "./host";
+import { boot, type FrameStats, readStats, type HostControls } from "./host";
 import { StressRecorder, type StressRecordingReport } from "./stress-recording";
 import type { DetailedProfiler, DetailedProfileReport } from "./profiling";
 import type { StressFiles, StressGame } from "../pkg/stress_lab";
@@ -257,7 +257,7 @@ function mutate(action: (runtime: StressGame) => void) {
   try { controls?.mutate(action); } catch (error) { notice(String(error), true); }
 }
 
-function drawChart(stats: RuntimeStats) {
+function drawChart(stats: FrameStats) {
   chart.push([stats.simulation_ms, stats.extraction_ms, stats.render_ms]);
   if (chart.length > 120) chart.shift();
   const max = Math.max(33.34, ...chart.flat()) * 1.08;

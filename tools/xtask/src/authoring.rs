@@ -59,17 +59,24 @@ pub fn write_schema(root: &Path) -> Result<(), String> {
 }
 
 /// The files the web host and scripts read that Rust generates: the
-/// development protocol's summary and the browser clients.
-fn generated() -> [(&'static str, String); 2] {
+/// development protocol's summary, the browser clients and the frame stats'
+/// types.
+fn generated() -> [(&'static str, String); 3] {
     let clients = serde_json::to_string_pretty(&crate::process::clients_json())
         .expect("the client list serializes")
         + "\n";
+    let stats: serde_json::Value =
+        serde_json::from_str(engine_dev::FRAME_STATS_SCHEMA).expect("generated schema is JSON");
     [
         (
             "web/src/generated/protocol.json",
             engine_dev::PROTOCOL_SUMMARY.to_owned(),
         ),
         ("web/src/generated/clients.json", clients),
+        (
+            "web/src/generated/stats.ts",
+            crate::typescript::interfaces(&stats, "FrameStats", "engine_core::FrameStats"),
+        ),
     ]
 }
 

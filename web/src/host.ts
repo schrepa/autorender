@@ -1,25 +1,13 @@
+import type { FrameStats } from "./generated/stats";
 import { BrowserInput } from "./input";
 import { type JobPool, type JobRuntime, jobPool } from "./jobs";
 import "./style.css";
 
-/**
- * The engine's frame statistics (Rust `FrameStats` with the renderer's
- * `RenderStats`), parsed from the JSON `Runtime.stats` returns. Only the fields
- * this host code reads are typed; agents receive every field.
- */
-export interface RuntimeStats {
-  simulation_ms: number; extraction_ms: number; render_ms: number; dropped_seconds: number;
-  instances: number; draw_calls: number; upload_bytes: number; invalid_transforms: number; fixed_steps: number;
-  render_candidates: number; visible_instances: number; culled_instances: number; dropped_instances: number;
-  missing_assets: number; culling_enabled: boolean; triangles: number | null;
-  resident_meshes: number; mesh_upload_bytes: number; resident_mesh_bytes: number;
-  resident_textures: number; texture_upload_bytes: number; resident_texture_bytes: number;
-  pipelines_created: number; pipelines_compiling: boolean; loading?: boolean;
-  [field: string]: unknown;
-}
-/** The last frame's statistics of `runtime`. */
-export function readStats(runtime: { stats(): string }): RuntimeStats {
-  return JSON.parse(runtime.stats()) as RuntimeStats;
+export type { FrameStats };
+/** The last frame's statistics of `runtime`: the JSON `Runtime.stats`
+ * returns, typed from Rust's `FrameStats`. */
+export function readStats(runtime: { stats(): string }): FrameStats {
+  return JSON.parse(runtime.stats()) as FrameStats;
 }
 export interface Runtime extends JobRuntime {
   /** Games without action buttons (Orbit, the Stress Lab) declare only the axes; JavaScript drops the rest. */

@@ -687,17 +687,37 @@ impl Renderer {
         self.pipeline_counts.compiling()
     }
 
+    /// The meshes and textures resident on the GPU.
+    fn residency(&self) -> Residency {
+        let (textures, texture_bytes, _) = self.materials.texture_totals();
+        Residency {
+            meshes: self.meshes.len() as u32,
+            mesh_bytes: self.meshes.values().map(|mesh| mesh.byte_len).sum(),
+            textures,
+            texture_bytes,
+        }
+    }
+
+    /// A skipped frame's stats: no work, and the current residency.
     fn residency_stats(&self) -> RenderStats {
-        let (resident_textures, resident_texture_bytes, _) = self.materials.texture_totals();
+        let residency = self.residency();
         RenderStats {
-            resident_meshes: self.meshes.len() as u32,
-            resident_mesh_bytes: self.meshes.values().map(|mesh| mesh.byte_len).sum(),
-            resident_textures,
-            resident_texture_bytes,
+            resident_meshes: residency.meshes,
+            resident_mesh_bytes: residency.mesh_bytes,
+            resident_textures: residency.textures,
+            resident_texture_bytes: residency.texture_bytes,
             pipelines: self.pipeline_counts.created(),
             ..RenderStats::default()
         }
     }
+}
+
+/// Meshes and textures resident on the GPU, and their bytes.
+struct Residency {
+    meshes: u32,
+    mesh_bytes: u64,
+    textures: u32,
+    texture_bytes: u64,
 }
 
 /// The canvas's clear color: the scene's in linear light, encoded for the

@@ -51,9 +51,9 @@ async function settle(gpu, budget = false) {
   for (let frame = 0; quiet < (budget ? 24 : 8); frame++) {
     assert.ok(frame < 600, `streaming settles: ${JSON.stringify(rendering)}`);
     rendering = (await command("present", { alpha: 0, gpu })).result.rendering;
-    const settled = rendering.virtual_clusters > 0 && rendering.virtual_loading_pages === 0 && (budget
-      ? rendering.virtual_resident_pages === previous?.virtual_resident_pages
-      : rendering.virtual_missing_pages === 0);
+    const settled = rendering.virtual_geometry.clusters > 0 && rendering.virtual_geometry.loading_pages === 0 && (budget
+      ? rendering.virtual_geometry.resident_pages === previous?.virtual_geometry?.resident_pages
+      : rendering.virtual_geometry.missing_pages === 0);
     quiet = settled ? quiet + 1 : 0;
     previous = rendering;
     await delay(40);
@@ -94,25 +94,25 @@ try {
     assert.ok(pixels.changed <= pixels.total * 0.001, `${camera.label}: ${pixels.changed} of ${pixels.total} pixels differ`);
     // Both shade clusters as they draw; resolving them through the
     // visibility buffer instead shows the same surfaces.
-    assert.ok(!cpu.rendering.visibility_buffer && !gpu.rendering.visibility_buffer, `${camera.label}: forward shading`);
+    assert.ok(!cpu.rendering.virtual_geometry.visibility_buffer && !gpu.rendering.virtual_geometry.visibility_buffer, `${camera.label}: forward shading`);
     await command("environment", { virtual_geometry: { visibility_buffer: true } });
     const resolved = await capture(`${camera.label}-visibility`, true);
     await command("environment", { virtual_geometry: { visibility_buffer: false } });
-    assert.equal(resolved.rendering.visibility_buffer, true);
+    assert.equal(resolved.rendering.virtual_geometry.visibility_buffer, true);
     const forwardPixels = await differentPixels(page, [gpu.png, resolved.png], { tolerance: 8 });
     assert.ok(forwardPixels.changed <= forwardPixels.total * 0.001,
       `${camera.label}: ${forwardPixels.changed} of ${forwardPixels.total} pixels differ through the visibility buffer`);
     const rendering = gpu.rendering;
-    assert.ok(rendering.virtual_clusters > 0 && rendering.virtual_triangles > 0, `${camera.label}: clusters drawn`);
-    assert.ok(rendering.virtual_shadow_clusters > 0 && rendering.virtual_shadow_triangles > 0, `${camera.label}: clusters cast shadows`);
-    assert.equal(rendering.dropped_virtual, 0, `${camera.label}: nothing dropped`);
-    assert.equal(rendering.virtual_loading_pages, 0, `${camera.label}: streaming settled`);
-    assert.equal(rendering.virtual_missing_pages, 0, `${camera.label}: every page the view wants is resident`);
+    assert.ok(rendering.virtual_geometry.clusters > 0 && rendering.virtual_geometry.triangles > 0, `${camera.label}: clusters drawn`);
+    assert.ok(rendering.virtual_geometry.shadow_clusters > 0 && rendering.virtual_geometry.shadow_triangles > 0, `${camera.label}: clusters cast shadows`);
+    assert.equal(rendering.virtual_geometry.dropped, 0, `${camera.label}: nothing dropped`);
+    assert.equal(rendering.virtual_geometry.loading_pages, 0, `${camera.label}: streaming settled`);
+    assert.equal(rendering.virtual_geometry.missing_pages, 0, `${camera.label}: every page the view wants is resident`);
     cases.push({
       label: camera.label, changed_pixels: pixels.changed, forward_changed_pixels: forwardPixels.changed,
-      clusters: rendering.virtual_clusters,
-      triangles: rendering.virtual_triangles, shadow_triangles: rendering.virtual_shadow_triangles,
-      occluded_clusters: rendering.virtual_occluded_clusters, resident_pages: rendering.virtual_resident_pages,
+      clusters: rendering.virtual_geometry.clusters,
+      triangles: rendering.virtual_geometry.triangles, shadow_triangles: rendering.virtual_geometry.shadow_triangles,
+      occluded_clusters: rendering.virtual_geometry.occluded_clusters, resident_pages: rendering.virtual_geometry.resident_pages,
     });
   }
   // Views streamed pages beyond the pinned ones.
@@ -133,7 +133,7 @@ try {
   const rebuilt = await capture(`${last.label}-rebuilt`, false);
   const rebuiltPixels = await differentPixels(page, [reference.png, rebuilt.png], { tolerance: 8 });
   assert.ok(rebuiltPixels.changed <= rebuiltPixels.total * 0.001, `rebuilt arena: ${rebuiltPixels.changed} pixels differ`);
-  streamed.rebuilt = { resident_pages: rebuilt.rendering.virtual_resident_pages, changed_pixels: rebuiltPixels.changed };
+  streamed.rebuilt = { resident_pages: rebuilt.rendering.virtual_geometry.resident_pages, changed_pixels: rebuiltPixels.changed };
 
   // A budget keeps that many pages resident (the pinned ones always) and
   // drops loads beyond it; captures of both paths still match.
@@ -143,11 +143,11 @@ try {
   const budgetPixels = await differentPixels(page, [budgetCpu.png, budgetGpu.png], { tolerance: 8 });
   assert.ok(budgetPixels.changed <= budgetPixels.total * 0.001, `budget: ${budgetPixels.changed} pixels differ`);
   const budgeted = budgetGpu.rendering;
-  assert.ok(budgeted.virtual_resident_pages <= 8 && budgeted.virtual_clusters > 0, JSON.stringify(budgeted));
-  assert.ok(budgeted.virtual_missing_pages > 0 && budgeted.dropped_virtual_pages > 0, JSON.stringify(budgeted));
+  assert.ok(budgeted.virtual_geometry.resident_pages <= 8 && budgeted.virtual_geometry.clusters > 0, JSON.stringify(budgeted));
+  assert.ok(budgeted.virtual_geometry.missing_pages > 0 && budgeted.virtual_geometry.dropped_pages > 0, JSON.stringify(budgeted));
   streamed.budget = {
-    resident_pages: budgeted.virtual_resident_pages, missing_pages: budgeted.virtual_missing_pages,
-    dropped_pages: budgeted.dropped_virtual_pages, triangles: budgeted.virtual_triangles,
+    resident_pages: budgeted.virtual_geometry.resident_pages, missing_pages: budgeted.virtual_geometry.missing_pages,
+    dropped_pages: budgeted.virtual_geometry.dropped_pages, triangles: budgeted.virtual_geometry.triangles,
   };
   await command("environment", { virtual_geometry: { enabled: true, pixel_error: 1.5 } });
 
@@ -157,23 +157,23 @@ try {
   const coarse = await command("environment", { virtual_geometry: { pixel_error: 6 } });
   assert.deepEqual(coarse.result.environment_changed, ["virtual_geometry"]);
   const coarseRendering = await settle(true);
-  assert.ok(coarseRendering.virtual_triangles < fine.virtual_triangles,
-    `pixel error 6 draws fewer triangles (${coarseRendering.virtual_triangles} against ${fine.virtual_triangles})`);
+  assert.ok(coarseRendering.virtual_geometry.triangles < fine.virtual_geometry.triangles,
+    `pixel error 6 draws fewer triangles (${coarseRendering.virtual_geometry.triangles} against ${fine.virtual_geometry.triangles})`);
   await command("environment", { virtual_geometry: { enabled: false } });
   let off;
   for (let frame = 0; frame < 8; frame++) off = (await command("present", { alpha: 0, gpu: true })).result.rendering;
-  assert.equal(off.virtual_clusters, 0);
+  assert.equal(off.virtual_geometry.clusters, 0);
   assert.ok(off.instances > 0, "fallback cuts draw");
   const invalid = await command("environment", { virtual_geometry: { pixel_error: 0.1 } }, false);
   assert.equal(invalid.error.code, "invalid_environment");
   assert.equal(invalid.error.path, "$.virtual_geometry.pixel_error");
   await command("environment", { virtual_geometry: { enabled: true, pixel_error: 1.5 } });
-  assert.ok((await settle(true)).virtual_clusters > 0);
+  assert.ok((await settle(true)).virtual_geometry.clusters > 0);
 
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({
     ok: true, url: url.href, artifact: output, cases, loaded_bytes: loadedBytes, file_bytes: fileBytes, streamed,
-    pixel_error: { fine: fine.virtual_triangles, coarse: coarseRendering.virtual_triangles },
+    pixel_error: { fine: fine.virtual_geometry.triangles, coarse: coarseRendering.virtual_geometry.triangles },
     checks: ["prefixes_load", "settings_discoverable", "gpu_cpu_pixel_equivalence", "visibility_buffer_matches_forward", "arena_rebuilds_keep_pages", "clusters_drawn", "cluster_shadows", "nothing_dropped", "pages_stream", "budget_bounds_pages", "pixel_error_control", "fallback_when_disabled", "invalid_settings_refused", "clean_browser_diagnostics"],
   }));
 } finally {

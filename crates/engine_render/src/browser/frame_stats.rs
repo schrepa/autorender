@@ -4,129 +4,54 @@ use super::frame::{EncodeReport, FrameKind, FrameState};
 use super::*;
 use crate::gpu_presentation::GpuPrepared;
 
-/// A profile counter read from a frame's stats; `None` records nothing.
-type StatCounter = (&'static str, fn(&RenderStats) -> Option<f64>);
+use engine_core::{
+    Applied, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn, GroundCoverStats,
+    LightStats, OccupancyStats, OceanStats, ProbeStats, ShadowStats, SkyStats, TerrainRenderStats,
+    VirtualGeometryStats, WaterStats,
+};
 
-/// Counters of every frame's stats.
-const STAT_COUNTERS: [StatCounter; 26] = [
-    ("render.instances", |stats| Some(stats.instances.into())),
-    ("render.draw_calls", |stats| Some(stats.draw_calls.into())),
-    ("render.upload_bytes", |stats| {
-        Some(stats.upload_bytes as f64)
-    }),
-    ("render.mesh_upload_bytes", |stats| {
-        Some(stats.mesh_upload_bytes as f64)
-    }),
-    ("render.texture_upload_bytes", |stats| {
-        Some(stats.texture_upload_bytes as f64)
-    }),
-    ("render.shadow_draws", |stats| {
-        Some(stats.shadow_draws.into())
-    }),
-    ("render.shadow_near_casters", |stats| {
-        stats.shadow_near_casters.map(f64::from)
-    }),
-    ("render.shadow_moving_casters", |stats| {
-        stats.shadow_moving_casters.map(f64::from)
-    }),
-    ("render.shadow_kept_casters", |stats| {
-        stats.shadow_kept_casters.map(f64::from)
-    }),
-    ("render.shadow_level_tiles", |stats| {
-        Some(stats.shadow_level_tiles.into())
-    }),
-    ("render.shadow_level_casters", |stats| {
-        stats.shadow_level_casters.map(f64::from)
-    }),
-    ("render.ambient_occlusion", |stats| {
-        Some(u8::from(stats.ambient_occlusion).into())
-    }),
-    ("render.bloom", |stats| Some(u8::from(stats.bloom).into())),
-    ("render.transparent_draws", |stats| {
-        Some(stats.transparent_draws.into())
-    }),
-    ("render.particles", |stats| Some(stats.particles.into())),
-    ("render.decals", |stats| Some(stats.decals.into())),
-    ("render.impostors", |stats| Some(stats.impostors.into())),
-    ("render.dropped_impostors", |stats| {
-        Some(stats.dropped_impostors.into())
-    }),
-    ("render.pipelines_created", |stats| {
-        Some(stats.pipelines_created.into())
-    }),
-    ("render.occluded_instances", |stats| {
-        stats.occluded_instances.map(f64::from)
-    }),
-    ("render.subpixel_instances", |stats| {
-        stats.subpixel_instances.map(f64::from)
-    }),
-    ("render.triangles", |stats| stats.triangles.map(f64::from)),
-    ("render.lod0_instances", |stats| {
-        stats.lod0_instances.map(f64::from)
-    }),
-    ("render.lod1_instances", |stats| {
-        stats.lod1_instances.map(f64::from)
-    }),
-    ("render.lod2_instances", |stats| {
-        stats.lod2_instances.map(f64::from)
-    }),
-    ("render.impostor_instances", |stats| {
-        stats.impostor_instances.map(f64::from)
-    }),
-];
-
-/// Counters of frames that shade local lights.
-const LIGHT_COUNTERS: [StatCounter; 3] = [
-    ("render.local_lights", |stats| {
-        Some(stats.local_lights.into())
-    }),
-    ("render.lights_visible", |stats| {
-        stats.lights_visible.map(f64::from)
-    }),
-    ("render.light_cluster_overflow", |stats| {
-        stats.light_cluster_overflow.map(f64::from)
-    }),
-];
-
-/// Counters of frames that read virtual geometry's selection back.
-const VIRTUAL_COUNTERS: [StatCounter; 9] = [
-    ("render.virtual_clusters", |stats| {
-        Some(stats.virtual_clusters.into())
-    }),
-    ("render.virtual_triangles", |stats| {
-        Some(stats.virtual_triangles.into())
-    }),
-    ("render.virtual_shadow_triangles", |stats| {
-        Some(stats.virtual_shadow_triangles.into())
-    }),
-    ("render.virtual_occluded_clusters", |stats| {
-        Some(stats.virtual_occluded_clusters.into())
-    }),
-    ("render.virtual_resident_pages", |stats| {
-        Some(stats.virtual_resident_pages.into())
-    }),
-    ("render.virtual_loading_pages", |stats| {
-        Some(stats.virtual_loading_pages.into())
-    }),
-    ("render.virtual_missing_pages", |stats| {
-        Some(stats.virtual_missing_pages.into())
-    }),
-    ("render.dropped_virtual_pages", |stats| {
-        Some(stats.dropped_virtual_pages.into())
-    }),
-    ("render.dropped_virtual", |stats| {
-        Some(stats.dropped_virtual.into())
-    }),
-];
-
-/// Records `counters` of `stats`.
-fn stat_counters(stats: &RenderStats, counters: &[StatCounter]) {
-    for (name, read) in counters {
-        if let Some(value) = read(stats) {
-            engine_profile::counter(name, value);
+/// Records every number and flag of `stats` as the counter `render.<path>`,
+/// its path in the JSON hosts read: no list to keep. Fields reading `null`
+/// record nothing.
+#[cfg(feature = "profiling")]
+fn stat_counters(stats: &RenderStats) {
+    use std::collections::HashMap;
+    thread_local! {
+        // Counter names live as long as the profiler: one per stats field.
+        static NAMES: std::cell::RefCell<HashMap<String, &'static str>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+    fn visit(path: &mut String, value: &serde_json::Value) {
+        let number = match value {
+            serde_json::Value::Object(fields) => {
+                for (key, value) in fields {
+                    let length = path.len();
+                    path.push('.');
+                    path.push_str(key);
+                    visit(path, value);
+                    path.truncate(length);
+                }
+                return;
+            }
+            serde_json::Value::Number(number) => number.as_f64(),
+            serde_json::Value::Bool(flag) => Some(f64::from(u8::from(*flag))),
+            _ => None,
+        };
+        if let Some(number) = number {
+            let name = NAMES.with_borrow_mut(|names| {
+                *names
+                    .entry(path.clone())
+                    .or_insert_with(|| Box::leak(path.clone().into_boxed_str()))
+            });
+            engine_profile::counter(name, number);
         }
     }
+    let value = serde_json::to_value(stats).expect("render stats serialize");
+    visit(&mut "render".to_owned(), &value);
 }
+
+#[cfg(not(feature = "profiling"))]
+fn stat_counters(_: &RenderStats) {}
 
 impl Renderer {
     /// The frame's stats, after submission (read-backs arrive a few frames
@@ -184,6 +109,7 @@ impl Renderer {
         let light_totals = light_frame
             .as_ref()
             .and(self.lights.as_ref().and_then(LightPass::totals));
+        let residency = self.residency();
         let stats = RenderStats {
             draw_calls: report.draws,
             upload_bytes: camera_upload_bytes
@@ -200,20 +126,6 @@ impl Renderer {
                 _ => instance_count as u32,
             },
             gpu_visible,
-            occluded_instances: if gpu_mode && snapshot.environment.occlusion_culling.enabled {
-                self.gpu_presentation.occluded()
-            } else {
-                None
-            },
-            subpixel_instances: if gpu_mode && snapshot.environment.subpixel_culling.enabled {
-                self.gpu_presentation.subpixel()
-            } else {
-                None
-            },
-            lod0_instances: lod_instances.map(|levels| levels[0]),
-            lod1_instances: lod_instances.map(|levels| levels[1]),
-            lod2_instances: lod_instances.map(|levels| levels[2]),
-            impostor_instances: lod_instances.map(|levels| levels[3]),
             triangles: if gpu_mode {
                 self.gpu_presentation.triangles()
             } else {
@@ -237,42 +149,13 @@ impl Renderer {
                     .sum();
                 Some(triangles.min(u64::from(u32::MAX)) as u32)
             },
+            resident_meshes: residency.meshes,
             mesh_upload_bytes,
+            resident_mesh_bytes: residency.mesh_bytes,
+            resident_textures: residency.textures,
             texture_upload_bytes,
+            resident_texture_bytes: residency.texture_bytes,
             submitted: true,
-            shadows_enabled: shadow_frame.is_some(),
-            shadow_draws: if shadow_frame.is_some() {
-                shadow_draws
-            } else {
-                0
-            },
-            shadow_kept_redraw: shadow_frame
-                .as_ref()
-                .map_or(0, |frame| u32::from(frame.refresh_kind())),
-            shadow_near_casters: shadow_casters.map(|casters| casters[0]),
-            shadow_moving_casters: shadow_casters.map(|casters| casters[1]),
-            shadow_kept_casters: shadow_casters.map(|casters| casters[2]),
-            shadow_level_tiles: shadow_frame
-                .as_ref()
-                .map_or(0, crate::shadows::ShadowFrame::level_tiles),
-            shadow_levels_pending: shadow_frame
-                .as_ref()
-                .map_or(0, crate::shadows::ShadowFrame::level_pending),
-            shadow_level_casters: shadow_casters.map(|casters| casters[3]),
-            ambient_occlusion: post_frame.is_some_and(|frame| frame.occlusion),
-            contact_shadows: post_frame.is_some_and(|frame| frame.contact),
-            bloom: post_frame.is_some_and(|frame| frame.bloom),
-            occlusion_culling: gpu_mode && self.gpu_presentation.occlusion(),
-            subpixel_culling: gpu_mode && self.gpu_presentation.culls_subpixel(),
-            temporal_antialiasing: state.packing.temporal_frame.is_some(),
-            local_lights: if lit { snapshot.lights.len() as u32 } else { 0 },
-            dropped_lights: if lit {
-                snapshot.dropped_lights.min(u32::MAX as usize) as u32
-            } else {
-                0
-            },
-            lights_visible: light_totals.map(|totals| totals[0]),
-            light_cluster_overflow: light_totals.map(|totals| totals[1]),
             transparent_draws: if instance_count > 0 {
                 self.plan
                     .batches
@@ -282,94 +165,183 @@ impl Renderer {
             } else {
                 0
             },
-            particles: particle_frame.as_ref().map_or(0, |frame| frame.total),
-            dropped_particles: (snapshot.dropped_particles as u64
-                + particle_frame.as_ref().map_or(0, |frame| frame.dropped))
-            .min(u64::from(u32::MAX)) as u32,
-            sun_shafts: post_frame.is_some_and(|frame| frame.shafts),
-            reflections: post_frame.is_some_and(|frame| frame.reflections),
-            refraction: refraction && post_frame.is_some(),
-            visibility_buffer: resolving,
-            decals: decal_frame.as_ref().map_or(0, |frame| frame.drawn),
-            dropped_decals: (snapshot.dropped_decals as u64
-                + decal_frame
-                    .as_ref()
-                    .map_or(0, |frame| u64::from(frame.dropped)))
-            .min(u64::from(u32::MAX)) as u32,
-            impostors: self.impostors.live(),
-            dropped_impostors: self.impostors.dropped,
-            reflection_probes: self.probes.slots.ready(),
-            reflection_probe_faces: probe_faces,
-            dropped_reflection_probes: dropped_probes.min(u64::from(u32::MAX)) as u32,
             pipelines: self.pipeline_counts.created(),
             pipelines_created,
-            passes: report.passes,
-            virtual_clusters: virtual_stats.map_or(0, |stats| stats.clusters),
-            virtual_triangles: virtual_stats.map_or(0, |stats| stats.triangles),
-            virtual_shadow_clusters: virtual_stats.map_or(0, |stats| stats.shadow_clusters),
-            virtual_shadow_triangles: virtual_stats.map_or(0, |stats| stats.shadow_triangles),
-            virtual_occluded_clusters: virtual_stats.map_or(0, |stats| stats.occluded),
-            virtual_resident_pages: virtual_stats.map_or(0, |stats| stats.resident_pages),
-            virtual_loading_pages: virtual_stats.map_or(0, |stats| stats.loading_pages),
-            virtual_missing_pages: virtual_stats.map_or(0, |stats| stats.missing_pages),
-            dropped_virtual_pages: virtual_stats.map_or(0, |stats| stats.dropped_pages),
-            dropped_virtual: virtual_stats.map_or(0, |stats| stats.dropped),
-            terrain_patches: self.terrain.frame.patches,
-            terrain_triangles: self.terrain.frame.triangles,
-            terrain_shadow_patches: self.terrain.frame.shadow_patches,
-            terrain_tiles: self.terrain.resident(),
-            terrain_loading_tiles: snapshot.terrain.stats.loading_tiles,
-            terrain_gpu_controls: self.terrain.controls,
-            dropped_terrain_tiles: snapshot.terrain.stats.dropped_tiles + self.terrain.dropped,
-            terrain_fallback_patches: snapshot.terrain.stats.fallback_patches,
-            terrain_horizons: self.terrain.horizons.count(),
-            terrain_horizon_builds: self.terrain.horizons.builds,
-            terrain_sky_maps: self.terrain.sky.count(),
-            terrain_sky_rows: self.terrain.sky.rows,
-            terrain_vt_slots: self.terrain.vt.stats.slots,
-            terrain_vt_pages: self.terrain.vt.stats.pages,
-            terrain_vt_bakes: self.terrain.vt.stats.bakes,
-            terrain_vt_missing: self.terrain.vt.stats.missing,
-            dropped_terrain_vt_pages: self.terrain.vt.stats.dropped,
-            terrain_vt_evictions: self.terrain.vt.stats.evictions,
-            ground_cover_blades: self.ground_cover.totals()[0],
-            dropped_ground_cover: self.ground_cover.totals()[1],
-            ground_cover_reach: self.ground_cover.reach().0.round() as u32,
-            ground_cover_tiers: self.ground_cover.reach().1,
-            placed_objects: self.scatter.resident,
-            water_chunks: if state.shape.water {
-                self.water.chunks_drawn()
-            } else {
-                0
+            render_passes: crate::render_graph::render_passes(report.passes),
+            shadows: ShadowStats {
+                active: shadow_frame.is_some(),
+                draws: if shadow_frame.is_some() {
+                    shadow_draws
+                } else {
+                    0
+                },
+                kept_redraw: shadow_frame
+                    .as_ref()
+                    .map_or(0, |frame| u32::from(frame.refresh_kind())),
+                near_casters: shadow_casters.map(|casters| casters[0]),
+                moving_casters: shadow_casters.map(|casters| casters[1]),
+                kept_casters: shadow_casters.map(|casters| casters[2]),
+                level_tiles: shadow_frame
+                    .as_ref()
+                    .map_or(0, crate::shadows::ShadowFrame::level_tiles),
+                levels_pending: shadow_frame
+                    .as_ref()
+                    .map_or(0, crate::shadows::ShadowFrame::level_pending),
+                level_casters: shadow_casters.map(|casters| casters[3]),
             },
-            ocean_sectors: if state.shape.water {
-                self.water.ocean_drawn().0
-            } else {
-                0
+            ambient_occlusion: Applied {
+                active: post_frame.is_some_and(|frame| frame.occlusion),
             },
-            ocean_triangles: if state.shape.water {
-                self.water.ocean_drawn().1
-            } else {
-                0
+            contact_shadows: Applied {
+                active: post_frame.is_some_and(|frame| frame.contact),
             },
-            cloud_rows: self.clouds.rows,
-            cloud_view_blocks: self.clouds.view_blocks,
-            sky_tables: self.sky.built,
-            cells: snapshot.cells.cells,
-            cells_loaded: snapshot.cells.loaded,
-            cells_pending: snapshot.cells.pending,
-            streamed_entities: snapshot.cells.entities,
-            cell_spawns: snapshot.cells.spawned,
-            cell_despawns: snapshot.cells.despawned,
-            deformation_stamps: self.terrain.deformation.pressed,
-            deformation_texels: self.terrain.deformation.texels,
-            placed_far_objects: self.scatter_draws.far_objects(),
-            placed_impostors: self.impostors.placed.live(),
-            occupancy_redraws: self.occupancy.redraws,
-            dropped_terrain_materials: self.terrain.dropped_materials,
-            ..self.residency_stats()
+            bloom: Applied {
+                active: post_frame.is_some_and(|frame| frame.bloom),
+            },
+            local_lights: LightStats {
+                shaded: if lit { snapshot.lights.len() as u32 } else { 0 },
+                dropped: if lit {
+                    snapshot.dropped_lights.min(u32::MAX as usize) as u32
+                } else {
+                    0
+                },
+                visible: light_totals.map(|totals| totals[0]),
+                cluster_overflow: light_totals.map(|totals| totals[1]),
+            },
+            sun_shafts: Applied {
+                active: post_frame.is_some_and(|frame| frame.shafts),
+            },
+            reflections: Applied {
+                active: post_frame.is_some_and(|frame| frame.reflections),
+            },
+            particles: Drawn {
+                drawn: particle_frame.as_ref().map_or(0, |frame| frame.total),
+                dropped: (snapshot.dropped_particles as u64
+                    + particle_frame.as_ref().map_or(0, |frame| frame.dropped))
+                .min(u64::from(u32::MAX)) as u32,
+            },
+            refraction: Applied {
+                active: refraction && post_frame.is_some(),
+            },
+            decals: Drawn {
+                drawn: decal_frame.as_ref().map_or(0, |frame| frame.drawn),
+                dropped: (snapshot.dropped_decals as u64
+                    + decal_frame
+                        .as_ref()
+                        .map_or(0, |frame| u64::from(frame.dropped)))
+                .min(u64::from(u32::MAX)) as u32,
+            },
+            reflection_probes: ProbeStats {
+                ready: self.probes.slots.ready(),
+                faces: probe_faces,
+                dropped: dropped_probes.min(u64::from(u32::MAX)) as u32,
+            },
+            virtual_geometry: VirtualGeometryStats {
+                clusters: virtual_stats.map_or(0, |stats| stats.clusters),
+                triangles: virtual_stats.map_or(0, |stats| stats.triangles),
+                shadow_clusters: virtual_stats.map_or(0, |stats| stats.shadow_clusters),
+                shadow_triangles: virtual_stats.map_or(0, |stats| stats.shadow_triangles),
+                occluded_clusters: virtual_stats.map_or(0, |stats| stats.occluded),
+                dropped: virtual_stats.map_or(0, |stats| stats.dropped),
+                resident_pages: virtual_stats.map_or(0, |stats| stats.resident_pages),
+                loading_pages: virtual_stats.map_or(0, |stats| stats.loading_pages),
+                missing_pages: virtual_stats.map_or(0, |stats| stats.missing_pages),
+                dropped_pages: virtual_stats.map_or(0, |stats| stats.dropped_pages),
+                visibility_buffer: resolving,
+            },
+            level_of_detail: DetailStats {
+                lod0_instances: lod_instances.map(|levels| levels[0]),
+                lod1_instances: lod_instances.map(|levels| levels[1]),
+                lod2_instances: lod_instances.map(|levels| levels[2]),
+                impostor_instances: lod_instances.map(|levels| levels[3]),
+                impostors: self.impostors.live(),
+                dropped_impostors: self.impostors.dropped,
+            },
+            terrain: TerrainRenderStats {
+                patches: self.terrain.frame.patches,
+                triangles: self.terrain.frame.triangles,
+                shadow_patches: self.terrain.frame.shadow_patches,
+                tiles: self.terrain.resident(),
+                loading_tiles: snapshot.terrain.stats.loading_tiles,
+                gpu_controls: self.terrain.controls,
+                dropped_tiles: snapshot.terrain.stats.dropped_tiles + self.terrain.dropped,
+                fallback_patches: snapshot.terrain.stats.fallback_patches,
+                horizons: self.terrain.horizons.count(),
+                horizon_builds: self.terrain.horizons.builds,
+                sky_maps: self.terrain.sky.count(),
+                sky_rows: self.terrain.sky.rows,
+                dropped_materials: self.terrain.dropped_materials,
+                vt_slots: self.terrain.vt.stats.slots,
+                vt_pages: self.terrain.vt.stats.pages,
+                vt_bakes: self.terrain.vt.stats.bakes,
+                vt_missing: self.terrain.vt.stats.missing,
+                dropped_vt_pages: self.terrain.vt.stats.dropped,
+                vt_evictions: self.terrain.vt.stats.evictions,
+                placed_objects: self.scatter.resident,
+                placed_far_objects: self.scatter_draws.far_objects(),
+                placed_impostors: self.impostors.placed.live(),
+            },
+            ground_cover: GroundCoverStats {
+                blades: self.ground_cover.totals()[0],
+                dropped: self.ground_cover.totals()[1],
+                reach: self.ground_cover.reach().0.round() as u32,
+                tiers: self.ground_cover.reach().1,
+            },
+            occupancy: OccupancyStats {
+                redraws: self.occupancy.redraws,
+            },
+            water: WaterStats {
+                chunks: if state.shape.water {
+                    self.water.chunks_drawn()
+                } else {
+                    0
+                },
+            },
+            ocean: OceanStats {
+                sectors: if state.shape.water {
+                    self.water.ocean_drawn().0
+                } else {
+                    0
+                },
+                triangles: if state.shape.water {
+                    self.water.ocean_drawn().1
+                } else {
+                    0
+                },
+            },
+            deformation: DeformationStats {
+                stamps: self.terrain.deformation.pressed,
+                texels: self.terrain.deformation.texels,
+            },
+            clouds: CloudStats {
+                rows: self.clouds.rows,
+                view_blocks: self.clouds.view_blocks,
+            },
+            world_streaming: snapshot.cells,
+            sky: SkyStats {
+                tables: self.sky.built,
+            },
+            occlusion_culling: CullingStats {
+                active: gpu_mode && self.gpu_presentation.occlusion(),
+                instances: if gpu_mode && snapshot.environment.occlusion_culling.enabled {
+                    self.gpu_presentation.occluded()
+                } else {
+                    None
+                },
+            },
+            subpixel_culling: CullingStats {
+                active: gpu_mode && self.gpu_presentation.culls_subpixel(),
+                instances: if gpu_mode && snapshot.environment.subpixel_culling.enabled {
+                    self.gpu_presentation.subpixel()
+                } else {
+                    None
+                },
+            },
+            temporal_antialiasing: Applied {
+                active: state.packing.temporal_frame.is_some(),
+            },
         };
-        self.profile_counters(state, &stats, gpu_visible, virtual_stats);
+        self.profile_counters(state, &stats, gpu_visible);
         stats
     }
 
@@ -379,18 +351,11 @@ impl Renderer {
         state: &FrameState<'_>,
         stats: &RenderStats,
         gpu_visible: Option<u32>,
-        virtual_stats: Option<crate::virtual_geometry::VirtualStats>,
     ) {
         if !engine_profile::active() {
             return;
         }
-        stat_counters(stats, &STAT_COUNTERS);
-        if state.features.light_frame.is_some() {
-            stat_counters(stats, &LIGHT_COUNTERS);
-        }
-        if virtual_stats.is_some() {
-            stat_counters(stats, &VIRTUAL_COUNTERS);
-        }
+        stat_counters(stats);
         self.upload_counters(state);
         if let Some(prepared) = &state.features.gpu_prepared {
             gpu_counters(prepared, gpu_visible);
@@ -417,18 +382,6 @@ impl Renderer {
         engine_profile::counter("render.color_write_bytes", writes.color_bytes as f64);
         engine_profile::counter("render.instance_id_write_bytes", writes.slot_bytes as f64);
         engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
-        engine_profile::counter(
-            "render.taa",
-            f64::from(u8::from(packing.temporal_frame.is_some())),
-        );
-        engine_profile::counter(
-            "render.shadow_refresh",
-            state
-                .features
-                .shadow_frame
-                .as_ref()
-                .map_or(0.0, |frame| f64::from(frame.refresh_kind())),
-        );
         engine_profile::counter("render.shadow_groups", self.shadows.groups().len() as f64);
         if let Some(frame) = &packing.temporal_frame {
             engine_profile::counter(

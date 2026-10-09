@@ -66,9 +66,25 @@ export function commander(page, { deadline = 30_000 } = {}) {
       ]).finally(() => clearTimeout(timer));
       if (reply?.error?.code === "command_busy" && Date.now() < until) { await delay(25); continue; }
       assert.equal(reply.ok, expectedOk, `${op}: ${JSON.stringify(reply).slice(0, 4000)}`);
+      if (reply.result?.rendering) reply.result.rendering = strictStats(reply.result.rendering);
       return reply;
     }
   };
+}
+
+/** A frame's stats (a reply's `rendering`) whose reads of a field they lack
+ * throw, at any depth: every field is always present, so a renamed or
+ * misspelt one fails the check instead of reading `undefined`. */
+export function strictStats(stats) {
+  return new Proxy(stats, {
+    get(target, field, receiver) {
+      if (typeof field === "string" && !(field in target) && field !== "toJSON" && field !== "then") {
+        throw new Error(`frame stats have no field ${JSON.stringify(field)}; describe FrameStats lists them`);
+      }
+      const value = Reflect.get(target, field, receiver);
+      return value && typeof value === "object" && !Array.isArray(value) ? strictStats(value) : value;
+    },
+  });
 }
 
 /** The development protocol's version, request limit and ops, generated

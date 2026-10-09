@@ -53,6 +53,7 @@ fn main() {
         "Skin": schemars::schema_for!(views::SkinView),
         "protocol": schemars::schema_for!(protocol::DevRequest),
         "BrowserControl": schemars::schema_for!(protocol::BrowserControl),
+        "FrameStats": frame_stats(),
     });
     let mut sections = Sections(serde_json::Map::new());
     engine_scene::SceneEnvironment::default().visit(&mut sections);
@@ -63,6 +64,11 @@ fn main() {
     let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
     std::fs::write(output.join("inspectors.json"), schemas.to_string())
         .expect("write generated development schemas");
+    std::fs::write(
+        output.join("frame_stats.schema.json"),
+        serde_json::to_string_pretty(&schemas["FrameStats"]).expect("schema serializes"),
+    )
+    .expect("write generated frame stats schema");
     std::fs::write(
         output.join("scene.schema.json"),
         engine_scene::SceneDocument::schema_json(),
@@ -98,6 +104,45 @@ pub const {name}: [&str; {}] = {:?};
 ",
     )
     .expect("write generated protocol summary");
+}
+
+/// The schema of what a frame observed, after checking the rules that keep it
+/// one readable definition: every field has a doc comment, a feature's
+/// numbers live under its environment section's key, and what a budget or
+/// the device's limits left out is named `dropped` or `dropped_*`.
+fn frame_stats() -> serde_json::Value {
+    let schema = serde_json::to_value(schemars::schema_for!(engine_core::FrameStats))
+        .expect("schema serializes");
+    let objects = std::iter::once(("FrameStats", &schema)).chain(
+        schema["$defs"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(name, definition)| (name.as_str(), definition)),
+    );
+    for (name, object) in objects {
+        for (field, property) in object["properties"].as_object().into_iter().flatten() {
+            if property["description"].as_str().is_none_or(str::is_empty) {
+                panic!("{name}.{field} needs a doc comment: frame stats describe themselves");
+            }
+            if field.contains("dropped") && field != "dropped" && !field.starts_with("dropped_") {
+                panic!("{name}.{field}: name what budgets drop `dropped` or `dropped_*`");
+            }
+        }
+    }
+    let render = serde_json::to_value(schemars::schema_for!(engine_core::RenderStats))
+        .expect("schema serializes");
+    for (field, property) in render["properties"].as_object().into_iter().flatten() {
+        if property.get("$ref").is_some()
+            && !engine_core::Environment::KEYS.contains(&field.as_str())
+        {
+            panic!(
+                "RenderStats.{field} groups a feature's stats under a key that is no environment \
+                 section's: name it after the section"
+            );
+        }
+    }
+    schema
 }
 
 /// The `op` of every variant of an internally tagged request enum's schema.

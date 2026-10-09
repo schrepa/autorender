@@ -7,6 +7,7 @@ mod pipeline;
 mod process;
 mod profiling;
 mod smoke;
+mod typescript;
 
 use std::{env, process::ExitCode};
 
@@ -103,7 +104,7 @@ fn execute() -> Result<(), String> {
                    assets Validate authored scene sources without changing them\n\
                    benchmark [--url URL] [--samples N] [--warmup N] [--repeats N] [--mode step|render|present] [--setup-ticks N]\n\
                           Measure fixed browser workloads with culling off/on; --output PATH, --baseline PATH, --max-regression-percent N\n\
-                   schema Write the generated scene JSON schema, development protocol summary and client list\n\
+                   schema Write the generated scene JSON schema, development protocol summary, client list and stats types\n\
                    smoke --list | --all | NAME...  List or run the browser smoke checks against a running dev server\n\
                    wasm-bindgen-version  Print the wasm-bindgen version Cargo.lock pins\n\
                    lint   Check source/schema, formatting, native/Wasm Clippy, TypeScript\n\

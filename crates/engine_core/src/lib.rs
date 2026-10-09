@@ -18,6 +18,7 @@ mod effects;
 mod entity_indices;
 mod environment;
 mod extraction;
+mod frame_stats;
 mod gpu_culling;
 mod ground_cover;
 mod grounded;
@@ -91,6 +92,11 @@ pub use engine_terrain::{
     PyramidError, Remap, Route, RouteOptions, Stamp, StampOp, Tile, TileKey, WaterGrid,
 };
 pub use environment::{Environment, EnvironmentSection, InvalidSetting};
+pub use frame_stats::{
+    Applied, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn, FrameStats,
+    GroundCoverStats, LightStats, OccupancyStats, OceanStats, ProbeStats, RenderPasses,
+    RenderStats, ShadowStats, SkyStats, TerrainRenderStats, VirtualGeometryStats, WaterStats,
+};
 pub use glam;
 pub use gpu_culling::{OcclusionCulling, SubpixelCulling};
 pub use ground_cover::{Cover, GroundCover};

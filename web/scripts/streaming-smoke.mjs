@@ -75,7 +75,7 @@ try {
   let rendering = await look(0, 0);
   // Job workers generate tiles beside the page, their
   // outputs arriving between commands.
-  for (let frame = 0; frame < 400 && (rendering.terrain_loading_tiles > 0 || rendering.terrain_fallback_patches > 0); frame++) {
+  for (let frame = 0; frame < 400 && (rendering.terrain.loading_tiles > 0 || rendering.terrain.fallback_patches > 0); frame++) {
     await new Promise(resolve => setTimeout(resolve, 25));
     rendering = await rendered();
   }
@@ -84,14 +84,14 @@ try {
   let state = await cells();
   assert.equal(state.items, 5, `items: ${JSON.stringify(state)}`);
   assert.deepEqual(state.grids.map(grid => [grid.cells, grid.loaded]), [[3, 2], [1, 1], [1, 1]], `grids: ${JSON.stringify(state.grids)}`);
-  assert.equal(rendering.cells, 5);
-  assert.equal(rendering.cells_loaded, 4);
-  assert.equal(rendering.cells_pending, 0);
+  assert.equal(rendering.world_streaming.cells, 5);
+  assert.equal(rendering.world_streaming.loaded, 4);
+  assert.equal(rendering.world_streaming.pending, 0);
   // The crate, the spinner and its blade, the lamp's root, post and
   // light, and the tower.
-  assert.equal(rendering.streamed_entities, 7, `streamed entities: ${JSON.stringify(rendering)}`);
+  assert.equal(rendering.world_streaming.entities, 7, `streamed entities: ${JSON.stringify(rendering)}`);
   assert.equal(await loaded("crate-mid"), null, "the middle crate's cell is out of range");
-  checks.push({ check: "binning", grids: state.grids, entities: rendering.streamed_entities });
+  checks.push({ check: "binning", grids: state.grids, entities: rendering.world_streaming.entities });
 
   // Grounded: the crate's bottom on the terrain under it.
   const [ground] = (await command("terrain_height", { points: [[20, 0]] })).result.samples;
@@ -121,7 +121,7 @@ try {
   assert.notEqual(await loaded("crate-mid"), null, "the middle crate loads");
   rendering = await look(1000, 0);
   assert.equal(await loaded("crate-near"), null, "past 1.25 times the range the near crate goes");
-  assert.ok(rendering.cell_despawns > 0, `the move despawned: ${JSON.stringify(rendering)}`);
+  assert.ok(rendering.world_streaming.despawned > 0, `the move despawned: ${JSON.stringify(rendering)}`);
   const missed = (await command("raycast", { origin: [20, 300, 0], direction: [0, -1, 0], max_distance: 600 })).result.hit;
   assert.notEqual(missed?.entity?.id, "crate-near", "an unloaded crate no longer collides");
   state = await cells();
@@ -131,26 +131,26 @@ try {
   // A budget of one entity a frame: a cell a frame.
   await streaming({ spawns_per_frame: 1 });
   rendering = await look(0, 0);
-  assert.ok(rendering.cell_spawns > 0, `a cell loads: ${JSON.stringify(rendering)}`);
-  assert.equal(rendering.cells_pending, 1, `the other waits: ${JSON.stringify(rendering)}`);
+  assert.ok(rendering.world_streaming.spawned > 0, `a cell loads: ${JSON.stringify(rendering)}`);
+  assert.equal(rendering.world_streaming.pending, 1, `the other waits: ${JSON.stringify(rendering)}`);
   rendering = await rendered();
-  assert.equal(rendering.cells_pending, 0);
-  assert.equal(rendering.cells_loaded, 4);
+  assert.equal(rendering.world_streaming.pending, 0);
+  assert.equal(rendering.world_streaming.loaded, 4);
   checks.push({ check: "budget" });
 
   // Frozen, nothing moves in or out; disabled, everything goes.
   await streaming({ frozen: true });
   rendering = await look(3000, 3000);
-  assert.equal(rendering.cells_loaded, 4, "frozen cells stay");
+  assert.equal(rendering.world_streaming.loaded, 4, "frozen cells stay");
   rendering = await streaming({ frozen: false });
-  assert.equal(rendering.cells_loaded, 2, `unfrozen, the small cells go: ${JSON.stringify(rendering)}`);
+  assert.equal(rendering.world_streaming.loaded, 2, `unfrozen, the small cells go: ${JSON.stringify(rendering)}`);
   rendering = await look(0, 0);
-  assert.equal(rendering.cells_loaded, 4);
+  assert.equal(rendering.world_streaming.loaded, 4);
   rendering = await streaming({ enabled: false });
-  assert.equal(rendering.cells_loaded, 0);
-  assert.equal(rendering.streamed_entities, 0);
+  assert.equal(rendering.world_streaming.loaded, 0);
+  assert.equal(rendering.world_streaming.entities, 0);
   rendering = await streaming({ enabled: true });
-  assert.equal(rendering.cells_loaded, 4);
+  assert.equal(rendering.world_streaming.loaded, 4);
   checks.push({ check: "frozen and disabled" });
 
   // Prefetch: moving east at 600 m/s, the cells 900 m ahead load early.

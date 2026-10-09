@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { strictStats } from "./harness.mjs";
 
 const executeFile = promisify(execFile);
 const workspace = fileURLToPath(new URL("../../", import.meta.url));
@@ -49,6 +50,7 @@ async function cli(verb, fields = {}, expectOk = true) {
     assert.equal(typeof response.id, "string");
     assert.equal(code === 0, expectOk);
   }
+  if (response.result?.rendering) response.result.rendering = strictStats(response.result.rendering);
   return response;
 }
 
@@ -105,8 +107,18 @@ try {
   const png = await readFile(join(workspace, capture.result.artifact.path));
   assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
   assert.ok(png.length > 1000);
-  const effects = rendering => [rendering.shadows_enabled, rendering.ambient_occlusion, rendering.bloom];
+  const effects = rendering => [rendering.shadows.active, rendering.ambient_occlusion.active, rendering.bloom.active];
   assert.deepEqual(effects(capture.result.rendering), [true, true, true]);
+  // Every reply's stats hold exactly the fields FrameStats' schema describes.
+  const statsSchema = (await cli("describe", { name: "FrameStats" })).result.schema;
+  const described = (schema, stats, path) => {
+    assert.deepEqual(Object.keys(stats).sort(), Object.keys(schema.properties).sort(), path);
+    for (const [field, property] of Object.entries(schema.properties)) {
+      const definition = property.$ref?.split("/").at(-1);
+      if (definition) described(statsSchema.$defs[definition], stats[field], `${path}.${field}`);
+    }
+  };
+  described(statsSchema, capture.result.rendering, "rendering");
 
   // The look: discovered, inspected in scene-section shape, changed temporarily.
   const listing = await cli("describe");
@@ -125,12 +137,12 @@ try {
   assert.equal(invalidLook.observation.tick, after.observation.tick);
   assert.deepEqual((await cli("inspect", { component: "Environment" })).result.value, look.result.value);
   // Opt-in effects start off; an empty section turns one on with its defaults.
-  assert.deepEqual([capture.result.rendering.sun_shafts, capture.result.rendering.reflections], [false, false]);
+  assert.deepEqual([capture.result.rendering.sun_shafts.active, capture.result.rendering.reflections.active], [false, false]);
   const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, sun_shafts: {}, reflections: {} });
   assert.equal(night.result.temporary, true);
   assert.deepEqual(night.result.environment_changed, ["atmosphere", "bloom", "sun_shafts", "reflections"]);
   assert.deepEqual(effects(night.result.rendering), [true, true, false]);
-  assert.deepEqual([night.result.rendering.sun_shafts, night.result.rendering.reflections], [true, true]);
+  assert.deepEqual([night.result.rendering.sun_shafts.active, night.result.rendering.reflections.active], [true, true]);
   assert.equal(night.observation.tick, after.observation.tick);
   const nightLook = await cli("inspect", { component: "Environment" });
   assert.notDeepEqual(nightLook.result.value.atmosphere, look.result.value.atmosphere);
@@ -185,15 +197,15 @@ try {
   assert.notDeepEqual(savedLook.atmosphere, nightLook.result.value.atmosphere);
   // The saved environment omits the opt-in effects: they are off again.
   assert.deepEqual([savedLook.sun_shafts.intensity, savedLook.reflections.intensity], [0, 0]);
-  assert.deepEqual([reloaded.result.rendering.sun_shafts, reloaded.result.rendering.reflections], [false, false]);
+  assert.deepEqual([reloaded.result.rendering.sun_shafts.active, reloaded.result.rendering.reflections.active], [false, false]);
   const lamp = await cli("inspect", { entity: "agent-lamp", component: "LocalLight" });
   assert.equal(lamp.result.entity.components.LocalLight.intensity, 20);
   const emitter = await cli("inspect", { entity: "agent-lamp", component: "ParticleEmitter" });
   assert.equal(emitter.result.entity.components.ParticleEmitter.rate, 20);
   const glass = await cli("inspect", { entity: "agent-glass-box", component: "Mesh3d" });
   assert.ok(Math.abs(glass.result.entity.components.Mesh3d.opacity - 0.4) < 1e-6);
-  assert.ok(reloaded.result.rendering.local_lights >= 1);
-  assert.ok(reloaded.result.rendering.particles > 0);
+  assert.ok(reloaded.result.rendering.local_lights.shaded >= 1);
+  assert.ok(reloaded.result.rendering.particles.drawn > 0);
   assert.ok(reloaded.result.rendering.transparent_draws >= 1);
   assert.notDeepEqual(savedLook.atmosphere, look.result.value.atmosphere);
   assert.deepEqual(effects(reloaded.result.rendering), [true, false, true]);

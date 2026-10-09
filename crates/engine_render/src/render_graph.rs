@@ -229,6 +229,8 @@ macro_rules! passes {
         /// Every pass in frame order, by its bit in the masks frames report:
         /// the pass, its name and its stage span.
         const PASSES: &[(Pass, &str, &str)] = &[$(($pass, $name, concat!("stage_", $name)),)*];
+        /// Every pass's name, by its bit.
+        const PASS_NAMES: &[&str] = &[$($name,)*];
     };
 }
 
@@ -290,22 +292,13 @@ impl Pass {
     }
 }
 
-/// The names of the passes in `mask`, such as a frame's
-/// [`RenderGraph::kept`], in frame order.
-pub(crate) fn pass_names(mask: u32) -> impl Iterator<Item = &'static str> {
-    PASSES
-        .iter()
-        .enumerate()
-        .filter(move |&(index, _)| mask & (1 << index) != 0)
-        .map(|(_, &(_, name, _))| name)
-}
-
-/// Serializes a mask of passes as the list of their names.
-pub(crate) fn serialize_passes<S: serde::Serializer>(
-    mask: &u32,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serializer.collect_seq(pass_names(*mask))
+/// The passes in `mask`, such as a frame's [`RenderGraph::kept`], as the
+/// stats report them: by name, in frame order.
+pub(crate) fn render_passes(mask: u32) -> engine_core::RenderPasses {
+    engine_core::RenderPasses {
+        bits: mask,
+        names: PASS_NAMES,
+    }
 }
 
 /// Color attachments a pass may draw into.
@@ -543,7 +536,7 @@ impl RenderGraph {
         self.nodes.iter().filter(|node| node.kept)
     }
 
-    /// The passes that run, as a mask [`pass_names`] reads.
+    /// The passes that run, as a mask [`render_passes`] reads.
     pub(crate) fn kept(&self) -> u32 {
         self.mask(true)
     }

@@ -146,6 +146,9 @@ macro_rules! core_sections {
         }
 
         impl Environment {
+            /// Every section's key, in order.
+            pub const KEYS: &'static [&'static str] = &[$(stringify!($key)),*];
+
             /// `world`'s settings as its resources hold them. A missing
             /// atmosphere reads as the default one, and a missing section
             /// resource as its feature off. An enabled time of day sets the

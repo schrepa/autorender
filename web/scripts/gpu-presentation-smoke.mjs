@@ -74,22 +74,22 @@ async function cullingSettings(label) {
   assert.deepEqual(await inspect("SubpixelCulling"), { enabled: true });
   const preview = async name => (await capture(name, { alpha: 0.5, gpu: true })).reply.result.rendering;
   const on = await preview(`${label}-culling-on`);
-  assert.equal(on.occlusion_culling, true, "GPU frames run occlusion culling by default");
-  assert.equal(on.subpixel_culling, true, "GPU frames run sub-pixel culling by default");
+  assert.equal(on.occlusion_culling.active, true, "GPU frames run occlusion culling by default");
+  assert.equal(on.subpixel_culling.active, true, "GPU frames run sub-pixel culling by default");
   assert.ok(on.render_passes.includes("occlusion_test"), "occlusion culling runs its test pass");
   const off = await command("environment", { occlusion_culling: { enabled: false }, subpixel_culling: { enabled: false } });
   assert.deepEqual(off.result.environment_changed, ["occlusion_culling", "subpixel_culling"]);
   assert.deepEqual(await inspect("OcclusionCulling"), { enabled: false });
   const without = await preview(`${label}-culling-off`);
-  assert.equal(without.occlusion_culling, false, "turned off, GPU frames skip occlusion culling");
-  assert.equal(without.subpixel_culling, false, "turned off, GPU frames skip sub-pixel culling");
-  assert.equal(without.occluded_instances, null);
-  assert.equal(without.subpixel_instances, null);
+  assert.equal(without.occlusion_culling.active, false, "turned off, GPU frames skip occlusion culling");
+  assert.equal(without.subpixel_culling.active, false, "turned off, GPU frames skip sub-pixel culling");
+  assert.equal(without.occlusion_culling.instances, null);
+  assert.equal(without.subpixel_culling.instances, null);
   assert.ok(!without.render_passes.includes("occlusion_test"), "no occlusion test runs while it is off");
   const invalid = await command("environment", { occlusion_culling: { enabled: true, phases: 2 } }, false);
   assert.equal(invalid.error.code, "invalid_request", "unknown occlusion culling fields are rejected");
   await command("environment", { occlusion_culling: { enabled: true }, subpixel_culling: { enabled: true } });
-  assert.equal((await preview(`${label}-culling-again`)).occlusion_culling, true);
+  assert.equal((await preview(`${label}-culling-again`)).occlusion_culling.active, true);
 }
 
 async function verify(workload) {

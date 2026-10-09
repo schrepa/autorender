@@ -22,9 +22,9 @@ async function present(gpu) {
   for (let frame = 0; frame < 8 || stable < 5; frame++) {
     assert.ok(frame < 600, `read-back counts settle: ${JSON.stringify(rendering)}`);
     rendering = (await command("present", { alpha: 0, gpu })).result.rendering;
-    const counts = JSON.stringify([rendering.occluded_instances, rendering.lod0_instances,
-      rendering.lod1_instances, rendering.lod2_instances, rendering.impostor_instances]);
-    stable = counts === previous && (!gpu || rendering.occluded_instances != null) ? stable + 1 : 0;
+    const counts = JSON.stringify([rendering.occlusion_culling.instances, rendering.level_of_detail.lod0_instances,
+      rendering.level_of_detail.lod1_instances, rendering.level_of_detail.lod2_instances, rendering.level_of_detail.impostor_instances]);
+    stable = counts === previous && (!gpu || rendering.occlusion_culling.instances != null) ? stable + 1 : 0;
     previous = counts;
     await delay(20);
   }
@@ -45,8 +45,8 @@ async function capture(name, gpu) {
   return { rendering, png: bytes.toString("base64") };
 }
 
-const coarser = rendering => (rendering.lod1_instances ?? 0) + (rendering.lod2_instances ?? 0)
-  + (rendering.impostor_instances ?? 0);
+const coarser = rendering => (rendering.level_of_detail.lod1_instances ?? 0) + (rendering.level_of_detail.lod2_instances ?? 0)
+  + (rendering.level_of_detail.impostor_instances ?? 0);
 
 
 try {
@@ -69,9 +69,9 @@ try {
   const cpu = await capture("overview-cpu", false);
   const gpu = await capture("overview-gpu", true);
   assert.ok(coarser(gpu.rendering) > 0, `coarser levels draw: ${JSON.stringify(gpu.rendering)}`);
-  assert.ok(gpu.rendering.impostors > 0 && gpu.rendering.impostor_instances > 0,
+  assert.ok(gpu.rendering.level_of_detail.impostors > 0 && gpu.rendering.level_of_detail.impostor_instances > 0,
     `impostors draw: ${JSON.stringify(gpu.rendering)}`);
-  assert.equal(gpu.rendering.dropped_impostors, 0);
+  assert.equal(gpu.rendering.level_of_detail.dropped_impostors, 0);
   const pixels = await differentPixels(page, [cpu.png, gpu.png], { tolerance: 8 });
   // Small objects shift by up to a pixel where impostors take over, so
   // differences run long; shading gone wrong would change far more.
@@ -80,7 +80,7 @@ try {
   // Without impostors, the mesh levels alone.
   await command("environment", { level_of_detail: { impostors: false } });
   const levels = await capture("overview-levels", true);
-  assert.equal(levels.rendering.impostor_instances ?? 0, 0, JSON.stringify(levels.rendering));
+  assert.equal(levels.rendering.level_of_detail.impostor_instances ?? 0, 0, JSON.stringify(levels.rendering));
   assert.ok(coarser(levels.rendering) > 0, `coarser levels draw: ${JSON.stringify(levels.rendering)}`);
   const levelPixels = await differentPixels(page, [cpu.png, levels.png], { tolerance: 8 });
   assert.ok(levelPixels.changed <= levelPixels.total * 0.01, `levels: ${levelPixels.changed} of ${levelPixels.total} pixels differ`);
@@ -97,7 +97,7 @@ try {
   // leaves drawing their meshes.
   await command("environment", { level_of_detail: { max_impostors: 2 } });
   const budget = await present(true);
-  assert.ok(budget.impostors > 0 && budget.impostors <= 2 && budget.dropped_impostors > 0,
+  assert.ok(budget.level_of_detail.impostors > 0 && budget.level_of_detail.impostors <= 2 && budget.level_of_detail.dropped_impostors > 0,
     `budget: ${JSON.stringify(budget)}`);
 
   // A larger pixel error draws more instances coarser; invalid settings are
@@ -117,11 +117,11 @@ try {
     overview: {
       changed_pixels: pixels.changed, level_changed_pixels: levelPixels.changed, total_pixels: pixels.total,
       exact_changed_pixels: exactPixels.changed,
-      levels: [gpu.rendering.lod0_instances, gpu.rendering.lod1_instances, gpu.rendering.lod2_instances,
-        gpu.rendering.impostor_instances],
-      impostors: gpu.rendering.impostors,
-      coarse_levels: [coarse.lod0_instances, coarse.lod1_instances, coarse.lod2_instances, coarse.impostor_instances],
-      budget: { impostors: budget.impostors, dropped: budget.dropped_impostors },
+      levels: [gpu.rendering.level_of_detail.lod0_instances, gpu.rendering.level_of_detail.lod1_instances, gpu.rendering.level_of_detail.lod2_instances,
+        gpu.rendering.level_of_detail.impostor_instances],
+      impostors: gpu.rendering.level_of_detail.impostors,
+      coarse_levels: [coarse.level_of_detail.lod0_instances, coarse.level_of_detail.lod1_instances, coarse.level_of_detail.lod2_instances, coarse.level_of_detail.impostor_instances],
+      budget: { impostors: budget.level_of_detail.impostors, dropped: budget.level_of_detail.dropped_impostors },
     },
     checks: ["settings_discoverable", "coarser_levels_draw", "impostors_draw", "impostors_within_pixels", "levels_within_pixels", "disabled_exact", "impostor_budget", "pixel_error_control", "invalid_settings_refused", "clean_browser_diagnostics"],
   }));

@@ -34,6 +34,12 @@ pub use ops::{CONTROL_OPS, QUERY_OPS};
 /// The protocol as hosts and tools need it: its version, request limit and
 /// ops, which `cargo xtask schema` writes for the web host and scripts.
 pub const PROTOCOL_SUMMARY: &str = include_str!(concat!(env!("OUT_DIR"), "/protocol.json"));
+
+/// The JSON schema of [`engine_core::FrameStats`], what every reply's
+/// `rendering` holds, which `cargo xtask schema` turns into the web host's
+/// types.
+pub const FRAME_STATS_SCHEMA: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/frame_stats.schema.json"));
 pub use terrain::{Press, TerrainEditing, change_world, edit_terrain, nav_go, press_track};
 
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;

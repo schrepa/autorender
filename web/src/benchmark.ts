@@ -1,10 +1,9 @@
 /** Bounded sampling for the opt-in development host. No ordinary-frame work. */
-import type { RuntimeStats } from "./host";
+import type { FrameStats } from "./host";
 import { percentiles } from "./statistics.ts";
 
 /** A benchmark control as the engine validated it, with its defaults. */
 export type BenchmarkOptions = { mode: "step" | "render" | "present"; warmup: number; samples: number };
-export type RenderingStats = RuntimeStats;
 export type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
 export type Reply = {
   version?: number; ok: boolean; observation?: Observation;
@@ -16,14 +15,11 @@ export class BenchmarkError extends Error {
   constructor(code: string, message: string) { super(message); this.code = code; }
 }
 
-/** The frame statistics in `json`, which agents receive as `rendering`. */
-export function readRendering(json: string): RenderingStats {
-  return JSON.parse(json) as RenderingStats;
-}
-
-/** Fields that are numbers in every one of `measurements`. */
-function numericFields(measurements: RenderingStats[]) {
-  return Object.keys(measurements[0] ?? {}).filter(field => measurements.every(stats => typeof stats[field] === "number"));
+/** Every number in `stats` by its path, such as `terrain.patches`. */
+function numbers(stats: object, prefix = ""): [string, number][] {
+  return Object.entries(stats).flatMap(([key, value]): [string, number][] =>
+    typeof value === "number" ? [[prefix + key, value]]
+      : value && typeof value === "object" && !Array.isArray(value) ? numbers(value, `${prefix}${key}.`) : []);
 }
 
 /** Percentiles of measured `values`; counts describe actual samples. */
@@ -37,7 +33,7 @@ function distribution(values: number[]) {
 type Context = {
   signal: AbortSignal;
   invoke(command: Record<string, unknown>): Reply;
-  stats(): string;
+  stats(): FrameStats;
   size(): [number, number];
   interrupted(): boolean;
 };
@@ -84,20 +80,20 @@ export async function sampleBenchmark(context: Context, options: BenchmarkOption
   invoke({ op: "input" });
   let previousTimestamp = await nextFrame();
   const frames: number[] = [];
-  const measurements: RenderingStats[] = [];
+  const measurements: FrameStats[] = [];
   let end: Observation | undefined;
   for (let index = 0; index < options.warmup + options.samples; index++) {
     const reply = invoke(options.mode === "step" ? { op: "step", ticks: 1 }
       : options.mode === "present" ? { op: "present", alpha: 0.5 } : { op: "render" });
-    const stats = readRendering(context.stats());
+    const stats = context.stats();
     check();
     // Pair CPU work with the following scheduling interval, including the final
     // sample; the interval preceding this work belongs to the preceding frame.
     const timestamp = await nextFrame();
     if (index >= options.warmup) {
       frames.push(Math.max(0, timestamp - previousTimestamp));
-      for (const [field, value] of Object.entries(stats)) {
-        if (typeof value === "number" && (!Number.isFinite(value) || value < 0)) throw new BenchmarkError("invalid_measurement", `invalid ${field} statistic`);
+      for (const [field, value] of numbers(stats)) {
+        if (!Number.isFinite(value) || value < 0) throw new BenchmarkError("invalid_measurement", `invalid ${field} statistic`);
       }
       measurements.push(stats);
     }
@@ -105,7 +101,10 @@ export async function sampleBenchmark(context: Context, options: BenchmarkOption
     end = reply.observation;
   }
   const final = invoke({ op: "assets" });
-  const range = (field: string) => ({ min: Math.min(...measurements.map(stats => stats[field] as number)), max: Math.max(...measurements.map(stats => stats[field] as number)) });
+  // Every stats path that reads a number in each sample.
+  const sampled = measurements.map(stats => new Map(numbers(stats)));
+  const paths = [...sampled[0]?.keys() ?? []].filter(path => sampled.every(values => values.has(path)));
+  const range = (path: string) => ({ min: Math.min(...sampled.map(values => values.get(path)!)), max: Math.max(...sampled.map(values => values.get(path)!)) });
   return {
     version: 1, ...options, elapsed_ms: performance.now() - startTime,
     frame_interval_ms: distribution(frames),
@@ -115,7 +114,7 @@ export async function sampleBenchmark(context: Context, options: BenchmarkOption
       render: distribution(measurements.map(stats => stats.render_ms)),
       total: distribution(measurements.map(stats => stats.simulation_ms + stats.extraction_ms + stats.render_ms)),
     },
-    rendering: { first: measurements[0], last: measurements.at(-1)!, ranges: Object.fromEntries(numericFields(measurements).map(field => [field, range(field)])) },
+    rendering: { first: measurements[0], last: measurements.at(-1)!, ranges: Object.fromEntries(paths.map(path => [path, range(path)])) },
     observation: { start: initial.observation, end }, assets: { before: initial.result, after: final.result },
     environment: { canvas_width: initialSize[0], canvas_height: initialSize[1], device_pixel_ratio: globalThis.devicePixelRatio ?? 1, user_agent: globalThis.navigator?.userAgent ?? "unknown" },
     timing: "CPU timings exclude JSON/stats collection; frame intervals include host work and browser pacing; GPU execution time is not measured",

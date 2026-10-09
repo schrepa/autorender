@@ -167,7 +167,7 @@ async function settle() {
   let resident = 0;
   for (let frame = 0; frame < 600; frame++) {
     rendering = (await command("render")).result.rendering ?? (await command("status")).result.rendering;
-    const ready = rendering.terrain_tiles > 0 && rendering.terrain_loading_tiles === 0 && rendering.terrain_fallback_patches === 0;
+    const ready = rendering.terrain.tiles > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_patches === 0;
     resident = ready ? resident + 1 : 0;
     if (resident > 1) return rendering;
     if (!ready) await new Promise(resolve => setTimeout(resolve, 25));
@@ -232,26 +232,26 @@ try {
   assert.deepEqual(fast.result.environment_changed, ["terrain"]);
   await command("camera", overview);
   const settled = await settle();
-  assert.ok(settled.terrain_patches > 0 && settled.terrain_triangles > 0, "terrain draws");
-  assert.ok(settled.terrain_shadow_patches > 0, "terrain casts shadows");
-  assert.equal(settled.dropped_terrain_tiles, 0);
-  assert.equal(settled.dropped_terrain_materials, 0);
-  assert.ok(settled.placed_objects > 0, `crates stand on the meadow: ${settled.placed_objects}`);
+  assert.ok(settled.terrain.patches > 0 && settled.terrain.triangles > 0, "terrain draws");
+  assert.ok(settled.terrain.shadow_patches > 0, "terrain casts shadows");
+  assert.equal(settled.terrain.dropped_tiles, 0);
+  assert.equal(settled.terrain.dropped_materials, 0);
+  assert.ok(settled.terrain.placed_objects > 0, `crates stand on the meadow: ${settled.terrain.placed_objects}`);
   // The pinned tiles stand a share of them everywhere.
-  assert.ok(settled.placed_far_objects > 0 && settled.placed_far_objects < settled.placed_objects,
-    `far crates: ${settled.placed_far_objects} of ${settled.placed_objects}`);
+  assert.ok(settled.terrain.placed_far_objects > 0 && settled.terrain.placed_far_objects < settled.terrain.placed_objects,
+    `far crates: ${settled.terrain.placed_far_objects} of ${settled.terrain.placed_objects}`);
   // Occupancy: the crates' covers are drawn around the camera.
-  assert.ok(settled.occupancy_redraws > 0, `the occupancy map draws: ${settled.occupancy_redraws}`);
+  assert.ok(settled.occupancy.redraws > 0, `the occupancy map draws: ${settled.occupancy.redraws}`);
   // GPU-presented frames bake the balls' impostor, which far
   // balls draw and cast as cards.
   let presented;
   for (let frame = 0; frame < 60; frame++) {
     presented = (await command("present", { alpha: 0, gpu: true })).result.rendering;
-    if (presented.placed_impostors > 0) break;
+    if (presented.terrain.placed_impostors > 0) break;
   }
-  assert.equal(presented.placed_impostors, 1, `the balls' impostor bakes: ${JSON.stringify(presented)}`);
-  assert.equal(presented.dropped_impostors, 0);
-  checks.push({ check: "streams and draws", tiles: settled.terrain_tiles, patches: settled.terrain_patches, triangles: settled.terrain_triangles, placed_impostors: presented.placed_impostors, placed_far: settled.placed_far_objects });
+  assert.equal(presented.terrain.placed_impostors, 1, `the balls' impostor bakes: ${JSON.stringify(presented)}`);
+  assert.equal(presented.level_of_detail.dropped_impostors, 0);
+  checks.push({ check: "streams and draws", tiles: settled.terrain.tiles, patches: settled.terrain.patches, triangles: settled.terrain.triangles, placed_impostors: presented.terrain.placed_impostors, placed_far: settled.terrain.placed_far_objects });
 
   // Discovery and inspection.
   const listing = await command("describe");
@@ -317,7 +317,7 @@ try {
     assert.deepEqual(edged.result.environment_changed, ["terrain"]);
     const alone = await settle();
     assert.equal((await command("inspect", { component: "Terrains" })).result.value.surroundings_patches, 0, "settings turn the surroundings off");
-    assert.equal(alone.placed_objects, surroundedFrame.placed_objects, "the surroundings place nothing");
+    assert.equal(alone.terrain.placed_objects, surroundedFrame.terrain.placed_objects, "the surroundings place nothing");
     const bare = await capture("no-surroundings");
     const filled = await differentPixels(page, [surrounded, bare]);
     assert.ok(filled.changed > 0.2 * filled.total, `the surroundings fill ${filled.changed} of ${filled.total} pixels`);
@@ -437,12 +437,12 @@ try {
 
   // A tile budget keeps residency within it and reports what it drops.
   const budget = await command("environment", { terrain: { samples_per_frame: 50_000_000, max_tiles: 3 } });
-  assert.ok(budget.result.rendering.terrain_tiles <= 3, `${budget.result.rendering.terrain_tiles} tiles under a budget of 3`);
+  assert.ok(budget.result.rendering.terrain.tiles <= 3, `${budget.result.rendering.terrain.tiles} tiles under a budget of 3`);
   const budgeted = (await command("render")).result.rendering;
-  assert.ok(budgeted.terrain_tiles <= 3 && budgeted.dropped_terrain_tiles > 0, JSON.stringify(budgeted));
+  assert.ok(budgeted.terrain.tiles <= 3 && budgeted.terrain.dropped_tiles > 0, JSON.stringify(budgeted));
   await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
   await settle();
-  checks.push({ check: "tile budget", resident: budgeted.terrain_tiles, dropped: budgeted.dropped_terrain_tiles });
+  checks.push({ check: "tile budget", resident: budgeted.terrain.tiles, dropped: budgeted.terrain.dropped_tiles });
 
   // Collision: rays hit the terrain entity where queries say the ground is.
   const ray = await command("raycast", { origin: [10, 200, -7], direction: [0, -1, 0], max_distance: 400 });
@@ -469,20 +469,20 @@ try {
   const finer = (await settle());
   const detailed = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
   assert.ok(detailed.level_ranges[0] > view.level_ranges[0], `level 0 reaches ${detailed.level_ranges[0]} m`);
-  assert.ok(finer.terrain_triangles > settled.terrain_triangles, "a smaller pixel error draws more triangles");
+  assert.ok(finer.terrain.triangles > settled.terrain.triangles, "a smaller pixel error draws more triangles");
   assert.deepEqual(fine.result.environment_changed, ["terrain"]);
   const invalid = await command("environment", { terrain: { pixel_error: 0.5 } }, false);
   assert.equal(invalid.error.code, "invalid_environment");
   assert.equal(invalid.error.path, "$.terrain.pixel_error");
   const shaded = await capture("shaded");
   const off = await command("environment", { terrain: { enabled: false } });
-  assert.equal(off.result.rendering.terrain_patches, 0);
+  assert.equal(off.result.rendering.terrain.patches, 0);
   const empty = await capture("disabled");
   const shown = await differentPixels(page, [shaded, empty]);
   assert.ok(shown.changed > 10_000, `terrain covers ${shown.changed} pixels`);
   await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
   await settle();
-  checks.push({ check: "settings section", more: finer.terrain_triangles, terrainPixels: shown.changed });
+  checks.push({ check: "settings section", more: finer.terrain.triangles, terrainPixels: shown.changed });
 
 
   // Speed-aware detail: while the camera moves fast the
@@ -556,13 +556,13 @@ try {
   const cornerView = { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] };
   await command("camera", cornerView);
   await settle();
-  const bandedObjects = (await command("render")).result.rendering.placed_objects;
+  const bandedObjects = (await command("render")).result.rendering.terrain.placed_objects;
   await command("environment", { terrain: { samples_per_frame: 50_000_000, max_bands: 1, cache_bytes: 1 } });
   await command("camera", overview);
   await settle();
   await command("camera", cornerView);
   await settle();
-  const wholeObjects = (await command("render")).result.rendering.placed_objects;
+  const wholeObjects = (await command("render")).result.rendering.terrain.placed_objects;
   assert.ok(bandedObjects > 0, "objects stand on the banded tiles");
   assert.equal(wholeObjects, bandedObjects, "banded and whole tiles place the same objects");
   await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
@@ -586,8 +586,8 @@ try {
   let controls = 0;
   for (let frame = 0; frame < 300; frame++) {
     const rendering = (await command("render")).result.rendering;
-    controls += rendering.terrain_gpu_controls;
-    if (controls > 0 && rendering.terrain_loading_tiles === 0 && rendering.terrain_fallback_patches === 0) break;
+    controls += rendering.terrain.gpu_controls;
+    if (controls > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_patches === 0) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   assert.ok(controls > 0, "the GPU gives new tiles their control values");
@@ -600,23 +600,23 @@ try {
   // pixels reading them show the ground as computing it does; turned off,
   // it keeps no sheets. Under a budget too small, the pages asked for
   // beyond it drop and the ground computes itself.
-  const vt = rendering => ({ slots: rendering.terrain_vt_slots, pages: rendering.terrain_vt_pages, bakes: rendering.terrain_vt_bakes, missing: rendering.terrain_vt_missing, dropped: rendering.dropped_terrain_vt_pages });
-  const textured = await rendersUntil(rendering => rendering.terrain_vt_pages > 0 && rendering.terrain_vt_missing === 0 && rendering.terrain_vt_bakes === 0, "the view's pages bake");
-  assert.ok(textured.terrain_vt_slots >= textured.terrain_vt_pages && textured.dropped_terrain_vt_pages === 0, `pages bake into the sheets: ${JSON.stringify(vt(textured))}`);
+  const vt = rendering => ({ slots: rendering.terrain.vt_slots, pages: rendering.terrain.vt_pages, bakes: rendering.terrain.vt_bakes, missing: rendering.terrain.vt_missing, dropped: rendering.terrain.dropped_vt_pages });
+  const textured = await rendersUntil(rendering => rendering.terrain.vt_pages > 0 && rendering.terrain.vt_missing === 0 && rendering.terrain.vt_bakes === 0, "the view's pages bake");
+  assert.ok(textured.terrain.vt_slots >= textured.terrain.vt_pages && textured.terrain.dropped_vt_pages === 0, `pages bake into the sheets: ${JSON.stringify(vt(textured))}`);
   const bakedView = await capture("virtual-texture");
   await command("environment", { terrain: { samples_per_frame: 50_000_000, virtual_texture: false } });
   const computed = await settle();
-  assert.ok(computed.terrain_vt_slots === 0 && computed.terrain_vt_pages === 0, `turned off, it keeps nothing: ${JSON.stringify(vt(computed))}`);
+  assert.ok(computed.terrain.vt_slots === 0 && computed.terrain.vt_pages === 0, `turned off, it keeps nothing: ${JSON.stringify(vt(computed))}`);
   const computedView = await capture("virtual-texture-off");
   const reading = await differentPixels(page, [bakedView, computedView]);
   const seen = await differentPixels(page, [bakedView, computedView], { tolerance: 8 });
   assert.ok(reading.changed > 0 && seen.changed < seen.total * 0.03, `pixels read the pages (${reading.changed} differ) and show the computed ground (${seen.changed} of ${seen.total} by more than 8)`);
   await command("environment", { terrain: { samples_per_frame: 50_000_000, virtual_texture_pages: 4 } });
-  const scarce = await rendersUntil(rendering => rendering.dropped_terrain_vt_pages > 0, "pages beyond the budget drop");
-  assert.ok(scarce.terrain_vt_slots === 4 && scarce.terrain_vt_pages <= 4, `the budget bounds the pages: ${JSON.stringify(vt(scarce))}`);
+  const scarce = await rendersUntil(rendering => rendering.terrain.dropped_vt_pages > 0, "pages beyond the budget drop");
+  assert.ok(scarce.terrain.vt_slots === 4 && scarce.terrain.vt_pages <= 4, `the budget bounds the pages: ${JSON.stringify(vt(scarce))}`);
   await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
   await settle();
-  checks.push({ check: "virtual texture", pages: textured.terrain_vt_pages, slots: textured.terrain_vt_slots, read: reading.changed, differing: seen.changed, dropped: scarce.dropped_terrain_vt_pages });
+  checks.push({ check: "virtual texture", pages: textured.terrain.vt_pages, slots: textured.terrain.vt_slots, read: reading.changed, differing: seen.changed, dropped: scarce.terrain.dropped_vt_pages });
 
   // The terrain control: development views change pixels, freezing keeps
   // the patches while the camera moves away.
@@ -637,19 +637,19 @@ try {
   let grown;
   for (let frame = 0; frame < 60; frame++) {
     grown = (await command("render")).result.rendering;
-    if (grown.ground_cover_blades > 0) break;
+    if (grown.ground_cover.blades > 0) break;
     // The tiles around the eye arrive from workers.
     await new Promise(resolve => setTimeout(resolve, 25));
   }
-  assert.ok(grown.ground_cover_blades > 0, `grass grows: ${JSON.stringify(grown)}`);
-  assert.equal(grown.dropped_ground_cover, 0);
+  assert.ok(grown.ground_cover.blades > 0, `grass grows: ${JSON.stringify(grown)}`);
+  assert.equal(grown.ground_cover.dropped, 0);
   const cover = (await command("inspect", { component: "GroundCover" })).result.value;
   await command("environment", { ground_cover: { ...cover, enabled: false } });
   let bare;
   for (let frame = 0; frame < 8; frame++) bare = (await command("render")).result.rendering;
-  assert.equal(bare.ground_cover_blades, 0, "no blades once cover stops");
+  assert.equal(bare.ground_cover.blades, 0, "no blades once cover stops");
   await command("environment", { ground_cover: cover });
-  checks.push({ check: "ground cover", blades: grown.ground_cover_blades });
+  checks.push({ check: "ground cover", blades: grown.ground_cover.blades });
   // The wind blades and swaying crates bend in: its section
   // reads back as set, and refuses speeds out of range.
   const calm = (await command("inspect", { component: "Wind" })).result.value;
@@ -667,13 +667,13 @@ try {
   const coarse = await command("environment", { occupancy: { ...occupancy, resolution: 16 } }, false);
   assert.equal(coarse.error.path, "$.occupancy.resolution");
   await command("environment", { occupancy });
-  checks.push({ check: "occupancy", redraws: settled.occupancy_redraws });
+  checks.push({ check: "occupancy", redraws: settled.occupancy.redraws });
   // Contact shadows trace with the frame's effects: the
   // blades and crates darken the sun's light where they reach; the section
   // reads back as set and refuses rays out of range.
   const contact = (await command("inspect", { component: "ContactShadows" })).result.value;
   const traced = (await command("environment", { contact_shadows: contact })).result.rendering;
-  assert.equal(traced.contact_shadows, true, "contact shadows trace");
+  assert.equal(traced.contact_shadows.active, true, "contact shadows trace");
   const withContact = await capture("contact-shadows");
   await command("environment", { contact_shadows: { ...contact, enabled: false } });
   const withoutContact = await capture("no-contact-shadows");
@@ -699,7 +699,7 @@ try {
   const waterSettings = (await command("inspect", { component: "Water" })).result.value;
   await command("camera", overview);
   const wet = (await command("environment", { water: waterSettings })).result.rendering;
-  assert.ok(wet.water_chunks > 0, `water draws: ${wet.water_chunks}`);
+  assert.ok(wet.water.chunks > 0, `water draws: ${wet.water.chunks}`);
   const withWater = await capture("water");
   await command("environment", { water: { ...waterSettings, enabled: false } });
   const withoutWater = await capture("no-water");
@@ -708,7 +708,7 @@ try {
   const murky = await command("environment", { water: { ...waterSettings, clarity: 0 } }, false);
   assert.equal(murky.error.path, "$.water.clarity");
   await command("environment", { water: waterSettings });
-  checks.push({ check: "water", lake_samples: lakes.length, chunks: wet.water_chunks, pixels: waterPixels.changed });
+  checks.push({ check: "water", lake_samples: lakes.length, chunks: wet.water.chunks, pixels: waterPixels.changed });
   // The sea stands at its level wherever the ground lies
   // lower: queries sum the waves frames draw, which move with time and stay
   // within their height, its sectors draw, and a camera just over the
@@ -734,7 +734,7 @@ try {
     const down = offset => ({ position: [deepest[0], surface + offset, deepest[1]], target: [deepest[0], surface - 50, deepest[1] + 0.01], vertical_fov_radians: 0.2, near: 0.05, far: 2000 });
     await command("camera", down(0.3));
     const afloat = (await command("render")).result.rendering;
-    assert.ok(afloat.ocean_sectors > 0 && afloat.ocean_triangles > 0, `the sea draws: ${afloat.ocean_sectors} sectors`);
+    assert.ok(afloat.ocean.sectors > 0 && afloat.ocean.triangles > 0, `the sea draws: ${afloat.ocean.sectors} sectors`);
     const above = await capture("sea-above");
     await command("camera", down(-0.3));
     const below = await capture("sea-below");
@@ -766,7 +766,7 @@ try {
     assert.equal(sparse.error.path, "$.ocean.waves");
     await command("environment", { ocean: still });
     await command("camera", overview);
-    checks.push({ check: "ocean", sectors: afloat.ocean_sectors, triangles: afloat.ocean_triangles, amplitude: tide.amplitude, depth, crossing: crossing.changed, buoy: buoy.translation[1], veiled: veiled.changed });
+    checks.push({ check: "ocean", sectors: afloat.ocean.sectors, triangles: afloat.ocean.triangles, amplitude: tide.amplitude, depth, crossing: crossing.changed, buoy: buoy.translation[1], veiled: veiled.changed });
   }
   // Inside an interior's box the ground takes a tenth of the
   // sky and sun: looking straight down at the box's edge, the half inside
@@ -973,7 +973,7 @@ try {
     const clear = await capture("sky-clear");
     const layer = { enabled: true, coverage: 0.6, base: 600, thickness: 900, density: 1, wind: [8, 3], scale: 2000, seed: 3, shadows: 0.75, resolution: 1024, slices: 16 };
     const clouded = (await command("environment", { clouds: layer })).result.rendering;
-    assert.equal(clouded.cloud_rows, 256, `exact frames march the whole dome: ${clouded.cloud_rows}`);
+    assert.equal(clouded.clouds.rows, 256, `exact frames march the whole dome: ${clouded.clouds.rows}`);
     const view = (await command("inspect", { component: "Clouds" })).result.value;
     assert.ok(Math.abs(view.coverage - 0.6) < 1e-6, `coverage reads back: ${view.coverage}`);
     const cloudy = await capture("sky-clouds");
@@ -990,22 +990,22 @@ try {
     // which the dome cannot show; off, only the dome shows them.
     await command("camera", { position: [0, 1900, 1], target: [400, 0, 300], vertical_fov_radians: 1.0, near: 0.5, far: 8000 });
     const over = (await command("environment", { clouds: layer })).result.rendering;
-    assert.ok(over.cloud_view_blocks > 0, `the view marches its clouds: ${over.cloud_view_blocks}`);
+    assert.ok(over.clouds.view_blocks > 0, `the view marches its clouds: ${over.clouds.view_blocks}`);
     const below = await capture("clouds-below");
     const domed = (await command("environment", { clouds: { ...layer, in_view: false } })).result.rendering;
-    assert.equal(domed.cloud_view_blocks, 0, "off, the view marches none");
+    assert.equal(domed.clouds.view_blocks, 0, "off, the view marches none");
     const domeOnly = await capture("clouds-dome-only");
     const viewPixels = await differentPixels(page, [below, domeOnly]);
     assert.ok(viewPixels.changed > 20000, `clouds lie below the camera: ${viewPixels.changed} pixels`);
     const blockless = await command("environment", { clouds: { ...layer, view_block: 0 } }, false);
     assert.equal(blockless.error.path, "$.clouds.view_block");
     const none = (await command("environment", { clouds: { ...layer, coverage: 0 } })).result.rendering;
-    assert.equal(none.cloud_rows, 0, "no coverage marches nothing");
+    assert.equal(none.clouds.rows, 0, "no coverage marches nothing");
     const odd = await command("environment", { clouds: { ...layer, resolution: 1000 } }, false);
     assert.equal(odd.error.path, "$.clouds.resolution");
     await command("environment", { clouds: { ...layer, enabled: false } });
     await command("camera", overview);
-    checks.push({ check: "clouds", rows: clouded.cloud_rows, pixels: cloudPixels.changed, shadows: shadowPixels.changed, view_blocks: over.cloud_view_blocks, below: viewPixels.changed });
+    checks.push({ check: "clouds", rows: clouded.clouds.rows, pixels: cloudPixels.changed, shadows: shadowPixels.changed, view_blocks: over.clouds.view_blocks, below: viewPixels.changed });
   }
   // The physically based sky is opt-in: its tables of the
   // air build once, the sky-view again for each step of the sun, which the
@@ -1015,13 +1015,13 @@ try {
     await command("camera", { position: [0, 60, 0], target: [300, 200, 200], vertical_fov_radians: 1.0, near: 0.5, far: 4000 });
     const authored = await capture("sky-authored");
     const first = (await command("environment", { sky: {}, time_of_day: { hours: 12 } })).result.rendering;
-    assert.equal(first.sky_tables, 3, `the air's tables and the sky-view build: ${first.sky_tables}`);
-    assert.equal((await command("render")).result.rendering.sky_tables, 0, "unchanged, nothing builds");
+    assert.equal(first.sky.tables, 3, `the air's tables and the sky-view build: ${first.sky.tables}`);
+    assert.equal((await command("render")).result.rendering.sky.tables, 0, "unchanged, nothing builds");
     const noon = await capture("sky-noon");
     const replaced = await differentPixels(page, [authored, noon]);
     assert.ok(replaced.changed > 20000, `the physical sky replaces the authored one: ${replaced.changed} pixels`);
     const step = (await command("environment", { time_of_day: { hours: 19.3 } })).result.rendering;
-    assert.equal(step.sky_tables, 1, `the sun's step builds the sky-view alone: ${step.sky_tables}`);
+    assert.equal(step.sky.tables, 1, `the sun's step builds the sky-view alone: ${step.sky.tables}`);
     const dusk = await capture("sky-dusk");
     const [noonColor, duskColor] = [await skyColor(noon), await skyColor(dusk)];
     assert.ok(duskColor[0] / Math.max(duskColor[2], 1) > noonColor[0] / Math.max(noonColor[2], 1),
@@ -1031,7 +1031,7 @@ try {
     assert.equal((await command("environment", { sky: { mie_g: 2 } }, false)).error.path, "$.sky.mie_g");
     assert.equal((await command("environment", { time_of_day: { hours: 25 } }, false)).error.path, "$.time_of_day.hours");
     const off = (await command("environment", { sky: { enabled: false }, time_of_day: { enabled: false } })).result.rendering;
-    assert.equal(off.sky_tables, 0, "without the sky nothing builds");
+    assert.equal(off.sky.tables, 0, "without the sky nothing builds");
     await command("camera", overview);
     checks.push({ check: "sky", noon: noonColor.map(Math.round), dusk: duskColor.map(Math.round), replaced: replaced.changed });
   }
@@ -1046,14 +1046,14 @@ try {
     let rendering;
     for (let frame = 0; frame < 40; frame++) {
       rendering = (await command("present", { alpha: 1, gpu: true })).result.rendering;
-      if (frame > 8 && rendering.shadow_levels_pending === 0) break;
+      if (frame > 8 && rendering.shadows.levels_pending === 0) break;
     }
     await command("capture", { alpha: 1, gpu: true });
     const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
     return { rendering, image: bytes.toString("base64") };
   };
   const leveled = await gpuCapture("kept-levels", { ...reachless, levels: 2, level_extent: 64 });
-  assert.equal(leveled.rendering.shadow_levels_pending, 0, `kept levels build: ${JSON.stringify(leveled.rendering)}`);
+  assert.equal(leveled.rendering.shadows.levels_pending, 0, `kept levels build: ${JSON.stringify(leveled.rendering)}`);
   const unleveled = await gpuCapture("kept-map-only", { ...reachless, levels: 0 });
   const levelPixels = await differentPixels(page, [leveled.image, unleveled.image]);
   assert.ok(levelPixels.changed > 100, `kept levels change ${levelPixels.changed} pixels`);
@@ -1067,15 +1067,15 @@ try {
   let sky;
   for (let frame = 0; frame < 200; frame++) {
     sky = (await command("render")).result.rendering;
-    if (sky.terrain_sky_maps === 2 && sky.terrain_sky_rows === 0) break;
-    if (sky.terrain_sky_maps < 2) await new Promise(resolve => setTimeout(resolve, 25));
+    if (sky.terrain.sky_maps === 2 && sky.terrain.sky_rows === 0) break;
+    if (sky.terrain.sky_maps < 2) await new Promise(resolve => setTimeout(resolve, 25));
   }
   // One for the terrain and one for its surroundings.
-  assert.equal(sky.terrain_sky_maps, 2, `the sky maps build: ${JSON.stringify(sky)}`);
+  assert.equal(sky.terrain.sky_maps, 2, `the sky maps build: ${JSON.stringify(sky)}`);
   await command("terrain", { view: "sky" });
   const skyView = await capture("view-sky");
   assert.ok((await differentPixels(page, [baseline, skyView])).changed > 10_000, "the sky view differs");
-  checks.push({ check: "sky visibility", maps: sky.terrain_sky_maps });
+  checks.push({ check: "sky visibility", maps: sky.terrain.sky_maps });
   await command("terrain", { view: "shaded" });
   const frozen = await command("terrain", { freeze: true });
   assert.ok(Array.isArray(frozen.result.frozen_at));
@@ -1092,7 +1092,7 @@ try {
   assert.notEqual(moved, before, "unfrozen, patches follow the camera");
   await command("camera", overview);
   await settle();
-  checks.push({ check: "terrain control", frozenPatches: before, visibleFromAfar: afar.terrain_patches, unfrozenPatches: moved });
+  checks.push({ check: "terrain control", frozenPatches: before, visibleFromAfar: afar.terrain.patches, unfrozenPatches: moved });
 
   // Long shadows: a low sun behind the dome, with shadow maps
   // reaching 60 m, shadows the plateau through the horizon map alone. A new
@@ -1103,20 +1103,20 @@ try {
   // The control renders a frame with the new sun.
   const rebuilt = (await command("environment", { atmosphere, shadows })).result.rendering;
   // The terrain's and its surroundings'.
-  assert.equal(rebuilt.terrain_horizons, 2);
-  assert.ok(rebuilt.terrain_horizon_builds >= 1, `a new sun rebuilds: ${JSON.stringify(rebuilt)}`);
-  assert.equal((await command("render")).result.rendering.terrain_horizon_builds, 0, "an unchanged sun keeps the map");
+  assert.equal(rebuilt.terrain.horizons, 2);
+  assert.ok(rebuilt.terrain.horizon_builds >= 1, `a new sun rebuilds: ${JSON.stringify(rebuilt)}`);
+  assert.equal((await command("render")).result.rendering.terrain.horizon_builds, 0, "an unchanged sun keeps the map");
   const above = { ...overview, position: [-60, 320, 220], target: [0, 30, 0] };
   await command("camera", above);
   await settle();
   const long = await capture("horizon-shadows");
   const flat = await command("environment", { terrain: { samples_per_frame: 50_000_000, sun_shadows: false } });
-  assert.equal(flat.result.rendering.terrain_horizons, 0);
+  assert.equal(flat.result.rendering.terrain.horizons, 0);
   await settle();
   const short = await capture("map-shadows-only");
   const lengthened = await differentPixels(page, [long, short]);
   assert.ok(lengthened.changed > 20_000, `the dome's long shadow covers ${lengthened.changed} pixels`);
-  checks.push({ check: "horizon shadows", builds: rebuilt.terrain_horizon_builds, pixels: lengthened.changed });
+  checks.push({ check: "horizon shadows", builds: rebuilt.terrain.horizon_builds, pixels: lengthened.changed });
 
   // Aerial perspective: thick air from the eye hazes the
   // terrain; none leaves it as it was.
@@ -1173,10 +1173,10 @@ try {
   let streamed;
   for (let attempt = 0; attempt < 60; attempt++) {
     streamed = (await command("render")).result.rendering;
-    if (streamed.terrain_tiles > 0 && streamed.terrain_loading_tiles === 0 && streamed.terrain_fallback_patches === 0) break;
+    if (streamed.terrain.tiles > 0 && streamed.terrain.loading_tiles === 0 && streamed.terrain.fallback_patches === 0) break;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  assert.equal(streamed.terrain_loading_tiles, 0, "file tiles arrive");
+  assert.equal(streamed.terrain.loading_tiles, 0, "file tiles arrive");
   const read = await heights([[10, -7], [-200, 150], [300, -310]]);
   for (const [index, sample] of read.entries()) {
     assert.ok(sample && generated[index], `point ${index} resident from both`);
@@ -1184,18 +1184,18 @@ try {
       assert.ok(Math.abs(sample.height - generated[index].height) < 2e-3, `file height ${sample.height} vs ${generated[index].height}`);
     }
   }
-  checks.push({ check: "ETR1 file streaming", tiles: streamed.terrain_tiles });
+  checks.push({ check: "ETR1 file streaming", tiles: streamed.terrain.tiles });
 
   // Running frames capture the probe's faces with terrain in them.
   await command("resume");
   let probes;
-  for (let attempt = 0; attempt < 50 && !(probes?.reflection_probes > 0); attempt++) {
+  for (let attempt = 0; attempt < 50 && !(probes?.reflection_probes?.ready > 0); attempt++) {
     await new Promise(resolve => setTimeout(resolve, 200));
     probes = (await command("status")).result.rendering;
   }
   await command("pause");
-  assert.ok(probes.reflection_probes > 0, `probe captured: ${JSON.stringify(probes)}`);
-  checks.push({ check: "probe captures", probes: probes.reflection_probes });
+  assert.ok(probes.reflection_probes.ready > 0, `probe captured: ${JSON.stringify(probes)}`);
+  checks.push({ check: "probe captures", probes: probes.reflection_probes.ready });
 
   // Version 8 scenes cannot author terrain or aerial perspective.
   const old = structuredClone(fixture);

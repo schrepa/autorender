@@ -72,14 +72,14 @@ try {
   assert.equal(initial.resident_meshes, 1);
   assert.equal(initial.resident_textures, 0, "First offscreen appearance must not upload texture pixels.");
   assert.equal((await command("assets")).result.texture_assets[0].gpu_resident, false);
-  assert.equal(initial.shadows_enabled, false);
+  assert.equal(initial.shadows.active, false);
 
   // An off-screen caster needs its mesh for the shadow maps, never its texture.
   const lit = await command("environment", { shadows: { enabled: true } });
   assert.deepEqual(lit.result.environment_changed, ["shadows"]);
   const shadowed = stats(lit);
-  assert.equal(shadowed.shadows_enabled, true);
-  assert.ok(shadowed.shadow_draws > 0);
+  assert.equal(shadowed.shadows.active, true);
+  assert.ok(shadowed.shadows.draws > 0);
   assert.equal(shadowed.instances, 1);
   assert.equal(shadowed.resident_meshes, 2, "An off-screen shadow caster uploads its mesh.");
   assert.equal(shadowed.resident_textures, 0, "Shadow maps must not upload caster textures.");
@@ -120,7 +120,7 @@ try {
   // and culled casters must still shadow the view.
   delete complex.environment;
   const reloaded = await scene.reload(command, complex);
-  assert.equal(reloaded.result.rendering.shadows_enabled, true);
+  assert.equal(reloaded.result.rendering.shadows.active, true);
   cases.push(await equivalent("hierarchy-shear-borders", camera));
   cases.push(await equivalent("angled-camera", { ...camera, position: [8, 6, 12], target: [0, 0.6, 0] }));
 

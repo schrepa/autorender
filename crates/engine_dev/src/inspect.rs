@@ -1008,6 +1008,7 @@ impl DevTools {
             types.push(json!({"name": "SceneDocument", "kind": "authoring", "source": engine_scene::schema_path()}));
             types.push(json!({"name": "protocol", "kind": "protocol"}));
             types.push(json!({"name": "BrowserControl", "kind": "protocol"}));
+            types.push(json!({"name": "FrameStats", "kind": "observation"}));
             return Ok(json!({"types": types}));
         };
         match name {
@@ -1022,6 +1023,13 @@ impl DevTools {
                 .expect("generated schemas are JSON");
                 Ok(
                     json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": "version=1; every control but pause and resume requires a paused host; reload revisions must fit u64. Spatial queries need CollisionPlugin but no pause: positions/endpoints within +/-1e6; nonzero finite directions; distance[0,2e6]; shape dimensions[1e-4,1e4]; normalized XYZW rotation. Symmetric layer filtering; sensors include/exclude/only. Raycast/cast return closest complete hit, terrain heightfields included; casts translate with fixed orientation. Terrain height takes 1..256 [x,z] points (null where no tile is resident); terrain sweep compares queries, collision rays and layers over samples2..64 per side within half_extent0..4096. Overlap limit1..100; budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, paged1..100, with attempted and committed ticks. Present/capture alpha finite[0,1]; preview preserves clocks/input. The terrain control sets pixel_error1..64, freezes streaming at the camera's position, and shows shaded, levels, normals, tiles, materials, sky or detail. Ordinary render/step/capture show current poses. Benchmark warmup0..120, samples1..240; step advances one tick, present samples alpha0.5 without ticks; clears input. Controls do not save source."}),
+                )
+            }
+            "FrameStats" => {
+                let schema: Value = serde_json::from_str(crate::FRAME_STATS_SCHEMA)
+                    .expect("generated schema is JSON");
+                Ok(
+                    json!({"name": name, "kind": "observation", "schema": schema, "source": "every successful reply's result.rendering: the last frame's stats"}),
                 )
             }
             _ => {
