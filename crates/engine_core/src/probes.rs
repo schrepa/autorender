@@ -23,8 +23,8 @@ use bevy_ecs::{
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::{InvalidSetting, check_budget};
 use crate::extraction::Nearest;
+use crate::rules::{ExtraRules, settings};
 use crate::{GlobalTransforms, RenderSnapshot, TransformIndex};
 
 /// Captures its surroundings from its entity's world position into an
@@ -100,42 +100,33 @@ impl ReflectionProbe {
     }
 }
 
-/// Reflection probe settings. Requires version 8.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneReflectionProbes")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct ReflectionProbes {
-    pub enabled: bool,
-    /// Texels across each face of every environment map, the sky's
-    /// included: a power of two from 16 to 1024.
-    #[cfg_attr(feature = "schema", schemars(range(min = 16, max = 1024)))]
-    pub resolution: u32,
-    /// An optional budget of probes kept captured; beyond it the probes
-    /// nearest the camera win. Omitted, as many as the GPU's texture arrays
-    /// hold.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_probes: Option<u32>,
-    /// Cube faces captured per frame while probes wait: more fill new places
-    /// sooner, fewer keep those frames lighter.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    pub faces_per_frame: u32,
-}
-
-impl Default for ReflectionProbes {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            resolution: 128,
-            max_probes: None,
-            faces_per_frame: 1,
-        }
+settings! {
+    /// Reflection probe settings. Requires version 8.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneReflectionProbes")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct ReflectionProbes {
+        /// Whether surfaces reflect probes.
+        pub enabled: bool = true => any,
+        /// Texels across each face of every environment map, the sky's
+        /// included.
+        pub resolution: u32 = 128 => power_of_two(16, 1024),
+        /// An optional budget of probes kept captured; beyond it the probes
+        /// nearest the camera win. Omitted, as many as the GPU's texture arrays
+        /// hold.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub max_probes: Option<u32> = None => budget,
+        /// Cube faces captured per frame while probes wait: more fill new places
+        /// sooner, fewer keep those frames lighter.
+        pub faces_per_frame: u32 = 1 => at_least(1),
     }
 }
+
+impl ExtraRules for ReflectionProbes {}
 
 impl ReflectionProbes {
     /// What a world without these settings reads as: no reflection probes.
@@ -143,33 +134,6 @@ impl ReflectionProbes {
         Self {
             enabled: false,
             ..Self::default()
-        }
-    }
-
-    /// Ok for a resolution that is a power of two from 16 to 1024, a budget
-    /// of at least one probe and at least one face per frame.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        if !(self.resolution.is_power_of_two() && (16..=1024).contains(&self.resolution)) {
-            return Err(InvalidSetting::new(
-                "resolution",
-                "must be a power of two from 16 to 1024",
-            ));
-        }
-        check_budget("max_probes", self.max_probes)?;
-        if self.faces_per_frame == 0 {
-            return Err(InvalidSetting::new("faces_per_frame", "must be at least 1"));
-        }
-        Ok(())
-    }
-
-    /// The resolution rounded up to a power of two in `[16, 1024]`, a budget
-    /// of at least one probe and at least one face per frame.
-    pub fn sanitized(self) -> Self {
-        Self {
-            enabled: self.enabled,
-            resolution: self.resolution.clamp(16, 1024).next_power_of_two(),
-            max_probes: self.max_probes.map(|budget| budget.max(1)),
-            faces_per_frame: self.faces_per_frame.max(1),
         }
     }
 }

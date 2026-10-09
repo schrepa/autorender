@@ -11,6 +11,15 @@ struct Sections(serde_json::Map<String, serde_json::Value>);
 impl engine_scene::SectionVisitor for Sections {
     fn section<T: engine_scene::EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
         let schema = serde_json::to_value(T::schema()).expect("schema serializes");
+        // Agents learn each field from its own doc comment.
+        for (field, property) in schema["properties"].as_object().into_iter().flatten() {
+            if property["description"].as_str().is_none_or(str::is_empty) {
+                panic!(
+                    "{}.{field} needs a doc comment: sections describe themselves",
+                    T::NAME
+                );
+            }
+        }
         self.0.insert(T::NAME.to_owned(), schema);
     }
 }

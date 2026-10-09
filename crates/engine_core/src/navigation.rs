@@ -19,32 +19,28 @@ use serde::{Deserialize, Serialize};
 
 use crate::environment::{InvalidSetting, check_range};
 use crate::math::{clamp, max};
+use crate::rules::{ExtraRules, settings};
 use crate::{FixedTime, JobId, Jobs, Parent, Terrains, Transform};
 
-/// Navigation: whether agents walk, and the samples of
-/// search work each fixed tick does at most over every walk being searched
-/// (at least 1024). Requires version 9.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneNavigation")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct Navigation {
-    pub enabled: bool,
-    #[cfg_attr(feature = "schema", schemars(range(min = 1024)))]
-    pub samples_per_tick: u32,
-}
-
-impl Default for Navigation {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            samples_per_tick: 32_768,
-        }
+settings! {
+    /// Navigation. Requires version 9.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneNavigation")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Navigation {
+        /// Whether agents walk.
+        pub enabled: bool = true => any,
+        /// The samples of search work each fixed tick does at most over every
+        /// walk being searched.
+        pub samples_per_tick: u32 = 32_768 => at_least(1024),
     }
 }
+
+impl ExtraRules for Navigation {}
 
 impl Navigation {
     /// What a world without these settings reads as: no agents walking.
@@ -52,25 +48,6 @@ impl Navigation {
         Self {
             enabled: false,
             ..Self::default()
-        }
-    }
-
-    /// The first field out of range.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        if self.samples_per_tick < 1024 {
-            return Err(InvalidSetting::new(
-                "samples_per_tick",
-                "must be at least 1024",
-            ));
-        }
-        Ok(())
-    }
-
-    /// Every value in range.
-    pub fn sanitized(self) -> Self {
-        Self {
-            enabled: self.enabled,
-            samples_per_tick: self.samples_per_tick.max(1024),
         }
     }
 }

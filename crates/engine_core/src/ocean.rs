@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::environment::{InvalidSetting, check_range};
 use crate::math::{clamp, max, min, sin_cos};
+use crate::rules::{ExtraRules, settings};
 use crate::{FixedTime, Parent, Transform};
 
 /// Most waves a sea holds ([`Ocean::waves`]).
@@ -28,55 +29,68 @@ pub const MAX_OCEAN_WAVES: usize = 16;
 /// Gravity's pull on the waves (meters per second squared).
 const GRAVITY: f32 = 9.81;
 
-/// The sea: whether it draws; the height of the still sea (world meters,
-/// -10000 to 10000); the wind that raised it (meters per second along x and
-/// z), whose speed (0.5 to 30) sets the waves' height and length and whose
-/// direction heads them; how sharply crests stand (0, round swells, to 1,
-/// nearly breaking); the waves it holds (1 to 16); the seed of their
-/// headings and phases; the color deep water scatters back (linear, each 0
-/// to 1); the meters of water through which half the light passes (0.1 to
-/// 100); how much foam crests and shores gather (0 to 1); and the meters
-/// from the camera it draws (100 to 100000). Requires version 9.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneOcean")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct Ocean {
-    pub enabled: bool,
-    #[cfg_attr(feature = "schema", schemars(range(min = -10000.0, max = 10000.0)))]
-    pub level: f32,
-    pub wind: [f32; 2],
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub choppiness: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 16)))]
-    pub waves: u32,
-    pub seed: u32,
-    pub color: [f32; 3],
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 100.0)))]
-    pub clarity: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub foam: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 100.0, max = 100000.0)))]
-    pub reach: f32,
+settings! {
+    /// The sea. Requires version 9.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneOcean")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Ocean {
+        /// Whether the sea draws.
+        pub enabled: bool = false => any,
+        /// The height of the still sea, world meters.
+        pub level: f32 = 0.0 => range(-10_000.0, 10_000.0),
+        /// The wind that raised it, meters per second along x and z: its speed,
+        /// from 0.5 to 30, sets the waves' height and length and its direction
+        /// heads them.
+        pub wind: [f32; 2] = [6.0, 2.0] => range(-30.0, 30.0),
+        /// How sharply crests stand: 0 round swells, 1 nearly breaking.
+        pub choppiness: f32 = 0.7 => range(0.0, 1.0),
+        /// The waves the sea holds.
+        pub waves: u32 = 12 => range(1, MAX_OCEAN_WAVES),
+        /// The seed of their headings and phases.
+        pub seed: u32 = 1 => any,
+        /// The color deep water scatters back, linear.
+        pub color: [f32; 3] = [0.004, 0.032, 0.055] => range(0.0, 1.0),
+        /// The meters of water through which half the light passes.
+        pub clarity: f32 = 8.0 => range(0.1, 100.0),
+        /// How much foam crests and shores gather.
+        pub foam: f32 = 0.5 => range(0.0, 1.0),
+        /// The meters from the camera the sea draws.
+        pub reach: f32 = 20_000.0 => range(100.0, 100_000.0),
+    }
 }
 
-impl Default for Ocean {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            level: 0.0,
-            wind: [6.0, 2.0],
-            choppiness: 0.7,
-            waves: 12,
-            seed: 1,
-            color: [0.004, 0.032, 0.055],
-            clarity: 8.0,
-            foam: 0.5,
-            reach: 20_000.0,
+impl ExtraRules for Ocean {
+    /// The wind's speed lies from 0.5 to 30 meters per second.
+    fn check_extra(&self) -> Result<(), InvalidSetting> {
+        let [x, z] = self.wind;
+        let speed = (x * x + z * z).sqrt();
+        if (0.5..=30.0).contains(&speed) {
+            Ok(())
+        } else {
+            Err(InvalidSetting::new(
+                "wind",
+                "must have a speed in [0.5, 30]",
+            ))
         }
+    }
+
+    /// The wind rescaled to a speed from 0.5 to 30, the default without a
+    /// heading.
+    fn sanitize_extra(self) -> Self {
+        let [x, z] = self.wind;
+        let speed = (x * x + z * z).sqrt();
+        let wind = if speed > 1.0e-3 {
+            let scale = clamp(speed, 0.5, 30.0) / speed;
+            [x * scale, z * scale]
+        } else {
+            Self::default().wind
+        };
+        Self { wind, ..self }
     }
 }
 
@@ -152,63 +166,6 @@ impl Ocean {
         Self {
             enabled: false,
             ..Self::default()
-        }
-    }
-
-    /// The first field out of range.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("level", self.level, -10_000.0..=10_000.0)?;
-        for value in self.wind {
-            check_range("wind", value, -30.0..=30.0)?;
-        }
-        let [x, z] = self.wind;
-        check_range("wind", (x * x + z * z).sqrt(), 0.5..=30.0)?;
-        check_range("choppiness", self.choppiness, 0.0..=1.0)?;
-        if !(1..=MAX_OCEAN_WAVES as u32).contains(&self.waves) {
-            return Err(InvalidSetting::new(
-                "waves",
-                format!("must be in [1, {MAX_OCEAN_WAVES}]"),
-            ));
-        }
-        for value in self.color {
-            check_range("color", value, 0.0..=1.0)?;
-        }
-        check_range("clarity", self.clarity, 0.1..=100.0)?;
-        check_range("foam", self.foam, 0.0..=1.0)?;
-        check_range("reach", self.reach, 100.0..=100_000.0)
-    }
-
-    /// Every value in range: out-of-range values clamp, unusable ones
-    /// fall back to the defaults.
-    pub fn sanitized(self) -> Self {
-        let defaults = Self::default();
-        let within = |value: f32, low: f32, high: f32, fallback: f32| {
-            if value.is_finite() {
-                clamp(value, low, high)
-            } else {
-                fallback
-            }
-        };
-        let [x, z] = self.wind;
-        let speed = (x * x + z * z).sqrt();
-        let wind = if speed.is_finite() && speed > 1.0e-3 {
-            let scale = clamp(speed, 0.5, 30.0) / speed;
-            [x * scale, z * scale]
-        } else {
-            defaults.wind
-        };
-        Self {
-            enabled: self.enabled,
-            level: within(self.level, -10_000.0, 10_000.0, defaults.level),
-            wind,
-            choppiness: within(self.choppiness, 0.0, 1.0, defaults.choppiness),
-            waves: self.waves.clamp(1, MAX_OCEAN_WAVES as u32),
-            seed: self.seed,
-            color: [0, 1, 2]
-                .map(|channel| within(self.color[channel], 0.0, 1.0, defaults.color[channel])),
-            clarity: within(self.clarity, 0.1, 100.0, defaults.clarity),
-            foam: within(self.foam, 0.0, 1.0, defaults.foam),
-            reach: within(self.reach, 100.0, 100_000.0, defaults.reach),
         }
     }
 

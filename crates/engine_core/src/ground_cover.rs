@@ -8,7 +8,8 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::{InvalidSetting, check_budget, check_range};
+use crate::environment::{InvalidSetting, check_range};
+use crate::rules::{ExtraRules, settings};
 
 /// The cover growing where a surface material lies: blades
 /// per square meter where the material lies alone, the shortest and
@@ -65,48 +66,36 @@ impl Cover {
     }
 }
 
-/// Ground cover settings. Requires version 9.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneGroundCover")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct GroundCover {
-    pub enabled: bool,
-    /// Meters from the camera within which cover grows densest, 2 to 200.
-    /// Past it the ground shows as its cover's canopy, and sparser tiers
-    /// of wider blades reach on.
-    #[cfg_attr(feature = "schema", schemars(range(min = 2.0, max = 200.0)))]
-    pub radius: f32,
-    /// How tall on screen (pixels) the average blade stands where tiers
-    /// end, 0 to 16: each tier reaches twice as far as the last, with
-    /// blades sparser and wider, until its blades would stand shorter than
-    /// this. 0 grows cover within the radius alone.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 16.0)))]
-    pub pixels: f32,
-    /// Scales every cover's density, 0 to 4. Blades sway in the world's
-    /// `Wind`.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4.0)))]
-    pub density: f32,
-    /// An optional budget of blades a frame; beyond it the farthest drop.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_blades: Option<u32>,
-}
-
-impl Default for GroundCover {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            radius: 40.0,
-            pixels: 2.0,
-            density: 1.0,
-            max_blades: None,
-        }
+settings! {
+    /// Ground cover settings. Requires version 9.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneGroundCover")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct GroundCover {
+        /// Whether terrains grow their cover.
+        pub enabled: bool = true => any,
+        /// Meters from the camera within which cover grows densest. Past it the
+        /// ground shows as its cover's canopy, and sparser tiers of wider blades
+        /// reach on.
+        pub radius: f32 = 40.0 => range(2.0, 200.0),
+        /// How tall on screen (pixels) the average blade stands where tiers
+        /// end: each tier reaches twice as far as the last, with blades sparser
+        /// and wider, until its blades would stand shorter than this. 0 grows
+        /// cover within the radius alone.
+        pub pixels: f32 = 2.0 => range(0.0, 16.0),
+        /// Scales every cover's density. Blades sway in the world's `Wind`.
+        pub density: f32 = 1.0 => range(0.0, 4.0),
+        /// An optional budget of blades a frame; beyond it the farthest drop.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub max_blades: Option<u32> = None => budget,
     }
 }
+
+impl ExtraRules for GroundCover {}
 
 impl GroundCover {
     /// What a world without these settings reads as: no ground cover.
@@ -114,27 +103,6 @@ impl GroundCover {
         Self {
             enabled: false,
             ..Self::default()
-        }
-    }
-
-    /// The first field out of range.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("radius", self.radius, 2.0..=200.0)?;
-        check_range("pixels", self.pixels, 0.0..=16.0)?;
-        check_range("density", self.density, 0.0..=4.0)?;
-        check_budget("max_blades", self.max_blades)
-    }
-
-    /// Every value in range.
-    pub fn sanitized(self) -> Self {
-        let defaults = Self::default();
-        let finite = |value: f32, fallback: f32| if value.is_finite() { value } else { fallback };
-        Self {
-            enabled: self.enabled,
-            radius: crate::math::clamp(finite(self.radius, defaults.radius), 2.0, 200.0),
-            pixels: crate::math::clamp(finite(self.pixels, defaults.pixels), 0.0, 16.0),
-            density: crate::math::clamp(finite(self.density, defaults.density), 0.0, 4.0),
-            max_blades: self.max_blades.map(|budget| budget.max(1)),
         }
     }
 }

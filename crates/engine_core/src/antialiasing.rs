@@ -6,34 +6,30 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::InvalidSetting;
+use crate::rules::{ExtraRules, settings};
 
-/// Temporal antialiasing settings: whether ordinary GPU-presented frames
-/// jitter and resolve against their history. Its targets cost 16 bytes per
-/// canvas pixel while it runs. Off by default. Requires version 9.
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneTemporalAntialiasing")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct TemporalAntialiasing {
-    pub enabled: bool,
+settings! {
+    /// Temporal antialiasing settings: whether ordinary GPU-presented frames
+    /// jitter and resolve against their history. Its targets cost 16 bytes per
+    /// canvas pixel while it runs. Off by default. Requires version 9.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneTemporalAntialiasing")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct TemporalAntialiasing {
+        /// Whether ordinary GPU-presented frames resolve temporally.
+        pub enabled: bool = false => any,
+    }
 }
+
+impl ExtraRules for TemporalAntialiasing {}
 
 impl TemporalAntialiasing {
     /// What a world without these settings reads as: no temporal antialiasing.
     pub fn off() -> Self {
         Self { enabled: false }
-    }
-
-    /// Every value is valid.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        Ok(())
-    }
-
-    pub fn sanitized(self) -> Self {
-        self
     }
 }

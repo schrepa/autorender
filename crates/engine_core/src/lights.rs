@@ -22,8 +22,8 @@ use bevy_ecs::{
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::environment::{InvalidSetting, check_budget, check_range};
 use crate::extraction::{Nearest, Poses};
+use crate::rules::{ExtraRules, settings};
 use crate::{GlobalTransforms, RenderSnapshot};
 
 /// The cone of a spot light.
@@ -120,46 +120,35 @@ impl LocalLight {
     }
 }
 
-/// Local lighting settings. Requires version 6.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneLocalLights")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct LocalLights {
-    pub enabled: bool,
-    /// An optional budget of lights a frame shades; beyond it the nearest to
-    /// the camera win. Omitted, every light shades.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_lights: Option<u32>,
-    /// An optional budget of lights one view cluster lists. Omitted, every
-    /// light reaching a cluster shades there.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub lights_per_cluster: Option<u32>,
-    /// Scales every light's intensity, e.g. to dim lamps by day.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
-    pub intensity: f32,
-    /// View distance beyond which local light fades out: distant lights
-    /// cost no shading.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 100000.0)))]
-    pub distance: f32,
-}
-
-impl Default for LocalLights {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            max_lights: None,
-            lights_per_cluster: None,
-            intensity: 1.0,
-            distance: 250.0,
-        }
+settings! {
+    /// Local lighting settings. Requires version 6.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneLocalLights")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct LocalLights {
+        /// Whether frames shade local lights.
+        pub enabled: bool = true => any,
+        /// An optional budget of lights a frame shades; beyond it the nearest to
+        /// the camera win. Omitted, every light shades.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub max_lights: Option<u32> = None => budget,
+        /// An optional budget of lights one view cluster lists. Omitted, every
+        /// light reaching a cluster shades there.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub lights_per_cluster: Option<u32> = None => budget,
+        /// Scales every light's intensity, e.g. to dim lamps by day.
+        pub intensity: f32 = 1.0 => range(0.0, 100.0),
+        /// View distance beyond which local light fades out: distant lights
+        /// cost no shading.
+        pub distance: f32 = 250.0 => range(1.0, 100_000.0),
     }
 }
+
+impl ExtraRules for LocalLights {}
 
 impl LocalLights {
     /// What a world without these settings reads as: no local lights.
@@ -167,35 +156,6 @@ impl LocalLights {
         Self {
             enabled: false,
             ..Self::default()
-        }
-    }
-
-    /// Ok for budgets of at least one light, an intensity in `[0, 100]` and
-    /// a distance in `[1, 100000]`.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_budget("max_lights", self.max_lights)?;
-        check_budget("lights_per_cluster", self.lights_per_cluster)?;
-        check_range("intensity", self.intensity, 0.0..=100.0)?;
-        check_range("distance", self.distance, 1.0..=100_000.0)
-    }
-
-    /// Budgets and cluster lists of at least one light; an unusable
-    /// intensity scale reads as 1 and an unusable distance as the default.
-    pub fn sanitized(self) -> Self {
-        Self {
-            enabled: self.enabled,
-            max_lights: self.max_lights.map(|budget| budget.max(1)),
-            lights_per_cluster: self.lights_per_cluster.map(|budget| budget.max(1)),
-            intensity: if self.intensity.is_finite() && self.intensity >= 0.0 {
-                self.intensity
-            } else {
-                1.0
-            },
-            distance: if self.distance.is_finite() && self.distance > 0.0 {
-                self.distance
-            } else {
-                Self::default().distance
-            },
         }
     }
 

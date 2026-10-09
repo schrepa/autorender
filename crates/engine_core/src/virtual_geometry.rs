@@ -11,52 +11,43 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::{InvalidSetting, check_budget, check_range};
+use crate::rules::{ExtraRules, settings};
 
-/// Virtual geometry settings: whether meshes built as cluster
-/// hierarchies draw the clusters each view needs, and how coarse those may
-/// be. Requires version 8.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneVirtualGeometry")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct VirtualGeometry {
-    pub enabled: bool,
-    /// The largest simplification error a drawn cluster may show, in pixels
-    /// of the viewport height, from 0.25 to 64: smaller draws more
-    /// triangles.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.25, max = 64.0)))]
-    pub pixel_error: f32,
-    /// An optional budget of streamed pages (128 KiB each) kept resident;
-    /// beyond it the least recently used make room, and pinned pages always
-    /// stay. Omitted, only the device's limits bound them.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_resident_pages: Option<u32>,
-    /// Whether the camera's clusters shade through the visibility buffer,
-    /// each pixel once; false shades them as they draw,
-    /// which was faster on the integrated GPU measured. Omitted, false.
-    #[serde(skip_serializing_if = "is_false")]
-    pub visibility_buffer: bool,
+settings! {
+    /// Virtual geometry settings: whether meshes built as cluster
+    /// hierarchies draw the clusters each view needs, and how coarse those may
+    /// be. Requires version 8.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneVirtualGeometry")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct VirtualGeometry {
+        /// Whether meshes with clusters draw as virtual geometry.
+        pub enabled: bool = true => any,
+        /// The largest simplification error a drawn cluster may show, in pixels
+        /// of the viewport height: smaller draws more triangles.
+        pub pixel_error: f32 = 1.5 => range(0.25, 64.0),
+        /// An optional budget of streamed pages (128 KiB each) kept resident;
+        /// beyond it the least recently used make room, and pinned pages always
+        /// stay. Omitted, only the device's limits bound them.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub max_resident_pages: Option<u32> = None => budget,
+        /// Whether the camera's clusters shade through the visibility buffer,
+        /// each pixel once; false shades them as they draw,
+        /// which was faster on the integrated GPU measured. Omitted, false.
+        #[serde(skip_serializing_if = "is_false")]
+        pub visibility_buffer: bool = false => any,
+    }
 }
+
+impl ExtraRules for VirtualGeometry {}
 
 /// Scenes omit the visibility buffer while it is off.
 fn is_false(value: &bool) -> bool {
     !*value
-}
-
-impl Default for VirtualGeometry {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            pixel_error: 1.5,
-            max_resident_pages: None,
-            visibility_buffer: false,
-        }
-    }
 }
 
 impl VirtualGeometry {
@@ -65,29 +56,6 @@ impl VirtualGeometry {
         Self {
             enabled: false,
             ..Self::default()
-        }
-    }
-
-    /// Ok for a pixel error in `[0.25, 64]` and a budget of at least one
-    /// page.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("pixel_error", self.pixel_error, 0.25..=64.0)?;
-        check_budget("max_resident_pages", self.max_resident_pages)
-    }
-
-    /// The pixel error within `[0.25, 64]` (1.5 when not finite), and a
-    /// budget of at least one page.
-    pub fn sanitized(self) -> Self {
-        let pixel_error = if self.pixel_error.is_finite() {
-            crate::math::clamp(self.pixel_error, 0.25, 64.0)
-        } else {
-            1.5
-        };
-        Self {
-            enabled: self.enabled,
-            pixel_error,
-            max_resident_pages: self.max_resident_pages.map(|pages| pages.max(1)),
-            visibility_buffer: self.visibility_buffer,
         }
     }
 }

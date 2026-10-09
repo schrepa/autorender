@@ -18,8 +18,9 @@ use bevy_ecs::prelude::*;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::{InvalidSetting, check_budget, check_range};
+use crate::environment::{InvalidSetting, check_range};
 use crate::math::{clamp, max, min};
+use crate::rules::{ExtraRules, settings};
 use crate::{Camera, FixedTime, GlobalTransforms, Terrains};
 
 /// The most meters a stamp sinks the ground.
@@ -43,51 +44,39 @@ const MERGE_LENGTH: f32 = 32.0;
 /// Refilled shallower than this (meters), a stamp leaves the log.
 const FORGOTTEN: f32 = 5.0e-4;
 
-/// Runtime deformation: whether deformers press tracks; the
-/// meters of ground the map around the camera spans (8 to 1024) and its
-/// texels along a side (128 to 8192, a multiple of 128; renderers keep
-/// fewer where the device's buffers cannot hold them); the seconds tracks
-/// take to refill to about a third of their depth (0, never, to 86400);
-/// how high the ground rises beside a track for its depth (0 to 1); an
-/// optional budget of stamps the log keeps, the oldest dropping beyond it;
-/// and whether the log keeps the stamps the map moves away from, so tracks
-/// are there when the camera returns. Requires version 9.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneDeformation")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct Deformation {
-    pub enabled: bool,
-    #[cfg_attr(feature = "schema", schemars(range(min = 8.0, max = 1024.0)))]
-    pub extent: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 128, max = 8192)))]
-    pub resolution: u32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 86400.0)))]
-    pub refill: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub rim: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_stamps: Option<u32>,
-    pub persist: bool,
-}
-
-impl Default for Deformation {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            extent: 64.0,
-            resolution: 1024,
-            refill: 0.0,
-            rim: 0.3,
-            max_stamps: None,
-            persist: true,
-        }
+settings! {
+    /// Runtime deformation. Requires version 9.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneDeformation")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Deformation {
+        /// Whether deformers press tracks.
+        pub enabled: bool = true => any,
+        /// The meters of ground the map around the camera spans.
+        pub extent: f32 = 64.0 => range(8.0, 1024.0),
+        /// The map's texels along a side; renderers keep fewer where the
+        /// device's buffers cannot hold them.
+        pub resolution: u32 = 1024 => multiple(DEFORMATION_GRAIN, DEFORMATION_GRAIN, 8192),
+        /// The seconds tracks take to refill to about a third of their depth;
+        /// 0 never.
+        pub refill: f32 = 0.0 => range(0.0, 86_400.0),
+        /// How high the ground rises beside a track for its depth.
+        pub rim: f32 = 0.3 => range(0.0, 1.0),
+        /// An optional budget of stamps the log keeps, the oldest dropping
+        /// beyond it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub max_stamps: Option<u32> = None => budget,
+        /// Whether the log keeps the stamps the map moves away from, so tracks
+        /// are there when the camera returns.
+        pub persist: bool = true => any,
     }
 }
+
+impl ExtraRules for Deformation {}
 
 impl Deformation {
     /// What a world without these settings reads as: no tracks.
@@ -95,45 +84,6 @@ impl Deformation {
         Self {
             enabled: false,
             ..Self::default()
-        }
-    }
-
-    /// The first field out of range.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("extent", self.extent, 8.0..=1024.0)?;
-        if !(DEFORMATION_GRAIN..=8192).contains(&self.resolution)
-            || !self.resolution.is_multiple_of(DEFORMATION_GRAIN)
-        {
-            return Err(InvalidSetting::new(
-                "resolution",
-                "must be in [128, 8192] and a multiple of 128",
-            ));
-        }
-        check_range("refill", self.refill, 0.0..=86_400.0)?;
-        check_range("rim", self.rim, 0.0..=1.0)?;
-        check_budget("max_stamps", self.max_stamps)
-    }
-
-    /// Every value in range: out-of-range values clamp, unusable ones fall
-    /// back to the defaults.
-    pub fn sanitized(self) -> Self {
-        let defaults = Self::default();
-        let within = |value: f32, low: f32, high: f32, fallback: f32| {
-            if value.is_finite() {
-                clamp(value, low, high)
-            } else {
-                fallback
-            }
-        };
-        let resolution = self.resolution.clamp(DEFORMATION_GRAIN, 8192);
-        Self {
-            enabled: self.enabled,
-            extent: within(self.extent, 8.0, 1024.0, defaults.extent),
-            resolution: resolution / DEFORMATION_GRAIN * DEFORMATION_GRAIN,
-            refill: within(self.refill, 0.0, 86_400.0, defaults.refill),
-            rim: within(self.rim, 0.0, 1.0, defaults.rim),
-            max_stamps: self.max_stamps.map(|budget| budget.max(1)),
-            persist: self.persist,
         }
     }
 

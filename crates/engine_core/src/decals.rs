@@ -17,7 +17,7 @@ use bevy_ecs::{
 use glam::Mat4;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::{InvalidSetting, check_budget};
+use crate::rules::{ExtraRules, settings};
 use crate::{
     AssetLibrary, MaterialHandle, RenderJoint, RenderMaterial, RenderSnapshot, RenderTexture,
     Surface, TransformIndex,
@@ -94,31 +94,26 @@ impl Decal {
     }
 }
 
-/// Decal settings. Requires version 8.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneDecals")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct Decals {
-    pub enabled: bool,
-    /// An optional budget of decals a frame draws; beyond it the decals
-    /// nearest the camera win. Omitted, every decal draws.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_decals: Option<u32>,
-}
-
-impl Default for Decals {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            max_decals: None,
-        }
+settings! {
+    /// Decal settings. Requires version 8.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneDecals")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Decals {
+        /// Whether frames draw decals.
+        pub enabled: bool = true => any,
+        /// An optional budget of decals a frame draws; beyond it the decals
+        /// nearest the camera win. Omitted, every decal draws.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub max_decals: Option<u32> = None => budget,
     }
 }
+
+impl ExtraRules for Decals {}
 
 impl Decals {
     /// What a world without these settings reads as: no decals.
@@ -126,19 +121,6 @@ impl Decals {
         Self {
             enabled: false,
             ..Self::default()
-        }
-    }
-
-    /// Ok for a budget of at least one decal.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_budget("max_decals", self.max_decals)
-    }
-
-    /// A budget of at least one decal.
-    pub fn sanitized(self) -> Self {
-        Self {
-            enabled: self.enabled,
-            max_decals: self.max_decals.map(|budget| budget.max(1)),
         }
     }
 }

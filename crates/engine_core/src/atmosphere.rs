@@ -8,69 +8,127 @@ use bevy_ecs::prelude::Resource;
 use glam::Vec3;
 
 use crate::environment::InvalidSetting;
+use crate::rules::{Rule, Setting};
 
-/// Lighting of the rendered scene, read when frames are extracted.
-///
-/// Colors are linear RGB. The sun and sky may exceed 1: the renderer tone
-/// maps the result. Vertical surfaces take their ambient light from the
-/// horizon color, upward ones from the zenith and downward ones from the
-/// ground, and fog takes the sky's color behind what it covers, so the
-/// three sky colors set the scene's palette.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
-pub struct Atmosphere {
-    /// Direction toward the sun; normalized when rendered.
-    pub sun_direction: Vec3,
-    /// Sun color times intensity.
-    pub sun_color: Vec3,
-    /// Sky straight up, at the horizon, and below it.
-    pub zenith: Vec3,
-    pub horizon: Vec3,
-    pub ground: Vec3,
-    /// Scale of the sky's ambient light on surfaces.
-    pub ambient: f32,
-    /// Fog begins this far from the camera.
-    pub fog_start: f32,
-    /// Fog density per unit of distance at height zero.
-    pub fog_density: f32,
-    /// How fast fog thins with height, per unit of height.
-    pub fog_falloff: f32,
-    /// The most fog can cover, in `[0, 1]`.
-    pub fog_max: f32,
-    /// Aerial perspective: beyond `aerial_start` from the
-    /// camera, air dims what lies behind it toward the light it scatters,
-    /// with `aerial_density` extinction per unit of distance at height zero
-    /// (0 turns it off), thinning by `aerial_falloff` per unit of height.
-    /// Distant ridges fade into `aerial_color` away from the sun and into a
-    /// glow of the sun's color, `aerial_glow` strong, toward it. Unlike fog
-    /// it is unbounded and spans kilometers.
-    pub aerial_start: f32,
-    pub aerial_density: f32,
-    pub aerial_falloff: f32,
-    pub aerial_color: Vec3,
-    pub aerial_glow: f32,
-    /// Silhouette light in the horizon color, facing away from the camera.
-    pub rim: f32,
-    /// Scale of sun highlights and sky reflections; 1 is physically based.
-    pub specular: f32,
-    /// Scale of material emission: how strongly lamps, lit windows and other
-    /// artificial lights show in this light.
-    pub emission: f32,
-    /// Exposure before tone mapping.
-    pub exposure: f32,
-    /// Saturation after tone mapping; 1 keeps it.
-    pub saturation: f32,
-    /// Contrast around mid grey after tone mapping: the slope
-    /// of an S-curve that keeps black and white, from 0 (flat) through 1
-    /// (unchanged) to its steepest at 1.5.
-    pub contrast: f32,
-    /// Saturation added to muted colors more than to vivid ones; 0 adds none.
-    pub vibrance: f32,
-    /// Hue of dark and of bright tones after tone mapping (split toning), as
-    /// color gains scaled to keep luminance; white, like black, leaves tones
-    /// as they are. Cool shadows against warm highlights read as vivid.
-    pub shadow_tint: Vec3,
-    pub highlight_tint: Vec3,
+/// Every atmosphere field once: its doc, which authors read too, its type,
+/// the scene version that introduced it and the [`Rule`] its values keep.
+/// engine_core builds [`Atmosphere`] and its validation from this list, and
+/// engine_scene the authored atmosphere: its fields, schema, overrides and
+/// version checks.
+#[macro_export]
+macro_rules! atmosphere_fields {
+    ($then:ident) => {
+        $then! {
+            /// Direction toward the sun; any nonzero length, normalized when
+            /// rendered.
+            sun_direction: Vec3, since 5, any;
+            /// Sun color times intensity.
+            sun_color: Vec3, since 5, at_least(0.0);
+            /// Sky color straight up: upward surfaces take their ambient light
+            /// from it.
+            zenith: Vec3, since 5, at_least(0.0);
+            /// Sky color at the horizon: vertical surfaces take their ambient
+            /// light from it.
+            horizon: Vec3, since 5, at_least(0.0);
+            /// Sky color below the horizon: downward surfaces take their
+            /// ambient light from it.
+            ground: Vec3, since 5, at_least(0.0);
+            /// Scale of the sky's ambient light on surfaces.
+            ambient: f32, since 5, at_least(0.0);
+            /// Fog begins this far from the camera (world units).
+            fog_start: f32, since 5, at_least(0.0);
+            /// Fog density per world unit at height zero.
+            fog_density: f32, since 5, at_least(0.0);
+            /// How fast fog thins with height, per world unit.
+            fog_falloff: f32, since 5, at_least(0.0);
+            /// The most fog can cover.
+            fog_max: f32, since 5, range(0.0, 1.0);
+            /// Aerial perspective begins this far from the camera (world
+            /// units): beyond it, air dims what lies behind it toward the light
+            /// it scatters. Unlike fog it is unbounded and spans kilometers.
+            aerial_start: f32, since 9, at_least(0.0);
+            /// Aerial extinction per world unit at height zero; 0 turns it off.
+            aerial_density: f32, since 9, at_least(0.0);
+            /// How fast the air thins with height, per world unit.
+            aerial_falloff: f32, since 9, at_least(0.0);
+            /// The color distant ridges fade into away from the sun.
+            aerial_color: Vec3, since 9, at_least(0.0);
+            /// How strongly distant ridges fade into a glow of the sun's color
+            /// toward the sun.
+            aerial_glow: f32, since 9, at_least(0.0);
+            /// Silhouette light in the horizon color, facing away from the
+            /// camera.
+            rim: f32, since 5, at_least(0.0);
+            /// Scale of sun highlights and sky reflections; 1 is physically
+            /// based.
+            specular: f32, since 5, at_least(0.0);
+            /// Scale of material emission: how strongly lamps, lit windows and
+            /// other artificial lights show in this light, dim by day and full
+            /// at night.
+            emission: f32, since 5, at_least(0.0);
+            /// Exposure before tone mapping.
+            exposure: f32, since 5, at_least(0.0);
+            /// Saturation after tone mapping; 1 keeps it.
+            saturation: f32, since 5, at_least(0.0);
+            /// Contrast around mid grey after tone mapping: the slope of an
+            /// S-curve that keeps black and white; 0 flattens, 1 keeps it, and
+            /// the curve is steepest at 1.5.
+            contrast: f32, since 6, at_least(0.0);
+            /// Saturation added to muted colors more than to vivid ones; 0 adds
+            /// none.
+            vibrance: f32, since 6, at_least(0.0);
+            /// Hue of dark tones after tone mapping (split toning), as a color
+            /// gain scaled to keep luminance; white, like black, keeps them.
+            /// Cool shadows against warm highlights read as vivid.
+            shadow_tint: Vec3, since 6, at_least(0.0);
+            /// Hue of bright tones, like `shadow_tint`.
+            highlight_tint: Vec3, since 6, at_least(0.0);
+        }
+    };
 }
+
+/// engine_core's part of [`atmosphere_fields`]: the atmosphere, its
+/// validation, and the rules an authored atmosphere's schema states.
+macro_rules! core_atmosphere {
+    ($($(#[$doc:meta])* $field:ident: $ty:ident, since $since:literal, $rule:ident $(($($arg:expr),*))?;)*) => {
+        /// Lighting of the rendered scene, read when frames are extracted.
+        ///
+        /// Colors are linear RGB. The sun and sky may exceed 1: the renderer
+        /// tone maps the result. Vertical surfaces take their ambient light
+        /// from the horizon color, upward ones from the zenith and downward
+        /// ones from the ground, and fog takes the sky's color behind what it
+        /// covers, so the three sky colors set the scene's palette.
+        #[derive(Resource, Clone, Copy, Debug, PartialEq)]
+        pub struct Atmosphere {
+            $($(#[$doc])* pub $field: $ty,)*
+        }
+
+        impl Atmosphere {
+            /// Ok when every field keeps its rule, as an authored
+            /// atmosphere's schema states it, and the sun has a direction;
+            /// otherwise the first field breaking one.
+            pub fn validate(&self) -> Result<(), InvalidSetting> {
+                $(Setting::check(self.$field, stringify!($field), Rule::$rule($($($arg as f64),*)?))?;)*
+                if !self.sun_direction.is_finite() || self.sun_direction.length_squared() == 0.0 {
+                    return Err(InvalidSetting::new(
+                        "sun_direction",
+                        "must be finite and nonzero",
+                    ));
+                }
+                Ok(())
+            }
+        }
+
+        /// States each atmosphere field's rule in the schema of an authored
+        /// atmosphere, whose fields share their names.
+        #[cfg(feature = "schema")]
+        pub fn state_atmosphere_rules(schema: &mut schemars::Schema) {
+            $(crate::rules::state(schema, stringify!($field), Rule::$rule($($($arg as f64),*)?));)*
+        }
+    };
+}
+
+crate::atmosphere_fields!(core_atmosphere);
 
 impl Default for Atmosphere {
     fn default() -> Self {
@@ -200,61 +258,6 @@ impl Atmosphere {
             shadow_tint: Vec3::new(0.8, 0.9, 1.35),
             highlight_tint: Vec3::new(1.15, 1.0, 0.85),
         }
-    }
-
-    /// Ok when every value is usable: finite, colors and scales
-    /// nonnegative, a nonzero sun direction and a fog maximum of at most 1.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        let colors = [
-            ("sun_color", self.sun_color),
-            ("zenith", self.zenith),
-            ("horizon", self.horizon),
-            ("ground", self.ground),
-            ("shadow_tint", self.shadow_tint),
-            ("highlight_tint", self.highlight_tint),
-            ("aerial_color", self.aerial_color),
-        ];
-        for (field, color) in colors {
-            if !color.is_finite() || color.min_element() < 0.0 {
-                return Err(InvalidSetting::new(
-                    field,
-                    "color channels must be finite and nonnegative",
-                ));
-            }
-        }
-        if !self.sun_direction.is_finite() || self.sun_direction.length_squared() == 0.0 {
-            return Err(InvalidSetting::new(
-                "sun_direction",
-                "must be finite and nonzero",
-            ));
-        }
-        let scalars = [
-            ("ambient", self.ambient),
-            ("fog_start", self.fog_start),
-            ("fog_density", self.fog_density),
-            ("fog_falloff", self.fog_falloff),
-            ("fog_max", self.fog_max),
-            ("aerial_start", self.aerial_start),
-            ("aerial_density", self.aerial_density),
-            ("aerial_falloff", self.aerial_falloff),
-            ("aerial_glow", self.aerial_glow),
-            ("rim", self.rim),
-            ("specular", self.specular),
-            ("emission", self.emission),
-            ("exposure", self.exposure),
-            ("saturation", self.saturation),
-            ("contrast", self.contrast),
-            ("vibrance", self.vibrance),
-        ];
-        for (field, value) in scalars {
-            if !value.is_finite() || value < 0.0 {
-                return Err(InvalidSetting::new(field, "must be finite and nonnegative"));
-            }
-        }
-        if self.fog_max > 1.0 {
-            return Err(InvalidSetting::new("fog_max", "must be at most 1"));
-        }
-        Ok(())
     }
 
     /// This atmosphere when [`Self::validate`] accepts it, otherwise the

@@ -19,81 +19,58 @@ use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate::FrameTime;
-use crate::environment::{InvalidSetting, check_range};
-use crate::math::{clamp, max, sin_cos};
+use crate::math::{max, sin_cos};
+use crate::rules::{ExtraRules, settings};
 
-/// A physically based sky: whether it draws; the planet's
-/// radius and the atmosphere's thickness (kilometers); Rayleigh scattering
-/// per kilometer at the ground (red, green, blue) and the height over which
-/// it thins by e (km); Mie scattering and absorption per kilometer, their
-/// scale height and the forward lobe of their phase (0 to 0.99); ozone
-/// absorption per kilometer at its densest, 25 km up; the ground's albedo;
-/// the sun's intensity (its color's scale above the air) and angular radius
-/// (degrees); how far air hazes what lies away from the camera, as a
-/// multiple of real distance (0 none); the height of the world's origin
-/// above the ground of the planet (meters); and how far exposure adapts to
-/// the sky's light (0 not at all, 1 fully), so that dawn, dusk and night
-/// stay readable. Defaults are Earth's. Opt-in. Requires version 9.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneSky")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct Sky {
-    pub enabled: bool,
-    #[cfg_attr(feature = "schema", schemars(range(min = 100.0, max = 100000.0)))]
-    pub planet_radius: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 1000.0)))]
-    pub atmosphere_height: f32,
-    pub rayleigh: [f32; 3],
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 100.0)))]
-    pub rayleigh_height: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub mie: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub mie_absorption: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 100.0)))]
-    pub mie_height: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 0.99)))]
-    pub mie_g: f32,
-    pub ozone: [f32; 3],
-    pub ground_albedo: [f32; 3],
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000.0)))]
-    pub sun_intensity: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.01, max = 10.0)))]
-    pub sun_size: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
-    pub aerial: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100000.0)))]
-    pub altitude: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub adaptation: f32,
-}
-
-impl Default for Sky {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            planet_radius: 6360.0,
-            atmosphere_height: 100.0,
-            rayleigh: [5.802e-3, 13.558e-3, 33.1e-3],
-            rayleigh_height: 8.0,
-            mie: 3.996e-3,
-            mie_absorption: 4.4e-3,
-            mie_height: 1.2,
-            mie_g: 0.8,
-            ozone: [0.65e-3, 1.881e-3, 0.085e-3],
-            ground_albedo: [0.3, 0.3, 0.3],
-            sun_intensity: 3.0,
-            sun_size: 0.27,
-            aerial: 1.0,
-            altitude: 0.0,
-            adaptation: 0.5,
-        }
+settings! {
+    /// A physically based sky. Defaults are Earth's. Opt-in. Requires version 9.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneSky")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Sky {
+        /// Whether the sky draws.
+        pub enabled: bool = true => any,
+        /// The planet's radius, kilometers.
+        pub planet_radius: f32 = 6360.0 => range(100.0, 100_000.0),
+        /// The atmosphere's thickness, kilometers.
+        pub atmosphere_height: f32 = 100.0 => range(1.0, 1000.0),
+        /// Rayleigh scattering per kilometer at the ground: red, green, blue.
+        pub rayleigh: [f32; 3] = [5.802e-3, 13.558e-3, 33.1e-3] => range(0.0, 1.0),
+        /// The height over which Rayleigh scattering thins by e, kilometers.
+        pub rayleigh_height: f32 = 8.0 => range(0.1, 100.0),
+        /// Mie scattering per kilometer.
+        pub mie: f32 = 3.996e-3 => range(0.0, 1.0),
+        /// Mie absorption per kilometer.
+        pub mie_absorption: f32 = 4.4e-3 => range(0.0, 1.0),
+        /// The height over which Mie scattering thins by e, kilometers.
+        pub mie_height: f32 = 1.2 => range(0.1, 100.0),
+        /// The forward lobe of Mie scattering's phase.
+        pub mie_g: f32 = 0.8 => range(0.0, 0.99),
+        /// Ozone absorption per kilometer at its densest, 25 km up.
+        pub ozone: [f32; 3] = [0.65e-3, 1.881e-3, 0.085e-3] => range(0.0, 1.0),
+        /// The ground's albedo.
+        pub ground_albedo: [f32; 3] = [0.3, 0.3, 0.3] => range(0.0, 1.0),
+        /// The sun's intensity: its color's scale above the air.
+        pub sun_intensity: f32 = 3.0 => range(0.0, 1000.0),
+        /// The sun's angular radius, degrees.
+        pub sun_size: f32 = 0.27 => range(0.01, 10.0),
+        /// How far air hazes what lies away from the camera, as a multiple of
+        /// real distance; 0 none.
+        pub aerial: f32 = 1.0 => range(0.0, 100.0),
+        /// The height of the world's origin above the ground of the planet,
+        /// meters.
+        pub altitude: f32 = 0.0 => range(0.0, 100_000.0),
+        /// How far exposure adapts to the sky's light, so that dawn, dusk and
+        /// night stay readable: 0 not at all, 1 fully.
+        pub adaptation: f32 = 0.5 => range(0.0, 1.0),
     }
 }
+
+impl ExtraRules for Sky {}
 
 impl Sky {
     /// What a world without these settings reads as: the atmosphere's sky.
@@ -103,118 +80,36 @@ impl Sky {
             ..Self::default()
         }
     }
+}
 
-    /// The first field out of range.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("planet_radius", self.planet_radius, 100.0..=100_000.0)?;
-        check_range("atmosphere_height", self.atmosphere_height, 1.0..=1000.0)?;
-        check_range("rayleigh_height", self.rayleigh_height, 0.1..=100.0)?;
-        check_range("mie", self.mie, 0.0..=1.0)?;
-        check_range("mie_absorption", self.mie_absorption, 0.0..=1.0)?;
-        check_range("mie_height", self.mie_height, 0.1..=100.0)?;
-        check_range("mie_g", self.mie_g, 0.0..=0.99)?;
-        check_range("sun_intensity", self.sun_intensity, 0.0..=1000.0)?;
-        check_range("sun_size", self.sun_size, 0.01..=10.0)?;
-        check_range("aerial", self.aerial, 0.0..=100.0)?;
-        check_range("altitude", self.altitude, 0.0..=100_000.0)?;
-        check_range("adaptation", self.adaptation, 0.0..=1.0)?;
-        for (field, values, high) in [
-            ("rayleigh", self.rayleigh, 1.0),
-            ("ozone", self.ozone, 1.0),
-            ("ground_albedo", self.ground_albedo, 1.0),
-        ] {
-            if !values.iter().all(|value| (0.0..=high).contains(value)) {
-                return Err(InvalidSetting::new(field, "values must be in [0, 1]"));
-            }
-        }
-        Ok(())
-    }
-
-    /// Every value in range: out-of-range values clamp, unusable ones fall
-    /// back to the defaults.
-    pub fn sanitized(self) -> Self {
-        let defaults = Self::default();
-        let within = |value: f32, low: f32, high: f32, fallback: f32| {
-            if value.is_finite() {
-                clamp(value, low, high)
-            } else {
-                fallback
-            }
-        };
-        let triple = |values: [f32; 3], fallback: [f32; 3]| {
-            let mut out = values;
-            for (value, fallback) in out.iter_mut().zip(fallback) {
-                *value = within(*value, 0.0, 1.0, fallback);
-            }
-            out
-        };
-        Self {
-            enabled: self.enabled,
-            planet_radius: within(self.planet_radius, 100.0, 100_000.0, defaults.planet_radius),
-            atmosphere_height: within(
-                self.atmosphere_height,
-                1.0,
-                1000.0,
-                defaults.atmosphere_height,
-            ),
-            rayleigh: triple(self.rayleigh, defaults.rayleigh),
-            rayleigh_height: within(self.rayleigh_height, 0.1, 100.0, defaults.rayleigh_height),
-            mie: within(self.mie, 0.0, 1.0, defaults.mie),
-            mie_absorption: within(self.mie_absorption, 0.0, 1.0, defaults.mie_absorption),
-            mie_height: within(self.mie_height, 0.1, 100.0, defaults.mie_height),
-            mie_g: within(self.mie_g, 0.0, 0.99, defaults.mie_g),
-            ozone: triple(self.ozone, defaults.ozone),
-            ground_albedo: triple(self.ground_albedo, defaults.ground_albedo),
-            sun_intensity: within(self.sun_intensity, 0.0, 1000.0, defaults.sun_intensity),
-            sun_size: within(self.sun_size, 0.01, 10.0, defaults.sun_size),
-            aerial: within(self.aerial, 0.0, 100.0, defaults.aerial),
-            altitude: within(self.altitude, 0.0, 100_000.0, defaults.altitude),
-            adaptation: within(self.adaptation, 0.0, 1.0, defaults.adaptation),
-        }
+settings! {
+    /// The time of day. Opt-in. Requires version 9.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneTimeOfDay")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct TimeOfDay {
+        /// Whether it moves the sun.
+        pub enabled: bool = true => any,
+        /// The hour.
+        pub hours: f32 = 15.0 => range(0.0, 24.0),
+        /// How many hours pass each second; 0 holds it.
+        pub speed: f32 = 0.0 => range(0.0, 24.0),
+        /// The minutes of each step the sun moves by.
+        pub step: f32 = 2.0 => range(0.1, 60.0),
+        /// The latitude that, with the day, sets the sun's path.
+        pub latitude: f32 = 45.0 => range(-90.0, 90.0),
+        /// The day of the year.
+        pub day: f32 = 172.0 => range(0.0, 365.0),
+        /// The yaw of north in the world: degrees from -z toward +x.
+        pub north: f32 = 0.0 => range(-360.0, 360.0),
     }
 }
 
-/// The time of day: whether it moves the sun; the hour (0 to
-/// 24); how many hours pass each second (0 holds it, up to 24); the
-/// minutes of each step the sun moves by (0.1 to 60); the latitude and day
-/// of the year (0 to 365) that set the sun's path; and the yaw of north in
-/// the world (degrees from -z toward +x). Opt-in. Requires version 9.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneTimeOfDay")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct TimeOfDay {
-    pub enabled: bool,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 24.0)))]
-    pub hours: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 24.0)))]
-    pub speed: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 60.0)))]
-    pub step: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = -90.0, max = 90.0)))]
-    pub latitude: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 365.0)))]
-    pub day: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = -360.0, max = 360.0)))]
-    pub north: f32,
-}
-
-impl Default for TimeOfDay {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            hours: 15.0,
-            speed: 0.0,
-            step: 2.0,
-            latitude: 45.0,
-            day: 172.0,
-            north: 0.0,
-        }
-    }
-}
+impl ExtraRules for TimeOfDay {}
 
 impl TimeOfDay {
     /// What a world without these settings reads as: the atmosphere's sun.
@@ -222,38 +117,6 @@ impl TimeOfDay {
         Self {
             enabled: false,
             ..Self::default()
-        }
-    }
-
-    /// The first field out of range.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("hours", self.hours, 0.0..=24.0)?;
-        check_range("speed", self.speed, 0.0..=24.0)?;
-        check_range("step", self.step, 0.1..=60.0)?;
-        check_range("latitude", self.latitude, -90.0..=90.0)?;
-        check_range("day", self.day, 0.0..=365.0)?;
-        check_range("north", self.north, -360.0..=360.0)
-    }
-
-    /// Every value in range: out-of-range values clamp, unusable ones fall
-    /// back to the defaults.
-    pub fn sanitized(self) -> Self {
-        let defaults = Self::default();
-        let within = |value: f32, low: f32, high: f32, fallback: f32| {
-            if value.is_finite() {
-                clamp(value, low, high)
-            } else {
-                fallback
-            }
-        };
-        Self {
-            enabled: self.enabled,
-            hours: within(self.hours, 0.0, 24.0, defaults.hours),
-            speed: within(self.speed, 0.0, 24.0, defaults.speed),
-            step: within(self.step, 0.1, 60.0, defaults.step),
-            latitude: within(self.latitude, -90.0, 90.0, defaults.latitude),
-            day: within(self.day, 0.0, 365.0, defaults.day),
-            north: within(self.north, -360.0, 360.0, defaults.north),
         }
     }
 

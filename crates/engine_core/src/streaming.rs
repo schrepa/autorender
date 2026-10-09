@@ -31,8 +31,8 @@ use bevy_ecs::prelude::*;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::environment::{InvalidSetting, check_range};
-use crate::math::{clamp, max, min};
+use crate::math::{max, min};
+use crate::rules::{ExtraRules, settings};
 use crate::{Camera, FrameTime, GlobalTransforms, TerrainFocus};
 
 /// One grid items stream in: its cells' side and the meters from a source
@@ -71,46 +71,35 @@ pub const STREAMING_GRIDS: [StreamingGrid; 3] = [
 /// a jump, which prefetch ignores.
 const JUMP_SPEED: f32 = 1000.0;
 
-/// World streaming: whether streamed items load at all
-/// (off unloads every cell); how far cells load, as a multiple of each
-/// grid's range (0.05 to 20); how much farther than that every source must
-/// be before a loaded cell unloads, as a multiple (1 to 4); the seconds
-/// ahead along the camera's motion cells load early for (0 to 10); the
-/// entities a frame spawns at most (cells spawn whole, and at least one a
-/// frame), pacing loads; and whether cells stay as they are, loading and
-/// unloading nothing (for captures and inspection). Requires version 9.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneWorldStreaming")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct WorldStreaming {
-    pub enabled: bool,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.05, max = 20.0)))]
-    pub distance: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 4.0)))]
-    pub unload: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10.0)))]
-    pub prefetch: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    pub spawns_per_frame: u32,
-    pub frozen: bool,
-}
-
-impl Default for WorldStreaming {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            distance: 1.0,
-            unload: 1.25,
-            prefetch: 1.5,
-            spawns_per_frame: 2048,
-            frozen: false,
-        }
+settings! {
+    /// World streaming. Requires version 9.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneWorldStreaming")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct WorldStreaming {
+        /// Whether streamed items load at all: off unloads every cell.
+        pub enabled: bool = true => any,
+        /// How far cells load, as a multiple of each grid's range.
+        pub distance: f32 = 1.0 => range(0.05, 20.0),
+        /// How much farther than that every source must be before a loaded
+        /// cell unloads, as a multiple.
+        pub unload: f32 = 1.25 => range(1.0, 4.0),
+        /// The seconds ahead along the camera's motion cells load early for.
+        pub prefetch: f32 = 1.5 => range(0.0, 10.0),
+        /// The entities a frame spawns at most, pacing loads: cells spawn
+        /// whole, and at least one a frame.
+        pub spawns_per_frame: u32 = 2048 => at_least(1),
+        /// Whether cells stay as they are, loading and unloading nothing, for
+        /// captures and inspection.
+        pub frozen: bool = false => any,
     }
 }
+
+impl ExtraRules for WorldStreaming {}
 
 impl WorldStreaming {
     /// What a world without these settings reads as: nothing streamed.
@@ -118,41 +107,6 @@ impl WorldStreaming {
         Self {
             enabled: false,
             ..Self::default()
-        }
-    }
-
-    /// The first field out of range.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("distance", self.distance, 0.05..=20.0)?;
-        check_range("unload", self.unload, 1.0..=4.0)?;
-        check_range("prefetch", self.prefetch, 0.0..=10.0)?;
-        if self.spawns_per_frame == 0 {
-            return Err(InvalidSetting::new(
-                "spawns_per_frame",
-                "must be at least 1",
-            ));
-        }
-        Ok(())
-    }
-
-    /// Every value in range: out-of-range values clamp, unusable ones fall
-    /// back to the defaults.
-    pub fn sanitized(self) -> Self {
-        let defaults = Self::default();
-        let within = |value: f32, low: f32, high: f32, fallback: f32| {
-            if value.is_finite() {
-                clamp(value, low, high)
-            } else {
-                fallback
-            }
-        };
-        Self {
-            enabled: self.enabled,
-            distance: within(self.distance, 0.05, 20.0, defaults.distance),
-            unload: within(self.unload, 1.0, 4.0, defaults.unload),
-            prefetch: within(self.prefetch, 0.0, 10.0, defaults.prefetch),
-            spawns_per_frame: self.spawns_per_frame.max(1),
-            frozen: self.frozen,
         }
     }
 }

@@ -63,7 +63,8 @@ use engine_terrain::{
     decode_tile, merge_placed,
 };
 
-use crate::environment::{InvalidSetting, check_budget, check_range};
+use crate::environment::InvalidSetting;
+use crate::rules::{ExtraRules, settings};
 use crate::{
     Camera, GlobalTransforms, IDLE_JOBS, JobId, Jobs, RenderMaterial, RenderMesh, RenderSnapshot,
     RenderTexture, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
@@ -705,194 +706,157 @@ impl Default for Viewport {
     }
 }
 
-/// Terrain settings. Requires version 9.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneTerrainSettings")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct TerrainSettings {
-    pub enabled: bool,
-    /// Pixels a level's samples span before the next coarser level takes
-    /// over, 1 to 64; smaller draws more triangles.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 64.0)))]
-    pub pixel_error: f32,
-    /// The coarsest levels kept resident over the whole terrain, so it
-    /// always draws whole, from 1 to 8.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 8)))]
-    pub pinned_levels: u32,
-    /// An optional budget of resident tiles (about 270 KB each, twice that
-    /// on the GPU); the least important beyond it drop.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tiles: Option<u32>,
-    /// Work generated, decoded or baked between checks of the frame's work
-    /// time, in samples' worth (67,000 a decoded tile, about 500,000 a
-    /// generated one); a frame's whole work where hosts give terrain no
-    /// clock.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    pub samples_per_frame: u32,
-    /// Milliseconds a frame works on terrain until the camera's view first
-    /// loads whole, and after, 0.1 to 1000 each: loading
-    /// takes large slices of frames, play small ones.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 1000.0)))]
-    pub loading_work_ms: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 1000.0)))]
-    pub work_ms: f32,
-    /// Meters around the camera and focus entities within which level-0
-    /// tiles load for collision, 0 to 4096.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4096.0)))]
-    pub collision_radius: f32,
-    /// Long sun shadows through each terrain's horizon map,
-    /// with shadows on; shadow maps then draw terrain near the camera only.
-    /// Off, terrain casts into the shadow maps alone.
-    pub sun_shadows: bool,
-    /// Texels along a horizon map's sides, 64 to 4096 (8 bytes each).
-    #[cfg_attr(feature = "schema", schemars(range(min = 64, max = 4096)))]
-    pub shadow_resolution: u32,
-    /// Shadow edge height per meter to the slope casting it (the sun's disc
-    /// gives 0.0093).
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 0.2)))]
-    pub shadow_softness: f32,
-    /// Ambient light on terrain scaled by how much sky its ground sees:
-    /// each terrain's sky visibility map, built once its
-    /// finest pinned level is resident, where valleys and hollows see less
-    /// sky and take their own light back instead.
-    pub sky_visibility: bool,
-    /// Texels along a sky visibility map's sides, 64 to 4096 (4 bytes each).
-    #[cfg_attr(feature = "schema", schemars(range(min = 64, max = 4096)))]
-    pub sky_resolution: u32,
-    /// Meters from the camera within which the ground's relief
-    /// shows, its view rays marching through its materials' heights,
-    /// 0 (none) to 200; and the most steps a ray takes, 2 to 64.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 200.0)))]
-    pub relief_distance: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 2, max = 64)))]
-    pub relief_steps: u32,
-    /// Ground generated around terrains with surroundings
-    /// streams and draws; off, every terrain ends at its edges.
-    pub surroundings: bool,
-    /// Detail lowered while the camera moves fast: off by
-    /// default, as it lowers detail in motion on purpose.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub motion_detail: Option<MotionDetail>,
-    /// Bytes of tiles kept in memory after the view leaves them,
-    /// about 600 KB each, to return at once when it comes back: the
-    /// least recently used beyond drop, and 0 keeps none.
-    pub cache_bytes: u64,
-    /// Bytes of tiles becoming resident in a frame, which the GPU takes in
-    /// that frame, about 540 KB a tile: tiles beyond wait for
-    /// the next, though each frame's first arrives whatever its size; at
-    /// least 1.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    pub upload_bytes: u32,
-    /// Multiples of each level's range within which workers generate tiles
-    /// ahead of the view into memory while nothing is missing,
-    /// 0 to 8; within the keeping reach (2.5) none.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 8.0)))]
-    pub idle_reach: f32,
-    /// The most bands of rows a tile under the view generates in at once
-    /// on workers the other such tiles leave free, 1 (whole
-    /// tiles) to 16.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 16)))]
-    pub max_bands: u32,
-    /// Tiles' surface materials from the GPU: tiles generate
-    /// without control values, which a compute pass gives each as it
-    /// uploads, the rules' own but where GPU rounding crosses a threshold;
-    /// gameplay reads the rules at the points it asks. Off, the CPU gives
-    /// them.
-    pub gpu_materials: bool,
-    /// The runtime virtual texture: the ground's materials
-    /// baked into pages the views ask for, which pixels read in place of
-    /// computing them; ground finer than its texels, steep ground and pages
-    /// not baked yet compute theirs.
-    pub virtual_texture: bool,
-    /// An optional budget of pages it keeps (about 340 KB each). Omitted,
-    /// it keeps as many as the views ask for, up to the device's texture
-    /// array layers; beyond either, pages unasked for a while make room,
-    /// and those asked for with none left drop (the ground computes
-    /// itself).
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub virtual_texture_pages: Option<u32>,
-    /// Pages it bakes in a frame at most, at least 1 (about 0.1 ms each on
-    /// an integrated GPU).
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    pub virtual_texture_bakes: u32,
+settings! {
+    /// Terrain settings. Requires version 9.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneTerrainSettings")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct TerrainSettings {
+        /// Whether terrains draw.
+        pub enabled: bool = true => any,
+        /// Pixels a level's samples span before the next coarser level takes
+        /// over; smaller draws more triangles.
+        pub pixel_error: f32 = 6.0 => range(1.0, 64.0),
+        /// The coarsest levels kept resident over the whole terrain, so it
+        /// always draws whole.
+        pub pinned_levels: u32 = 2 => range(1, 8),
+        /// An optional budget of resident tiles (about 270 KB each, twice that
+        /// on the GPU); the least important beyond it drop.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub max_tiles: Option<u32> = None => budget,
+        /// Work generated, decoded or baked between checks of the frame's work
+        /// time, in samples' worth (67,000 a decoded tile, about 500,000 a
+        /// generated one); a frame's whole work where hosts give terrain no
+        /// clock.
+        pub samples_per_frame: u32 = 24_576 => at_least(1),
+        /// Milliseconds a frame works on terrain until the camera's view first
+        /// loads whole: loading takes large slices of frames.
+        pub loading_work_ms: f32 = 50.0 => range(0.1, 1000.0),
+        /// Milliseconds a frame works on terrain after: play takes small
+        /// slices.
+        pub work_ms: f32 = 4.0 => range(0.1, 1000.0),
+        /// Meters around the camera and focus entities within which level-0
+        /// tiles load for collision.
+        pub collision_radius: f32 = 192.0 => range(0.0, 4096.0),
+        /// Long sun shadows through each terrain's horizon map,
+        /// with shadows on; shadow maps then draw terrain near the camera only.
+        /// Off, terrain casts into the shadow maps alone.
+        pub sun_shadows: bool = true => any,
+        /// Texels along a horizon map's sides, 8 bytes each.
+        pub shadow_resolution: u32 = 1024 => range(64, 4096),
+        /// Shadow edge height per meter to the slope casting it (the sun's disc
+        /// gives 0.0093).
+        pub shadow_softness: f32 = 0.01 => range(0.0, 0.2),
+        /// Ambient light on terrain scaled by how much sky its ground sees:
+        /// each terrain's sky visibility map, built once its
+        /// finest pinned level is resident, where valleys and hollows see less
+        /// sky and take their own light back instead.
+        pub sky_visibility: bool = true => any,
+        /// Texels along a sky visibility map's sides, 4 bytes each.
+        pub sky_resolution: u32 = 1024 => range(64, 4096),
+        /// Meters from the camera within which the ground's relief shows, its
+        /// view rays marching through its materials' heights; 0 none.
+        pub relief_distance: f32 = 24.0 => range(0.0, 200.0),
+        /// The most steps a relief ray takes.
+        pub relief_steps: u32 = 8 => range(2, 64),
+        /// Ground generated around terrains with surroundings
+        /// streams and draws; off, every terrain ends at its edges.
+        pub surroundings: bool = true => any,
+        /// Detail lowered while the camera moves fast: off by
+        /// default, as it lowers detail in motion on purpose.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub motion_detail: Option<MotionDetail> = None => any,
+        /// Bytes of tiles kept in memory after the view leaves them,
+        /// about 600 KB each, to return at once when it comes back: the
+        /// least recently used beyond drop, and 0 keeps none.
+        pub cache_bytes: u64 = 256 << 20 => any,
+        /// Bytes of tiles becoming resident in a frame, which the GPU takes in
+        /// that frame, about 540 KB a tile: tiles beyond wait for the next,
+        /// though each frame's first arrives whatever its size.
+        pub upload_bytes: u32 = 8 << 20 => at_least(1),
+        /// Multiples of each level's range within which workers generate tiles
+        /// ahead of the view into memory while nothing is missing; within the
+        /// keeping reach (2.5) none.
+        pub idle_reach: f32 = 3.0 => range(0.0, 8.0),
+        /// The most bands of rows a tile under the view generates in at once
+        /// on workers the other such tiles leave free; 1 generates whole tiles.
+        pub max_bands: u32 = 4 => range(1, 16),
+        /// Tiles' surface materials from the GPU: tiles generate
+        /// without control values, which a compute pass gives each as it
+        /// uploads, the rules' own but where GPU rounding crosses a threshold;
+        /// gameplay reads the rules at the points it asks. Off, the CPU gives
+        /// them.
+        pub gpu_materials: bool = true => any,
+        /// The runtime virtual texture: the ground's materials
+        /// baked into pages the views ask for, which pixels read in place of
+        /// computing them; ground finer than its texels, steep ground and pages
+        /// not baked yet compute theirs.
+        pub virtual_texture: bool = true => any,
+        /// An optional budget of pages it keeps (about 340 KB each). Omitted,
+        /// it keeps as many as the views ask for, up to the device's texture
+        /// array layers; beyond either, pages unasked for a while make room,
+        /// and those asked for with none left drop (the ground computes
+        /// itself).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub virtual_texture_pages: Option<u32> = None => budget,
+        /// Pages it bakes in a frame at most, about 0.1 ms each on an
+        /// integrated GPU.
+        pub virtual_texture_bakes: u32 = 16 => at_least(1),
+    }
 }
 
-/// How terrain loads while the camera moves fast: the
-/// finest levels' tiles in its view wait, more of them the faster it
-/// moves, and tiles out of its view wait until it settles. The coarsest
-/// pinned levels, collision's tiles and those under focus entities never
-/// wait, and tiles resident stay.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneTerrainMotionDetail")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct MotionDetail {
-    /// Meters per second above which the camera moves fast, 0 to 100,000.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100000.0)))]
-    pub speed: f32,
-    /// Meters per second at which the finest `levels` levels wait, from
-    /// `speed` to 100,000; between, fewer wait, at least one.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100000.0)))]
-    pub fastest: f32,
-    /// Finest levels whose tiles wait at `fastest`, 0 to 8.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0, max = 8)))]
-    pub levels: u32,
-    /// Seconds after the camera slows below `speed` before tiles out of its
-    /// view load, 0 to 10.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10.0)))]
-    pub settle: f32,
+impl ExtraRules for TerrainSettings {}
+
+settings! {
+    /// How terrain loads while the camera moves fast: the
+    /// finest levels' tiles in its view wait, more of them the faster it
+    /// moves, and tiles out of its view wait until it settles. The coarsest
+    /// pinned levels, collision's tiles and those under focus entities never
+    /// wait, and tiles resident stay.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneTerrainMotionDetail")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct MotionDetail {
+        /// Meters per second above which the camera moves fast.
+        pub speed: f32 = 30.0 => range(0.0, 100_000.0),
+        /// Meters per second at which the finest `levels` levels wait, at least
+        /// `speed`; between, fewer wait, at least one.
+        pub fastest: f32 = 300.0 => range(0.0, 100_000.0),
+        /// Finest levels whose tiles wait at `fastest`.
+        pub levels: u32 = 2 => range(0, 8),
+        /// Seconds after the camera slows below `speed` before tiles out of its
+        /// view load.
+        pub settle: f32 = 0.2 => range(0.0, 10.0),
+    }
 }
 
-impl Default for MotionDetail {
-    fn default() -> Self {
+impl ExtraRules for MotionDetail {
+    /// The fastest speed is at least the fast one.
+    fn check_extra(&self) -> Result<(), InvalidSetting> {
+        if self.fastest >= self.speed {
+            Ok(())
+        } else {
+            Err(InvalidSetting::new("fastest", "must be at least speed"))
+        }
+    }
+
+    fn sanitize_extra(self) -> Self {
         Self {
-            speed: 30.0,
-            fastest: 300.0,
-            levels: 2,
-            settle: 0.2,
+            fastest: crate::math::max(self.fastest, self.speed),
+            ..self
         }
     }
 }
 
 impl MotionDetail {
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("motion_detail.speed", self.speed, 0.0..=100_000.0)?;
-        check_range(
-            "motion_detail.fastest",
-            self.fastest,
-            self.speed..=100_000.0,
-        )?;
-        if self.levels > 8 {
-            return Err(InvalidSetting::new(
-                "motion_detail.levels",
-                "must be in [0, 8]",
-            ));
-        }
-        check_range("motion_detail.settle", self.settle, 0.0..=10.0)
-    }
-
-    /// Every value in range.
-    pub fn sanitized(self) -> Self {
-        let defaults = Self::default();
-        let finite = |value: f32, fallback: f32| if value.is_finite() { value } else { fallback };
-        let speed = crate::math::clamp(finite(self.speed, defaults.speed), 0.0, 100_000.0);
-        Self {
-            speed,
-            fastest: crate::math::clamp(finite(self.fastest, defaults.fastest), speed, 100_000.0),
-            levels: self.levels.min(8),
-            settle: crate::math::clamp(finite(self.settle, defaults.settle), 0.0, 10.0),
-        }
-    }
-
     /// The finest levels whose tiles wait at `speed` meters per second.
     pub fn waiting(&self, speed: f32) -> u32 {
         if speed <= self.speed || speed.is_nan() || self.levels == 0 {
@@ -907,149 +871,12 @@ impl MotionDetail {
     }
 }
 
-impl Default for TerrainSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            pixel_error: 6.0,
-            pinned_levels: 2,
-            max_tiles: None,
-            samples_per_frame: 24_576,
-            loading_work_ms: 50.0,
-            work_ms: 4.0,
-            collision_radius: 192.0,
-            sun_shadows: true,
-            shadow_resolution: 1024,
-            shadow_softness: 0.01,
-            sky_visibility: true,
-            sky_resolution: 1024,
-            relief_distance: 24.0,
-            relief_steps: 8,
-            surroundings: true,
-            motion_detail: None,
-            cache_bytes: 256 << 20,
-            upload_bytes: 8 << 20,
-            idle_reach: 3.0,
-            max_bands: 4,
-            gpu_materials: true,
-            virtual_texture: true,
-            virtual_texture_pages: None,
-            virtual_texture_bakes: 16,
-        }
-    }
-}
-
 impl TerrainSettings {
     /// What a world without these settings reads as: no terrain draws.
     pub fn off() -> Self {
         Self {
             enabled: false,
             ..Self::default()
-        }
-    }
-
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("pixel_error", self.pixel_error, 1.0..=64.0)?;
-        if !(1..=8).contains(&self.pinned_levels) {
-            return Err(InvalidSetting::new("pinned_levels", "must be in [1, 8]"));
-        }
-        check_budget("max_tiles", self.max_tiles)?;
-        if self.samples_per_frame == 0 {
-            return Err(InvalidSetting::new(
-                "samples_per_frame",
-                "must be at least 1",
-            ));
-        }
-        check_range("loading_work_ms", self.loading_work_ms, 0.1..=1000.0)?;
-        check_range("work_ms", self.work_ms, 0.1..=1000.0)?;
-        check_range("collision_radius", self.collision_radius, 0.0..=4096.0)?;
-        if !(64..=4096).contains(&self.shadow_resolution) {
-            return Err(InvalidSetting::new(
-                "shadow_resolution",
-                "must be in [64, 4096]",
-            ));
-        }
-        check_range("shadow_softness", self.shadow_softness, 0.0..=0.2)?;
-        if !(64..=4096).contains(&self.sky_resolution) {
-            return Err(InvalidSetting::new(
-                "sky_resolution",
-                "must be in [64, 4096]",
-            ));
-        }
-        check_range("relief_distance", self.relief_distance, 0.0..=200.0)?;
-        if !(2..=64).contains(&self.relief_steps) {
-            return Err(InvalidSetting::new("relief_steps", "must be in [2, 64]"));
-        }
-        if let Some(detail) = &self.motion_detail {
-            detail.validate()?;
-        }
-        if self.upload_bytes == 0 {
-            return Err(InvalidSetting::new("upload_bytes", "must be at least 1"));
-        }
-        check_range("idle_reach", self.idle_reach, 0.0..=8.0)?;
-        if !(1..=16).contains(&self.max_bands) {
-            return Err(InvalidSetting::new("max_bands", "must be in [1, 16]"));
-        }
-        crate::environment::check_budget("virtual_texture_pages", self.virtual_texture_pages)?;
-        if self.virtual_texture_bakes == 0 {
-            return Err(InvalidSetting::new(
-                "virtual_texture_bakes",
-                "must be at least 1",
-            ));
-        }
-        Ok(())
-    }
-
-    /// Every value in range.
-    pub fn sanitized(self) -> Self {
-        let defaults = Self::default();
-        let finite = |value: f32, fallback: f32| if value.is_finite() { value } else { fallback };
-        Self {
-            enabled: self.enabled,
-            pixel_error: crate::math::clamp(
-                finite(self.pixel_error, defaults.pixel_error),
-                1.0,
-                64.0,
-            ),
-            pinned_levels: self.pinned_levels.clamp(1, 8),
-            max_tiles: self.max_tiles.map(|budget| budget.max(1)),
-            samples_per_frame: self.samples_per_frame.max(1),
-            loading_work_ms: crate::math::clamp(
-                finite(self.loading_work_ms, defaults.loading_work_ms),
-                0.1,
-                1000.0,
-            ),
-            work_ms: crate::math::clamp(finite(self.work_ms, defaults.work_ms), 0.1, 1000.0),
-            collision_radius: crate::math::clamp(
-                finite(self.collision_radius, defaults.collision_radius),
-                0.0,
-                4096.0,
-            ),
-            sun_shadows: self.sun_shadows,
-            shadow_resolution: self.shadow_resolution.clamp(64, 4096),
-            shadow_softness: crate::math::clamp(
-                finite(self.shadow_softness, defaults.shadow_softness),
-                0.0,
-                0.2,
-            ),
-            sky_visibility: self.sky_visibility,
-            sky_resolution: self.sky_resolution.clamp(64, 4096),
-            relief_distance: crate::math::clamp(
-                finite(self.relief_distance, defaults.relief_distance),
-                0.0,
-                200.0,
-            ),
-            relief_steps: self.relief_steps.clamp(2, 64),
-            surroundings: self.surroundings,
-            motion_detail: self.motion_detail.map(MotionDetail::sanitized),
-            cache_bytes: self.cache_bytes,
-            upload_bytes: self.upload_bytes.max(1),
-            idle_reach: crate::math::clamp(finite(self.idle_reach, defaults.idle_reach), 0.0, 8.0),
-            max_bands: self.max_bands.clamp(1, 16),
-            gpu_materials: self.gpu_materials,
-            virtual_texture: self.virtual_texture,
-            virtual_texture_pages: self.virtual_texture_pages.map(|budget| budget.max(1)),
-            virtual_texture_bakes: self.virtual_texture_bakes.max(1),
         }
     }
 }

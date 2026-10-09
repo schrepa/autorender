@@ -36,6 +36,7 @@ mod packed;
 mod particles;
 mod probes;
 mod retained_render;
+mod rules;
 mod scene;
 mod skin;
 mod sky;
@@ -51,6 +52,8 @@ mod wind;
 pub use animation::{AnimationPlayer, AnimationSystems};
 pub use antialiasing::TemporalAntialiasing;
 pub use atmosphere::Atmosphere;
+#[cfg(feature = "schema")]
+pub use atmosphere::state_atmosphere_rules;
 pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
 pub use bridges::{DECK_DEPTH, DECK_MARGIN, DECK_RISE};

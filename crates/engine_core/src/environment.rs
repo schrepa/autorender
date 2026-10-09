@@ -14,14 +14,15 @@ use crate::Atmosphere;
 /// breaks, such as `must be in [0, 1]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvalidSetting {
-    pub field: &'static str,
+    /// The field's name, with its parents' (`motion_detail.speed`).
+    pub field: Cow<'static, str>,
     pub rule: Cow<'static, str>,
 }
 
 impl InvalidSetting {
     pub(crate) fn new(field: &'static str, rule: impl Into<Cow<'static, str>>) -> Self {
         Self {
-            field,
+            field: Cow::Borrowed(field),
             rule: rule.into(),
         }
     }
@@ -204,14 +205,5 @@ pub(crate) fn check_range(
         Ok(())
     } else {
         Err(InvalidSetting::new(field, within(&range)))
-    }
-}
-
-/// Checks that an optional budget is at least 1.
-pub(crate) fn check_budget(field: &'static str, budget: Option<u32>) -> Result<(), InvalidSetting> {
-    if budget == Some(0) {
-        Err(InvalidSetting::new(field, "must be at least 1"))
-    } else {
-        Ok(())
     }
 }

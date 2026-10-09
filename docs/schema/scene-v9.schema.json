@@ -1275,6 +1275,7 @@
       "type": "object",
       "properties": {
         "intensity": {
+          "description": "How much creases and corners darken the ambient light; 0 turns it\noff.",
           "type": "number",
           "format": "float",
           "default": 0.800000011920929,
@@ -1286,7 +1287,7 @@
           "type": "number",
           "format": "float",
           "default": 2.5,
-          "minimum": 0.001
+          "exclusiveMinimum": 0.0
         }
       },
       "additionalProperties": false
@@ -1339,69 +1340,81 @@
       "type": "object",
       "properties": {
         "aerial_color": {
+          "description": "The color distant ridges fade into away from the sun.",
           "type": [
             "array",
             "null"
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "aerial_density": {
+          "description": "Aerial extinction per world unit at height zero; 0 turns it off.",
           "type": [
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "aerial_falloff": {
+          "description": "How fast the air thins with height, per world unit.",
           "type": [
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "aerial_glow": {
+          "description": "How strongly distant ridges fade into a glow of the sun's color\ntoward the sun.",
           "type": [
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "aerial_start": {
-          "description": "Aerial perspective, version 9: beyond this distance,\nair of `aerial_density` per unit at height zero (0: off), thinning by\n`aerial_falloff` per unit up, dims toward `aerial_color` and, toward\nthe sun, an `aerial_glow` of its color.",
+          "description": "Aerial perspective begins this far from the camera (world\nunits): beyond it, air dims what lies behind it toward the light\nit scatters. Unlike fog it is unbounded and spans kilometers.",
           "type": [
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "ambient": {
-          "description": "Scale of the sky's ambient light.",
+          "description": "Scale of the sky's ambient light on surfaces.",
           "type": [
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "contrast": {
-          "description": "Contrast around mid grey after tone mapping: 1 keeps it, and the\ncurve, which keeps black and white, is steepest at 1.5. Version 6,\nlike the grade fields below.",
+          "description": "Contrast around mid grey after tone mapping: the slope of an\nS-curve that keeps black and white; 0 flattens, 1 keeps it, and\nthe curve is steepest at 1.5.",
           "type": [
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "emission": {
-          "description": "Scale of material emission: dim by day, full at night.",
+          "description": "Scale of material emission: how strongly lamps, lit windows and\nother artificial lights show in this light, dim by day and full\nat night.",
           "type": [
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "exposure": {
           "description": "Exposure before tone mapping.",
@@ -1409,7 +1422,8 @@
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "fog_density": {
           "description": "Fog density per world unit at height zero.",
@@ -1417,7 +1431,8 @@
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "fog_falloff": {
           "description": "How fast fog thins with height, per world unit.",
@@ -1425,7 +1440,8 @@
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "fog_max": {
           "description": "The most fog can cover.",
@@ -1443,16 +1459,19 @@
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "ground": {
+          "description": "Sky color below the horizon: downward surfaces take their\nambient light from it.",
           "type": [
             "array",
             "null"
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
@@ -1465,34 +1484,39 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "horizon": {
+          "description": "Sky color at the horizon: vertical surfaces take their ambient\nlight from it.",
           "type": [
             "array",
             "null"
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "preset": {
+          "description": "The preset the other fields override.",
           "$ref": "#/$defs/AtmospherePreset",
           "default": "golden_hour"
         },
         "rim": {
-          "description": "Silhouette light in the horizon color.",
+          "description": "Silhouette light in the horizon color, facing away from the\ncamera.",
           "type": [
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "saturation": {
           "description": "Saturation after tone mapping; 1 keeps it.",
@@ -1500,28 +1524,31 @@
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "shadow_tint": {
-          "description": "Hue of dark tones after tone mapping (split toning), as a color gain\nscaled to keep luminance; white or black keeps them.",
+          "description": "Hue of dark tones after tone mapping (split toning), as a color\ngain scaled to keep luminance; white, like black, keeps them.\nCool shadows against warm highlights read as vivid.",
           "type": [
             "array",
             "null"
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "specular": {
-          "description": "Scale of sun highlights and sky reflections; 1 is physically based.",
+          "description": "Scale of sun highlights and sky reflections; 1 is physically\nbased.",
           "type": [
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "sun_color": {
           "description": "Sun color times intensity.",
@@ -1531,13 +1558,14 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "sun_direction": {
-          "description": "Direction toward the sun; any nonzero length.",
+          "description": "Direction toward the sun; any nonzero length, normalized when\nrendered.",
           "type": [
             "array",
             "null"
@@ -1550,22 +1578,24 @@
           "minItems": 3
         },
         "vibrance": {
-          "description": "Saturation added to muted colors more than to vivid ones; 0 adds none.",
+          "description": "Saturation added to muted colors more than to vivid ones; 0 adds\nnone.",
           "type": [
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "minimum": 0.0
         },
         "zenith": {
-          "description": "Sky straight up, at the horizon, and below it.",
+          "description": "Sky color straight up: upward surfaces take their ambient light\nfrom it.",
           "type": [
             "array",
             "null"
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
@@ -1578,6 +1608,7 @@
       "type": "object",
       "properties": {
         "intensity": {
+          "description": "How strongly light glows beyond bright pixels; 0 turns it off.",
           "type": "number",
           "format": "float",
           "default": 0.6000000238418579,
@@ -1722,10 +1753,11 @@
       ]
     },
     "SceneClouds": {
-      "description": "The cloud layer: whether it draws; how much of the sky it covers (0,\nclear, to 1, overcast); the world height of its base and how thick it\nis (meters, base -10000 to 30000, thickness 50 to 10000); how dense its\nclouds are (0.01 to 4); the wind it drifts in (meters per second along x\nand z, each -100 to 100); the meters across its largest shapes (200 to\n50000); the seed of its shapes; how much of the sun's light its shadows\ntake from the ground (0 to 1); the dome's texels around the horizon\n(256 to 4096, a multiple of 64; a quarter as many from the horizon up);\nthe frames over which ordinary frames march the whole dome (1 to 64);\nand whether the view marches them a ray per block of `view_block`\npixels along a side (1 to 16) after the opaque scene:\nthen they stand in front of whatever lies beyond them, all around a\ncamera inside the layer and below one above it, and the sky's dome\nshows them behind every surface only while the camera is under the\nlayer. Opt-in: a scene without a `clouds` section has none. Requires\nversion 9.",
+      "description": "The cloud layer. Opt-in: a scene without a `clouds` section has none.\nRequires version 9.",
       "type": "object",
       "properties": {
         "base": {
+          "description": "The world height of its base, meters.",
           "type": "number",
           "format": "float",
           "default": 1800.0,
@@ -1733,6 +1765,7 @@
           "minimum": -10000.0
         },
         "coverage": {
+          "description": "How much of the sky it covers: 0 clear, 1 overcast.",
           "type": "number",
           "format": "float",
           "default": 0.44999998807907104,
@@ -1740,6 +1773,7 @@
           "minimum": 0.0
         },
         "density": {
+          "description": "How dense its clouds are.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -1747,21 +1781,26 @@
           "minimum": 0.01
         },
         "enabled": {
+          "description": "Whether the layer draws.",
           "type": "boolean",
           "default": true
         },
         "in_view": {
+          "description": "Whether the view marches the clouds after the opaque scene: then\nthey stand in front of whatever lies beyond them, all around a camera\ninside the layer and below one above it, and the dome shows them\nbehind every surface only while the camera is under the layer.",
           "type": "boolean",
           "default": true
         },
         "resolution": {
+          "description": "The dome's texels around the horizon; a quarter as many from the\nhorizon up.",
           "type": "integer",
           "format": "uint32",
           "default": 2048,
           "maximum": 4096,
-          "minimum": 256
+          "minimum": 256,
+          "multipleOf": 64
         },
         "scale": {
+          "description": "The meters across its largest shapes.",
           "type": "number",
           "format": "float",
           "default": 3000.0,
@@ -1769,12 +1808,14 @@
           "minimum": 200.0
         },
         "seed": {
+          "description": "The seed of its shapes.",
           "type": "integer",
           "format": "uint32",
           "default": 1,
           "minimum": 0
         },
         "shadows": {
+          "description": "How much of the sun's light its shadows take from the ground.",
           "type": "number",
           "format": "float",
           "default": 0.75,
@@ -1782,6 +1823,7 @@
           "minimum": 0.0
         },
         "slices": {
+          "description": "The frames over which ordinary frames march the whole dome.",
           "type": "integer",
           "format": "uint32",
           "default": 64,
@@ -1789,6 +1831,7 @@
           "minimum": 1
         },
         "thickness": {
+          "description": "How thick it is, meters.",
           "type": "number",
           "format": "float",
           "default": 1400.0,
@@ -1796,6 +1839,7 @@
           "minimum": 50.0
         },
         "view_block": {
+          "description": "The pixels along a side of the blocks the view marches a ray each.",
           "type": "integer",
           "format": "uint32",
           "default": 4,
@@ -1803,6 +1847,7 @@
           "minimum": 1
         },
         "wind": {
+          "description": "The wind it drifts in, meters per second along x and z.",
           "type": "array",
           "default": [
             8.0,
@@ -1810,7 +1855,9 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": -100.0
           },
           "maxItems": 2,
           "minItems": 2
@@ -1898,10 +1945,11 @@
       ]
     },
     "SceneContactShadows": {
-      "description": "Contact shadow settings: whether they trace, how far each ray reaches\ntoward the sun in meters (0.05 to 4), how much of the sun's light a hit\ntakes away (0 to 1; 0 turns them off), and the meters from the camera\nwithin which surfaces trace, their shadows fading out over its last\nthird (1 to 1000). Requires version 9.",
+      "description": "Contact shadow settings. Requires version 9.",
       "type": "object",
       "properties": {
         "distance": {
+          "description": "Meters from the camera within which surfaces trace, their shadows\nfading out over its last third.",
           "type": "number",
           "format": "float",
           "default": 80.0,
@@ -1909,10 +1957,12 @@
           "minimum": 1.0
         },
         "enabled": {
+          "description": "Whether contact shadows trace.",
           "type": "boolean",
           "default": true
         },
         "length": {
+          "description": "How far each ray reaches toward the sun, in meters.",
           "type": "number",
           "format": "float",
           "default": 0.6000000238418579,
@@ -1920,6 +1970,7 @@
           "minimum": 0.05
         },
         "strength": {
+          "description": "How much of the sun's light a hit takes away; 0 turns them off.",
           "type": "number",
           "format": "float",
           "default": 0.8500000238418579,
@@ -1986,6 +2037,7 @@
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Whether frames draw decals.",
           "type": "boolean",
           "default": true
         },
@@ -2002,14 +2054,16 @@
       "additionalProperties": false
     },
     "SceneDeformation": {
-      "description": "Runtime deformation: whether deformers press tracks; the\nmeters of ground the map around the camera spans (8 to 1024) and its\ntexels along a side (128 to 8192, a multiple of 128; renderers keep\nfewer where the device's buffers cannot hold them); the seconds tracks\ntake to refill to about a third of their depth (0, never, to 86400);\nhow high the ground rises beside a track for its depth (0 to 1); an\noptional budget of stamps the log keeps, the oldest dropping beyond it;\nand whether the log keeps the stamps the map moves away from, so tracks\nare there when the camera returns. Requires version 9.",
+      "description": "Runtime deformation. Requires version 9.",
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Whether deformers press tracks.",
           "type": "boolean",
           "default": true
         },
         "extent": {
+          "description": "The meters of ground the map around the camera spans.",
           "type": "number",
           "format": "float",
           "default": 64.0,
@@ -2017,6 +2071,7 @@
           "minimum": 8.0
         },
         "max_stamps": {
+          "description": "An optional budget of stamps the log keeps, the oldest dropping\nbeyond it.",
           "type": [
             "integer",
             "null"
@@ -2025,10 +2080,12 @@
           "minimum": 1
         },
         "persist": {
+          "description": "Whether the log keeps the stamps the map moves away from, so tracks\nare there when the camera returns.",
           "type": "boolean",
           "default": true
         },
         "refill": {
+          "description": "The seconds tracks take to refill to about a third of their depth;\n0 never.",
           "type": "number",
           "format": "float",
           "default": 0.0,
@@ -2036,13 +2093,16 @@
           "minimum": 0.0
         },
         "resolution": {
+          "description": "The map's texels along a side; renderers keep fewer where the\ndevice's buffers cannot hold them.",
           "type": "integer",
           "format": "uint32",
           "default": 1024,
           "maximum": 8192,
-          "minimum": 128
+          "minimum": 128,
+          "multipleOf": 128
         },
         "rim": {
+          "description": "How high the ground rises beside a track for its depth.",
           "type": "number",
           "format": "float",
           "default": 0.30000001192092896,
@@ -2541,7 +2601,7 @@
       "type": "object",
       "properties": {
         "density": {
-          "description": "Scales every cover's density, 0 to 4. Blades sway in the world's\n`Wind`.",
+          "description": "Scales every cover's density. Blades sway in the world's `Wind`.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -2549,6 +2609,7 @@
           "minimum": 0.0
         },
         "enabled": {
+          "description": "Whether terrains grow their cover.",
           "type": "boolean",
           "default": true
         },
@@ -2562,7 +2623,7 @@
           "minimum": 1
         },
         "pixels": {
-          "description": "How tall on screen (pixels) the average blade stands where tiers\nend, 0 to 16: each tier reaches twice as far as the last, with\nblades sparser and wider, until its blades would stand shorter than\nthis. 0 grows cover within the radius alone.",
+          "description": "How tall on screen (pixels) the average blade stands where tiers\nend: each tier reaches twice as far as the last, with blades sparser\nand wider, until its blades would stand shorter than this. 0 grows\ncover within the radius alone.",
           "type": "number",
           "format": "float",
           "default": 2.0,
@@ -2570,7 +2631,7 @@
           "minimum": 0.0
         },
         "radius": {
-          "description": "Meters from the camera within which cover grows densest, 2 to 200.\nPast it the ground shows as its cover's canopy, and sparser tiers\nof wider blades reach on.",
+          "description": "Meters from the camera within which cover grows densest. Past it the\nground shows as its cover's canopy, and sparser tiers of wider blades\nreach on.",
           "type": "number",
           "format": "float",
           "default": 40.0,
@@ -2699,11 +2760,12 @@
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Whether instances draw simplified levels.",
           "type": "boolean",
           "default": true
         },
         "fade_seconds": {
-          "description": "Seconds placed objects take to fade between how the camera shows\nthem, from 0 (at once) to 4.",
+          "description": "Seconds placed objects take to fade between how the camera shows\nthem, from 0 (at once).",
           "type": "number",
           "format": "float",
           "default": 0.5,
@@ -2722,10 +2784,10 @@
             "null"
           ],
           "format": "uint32",
-          "minimum": 0
+          "minimum": 1
         },
         "pixel_error": {
-          "description": "The largest simplification error a drawn level may show, in pixels of\nthe viewport height, from 0.25 to 64: smaller draws finer levels\nfarther away.",
+          "description": "The largest simplification error a drawn level may show, in pixels\nof the viewport height: smaller draws finer levels farther away.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -2810,6 +2872,7 @@
           "minimum": 1.0
         },
         "enabled": {
+          "description": "Whether frames shade local lights.",
           "type": "boolean",
           "default": true
         },
@@ -3103,14 +3166,16 @@
       ]
     },
     "SceneNavigation": {
-      "description": "Navigation: whether agents walk, and the samples of\nsearch work each fixed tick does at most over every walk being searched\n(at least 1024). Requires version 9.",
+      "description": "Navigation. Requires version 9.",
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Whether agents walk.",
           "type": "boolean",
           "default": true
         },
         "samples_per_tick": {
+          "description": "The samples of search work each fixed tick does at most over every\nwalk being searched.",
           "type": "integer",
           "format": "uint32",
           "default": 32768,
@@ -3379,6 +3444,7 @@
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Whether GPU-presented frames cull occluded instances.",
           "type": "boolean",
           "default": true
         }
@@ -3386,14 +3452,16 @@
       "additionalProperties": false
     },
     "SceneOccupancy": {
-      "description": "Occupancy settings: whether the map is drawn, the meters around the\ncamera within which covers darken, less over the outer two fifths\n(64 to 4096), the map's texels a side (128 to 4096), how\nmuch of the sky light full cover takes away (0 to 1), and the meters\nthe coarser far map reaches (0, none, or the radius to\n65536), its texels as many. Requires version 9.",
+      "description": "Occupancy settings. Requires version 9.",
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Whether the map is drawn.",
           "type": "boolean",
           "default": true
         },
         "far_radius": {
+          "description": "Meters the coarser far map reaches, with as many texels: none at\nor within `radius`.",
           "type": "number",
           "format": "float",
           "default": 4096.0,
@@ -3401,6 +3469,7 @@
           "minimum": 0.0
         },
         "radius": {
+          "description": "Meters around the camera within which covers darken, less over the\nouter two fifths.",
           "type": "number",
           "format": "float",
           "default": 512.0,
@@ -3408,6 +3477,7 @@
           "minimum": 64.0
         },
         "resolution": {
+          "description": "The map's texels a side.",
           "type": "integer",
           "format": "uint32",
           "default": 1024,
@@ -3415,6 +3485,7 @@
           "minimum": 128
         },
         "strength": {
+          "description": "How much of the sky light full cover takes away.",
           "type": "number",
           "format": "float",
           "default": 0.75,
@@ -3425,10 +3496,11 @@
       "additionalProperties": false
     },
     "SceneOcean": {
-      "description": "The sea: whether it draws; the height of the still sea (world meters,\n-10000 to 10000); the wind that raised it (meters per second along x and\nz), whose speed (0.5 to 30) sets the waves' height and length and whose\ndirection heads them; how sharply crests stand (0, round swells, to 1,\nnearly breaking); the waves it holds (1 to 16); the seed of their\nheadings and phases; the color deep water scatters back (linear, each 0\nto 1); the meters of water through which half the light passes (0.1 to\n100); how much foam crests and shores gather (0 to 1); and the meters\nfrom the camera it draws (100 to 100000). Requires version 9.",
+      "description": "The sea. Requires version 9.",
       "type": "object",
       "properties": {
         "choppiness": {
+          "description": "How sharply crests stand: 0 round swells, 1 nearly breaking.",
           "type": "number",
           "format": "float",
           "default": 0.699999988079071,
@@ -3436,6 +3508,7 @@
           "minimum": 0.0
         },
         "clarity": {
+          "description": "The meters of water through which half the light passes.",
           "type": "number",
           "format": "float",
           "default": 8.0,
@@ -3443,6 +3516,7 @@
           "minimum": 0.1
         },
         "color": {
+          "description": "The color deep water scatters back, linear.",
           "type": "array",
           "default": [
             0.004000000189989805,
@@ -3451,16 +3525,20 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "enabled": {
+          "description": "Whether the sea draws.",
           "type": "boolean",
           "default": false
         },
         "foam": {
+          "description": "How much foam crests and shores gather.",
           "type": "number",
           "format": "float",
           "default": 0.5,
@@ -3468,6 +3546,7 @@
           "minimum": 0.0
         },
         "level": {
+          "description": "The height of the still sea, world meters.",
           "type": "number",
           "format": "float",
           "default": 0.0,
@@ -3475,6 +3554,7 @@
           "minimum": -10000.0
         },
         "reach": {
+          "description": "The meters from the camera the sea draws.",
           "type": "number",
           "format": "float",
           "default": 20000.0,
@@ -3482,12 +3562,14 @@
           "minimum": 100.0
         },
         "seed": {
+          "description": "The seed of their headings and phases.",
           "type": "integer",
           "format": "uint32",
           "default": 1,
           "minimum": 0
         },
         "waves": {
+          "description": "The waves the sea holds.",
           "type": "integer",
           "format": "uint32",
           "default": 12,
@@ -3495,6 +3577,7 @@
           "minimum": 1
         },
         "wind": {
+          "description": "The wind that raised it, meters per second along x and z: its speed,\nfrom 0.5 to 30, sets the waves' height and length and its direction\nheads them.",
           "type": "array",
           "default": [
             6.0,
@@ -3502,7 +3585,9 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 30.0,
+            "minimum": -30.0
           },
           "maxItems": 2,
           "minItems": 2
@@ -3530,6 +3615,7 @@
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Whether frames draw particles.",
           "type": "boolean",
           "default": true
         },
@@ -3647,6 +3733,7 @@
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Whether surfaces reflect probes.",
           "type": "boolean",
           "default": true
         },
@@ -3667,12 +3754,20 @@
           "minimum": 1
         },
         "resolution": {
-          "description": "Texels across each face of every environment map, the sky's\nincluded: a power of two from 16 to 1024.",
+          "description": "Texels across each face of every environment map, the sky's\nincluded.",
           "type": "integer",
           "format": "uint32",
           "default": 128,
-          "maximum": 1024,
-          "minimum": 16
+          "enum": [
+            16,
+            32,
+            64,
+            128,
+            256,
+            512,
+            1024
+          ],
+          "minimum": 0
         }
       },
       "additionalProperties": false
@@ -3690,6 +3785,7 @@
           "minimum": 0.001
         },
         "intensity": {
+          "description": "How strongly glossy surfaces reflect the screen; 0 turns them off.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -3720,7 +3816,7 @@
           "minimum": 0.0
         },
         "strength": {
-          "description": "Scales how far rays bend through transmissive materials.",
+          "description": "Scales how far rays bend through transmissive materials; 0 turns\nit off.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -3735,7 +3831,7 @@
       "type": "object",
       "properties": {
         "bounds": {
-          "description": "Region to keep shadows for: the whole scene gives the sharpest, stable\nshadows. Without it the maps follow the camera.",
+          "description": "Region to keep shadows for: the whole scene gives the sharpest,\nstable shadows. Without it the maps follow the camera. Corners\nfinite, `min` at most `max` on every axis.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneBounds"
@@ -3746,7 +3842,7 @@
           ]
         },
         "cascades": {
-          "description": "Sharper maps (cascades) splitting `near_distance`, each reaching a\nthird as far as the next: 1 to 4, 3 when omitted. Version 6.",
+          "description": "Sharper maps (cascades) splitting `near_distance`, each reaching a\nthird as far as the next; 3 when omitted. Version 6.",
           "type": [
             "integer",
             "null"
@@ -3760,9 +3856,10 @@
           "type": "number",
           "format": "float",
           "default": 500.0,
-          "minimum": 0.001
+          "exclusiveMinimum": 0.0
         },
         "enabled": {
+          "description": "Whether the sun casts shadows.",
           "type": "boolean",
           "default": true
         },
@@ -3770,29 +3867,33 @@
           "description": "Side of the finest kept level (world units), which each next level\nis four times; 256 when omitted.",
           "type": "number",
           "format": "float",
-          "minimum": 0.001
+          "exclusiveMinimum": 0.0
         },
         "levels": {
-          "description": "Kept levels: maps of still casters following the\ncamera, sharper than the far maps where they reach, each with half\nthe far maps' `resolution` per side; 0 to 3, none when omitted.\nWorlds larger than their shadows' sharpness give them two or three.",
+          "description": "Kept levels: maps of still casters following the camera, sharper\nthan the far maps where they reach, each with half the far maps'\n`resolution` per side; none when omitted. Worlds larger than their\nshadows' sharpness give them two or three.",
           "type": "integer",
           "format": "uint32",
           "maximum": 3,
           "minimum": 0
         },
         "near_distance": {
-          "description": "View distance of the sharper maps that follow the camera.",
+          "description": "View distance of the sharper maps that follow the camera, less\nthan `distance`.",
           "type": "number",
           "format": "float",
           "default": 100.0,
-          "minimum": 0.001
+          "exclusiveMinimum": 0.0
         },
         "resolution": {
-          "description": "Texels per side of the far maps: 1024, 2048 or 4096.",
+          "description": "Texels per side of the far maps.",
           "type": "integer",
           "format": "uint32",
           "default": 2048,
-          "maximum": 4096,
-          "minimum": 1024
+          "enum": [
+            1024,
+            2048,
+            4096
+          ],
+          "minimum": 0
         }
       },
       "additionalProperties": false
@@ -3835,10 +3936,11 @@
       ]
     },
     "SceneSky": {
-      "description": "A physically based sky: whether it draws; the planet's\nradius and the atmosphere's thickness (kilometers); Rayleigh scattering\nper kilometer at the ground (red, green, blue) and the height over which\nit thins by e (km); Mie scattering and absorption per kilometer, their\nscale height and the forward lobe of their phase (0 to 0.99); ozone\nabsorption per kilometer at its densest, 25 km up; the ground's albedo;\nthe sun's intensity (its color's scale above the air) and angular radius\n(degrees); how far air hazes what lies away from the camera, as a\nmultiple of real distance (0 none); the height of the world's origin\nabove the ground of the planet (meters); and how far exposure adapts to\nthe sky's light (0 not at all, 1 fully), so that dawn, dusk and night\nstay readable. Defaults are Earth's. Opt-in. Requires version 9.",
+      "description": "A physically based sky. Defaults are Earth's. Opt-in. Requires version 9.",
       "type": "object",
       "properties": {
         "adaptation": {
+          "description": "How far exposure adapts to the sky's light, so that dawn, dusk and\nnight stay readable: 0 not at all, 1 fully.",
           "type": "number",
           "format": "float",
           "default": 0.5,
@@ -3846,6 +3948,7 @@
           "minimum": 0.0
         },
         "aerial": {
+          "description": "How far air hazes what lies away from the camera, as a multiple of\nreal distance; 0 none.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -3853,6 +3956,7 @@
           "minimum": 0.0
         },
         "altitude": {
+          "description": "The height of the world's origin above the ground of the planet,\nmeters.",
           "type": "number",
           "format": "float",
           "default": 0.0,
@@ -3860,6 +3964,7 @@
           "minimum": 0.0
         },
         "atmosphere_height": {
+          "description": "The atmosphere's thickness, kilometers.",
           "type": "number",
           "format": "float",
           "default": 100.0,
@@ -3867,10 +3972,12 @@
           "minimum": 1.0
         },
         "enabled": {
+          "description": "Whether the sky draws.",
           "type": "boolean",
           "default": true
         },
         "ground_albedo": {
+          "description": "The ground's albedo.",
           "type": "array",
           "default": [
             0.30000001192092896,
@@ -3879,12 +3986,15 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "mie": {
+          "description": "Mie scattering per kilometer.",
           "type": "number",
           "format": "float",
           "default": 0.003996000159531832,
@@ -3892,6 +4002,7 @@
           "minimum": 0.0
         },
         "mie_absorption": {
+          "description": "Mie absorption per kilometer.",
           "type": "number",
           "format": "float",
           "default": 0.004399999976158142,
@@ -3899,6 +4010,7 @@
           "minimum": 0.0
         },
         "mie_g": {
+          "description": "The forward lobe of Mie scattering's phase.",
           "type": "number",
           "format": "float",
           "default": 0.800000011920929,
@@ -3906,6 +4018,7 @@
           "minimum": 0.0
         },
         "mie_height": {
+          "description": "The height over which Mie scattering thins by e, kilometers.",
           "type": "number",
           "format": "float",
           "default": 1.2000000476837158,
@@ -3913,6 +4026,7 @@
           "minimum": 0.1
         },
         "ozone": {
+          "description": "Ozone absorption per kilometer at its densest, 25 km up.",
           "type": "array",
           "default": [
             0.0006500000017695129,
@@ -3921,12 +4035,15 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "planet_radius": {
+          "description": "The planet's radius, kilometers.",
           "type": "number",
           "format": "float",
           "default": 6360.0,
@@ -3934,6 +4051,7 @@
           "minimum": 100.0
         },
         "rayleigh": {
+          "description": "Rayleigh scattering per kilometer at the ground: red, green, blue.",
           "type": "array",
           "default": [
             0.005801999941468239,
@@ -3942,12 +4060,15 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "rayleigh_height": {
+          "description": "The height over which Rayleigh scattering thins by e, kilometers.",
           "type": "number",
           "format": "float",
           "default": 8.0,
@@ -3955,6 +4076,7 @@
           "minimum": 0.1
         },
         "sun_intensity": {
+          "description": "The sun's intensity: its color's scale above the air.",
           "type": "number",
           "format": "float",
           "default": 3.0,
@@ -3962,6 +4084,7 @@
           "minimum": 0.0
         },
         "sun_size": {
+          "description": "The sun's angular radius, degrees.",
           "type": "number",
           "format": "float",
           "default": 0.27000001072883606,
@@ -4054,6 +4177,7 @@
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Whether GPU-presented frames cull sub-pixel instances.",
           "type": "boolean",
           "default": true
         }
@@ -4061,7 +4185,7 @@
       "additionalProperties": false
     },
     "SceneSunShafts": {
-      "description": "Sun shafts: sunlight scattered by the fog between shadow\ncasters. Requires version 6 and shadows; an intensity of 0 turns them off.",
+      "description": "Sun shafts: sunlight scattered by the fog between shadow\ncasters. Requires version 6 and shadows; an intensity of 0 turns them\noff.",
       "type": "object",
       "properties": {
         "anisotropy": {
@@ -4081,6 +4205,7 @@
           "minimum": 0.001
         },
         "intensity": {
+          "description": "How bright the shafts are; 0 turns them off.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -4156,6 +4281,7 @@
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Whether ordinary GPU-presented frames resolve temporally.",
           "type": "boolean",
           "default": false
         }
@@ -4503,7 +4629,7 @@
       "type": "object",
       "properties": {
         "fastest": {
-          "description": "Meters per second at which the finest `levels` levels wait, from\n`speed` to 100,000; between, fewer wait, at least one.",
+          "description": "Meters per second at which the finest `levels` levels wait, at least\n`speed`; between, fewer wait, at least one.",
           "type": "number",
           "format": "float",
           "default": 300.0,
@@ -4511,7 +4637,7 @@
           "minimum": 0.0
         },
         "levels": {
-          "description": "Finest levels whose tiles wait at `fastest`, 0 to 8.",
+          "description": "Finest levels whose tiles wait at `fastest`.",
           "type": "integer",
           "format": "uint32",
           "default": 2,
@@ -4519,7 +4645,7 @@
           "minimum": 0
         },
         "settle": {
-          "description": "Seconds after the camera slows below `speed` before tiles out of its\nview load, 0 to 10.",
+          "description": "Seconds after the camera slows below `speed` before tiles out of its\nview load.",
           "type": "number",
           "format": "float",
           "default": 0.20000000298023224,
@@ -4527,7 +4653,7 @@
           "minimum": 0.0
         },
         "speed": {
-          "description": "Meters per second above which the camera moves fast, 0 to 100,000.",
+          "description": "Meters per second above which the camera moves fast.",
           "type": "number",
           "format": "float",
           "default": 30.0,
@@ -4549,7 +4675,7 @@
           "minimum": 0
         },
         "collision_radius": {
-          "description": "Meters around the camera and focus entities within which level-0\ntiles load for collision, 0 to 4096.",
+          "description": "Meters around the camera and focus entities within which level-0\ntiles load for collision.",
           "type": "number",
           "format": "float",
           "default": 192.0,
@@ -4557,6 +4683,7 @@
           "minimum": 0.0
         },
         "enabled": {
+          "description": "Whether terrains draw.",
           "type": "boolean",
           "default": true
         },
@@ -4566,7 +4693,7 @@
           "default": true
         },
         "idle_reach": {
-          "description": "Multiples of each level's range within which workers generate tiles\nahead of the view into memory while nothing is missing,\n0 to 8; within the keeping reach (2.5) none.",
+          "description": "Multiples of each level's range within which workers generate tiles\nahead of the view into memory while nothing is missing; within the\nkeeping reach (2.5) none.",
           "type": "number",
           "format": "float",
           "default": 3.0,
@@ -4574,7 +4701,7 @@
           "minimum": 0.0
         },
         "loading_work_ms": {
-          "description": "Milliseconds a frame works on terrain until the camera's view first\nloads whole, and after, 0.1 to 1000 each: loading\ntakes large slices of frames, play small ones.",
+          "description": "Milliseconds a frame works on terrain until the camera's view first\nloads whole: loading takes large slices of frames.",
           "type": "number",
           "format": "float",
           "default": 50.0,
@@ -4582,7 +4709,7 @@
           "minimum": 0.1
         },
         "max_bands": {
-          "description": "The most bands of rows a tile under the view generates in at once\non workers the other such tiles leave free, 1 (whole\ntiles) to 16.",
+          "description": "The most bands of rows a tile under the view generates in at once\non workers the other such tiles leave free; 1 generates whole tiles.",
           "type": "integer",
           "format": "uint32",
           "default": 4,
@@ -4610,7 +4737,7 @@
           ]
         },
         "pinned_levels": {
-          "description": "The coarsest levels kept resident over the whole terrain, so it\nalways draws whole, from 1 to 8.",
+          "description": "The coarsest levels kept resident over the whole terrain, so it\nalways draws whole.",
           "type": "integer",
           "format": "uint32",
           "default": 2,
@@ -4618,7 +4745,7 @@
           "minimum": 1
         },
         "pixel_error": {
-          "description": "Pixels a level's samples span before the next coarser level takes\nover, 1 to 64; smaller draws more triangles.",
+          "description": "Pixels a level's samples span before the next coarser level takes\nover; smaller draws more triangles.",
           "type": "number",
           "format": "float",
           "default": 6.0,
@@ -4626,7 +4753,7 @@
           "minimum": 1.0
         },
         "relief_distance": {
-          "description": "Meters from the camera within which the ground's relief\nshows, its view rays marching through its materials' heights,\n0 (none) to 200; and the most steps a ray takes, 2 to 64.",
+          "description": "Meters from the camera within which the ground's relief shows, its\nview rays marching through its materials' heights; 0 none.",
           "type": "number",
           "format": "float",
           "default": 24.0,
@@ -4634,6 +4761,7 @@
           "minimum": 0.0
         },
         "relief_steps": {
+          "description": "The most steps a relief ray takes.",
           "type": "integer",
           "format": "uint32",
           "default": 8,
@@ -4648,7 +4776,7 @@
           "minimum": 1
         },
         "shadow_resolution": {
-          "description": "Texels along a horizon map's sides, 64 to 4096 (8 bytes each).",
+          "description": "Texels along a horizon map's sides, 8 bytes each.",
           "type": "integer",
           "format": "uint32",
           "default": 1024,
@@ -4664,7 +4792,7 @@
           "minimum": 0.0
         },
         "sky_resolution": {
-          "description": "Texels along a sky visibility map's sides, 64 to 4096 (4 bytes each).",
+          "description": "Texels along a sky visibility map's sides, 4 bytes each.",
           "type": "integer",
           "format": "uint32",
           "default": 1024,
@@ -4687,7 +4815,7 @@
           "default": true
         },
         "upload_bytes": {
-          "description": "Bytes of tiles becoming resident in a frame, which the GPU takes in\nthat frame, about 540 KB a tile: tiles beyond wait for\nthe next, though each frame's first arrives whatever its size; at\nleast 1.",
+          "description": "Bytes of tiles becoming resident in a frame, which the GPU takes in\nthat frame, about 540 KB a tile: tiles beyond wait for the next,\nthough each frame's first arrives whatever its size.",
           "type": "integer",
           "format": "uint32",
           "default": 8388608,
@@ -4699,7 +4827,7 @@
           "default": true
         },
         "virtual_texture_bakes": {
-          "description": "Pages it bakes in a frame at most, at least 1 (about 0.1 ms each on\nan integrated GPU).",
+          "description": "Pages it bakes in a frame at most, about 0.1 ms each on an\nintegrated GPU.",
           "type": "integer",
           "format": "uint32",
           "default": 16,
@@ -4715,6 +4843,7 @@
           "minimum": 1
         },
         "work_ms": {
+          "description": "Milliseconds a frame works on terrain after: play takes small\nslices.",
           "type": "number",
           "format": "float",
           "default": 4.0,
@@ -4935,10 +5064,11 @@
       ]
     },
     "SceneTimeOfDay": {
-      "description": "The time of day: whether it moves the sun; the hour (0 to\n24); how many hours pass each second (0 holds it, up to 24); the\nminutes of each step the sun moves by (0.1 to 60); the latitude and day\nof the year (0 to 365) that set the sun's path; and the yaw of north in\nthe world (degrees from -z toward +x). Opt-in. Requires version 9.",
+      "description": "The time of day. Opt-in. Requires version 9.",
       "type": "object",
       "properties": {
         "day": {
+          "description": "The day of the year.",
           "type": "number",
           "format": "float",
           "default": 172.0,
@@ -4946,10 +5076,12 @@
           "minimum": 0.0
         },
         "enabled": {
+          "description": "Whether it moves the sun.",
           "type": "boolean",
           "default": true
         },
         "hours": {
+          "description": "The hour.",
           "type": "number",
           "format": "float",
           "default": 15.0,
@@ -4957,6 +5089,7 @@
           "minimum": 0.0
         },
         "latitude": {
+          "description": "The latitude that, with the day, sets the sun's path.",
           "type": "number",
           "format": "float",
           "default": 45.0,
@@ -4964,6 +5097,7 @@
           "minimum": -90.0
         },
         "north": {
+          "description": "The yaw of north in the world: degrees from -z toward +x.",
           "type": "number",
           "format": "float",
           "default": 0.0,
@@ -4971,6 +5105,7 @@
           "minimum": -360.0
         },
         "speed": {
+          "description": "How many hours pass each second; 0 holds it.",
           "type": "number",
           "format": "float",
           "default": 0.0,
@@ -4978,6 +5113,7 @@
           "minimum": 0.0
         },
         "step": {
+          "description": "The minutes of each step the sun moves by.",
           "type": "number",
           "format": "float",
           "default": 2.0,
@@ -5169,6 +5305,7 @@
       "type": "object",
       "properties": {
         "enabled": {
+          "description": "Whether meshes with clusters draw as virtual geometry.",
           "type": "boolean",
           "default": true
         },
@@ -5182,7 +5319,7 @@
           "minimum": 1
         },
         "pixel_error": {
-          "description": "The largest simplification error a drawn cluster may show, in pixels\nof the viewport height, from 0.25 to 64: smaller draws more\ntriangles.",
+          "description": "The largest simplification error a drawn cluster may show, in pixels\nof the viewport height: smaller draws more triangles.",
           "type": "number",
           "format": "float",
           "default": 1.5,
@@ -5197,10 +5334,11 @@
       "additionalProperties": false
     },
     "SceneWater": {
-      "description": "Water settings: whether water draws; the color deep water scatters back\n(linear, each 0 to 1); the meters of water through which half the light\npasses (0.1 to 100); how strongly ripples tilt its surface (0 to 1); the\nmeters across its largest ripples (0.1 to 100); how much foam shores and\nrapids gather (0, none, to 1); and the meters of water\nshallower than which shores foam (0.05 to 10). Requires version 9.",
+      "description": "Water settings. Requires version 9.",
       "type": "object",
       "properties": {
         "clarity": {
+          "description": "The meters of water through which half the light passes.",
           "type": "number",
           "format": "float",
           "default": 2.5,
@@ -5208,6 +5346,7 @@
           "minimum": 0.1
         },
         "color": {
+          "description": "The color deep water scatters back, linear.",
           "type": "array",
           "default": [
             0.012000000104308128,
@@ -5216,16 +5355,20 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "enabled": {
+          "description": "Whether water draws.",
           "type": "boolean",
           "default": true
         },
         "foam": {
+          "description": "How much foam shores and rapids gather; 0 none.",
           "type": "number",
           "format": "float",
           "default": 0.6000000238418579,
@@ -5233,6 +5376,7 @@
           "minimum": 0.0
         },
         "foam_width": {
+          "description": "The meters of water shallower than which shores foam.",
           "type": "number",
           "format": "float",
           "default": 0.6000000238418579,
@@ -5240,6 +5384,7 @@
           "minimum": 0.05
         },
         "ripple_size": {
+          "description": "The meters across the largest ripples.",
           "type": "number",
           "format": "float",
           "default": 5.0,
@@ -5247,6 +5392,7 @@
           "minimum": 0.1
         },
         "ripples": {
+          "description": "How strongly ripples tilt the surface.",
           "type": "number",
           "format": "float",
           "default": 0.30000001192092896,
@@ -5257,10 +5403,11 @@
       "additionalProperties": false
     },
     "SceneWind": {
-      "description": "The wind: its horizontal velocity (x and z, meters per second, each -40\nto 40) and how strongly gusts traveling with it vary its push, 0 to 1.\nRequires version 9.",
+      "description": "The wind. Requires version 9.",
       "type": "object",
       "properties": {
         "gusts": {
+          "description": "How strongly gusts traveling with the wind vary its push.",
           "type": "number",
           "format": "float",
           "default": 0.44999998807907104,
@@ -5268,6 +5415,7 @@
           "minimum": 0.0
         },
         "velocity": {
+          "description": "Horizontal velocity: x and z, meters per second.",
           "type": "array",
           "default": [
             2.5,
@@ -5275,7 +5423,9 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 40.0,
+            "minimum": -40.0
           },
           "maxItems": 2,
           "minItems": 2
@@ -5284,10 +5434,11 @@
       "additionalProperties": false
     },
     "SceneWorldStreaming": {
-      "description": "World streaming: whether streamed items load at all\n(off unloads every cell); how far cells load, as a multiple of each\ngrid's range (0.05 to 20); how much farther than that every source must\nbe before a loaded cell unloads, as a multiple (1 to 4); the seconds\nahead along the camera's motion cells load early for (0 to 10); the\nentities a frame spawns at most (cells spawn whole, and at least one a\nframe), pacing loads; and whether cells stay as they are, loading and\nunloading nothing (for captures and inspection). Requires version 9.",
+      "description": "World streaming. Requires version 9.",
       "type": "object",
       "properties": {
         "distance": {
+          "description": "How far cells load, as a multiple of each grid's range.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -5295,14 +5446,17 @@
           "minimum": 0.05
         },
         "enabled": {
+          "description": "Whether streamed items load at all: off unloads every cell.",
           "type": "boolean",
           "default": true
         },
         "frozen": {
+          "description": "Whether cells stay as they are, loading and unloading nothing, for\ncaptures and inspection.",
           "type": "boolean",
           "default": false
         },
         "prefetch": {
+          "description": "The seconds ahead along the camera's motion cells load early for.",
           "type": "number",
           "format": "float",
           "default": 1.5,
@@ -5310,12 +5464,14 @@
           "minimum": 0.0
         },
         "spawns_per_frame": {
+          "description": "The entities a frame spawns at most, pacing loads: cells spawn\nwhole, and at least one a frame.",
           "type": "integer",
           "format": "uint32",
           "default": 2048,
           "minimum": 1
         },
         "unload": {
+          "description": "How much farther than that every source must be before a loaded\ncell unloads, as a multiple.",
           "type": "number",
           "format": "float",
           "default": 1.25,

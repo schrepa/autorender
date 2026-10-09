@@ -6,79 +6,59 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::InvalidSetting;
+use crate::rules::{ExtraRules, settings};
 
-/// Occlusion culling settings: whether GPU-presented frames draw what the
-/// last frame showed, test every other frustum-visible instance against a
-/// depth pyramid of those depths, then draw only what it does not hide.
-/// Output is unchanged; hidden instances cost no drawing. On by default.
-/// Requires version 9.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneOcclusionCulling")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct OcclusionCulling {
-    pub enabled: bool,
-}
-
-impl Default for OcclusionCulling {
-    fn default() -> Self {
-        Self { enabled: true }
+settings! {
+    /// Occlusion culling settings: whether GPU-presented frames draw what the
+    /// last frame showed, test every other frustum-visible instance against a
+    /// depth pyramid of those depths, then draw only what it does not hide.
+    /// Output is unchanged; hidden instances cost no drawing. On by default.
+    /// Requires version 9.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneOcclusionCulling")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct OcclusionCulling {
+        /// Whether GPU-presented frames cull occluded instances.
+        pub enabled: bool = true => any,
     }
 }
+
+impl ExtraRules for OcclusionCulling {}
 
 impl OcclusionCulling {
     /// What a world without these settings reads as: no occlusion culling.
     pub fn off() -> Self {
         Self { enabled: false }
     }
-
-    /// Every value is valid.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        Ok(())
-    }
-
-    pub fn sanitized(self) -> Self {
-        self
-    }
 }
 
-/// Sub-pixel culling settings: whether GPU-presented frames leave visible
-/// instances whose projected bounds cover no pixel center undrawn. They
-/// could produce no fragments, so output is unchanged. On by default.
-/// Requires version 9.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneSubpixelCulling")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct SubpixelCulling {
-    pub enabled: bool,
-}
-
-impl Default for SubpixelCulling {
-    fn default() -> Self {
-        Self { enabled: true }
+settings! {
+    /// Sub-pixel culling settings: whether GPU-presented frames leave visible
+    /// instances whose projected bounds cover no pixel center undrawn. They
+    /// could produce no fragments, so output is unchanged. On by default.
+    /// Requires version 9.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneSubpixelCulling")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct SubpixelCulling {
+        /// Whether GPU-presented frames cull sub-pixel instances.
+        pub enabled: bool = true => any,
     }
 }
+
+impl ExtraRules for SubpixelCulling {}
 
 impl SubpixelCulling {
     /// What a world without these settings reads as: no sub-pixel culling.
     pub fn off() -> Self {
         Self { enabled: false }
-    }
-
-    /// Every value is valid.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        Ok(())
-    }
-
-    pub fn sanitized(self) -> Self {
-        self
     }
 }
