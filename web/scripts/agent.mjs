@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 /** Machine-readable local agent client and development browser owner. */
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { AgentError, VERSION, MAX_BYTES, createBridge, failure } from "./agent-protocol.mjs";
 import { launchBrowserSession } from "./agent-browser.mjs";
 
-const verbs = new Set(["status", "describe", "inspect", "assets", "raycast", "overlap", "shape_cast", "collision_events", "terrain_height", "terrain_sweep", "terrain_route", "water_query", "deformation_query", "nav_path", "pause", "resume", "step", "input", "camera", "culling", "environment", "terrain", "terrain_edit", "terrain_undo", "terrain_redo", "deform", "world_changes", "nav_go", "present", "benchmark", "profile", "reload", "capture", "diagnostics", "close"]);
+// The engine's queries and controls, generated from it (`cargo xtask
+// schema`), and the bridge's own verbs.
+const protocol = JSON.parse(readFileSync(new URL("../src/generated/protocol.json", import.meta.url), "utf8"));
+const bridgeQueries = ["diagnostics"];
+const bridgeControls = ["profile", "close"];
+const queries = new Set([...protocol.queries, ...bridgeQueries]);
+const verbs = new Set([...queries, ...protocol.controls, ...bridgeControls]);
 
 function options(args) {
   const result = {};
@@ -106,7 +113,7 @@ async function client(verb, values) {
   if (Buffer.byteLength(body) > MAX_BYTES) throw new AgentError("request_too_large", "Serialized request exceeds the 1 MiB limit.");
   return fetchJson(endpoint, "/request", {
     method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(20_000),
-  }, !new Set(["status", "describe", "inspect", "assets", "diagnostics", "terrain_height", "terrain_sweep", "terrain_route", "water_query", "deformation_query", "nav_path"]).has(request.command?.op));
+  }, !queries.has(request.command?.op));
 }
 
 async function fetchJson(endpoint, path, options, mutation = false) {
@@ -132,7 +139,7 @@ async function main() {
     await startIteration(values);
     return;
   }
-  if (verb !== "sessions" && verb !== "development" && verb !== "request" && !verbs.has(verb)) throw new AgentError("arguments", "Use watch, serve, development, sessions, request, status, describe, inspect, assets, raycast, overlap, shape_cast, collision_events, terrain_height, terrain_sweep, terrain_route, water_query, deformation_query, nav_path, pause, resume, step, input, camera, culling, environment, terrain, terrain_edit, terrain_undo, terrain_redo, deform, world_changes, nav_go, present, benchmark, reload, capture, diagnostics, or close.");
+  if (verb !== "sessions" && verb !== "development" && verb !== "request" && !verbs.has(verb)) throw new AgentError("arguments", `Use watch, serve, development, sessions, request, or ${[...verbs].join(", ")}.`);
   const response = await client(verb, values);
   console.log(JSON.stringify(response));
   if (response.ok === false) process.exitCode = 1;

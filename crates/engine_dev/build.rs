@@ -68,4 +68,54 @@ fn main() {
         engine_scene::SceneDocument::schema_json(),
     )
     .expect("write generated scene development schema");
+    // The ops of queries and controls, from their schemas: no list to keep.
+    let queries = ops(&schemas["protocol"]);
+    let controls = ops(&schemas["BrowserControl"]);
+    let constant = |name: &str, what: &str, ops: &[String]| {
+        format!(
+            "/// The op of every {what}, as requests name it.
+pub const {name}: [&str; {}] = {:?};
+",
+            ops.len(),
+            ops
+        )
+    };
+    std::fs::write(
+        output.join("ops.rs"),
+        constant("QUERY_OPS", "query", &queries) + &constant("CONTROL_OPS", "control", &controls),
+    )
+    .expect("write generated op lists");
+    let summary = serde_json::json!({
+        "version": protocol::PROTOCOL_VERSION,
+        "max_request_bytes": protocol::MAX_REQUEST_BYTES,
+        "queries": queries,
+        "controls": controls,
+    });
+    std::fs::write(
+        output.join("protocol.json"),
+        serde_json::to_string_pretty(&summary).expect("summary serializes")
+            + "
+",
+    )
+    .expect("write generated protocol summary");
+}
+
+/// The `op` of every variant of an internally tagged request enum's schema.
+fn ops(schema: &serde_json::Value) -> Vec<String> {
+    let variants = schema
+        .get("oneOf")
+        .or_else(|| schema.get("anyOf"))
+        .and_then(serde_json::Value::as_array)
+        .expect("request enums are one of their variants");
+    variants
+        .iter()
+        .map(|variant| {
+            let op = &variant["properties"]["op"];
+            op.get("const")
+                .or_else(|| op["enum"].get(0))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_else(|| panic!("a request variant names no op: {variant}"))
+                .to_owned()
+        })
+        .collect()
 }

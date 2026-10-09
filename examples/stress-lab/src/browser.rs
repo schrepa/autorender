@@ -431,7 +431,7 @@ impl StressGame {
 #[cfg(feature = "dev")]
 #[wasm_bindgen]
 impl StressGame {
-    pub fn dev_command(&mut self, request: &str, width: u32, height: u32) -> String {
+    pub fn dev_command(&mut self, request: &str, width: u32, height: u32, paused: bool) -> String {
         // Read-only polls retain the timings belonging to the last frame.
         let submitted = serde_json::from_str::<serde_json::Value>(request)
             .ok()
@@ -453,7 +453,7 @@ impl StressGame {
         }
         let reply = self
             .development
-            .command(&mut self.app, None, request, width, height);
+            .command(&mut self.app, None, request, width, height, paused);
         if submitted {
             if serde_json::from_str::<serde_json::Value>(&reply)
                 .ok()

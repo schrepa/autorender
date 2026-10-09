@@ -6,6 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,11 +74,21 @@ export function commander(page, { deadline = 30_000 } = {}) {
   };
 }
 
+/** The development protocol's version, request limit and ops, generated
+ * from the engine (`cargo xtask schema`). */
+export const protocol = JSON.parse(readFileSync(new URL("../src/generated/protocol.json", import.meta.url), "utf8"));
+
+/** Waits up to `timeout` milliseconds for the page's development host to
+ * answer this protocol's version. */
+export async function developmentReady(page, { timeout = 60_000 } = {}) {
+  await page.waitForFunction(version => window.__engineDev?.version === version, protocol.version, { timeout });
+}
+
 /** Opens `url` and pauses it once its development host answers, waiting up
  * to `timeout` milliseconds while the page starts and builds its workload. */
 export async function openPaused(page, url, { timeout = 60_000 } = {}) {
   await page.goto(String(url), { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => window.__engineDev?.version === 1, null, { timeout });
+  await developmentReady(page, { timeout });
   return commander(page, { deadline: timeout })("pause");
 }
 

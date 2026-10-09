@@ -71,7 +71,10 @@ fn execute() -> Result<(), String> {
         "lint" => pipeline::lint(&root),
         "docs" => pipeline::docs(&root),
         "assets" => authoring::validate_sources(&root),
-        "schema" => authoring::write_schema(&root),
+        "schema" => {
+            authoring::write_schema(&root)?;
+            authoring::write_protocol(&root)
+        }
         "help" | "--help" | "-h" => {
             println!(
                 "Usage: cargo xtask <command>\n\n\
@@ -91,7 +94,7 @@ fn execute() -> Result<(), String> {
                    assets Validate authored scene sources without changing them\n\
                    benchmark [--url URL] [--samples N] [--warmup N] [--repeats N] [--mode step|render|present] [--setup-ticks N]\n\
                           Measure fixed browser workloads with culling off/on; --output PATH, --baseline PATH, --max-regression-percent N\n\
-                   schema Write the generated versioned scene JSON schema\n\
+                   schema Write the generated scene JSON schema and development protocol summary\n\
                    lint   Check source/schema, formatting, native/Wasm Clippy, TypeScript\n\
                    docs   Generate native workspace and browser API documentation\n\
                    help   Show this message"

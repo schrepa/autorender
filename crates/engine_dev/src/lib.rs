@@ -20,13 +20,22 @@ pub use error::DevError;
 pub use inspect::{DevTools, InspectorDescriptor, InspectorKind};
 pub use protocol::{
     BenchmarkMode, BrowserControl, CollisionFilterRequest, CollisionSensorFilter,
-    CollisionShapeRequest, DevRequest, TerrainViewRequest,
+    CollisionShapeRequest, DevRequest, Handler, MAX_REQUEST_BYTES, PROTOCOL_VERSION,
+    TerrainViewRequest,
 };
+
+/// The ops of queries and controls, as requests name them, from the
+/// protocol's schema (build.rs).
+mod ops {
+    include!(concat!(env!("OUT_DIR"), "/ops.rs"));
+}
+pub use ops::{CONTROL_OPS, QUERY_OPS};
+
+/// The protocol as hosts and tools need it: its version, request limit and
+/// ops, which `cargo xtask schema` writes for the web host and scripts.
+pub const PROTOCOL_SUMMARY: &str = include_str!(concat!(env!("OUT_DIR"), "/protocol.json"));
 pub use terrain::{Press, TerrainEditing, change_world, edit_terrain, nav_go, press_track};
 
-/// Initial development protocol version, independent of scene format versions.
-pub const PROTOCOL_VERSION: u32 = 1;
-pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 pub const MAX_INSPECTOR_BYTES: usize = 16 * 1024;
 /// Inspectors a game may register beside the engine's own.

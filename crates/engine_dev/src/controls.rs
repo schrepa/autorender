@@ -12,7 +12,7 @@ impl BrowserControl {
             return Err(DevError::new(
                 "unsupported_version",
                 "$.version",
-                "accepted protocol version: 1",
+                format!("accepted protocol version: {PROTOCOL_VERSION}"),
             ));
         }
         match self {

@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { artifacts, commander, devUrl, launch } from "./harness.mjs";
+import { artifacts, commander, devUrl, developmentReady, launch } from "./harness.mjs";
 
 const output = await artifacts("jobs-smoke");
 const { browser, page, errors } = await launch({ width: 960, height: 540, timeout: 600_000 });
@@ -52,7 +52,7 @@ async function settle(label) {
 async function session(name, query, walk) {
   const opened = Date.now();
   await page.goto(String(devUrl("stress.html", { preset: "highlands", prepare: "1", ...query })), { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => window.__engineDev?.version === 1, null, { timeout: 600_000 });
+  await developmentReady(page, { timeout: 600_000 });
   await page.waitForFunction(() => document.querySelector("canvas")?.style.visibility !== "hidden", null, { timeout: 600_000, polling: 100 });
   const shown = (Date.now() - opened) / 1000;
   // The hiker's first walk is searched while the view loads: at once on a

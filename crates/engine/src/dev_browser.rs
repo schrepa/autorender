@@ -8,8 +8,6 @@ use engine_scene::SceneInstance;
 use serde_json::{Value, json};
 use wasm_bindgen::JsValue;
 
-const MAX_COMMAND_BYTES: usize = 16 * 1024;
-
 /// Per-session temporary control state; excluded from ordinary builds.
 #[derive(Default)]
 pub struct DevBrowser {
@@ -39,8 +37,9 @@ impl DevBrowser {
         self.input = InputBatch::default();
     }
 
-    /// Execute an on-demand request, then attach the observed frame and revision.
-    /// The host enforces paused state for input, stepping, and render commands.
+    /// Execute an on-demand request, then attach the observed frame and
+    /// revision. `paused` says whether the host is paused: every control but
+    /// pause and resume requires it.
     pub fn command(
         &mut self,
         app: &mut BrowserApp,
@@ -48,14 +47,15 @@ impl DevBrowser {
         source: &str,
         width: u32,
         height: u32,
+        paused: bool,
     ) -> String {
-        if source.len() > MAX_COMMAND_BYTES {
+        if source.len() > engine_dev::MAX_REQUEST_BYTES {
             return self.error(
                 app,
                 scene,
                 "request_too_large",
                 "$",
-                "command exceeds 16 KiB",
+                &format!("command exceeds {} bytes", engine_dev::MAX_REQUEST_BYTES),
             );
         }
         let request: Value = match serde_json::from_str(source) {
@@ -65,11 +65,11 @@ impl DevBrowser {
         // Commands observe and control completed ticks only.
         app.engine.complete_pending_tick();
         let op = request.get("op").and_then(Value::as_str);
-        if !op.is_some_and(|op| BrowserControl::OPS.contains(&op)) {
+        if !op.is_some_and(|op| engine_dev::CONTROL_OPS.contains(&op)) {
             let assets = op == Some("assets");
             return self.tools_request(app, scene, source, assets);
         }
-        match self.control(app, scene, request, (width, height)) {
+        match self.control(app, scene, request, (width, height), paused) {
             Ok(result) => self.result(app, scene, result),
             Err(error) => self.error(app, scene, error.code, &error.path, &error.message),
         }
@@ -119,10 +119,19 @@ impl DevBrowser {
         scene: Option<&SceneInstance>,
         request: Value,
         (width, height): (u32, u32),
+        paused: bool,
     ) -> Result<Value, DevError> {
+        let op = request["op"].as_str().unwrap_or_default().to_owned();
         let control: BrowserControl = serde_json::from_value(request)
             .map_err(|error| DevError::new("invalid_request", "$", error.to_string()))?;
         control.validate()?;
+        if control.needs_pause() && !paused {
+            return Err(DevError::new(
+                "pause_required",
+                "$",
+                format!("pause the host before {op}"),
+            ));
+        }
         match control {
             BrowserControl::Present { alpha, gpu, .. } => {
                 let alpha = engine_dev::validated_presentation_alpha(alpha)?;
@@ -420,7 +429,7 @@ impl DevBrowser {
         serde_json::from_str(&self.tools.execute(
             &mut app.engine,
             scene,
-            r#"{"version":1,"op":"status"}"#,
+            &json!({"version": engine_dev::PROTOCOL_VERSION, "op": "status"}).to_string(),
         ))
         .expect("development tools serialize an object envelope")
     }

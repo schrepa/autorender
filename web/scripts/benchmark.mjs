@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { developmentReady } from "./harness.mjs";
 import { arch, cpus, platform, release, totalmem } from "node:os";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -143,7 +144,7 @@ async function measure(options, workload, repeat, enabled, order, sceneBytes, ba
     url.searchParams.set("engine_dev", "1");
     if (workload.game === "playground") await page.route("**/scenes/playground.scene.json", route => route.fulfill({ body: sceneBytes, contentType: "application/json" }));
     await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: 20_000 });
-    await page.waitForFunction(() => window.__engineDev?.version === 1, null, { timeout: 20_000 });
+    await developmentReady(page, { timeout: 20_000 });
     const pauseDeadline = Date.now() + 5000;
     while (true) {
       const reply = await page.evaluate(() => window.__engineDev.request({ op: "pause" }));

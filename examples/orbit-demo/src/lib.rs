@@ -172,9 +172,15 @@ mod browser {
     #[cfg(feature = "dev")]
     #[wasm_bindgen]
     impl Game {
-        pub fn dev_command(&mut self, request: &str, width: u32, height: u32) -> String {
+        pub fn dev_command(
+            &mut self,
+            request: &str,
+            width: u32,
+            height: u32,
+            paused: bool,
+        ) -> String {
             self.development
-                .command(&mut self.app, None, request, width, height)
+                .command(&mut self.app, None, request, width, height, paused)
         }
     }
 }

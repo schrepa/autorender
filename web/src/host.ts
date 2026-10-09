@@ -32,7 +32,7 @@ export interface Runtime extends JobRuntime {
   suspend(): void;
   reset_camera(): void;
   set_count?(count: number): void;
-  dev_command?(request: string, width: number, height: number): string;
+  dev_command?(request: string, width: number, height: number, paused: boolean): string;
   dev_reload?(source: string, expectedRevision: string, revision: string, files?: unknown): string;
   profiling_start?(maxEvents: number): void;
   profiling_stop?(): string;

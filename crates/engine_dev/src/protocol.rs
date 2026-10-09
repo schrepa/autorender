@@ -1,6 +1,22 @@
 use engine_scene::{SceneAtmosphere, SceneEnvironment};
 use serde::{Deserialize, Serialize};
 
+/// The development protocol's version, independent of scene format versions.
+pub const PROTOCOL_VERSION: u32 = 1;
+/// Bytes of one request's JSON.
+pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
+
+/// Where a query runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Handler {
+    /// Status, inspection, assets and descriptions.
+    Tools,
+    /// The collision world's queries.
+    Collision,
+    /// Terrain, water, deformation and navigation queries.
+    Terrain,
+}
+
 /// Versioned, read-only requests processed synchronously between frames.
 /// Transport/session identity and execution controls belong to the host.
 #[derive(Debug, Deserialize, Serialize)]
@@ -292,6 +308,26 @@ fn default_limit() -> usize {
 }
 
 impl DevRequest {
+    /// Where the query runs: the one routing table of queries.
+    pub fn handler(&self) -> Handler {
+        match self {
+            Self::Status { .. }
+            | Self::Inspect { .. }
+            | Self::Assets { .. }
+            | Self::Describe { .. } => Handler::Tools,
+            Self::Raycast { .. }
+            | Self::Overlap { .. }
+            | Self::ShapeCast { .. }
+            | Self::CollisionEvents { .. } => Handler::Collision,
+            Self::TerrainHeight { .. }
+            | Self::TerrainSweep { .. }
+            | Self::TerrainRoute { .. }
+            | Self::WaterQuery { .. }
+            | Self::DeformationQuery { .. }
+            | Self::NavPath { .. } => Handler::Terrain,
+        }
+    }
+
     pub fn version(&self) -> u32 {
         match self {
             Self::Status { version }
@@ -555,28 +591,30 @@ pub enum BrowserControl {
 }
 
 impl BrowserControl {
-    /// The operation of every control, as requests name it.
-    pub const OPS: [&'static str; 19] = [
-        "present",
-        "culling",
-        "environment",
-        "terrain",
-        "terrain_edit",
-        "terrain_undo",
-        "terrain_redo",
-        "deform",
-        "world_changes",
-        "nav_go",
-        "camera",
-        "benchmark",
-        "step",
-        "input",
-        "render",
-        "pause",
-        "resume",
-        "capture",
-        "reload",
-    ];
+    /// Whether the control needs a paused host: every one but pausing and
+    /// resuming.
+    pub fn needs_pause(&self) -> bool {
+        match self {
+            Self::Present { .. }
+            | Self::Culling { .. }
+            | Self::Environment(..)
+            | Self::Terrain { .. }
+            | Self::TerrainEdit { .. }
+            | Self::TerrainUndo { .. }
+            | Self::TerrainRedo { .. }
+            | Self::Deform { .. }
+            | Self::WorldChanges { .. }
+            | Self::NavGo { .. }
+            | Self::Camera { .. }
+            | Self::Benchmark { .. }
+            | Self::Step { .. }
+            | Self::Input { .. }
+            | Self::Render { .. }
+            | Self::Capture { .. }
+            | Self::Reload { .. } => true,
+            Self::Pause { .. } | Self::Resume { .. } => false,
+        }
+    }
 
     pub fn version(&self) -> u32 {
         match self {

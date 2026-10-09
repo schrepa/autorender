@@ -55,6 +55,16 @@ impl InspectorDescriptor {
         }
     }
 
+    /// A built-in inspector's descriptor with the schema build.rs generated
+    /// under its name: a name without one is a programming error.
+    pub(crate) fn generated(schemas: &Value, name: &str, description: impl Into<String>) -> Self {
+        let schema = schemas
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| panic!("build.rs generates no schema named {name}"));
+        Self::new(name, description, schema)
+    }
+
     pub fn with_default(mut self, value: Value) -> Self {
         self.default = Some(value);
         self
@@ -112,12 +122,12 @@ impl DevTools {
     /// Local, world and presented poses, and the hierarchy.
     fn register_poses(&mut self, schemas: &Value) {
         self.register_component::<Transform>(
-            InspectorDescriptor::new("Transform", "Local transform relative to Parent, or world transform for a root. Quaternion is normalized XYZW; authored scale is positive and nonsingular.", schemas["Transform"].clone())
+            InspectorDescriptor::generated(schemas, "Transform", "Local transform relative to Parent, or world transform for a root. Quaternion is normalized XYZW; authored scale is positive and nonsingular.")
                 .with_default(transform_value(&Transform::default())),
             transform_value,
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("GlobalTransform", "Derived world transform, refreshed before inspection. Column-major matrix preserves shear; invalid hierarchies return null matrix and translation and skip rendering.", schemas["GlobalTransform"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "GlobalTransform", "Derived world transform, refreshed before inspection. Column-major matrix preserves shear; invalid hierarchies return null matrix and translation and skip rendering."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Transform>(entity).is_some())),
             read: Box::new(|world, entity, _scene| {
@@ -132,11 +142,11 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_component::<InterpolateTransform>(
-            InspectorDescriptor::new("InterpolateTransform", "Opt-in marker for fixed-tick interpolation of this local transform. Descendants inherit the presented parent matrix. Gameplay and authored transforms remain authoritative.", schemas["InterpolateTransform"].clone()),
+            InspectorDescriptor::generated(schemas, "InterpolateTransform", "Opt-in marker for fixed-tick interpolation of this local transform. Descendants inherit the presented parent matrix. Gameplay and authored transforms remain authoritative."),
             |_| json!(InterpolateTransformView { enabled: true }),
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("PresentedTransform", "Last extracted world matrix, including interpolated ancestors; column-major and preserves shear. Inspection does not recompute it, except to materialize the exact CPU reference of a GPU-presented frame while its inputs are unchanged. Null until extracted or when the presented branch is invalid. See PresentationState for actual mode, alpha and gpu_pending.", schemas["PresentedTransform"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "PresentedTransform", "Last extracted world matrix, including interpolated ancestors; column-major and preserves shear. Inspection does not recompute it, except to materialize the exact CPU reference of a GPU-presented frame while its inputs are unchanged. Null until extracted or when the presented branch is invalid. See PresentationState for actual mode, alpha and gpu_pending."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Transform>(entity).is_some())),
             read: Box::new(|world, entity, _scene| {
@@ -151,11 +161,11 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_resource::<PresentationState>(
-            InspectorDescriptor::new("PresentationState", "Last prepared extraction's frame/tick and actual mode/fraction; null frame/tick before extraction. Current mode uses alpha one. History counters measure bounded storage. gpu_pending marks a GPU-presented extraction whose CPU poses are not materialized. Inspection prepares presentation only to materialize such a frame; this is not GPU submission/completion or total process memory.", schemas["PresentationState"].clone()),
+            InspectorDescriptor::generated(schemas, "PresentationState", "Last prepared extraction's frame/tick and actual mode/fraction; null frame/tick before extraction. Current mode uses alpha one. History counters measure bounded storage. gpu_pending marks a GPU-presented extraction whose CPU poses are not materialized. Inspection prepares presentation only to materialize such a frame; this is not GPU submission/completion or total process memory."),
             presentation_value,
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Hierarchy", "Current parent and source prefab metadata. IDs are authored IDs, never runtime handles. Use inspect with parent to page direct children.", schemas["Hierarchy"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "Hierarchy", "Current parent and source prefab metadata. IDs are authored IDs, never runtime handles. Use inspect with parent to page direct children."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Transform>(entity).is_some())),
             read: Box::new(|world, entity, scene| {
@@ -181,22 +191,22 @@ impl DevTools {
     /// Collision, the camera, meshes and the components entities carry.
     fn register_components(&mut self, schemas: &Value) {
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Collider", "Local cuboid/sphere, symmetric layer filters and sensor flag. Current authoritative world admission and refreshed collision-cache status are independent of visibility and interpolation.", schemas["Collider"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "Collider", "Local cuboid/sphere, symmetric layer filters and sensor flag. Current authoritative world admission and refreshed collision-cache status are independent of visibility and interpolation."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Collider>(entity).is_some())),
             read: Box::new(|world, entity, _scene| crate::collision::collider_value(world, entity?)),
         }).expect("built-in descriptor is bounded");
         self.register_resource::<CollisionWorld>(
-            InspectorDescriptor::new("CollisionWorld", "Authoritative spatial cache refreshed for inspection without advancing clocks or committing sensor events. Includes source frame/tick, cache revision, completeness, invalid/overflow counts and query budgets. Memory counts are cache payload, not process totals.", schemas["CollisionWorld"].clone()),
+            InspectorDescriptor::generated(schemas, "CollisionWorld", "Authoritative spatial cache refreshed for inspection without advancing clocks or committing sensor events. Includes source frame/tick, cache revision, completeness, invalid/overflow counts and query budgets. Memory counts are cache payload, not process totals."),
             crate::collision::world_value,
         ).expect("built-in descriptor is bounded");
         self.register_resource::<Camera>(
-            InspectorDescriptor::new("Camera", "Right-handed Y-up perspective. Lens distances use world units; 0 < near < far; FOV is in radians.", schemas["Camera"].clone())
+            InspectorDescriptor::generated(schemas, "Camera", "Right-handed Y-up perspective. Lens distances use world units; 0 < near < far; FOV is in radians.")
                 .with_default(camera_value(&Camera::default())),
             camera_value,
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Mesh3d", "Resolved immutable mesh/material readiness. Missing assets skip rendering. This view contains no persistent runtime handles.", schemas["Mesh3d"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "Mesh3d", "Resolved immutable mesh/material readiness. Missing assets skip rendering. This view contains no persistent runtime handles."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Mesh3d>(entity).is_some())),
             read: Box::new(|world, entity, _scene| {
@@ -224,27 +234,27 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_component::<LocalLight>(
-            InspectorDescriptor::new("LocalLight", "A point or spot light on this entity as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())
+            InspectorDescriptor::generated(schemas, "LocalLight", "A point or spot light on this entity as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.")
                 .with_default(json!(SceneLight::default())),
             |light| json!(SceneLight::from(light)),
         ).expect("built-in descriptor is bounded");
         self.register_component::<engine_core::Floating>(
-            InspectorDescriptor::new("Floating", "Rides the sea as a scene version 9 `floating` field: each fixed tick the entity rises and falls with the sea's surface under it, `draft` meters below the surface, leaning by `tilt` (0 upright, 1 with the surface's normal) about its heading. Unparented entities only; nothing moves without an enabled sea.", schemas["Floating"].clone())
+            InspectorDescriptor::generated(schemas, "Floating", "Rides the sea as a scene version 9 `floating` field: each fixed tick the entity rises and falls with the sea's surface under it, `draft` meters below the surface, leaning by `tilt` (0 upright, 1 with the surface's normal) about its heading. Unparented entities only; nothing moves without an enabled sea.")
                 .with_default(json!(engine_core::Floating::default())),
             |floating| json!(floating),
         ).expect("built-in descriptor is bounded");
         self.register_component::<engine_core::TerrainPrefetch>(
-            InspectorDescriptor::new("TerrainPrefetch", "Names a place the camera may be sent to as a scene version 9 `prefetch` field: while the view wants nothing, workers generate the terrain tiles a camera here wants into memory, which keeps them while named; each level's within `reach` times its range, 2 being what a camera loads. The Terrains view counts tiles kept and generating.", schemas["TerrainPrefetch"].clone())
+            InspectorDescriptor::generated(schemas, "TerrainPrefetch", "Names a place the camera may be sent to as a scene version 9 `prefetch` field: while the view wants nothing, workers generate the terrain tiles a camera here wants into memory, which keeps them while named; each level's within `reach` times its range, 2 being what a camera loads. The Terrains view counts tiles kept and generating.")
                 .with_default(json!(engine_core::TerrainPrefetch::default())),
             |prefetch| json!(prefetch),
         ).expect("built-in descriptor is bounded");
         self.register_component::<engine_core::Deformer>(
-            InspectorDescriptor::new("Deformer", "Presses tracks into deformable ground as a scene version 9 `deformer` field: each fixed tick, while the entity's world position lies at most `contact` meters above the terrain, it presses a footprint `radius` meters across from where it pressed the tick before, `depth` meters deep (deeper below the ground), round (`flatness` 0) to flat (1). Surface materials' `deform` bounds what shows.", schemas["Deformer"].clone())
+            InspectorDescriptor::generated(schemas, "Deformer", "Presses tracks into deformable ground as a scene version 9 `deformer` field: each fixed tick, while the entity's world position lies at most `contact` meters above the terrain, it presses a footprint `radius` meters across from where it pressed the tick before, `depth` meters deep (deeper below the ground), round (`flatness` 0) to flat (1). Surface materials' `deform` bounds what shows.")
                 .with_default(json!(engine_core::Deformer::default())),
             |deformer| json!(deformer),
         ).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Tracks>(
-            InspectorDescriptor::new("Tracks", "The log of runtime deformation's stamps: stamps held, pressed and dropped by the deformation budget, and the newest. Read tracks with deformation_query; press one with the deform control.", schemas["Tracks"].clone()),
+            InspectorDescriptor::generated(schemas, "Tracks", "The log of runtime deformation's stamps: stamps held, pressed and dropped by the deformation budget, and the newest. Read tracks with deformation_query; press one with the deform control."),
             |tracks| json!(crate::views::TracksView {
                 stamps: tracks.len(),
                 pressed: tracks.pressed(),
@@ -253,7 +263,7 @@ impl DevTools {
             }),
         ).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::WorldCells>(
-            InspectorDescriptor::new("WorldCells", "World streaming at the last extraction: cells holding streamed items, loaded and pending (within range, waiting), items, entities streamed items hold, the frame's spawns and despawns, the camera velocity prefetch followed, each grid's cells and the 32 cells nearest a streaming source. Settings: the world_streaming environment section.", schemas["WorldCells"].clone()),
+            InspectorDescriptor::generated(schemas, "WorldCells", "World streaming at the last extraction: cells holding streamed items, loaded and pending (within range, waiting), items, entities streamed items hold, the frame's spawns and despawns, the camera velocity prefetch followed, each grid's cells and the 32 cells nearest a streaming source. Settings: the world_streaming environment section."),
             |cells| {
                 let stats = cells.stats();
                 let grids = cells.grids();
@@ -285,14 +295,14 @@ impl DevTools {
             },
         ).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::WorldChanges>(
-            InspectorDescriptor::new("WorldChanges", "What gameplay changed of the streamed world, which games save: items removed for good (an item is removed when gameplay despawns its root), by ID (`scene/root` for scenes), which their cells no longer spawn. The count and the first 64 IDs. Change it with the world_changes control.", schemas["WorldChanges"].clone()),
+            InspectorDescriptor::generated(schemas, "WorldChanges", "What gameplay changed of the streamed world, which games save: items removed for good (an item is removed when gameplay despawns its root), by ID (`scene/root` for scenes), which their cells no longer spawn. The count and the first 64 IDs. Change it with the world_changes control."),
             |changes| json!(crate::views::WorldChangesView {
                 removed: changes.removed().len(),
                 ids: changes.removed().take(64).map(str::to_owned).collect(),
             }),
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("NavAgent", "A navigation agent as a scene version 9 `nav_agent` field: it walks over the terrain to its destination (world x, z) at its speed, on the ground, around obstacles widened by its radius, no steeper than max_slope, wading no deeper than max_water; with its walk's status, length, points, next point, meters left and samples searched. Send it with nav_go.", schemas["NavAgent"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "NavAgent", "A navigation agent as a scene version 9 `nav_agent` field: it walks over the terrain to its destination (world x, z) at its speed, on the ground, around obstacles widened by its radius, no steeper than max_slope, wading no deeper than max_water; with its walk's status, length, points, next point, meters left and samples searched. Send it with nav_go."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::NavAgent>(entity).is_some())),
             read: Box::new(|world, entity, _scene| {
@@ -322,7 +332,7 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("NavAgents", "What navigation did at the last fixed tick: agents, those searching, walking, arrived and unable to reach their destination, the samples of search work the tick did, and the first 16 agents with their status, position, destination and meters left. Settings: the navigation environment section.", schemas["NavAgents"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "NavAgents", "What navigation did at the last fixed tick: agents, those searching, walking, arrived and unable to reach their destination, the samples of search work the tick did, and the first 16 agents with their status, position, destination and meters left. Settings: the navigation environment section."),
             kind: InspectorKind::Resource,
             has: Box::new(|world, _| world.get_resource::<engine_core::NavAgents>().is_some()),
             read: Box::new(|world, _, _| {
@@ -364,11 +374,11 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_component::<engine_core::StreamedId>(
-            InspectorDescriptor::new("StreamedId", "The streamed item whose root this entity is: its ID. Despawning the entity removes the item for good (WorldChanges); its cell no longer spawns it.", schemas["StreamedId"].clone()),
+            InspectorDescriptor::generated(schemas, "StreamedId", "The streamed item whose root this entity is: its ID. Despawning the entity removes the item for good (WorldChanges); its cell no longer spawns it."),
             |id| json!(crate::views::StreamedIdView { id: id.0.to_string() }),
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Grounded", "Stands on the terrain as a scene version 9 `grounded` field: the entity's translation's y is kept `offset` meters above the ground under it, from the finest terrain tile resident there, sampling again as finer tiles arrive and when its x, z or offset changes; with the level of the tile it last stood on. Unparented entities only.", schemas["Grounded"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "Grounded", "Stands on the terrain as a scene version 9 `grounded` field: the entity's translation's y is kept `offset` meters above the ground under it, from the finest terrain tile resident there, sampling again as finer tiles arrive and when its x, z or offset changes; with the level of the tile it last stood on. Unparented entities only."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::Grounded>(entity).is_some())),
             read: Box::new(|world, entity, _scene| {
@@ -382,12 +392,12 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_component::<Tint>(
-            InspectorDescriptor::new("Tint", "Per-object color factors as a scene version 8 `tint` field: red, green, blue and opacity multiply this object's material or cube color, each in [0, 1]. Changing it uploads only this object's color.", schemas["Tint"].clone())
+            InspectorDescriptor::generated(schemas, "Tint", "Per-object color factors as a scene version 8 `tint` field: red, green, blue and opacity multiply this object's material or cube color, each in [0, 1]. Changing it uploads only this object's color.")
                 .with_default(json!(Tint::WHITE.0)),
             |tint| json!(tint.0),
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Decal", "A decal on this entity as a scene version 8 `decal` field: its material projected down the entity's local y onto the opaque surfaces inside its unit box, fading on surfaces turning away beyond `fade_degrees`.", schemas["Decal"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "Decal", "A decal on this entity as a scene version 8 `decal` field: its material projected down the entity's local y onto the opaque surfaces inside its unit box, fading on surfaces turning away beyond `fade_degrees`."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Decal>(entity).is_some())),
             read: Box::new(|world, entity, scene| {
@@ -405,7 +415,7 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("SplineMesh", "A mesh bent along a curve on this entity as a scene version 9 `spline` field: copies of the mesh end to end along a centripetal Catmull-Rom curve through `points` (entity space), its x along the curve, y up and z across, drawn by child entities a chunk of at most 256 m each; with the curve's length, copies, chunks and vertices once built, or the error that stopped it.", schemas["SplineMesh"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "SplineMesh", "A mesh bent along a curve on this entity as a scene version 9 `spline` field: copies of the mesh end to end along a centripetal Catmull-Rom curve through `points` (entity space), its x along the curve, y up and z across, drawn by child entities a chunk of at most 256 m each; with the curve's length, copies, chunks and vertices once built, or the error that stopped it."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::SplineMesh>(entity).is_some())),
             read: Box::new(|world, entity, scene| {
@@ -427,11 +437,11 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_component::<ReflectionProbe>(
-            InspectorDescriptor::new("ReflectionProbe", "A reflection probe on this entity as a scene version 8 `reflection_probe` field: surfaces inside the world-axis box reaching `extent` from the entity's world position reflect the still objects and lights it captured from there, fading out over `blend` inside its faces.", schemas["ReflectionProbe"].clone()),
+            InspectorDescriptor::generated(schemas, "ReflectionProbe", "A reflection probe on this entity as a scene version 8 `reflection_probe` field: surfaces inside the world-axis box reaching `extent` from the entity's world position reflect the still objects and lights it captured from there, fading out over `blend` inside its faces."),
             |probe| json!(SceneReflectionProbe::from(probe)),
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Terrain", "A heightfield terrain on this entity as a scene version 9 `terrain` field: its origin, tiles, spacing, layers or file, material, collision and surroundings, with its streaming state: resident tiles by level, and its surroundings' once they stream.", schemas["Terrain"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "Terrain", "A heightfield terrain on this entity as a scene version 9 `terrain` field: its origin, tiles, spacing, layers or file, material, collision and surroundings, with its streaming state: resident tiles by level, and its surroundings' once they stream."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::Terrain>(entity).is_some())),
             read: Box::new(|world, entity, scene| {
@@ -532,7 +542,7 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Terrains>(
-            InspectorDescriptor::new("Terrains", "Terrain streaming at the last extraction: terrains; resident, loading, shape-only, waiting, kept, restored and idle, banded and dropped tiles; patches drawn and those standing in for finer levels; and the surroundings'. Query heights with terrain_height, compare queries, collision and layers with terrain_sweep, and find routes for path layers with terrain_route.", schemas["Terrains"].clone()),
+            InspectorDescriptor::generated(schemas, "Terrains", "Terrain streaming at the last extraction: terrains; resident, loading, shape-only, waiting, kept, restored and idle, banded and dropped tiles; patches drawn and those standing in for finer levels; and the surroundings'. Query heights with terrain_height, compare queries, collision and layers with terrain_sweep, and find routes for path layers with terrain_route."),
             |terrains| {
                 let stats = terrains.stats();
                 json!(crate::views::TerrainsView {
@@ -559,7 +569,7 @@ impl DevTools {
             },
         ).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Jobs>(
-            InspectorDescriptor::new("Jobs", "The host's job workers: workers (none keeps bakes, tiles and walks on the engine's thread), jobs in flight, submitted, completed, failed and cancelled, parts handed back early, keys shared and their bytes, and the page's output cache. Workers run their most urgent job a slice at a time. Pages take ?workers=N or off, and ?jobcache=off, verify or a budget in MiB.", schemas["Jobs"].clone()),
+            InspectorDescriptor::generated(schemas, "Jobs", "The host's job workers: workers (none keeps bakes, tiles and walks on the engine's thread), jobs in flight, submitted, completed, failed and cancelled, parts handed back early, keys shared and their bytes, and the page's output cache. Workers run their most urgent job a slice at a time. Pages take ?workers=N or off, and ?jobcache=off, verify or a budget in MiB."),
             |jobs| {
                 let stats = jobs.stats();
                 json!(crate::views::JobsView {
@@ -580,7 +590,7 @@ impl DevTools {
             },
         ).expect("built-in descriptor is bounded");
         self.register_component::<ParticleEmitter>(
-            InspectorDescriptor::new("ParticleEmitter", "A particle emitter on this entity as a scene version 6 `particles` field; particles are a function of presentation time.", schemas["ParticleEmitter"].clone())
+            InspectorDescriptor::generated(schemas, "ParticleEmitter", "A particle emitter on this entity as a scene version 6 `particles` field; particles are a function of presentation time.")
                 .with_default(json!(SceneEmitter::default())),
             |emitter| json!(SceneEmitter::from(emitter)),
         ).expect("built-in descriptor is bounded");
@@ -597,7 +607,7 @@ impl DevTools {
                 .map(|source| source.authored_id.clone())
         };
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("AnimationPlayer", "An animation player as a scene version 8 `animation` field with its clip's duration and its targets: every fixed tick it advances `time` by the tick times `speed`, wrapping when `loop` is set, and poses its targets' transforms.", schemas["AnimationPlayer"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "AnimationPlayer", "An animation player as a scene version 8 `animation` field with its clip's duration and its targets: every fixed tick it advances `time` by the tick times `speed`, wrapping when `loop` is set, and poses its targets' transforms."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<AnimationPlayer>(entity).is_some())),
             read: Box::new(move |world, entity, scene| {
@@ -615,7 +625,7 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Skin", "The joints deforming this entity's mesh, as a scene version 8 `skin` names them: each vertex moves by its weighted joints' displayed world matrices times their inverse bind matrices.", schemas["Skin"].clone()),
+            descriptor: InspectorDescriptor::generated(schemas, "Skin", "The joints deforming this entity's mesh, as a scene version 8 `skin` names them: each vertex moves by its weighted joints' displayed world matrices times their inverse bind matrices."),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Skin>(entity).is_some())),
             read: Box::new(move |world, entity, _scene| {
@@ -633,7 +643,7 @@ impl DevTools {
         // The environment: each resource serializes as its
         // scene section, so values copy into controls and v5 scenes as is.
         self.register_resource::<Atmosphere>(
-            InspectorDescriptor::new("Atmosphere", "Sun, sky colors, fog and grade of every frame, every field set over the golden_hour preset. Change it with the environment control or a v5 scene environment.", schemas["Atmosphere"].clone())
+            InspectorDescriptor::generated(schemas, "Atmosphere", "Sun, sky colors, fog and grade of every frame, every field set over the golden_hour preset. Change it with the environment control or a v5 scene environment.")
                 .with_default(json!(SceneAtmosphere::from(&Atmosphere::default()))),
             |atmosphere| json!(SceneAtmosphere::from(atmosphere)),
         ).expect("built-in descriptor is bounded");
@@ -645,7 +655,10 @@ impl DevTools {
         }
         impl SectionVisitor for Sections<'_> {
             fn section<T: EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
-                let schema = self.schemas[T::NAME].clone();
+                let schema =
+                    self.schemas.get(T::NAME).cloned().unwrap_or_else(|| {
+                        panic!("build.rs generates no schema named {}", T::NAME)
+                    });
                 // The settings type's doc comment, whole in the schema.
                 let description = summary(
                     schema["description"]
@@ -866,7 +879,7 @@ impl DevTools {
             return Err(DevError::new(
                 "request_too_large",
                 "$",
-                "request must fit 16384 UTF-8 bytes",
+                format!("request must fit {MAX_REQUEST_BYTES} UTF-8 bytes"),
             ));
         }
         let request: DevRequest = serde_json::from_str(source)
@@ -875,7 +888,7 @@ impl DevTools {
             return Err(DevError::new(
                 "unsupported_version",
                 "$.version",
-                "accepted protocol version: 1",
+                format!("accepted protocol version: {PROTOCOL_VERSION}"),
             ));
         }
         if scene.is_some_and(|scene| !scene.belongs_to(engine.app.world())) {
@@ -885,11 +898,10 @@ impl DevTools {
                 "scene instance belongs to a different engine world",
             ));
         }
-        if crate::collision::spatial_request(&request) {
-            return crate::collision::execute(engine, scene, request);
-        }
-        if crate::terrain::terrain_request(&request) {
-            return crate::terrain::execute(engine, scene, request);
+        match request.handler() {
+            crate::Handler::Collision => return crate::collision::execute(engine, scene, request),
+            crate::Handler::Terrain => return crate::terrain::execute(engine, scene, request),
+            crate::Handler::Tools => {}
         }
         if let DevRequest::Inspect {
             component: Some(component),
@@ -986,7 +998,7 @@ impl DevTools {
             | DevRequest::TerrainRoute { .. }
             | DevRequest::WaterQuery { .. }
             | DevRequest::DeformationQuery { .. }
-            | DevRequest::NavPath { .. } => unreachable!("spatial requests return above"),
+            | DevRequest::NavPath { .. } => unreachable!("only tools queries reach the tools"),
         }
     }
 
@@ -1009,7 +1021,7 @@ impl DevTools {
                 )))
                 .expect("generated schemas are JSON");
                 Ok(
-                    json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": "version=1; mutations, capture and benchmark require a paused host; reload revisions must fit u64. Spatial queries need CollisionPlugin but no pause: positions/endpoints within +/-1e6; nonzero finite directions; distance[0,2e6]; shape dimensions[1e-4,1e4]; normalized XYZW rotation. Symmetric layer filtering; sensors include/exclude/only. Raycast/cast return closest complete hit, terrain heightfields included; casts translate with fixed orientation. Terrain height takes 1..256 [x,z] points (null where no tile is resident); terrain sweep compares queries, collision rays and layers over samples2..64 per side within half_extent0..4096. Overlap limit1..100; budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, paged1..100, with attempted and committed ticks. Present/capture alpha finite[0,1]; preview preserves clocks/input. The terrain control sets pixel_error1..64, freezes streaming at the camera's position, and shows shaded, levels, normals, tiles, materials, sky or detail. Ordinary render/step/capture show current poses. Benchmark warmup0..120, samples1..240; step advances one tick, present samples alpha0.5 without ticks; clears input. Controls do not save source."}),
+                    json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": "version=1; every control but pause and resume requires a paused host; reload revisions must fit u64. Spatial queries need CollisionPlugin but no pause: positions/endpoints within +/-1e6; nonzero finite directions; distance[0,2e6]; shape dimensions[1e-4,1e4]; normalized XYZW rotation. Symmetric layer filtering; sensors include/exclude/only. Raycast/cast return closest complete hit, terrain heightfields included; casts translate with fixed orientation. Terrain height takes 1..256 [x,z] points (null where no tile is resident); terrain sweep compares queries, collision rays and layers over samples2..64 per side within half_extent0..4096. Overlap limit1..100; budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, paged1..100, with attempted and committed ticks. Present/capture alpha finite[0,1]; preview preserves clocks/input. The terrain control sets pixel_error1..64, freezes streaming at the camera's position, and shows shaded, levels, normals, tiles, materials, sky or detail. Ordinary render/step/capture show current poses. Benchmark warmup0..120, samples1..240; step advances one tick, present samples alpha0.5 without ticks; clears input. Controls do not save source."}),
                 )
             }
             _ => {

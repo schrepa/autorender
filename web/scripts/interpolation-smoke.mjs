@@ -1,7 +1,7 @@
 /** Real Chrome interpolation contracts. The disposable scene exists only in routed responses. */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { artifacts, commander, devUrl, differentPixels, launch, near, openPaused, routedScene } from "./harness.mjs";
+import { artifacts, commander, devUrl, differentPixels, launch, near, openPaused, protocol, routedScene } from "./harness.mjs";
 
 const url = devUrl("playground.html", process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
 const output = await artifacts("interpolation-smoke");
@@ -100,7 +100,7 @@ try {
   await scene.route();
   assert.equal((await openPaused(page, url, { timeout: 30_000 })).observation.tick, "0");
   assert.equal(bindingUrls.size, 1, "The ordinary-frame check must use the exact loaded game bindings.");
-  const ordinaryFrames = await page.evaluate(async ({ moduleUrl, fixture }) => {
+  const ordinaryFrames = await page.evaluate(async ({ moduleUrl, fixture, protocolVersion }) => {
     const { PlaygroundGame, SceneFileSet } = await import(moduleUrl);
     const canvas = document.createElement("canvas");
     canvas.width = 320; canvas.height = 240;
@@ -113,8 +113,9 @@ try {
       // Development commands between these frames would complete a pipelined
       // tick early; this check covers interpolation alone.
       game.set_tick_pipelining(false);
+      // No frame loop runs: the game is paused for every command.
       const request = command => {
-        const reply = JSON.parse(game.dev_command(JSON.stringify({ version: 1, ...command }), 320, 240));
+        const reply = JSON.parse(game.dev_command(JSON.stringify({ version: protocolVersion, ...command }), 320, 240, true));
         if (!reply.ok) throw new Error(JSON.stringify(reply));
         return reply;
       };
@@ -134,7 +135,7 @@ try {
       const resumed = state();
       return { before, afterTick, halfTick, resumed };
     } finally { game?.free(); canvas.remove(); }
-  }, { moduleUrl: [...bindingUrls][0], fixture });
+  }, { moduleUrl: [...bindingUrls][0], fixture, protocolVersion: protocol.version });
   assert.equal(ordinaryFrames.before.observation.tick, "0");
   assert.equal(ordinaryFrames.afterTick.observation.tick, "1");
   assert.equal(ordinaryFrames.halfTick.observation.tick, "1");

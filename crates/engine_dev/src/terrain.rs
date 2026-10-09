@@ -30,18 +30,6 @@ const LIMIT: f64 = 1.0e6;
 /// ground, and the ground itself.
 const PLACED_RAY_HITS: usize = 16;
 
-pub(crate) fn terrain_request(request: &DevRequest) -> bool {
-    matches!(
-        request,
-        DevRequest::TerrainHeight { .. }
-            | DevRequest::TerrainSweep { .. }
-            | DevRequest::TerrainRoute { .. }
-            | DevRequest::WaterQuery { .. }
-            | DevRequest::DeformationQuery { .. }
-            | DevRequest::NavPath { .. }
-    )
-}
-
 /// A track an agent presses.
 pub struct Press {
     pub from: [f64; 2],

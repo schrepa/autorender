@@ -1,7 +1,7 @@
 /** Real Chrome collision contracts; fixtures are routed responses, never source edits. */
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
-import { artifacts, commander, devUrl, launch, openPaused, routedScene } from "./harness.mjs";
+import { artifacts, commander, devUrl, developmentReady, launch, openPaused, routedScene } from "./harness.mjs";
 
 const url = devUrl("playground.html", process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
 const output = await artifacts("collision-smoke");
@@ -131,7 +131,7 @@ try {
   checks.push("queries_allowed_while_running");
   const orbit = new URL(url); orbit.pathname = "/";
   await page.goto(orbit.href);
-  await page.waitForFunction(() => window.__engineDev?.version === 1);
+  await developmentReady(page);
   const missing = await command("raycast", ray, false);
   assert.match(missing.error.code, /missing_plugin/);
   checks.push("plugin_is_opt_in");

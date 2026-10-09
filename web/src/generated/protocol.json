@@ -1,0 +1,41 @@
+{
+  "controls": [
+    "present",
+    "culling",
+    "environment",
+    "terrain",
+    "terrain_edit",
+    "terrain_undo",
+    "terrain_redo",
+    "deform",
+    "nav_go",
+    "world_changes",
+    "camera",
+    "benchmark",
+    "step",
+    "input",
+    "render",
+    "pause",
+    "resume",
+    "capture",
+    "reload"
+  ],
+  "max_request_bytes": 16384,
+  "queries": [
+    "status",
+    "inspect",
+    "assets",
+    "describe",
+    "raycast",
+    "overlap",
+    "shape_cast",
+    "terrain_height",
+    "nav_path",
+    "water_query",
+    "deformation_query",
+    "terrain_sweep",
+    "terrain_route",
+    "collision_events"
+  ],
+  "version": 1
+}

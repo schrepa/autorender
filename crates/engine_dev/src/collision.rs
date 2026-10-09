@@ -20,16 +20,6 @@ use crate::{
     views::{ColliderShapeView, ColliderView, CollisionLimitsView, CollisionWorldView},
 };
 
-pub(crate) fn spatial_request(request: &DevRequest) -> bool {
-    matches!(
-        request,
-        DevRequest::Raycast { .. }
-            | DevRequest::Overlap { .. }
-            | DevRequest::ShapeCast { .. }
-            | DevRequest::CollisionEvents { .. }
-    )
-}
-
 pub(crate) fn execute(
     engine: &mut Engine,
     scene: Option<&SceneInstance>,

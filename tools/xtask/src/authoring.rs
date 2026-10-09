@@ -58,6 +58,32 @@ pub fn write_schema(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Where the protocol summary the web host and scripts read lives.
+const PROTOCOL_PATH: &str = "web/src/generated/protocol.json";
+
+/// Writes the development protocol's summary for the web host and scripts.
+pub fn write_protocol(root: &Path) -> Result<(), String> {
+    fs::create_dir_all(root.join("web/src/generated"))
+        .map_err(|error| format!("cannot create the generated directory: {error}"))?;
+    fs::write(root.join(PROTOCOL_PATH), engine_dev::PROTOCOL_SUMMARY)
+        .map_err(|error| format!("cannot write {PROTOCOL_PATH}: {error}"))?;
+    println!("Generated {PROTOCOL_PATH} from engine_dev's protocol.");
+    Ok(())
+}
+
+pub fn check_protocol(root: &Path) -> Result<(), String> {
+    let saved = fs::read_to_string(root.join(PROTOCOL_PATH)).map_err(|error| {
+        format!("cannot read {PROTOCOL_PATH}: {error}; run `cargo xtask schema`")
+    })?;
+    if saved.replace("\r\n", "\n") != engine_dev::PROTOCOL_SUMMARY {
+        return Err(format!(
+            "{PROTOCOL_PATH} differs from engine_dev's protocol; run `cargo xtask schema`"
+        ));
+    }
+    println!("Generated protocol summary matches {PROTOCOL_PATH}.");
+    Ok(())
+}
+
 pub fn check_schema(root: &Path) -> Result<(), String> {
     let schema = schema_path();
     let saved = fs::read_to_string(root.join(&schema))

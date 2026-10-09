@@ -180,13 +180,14 @@ impl PlaygroundGame {
 #[cfg(feature = "dev")]
 #[wasm_bindgen]
 impl PlaygroundGame {
-    pub fn dev_command(&mut self, request: &str, width: u32, height: u32) -> String {
+    pub fn dev_command(&mut self, request: &str, width: u32, height: u32, paused: bool) -> String {
         self.development.command(
             &mut self.app,
             self.game.scene_instance(),
             request,
             width,
             height,
+            paused,
         )
     }
 

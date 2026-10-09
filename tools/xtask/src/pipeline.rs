@@ -43,6 +43,7 @@ pub fn dev(root: &Path, port: u16) -> Result<(), String> {
 pub fn lint(root: &Path) -> Result<(), String> {
     authoring::validate_sources(root)?;
     authoring::check_schema(root)?;
+    authoring::check_protocol(root)?;
     run(root, "cargo", &["fmt", "--all", "--", "--check"])?;
     run(
         root,

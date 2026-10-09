@@ -1,6 +1,9 @@
 /** On-demand adapter, dynamically imported only by the Vite development host. */
 import type { Runtime } from "./host";
 import { BenchmarkError, type BenchmarkOptions, type Reply, readRendering, sampleBenchmark } from "./benchmark.ts";
+// The protocol's version, request limit and ops, generated from the engine
+// (`cargo xtask schema`).
+import protocol from "./generated/protocol.json";
 
 type Command = { op: string; [field: string]: unknown };
 interface Host {
@@ -17,7 +20,7 @@ interface Host {
 
 declare global {
   interface Window {
-    __engineDev?: { version: 1; instance: string; build: string | null; request(command: Command): Promise<Reply> };
+    __engineDev?: { version: number; instance: string; build: string | null; request(command: Command): Promise<Reply> };
   }
 }
 
@@ -31,7 +34,7 @@ export function connectDevelopment(host: Host): () => void {
   function invoke(command: Command): Reply {
     if (disposed || host.signal.aborted) throw new Error("Development session has been disposed.");
     const [width, height] = host.size();
-    return JSON.parse(runtime.dev_command!(JSON.stringify({ ...command, version: 1 }), width, height));
+    return JSON.parse(runtime.dev_command!(JSON.stringify({ ...command, version: protocol.version }), width, height, host.paused()));
   }
   function error(code: string, path: string, message: string): Reply {
     const reply: Reply = { ok: false, error: { code, path, message } };
@@ -52,13 +55,46 @@ export function connectDevelopment(host: Host): () => void {
     }
     return reply;
   }
-  /** The engine validates the controls the host runs and returns them with their defaults. */
-  function validated(command: Command): Reply & { control?: Command } {
-    const reply = invoke(command);
-    return reply.ok ? { ...reply, control: reply.result?.control as Command } : reply;
-  }
+  /** The controls the engine hands back for the page to carry out. */
+  const hostControls: Record<string, (control: Command) => Promise<Reply>> = {
+    async pause() {
+      host.setPaused(true);
+      return invoke({ op: "status" });
+    },
+    async resume() {
+      host.setPaused(false);
+      return invoke({ op: "status" });
+    },
+    async benchmark(control) {
+      const options = control as unknown as BenchmarkOptions;
+      const benchmark = await sampleBenchmark({
+        signal: host.signal, invoke, stats: () => runtime.stats(), size: host.size,
+        interrupted: () => disposed || !host.paused() || (globalThis.document?.hidden ?? false),
+      }, options);
+      return { ok: true, version: protocol.version, observation: benchmark.observation.end, result: { benchmark, temporary: true } };
+    },
+    async capture(control) {
+      const reply = invoke("alpha" in control ? { op: "present", alpha: control.alpha, ...(control.gpu ? { gpu: true } : {}) } : { op: "render" });
+      if (reply.ok) await presented(host.signal);
+      return reply;
+    },
+    async reload(control) {
+      if (!host.source || !runtime.dev_reload) return error("unsupported_command", "$.op", "this game has no authored scene reload adapter");
+      const source = await host.source.load(host.signal);
+      const files = await host.source.files?.(source, host.signal);
+      host.signal.throwIfAborted();
+      if (disposed) return error("session_closed", "$", "runtime was disposed during scene fetch");
+      const reply = JSON.parse(runtime.dev_reload(source, control.expected_revision as string, control.revision as string, files)) as Reply;
+      if (reply.ok) {
+        const rendered = invoke({ op: "render" });
+        if (!rendered.ok) return rendered;
+        reply.observation = rendered.observation;
+      }
+      return reply;
+    },
+  };
   const api = {
-    version: 1 as const,
+    version: protocol.version,
     instance: crypto.randomUUID(),
     build: new URLSearchParams(globalThis.location?.search ?? "").get("engine_build"),
     async request(command: Command): Promise<Reply> {
@@ -68,74 +104,23 @@ export function connectDevelopment(host: Host): () => void {
         return error("invalid_request", "$.command", "expected an object with an op string");
       }
       try {
-        if (new TextEncoder().encode(JSON.stringify(command)).byteLength > 16 * 1024) {
-          return error("request_too_large", "$.command", "command exceeds 16 KiB");
+        if (new TextEncoder().encode(JSON.stringify(command)).byteLength > protocol.max_request_bytes) {
+          return error("request_too_large", "$.command", `command exceeds ${protocol.max_request_bytes} bytes`);
         }
       } catch { return error("invalid_request", "$.command", "command must be serializable JSON"); }
       busy = true;
       host.setBusy(true);
       try {
-        let reply: Reply;
-        switch (command.op) {
-          case "pause":
-          case "resume": {
-            const checked = validated(command);
-            if (!checked.ok) return checked;
-            host.setPaused(command.op === "pause");
-            reply = invoke({ op: "status" });
-            break;
-          }
-          case "input":
-          case "camera":
-          case "culling":
-          case "environment":
-          case "terrain":
-          case "terrain_edit":
-          case "terrain_undo":
-          case "terrain_redo":
-          case "deform":
-          case "world_changes":
-          case "nav_go":
-          case "present":
-          case "benchmark":
-          case "step":
-          case "render":
-          case "capture":
-          case "reload": {
-            if (!host.paused()) return error("pause_required", "$", "pause before input, camera/culling/environment/terrain edits, presentation previews, benchmarking, stepping, rendering, capture, or reload");
-            const checked = ["benchmark", "capture", "reload"].includes(command.op) ? validated(command) : undefined;
-            if (checked && !checked.ok) return checked;
-            const control = checked?.control ?? command;
-            if (command.op === "benchmark") {
-              const options = control as unknown as BenchmarkOptions;
-              const benchmark = await sampleBenchmark({
-                signal: host.signal, invoke, stats: () => runtime.stats(), size: host.size,
-                interrupted: () => disposed || !host.paused() || (globalThis.document?.hidden ?? false),
-              }, options);
-              reply = { ok: true, version: 1, observation: benchmark.observation.end, result: { benchmark, temporary: true } };
-            } else if (command.op === "capture") {
-              reply = invoke("alpha" in control ? { op: "present", alpha: control.alpha, ...(control.gpu ? { gpu: true } : {}) } : { op: "render" });
-              if (!reply.ok) return reply;
-              await presented(host.signal);
-            } else if (command.op === "reload") {
-              if (!host.source || !runtime.dev_reload) return error("unsupported_command", "$.op", "this game has no authored scene reload adapter");
-              const source = await host.source.load(host.signal);
-              const files = await host.source.files?.(source, host.signal);
-              host.signal.throwIfAborted();
-              if (disposed) return error("session_closed", "$", "runtime was disposed during scene fetch");
-              reply = JSON.parse(runtime.dev_reload(source, control.expected_revision as string, control.revision as string, files));
-              if (reply.ok) {
-                const rendered = invoke({ op: "render" });
-                if (!rendered.ok) return finish(rendered);
-                reply.observation = rendered.observation;
-              }
-            } else {
-              reply = invoke(command);
-            }
-            break;
-          }
-          default:
-            reply = invoke(command);
+        // The engine checks every command, pause rules included, and runs
+        // it, or returns the control the page carries out, validated with
+        // its defaults.
+        let reply = invoke(command);
+        const control = reply.ok ? reply.result?.control as Command | undefined : undefined;
+        if (control) {
+          const carry = hostControls[command.op];
+          if (!carry) return error("unsupported_command", "$.op", `this host cannot carry out ${command.op}`);
+          reply = await carry(control);
+          if (!reply.ok) return finish(reply);
         }
         if (disposed || host.signal.aborted) return error("session_closed", "$", "runtime was disposed during command");
         return finish(reply);
