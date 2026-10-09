@@ -88,6 +88,11 @@ impl GpuProfiler {
     }
 
     #[inline(always)]
+    pub(crate) fn span_in(&self, _group: &'static str, _name: &'static str) -> Option<Span<'_>> {
+        None
+    }
+
+    #[inline(always)]
     pub(crate) fn end_frame(&mut self, _encoder: &mut wgpu::CommandEncoder) {}
 
     #[inline(always)]
@@ -114,22 +119,6 @@ mod capture {
     const QUERY_BYTES: u64 = QUERIES as u64 * 8;
     /// The span every captured frame records: its opaque passes.
     const OPAQUE: &str = "opaque_meshes";
-    /// Presentation stages of a frame's own compute passes, whose first
-    /// begin to last end is `presentation_compute`; the previous-pose shift
-    /// is submitted before the frame's uploads.
-    const PRESENTATION: [&str; 4] = [
-        "presentation_compose",
-        "presentation_cull",
-        "presentation_scan",
-        "presentation_scatter",
-    ];
-    /// Shadow maps, whose first begin to last end is `shadow_maps`.
-    const SHADOW_MAPS: [&str; 4] = [
-        "shadow_near",
-        "shadow_moving",
-        "shadow_kept",
-        "shadow_levels",
-    ];
 
     #[derive(Clone, Copy)]
     struct Origin {
@@ -151,8 +140,10 @@ mod capture {
         readback: wgpu::Buffer,
         mapped: Rc<Cell<MapState>>,
         origin: Option<Origin>,
-        // The spans this frame recorded, in order, by name and begin query.
-        spans: RefCell<Vec<&'static str>>,
+        // The spans this frame recorded, in order, by name and begin query,
+        // each with the group whose first begin to last end the report
+        // also times.
+        spans: RefCell<Vec<(&'static str, Option<&'static str>)>>,
     }
 
     impl Slot {
@@ -296,12 +287,22 @@ mod capture {
         /// for it; `None` unless this frame is captured. Every span asked for
         /// must have its begin and end written.
         pub(crate) fn span(&self, name: &'static str) -> Option<Span<'_>> {
+            self.recorded(None, name)
+        }
+
+        /// [`Self::span`] of a span in `group`: the report also times the
+        /// group, from its spans' first begin to their last end.
+        pub(crate) fn span_in(&self, group: &'static str, name: &'static str) -> Option<Span<'_>> {
+            self.recorded(Some(group), name)
+        }
+
+        fn recorded(&self, group: Option<&'static str>, name: &'static str) -> Option<Span<'_>> {
             let slot = &self.slots[self.current?];
             let mut spans = slot.spans.borrow_mut();
-            let index = match spans.iter().position(|span| *span == name) {
+            let index = match spans.iter().position(|&(span, _)| span == name) {
                 Some(index) => index,
                 None if spans.len() < SPANS => {
-                    spans.push(name);
+                    spans.push((name, group));
                     spans.len() - 1
                 }
                 None => {
@@ -372,7 +373,15 @@ mod capture {
                     }
                     continue;
                 }
-                let names = slot.spans.get_mut().clone();
+                let recorded = slot.spans.get_mut().clone();
+                let names: Vec<&'static str> = recorded.iter().map(|&(name, _)| name).collect();
+                // Each group in the order its first span was recorded.
+                let mut groups: Vec<&'static str> = Vec::new();
+                for group in recorded.iter().filter_map(|&(_, group)| group) {
+                    if !groups.contains(&group) {
+                        groups.push(group);
+                    }
+                }
                 let stamps: Option<Vec<(u64, u64)>> =
                     slot.readback.get_mapped_range(..).ok().map(|bytes| {
                         let stamp = |query: usize| {
@@ -397,12 +406,12 @@ mod capture {
                         .map(to_ms)
                         .filter(|value| value.is_finite())
                 };
-                // The first begin to the last end of the spans named `set`.
-                let across = |set: &[&str]| {
-                    let spans: Vec<(u64, u64)> = names
+                // The first begin to the last end of the spans in `group`.
+                let across = |group: &str| {
+                    let spans: Vec<(u64, u64)> = recorded
                         .iter()
                         .zip(&stamps)
-                        .filter(|(name, _)| set.contains(name))
+                        .filter(|((_, of), _)| *of == Some(group))
                         .map(|(_, &stamps)| stamps)
                         .collect();
                     let begin = spans.iter().map(|&(begin, _)| begin).min()?;
@@ -446,13 +455,10 @@ mod capture {
                     self.errors = self.errors.saturating_add(1);
                     continue;
                 };
-                // The opaque span first, then the frame's compute passes,
-                // every other span in the order the frame recorded them, the
-                // shadow maps together and the frame's GPU span, gap and
-                // interval.
+                // The opaque span first, then every other span in the order
+                // the frame recorded them, each group whole and the frame's
+                // GPU span, gap and interval.
                 let mut spans = vec![(OPAQUE, opaque)];
-                spans
-                    .extend(across(&PRESENTATION).map(|compute| ("presentation_compute", compute)));
                 spans.extend(
                     names
                         .iter()
@@ -460,7 +466,11 @@ mod capture {
                         .filter(|(name, _)| **name != OPAQUE)
                         .filter_map(|(name, &stamps)| Some((*name, duration(stamps)?))),
                 );
-                spans.extend(across(&SHADOW_MAPS).map(|maps| ("shadow_maps", maps)));
+                spans.extend(
+                    groups
+                        .iter()
+                        .filter_map(|&group| across(group).map(|whole| (group, whole))),
+                );
                 // Where the frame's GPU span goes outside the render graph's
                 // passes: before the first, after the last, and between
                 // each pass and the one before it.
@@ -515,7 +525,7 @@ mod capture {
                 "reason": if self.supported { Value::Null } else { json!("timestamp-query unavailable on adapter") },
                 "capture_id": self.capture.map(|id| id.to_string()),
                 "active": active,
-                "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (stages run as separate passes while capturing), taa_resolve for temporally antialiased frames, shadow_select and shadow_maps, ambient_occlusion, bloom and post_composite, reflections and sun_shafts, light_bins, decals, transparent and transparent_composite, shadow_near, shadow_moving, shadow_kept and shadow_levels per map, occlusion (the depth pyramid, test and second compaction, with virtual geometry's cluster retest; opaque_meshes then spans both drawing phases), probe_captures and virtual_selection (every cluster selection dispatch), effects_filter, stage_* (every render graph pass whole, with the copies and passes it records, timed or not; stage_lead, stage_gaps and stage_tail are the frame's GPU span before, between and after them, so stalls inside passes with almost no gaps mean other work shares the GPU), pre_mips, pre_poses, pre_inputs and pre_environment (the command buffers submitted before the frame's: texture mips, staged poses, presentation input copies and environment maps), and frame_gpu (the frame's first timed begin to last timed end, including GPU time of other work between its passes), frame_gpu_gap (from the previous frame's last end, when consecutive) and frame_gpu_interval (first begin to first begin per frame); excludes uploads, queue latency, presentation and timestamp readback",
+                "scope": "every span the captured frames recorded, by name: opaque_meshes (the opaque passes), the passes and dispatch groups the renderer times, each group of spans whole under the group's name from its first begin to its last end, stage_<pass> for every render graph pass whole (with the copies and passes it records, timed or not), stage_lead, stage_gaps and stage_tail (the frame's GPU span before, between and after the passes: stalls inside passes with almost no gaps mean other work shares the GPU), pre_<what> for the command buffers submitted before the frame's, frame_gpu (the frame's first timed begin to last timed end, including other work between its passes), frame_gpu_gap (from the previous frame's last end, when consecutive) and frame_gpu_interval (first begin to first begin per frame); excludes uploads, queue latency, presentation and timestamp readback",
                 "clock": "GPU duration only; frame/submission IDs correlate origin, clocks are not aligned",
                 "timestamp_period_ns": if self.supported { Some(self.period_ns) } else { None },
                 "precision": "browser may quantize timestamp values; zero durations remain valid samples",

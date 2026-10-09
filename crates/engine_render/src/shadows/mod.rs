@@ -889,7 +889,7 @@ impl ShadowPass {
                 cascade => ("shadow_near", cascade == 0, cascade == last_cascade),
             };
             (begin || end)
-                .then(|| profiler.span(span))
+                .then(|| profiler.span_in("shadow_maps", span))
                 .flatten()
                 .map(|span| span.render_part(begin, end))
         };

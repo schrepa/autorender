@@ -11,113 +11,82 @@
 //! operations. [`plan`] declares the renderer's frame from its [`FrameShape`].
 #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 
-/// A resource the frame's passes share.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Resource {
-    /// The canvas texture the frame presents.
-    Canvas,
-    /// The depth buffer (reversed).
-    Depth,
-    /// The screen effects' scene color, glow and surface targets.
-    Scene,
-    Glow,
-    Surface,
-    /// Temporal antialiasing's motion target and history.
-    Motion,
-    History,
-    /// The visibility buffer's triangle IDs and per-bin tile lists.
-    Ids,
-    Tiles,
-    /// Transparent surfaces' accumulated color and revealage.
-    Accumulated,
-    Revealed,
-    /// Retained slots' poses and colors.
-    Poses,
-    /// GPU presentation's visible IDs and indirect draws, which the next
-    /// frame's first phase starts from.
-    Visible,
-    /// Placed objects' lists and draws for the camera and the shadow maps.
-    Placed,
-    /// What placed objects cover around the camera, kept between its draws.
-    Occupancy,
-    /// Shadow casters each map draws, and the maps (the kept map is kept
-    /// between frames).
-    Casters,
-    ShadowMaps,
-    /// Virtual geometry's selected clusters and the pages they request.
-    Clusters,
-    /// Local lights binned into view clusters.
-    Lights,
-    /// The depth pyramid occlusion culling tests against, which the next
-    /// frame's cluster selection retests with.
-    Pyramid,
-    /// Ambient occlusion, bloom, reflections and sun shafts.
-    Effects,
-    /// Environment maps and reflection probes' cubes.
-    Probes,
-    /// The view's marched clouds.
-    CloudView,
+/// Builds [`Resource`], the list of every resource and each one's
+/// [`Lifetime`] from one table: `Name: Lifetime`.
+macro_rules! resources {
+    ($($(#[$doc:meta])* $resource:ident: $lifetime:ident,)*) => {
+        /// A resource the frame's passes share.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub(crate) enum Resource {
+            $($(#[$doc])* $resource,)*
+        }
+
+        /// Every resource, by its bit in a [`Set`].
+        const RESOURCES: &[Resource] = &[$(Resource::$resource,)*];
+
+        impl Resource {
+            /// How long its contents live.
+            pub(crate) fn lifetime(self) -> Lifetime {
+                match self {
+                    $(Self::$resource => Lifetime::$lifetime,)*
+                }
+            }
+        }
+    };
 }
 
-/// Resources, by their bits in a [`Set`].
-const RESOURCES: [Resource; 23] = [
-    Resource::Canvas,
-    Resource::Depth,
-    Resource::Scene,
-    Resource::Glow,
-    Resource::Surface,
-    Resource::Motion,
-    Resource::History,
-    Resource::Ids,
-    Resource::Tiles,
-    Resource::Accumulated,
-    Resource::Revealed,
-    Resource::Poses,
-    Resource::Visible,
-    Resource::Placed,
-    Resource::Occupancy,
-    Resource::Casters,
-    Resource::ShadowMaps,
-    Resource::Clusters,
-    Resource::Lights,
-    Resource::Pyramid,
-    Resource::Effects,
-    Resource::Probes,
-    Resource::CloudView,
-];
+resources! {
+    /// The canvas texture the frame presents.
+    Canvas: Output,
+    /// The depth buffer (reversed).
+    Depth: Frame,
+    /// The screen effects' scene color, glow and surface targets.
+    Scene: Frame,
+    Glow: Frame,
+    Surface: Frame,
+    /// Temporal antialiasing's motion target and history.
+    Motion: Frame,
+    History: Kept,
+    /// The visibility buffer's triangle IDs and per-bin tile lists.
+    Ids: Frame,
+    Tiles: Frame,
+    /// Transparent surfaces' accumulated color and revealage.
+    Accumulated: Frame,
+    Revealed: Frame,
+    /// Retained slots' poses and colors.
+    Poses: Kept,
+    /// GPU presentation's visible IDs and indirect draws, which the next
+    /// frame's first phase starts from.
+    Visible: Kept,
+    /// Placed objects' lists and draws for the camera and the shadow maps.
+    Placed: Frame,
+    /// What placed objects cover around the camera, kept between its draws.
+    Occupancy: Kept,
+    /// Shadow casters each map draws, and the maps (the kept map is kept
+    /// between frames).
+    Casters: Frame,
+    ShadowMaps: Kept,
+    /// Virtual geometry's selected clusters and the pages they request.
+    Clusters: Kept,
+    /// Local lights binned into view clusters.
+    Lights: Frame,
+    /// The depth pyramid occlusion culling tests against, which the next
+    /// frame's cluster selection retests with.
+    Pyramid: Kept,
+    /// Ambient occlusion, bloom, reflections and sun shafts.
+    Effects: Frame,
+    /// Environment maps and reflection probes' cubes.
+    Probes: Kept,
+    /// The view's marched clouds.
+    CloudView: Frame,
+}
+
+// A set holds every resource as a bit of a u32.
+const _: () = assert!(RESOURCES.len() <= 32);
 
 impl Resource {
     fn bit(self) -> u32 {
         1 << self as u32
-    }
-
-    /// How long its contents live.
-    pub(crate) fn lifetime(self) -> Lifetime {
-        match self {
-            Self::Canvas => Lifetime::Output,
-            Self::History
-            | Self::Poses
-            | Self::Visible
-            | Self::ShadowMaps
-            | Self::Occupancy
-            | Self::Clusters
-            | Self::Pyramid
-            | Self::Probes => Lifetime::Kept,
-            Self::Depth
-            | Self::Scene
-            | Self::Glow
-            | Self::Surface
-            | Self::Motion
-            | Self::Ids
-            | Self::Tiles
-            | Self::Accumulated
-            | Self::Revealed
-            | Self::Placed
-            | Self::Casters
-            | Self::Lights
-            | Self::Effects
-            | Self::CloudView => Lifetime::Frame,
-        }
     }
 }
 
@@ -154,7 +123,8 @@ impl Set {
 
     fn iter(self) -> impl Iterator<Item = Resource> {
         RESOURCES
-            .into_iter()
+            .iter()
+            .copied()
             .filter(move |resource| self.contains(*resource))
     }
 }
@@ -251,107 +221,72 @@ pub(crate) enum Pass {
     CloudComposite,
 }
 
-/// Passes, by their bits in the masks frames report.
-const PASSES: [Pass; 26] = [
-    Pass::Presentation,
-    Pass::Scatter,
-    Pass::Occupancy,
-    Pass::ShadowSelect,
-    Pass::VirtualSelect,
-    Pass::ShadowMaps,
-    Pass::Lights,
-    Pass::Opaque { phase: 0 },
-    Pass::VisibilityIds { phase: 0 },
-    Pass::Classify { phase: 0 },
-    Pass::Resolve { phase: 0 },
-    Pass::OcclusionTest,
-    Pass::Opaque { phase: 1 },
-    Pass::VisibilityIds { phase: 1 },
-    Pass::Classify { phase: 1 },
-    Pass::Resolve { phase: 1 },
-    Pass::Decals,
-    Pass::Water,
-    Pass::CloudMarch,
-    Pass::CloudComposite,
-    Pass::Transparent,
-    Pass::TransparentComposite,
-    Pass::Effects,
-    Pass::Composite,
-    Pass::TemporalResolve,
-    Pass::ProbeCaptures,
-];
+/// Builds [`PASSES`] from one table: each pass in frame order with its name
+/// in reports, and the span profiling captures time it whole as,
+/// `stage_<name>`.
+macro_rules! passes {
+    ($($pass:expr => $name:literal,)*) => {
+        /// Every pass in frame order, by its bit in the masks frames report:
+        /// the pass, its name and its stage span.
+        const PASSES: &[(Pass, &str, &str)] = &[$(($pass, $name, concat!("stage_", $name)),)*];
+    };
+}
+
+passes! {
+    Pass::Presentation => "presentation",
+    Pass::Scatter => "scatter",
+    Pass::Occupancy => "occupancy",
+    Pass::ShadowSelect => "shadow_select",
+    Pass::VirtualSelect => "virtual_select",
+    Pass::ShadowMaps => "shadow_maps",
+    Pass::Lights => "lights",
+    Pass::Opaque { phase: 0 } => "opaque",
+    Pass::VisibilityIds { phase: 0 } => "visibility",
+    Pass::Classify { phase: 0 } => "visibility_tiles",
+    Pass::Resolve { phase: 0 } => "visibility_resolve",
+    Pass::OcclusionTest => "occlusion_test",
+    Pass::Opaque { phase: 1 } => "opaque_phase_two",
+    Pass::VisibilityIds { phase: 1 } => "visibility_phase_two",
+    Pass::Classify { phase: 1 } => "visibility_tiles_phase_two",
+    Pass::Resolve { phase: 1 } => "visibility_resolve_phase_two",
+    Pass::Decals => "decals",
+    Pass::Water => "water",
+    Pass::CloudMarch => "cloud_march",
+    Pass::CloudComposite => "cloud_composite",
+    Pass::Transparent => "transparent",
+    Pass::TransparentComposite => "transparent_composite",
+    Pass::Effects => "effects",
+    Pass::Composite => "composite",
+    Pass::TemporalResolve => "temporal_resolve",
+    Pass::ProbeCaptures => "probe_captures",
+}
+
+// A mask holds every pass as a bit of a u32.
+const _: () = assert!(PASSES.len() <= 32);
 
 impl Pass {
+    /// The pass's entry in [`PASSES`]: every pass the renderer declares has
+    /// one.
+    fn entry(self) -> (usize, &'static str, &'static str) {
+        PASSES
+            .iter()
+            .position(|&(pass, _, _)| pass == self)
+            .map(|index| (index, PASSES[index].1, PASSES[index].2))
+            .unwrap_or_else(|| panic!("{self:?} has no entry in PASSES"))
+    }
+
     /// The pass's name in reports.
     pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Presentation => "presentation",
-            Self::Scatter => "scatter",
-            Self::Occupancy => "occupancy",
-            Self::ShadowSelect => "shadow_select",
-            Self::VirtualSelect => "virtual_select",
-            Self::ShadowMaps => "shadow_maps",
-            Self::Lights => "lights",
-            Self::Opaque { phase: 0 } => "opaque",
-            Self::Opaque { .. } => "opaque_phase_two",
-            Self::VisibilityIds { phase: 0 } => "visibility",
-            Self::VisibilityIds { .. } => "visibility_phase_two",
-            Self::Classify { phase: 0 } => "visibility_tiles",
-            Self::Classify { .. } => "visibility_tiles_phase_two",
-            Self::Resolve { phase: 0 } => "visibility_resolve",
-            Self::Resolve { .. } => "visibility_resolve_phase_two",
-            Self::OcclusionTest => "occlusion_test",
-            Self::Decals => "decals",
-            Self::Transparent => "transparent",
-            Self::TransparentComposite => "transparent_composite",
-            Self::Effects => "effects",
-            Self::Composite => "composite",
-            Self::TemporalResolve => "temporal_resolve",
-            Self::Water => "water",
-            Self::CloudMarch => "cloud_march",
-            Self::CloudComposite => "cloud_composite",
-            Self::ProbeCaptures => "probe_captures",
-        }
+        self.entry().1
     }
 
     /// The span profiling captures time the whole pass as.
     pub(crate) fn stage(self) -> &'static str {
-        match self {
-            Self::Presentation => "stage_presentation",
-            Self::Scatter => "stage_scatter",
-            Self::Occupancy => "stage_occupancy",
-            Self::ShadowSelect => "stage_shadow_select",
-            Self::VirtualSelect => "stage_virtual_select",
-            Self::ShadowMaps => "stage_shadow_maps",
-            Self::Lights => "stage_lights",
-            Self::Opaque { phase: 0 } => "stage_opaque",
-            Self::Opaque { .. } => "stage_opaque_phase_two",
-            Self::VisibilityIds { phase: 0 } => "stage_visibility",
-            Self::VisibilityIds { .. } => "stage_visibility_phase_two",
-            Self::Classify { phase: 0 } => "stage_visibility_tiles",
-            Self::Classify { .. } => "stage_visibility_tiles_phase_two",
-            Self::Resolve { phase: 0 } => "stage_visibility_resolve",
-            Self::Resolve { .. } => "stage_visibility_resolve_phase_two",
-            Self::OcclusionTest => "stage_occlusion_test",
-            Self::Decals => "stage_decals",
-            Self::Transparent => "stage_transparent",
-            Self::TransparentComposite => "stage_transparent_composite",
-            Self::Effects => "stage_effects",
-            Self::Composite => "stage_composite",
-            Self::TemporalResolve => "stage_temporal_resolve",
-            Self::Water => "stage_water",
-            Self::CloudMarch => "stage_cloud_march",
-            Self::CloudComposite => "stage_cloud_composite",
-            Self::ProbeCaptures => "stage_probe_captures",
-        }
+        self.entry().2
     }
 
     fn bit(self) -> u32 {
-        let index = PASSES
-            .iter()
-            .position(|pass| *pass == self)
-            .expect("every pass is listed");
-        1 << index
+        1 << self.entry().0
     }
 }
 
@@ -359,9 +294,10 @@ impl Pass {
 /// [`RenderGraph::kept`], in frame order.
 pub(crate) fn pass_names(mask: u32) -> impl Iterator<Item = &'static str> {
     PASSES
-        .into_iter()
-        .filter(move |pass| mask & pass.bit() != 0)
-        .map(Pass::name)
+        .iter()
+        .enumerate()
+        .filter(move |&(index, _)| mask & (1 << index) != 0)
+        .map(|(_, &(_, name, _))| name)
 }
 
 /// Serializes a mask of passes as the list of their names.
@@ -541,7 +477,7 @@ impl RenderGraph {
     pub(crate) fn compile(&mut self) -> Result<(), Unwritten> {
         // Backwards: what later kept passes read of each resource.
         let mut needed = Set::default();
-        for resource in RESOURCES {
+        for &resource in RESOURCES {
             if resource.lifetime() != Lifetime::Frame {
                 needed.insert(resource);
             }
@@ -549,7 +485,8 @@ impl RenderGraph {
         for node in self.nodes.iter_mut().rev() {
             let outputs = node.outputs();
             node.kept = RESOURCES
-                .into_iter()
+                .iter()
+                .copied()
                 .any(|resource| outputs.contains(resource) && needed.contains(resource));
             if !node.kept {
                 continue;
@@ -571,7 +508,7 @@ impl RenderGraph {
         }
         // Forwards: what earlier kept passes wrote.
         let mut written = Set::default();
-        for resource in RESOURCES {
+        for &resource in RESOURCES {
             if resource.lifetime() == Lifetime::Kept {
                 written.insert(resource);
             }

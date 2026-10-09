@@ -743,7 +743,9 @@ impl GpuPresentationPass {
                 if runs {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                         label: Some("engine/presentation-stage"),
-                        timestamp_writes: profiler.span(stage.span()).map(Span::compute),
+                        timestamp_writes: profiler
+                            .span_in("presentation_compute", stage.span())
+                            .map(Span::compute),
                     });
                     record(&mut pass, stage);
                 }
