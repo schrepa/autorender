@@ -1055,8 +1055,17 @@ fn scan_groups(@builtin(local_invocation_index) lane: u32) {
     }
 }
 
+// The product from 16-bit halves, without dividing: NVIDIA's D3D12 driver
+// failed to create `batch_args` (E_OUTOFMEMORY) while its overflow test
+// divided by a value known only at run time.
 fn saturating_mul(a: u32, b: u32) -> u32 {
-    return select(a * b, 0xffffffffu, b != 0u && a > 0xffffffffu / b);
+    let a_high = a >> 16u;
+    let b_high = b >> 16u;
+    let cross = a_high * (b & 0xffffu) + (a & 0xffffu) * b_high;
+    let low = (a & 0xffffu) * (b & 0xffffu);
+    let high = cross << 16u;
+    let overflow = ((a_high != 0u) & (b_high != 0u)) | (cross > 0xffffu) | (low > 0xffffffffu - high);
+    return select(low + high, 0xffffffffu, overflow);
 }
 
 fn saturating_add(a: u32, b: u32) -> u32 {
