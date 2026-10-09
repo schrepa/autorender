@@ -19,9 +19,9 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Install pinned Rust toolchain
+      - name: Install the Rust toolchain rust-toolchain.toml pins
         run: |
-          rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt --target wasm32-unknown-unknown
+          rustup toolchain install
           rustup show active-toolchain
       - name: Cache Cargo dependencies and builds
         uses: actions/cache@v4
@@ -30,9 +30,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
-      - name: Install matching Wasm binding generator
-        run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+          key: ${{ runner.os }}-rust-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      - name: Install the Wasm binding generator Cargo.lock pins
+        run: cargo install wasm-bindgen-cli --version "$(cargo xtask wasm-bindgen-version)" --locked
       - run: cargo xtask lint
       - run: cargo xtask build
       - run: cargo xtask docs

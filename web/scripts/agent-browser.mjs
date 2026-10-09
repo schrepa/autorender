@@ -5,6 +5,7 @@ import { resolve, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgentError, loopbackUrl } from "./agent-protocol.mjs";
+import { launchOptions } from "./browser-launch.mjs";
 
 const workspace = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -13,11 +14,7 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
   const url = loopbackUrl(String(value));
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "Session identity must be a bounded identifier.", "session");
   const { chromium } = await import("@playwright/test");
-  const browser = await chromium.launch({
-    ...(browserPath ? { executablePath: resolve(browserPath) } : { channel: process.env.BROWSER_CHANNEL ?? "chrome" }),
-    headless: true,
-    args: ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])],
-  });
+  const browser = await chromium.launch(launchOptions({ executablePath: browserPath }));
   let page;
   let instance;
   let build;

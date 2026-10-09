@@ -58,29 +58,42 @@ pub fn write_schema(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Where the protocol summary the web host and scripts read lives.
-const PROTOCOL_PATH: &str = "web/src/generated/protocol.json";
+/// The files the web host and scripts read that Rust generates: the
+/// development protocol's summary and the browser clients.
+fn generated() -> [(&'static str, String); 2] {
+    let clients = serde_json::to_string_pretty(&crate::process::clients_json())
+        .expect("the client list serializes")
+        + "\n";
+    [
+        (
+            "web/src/generated/protocol.json",
+            engine_dev::PROTOCOL_SUMMARY.to_owned(),
+        ),
+        ("web/src/generated/clients.json", clients),
+    ]
+}
 
-/// Writes the development protocol's summary for the web host and scripts.
-pub fn write_protocol(root: &Path) -> Result<(), String> {
+/// Writes the generated files the web host and scripts read.
+pub fn write_generated(root: &Path) -> Result<(), String> {
     fs::create_dir_all(root.join("web/src/generated"))
         .map_err(|error| format!("cannot create the generated directory: {error}"))?;
-    fs::write(root.join(PROTOCOL_PATH), engine_dev::PROTOCOL_SUMMARY)
-        .map_err(|error| format!("cannot write {PROTOCOL_PATH}: {error}"))?;
-    println!("Generated {PROTOCOL_PATH} from engine_dev's protocol.");
+    for (path, contents) in generated() {
+        fs::write(root.join(path), contents)
+            .map_err(|error| format!("cannot write {path}: {error}"))?;
+        println!("Generated {path}.");
+    }
     Ok(())
 }
 
-pub fn check_protocol(root: &Path) -> Result<(), String> {
-    let saved = fs::read_to_string(root.join(PROTOCOL_PATH)).map_err(|error| {
-        format!("cannot read {PROTOCOL_PATH}: {error}; run `cargo xtask schema`")
-    })?;
-    if saved.replace("\r\n", "\n") != engine_dev::PROTOCOL_SUMMARY {
-        return Err(format!(
-            "{PROTOCOL_PATH} differs from engine_dev's protocol; run `cargo xtask schema`"
-        ));
+pub fn check_generated(root: &Path) -> Result<(), String> {
+    for (path, contents) in generated() {
+        let saved = fs::read_to_string(root.join(path))
+            .map_err(|error| format!("cannot read {path}: {error}; run `cargo xtask schema`"))?;
+        if saved.replace("\r\n", "\n") != contents {
+            return Err(format!("{path} is out of date; run `cargo xtask schema`"));
+        }
+        println!("Generated file matches {path}.");
     }
-    println!("Generated protocol summary matches {PROTOCOL_PATH}.");
     Ok(())
 }
 

@@ -12,6 +12,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "@playwright/test";
+import { launchOptions } from "./browser-launch.mjs";
 
 /** The development server the checks open: `DEMO_URL`, else Vite's default. */
 export const base = `${(process.env.DEMO_URL ?? "http://127.0.0.1:5173").replace(/\/$/, "")}/`;
@@ -38,11 +39,7 @@ export async function artifacts(name) {
  * unsafe WebGPU, SwiftShader with `SOFTWARE_GPU=1`, and one page of `width`
  * by `height` whose first errors collect in `errors`. */
 export async function launch({ width = 1200, height = 900, timeout = 30_000, args = [] } = {}) {
-  const browser = await chromium.launch({
-    ...(process.env.BROWSER_PATH ? { executablePath: resolve(process.env.BROWSER_PATH) } : { channel: process.env.BROWSER_CHANNEL ?? "chrome" }),
-    headless: true,
-    args: ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : []), ...args],
-  });
+  const browser = await chromium.launch(launchOptions({ args }));
   const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
   page.setDefaultTimeout(timeout);
   const errors = [];

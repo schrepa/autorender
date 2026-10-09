@@ -1,6 +1,6 @@
 /** Own the edit/build/browser loop; runtime frames never participate in watching. */
 import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { access, mkdir, lstat, realpath, rm, stat, open } from "node:fs/promises";
 import { resolve, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,12 @@ import { IterationController } from "./iteration-controller.mjs";
 import { runBuild } from "./iteration-process.mjs";
 
 const workspace = fileURLToPath(new URL("../../", import.meta.url));
+// The browser clients and their games' pages, generated from xtask
+// (`cargo xtask schema`).
+const clients = JSON.parse(readFileSync(new URL("../src/generated/clients.json", import.meta.url), "utf8"));
+const gamePages = Object.fromEntries(clients.filter(client => client.game).map(client => [client.game, client.page]));
+const wasmNames = clients.map(client => client.wasm);
+const builtArtifact = new RegExp(`^/_engine/builds/([A-Za-z0-9_-]{1,100})/(${wasmNames.join("|")})(\\.js|_bg\\.wasm)$`);
 const GENERATION = /^[A-Za-z0-9_-]{1,100}$/;
 function port(value, fallback) {
   const text = value ?? String(fallback);
@@ -25,7 +31,7 @@ export async function startIteration(values) {
   const bridgePort = port(values.port, 7331);
   if (webPort === bridgePort) throw new AgentError("arguments", "Web and bridge ports must differ.");
   const game = values.game ?? "playground";
-  if (!["playground", "orbit", "stress"].includes(game)) throw new AgentError("arguments", "Game must be playground, orbit or stress.");
+  if (!(game in gamePages)) throw new AgentError("arguments", `Game must be one of ${Object.keys(gamePages).join(", ")}.`);
   const executable = process.env.ENGINE_XTASK_BIN ?? resolve(workspace, "target/debug", process.platform === "win32" ? "xtask.exe" : "xtask");
   await access(executable).catch(() => { throw new AgentError("build_worker_unavailable", "Start with cargo xtask agent watch to compile the native build worker.", executable); });
   const outputRoot = resolve(workspace, "web/pkg-iterations");
@@ -47,7 +53,7 @@ export async function startIteration(values) {
   const available = new Set();
   const retained = [];
   const browserStates = new WeakMap();
-  const baseUrl = `http://127.0.0.1:${webPort}/${({ playground: "playground.html", orbit: "", stress: "stress.html" })[game]}`;
+  const baseUrl = `http://127.0.0.1:${webPort}/${gamePages[game]}`;
   let active;
   let controller;
   let bridge;
@@ -158,7 +164,7 @@ export async function startIteration(values) {
     vite = await createServer({
       root: resolve(workspace, "web"), configFile: resolve(workspace, "web/vite.config.ts"),
       logLevel: "silent",
-      resolve: { alias: ["orbit_demo", "playground", "stress_lab"].map(name => ({ find: `../pkg/${name}`, replacement: `virtual:iteration-${name}` })) },
+      resolve: { alias: wasmNames.map(name => ({ find: `../pkg/${name}`, replacement: `virtual:iteration-${name}` })) },
       server: { host: "127.0.0.1", port: webPort, strictPort: true, hmr: false, watch: { ignored: ["**/pkg-iterations/**"] } },
       plugins: [{
         name: "immutable-development-builds",
@@ -167,7 +173,7 @@ export async function startIteration(values) {
         configureServer(server) {
           server.middlewares.use(async (request, response, next) => {
             const url = new URL(request.url ?? "/", baseUrl);
-            const match = /^\/_engine\/builds\/([A-Za-z0-9_-]{1,100})\/(orbit_demo|playground|stress_lab)(\.js|_bg\.wasm)$/.exec(url.pathname);
+            const match = builtArtifact.exec(url.pathname);
             if (match) {
               if (request.method !== "GET" && request.method !== "HEAD") { response.statusCode = 405; response.end(); return; }
               if (!available.has(match[1])) { response.statusCode = 404; response.end("Build unavailable; open the game's base URL for the active build."); return; }
@@ -185,7 +191,7 @@ export async function startIteration(values) {
               } catch { response.statusCode = 404; response.end("Build artifact unavailable"); }
               return;
             }
-            if (["/", "/index.html", "/playground.html", "/stress.html"].includes(url.pathname) && !url.searchParams.has("engine_build")) {
+            if (["/", ...Object.values(gamePages).map(page => `/${page}`)].includes(url.pathname) && !url.searchParams.has("engine_build")) {
               if (!active) { response.statusCode = 503; response.end("The first Rust build is not ready. Read agent development status for diagnostics."); return; }
               url.searchParams.set("engine_build", active.build);
               response.writeHead(302, { Location: `${url.pathname}${url.search}`, "Cache-Control": "no-store" }); response.end(); return;

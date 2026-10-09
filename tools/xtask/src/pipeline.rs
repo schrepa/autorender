@@ -3,7 +3,8 @@ use std::{fs, path::Path};
 use crate::{
     authoring,
     process::{
-        CLIENTS, NPM, WASM_TARGET, client_dev_features, client_packages, run, verify_wasm_bindgen,
+        NPM, WASM_TARGET, client_crates, client_dev_features, client_packages, run,
+        verify_wasm_bindgen,
     },
 };
 
@@ -43,7 +44,7 @@ pub fn dev(root: &Path, port: u16) -> Result<(), String> {
 pub fn lint(root: &Path) -> Result<(), String> {
     authoring::validate_sources(root)?;
     authoring::check_schema(root)?;
-    authoring::check_protocol(root)?;
+    authoring::check_generated(root)?;
     run(root, "cargo", &["fmt", "--all", "--", "--check"])?;
     run(
         root,
@@ -118,7 +119,7 @@ pub(crate) fn build_wasm(root: &Path, development: bool) -> Result<(), String> {
         arguments.extend(["--features", features.as_str()]);
     }
     run(root, "cargo", &arguments)?;
-    for (_, name) in CLIENTS {
+    for name in client_crates() {
         let artifact = format!("target/{WASM_TARGET}/release/{name}.wasm");
         let mut arguments = vec![
             artifact.as_str(),

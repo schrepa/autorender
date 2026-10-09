@@ -1,3 +1,4 @@
+/** The playground and orbit demo in real Chrome: WebGPU startup, workloads, controls, resize, play, reloads and asset retirement. */
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";

@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { browserChannel, launchFlags, launchOptions } from "./browser-launch.mjs";
 import { developmentReady } from "./harness.mjs";
 import { arch, cpus, platform, release, totalmem } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -219,10 +220,8 @@ async function main() {
   if (options.setupTicks) configuration.setup_ticks = options.setupTicks;
   if (options.mode === "present") configuration.presentation_alpha = 0.5;
   if (baseline) expect(isDeepStrictEqual(configuration, baseline.configuration), "incompatible_baseline", "$.configuration", "Baseline configuration differs; use identical workload/sample settings.");
-  const launchFlags = ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])];
-  const channel = process.env.BROWSER_PATH ? "explicit-executable" : process.env.BROWSER_CHANNEL ?? "chrome";
   report = { version: REPORT_VERSION, kind: "browser_engine_benchmark", suite: SUITE, status: "incomplete", started_at: new Date().toISOString(),
-    configuration, environment: { browser_channel: channel, browser_version: null, platform: platform(), arch: arch(), os_release: release(),
+    configuration, environment: { browser_channel: browserChannel, browser_version: null, platform: platform(), arch: arch(), os_release: release(),
       cpu_model: cpus()[0]?.model ?? null, logical_cpus: cpus().length, physical_memory_bytes: totalmem(), headless: true,
       launch_flags: launchFlags, software_gpu_requested: process.env.SOFTWARE_GPU === "1", browser_probe: null },
     source: { wasm: {}, host: {}, scene: null, cargo_lock_sha256: null, package_lock_sha256: null }, runs: [],
@@ -232,7 +231,7 @@ async function main() {
     try { report.source[field] = hash(await readFile(resolve(workspace, file))); } catch { /* A remote/local-server bundle may have no adjacent checkout metadata. */ }
   }
   const { chromium } = await import("@playwright/test");
-  browser = await chromium.launch({ ...(process.env.BROWSER_PATH ? { executablePath: resolve(process.env.BROWSER_PATH) } : { channel }), headless: true, args: launchFlags, timeout: 30_000, handleSIGINT: false, handleSIGTERM: false });
+  browser = await chromium.launch(launchOptions({ timeout: 30_000, handleSIGINT: false, handleSIGTERM: false }));
   report.environment.browser_version = browser.version();
   suiteTimer = setTimeout(() => {
     suiteExpired = true;

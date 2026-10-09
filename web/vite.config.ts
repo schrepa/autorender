@@ -2,6 +2,8 @@ import { defineConfig } from "vite";
 import { resolve } from "node:path";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+// The browser clients, generated from xtask (`cargo xtask schema`).
+import clients from "./src/generated/clients.json";
 
 // Instrumented Stress Lab builds (`cargo xtask profile [--attribution]`) by
 // mode: the suffix of their binding and output directories.
@@ -66,7 +68,7 @@ export default defineConfig(({ command, mode }) => ({
   resolve: {
     alias: instrumented.has(mode) ? [{
       find: "../pkg/stress_lab", replacement: resolve(import.meta.dirname, `pkg-${instrumented.get(mode)}/stress_lab.js`),
-    }] : command === "serve" ? ["orbit_demo", "playground", "stress_lab", "engine_worker"].map(name => ({
+    }] : command === "serve" ? clients.map(client => client.wasm).map(name => ({
       find: `../pkg/${name}`, replacement: resolve(import.meta.dirname, `pkg-dev/${name}.js`),
     })) : [],
   },

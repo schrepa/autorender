@@ -3,7 +3,6 @@ use std::{
     process::Command,
 };
 
-pub const WASM_BINDGEN_VERSION: &str = "0.2.127";
 pub const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
 #[cfg(windows)]
@@ -19,37 +18,114 @@ pub fn repository_root() -> Result<PathBuf, String> {
         .ok_or_else(|| "cannot locate the workspace above tools/xtask".to_owned())
 }
 
-/// The browser clients: each one's Cargo package and Wasm crate name.
-pub const CLIENTS: [(&str, &str); 4] = [
-    ("orbit-demo", "orbit_demo"),
-    ("playground", "playground"),
-    ("stress-lab", "stress_lab"),
-    // The job worker pages run beside them.
-    ("engine_worker", "engine_worker"),
+/// A browser client: its Cargo package, its Wasm crate's name, and for
+/// games the name tools select it by and the page serving it.
+#[derive(Clone, Copy)]
+pub struct Client {
+    pub package: &'static str,
+    pub wasm: &'static str,
+    pub game: Option<&'static str>,
+    pub page: Option<&'static str>,
+}
+
+/// The browser clients: the one list of them, which `cargo xtask schema`
+/// writes for the web host and scripts.
+pub const CLIENTS: [Client; 4] = [
+    Client {
+        package: "orbit-demo",
+        wasm: "orbit_demo",
+        game: Some("orbit"),
+        page: Some("index.html"),
+    },
+    Client {
+        package: "playground",
+        wasm: "playground",
+        game: Some("playground"),
+        page: Some("playground.html"),
+    },
+    Client {
+        package: "stress-lab",
+        wasm: "stress_lab",
+        game: Some("stress"),
+        page: Some("stress.html"),
+    },
+    // The job worker pages run beside the games.
+    Client {
+        package: "engine_worker",
+        wasm: "engine_worker",
+        game: None,
+        page: None,
+    },
 ];
 
 /// `-p PACKAGE` for every client.
 pub fn client_packages<'a>() -> impl Iterator<Item = &'a str> {
-    CLIENTS.into_iter().flat_map(|(package, _)| ["-p", package])
+    CLIENTS
+        .into_iter()
+        .flat_map(|client| ["-p", client.package])
 }
 
 /// Every client's Wasm crate name.
-pub fn client_crates() -> [&'static str; 4] {
-    CLIENTS.map(|(_, name)| name)
+pub fn client_crates() -> [&'static str; CLIENTS.len()] {
+    CLIENTS.map(|client| client.wasm)
 }
 
 /// Every client's `dev` feature, as `--features` takes them.
 pub fn client_dev_features() -> String {
     CLIENTS
-        .map(|(package, _)| format!("{package}/dev"))
+        .map(|client| format!("{}/dev", client.package))
         .join(",")
+}
+
+/// The clients as the web host and scripts read them.
+pub fn clients_json() -> serde_json::Value {
+    CLIENTS
+        .iter()
+        .map(|client| {
+            serde_json::json!({
+                "package": client.package,
+                "wasm": client.wasm,
+                "game": client.game,
+                "page": client.page,
+            })
+        })
+        .collect()
+}
+
+/// The games tools select by name, as `a|b|c`.
+pub fn game_names() -> String {
+    CLIENTS
+        .iter()
+        .filter_map(|client| client.game)
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+/// The wasm-bindgen version Cargo.lock pins, which the CLI must match.
+pub fn wasm_bindgen_version(root: &Path) -> Result<String, String> {
+    let lock = std::fs::read_to_string(root.join("Cargo.lock"))
+        .map_err(|error| format!("cannot read Cargo.lock: {error}"))?;
+    lock.split("[[package]]")
+        .find(|package| {
+            package
+                .lines()
+                .any(|line| line.trim() == "name = \"wasm-bindgen\"")
+        })
+        .and_then(|package| {
+            package
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("version = \""))
+                .map(|version| version.trim_end_matches('"').to_owned())
+        })
+        .ok_or_else(|| "Cargo.lock pins no wasm-bindgen".to_owned())
 }
 
 /// Whether wasm-bindgen is the version the bindings need: otherwise an error
 /// code (`bindgen_unavailable` or `bindgen_version`) and how to fix it.
 pub fn check_wasm_bindgen(root: &Path) -> Result<(), (&'static str, String)> {
+    let version = wasm_bindgen_version(root).map_err(|error| ("bindgen_version", error))?;
     let install = format!(
-        "install the matching CLI with `cargo install wasm-bindgen-cli --version {WASM_BINDGEN_VERSION} --locked` and ensure it is on PATH"
+        "install the matching CLI with `cargo install wasm-bindgen-cli --version {version} --locked` and ensure it is on PATH"
     );
     let output = Command::new("wasm-bindgen")
         .arg("--version")
@@ -72,7 +148,7 @@ pub fn check_wasm_bindgen(root: &Path) -> Result<(), (&'static str, String)> {
         ));
     }
     let version = String::from_utf8_lossy(&output.stdout);
-    let expected = format!("wasm-bindgen {WASM_BINDGEN_VERSION}");
+    let expected = format!("wasm-bindgen {version}");
     if version.trim() != expected {
         return Err((
             "bindgen_version",

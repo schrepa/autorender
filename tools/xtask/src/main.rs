@@ -6,6 +6,7 @@ mod iteration_build;
 mod pipeline;
 mod process;
 mod profiling;
+mod smoke;
 
 use std::{env, process::ExitCode};
 
@@ -46,6 +47,9 @@ fn execute() -> Result<(), String> {
             _ => Err("usage: profile [--attribution]".into()),
         };
     }
+    if task == "smoke" {
+        return smoke::smoke(&root, &options);
+    }
     if task == "build-dev" {
         let [option, output] = options.as_slice() else {
             return Err("usage: build-dev --output web/pkg-iterations/GENERATION".into());
@@ -73,9 +77,14 @@ fn execute() -> Result<(), String> {
         "assets" => authoring::validate_sources(&root),
         "schema" => {
             authoring::write_schema(&root)?;
-            authoring::write_protocol(&root)
+            authoring::write_generated(&root)
+        }
+        "wasm-bindgen-version" => {
+            println!("{}", process::wasm_bindgen_version(&root)?);
+            Ok(())
         }
         "help" | "--help" | "-h" => {
+            let games = process::game_names();
             println!(
                 "Usage: cargo xtask <command>\n\n\
                  Commands:\n\
@@ -83,7 +92,7 @@ fn execute() -> Result<(), String> {
                    profile [--attribution]  Build an isolated instrumented Stress Lab in web/dist-profile\n\
                           --attribution: hot helpers out of line for sampling profilers, in web/dist-attribution\n\
                    dev [--port N]  Build and serve on loopback (default port 5173)\n\
-                   agent watch [--web-port N] [--port N] [--game playground|orbit|stress]\n\
+                   agent watch [--web-port N] [--port N] [--game {games}]\n\
                           Watch Rust, build, and replace identified browser sessions\n\
                    agent  Browser session commands and development build status\n\
                    scene  Validate or save revision-checked scene sources as JSON\n\
@@ -94,7 +103,9 @@ fn execute() -> Result<(), String> {
                    assets Validate authored scene sources without changing them\n\
                    benchmark [--url URL] [--samples N] [--warmup N] [--repeats N] [--mode step|render|present] [--setup-ticks N]\n\
                           Measure fixed browser workloads with culling off/on; --output PATH, --baseline PATH, --max-regression-percent N\n\
-                   schema Write the generated scene JSON schema and development protocol summary\n\
+                   schema Write the generated scene JSON schema, development protocol summary and client list\n\
+                   smoke --list | --all | NAME...  List or run the browser smoke checks against a running dev server\n\
+                   wasm-bindgen-version  Print the wasm-bindgen version Cargo.lock pins\n\
                    lint   Check source/schema, formatting, native/Wasm Clippy, TypeScript\n\
                    docs   Generate native workspace and browser API documentation\n\
                    help   Show this message"
