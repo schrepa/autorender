@@ -69,6 +69,17 @@ override FADE_LIST: bool = false;
 // variant bits from its uniform instead of the map constants above.
 override UBER_MATERIALS: bool = false;
 
+// Bits of a material's variant (`gpu_data::Variant`) in the uniform.
+const VARIANT_MAPS: u32 = 1u;
+const VARIANT_NORMAL_MAP: u32 = 2u;
+const VARIANT_DOUBLE_SIDED: u32 = 8u;
+const VARIANT_METALLIC_ROUGHNESS_MAP: u32 = 128u;
+const VARIANT_OCCLUSION_MAP: u32 = 256u;
+const VARIANT_EMISSIVE_MAP: u32 = 512u;
+const VARIANT_PACKED_OCCLUSION: u32 = 1024u;
+const VARIANT_WORLD_MAPPING: u32 = 4096u;
+const VARIANT_TOP_LAYER: u32 = 8192u;
+
 // Whether the material has feature `bit` of its variant: `specialized` in
 // pipelines specialized for it, the uniform's bit in uber ones.
 fn material_flag(bit: u32, specialized: bool) -> bool {
@@ -92,9 +103,11 @@ fn material_flag(bit: u32, specialized: bool) -> bool {
 // (world x and z) and cell size (bits of f32) and the probe count; [1] the
 // cells across x and z and where the cells and their lists start; then a
 // word per cell (the first entry and the length of its list); then the
-// lists, smallest boxes first, two words an entry: the probe's center and
-// blend distance (bits of f32), and its extent (bits of f32) and cube in the
-// environment maps.
+// lists, smallest boxes first, PROBE_ENTRY_WORDS words an entry: the probe's
+// center and blend distance (bits of f32); its extent (bits of f32) and cube
+// in the environment maps; and its interior's sky and sun shares (bits of
+// f32), whether it is an interior and whether it is captured.
+const PROBE_ENTRY_WORDS: u32 = 3u;
 @group(0) @binding(12) var<storage, read> probe_words: array<vec4<u32>>;
 
 // Stable engine-owned slots; three aligned rows give an exact 48-byte affine pose.
@@ -135,8 +148,8 @@ const MOVED_SLOT: u32 = 0x80000000u;
 const FADE_SLOT: u32 = 0x00ffffffu;
 // A vertex output's fade word: whether it fades at all, whether out, and
 // how far (of 127).
-const FADE_ON: u32 = 0x100u;
-const FADE_OUT: u32 = 0x80u;
+const FADE_WORD_ON: u32 = 0x100u;
+const FADE_WORD_OUT: u32 = 0x80u;
 
 // The slot of a visible-ID or fading-list entry.
 fn slot_index(entry: u32) -> u32 {
@@ -153,7 +166,7 @@ fn slot_moved(entry: u32) -> bool {
 
 // The fade word of an entry: 0 for entries of steady lists.
 fn slot_fade(entry: u32) -> u32 {
-    return select(0u, (entry >> 24u) | FADE_ON, FADE_LIST);
+    return select(0u, (entry >> 24u) | FADE_WORD_ON, FADE_LIST);
 }
 
 // A threshold in [0, 1) at pixel `position` that fades compare their
@@ -169,11 +182,11 @@ fn fade_noise(position: vec2<f32>) -> f32 {
 // shows where the threshold falls under its progress and one fading out
 // where it does not, so the two cover each pixel once between them.
 fn fade_hidden(fade: u32, position: vec2<f32>) -> bool {
-    if (fade & FADE_ON) == 0u {
+    if (fade & FADE_WORD_ON) == 0u {
         return false;
     }
     let shows = fade_noise(position) < f32(fade & 0x7fu) / 127.0;
-    return shows == ((fade & FADE_OUT) != 0u);
+    return shows == ((fade & FADE_WORD_OUT) != 0u);
 }
 
 // Virtual geometry: the arena `virtual_geometry.wgsl` selects

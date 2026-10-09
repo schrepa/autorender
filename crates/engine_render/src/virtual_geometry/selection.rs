@@ -4,13 +4,15 @@
 //! arguments, grown to what frames read back needed, and the uniform of
 //! views and the camera's tests.
 
+use bytemuck::Zeroable;
 use engine_core::glam::Vec3;
 
 use crate::buffers::storage;
+use crate::gpu_layouts::virtual_geometry::{FrameUniform, ViewRecord};
 
 use super::{
-    CAMERA, COUNTERS, CameraTests, Cone, MAX_VIEWS, NONE, TEST_PREVIOUS, TEST_SUBPIXEL,
-    UNIFORM_BYTES, VIEW_FLOATS, VISIBLE_BYTES, VirtualBatch, VirtualView,
+    CAMERA, COUNTERS, CameraTests, Cone, NONE, TEST_PREVIOUS, TEST_SUBPIXEL, VISIBLE_BYTES,
+    VirtualBatch, VirtualView,
 };
 
 /// Starting capacities, grown from read-back counts.
@@ -55,7 +57,11 @@ impl SelectionStorage {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let none = wgpu::BufferUsages::empty();
         Self {
-            uniform: crate::buffers::uniform(device, "engine/virtual-frame", UNIFORM_BYTES),
+            uniform: crate::buffers::uniform(
+                device,
+                "engine/virtual-frame",
+                size_of::<FrameUniform>() as u64,
+            ),
             batches: [
                 storage(device, "engine/virtual-camera-batches", 32, none),
                 storage(device, "engine/virtual-shadow-batches", 32, none),
@@ -315,61 +321,54 @@ impl SelectionStorage {
         tests: &CameraTests,
         bits_base: u64,
     ) {
-        let counts = [
-            self.queue_capacity as u32,
-            self.queue_capacity as u32,
-            bins as u32,
-            views.len() as u32,
-        ];
-        let mut bytes: Vec<u8> = bytemuck::cast_slice(&counts).to_vec();
         self.retesting = tests.phase_two.is_some();
         let (width, height, levels) = tests.viewport;
         let flags = match (tests.previous, tests.phase_two) {
             (Some(_), Some(_)) => TEST_PREVIOUS,
             _ => 0,
         } | if tests.subpixel { TEST_SUBPIXEL } else { 0 };
-        bytes.extend_from_slice(bytemuck::cast_slice(&tests.view_projection.to_cols_array()));
-        bytes.extend_from_slice(bytemuck::cast_slice(
-            &tests
+        let mut uniform = FrameUniform {
+            counts: [
+                self.queue_capacity as u32,
+                self.queue_capacity as u32,
+                bins as u32,
+                views.len() as u32,
+            ],
+            view_projection: tests.view_projection.to_cols_array_2d(),
+            previous_view_projection: tests
                 .previous
                 .unwrap_or(tests.view_projection)
-                .to_cols_array(),
-        ));
-        bytes.extend_from_slice(bytemuck::cast_slice(&[
-            width as f32,
-            height as f32,
-            levels as f32,
-            0.0,
-        ]));
-        bytes.extend_from_slice(bytemuck::cast_slice(&[
-            flags,
-            tests.phase_two.unwrap_or(0),
-            self.retest_capacity as u32,
-            0,
-        ]));
-        // Where selection marks used and requested groups, and where the
-        // groups' residency bits start.
-        bytes.extend_from_slice(bytemuck::cast_slice(&[
-            self.counter_capacity as u32,
-            (self.counter_capacity + self.feedback_words) as u32,
-            bits_base as u32,
-            0,
-        ]));
-        for view in views.iter().take(MAX_VIEWS) {
-            let mut floats = Vec::with_capacity(VIEW_FLOATS);
-            for plane in view.planes {
-                floats.extend(plane);
-            }
-            floats.extend([view.eye.x, view.eye.y, view.eye.z, view.min_distance]);
+                .to_cols_array_2d(),
+            viewport: [width as f32, height as f32, levels as f32, 0.0],
+            tests: [
+                flags,
+                tests.phase_two.unwrap_or(0),
+                self.retest_capacity as u32,
+                0,
+            ],
+            // Where selection marks used and requested groups, and where the
+            // groups' residency bits start.
+            feedback: [
+                self.counter_capacity as u32,
+                (self.counter_capacity + self.feedback_words) as u32,
+                bits_base as u32,
+                0,
+            ],
+            views: Zeroable::zeroed(),
+        };
+        for (record, view) in uniform.views.iter_mut().zip(views) {
             let (mode, direction) = match view.cone {
                 Cone::Eye => (0.0, Vec3::ZERO),
                 Cone::Along(direction) => (1.0, direction),
             };
-            floats.extend([view.projection, view.threshold, mode, view.unseen_error]);
-            floats.extend([direction.x, direction.y, direction.z, 0.0]);
-            bytes.extend_from_slice(bytemuck::cast_slice(&floats));
+            *record = ViewRecord {
+                planes: view.planes,
+                eye: [view.eye.x, view.eye.y, view.eye.z, view.min_distance],
+                lod: [view.projection, view.threshold, mode, view.unseen_error],
+                direction: [direction.x, direction.y, direction.z, 0.0],
+            };
         }
-        queue.write_buffer(&self.uniform, 0, &bytes);
+        queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
     }
 
     /// Bin `bin`'s first entry of the visible storage.

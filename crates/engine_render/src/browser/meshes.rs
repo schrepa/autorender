@@ -5,6 +5,7 @@
 use super::*;
 use crate::bindings::EMPTY;
 use crate::entries::{self, Slots};
+use crate::pipelines::vertex_attributes;
 
 /// Mesh pipelines: their layouts, unlit and lit, created with
 /// the first variant needing each (temporal frames' come with the temporal
@@ -75,15 +76,22 @@ pub(super) struct DrawOrder {
 }
 
 // Position, octahedral normal and texture coordinates.
-const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-    wgpu::vertex_attr_array![0 => Float32x3, 1 => Snorm16x2, 7 => Float32x2];
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = vertex_attributes!(Vertex {
+    0 => position as Float32x3,
+    1 => normal as Snorm16x2,
+    7 => uv as Float32x2,
+});
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
 // Vertex color and second texture coordinates.
-const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-    wgpu::vertex_attr_array![9 => Unorm16x4, 10 => Float32x2];
+const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = vertex_attributes!(ExtraVertex {
+    9 => color as Unorm16x4,
+    10 => uv1 as Float32x2,
+});
 // Joints and weights of meshes with joints.
-const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-    wgpu::vertex_attr_array![11 => Uint16x4, 12 => Unorm16x4];
+const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] = vertex_attributes!(SkinVertex {
+    11 => joints as Uint16x4,
+    12 => weights as Unorm16x4,
+});
 
 /// The skin stream of skinned draws, after the second stream.
 pub(crate) fn skin_layout() -> Option<wgpu::VertexBufferLayout<'static>> {

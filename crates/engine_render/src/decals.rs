@@ -4,23 +4,10 @@
 
 use std::ops::Range;
 
-use bytemuck::{Pod, Zeroable};
-use engine_core::{DecalBlend, MaterialHandle, PoseRows, RenderDecal};
+use engine_core::{DecalBlend, MaterialHandle, RenderDecal};
 
-/// `DecalRecord::pose` of decals drawn from their own matrix.
-pub(crate) const NO_POSE: u32 = u32::MAX;
-
-/// WGSL `DecalRecord` of `meshes/decals.wgsl`: 96 bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct DecalData {
-    /// The box's world matrix, unless `pose[0]` names its palette entry.
-    pub model: PoseRows,
-    pub color: [f32; 4],
-    /// Fade cosine, roughness, metalness and emission.
-    pub params: [f32; 4],
-    pub pose: [u32; 4],
-}
+pub(crate) use crate::gpu_layouts::constants::NO_DECAL_POSE as NO_POSE;
+pub(crate) use crate::gpu_layouts::decals::DecalData;
 
 impl DecalData {
     /// A decal's record, reading its pose from the frame's joint palette

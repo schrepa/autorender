@@ -429,14 +429,7 @@ impl Renderer {
             size_of::<LightingUniform>() as u64,
         );
         let materials = MaterialStore::new(&device, &queue);
-        let shadows = ShadowPass::new(
-            &device,
-            (
-                size_of::<Vertex>() as u64,
-                std::mem::offset_of!(Vertex, uv) as u64,
-            ),
-            materials.layout(),
-        );
+        let shadows = ShadowPass::new(&device, materials.layout());
         let clouds = crate::clouds::CloudPass::new(&device, &queue);
         let sky = crate::sky::SkyPass::new(&device);
         let environment = Environment::new(

@@ -14,6 +14,7 @@ use engine_core::{CLUSTER_WORDS, GROUP_WORDS, MeshHandle, NODE_WORDS, PAGE_WORDS
 use wasm_bindgen::JsCast;
 
 use super::NONE;
+use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::virtual_streaming::{MeshLinks, PageState, Placement, Residency};
 
 /// A fetched byte range of a mesh's file: pages `first..first + count`,
@@ -325,13 +326,13 @@ impl VirtualArena {
             links.push(MeshLinks::of(geometry));
             let (position_min, position_step, uv_min, uv_step) = geometry.quantization();
             // The last base is where the pool's slots start.
-            meshes.extend([node_base, group_base, cluster_base, self.table_words as u32]);
-            meshes.extend([geometry.levels(), geometry.depth(), 0, 0]);
-            meshes.extend(position_min.map(f32::to_bits));
-            meshes.push(0);
-            meshes.extend(position_step.map(f32::to_bits));
-            meshes.push(0);
-            meshes.extend([uv_min[0], uv_min[1], uv_step[0], uv_step[1]].map(f32::to_bits));
+            meshes.push(MeshRecord {
+                bases: [node_base, group_base, cluster_base, self.table_words as u32],
+                info: [geometry.levels(), geometry.depth(), 0, 0],
+                position_min: [position_min[0], position_min[1], position_min[2], 0.0],
+                position_step: [position_step[0], position_step[1], position_step[2], 0.0],
+                uv: [uv_min[0], uv_min[1], uv_step[0], uv_step[1]],
+            });
             for words in geometry.node_section().as_chunks::<NODE_WORDS>().0 {
                 let mut node = *words;
                 if node[5] != NONE {
@@ -434,7 +435,11 @@ impl VirtualArena {
         self.layout_frame = self.frame + 1;
         (self.missing_pages, self.dropped_pages) = (0, 0);
         self.buffers = Some(ArenaBuffers {
-            meshes: storage_init(device, "engine/virtual-meshes", &meshes),
+            meshes: storage_init(
+                device,
+                "engine/virtual-meshes",
+                bytemuck::cast_slice(&meshes),
+            ),
             nodes: storage_init(device, "engine/virtual-nodes", &nodes),
             groups: storage_init(device, "engine/virtual-groups", &groups),
             clusters: storage_init(device, "engine/virtual-clusters", &clusters),

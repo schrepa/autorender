@@ -151,35 +151,35 @@ fn material_texels(uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
     // RGBA8UnormSrgb sampling decodes source RGB; alpha masks emission and,
     // with maps, is coverage.
     var base_uv = uv;
-    if material_flag(1u, MATERIAL_MAPS) {
+    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
         base_uv = map_uv(0u, uv, uv1);
     }
     texels.base = textureSample(base_color_texture, base_color_sampler, base_uv);
     if ALPHA_MASK {
         texels.coverage = mask_coverage(dpdx(base_uv), dpdy(base_uv));
     }
-    if material_flag(1u, MATERIAL_MAPS) {
+    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
         // glTF: green is roughness and blue metalness, red packed occlusion.
         var metallic_roughness = vec4<f32>(1.0);
-        if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
+        if material_flag(VARIANT_METALLIC_ROUGHNESS_MAP, METALLIC_ROUGHNESS_MAP) {
             metallic_roughness = textureSample(metallic_roughness_texture,
                 metallic_roughness_sampler, map_uv(1u, uv, uv1));
         }
         texels.factors = metallic_roughness.gb;
         texels.height = metallic_roughness.a;
-        if material_flag(1024u, PACKED_OCCLUSION) {
+        if material_flag(VARIANT_PACKED_OCCLUSION, PACKED_OCCLUSION) {
             texels.occlusion = metallic_roughness.r;
-        } else if material_flag(256u, OCCLUSION_MAP) {
+        } else if material_flag(VARIANT_OCCLUSION_MAP, OCCLUSION_MAP) {
             texels.occlusion = textureSample(occlusion_texture, occlusion_sampler,
                 map_uv(3u, uv, uv1)).r;
         }
         texels.emissive = vec3<f32>(1.0);
-        if material_flag(512u, EMISSIVE_MAP) {
+        if material_flag(VARIANT_EMISSIVE_MAP, EMISSIVE_MAP) {
             texels.emissive = textureSample(emissive_texture, emissive_sampler,
                 map_uv(4u, uv, uv1)).rgb;
         }
     }
-    if material_flag(2u, NORMAL_MAP) {
+    if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
         let normal_uv = map_uv(2u, uv, uv1);
         texels.normal = textureSample(normal_texture, normal_sampler, normal_uv).xyz * 2.0 - 1.0;
         texels.normal_dx = dpdx(normal_uv);
@@ -259,23 +259,23 @@ fn world_mean_texels(texels: MaterialTexels, detail: f32, normal: vec3<f32>) -> 
     var result = texels;
     let mean = 1.0 - detail;
     result.base = texels.base * detail + mean * map_mean(base_color_texture, base_color_sampler);
-    if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
+    if material_flag(VARIANT_METALLIC_ROUGHNESS_MAP, METALLIC_ROUGHNESS_MAP) {
         let mapped = map_mean(metallic_roughness_texture, metallic_roughness_sampler);
         result.factors = texels.factors * detail + mean * mapped.gb;
         result.height = texels.height * detail + mean * mapped.a;
-        if material_flag(1024u, PACKED_OCCLUSION) {
+        if material_flag(VARIANT_PACKED_OCCLUSION, PACKED_OCCLUSION) {
             result.occlusion = texels.occlusion * detail + mean * mapped.r;
         }
     }
-    if material_flag(256u, OCCLUSION_MAP) && !material_flag(1024u, PACKED_OCCLUSION) {
+    if material_flag(VARIANT_OCCLUSION_MAP, OCCLUSION_MAP) && !material_flag(VARIANT_PACKED_OCCLUSION, PACKED_OCCLUSION) {
         result.occlusion = texels.occlusion * detail
             + mean * map_mean(occlusion_texture, occlusion_sampler).r;
     }
-    if material_flag(512u, EMISSIVE_MAP) {
+    if material_flag(VARIANT_EMISSIVE_MAP, EMISSIVE_MAP) {
         result.emissive = texels.emissive * detail
             + mean * map_mean(emissive_texture, emissive_sampler).rgb;
     }
-    if material_flag(2u, NORMAL_MAP) {
+    if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
         result.world_normal = texels.world_normal * detail + mean * normal;
         result.normal = mix(vec3<f32>(0.0, 0.0, 1.0), texels.normal, detail);
     }
@@ -305,39 +305,39 @@ fn world_texels(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32
         }
         base += share * world_map_texel(base_color_texture, base_color_sampler, 0u, world, dx, dy,
             axis);
-        if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
+        if material_flag(VARIANT_METALLIC_ROUGHNESS_MAP, METALLIC_ROUGHNESS_MAP) {
             metallic_roughness += share * world_map_texel(metallic_roughness_texture,
                 metallic_roughness_sampler, 1u, world, dx, dy, axis);
         }
-        if material_flag(256u, OCCLUSION_MAP) {
+        if material_flag(VARIANT_OCCLUSION_MAP, OCCLUSION_MAP) {
             occlusion += share * world_map_texel(occlusion_texture, occlusion_sampler, 3u, world,
                 dx, dy, axis).r;
         }
-        if material_flag(512u, EMISSIVE_MAP) {
+        if material_flag(VARIANT_EMISSIVE_MAP, EMISSIVE_MAP) {
             emissive += share * world_map_texel(emissive_texture, emissive_sampler, 4u, world, dx,
                 dy, axis).rgb;
         }
-        if material_flag(2u, NORMAL_MAP) {
+        if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
             let sampled = world_map_texel(normal_texture, normal_sampler, 2u, world, dx, dy, axis)
                 .xyz * 2.0 - 1.0;
             mapped += share * world_plane_normal(sampled, axis, normal, material_maps.params.x);
         }
     }
     texels.base = base;
-    if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
+    if material_flag(VARIANT_METALLIC_ROUGHNESS_MAP, METALLIC_ROUGHNESS_MAP) {
         texels.factors = metallic_roughness.gb;
         texels.height = metallic_roughness.a;
     }
-    if material_flag(1024u, PACKED_OCCLUSION) {
+    if material_flag(VARIANT_PACKED_OCCLUSION, PACKED_OCCLUSION) {
         texels.occlusion = metallic_roughness.r;
-    } else if material_flag(256u, OCCLUSION_MAP) {
+    } else if material_flag(VARIANT_OCCLUSION_MAP, OCCLUSION_MAP) {
         texels.occlusion = occlusion;
     }
     texels.emissive = vec3<f32>(1.0);
-    if material_flag(512u, EMISSIVE_MAP) {
+    if material_flag(VARIANT_EMISSIVE_MAP, EMISSIVE_MAP) {
         texels.emissive = emissive;
     }
-    if material_flag(2u, NORMAL_MAP) {
+    if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
         texels.world_normal = mapped;
     }
     if detail < 1.0 {
@@ -372,7 +372,7 @@ fn material_texels_grad(uv: vec2<f32>, uv1: vec2<f32>, gradients: UvGradients)
     var base_uv = uv;
     var base_dx = gradients.dx;
     var base_dy = gradients.dy;
-    if material_flag(1u, MATERIAL_MAPS) {
+    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
         base_uv = map_uv(0u, uv, uv1);
         base_dx = map_gradient(0u, gradients.dx, gradients.dx1);
         base_dy = map_gradient(0u, gradients.dy, gradients.dy1);
@@ -382,9 +382,9 @@ fn material_texels_grad(uv: vec2<f32>, uv1: vec2<f32>, gradients: UvGradients)
     if ALPHA_MASK {
         texels.coverage = mask_coverage(base_dx, base_dy);
     }
-    if material_flag(1u, MATERIAL_MAPS) {
+    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
         var metallic_roughness = vec4<f32>(1.0);
-        if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
+        if material_flag(VARIANT_METALLIC_ROUGHNESS_MAP, METALLIC_ROUGHNESS_MAP) {
             metallic_roughness = textureSampleGrad(metallic_roughness_texture,
                 metallic_roughness_sampler, map_uv(1u, uv, uv1),
                 map_gradient(1u, gradients.dx, gradients.dx1),
@@ -392,21 +392,21 @@ fn material_texels_grad(uv: vec2<f32>, uv1: vec2<f32>, gradients: UvGradients)
         }
         texels.factors = metallic_roughness.gb;
         texels.height = metallic_roughness.a;
-        if material_flag(1024u, PACKED_OCCLUSION) {
+        if material_flag(VARIANT_PACKED_OCCLUSION, PACKED_OCCLUSION) {
             texels.occlusion = metallic_roughness.r;
-        } else if material_flag(256u, OCCLUSION_MAP) {
+        } else if material_flag(VARIANT_OCCLUSION_MAP, OCCLUSION_MAP) {
             texels.occlusion = textureSampleGrad(occlusion_texture, occlusion_sampler,
                 map_uv(3u, uv, uv1), map_gradient(3u, gradients.dx, gradients.dx1),
                 map_gradient(3u, gradients.dy, gradients.dy1)).r;
         }
         texels.emissive = vec3<f32>(1.0);
-        if material_flag(512u, EMISSIVE_MAP) {
+        if material_flag(VARIANT_EMISSIVE_MAP, EMISSIVE_MAP) {
             texels.emissive = textureSampleGrad(emissive_texture, emissive_sampler,
                 map_uv(4u, uv, uv1), map_gradient(4u, gradients.dx, gradients.dx1),
                 map_gradient(4u, gradients.dy, gradients.dy1)).rgb;
         }
     }
-    if material_flag(2u, NORMAL_MAP) {
+    if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
         texels.normal_dx = map_gradient(2u, gradients.dx, gradients.dx1);
         texels.normal_dy = map_gradient(2u, gradients.dy, gradients.dy1);
         texels.normal = textureSampleGrad(normal_texture, normal_sampler, map_uv(2u, uv, uv1),
@@ -423,7 +423,7 @@ fn shading_normal(geometric: vec3<f32>, world: vec3<f32>, world_dx: vec3<f32>,
         world_dy: vec3<f32>, sampled: vec3<f32>, normal_dx: vec2<f32>, normal_dy: vec2<f32>,
         ripples: f32) -> vec3<f32> {
     var normal = geometric;
-    if material_flag(2u, NORMAL_MAP) {
+    if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
         normal = mapped_normal(geometric, world_dx, world_dy, normal_dx, normal_dy, sampled,
             material_maps.params.x);
     }
@@ -437,7 +437,7 @@ fn shading_normal(geometric: vec3<f32>, world: vec3<f32>, world_dx: vec3<f32>,
 // of double-sided materials are lit from their own side.
 fn geometric_normal(surface_normal: vec3<f32>, front: bool) -> vec3<f32> {
     let geometric = stable_normalize(surface_normal);
-    if material_flag(8u, DOUBLE_SIDED) && !front {
+    if material_flag(VARIANT_DOUBLE_SIDED, DOUBLE_SIDED) && !front {
         return -geometric;
     }
     return geometric;
@@ -458,7 +458,7 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     point.occlusion = 1.0;
     var roughness = surface.x;
     var metalness = surface.y;
-    if material_flag(1u, MATERIAL_MAPS) {
+    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
         point.opacity *= texels.base.a;
         roughness *= texels.factors.x;
         metalness *= texels.factors.y;
@@ -472,7 +472,7 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     point.geometric = geometric_normal(surface_normal, front);
     point.normal = shading_normal(point.geometric, world, world_dx, world_dy, texels.normal,
         texels.normal_dx, texels.normal_dy, surface.w);
-    if material_flag(4096u, WORLD_MAPPING) && material_flag(2u, NORMAL_MAP)
+    if material_flag(VARIANT_WORLD_MAPPING, WORLD_MAPPING) && material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP)
         && dot(texels.world_normal, texels.world_normal) > 0.0 {
         // World-mapped normal maps shade their own normal,
         // turned to the side the surface shows.
@@ -482,7 +482,7 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
         }
         point.normal = mapped;
     }
-    if material_flag(8192u, TOP_LAYER) {
+    if material_flag(VARIANT_TOP_LAYER, TOP_LAYER) {
         // The top layer settles on faces turned up.
         let breakup = variety_noise(world.xz * 2.3 + vec2<f32>(world.y * 0.7, 3.1)) * 0.6
             + variety_noise(world.xz * 0.55 - vec2<f32>(world.y * 0.4, 7.7)) * 0.4;
@@ -511,7 +511,7 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
 // map's alpha) and the darker hollows of its base color.
 fn top_layer_amount(up: f32, breakup: f32, texels: MaterialTexels) -> f32 {
     var hollow = 1.0 - dot(texels.base.rgb, vec3<f32>(0.299, 0.587, 0.114));
-    if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
+    if material_flag(VARIANT_METALLIC_ROUGHNESS_MAP, METALLIC_ROUGHNESS_MAP) {
         hollow = mix(hollow, 1.0 - texels.height, 0.6);
     }
     let lift = up + 0.5 * (breakup - 0.5) + 0.4 * (hollow - 0.5);
@@ -541,7 +541,7 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
     var texels: MaterialTexels;
-    if material_flag(4096u, WORLD_MAPPING) {
+    if material_flag(VARIANT_WORLD_MAPPING, WORLD_MAPPING) {
         texels = world_texels(world, stable_normalize(surface_normal), world_dx, world_dy);
     } else {
         texels = material_texels(uv, uv1);
@@ -588,7 +588,7 @@ fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
         if all(cell >= vec2<i32>(0)) && all(vec2<u32>(cell) < grid.xy) {
             let list = probe_words[grid.z + u32(cell.y) * grid.x + u32(cell.x)];
             for (var n = 0u; n < list.y && covered < 0.999; n++) {
-                let entry = grid.w + (list.x + n) * 3u;
+                let entry = grid.w + (list.x + n) * PROBE_ENTRY_WORDS;
                 // Interiors not captured yet reflect nothing.
                 if probe_words[entry + 2u].w == 0u {
                     continue;
@@ -638,7 +638,7 @@ fn interior_light(world: vec3<f32>) -> vec2<f32> {
         return light;
     }
     for (var n = 0u; n < list.y; n++) {
-        let entry = grid.w + (list.x + n) * 3u;
+        let entry = grid.w + (list.x + n) * PROBE_ENTRY_WORDS;
         let shares = probe_words[entry + 2u];
         if shares.z == 0u {
             continue;

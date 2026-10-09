@@ -57,9 +57,7 @@ struct Record {
     terrain: u32,
     sink: f32,
     state: u32,
-    pad_0: u32,
-    pad_1: u32,
-    pad_2: u32,
+    pad: array<u32, 3>,
 }
 
 // How the camera shows an object: one of its levels (0 to

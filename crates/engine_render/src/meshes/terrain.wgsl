@@ -1609,11 +1609,13 @@ fn fs_terrain_vt_bake(input: TerrainVtBakeOutput) -> TerrainVtTargets {
 // its 64 in turn frame by frame, asks for the pages of the mips around its
 // footprint (which the resolve measures on the terrain's smooth surface,
 // this on its drawn one), from where its depth puts it.
+// Pixels a side of the blocks feedback tests one pixel of.
+const VT_FEEDBACK_BLOCK: u32 = 8u;
 @compute @workgroup_size(8, 8)
 fn cs_terrain_vt_feedback(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = vec2<u32>(textureDimensions(terrain_ids_texture));
     let leader = vec2<u32>(terrain.vt.w & 7u, (terrain.vt.w >> 3u) & 7u);
-    let pixel = id.xy * 8u + leader;
+    let pixel = id.xy * VT_FEEDBACK_BLOCK + leader;
     if any(pixel >= size) || terrain.vt.y < 2u {
         return;
     }

@@ -20,70 +20,35 @@
 
 use std::collections::HashMap;
 
-use bytemuck::{Pod, Zeroable};
 use engine_core::Clouds;
 
 use crate::bindings::{CLOUD_COMPOSITE, CLOUD_MARCH, CLOUD_NOISE, CLOUD_SKY, CLOUD_VIEW};
 use crate::cached::Cached;
 use crate::gpu_data::LightingUniform;
+use crate::gpu_layouts::constants::{CLOUD_GROUP, NOISE_GROUP};
 
 /// Texels along each side of the noise volume.
 const NOISE_SIZE: u32 = 128;
 const DOME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Domes completed between redraws of the sky's environment map.
 const ENVIRONMENT_EVERY: u64 = 16;
-/// Cells along a side of the shadows' grid (`scene.wgsl`'s
-/// `CLOUD_SHADOW_CELLS`), and the meters it spans around the camera.
-const SHADOW_CELLS: u32 = 128;
+use crate::gpu_layouts::clouds::{CLOUD_SHADOW_BYTES, SHADOW_CELLS};
+/// The meters the shadows' grid spans around the camera.
 const SHADOW_EXTENT: f32 = 8192.0;
 /// Frames over which ordinary frames march the whole shadows' grid.
 const SHADOW_SLICES: u32 = 4;
-/// Bytes of the shadows' grid: a half float a cell.
-pub(crate) const CLOUD_SHADOW_BYTES: usize = (SHADOW_CELLS * SHADOW_CELLS * 2) as usize;
 
-/// WGSL `CloudUniform`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct CloudUniform {
-    eye: [f32; 4],
-    layer: [f32; 4],
-    drift: [f32; 4],
-    dome: [u32; 4],
-    sun: [f32; 4],
-    sun_color: [f32; 4],
-    zenith: [f32; 4],
-    horizon: [f32; 4],
-    shadow: [f32; 4],
-    shadow_rows: [u32; 4],
-}
+use crate::gpu_layouts::clouds::CloudUniform;
 
 /// Bytes of the march's uniform.
 pub(crate) const CLOUD_UNIFORM_BYTES: usize = size_of::<CloudUniform>();
 
-/// WGSL `CloudDomes` (`scene.wgsl`): the shown domes' origins, whether they
-/// show and the newer's share, and the eye lookups correct for with the
-/// cloud layer's middle.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct DomeUniform {
-    old: [f32; 4],
-    new: [f32; 4],
-    eye: [f32; 4],
-    view: [f32; 4],
-}
+use crate::gpu_layouts::clouds::DomeUniform;
 
 /// Bytes of the domes' uniform.
 pub(crate) const DOME_UNIFORM_BYTES: usize = size_of::<DomeUniform>();
 
-/// WGSL `CloudView` (`clouds.wgsl`): the view's unjittered
-/// inverse view-projection; its blocks along x and y, pixels along a
-/// block's side, and whether blocks seeing the sky march.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct ViewUniform {
-    inverse_view_projection: [[f32; 4]; 4],
-    blocks: [u32; 4],
-}
+use crate::gpu_layouts::clouds::ViewUniform;
 
 /// Bytes of the view march's uniform.
 pub(crate) const CLOUD_VIEW_BYTES: usize = size_of::<ViewUniform>();
@@ -668,7 +633,11 @@ impl CloudPass {
         });
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, self.view_group.get().expect("built above"), &[]);
-        pass.dispatch_workgroups(blocks[0].div_ceil(8), blocks[1].div_ceil(8), 1);
+        pass.dispatch_workgroups(
+            blocks[0].div_ceil(CLOUD_GROUP),
+            blocks[1].div_ceil(CLOUD_GROUP),
+            1,
+        );
     }
 
     /// Builds the composite's pipeline into `format` (`canvas`: the
@@ -764,8 +733,8 @@ impl CloudPass {
         let shows = if self.active && self.ready { 1.0 } else { 0.0 };
         let [old, new, _] = self.roles;
         let uniform = DomeUniform {
-            old: self.origins[old].extend(shows).to_array(),
-            new: self.origins[new].extend(self.blend).to_array(),
+            older: self.origins[old].extend(shows).to_array(),
+            newer: self.origins[new].extend(self.blend).to_array(),
             eye: eye
                 .extend(settings.base + 0.5 * settings.thickness)
                 .to_array(),
@@ -829,7 +798,7 @@ impl CloudPass {
             });
             pass.set_pipeline(make);
             pass.set_bind_group(0, &noise_group, &[]);
-            let groups = NOISE_SIZE.div_ceil(4);
+            let groups = NOISE_SIZE.div_ceil(NOISE_GROUP);
             pass.dispatch_workgroups(groups, groups, groups);
             self.noise_made = true;
         }
@@ -841,7 +810,7 @@ impl CloudPass {
             });
             pass.set_pipeline(march);
             pass.set_bind_group(0, group, &[]);
-            pass.dispatch_workgroups(width.div_ceil(8), count.div_ceil(8), 1);
+            pass.dispatch_workgroups(width.div_ceil(CLOUD_GROUP), count.div_ceil(CLOUD_GROUP), 1);
         }
         {
             // A slice of the shadows' grid every frame: the clouds drift.
@@ -852,7 +821,11 @@ impl CloudPass {
             pass.set_pipeline(shade);
             pass.set_bind_group(0, group, &[]);
             let shadow_rows = SHADOW_CELLS.div_ceil(self.shadow_stride);
-            pass.dispatch_workgroups((SHADOW_CELLS / 2).div_ceil(8), shadow_rows.div_ceil(8), 1);
+            pass.dispatch_workgroups(
+                (SHADOW_CELLS / 2).div_ceil(CLOUD_GROUP),
+                shadow_rows.div_ceil(CLOUD_GROUP),
+                1,
+            );
         }
         encoder.copy_buffer_to_buffer(cells, 0, shadows, 0, CLOUD_SHADOW_BYTES as u64);
         self.recorded = self.completed;

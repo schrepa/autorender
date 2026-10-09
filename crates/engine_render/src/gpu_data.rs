@@ -1,42 +1,23 @@
 //! Explicit schemas for the adjacent shader, separate from gameplay components.
 
-use bytemuck::{Pod, Zeroable};
+pub(crate) use crate::gpu_layouts::scene::{CASTER_PLANES, MAX_CASCADES, MAX_LEVELS};
 use engine_core::{
     AlphaMode, Atmosphere, Bloom, Material, MeshVertex, Reflections, RenderInstance, Surface,
     UvTransform, glam::Mat4,
 };
 
-/// WGSL `Camera` uniform: three column-major mat4x4<f32> and three
-/// vec4<f32>, alignment 16, size 240. `view_projection` is the rasterized
-/// projection.
-/// Temporally antialiased frames jitter it by `jitter.xy` clip
-/// units per w, and their motion vectors use the previous frame's unjittered
-/// `previous_view_projection` and `jitter.zw`, two over the viewport size in
-/// pixels. Other frames repeat the view-projection and keep the jitter zero.
-/// The unjittered `inverse_view_projection` turns pixels into sky rays and
-/// `position` (xyz) is the eye, for view-dependent lighting;
-/// its w is presentation time in seconds, for animated surfaces.
-/// `options.x` is 1 while a reflection probe captures a cube face:
-/// its surfaces read shadows from the far maps alone, which
-/// hold every caster whatever the main camera sees; `options.y` is the angle
-/// a pixel spans at the view's center ([`pixel_angle`]);
-/// `options.z` turns fades' dither each temporally antialiased frame.
-/// The
-/// GPU buffer starts at offset zero; only these 240 initialized bytes are
-/// copied into it.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct CameraUniform {
-    pub view_projection: [[f32; 4]; 4],
-    pub previous_view_projection: [[f32; 4]; 4],
-    pub inverse_view_projection: [[f32; 4]; 4],
-    pub position: [f32; 4],
-    pub jitter: [f32; 4],
-    pub options: [f32; 4],
-    /// The wind's velocity (x and z), gust strength and the previous
-    /// frame's presentation time.
-    pub wind: [f32; 4],
-}
+use crate::gpu_layouts::constants;
+
+pub(crate) use crate::gpu_layouts::constants::COMPOSED_BYTES;
+pub(crate) use crate::gpu_layouts::constants::DRAW_ARGS_BYTES;
+pub(crate) use crate::gpu_layouts::constants::FLAG_PHASE1;
+pub(crate) use crate::gpu_layouts::constants::FLAG_PHASE2;
+pub(crate) use crate::gpu_layouts::constants::FLAG_PROBE;
+pub(crate) use crate::gpu_layouts::constants::FLAG_VISIBLE;
+pub(crate) use crate::gpu_layouts::constants::LOD_LEVELS;
+pub(crate) use crate::gpu_layouts::constants::MOVED_SLOT;
+pub(crate) use crate::gpu_layouts::constants::STILL_FRAMES;
+pub(crate) use crate::gpu_layouts::scene::CameraUniform;
 
 impl CameraUniform {
     /// An unjittered camera at `position` without temporal history, at
@@ -107,65 +88,7 @@ pub(crate) fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
     2.0 / engine_core::math::max(row, 1.0e-12)
 }
 
-/// WGSL `Lighting` uniform of the scene's atmosphere and
-/// grade: ten vec4<f32>, 160 bytes. Scalars ride in the fourth
-/// components.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct LightingUniform {
-    /// Normalized direction toward the sun; w: rim strength.
-    pub sun: [f32; 4],
-    /// w: specular strength.
-    pub sun_color: [f32; 4],
-    /// w: ambient scale.
-    pub zenith: [f32; 4],
-    /// w: exposure.
-    pub horizon: [f32; 4],
-    /// w: saturation.
-    pub ground: [f32; 4],
-    /// Start, density, height falloff and maximum.
-    pub fog: [f32; 4],
-    /// Emission scale, the exposed brightness above which light glows,
-    /// the roughness beyond which surfaces reflect only the
-    /// sky, and 1 when screen-space reflections run.
-    pub effects: [f32; 4],
-    /// The contrast curve's weight (see [`contrast_weight`]) and vibrance;
-    /// 1 with the physically based sky; w
-    /// unused.
-    pub grade: [f32; 4],
-    /// Luminance-normalized split-toning gains of shadows and highlights; w
-    /// unused.
-    pub shadow_tint: [f32; 4],
-    pub highlight_tint: [f32; 4],
-    /// Refraction through glass: the bend's strength (0
-    /// without refraction) and the blur radius in pixels of fully rough
-    /// glass; zw unused.
-    pub refraction: [f32; 4],
-    /// Aerial perspective: start, density at height zero,
-    /// height falloff and the sun's glow; the air's color (w unused).
-    pub aerial: [f32; 4],
-    pub aerial_color: [f32; 4],
-    /// Occupancy: the map's center (x and z), the inverse of
-    /// its side in meters and the strength covers darken by (0 without a
-    /// map); then the reference height its heights are above and its texels
-    /// a side.
-    pub occupancy: [f32; 4],
-    pub occupancy_heights: [f32; 4],
-    pub occupancy_far: [f32; 4],
-    /// Under the sea: the light its water scatters toward
-    /// the eye (rgb) and the meters through which half the light passes
-    /// (w); zero above it.
-    pub underwater: [f32; 4],
-    /// The sea: its still level, the meters through which
-    /// half the light passes, and 1 while it stands (0 without one); w
-    /// unused.
-    pub sea: [f32; 4],
-    /// Clouds' shadows: the grid's first cell's corner (x
-    /// and z), cells per meter and the shadows' strength (0 without
-    /// clouds); then the clouds' base height.
-    pub cloud_shadow: [f32; 4],
-    pub cloud_layer: [f32; 4],
-}
+pub(crate) use crate::gpu_layouts::scene::LightingUniform;
 
 /// Weight of the grade's S-curve for `contrast`: the shader mixes a
 /// perceptual value `s` toward `smoothstep(0, 1, s)` by it, a curve that keeps
@@ -314,28 +237,11 @@ pub(crate) fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
     ) * view_projection
 }
 
-/// A slot pose as WGSL `Rows` reads it: core's three aligned affine rows at
-/// storage offsets 0/16/32, with a 48-byte stride and the implicit final row
-/// [0, 0, 0, 1]. Frames upload `RenderFrame::pose_rows` as they are.
-pub(crate) type PoseData = engine_core::PoseRows;
+pub(crate) use crate::gpu_layouts::scene::PoseData;
 
-/// Separate per-instance color, opacity and packed surface; unchanged colors
-/// need no pose upload. WGSL `SlotColor`: vec2<u32> ([`pack_color`]) and two
-/// u32, 16 bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct ColorData {
-    pub color: [u32; 2],
-    pub surface: u32,
-    pub flags: u32,
-}
+pub(crate) use crate::gpu_layouts::scene::ColorData;
 
-/// WGSL `grounds` of `meshes/declarations.wgsl`: what lies
-/// under a placed object, x and z of the ground's normal as two signed
-/// 16-bit fractions, the meters its base sinks below the ground, the meters
-/// up its stain reaches (0: none) and the stain's linear color as four
-/// bytes, 16 bytes.
-pub(crate) type GroundData = [u32; 4];
+pub(crate) use crate::gpu_layouts::scene::GroundData;
 
 /// The ground of an object at `scale` whose base sinks `sink` meters below
 /// ground of normal `normal` (x and z), stained as its material's
@@ -374,16 +280,7 @@ impl From<&RenderInstance> for ColorData {
     }
 }
 
-/// Vertex attributes at offsets 0/12/16 with an explicit 24-byte vertex
-/// stride: the position, the [`octahedral`] normal and texture coordinates.
-/// The CPU asset representation has no GPU byte-layout contract.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct Vertex {
-    pub position: [f32; 3],
-    pub normal: [i16; 2],
-    pub uv: [f32; 2],
-}
+pub(crate) use crate::gpu_layouts::scene::Vertex;
 
 impl From<&MeshVertex> for Vertex {
     fn from(vertex: &MeshVertex) -> Self {
@@ -395,16 +292,7 @@ impl From<&MeshVertex> for Vertex {
     }
 }
 
-/// The second vertex stream of meshes with vertex colors or second texture
-/// coordinates, 16 bytes: linear RGBA as four 16-bit
-/// fractions (white without colors) and the second coordinates (the first
-/// without them).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct ExtraVertex {
-    pub color: [u16; 4],
-    pub uv1: [f32; 2],
-}
+pub(crate) use crate::gpu_layouts::scene::ExtraVertex;
 
 impl ExtraVertex {
     /// The extra stream of `mesh`, or `None` without colors, second
@@ -431,15 +319,7 @@ impl ExtraVertex {
     }
 }
 
-/// The skin stream of meshes with joints, 16 bytes: four
-/// joint indices and their weights as 16-bit fractions, which the shaders
-/// renormalize.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct SkinVertex {
-    pub joints: [u16; 4],
-    pub weights: [u16; 4],
-}
+pub(crate) use crate::gpu_layouts::scene::SkinVertex;
 
 impl SkinVertex {
     /// The skin stream of `mesh`, or `None` without joints.
@@ -477,122 +357,16 @@ pub(crate) fn octahedral(normal: [f32; 3]) -> [i16; 2] {
     [u, v].map(|value| (engine_core::math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16)
 }
 
-/// Meshes after the shared scene declarations.
-pub(crate) const SHADER: &str = concat!(
-    include_str!("scene.wgsl"),
-    include_str!("meshes/declarations.wgsl"),
-    include_str!("meshes/vertex.wgsl"),
-    include_str!("meshes/shading.wgsl"),
-    include_str!("meshes/forward.wgsl"),
-    include_str!("meshes/resolve.wgsl"),
-    include_str!("sky_common.wgsl"),
-    include_str!("meshes/sky.wgsl"),
-    include_str!("meshes/decals.wgsl"),
-    include_str!("impostor_frames.wgsl"),
-    include_str!("meshes/impostors.wgsl"),
-    include_str!("meshes/terrain_vertex.wgsl"),
-    include_str!("terrain_variety.wgsl"),
-    include_str!("meshes/terrain.wgsl"),
-    include_str!("meshes/cover.wgsl"),
-    include_str!("meshes/water.wgsl"),
-    include_str!("meshes/ocean.wgsl"),
-);
-/// Terrain normal maps.
-pub(crate) const TERRAIN_NORMALS_SHADER: &str = include_str!("terrain_normals.wgsl");
-/// Terrain control values from the surface's rules.
-pub(crate) const TERRAIN_CONTROL_SHADER: &str = include_str!("terrain_control.wgsl");
-/// Terrain horizon map builds.
-pub(crate) const TERRAIN_HORIZON_SHADER: &str = include_str!("terrain_horizon.wgsl");
-/// Terrain sky visibility map builds.
-pub(crate) const TERRAIN_SKY_SHADER: &str = include_str!("terrain_sky.wgsl");
-/// Ground cover's growth.
-pub(crate) const COVER_GROW_SHADER: &str = concat!(
-    include_str!("terrain_variety.wgsl"),
-    include_str!("cover_grow.wgsl")
-);
+pub(crate) use crate::shaders::{
+    CLOUDS_SHADER, COVER_GROW_SHADER, DEFORMATION_SHADER, DEPTH_PYRAMID_SHADER, ENVIRONMENT_SHADER,
+    LIGHT_SHADER, MIPMAP_SHADER, OCCUPANCY_SHADER, PARTICLE_SHADER, POST_SHADER,
+    PRESENTATION_SHADER, SCATTER_CULL_SHADER, SCATTER_SNAP_SHADER, SHADER, SHADOW_SHADER,
+    SHAFTS_SHADER, SKY_SHADER, TEMPORAL_SHADER, TERRAIN_CONTROL_SHADER, TERRAIN_HORIZON_SHADER,
+    TERRAIN_NORMALS_SHADER, TERRAIN_SHADOW_SHADER, TERRAIN_SKY_SHADER, TRANSPARENT_SHADER,
+    VIRTUAL_SHADER, VISIBILITY_SHADER,
+};
 
-pub(crate) const DEFORMATION_SHADER: &str = include_str!("deformation.wgsl");
-
-pub(crate) const CLOUDS_SHADER: &str = include_str!("clouds.wgsl");
-/// The physically based sky's tables and light.
-pub(crate) const SKY_SHADER: &str =
-    concat!(include_str!("sky_common.wgsl"), include_str!("sky.wgsl"));
-/// Placed objects' culling.
-pub(crate) const SCATTER_CULL_SHADER: &str = include_str!("scatter_cull.wgsl");
-
-pub(crate) const SCATTER_SNAP_SHADER: &str = include_str!("scatter_snap.wgsl");
-
-pub(crate) const OCCUPANCY_SHADER: &str = include_str!("occupancy.wgsl");
-/// Terrain's depth drawing into shadow maps.
-pub(crate) const TERRAIN_SHADOW_SHADER: &str = concat!(
-    include_str!("meshes/terrain_vertex.wgsl"),
-    include_str!("terrain_shadow.wgsl")
-);
-/// Compute passes of GPU presentation.
-pub(crate) const PRESENTATION_SHADER: &str = include_str!("presentation.wgsl");
-/// The depth pyramid of occlusion culling.
-pub(crate) const DEPTH_PYRAMID_SHADER: &str = include_str!("depth_pyramid.wgsl");
-/// Cluster selection of virtual geometry.
-pub(crate) const VIRTUAL_SHADER: &str = include_str!("virtual_geometry.wgsl");
-/// Tile classification of the visibility buffer.
-pub(crate) const VISIBILITY_SHADER: &str = include_str!("visibility.wgsl");
-/// Temporal antialiasing resolve, after the shared effects.
-pub(crate) const TEMPORAL_SHADER: &str =
-    concat!(include_str!("effects.wgsl"), include_str!("temporal.wgsl"));
-/// Mip generation of base color textures.
-pub(crate) const MIPMAP_SHADER: &str = include_str!("mipmaps.wgsl");
-/// Local light binning into view clusters.
-pub(crate) const LIGHT_SHADER: &str = include_str!("lights.wgsl");
-/// Stateless particles after the shared scene declarations.
-pub(crate) const PARTICLE_SHADER: &str =
-    concat!(include_str!("scene.wgsl"), include_str!("particles.wgsl"));
-/// The composite of weighted blended transparency.
-pub(crate) const TRANSPARENT_SHADER: &str = include_str!("transparent.wgsl");
-/// Sun shafts after the scene declarations and effects.
-pub(crate) const SHAFTS_SHADER: &str = concat!(
-    include_str!("scene.wgsl"),
-    include_str!("effects.wgsl"),
-    include_str!("shafts.wgsl")
-);
-/// Shadow caster selection and depth drawing.
-pub(crate) const SHADOW_SHADER: &str = concat!(
-    include_str!("shadows.wgsl"),
-    include_str!("impostor_frames.wgsl")
-);
-/// Ambient occlusion, bloom and their composite.
-pub(crate) const POST_SHADER: &str =
-    concat!(include_str!("effects.wgsl"), include_str!("post.wgsl"));
-/// Environment maps after the scene declarations.
-pub(crate) const ENVIRONMENT_SHADER: &str = concat!(
-    include_str!("scene.wgsl"),
-    include_str!("sky_common.wgsl"),
-    include_str!("environment.wgsl")
-);
-
-/// WGSL `MaterialMaps` uniform of `meshes/declarations.wgsl`, 224 bytes:
-/// each map's texture coordinate transform, the emissive color and the map
-/// parameters of one material, and its top layer.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct MaterialUniform {
-    /// Rows of each map's 2x3 transform (base color, metallic-roughness,
-    /// normal, occlusion and emissive), w unused.
-    pub transforms: [[f32; 4]; 10],
-    /// Linear emissive color; w the meters one repeat of world-mapped maps
-    /// covers, 0 for texture coordinates.
-    pub emissive: [f32; 4],
-    /// Normal scale, occlusion strength, alpha cutoff, and the maps reading
-    /// the second texture coordinates as bits in map order.
-    pub params: [f32; 4],
-    /// Transmission: its share, index of refraction and
-    /// thickness; w the material's variant bits as `f32` bits, which uber
-    /// pipelines read.
-    pub volume: [f32; 4],
-    /// The top layer: its linear color and coverage, then its
-    /// roughness.
-    pub top: [f32; 4],
-    pub layer: [f32; 4],
-}
+pub(crate) use crate::gpu_layouts::scene::MaterialUniform;
 
 impl MaterialUniform {
     /// Maps of materials without them: identity transforms and no emission.
@@ -681,10 +455,10 @@ pub(crate) struct Variant(u16);
 
 impl Variant {
     pub(crate) const BASIC: Self = Self(0);
-    const MAPS: u16 = 1;
-    const NORMAL_MAP: u16 = 2;
+    const MAPS: u16 = constants::VARIANT_MAPS;
+    const NORMAL_MAP: u16 = constants::VARIANT_NORMAL_MAP;
     const ALPHA_MASK: u16 = 4;
-    const DOUBLE_SIDED: u16 = 8;
+    const DOUBLE_SIDED: u16 = constants::VARIANT_DOUBLE_SIDED;
     // Meshes with a second vertex stream: extended entry
     // points rather than a constant.
     const EXTENDED: u16 = 16;
@@ -698,16 +472,16 @@ impl Variant {
     // white texel they would read changes nothing. Occlusion packed in the
     // metallic-roughness texture's red (the same texture, sampler, transform
     // and coordinates) is read from its sample.
-    const METALLIC_ROUGHNESS_MAP: u16 = 128;
-    const OCCLUSION_MAP: u16 = 256;
-    const EMISSIVE_MAP: u16 = 512;
-    const PACKED_OCCLUSION: u16 = 1024;
+    const METALLIC_ROUGHNESS_MAP: u16 = constants::VARIANT_METALLIC_ROUGHNESS_MAP;
+    const OCCLUSION_MAP: u16 = constants::VARIANT_OCCLUSION_MAP;
+    const EMISSIVE_MAP: u16 = constants::VARIANT_EMISSIVE_MAP;
+    const PACKED_OCCLUSION: u16 = constants::VARIANT_PACKED_OCCLUSION;
     // Passes drawn rarely read the map bits from the
     // material uniform: their pipelines key on pipeline state alone.
     const UBER: u16 = 2048;
     // Maps laid from the world's axes, and a layer on faces turned up.
-    const WORLD_MAPPING: u16 = 4096;
-    const TOP_LAYER: u16 = 8192;
+    const WORLD_MAPPING: u16 = constants::VARIANT_WORLD_MAPPING;
+    const TOP_LAYER: u16 = constants::VARIANT_TOP_LAYER;
     // Bases the ground stains: slot vertex stages read
     // placed objects' grounds.
     const GROUNDING: u16 = 16384;
@@ -858,142 +632,11 @@ impl Variant {
     }
 }
 
-/// Most near shadow cascades.
-pub(crate) const MAX_CASCADES: usize = engine_core::MAX_SHADOW_CASCADES as usize;
-/// Most kept shadow levels.
-pub(crate) const MAX_LEVELS: usize = engine_core::MAX_KEPT_LEVELS as usize;
+pub(crate) use crate::gpu_layouts::scene::ShadowUniform;
 
-/// WGSL `Shadow` uniform of `scene.wgsl`:
-/// world to each near cascade, to the far shadow maps and to light space,
-/// each kept level's part of it, and their settings, 656 bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct ShadowUniform {
-    /// World to each near cascade: x and y in [-1, 1] across it, z in
-    /// [0, 1].
-    pub near: [[[f32; 4]; 4]; MAX_CASCADES],
-    /// World to both far maps.
-    pub far: [[f32; 4]; 4],
-    /// Shadows on, the kept far map holds casters, the near cascades in use,
-    /// and the distance where shadows begin to fade.
-    pub state: [f32; 4],
-    /// View distance each near cascade reaches; unreachable beyond those in
-    /// use.
-    pub reach: [f32; 4],
-    /// Normal offsets (world units) of lookups in each near cascade.
-    pub near_offsets: [f32; 4],
-    /// Steepest receiver plane (depth per texel) of each near cascade.
-    pub near_limits: [f32; 4],
-    /// Distance where shadows are gone, the normal offset (world units) of
-    /// far lookups and the far maps' steepest receiver plane; w unused.
-    pub offsets: [f32; 4],
-    /// Texels a side of the near cascades and the far maps; zw unused.
-    pub sizes: [f32; 4],
-    /// World to light space: the sun's right, up and
-    /// away-from-sun axes, which every kept level scales.
-    pub light: [[f32; 4]; 3],
-    /// Each kept level's light space: one over its width (x and y in level
-    /// widths, whose fractions place a point in its toroidal map), and its
-    /// band's nearest depth and one over its depth (z in [0, 1]); w unused.
-    pub level_scales: [[f32; 4]; MAX_LEVELS],
-    /// Each level's window: its first corner in level widths, the normal
-    /// offset (world units) of its lookups and its steepest receiver plane.
-    pub level_windows: [[f32; 4]; MAX_LEVELS],
-    /// The tiles of each level holding their casters: a bit per tile slot,
-    /// eight words a level.
-    pub level_valid: [[u32; 4]; 2 * MAX_LEVELS],
-    /// Levels in use, their texels a side, and a bit for each level with
-    /// tiles not yet drawn; w unused.
-    pub level_state: [f32; 4],
-}
+pub(crate) use crate::gpu_layouts::scene::ShadowCullUniform;
 
-/// WGSL `Cull` uniform of `shadows.wgsl`: 240 bytes. Each draw group's ID
-/// region start is in a storage buffer beside it.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct ShadowCullUniform {
-    /// World to light space: the sun's right, up and away-from-sun axes.
-    pub light: [[f32; 4]; 3],
-    /// Light-space rectangles (minimum x and y, maximum x and y) of each
-    /// near cascade, the far maps and the region of the kept map redrawn
-    /// this frame.
-    pub near: [[f32; 4]; MAX_CASCADES],
-    pub far: [f32; 4],
-    pub refresh: [f32; 4],
-    /// The part of the far maps the moving map selects casters from: where
-    /// visible receivers can be.
-    pub moving: [f32; 4],
-    /// Light-space depth beyond which casters cannot darken receivers of
-    /// each near cascade; then (y and z) of the far maps and the refreshed
-    /// region, and (w) of the moving map's selection.
-    pub near_depths: [f32; 4],
-    pub depths: [f32; 4],
-    pub candidates: u32,
-    pub groups: u32,
-    /// Instance IDs per map.
-    pub capacity: u32,
-    /// `STILLNESS | REFRESH` of the shader.
-    pub mode: u32,
-    /// Kept-map tiles: light-space x and y of the first tile's corner, and
-    /// the tile width and height.
-    pub tiles: [f32; 4],
-    /// Near cascades drawn this frame.
-    pub cascades: u32,
-    /// Skinned slots `select_skinned` visits on GPU-presented frames.
-    pub skinned: u32,
-    /// Kept levels in use.
-    pub levels: u32,
-    pub pad: u32,
-    /// The light-space rectangle of the kept level redrawn this frame, and
-    /// its depth band's nearest and farthest depths (zw unused).
-    pub level_refresh: [f32; 4],
-    pub level_depths: [f32; 4],
-    /// Each kept level's tiles: light-space x and y of its first tile's
-    /// corner and the tile width; w unused.
-    pub level_tiles: [[f32; 4]; MAX_LEVELS],
-    /// Inward world planes (`xyz . p + w >= 0` inside) bounding where
-    /// casters can darken each near cascade's receivers, then the moving
-    /// map's: their part of the view swept toward the sun; unused planes
-    /// pass everything.
-    pub planes: [[[f32; 4]; CASTER_PLANES]; MAX_CASCADES + 1],
-}
-
-/// Planes of a map's caster volume ([`ShadowCullUniform::planes`]): the
-/// view frustum's sides, near and far planes, and the receivers' first and
-/// last view depths, those facing the sun.
-pub(crate) const CASTER_PLANES: usize = 8;
-
-/// WGSL `Post` uniform of `effects.wgsl`: 240
-/// bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct PostUniform {
-    /// Unjittered clip to world space.
-    pub inverse_view_projection: [[f32; 4]; 4],
-    /// Unjittered world to clip space, for reflection rays.
-    pub view_projection: [[f32; 4]; 4],
-    /// The eye; w: depth-buffer pixels per world unit at distance 1.
-    pub eye: [f32; 4],
-    /// Scene target size in pixels, and its inverse.
-    pub size: [f32; 4],
-    /// Radius, strength, unused and 1 when ambient occlusion runs.
-    pub occlusion: [f32; 4],
-    /// Strength and 1 when bloom runs; half-resolution texel size.
-    pub bloom: [f32; 4],
-    /// Ray distance, strength, 1 when reflections run, and which pixel of
-    /// each 2x2 block the half-resolution reflections trace this frame.
-    pub reflections: [f32; 4],
-    /// Strength, forward scattering, distance and 1 when sun shafts run.
-    pub shafts: [f32; 4],
-    /// The sun's exposed color; w unused.
-    pub sun: [f32; 4],
-    /// Contact shadows: each ray's reach in meters, the
-    /// share of sunlight a hit takes away, the distance within which
-    /// surfaces trace, and 1 when they run.
-    pub contact: [f32; 4],
-    /// The unit direction toward the sun; w unused.
-    pub sun_direction: [f32; 4],
-}
+pub(crate) use crate::gpu_layouts::scene::PostUniform;
 
 /// Levels of a full mip chain down to 1x1 for a `width` x `height` texture.
 pub(crate) fn mip_levels(width: u32, height: u32) -> u32 {
@@ -1007,17 +650,7 @@ pub(crate) fn mip_chain_bytes(width: u32, height: u32) -> u64 {
         .sum()
 }
 
-/// `Resolve` uniform of `temporal.wgsl`: 16 bytes, WGSL uniform layout.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct ResolveUniform {
-    /// Size of one target pixel in texture coordinates.
-    pub texel: [f32; 2],
-    /// Weight of this frame's color against the reprojected history.
-    pub current_weight: f32,
-    /// Zero when the history must not be read (reset).
-    pub history_valid: u32,
-}
+pub(crate) use crate::gpu_layouts::scene::ResolveUniform;
 
 /// Samples in the jitter sequence before it repeats.
 pub(crate) const JITTER_SAMPLES: u32 = 8;
@@ -1050,137 +683,13 @@ pub(crate) fn jitter_clip(offset: [f32; 2], width: u32, height: u32) -> [f32; 2]
     ]
 }
 
-/// `Frame` uniform of `presentation.wgsl`: 320 bytes, WGSL uniform layout.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct PresentationFrame {
-    pub alpha: f32,
-    pub candidates: u32,
-    pub budget: u32,
-    pub culling: u32,
-    pub groups: u32,
-    pub batches: u32,
-    /// Node slots per half of the pose buffer; previous poses follow.
-    pub node_capacity: u32,
-    /// Zero while previous poses are inconsistent (no blending).
-    pub blend: u32,
-    pub planes: [[f32; 4]; 6],
-    pub absolute_view_projection: [[f32; 4]; 4],
-    /// Nonzero on temporally antialiased frames with valid previous poses:
-    /// visible IDs of moving slots then carry [`MOVED_SLOT`].
-    pub motion: u32,
-    /// Joints of skinned slots' palettes.
-    pub joints: u32,
-    /// Candidate flags compaction gathers: [`FLAG_VISIBLE`] without
-    /// occlusion culling, [`FLAG_PHASE1`] or [`FLAG_PHASE2`] with it.
-    pub mask: u32,
-    /// Nonzero when occlusion culling splits drawing into two phases.
-    pub occlusion: u32,
-    /// The projection the frame rasterizes.
-    pub view_projection: [[f32; 4]; 4],
-    /// Viewport width and height in pixels, and the depth pyramid's levels.
-    pub viewport: [f32; 4],
-    /// Skinned slots whose palette bounds `skin_bounds_pass`
-    /// computes and culls.
-    pub skinned: u32,
-    /// Nonzero when candidates covering no pixel center are left undrawn.
-    pub subpixel: u32,
-    /// Candidates per visible-ID plane: each level of detail's IDs start
-    /// this many entries after the last's.
-    pub plane: u32,
-    /// The screen error in pixels levels of detail keep within; 0 draws
-    /// every instance at full detail.
-    pub lod_error: f32,
-    /// The eye the frame rasterizes from (w unused): levels of detail
-    /// follow the distance to it.
-    pub eye: [f32; 4],
-    /// Fades: the share of a switch between a mesh and its
-    /// card this frame fades (1 for previews, which keep no level) and the
-    /// share of its distance past a switch the eye goes before a candidate
-    /// switches back.
-    pub fade: [f32; 4],
-}
+pub(crate) use crate::gpu_layouts::scene::PresentationFrame;
 
-/// Candidate flags of `presentation.wgsl` the compaction passes gather.
-pub(crate) const FLAG_VISIBLE: u32 = 1;
-pub(crate) const FLAG_PHASE1: u32 = 8;
-pub(crate) const FLAG_PHASE2: u32 = 16;
-/// Reflection probe captures: candidates of the cube face
-/// being captured.
-pub(crate) const FLAG_PROBE: u32 = 128;
-/// Frames in a row a slot must display an unchanged pose before reflection
-/// probes capture it.
-pub(crate) const STILL_FRAMES: u32 = 16;
+pub(crate) use crate::gpu_layouts::scene::CandidateData;
 
-/// Bit of a visible slot ID marking a slot whose displayed pose can differ
-/// from the previous frame's; slot indices stay below it.
-pub(crate) const MOVED_SLOT: u32 = 1 << 31;
+pub(crate) use crate::gpu_layouts::scene::BatchData;
 
-/// One candidate slot, its hierarchy node, its draw group and its index in
-/// draw-group order (16 bytes).
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct CandidateData {
-    pub slot: u32,
-    pub node: u32,
-    pub batch: u32,
-    pub position: u32,
-}
-
-/// One draw group: its candidate range (also its compacted visible-ID region),
-/// mesh index count, shadow draw group, local bounds and
-/// levels of detail (96 bytes). `bounds_min[3]` is 1 for meshes with joints,
-/// whose joints place them: GPU-presented frames bound their
-/// slots by their palettes ([`SkinnedData`]), and they never cast kept
-/// shadows.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct BatchData {
-    pub start: u32,
-    pub count: u32,
-    pub index_count: u32,
-    pub pad: u32,
-    pub bounds_min: [f32; 4],
-    pub bounds_max: [f32; 4],
-    // Where the batch's mesh lies in the mesh arena: its first index and
-    // base vertex, which its draw arguments carry, with its first instance:
-    // `start` where devices draw indirectly from nonzero first instances,
-    // otherwise 0.
-    pub first_index: u32,
-    pub base_vertex: i32,
-    pub first_instance: u32,
-    /// What each coarser level's first instance adds per level:
-    /// the visible-ID plane stride where first instances name
-    /// regions, otherwise 0.
-    pub first_plane: u32,
-    /// Levels of detail 1 and 2: each one's first index and
-    /// index count in the mesh arena.
-    pub lod_ranges: [u32; 4],
-    /// Levels 1 and 2's geometric errors in mesh units, then the level
-    /// count (1 to [`LOD_LEVELS`]); w unused.
-    pub lod_errors: [f32; 4],
-}
-
-/// Levels of detail a draw group has at most: the mesh and two
-/// simplifications, each with its own plane of visible IDs and draws.
-pub(crate) const LOD_LEVELS: usize = 3;
-
-/// A skinned slot of GPU-presented frames: its slot, its
-/// candidate's draw-group position, its draw group and its mesh's joint count
-/// (16 bytes).
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct SkinnedData {
-    pub slot: u32,
-    pub position: u32,
-    pub batch: u32,
-    pub joints: u32,
-}
-
-/// Indexed indirect draw arguments written by the GPU (20 bytes).
-pub(crate) const DRAW_ARGS_BYTES: u64 = 20;
-/// Composed active-parent record of `presentation.wgsl` (112 bytes).
-pub(crate) const COMPOSED_BYTES: u64 = 112;
+pub(crate) use crate::gpu_layouts::scene::SkinnedData;
 
 /// Clip-space depth of the near and far planes: depth is reversed,
 /// so nearer is larger and the depth buffer clears to the far plane.

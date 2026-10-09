@@ -927,6 +927,16 @@ impl Default for Engine {
 }
 
 /// Common gameplay imports; Bevy types are intentionally part of the SDK.
+/// The bounds GPU presentation's shaders share with the CPU reference
+/// (`presentation.wgsl`): culling's coefficient and rounding limits, the
+/// hierarchy validator's common admission path and interpolation's linear
+/// rotation threshold.
+pub mod presentation_bounds {
+    pub use crate::culling::{MAX_COEFFICIENT, MAX_PRODUCT_BOUND, ROUNDING_MARGIN};
+    pub use crate::hierarchy::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN, MIN_LINEAR_SCALE};
+    pub use crate::interpolation::LINEAR_ROTATION_DOT_THRESHOLD;
+}
+
 pub mod prelude {
     #[cfg(feature = "dev")]
     pub use crate::DevStepError;

@@ -4,32 +4,9 @@
 //! composite pass. Everything here is created with the first frame that has
 //! emitters.
 
-use bytemuck::{Pod, Zeroable};
 use engine_core::{ParticleBlend, RenderEmitter};
 
-/// WGSL `Emitter` of `particles.wgsl`: 128 bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct EmitterData {
-    pub origin: [f32; 3],
-    pub rate: f32,
-    pub velocity: [f32; 3],
-    pub lifetime: f32,
-    pub direction: [f32; 3],
-    pub speed: f32,
-    pub acceleration: [f32; 3],
-    /// Cosine of the spread half-angle.
-    pub spread: f32,
-    pub start_color: [f32; 4],
-    pub end_color: [f32; 4],
-    pub size: [f32; 2],
-    pub emission: f32,
-    pub stretch: f32,
-    pub radius: f32,
-    pub seed: u32,
-    pub first: u32,
-    pub count: u32,
-}
+pub(crate) use crate::gpu_layouts::particles::EmitterData;
 
 impl EmitterData {
     pub(crate) fn new(emitter: &RenderEmitter, first: u32) -> Self {
@@ -60,14 +37,7 @@ impl EmitterData {
     }
 }
 
-/// WGSL `Particles` of `particles.wgsl`: 48 bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct ParticleUniform {
-    pub right: [f32; 4],
-    pub up: [f32; 4],
-    pub size: [f32; 4],
-}
+pub(crate) use crate::gpu_layouts::particles::ParticleUniform;
 
 impl ParticleUniform {
     /// Billboard axes of the unjittered `view_projection`: its first two

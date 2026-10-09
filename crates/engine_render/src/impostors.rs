@@ -11,16 +11,9 @@
 //! mesh's own shadows would. The GPU side is created with
 //! the first bake.
 
-use bytemuck::{Pod, Zeroable};
+pub(crate) use crate::gpu_layouts::constants::IMPOSTOR_FRAMES;
+pub(crate) use crate::gpu_layouts::constants::IMPOSTOR_HEMISPHERE as HEMISPHERE;
 use engine_core::glam::Vec3;
-
-/// Frames per side of the octahedral grid, as `meshes/impostors.wgsl`
-/// declares it.
-pub(crate) const IMPOSTOR_FRAMES: u32 = 8;
-
-/// The flag of records whose frames cover only the upper hemisphere, above
-/// their texels across a frame.
-pub(crate) const HEMISPHERE: u32 = 1 << 16;
 
 /// How an atlas lays out its impostors: texels across a frame of the first
 /// level, and whether its frames cover only the upper hemisphere.
@@ -60,20 +53,7 @@ impl AtlasShape {
     }
 }
 
-/// WGSL `ImpostorRecord` of `meshes/impostors.wgsl`: 48 bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
-pub(crate) struct ImpostorRecord {
-    /// Mesh-space center and radius of the sphere every frame frames.
-    pub sphere: [f32; 4],
-    /// Mesh-space half extents of the mesh's bounds.
-    pub extent: [f32; 3],
-    pub layer: u32,
-    /// The material's emissive color (glTF), linear.
-    pub emissive: [f32; 3],
-    /// Texels across a frame, and `HEMISPHERE`.
-    pub flags: u32,
-}
+pub(crate) use crate::gpu_layouts::impostors::ImpostorRecord;
 
 impl ImpostorRecord {
     /// The record of a mesh with bounds `min` to `max` baked into `layer` of
@@ -111,14 +91,7 @@ impl ImpostorRecord {
     }
 }
 
-/// WGSL `ImpostorBake` uniform of `meshes/impostors.wgsl`: 32 bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct ImpostorBakeUniform {
-    pub sphere: [f32; 4],
-    /// The record's flags; the rest unused.
-    pub flags: [u32; 4],
-}
+pub(crate) use crate::gpu_layouts::impostors::ImpostorBakeUniform;
 
 /// Layers of the texture arrays: free ones are reused lowest first, and the
 /// arrays grow by doubling up to `limit` layers.

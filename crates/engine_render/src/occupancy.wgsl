@@ -24,9 +24,7 @@ struct Record {
     terrain: u32,
     sink: f32,
     state: u32,
-    pad_0: u32,
-    pad_1: u32,
-    pad_2: u32,
+    pad: array<u32, 3>,
 }
 
 // A placed object's pose: the rows of its affine world matrix.

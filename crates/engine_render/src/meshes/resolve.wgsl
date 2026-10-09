@@ -133,7 +133,7 @@ fn stepped_normal(resolved: Resolved, texels: MaterialTexels, normal_step: vec3<
         world_step: vec3<f32>, uv_step: vec2<f32>, ripples: f32) -> vec3<f32> {
     let input = resolved.fragment;
     var sampled = texels.normal;
-    if material_flag(2u, NORMAL_MAP) {
+    if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
         let step = map_gradient(2u, uv_step, uv_step);
         sampled = textureSampleGrad(normal_texture, normal_sampler,
             map_uv(2u, input.uv, input.uv1) + step, texels.normal_dx,
@@ -151,7 +151,7 @@ fn resolved_point(resolved: Resolved) -> SurfacePoint {
     let input = resolved.fragment;
     let gradients = UvGradients(resolved.uv_dx, resolved.uv_dy, resolved.uv_dx, resolved.uv_dy);
     var texels: MaterialTexels;
-    if material_flag(4096u, WORLD_MAPPING) {
+    if material_flag(VARIANT_WORLD_MAPPING, WORLD_MAPPING) {
         texels = world_texels(input.world, stable_normalize(input.normal), resolved.world_dx,
             resolved.world_dy);
     } else {
@@ -162,7 +162,7 @@ fn resolved_point(resolved: Resolved) -> SurfacePoint {
     let ripples = unpack4x8unorm(input.surface).w;
     let x = resolved.partner.x;
     let y = resolved.partner.y;
-    if material_flag(4096u, WORLD_MAPPING) {
+    if material_flag(VARIANT_WORLD_MAPPING, WORLD_MAPPING) {
         // World-mapped maps turn toward the partners with
         // the interpolated normal alone.
         let across = stable_normalize(point.normal + resolved.normal_dx * x);

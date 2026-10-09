@@ -50,6 +50,16 @@ use crate::mesh_arena::{Bindings, Ids, MeshDraw};
 use crate::profiling::GpuProfiler;
 use crate::shadow_fit::{KeptLevels, KeptMap, LevelRefresh, LightBasis, REFRESH_TILES, Refresh};
 
+pub(crate) use crate::gpu_layouts::constants::KEPT_LEVELS;
+pub(crate) use crate::gpu_layouts::constants::KEPT_MAP;
+use crate::gpu_layouts::constants::LEVEL_REFRESH;
+pub(crate) use crate::gpu_layouts::constants::MOVING_MAP;
+use crate::gpu_layouts::constants::REFRESH;
+use crate::gpu_layouts::constants::SHADOW_GROUP as GROUP;
+use crate::gpu_layouts::constants::SHADOW_MAPS as MAPS;
+use crate::gpu_layouts::constants::SHADOW_SKINNED_GROUP as SKINNED_GROUP;
+use crate::gpu_layouts::constants::STILLNESS;
+pub(crate) use crate::gpu_layouts::constants::VIRTUAL_SHADOW_PLANES;
 use casters::CasterGroups;
 pub(crate) use casters::ShadowGroup;
 pub(crate) use maps::SHADOW_FORMAT;
@@ -58,28 +68,11 @@ use pipelines::ShadowPipelines;
 use regions::{Regions, SelectionCounts};
 use selection::Selection;
 
-// Near cascades are maps 0 to MAX_CASCADES - 1; the far maps follow, then
-// the kept levels, one map of selected casters for the one
-// redrawn.
-pub(crate) const MOVING_MAP: usize = MAX_CASCADES;
-pub(crate) const KEPT_MAP: usize = MAX_CASCADES + 1;
-pub(crate) const KEPT_LEVELS: usize = MAX_CASCADES + 2;
-const MAPS: usize = MAX_CASCADES + 3;
 // Uniform offset alignment between view matrices: each near cascade's, the
 // far maps', then the redrawn kept level's.
 const VIEW_STRIDE: u64 = 256;
 const FAR_VIEW: u64 = MAX_CASCADES as u64 * VIEW_STRIDE;
 const LEVEL_VIEW: u64 = FAR_VIEW + VIEW_STRIDE;
-const GROUP: u32 = 256;
-const SKINNED_GROUP: u32 = 64;
-// Mode bits of the selection pass.
-const STILLNESS: u32 = 1;
-const REFRESH: u32 = 2;
-const LEVEL_REFRESH: u32 = 4;
-
-/// Planes of a virtual shadow view: its selection region's five, and the
-/// view frustum slice's that the sun's sweep never crosses.
-pub(crate) const VIRTUAL_SHADOW_PLANES: usize = 12;
 
 /// A shadow map drawn this frame whose virtual casters' clusters virtual
 /// geometry selects: its planes around where casters can
@@ -260,9 +253,7 @@ pub(crate) struct ShadowPass {
     // Created with the first frame that has shadows: games without them
     // never compile them.
     pipelines: Option<ShadowPipelines>,
-    // Vertex stride and texture coordinate offset, and the material group
-    // layout of masked casters.
-    layout: (u64, u64),
+    // The material group layout of masked casters.
     material_layout: wgpu::BindGroupLayout,
     maps: ShadowMaps,
     // Terrains whose horizon records lookups loop over, as
@@ -296,17 +287,10 @@ pub(crate) struct ShadowPass {
 
 impl ShadowPass {
     /// The bindings the main passes read; pipelines follow with the first
-    /// frame that has shadows. `layout`: the renderer's mesh vertex stride
-    /// and the texture coordinate offset in a vertex; `material_layout`, the
-    /// mesh material group.
-    pub(crate) fn new(
-        device: &wgpu::Device,
-        layout: (u64, u64),
-        material_layout: &wgpu::BindGroupLayout,
-    ) -> Self {
+    /// frame that has shadows. `material_layout`: the mesh material group.
+    pub(crate) fn new(device: &wgpu::Device, material_layout: &wgpu::BindGroupLayout) -> Self {
         Self {
             pipelines: None,
-            layout,
             material_layout: material_layout.clone(),
             maps: ShadowMaps::new(device),
             horizon_records: 0.0,
@@ -491,9 +475,8 @@ impl ShadowPass {
             return None;
         }
         let source = self.casters.source();
-        self.pipelines.get_or_insert_with(|| {
-            ShadowPipelines::new(device, self.layout, &self.material_layout)
-        });
+        self.pipelines
+            .get_or_insert_with(|| ShadowPipelines::new(device, &self.material_layout));
         if self.maps.ensure(
             device,
             settings.resolution,

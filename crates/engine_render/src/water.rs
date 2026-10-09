@@ -25,13 +25,14 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use bytemuck::{Pod, Zeroable};
+use bytemuck::Zeroable;
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::math::max;
 use engine_core::terrain_data::Rivers;
 use engine_core::{Environment, MAX_OCEAN_WAVES, Ocean, RenderTerrains, Water, WaterGrid};
 
 use crate::bindings::{WATER, WATER_DEPTH};
+use crate::gpu_layouts::constants::WATER_DEPTH_RANGE as DEPTH_RANGE;
 use crate::render_graph::Targets;
 
 /// Quads along each side of a chunk at full detail; coarser chunks draw a
@@ -40,11 +41,6 @@ pub(crate) const CHUNK_QUADS: u32 = 32;
 /// Samples between a chunk's vertices by distance: full detail within the
 /// first reach, half within the second, and so on (meters).
 const STRIDES: [(u32, f32); 4] = [(1, 700.0), (2, 1600.0), (4, 3200.0), (8, f32::INFINITY)];
-
-/// The deepest water the depth texture holds (meters, `water.wgsl`'s
-/// `WATER_DEPTH_RANGE`): it keeps the square root of each depth's share of
-/// it, so shallows keep centimeters and a deep lake's middle its depth.
-const DEPTH_RANGE: f32 = 256.0;
 
 /// Cells around the sea's grid, the sectors it splits into for culling,
 /// and the rings a cell apart at its middle: about the cells around over
@@ -57,22 +53,7 @@ const OCEAN_FIRST_RINGS: u32 = 31;
 const OCEAN_CELL: f32 = 0.3;
 const OCEAN_CELL_PER_HEIGHT: f32 = 0.004;
 
-/// WGSL `WaterUniform` of `meshes/water.wgsl`; the sea's parts are zero
-/// for terrains' water, and the terrain parts for the sea's.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct WaterUniform {
-    relative_view_projection: [[f32; 4]; 4],
-    origin: [f32; 4],
-    grid: [u32; 4],
-    color: [f32; 4],
-    ripples: [f32; 4],
-    foam: [f32; 4],
-    ocean: [f32; 4],
-    ocean_grid: [f32; 4],
-    ocean_waves: [[f32; 4]; MAX_OCEAN_WAVES],
-    ocean_reach: [[f32; 4]; MAX_OCEAN_WAVES / 4],
-}
+use crate::gpu_layouts::water::WaterUniform;
 
 /// Bytes of the water group's uniform.
 pub(crate) const WATER_UNIFORM_BYTES: usize = size_of::<WaterUniform>();
@@ -88,14 +69,7 @@ struct OceanDraw {
     runs: Vec<Range<u32>>,
 }
 
-/// WGSL `WaterChunk`'s instance part: its first sample and the samples
-/// between its vertices.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct ChunkRecord {
-    first: [u32; 2],
-    stride: u32,
-}
+use crate::gpu_layouts::water::ChunkRecord;
 
 /// A chunk holding water: its first sample, and its terrain-local bounds.
 struct Chunk {
@@ -120,15 +94,7 @@ struct TerrainWater {
     drawn: bool,
 }
 
-/// A point of a river's ribbon: terrain-local, and the water's depth over
-/// the bed there, its flow along x and z and half the river's width
-/// (`meshes/water.wgsl`'s `RiverVertex`).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct RiverVertex {
-    position: [f32; 3],
-    water: [f32; 4],
-}
+use crate::gpu_layouts::water::RiverVertex;
 
 /// A terrain's rivers' ribbons: their vertices and indices, and each
 /// chunk's index ranges at each of `RIBBON_STRIDES` and its terrain-local

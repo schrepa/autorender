@@ -103,8 +103,9 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
       await route.continue();
     });
     await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    initialNavigation = false;
     try {
+      // Navigations before the runtime is ready (the dev server reloading
+      // after a rebuild) still belong to loading it.
       await page.waitForFunction(() => typeof window.__engineDev?.request === "function" || document.querySelector("#status")?.getAttribute("data-state") === "error", null, { timeout: 60_000 });
       const identity = await page.evaluate(() => ({
         instance: window.__engineDev?.instance,
@@ -112,6 +113,7 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
         ready: typeof window.__engineDev?.request === "function",
       }));
       if (!identity.ready) throw new AgentError("runtime_unavailable", "The game reported an initialization error.");
+      initialNavigation = false;
       instance = identity.instance;
       build = identity.build;
       if (typeof instance !== "string" || !instance) throw new AgentError("missing_runtime_identity", "The development browser must expose a runtime instance identity.");

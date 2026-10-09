@@ -14,7 +14,6 @@
 //! the camera sees them, cards cast facing the sun, and the
 //! moving map without the camera's cards. They are never occlusion culled.
 
-use bytemuck::{Pod, Zeroable};
 use engine_core::glam::{Mat4, Vec3};
 
 use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, TEMPORAL_POSES};
@@ -22,41 +21,29 @@ use crate::cached::Cached;
 use crate::gpu_data::{ColorData, GroundData, PoseData};
 use crate::shadows::KeptRefresh;
 
-/// Levels each draw group lists: its mesh and four coarser levels.
-pub(crate) const LEVELS: u32 = 5;
+use crate::gpu_layouts::constants::CARD_VERTICES;
+pub(crate) use crate::gpu_layouts::constants::DEAD;
+use crate::gpu_layouts::constants::FADED;
+pub(crate) use crate::gpu_layouts::constants::LAYER_SHIFT;
+pub(crate) use crate::gpu_layouts::constants::NEAR_LEVEL_SHIFT;
+pub(crate) use crate::gpu_layouts::constants::NO_LAYER;
+pub(crate) use crate::gpu_layouts::constants::RANK_SHIFT;
+use crate::gpu_layouts::constants::SCATTER_GROUP;
+pub(crate) use crate::gpu_layouts::constants::SCATTER_LEVELS as LEVELS;
+use crate::gpu_layouts::constants::SHOWN_NONE;
+pub(crate) use crate::gpu_layouts::constants::STATE_ADOPT;
+pub(crate) use crate::gpu_layouts::constants::TERRAIN_INDEX;
+pub(crate) use crate::gpu_layouts::constants::THIN_LAYERS;
+use crate::gpu_layouts::scatter::FrameUniform;
 
-/// WGSL `Frame` of `scatter_cull.wgsl`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct FrameUniform {
-    eye: [f32; 4],
-    counts: [u32; 4],
-    strides: [u32; 4],
-    fade: [f32; 4],
-}
-
-/// How the camera shows an object (`scatter_cull.wgsl`): its
-/// levels, its card or nothing, and how far its last switch has faded.
-/// Objects new to the view start showing nothing, so they fade in; those
-/// written again in place take what the camera would show at once.
-const SHOWN_NONE: u32 = 6;
-const FADED: u32 = 65535;
 pub(crate) const STATE_FRESH: u32 = SHOWN_NONE | SHOWN_NONE << 3 | FADED << 6;
-pub(crate) const STATE_ADOPT: u32 = u32::MAX;
 
 /// The share of its distance past a switch the eye goes before the camera
 /// switches an object back, so objects near a switch's
 /// distance do not flicker between two ways as the eye wavers.
 const FADE_MARGIN: f32 = 0.1;
 
-/// WGSL `View`: a view's frustum planes, the radius objects need in it,
-/// the error its texels hide and whether it is the kept shadow map's.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct ViewData {
-    planes: [[f32; 4]; 6],
-    limits: [f32; 4],
-}
+use crate::gpu_layouts::scatter::ViewData;
 
 /// The shadow maps placed objects cast into: those drawn every frame
 /// (their world-to-clip matrices), this frame's redraws of the kept map and
@@ -68,54 +55,12 @@ pub(crate) type ShadowViews<'a> = (
     u32,
 );
 
-/// The draw group of slots no object holds, which culling skips.
-pub(crate) const DEAD: u32 = u32::MAX;
-
-/// A record's terrain word: the index this frame of the terrain the object
-/// stands on, nine bits (`TERRAIN_INDEX` itself: none); its placement
-/// layer, seven bits from `LAYER_SHIFT` (`NO_LAYER`: authored, or none);
-/// for objects standing far away, one more than the level
-/// whose resident tiles hold them instead, five bits from
-/// `NEAR_LEVEL_SHIFT`; its rank under the density where it stands,
-/// ten bits from `RANK_SHIFT`; and the top bit (the
-/// shaders' `HIDDEN`) while tiles holding it instead are resident where it
-/// stands, which setting it on the terrain marks and culling skips.
-pub(crate) const TERRAIN_INDEX: u32 = 0x1ff;
-pub(crate) const LAYER_SHIFT: u32 = 9;
-pub(crate) const NO_LAYER: u32 = 0x7f;
-pub(crate) const NEAR_LEVEL_SHIFT: u32 = 16;
 pub(crate) const NEAR_LEVEL_MASK: u32 = 0x1f;
-pub(crate) const RANK_SHIFT: u32 = 21;
 pub(crate) const RANK_MAX: f32 = 1023.0;
-/// Entries of the thinning table each terrain takes: one
-/// per placement layer a surface may have (a validity bound).
-pub(crate) const THIN_LAYERS: usize = 64;
 
-/// WGSL `Record`: an object's bounding sphere, draw group and scale, the
-/// terrain word (see [`TERRAIN_INDEX`]), how far its base sinks below the
-/// ground, and how the camera shows it ([`STATE_FRESH`]).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct Record {
-    pub center: [f32; 3],
-    pub radius: f32,
-    pub group: u32,
-    pub scale: f32,
-    pub terrain: u32,
-    pub sink: f32,
-    pub state: u32,
-    pub pad: [u32; 3],
-}
+pub(crate) use crate::gpu_layouts::scatter::Record;
 
-/// WGSL `TerrainInfo` of `scatter_snap.wgsl`: a terrain's origin and
-/// level-0 spacing, and where its levels start in the directory and how
-/// many there are.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct TerrainInfo {
-    pub origin: [f32; 4],
-    pub levels: [u32; 4],
-}
+pub(crate) use crate::gpu_layouts::scatter::TerrainInfo;
 
 /// What setting objects on the terrain reads: the terrain pass's resident
 /// heights and directory, their generations, a revision advancing whenever
@@ -128,40 +73,14 @@ pub(crate) struct SnapSources<'a> {
     pub terrains: &'a [TerrainInfo],
 }
 
-/// WGSL `Group`: where its lists start, its objects, its levels, those
-/// the camera draws, the coarser ones' errors, and its impostor's error
-/// and record.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct GroupData {
-    ids: u32,
-    count: u32,
-    levels: u32,
-    camera: u32,
-    errors: [f32; 4],
-    impostor: f32,
-    record: u32,
-    pad: [u32; 2],
-}
+use crate::gpu_layouts::scatter::GroupData;
 
 /// What setting objects on the terrain binds: the generations of the
 /// objects' buffers, the terrains' places and the terrain pass's heights
 /// and directory.
 type SnapKey = (u64, u64, (u64, u64));
 
-/// Vertices of an impostor card (`meshes/impostors.wgsl`).
-const CARD_VERTICES: u32 = 6;
-
-/// An indexed indirect draw's arguments.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct DrawArgs {
-    index_count: u32,
-    instance_count: u32,
-    first_index: u32,
-    base_vertex: i32,
-    first_instance: u32,
-}
+use crate::gpu_layouts::scatter::DrawArgs;
 
 /// One draw group as the renderer lays it out: each level's index count,
 /// first index and base vertex, the levels the camera draws, the coarser
@@ -842,11 +761,11 @@ impl ScatterPass {
         {
             pass.set_pipeline(snap);
             pass.set_bind_group(0, group, &[]);
-            pass.dispatch_workgroups(self.objects.div_ceil(64), 1, 1);
+            pass.dispatch_workgroups(self.objects.div_ceil(SCATTER_GROUP), 1, 1);
         }
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, group, &[]);
-        pass.dispatch_workgroups(self.objects.div_ceil(64), 1, 1);
+        pass.dispatch_workgroups(self.objects.div_ceil(SCATTER_GROUP), 1, 1);
     }
 
     /// `view`'s impostor cards (0 the camera's), each one's slot and

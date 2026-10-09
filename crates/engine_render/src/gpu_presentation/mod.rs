@@ -32,6 +32,12 @@ use crate::mesh_arena::Ids;
 use crate::profiling::{GpuProfiler, Span};
 use crate::staging::Prestaged;
 
+use crate::gpu_layouts::constants::ARGS_GROUP;
+use crate::gpu_layouts::constants::JOINT_GROUP;
+use crate::gpu_layouts::constants::PARENT_GROUP;
+use crate::gpu_layouts::constants::PRESENTATION_GROUP as GROUP;
+use crate::gpu_layouts::constants::SCAN_GROUP;
+use crate::gpu_layouts::constants::SKIN_BOUNDS_GROUP as SKINNED_GROUP;
 use fades::Fades;
 use groups::{DrawGroups, PHASE_ONE, PHASE_TWO};
 use inputs::NodeInputs;
@@ -64,17 +70,6 @@ impl Stage {
     }
 }
 
-// Candidates per workgroup of the per-candidate passes, and of the
-// compaction passes (`GROUP` in presentation.wgsl), whose workgroup arrays
-// are kept small for Firefox's compile times.
-const GROUP: u32 = 256;
-const SCAN_GROUP: u32 = 64;
-const PARENT_GROUP: u32 = 64;
-const JOINT_GROUP: u32 = 64;
-const SKINNED_GROUP: u32 = 64;
-const ARGS_GROUP: u32 = 64;
-// Beyond this bound the CPU frustum also fails open (see culling.rs).
-const MAX_COEFFICIENT: f32 = 1.0e15;
 // Bindings need at least one element; exceeds every record stride.
 const MIN_STORAGE_BYTES: u64 = 256;
 
@@ -582,11 +577,9 @@ impl GpuPresentationPass {
     ) {
         // A view-projection the CPU frustum rejects disables culling there too.
         let (planes, absolute) = frustum_uniform(view.view_projection);
-        let bounded = absolute
-            .iter()
-            .flatten()
-            .all(|value| value.is_finite() && *value <= MAX_COEFFICIENT)
-            && planes.iter().flatten().all(|value| value.is_finite());
+        let bounded = absolute.iter().flatten().all(|value| {
+            value.is_finite() && *value <= engine_core::presentation_bounds::MAX_COEFFICIENT
+        }) && planes.iter().flatten().all(|value| value.is_finite());
         let culling = frame.culling() && bounded;
         let candidates = self.groups.count();
         let unbudgeted = culling && frame.instance_budget() >= candidates as usize;

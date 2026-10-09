@@ -8,15 +8,14 @@
 //! units, which shading scales by what is left of a track since the
 //! reference time, and which a rebase scales once that falls below half.
 
-use bytemuck::{Pod, Zeroable};
 use engine_core::math::{max, min};
 use engine_core::{DeformationMap, RIM_REACH, RenderDeformation};
 
 use crate::bindings::DEFORMATION;
 use crate::cached::Cached;
+use crate::gpu_layouts::constants::DEFORMATION_BLOCK as BLOCK;
+use crate::gpu_layouts::constants::DEFORMATION_GROUP;
 
-/// Texels along a side of a block of the map's mask.
-const BLOCK: u32 = 16;
 /// Stamps one dispatch presses: every texel tries each of them.
 const CHUNK: usize = 64;
 /// Uniform offsets of the jobs, at the WebGPU alignment.
@@ -25,23 +24,9 @@ const SLOT: u64 = 256;
 /// track is left since it.
 const REBASE: f32 = 0.5;
 
-/// WGSL `Stamp`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct StampRecord {
-    ends: [f32; 4],
-    shape: [f32; 4],
-    bounds: [i32; 4],
-}
+use crate::gpu_layouts::deformation::StampRecord;
 
-/// WGSL `Job`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct JobUniform {
-    first: [i32; 4],
-    counts: [u32; 4],
-    scale: [f32; 4],
-}
+use crate::gpu_layouts::deformation::JobUniform;
 
 /// A recorded job: its entry point, uniform and workgroups.
 #[derive(Clone, Copy, Debug)]
@@ -163,7 +148,7 @@ impl DeformationPass {
             self.generation += 1;
         }
         let blocks = map.resolution / BLOCK;
-        let texel_groups = map.resolution.div_ceil(8);
+        let texel_groups = map.resolution.div_ceil(DEFORMATION_GROUP);
         let uniform = |first: [i32; 2], last: [i32; 2], factor: f32| JobUniform {
             first: [first[0], first[1], last[0], last[1]],
             counts: [map.resolution, blocks, 0, 0],
@@ -288,10 +273,14 @@ impl DeformationPass {
             self.jobs.push(Job {
                 entry: Entry::Press,
                 uniform,
-                groups: [widest.div_ceil(8), widest.div_ceil(8), chunk.len() as u32],
+                groups: [
+                    widest.div_ceil(DEFORMATION_GROUP),
+                    widest.div_ceil(DEFORMATION_GROUP),
+                    chunk.len() as u32,
+                ],
             });
             // Slopes reach a texel further each way.
-            let wider = (widest + 2).div_ceil(8);
+            let wider = (widest + 2).div_ceil(DEFORMATION_GROUP);
             slopes.push(Job {
                 entry: Entry::Slopes,
                 uniform,

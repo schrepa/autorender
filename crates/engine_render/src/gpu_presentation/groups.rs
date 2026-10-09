@@ -15,7 +15,7 @@ use super::{BatchMeta, PresentationInputs, RecordsKey, SCAN_GROUP, grow, storage
 /// probe faces.
 pub(super) const PHASE_ONE: usize = 0;
 pub(super) const PHASE_TWO: usize = 1;
-pub(super) const PROBE: usize = 2;
+pub(super) const PROBE_FACES: usize = 2;
 
 // The frame identity, structure and source revisions and gather identity
 // the groups were built for, and what batch records carry.
@@ -464,7 +464,7 @@ fn batch_record(
             (1 + meta.lods.len()) as f32,
             meta.impostor,
         ],
-        pad: meta.group,
+        group: meta.group,
         bounds_min: meta
             .bounds
             .min()

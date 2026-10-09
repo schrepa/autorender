@@ -8,11 +8,11 @@
 //! pass reads them. The sky's passes and the environment maps sample the
 //! sky-view and transmittance tables.
 
-use bytemuck::{Pod, Zeroable};
 use engine_core::Sky;
 use glam::Vec3;
 
 use crate::bindings::SKY_TABLES;
+use crate::gpu_layouts::constants::SKY_TABLE_GROUP;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Texels of the tables (`sky_common.wgsl`'s sizes).
@@ -26,18 +26,7 @@ const ENVIRONMENT_HEIGHT_STEP: f32 = 200.0;
 /// last the exposure as it eased to last frame.
 const DERIVED_BYTES: u64 = 7 * 16;
 
-/// WGSL `SkyUniform` (`sky_common.wgsl`).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct SkyUniform {
-    rayleigh: [f32; 4],
-    mie: [f32; 4],
-    ozone: [f32; 4],
-    ground: [f32; 4],
-    radii: [f32; 4],
-    sun: [f32; 4],
-    frame: [f32; 4],
-}
+use crate::gpu_layouts::sky::SkyUniform;
 
 /// Bytes of the sky's uniform.
 pub(crate) const SKY_UNIFORM_BYTES: usize = size_of::<SkyUniform>();
@@ -316,7 +305,12 @@ impl SkyPass {
                 label: Some("engine/sky"),
                 timestamp_writes: None,
             });
-            let groups = |(width, height): (u32, u32)| (width.div_ceil(8), height.div_ceil(8));
+            let groups = |(width, height): (u32, u32)| {
+                (
+                    width.div_ceil(SKY_TABLE_GROUP),
+                    height.div_ceil(SKY_TABLE_GROUP),
+                )
+            };
             if build_tables {
                 pass.set_pipeline(&passes.transmittance);
                 pass.set_bind_group(0, &passes.groups[0], &[]);

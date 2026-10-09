@@ -9,7 +9,6 @@
 //! when it no longer holds the camera's surroundings or the objects
 //! changed.
 
-use bytemuck::{Pod, Zeroable};
 use engine_core::Occupancy;
 use engine_core::glam::Vec3;
 
@@ -28,24 +27,9 @@ const NOTHING: f64 = -1.0e4;
 const NEAR: usize = 0;
 const FAR: usize = 1;
 
-/// WGSL `Splat` of `occupancy.wgsl`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct SplatUniform {
-    area: [f32; 4],
-    counts: [u32; 4],
-}
+use crate::gpu_layouts::occupancy::SplatUniform;
 
-/// WGSL `Cover`: a draw group's footprint radius, the bottom and top of
-/// what it covers above its origin (mesh units), and its density.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
-pub(crate) struct Cover {
-    pub footprint: f32,
-    pub bottom: f32,
-    pub top: f32,
-    pub density: f32,
-}
+pub(crate) use crate::gpu_layouts::occupancy::Cover;
 
 impl Cover {
     /// The cover of a mesh with bounds `min` to `max`: its footprint a

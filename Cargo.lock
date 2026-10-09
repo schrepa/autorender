@@ -2074,7 +2074,9 @@ version = "0.1.0"
 dependencies = [
  "engine_assetc",
  "engine_dev",
+ "engine_render",
  "engine_scene",
+ "naga",
  "serde_json",
 ]
 

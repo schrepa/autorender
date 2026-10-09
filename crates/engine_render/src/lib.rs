@@ -5,8 +5,7 @@
 
 pub use engine_core::RenderStats;
 
-#[cfg(target_arch = "wasm32")]
-mod bindings;
+pub mod bindings;
 #[cfg(target_arch = "wasm32")]
 mod cached;
 #[cfg(target_arch = "wasm32")]
@@ -24,6 +23,7 @@ mod deformation;
 mod depth_pyramid;
 #[cfg(target_arch = "wasm32")]
 mod entries;
+pub mod gpu_layouts;
 #[cfg(target_arch = "wasm32")]
 mod gpu_uploads;
 #[cfg(target_arch = "wasm32")]
@@ -39,6 +39,7 @@ mod probes;
 mod render_graph;
 #[cfg(target_arch = "wasm32")]
 mod retained_uploads;
+pub mod shaders;
 #[cfg(target_arch = "wasm32")]
 mod shadow_fit;
 #[cfg(target_arch = "wasm32")]

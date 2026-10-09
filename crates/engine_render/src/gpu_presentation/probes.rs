@@ -5,7 +5,7 @@
 
 use engine_core::PoseRows;
 
-use super::groups::PROBE;
+use super::groups::PROBE_FACES;
 use super::{GROUP, GpuPresentationPass, compact_group, entry, storage};
 use crate::batches::DrawBatch;
 use crate::gpu_data::{FLAG_PROBE, PresentationFrame, STILL_FRAMES, frustum_uniform};
@@ -237,7 +237,7 @@ impl GpuPresentationPass {
                 &self.occlusion_counts,
                 "engine/presentation-probe-compact-group",
                 frame,
-                PROBE,
+                PROBE_FACES,
             ),
         }
     }
@@ -249,7 +249,7 @@ impl GpuPresentationPass {
         batch: &DrawBatch,
         index: usize,
     ) -> (Ids<'a>, &'a wgpu::Buffer, u64) {
-        self.groups.draw_source(batch, index, PROBE, 0)
+        self.groups.draw_source(batch, index, PROBE_FACES, 0)
     }
 
     /// Each slot's pose fingerprint and still frames, and the

@@ -6,13 +6,11 @@
 use engine_core::PoseRows;
 
 use super::storage;
+use crate::gpu_layouts::constants::CARD_VERTICES;
 
 /// The share of its distance past a switch the eye goes before a candidate
 /// switches back (`presentation.wgsl`'s `fade_levels`).
 pub(super) const FADE_MARGIN: f32 = 0.1;
-
-/// Vertices of an impostor card: two triangles.
-const CARD_VERTICES: u32 = 6;
 
 /// Each slot's level state, and the fading cards' draw arguments and
 /// instances.

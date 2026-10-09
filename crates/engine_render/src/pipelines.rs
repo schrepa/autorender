@@ -11,7 +11,7 @@ use std::{
     },
 };
 
-use crate::bindings::{Kind, Sample, Sampling, Stages, Table, View};
+use crate::bindings::{Format, Kind, Sample, Sampling, Stages, Table, View};
 
 thread_local! {
     static CREATED: Cell<u32> = const { Cell::new(0) };
@@ -122,12 +122,12 @@ fn binding_type(kind: Kind) -> wgpu::BindingType {
         },
         Kind::Storage(format) => wgpu::BindingType::StorageTexture {
             access: wgpu::StorageTextureAccess::WriteOnly,
-            format,
+            format: texture_format(format),
             view_dimension: wgpu::TextureViewDimension::D2,
         },
         Kind::Storage3d(format) => wgpu::BindingType::StorageTexture {
             access: wgpu::StorageTextureAccess::WriteOnly,
-            format,
+            format: texture_format(format),
             view_dimension: wgpu::TextureViewDimension::D3,
         },
         Kind::Sampler(sampling) => wgpu::BindingType::Sampler(match sampling {
@@ -135,6 +135,17 @@ fn binding_type(kind: Kind) -> wgpu::BindingType {
             Sampling::NonFiltering => wgpu::SamplerBindingType::NonFiltering,
             Sampling::Comparison => wgpu::SamplerBindingType::Comparison,
         }),
+    }
+}
+
+/// The `wgpu` format of `format`.
+fn texture_format(format: Format) -> wgpu::TextureFormat {
+    match format {
+        Format::R32Float => wgpu::TextureFormat::R32Float,
+        Format::R32Uint => wgpu::TextureFormat::R32Uint,
+        Format::Rgba8Snorm => wgpu::TextureFormat::Rgba8Snorm,
+        Format::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
+        Format::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
     }
 }
 
@@ -486,6 +497,25 @@ pub(crate) struct Fullscreen<'a> {
     pub targets: &'a [Option<wgpu::ColorTargetState>],
     pub depth: Option<wgpu::DepthStencilState>,
 }
+
+/// The vertex attributes of upload struct `$ty`'s fields
+/// (`crate::gpu_layouts`): `Type { location => field as Format, .. }`, each
+/// at its field's offset. A format whose size differs from its field's fails
+/// to compile.
+macro_rules! vertex_attributes {
+    ($ty:ident { $($location:literal => $field:ident as $format:ident),+ $(,)? }) => {
+        [$({
+            const FIELD: &$crate::gpu_layouts::Field = $ty::LAYOUT.field(stringify!($field));
+            const _: () = assert!(wgpu::VertexFormat::$format.size() as usize == FIELD.size);
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::$format,
+                offset: FIELD.offset as u64,
+                shader_location: $location,
+            }
+        }),+]
+    };
+}
+pub(crate) use vertex_attributes;
 
 /// The pipeline of a fullscreen pass.
 pub(crate) fn fullscreen(device: &wgpu::Device, pass: &Fullscreen<'_>) -> wgpu::RenderPipeline {

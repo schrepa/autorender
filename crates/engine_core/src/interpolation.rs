@@ -1085,11 +1085,12 @@ fn compatible_scales(previous: &NodePose, current: &NodePose) -> bool {
     })
 }
 
-// About 3.624 degrees of physical rotation. Normalized lerp removes the three
-// sine evaluations on ordinary small fixed-step motion. The ideal angular
-// deviation is below 1.1e-6 rad; tests allow 1e-5 rad including f32 rounding.
-// This is an explicit interpolation policy, not bit-equivalent SLERP.
-const LINEAR_ROTATION_DOT_THRESHOLD: f32 = 0.9995;
+/// The rotation dot product above which interpolation blends linearly:
+/// about 3.624 degrees of physical rotation. Normalized lerp removes the three
+/// sine evaluations on ordinary small fixed-step motion. The ideal angular
+/// deviation is below 1.1e-6 rad. This is an explicit interpolation policy,
+/// not bit-equivalent SLERP.
+pub const LINEAR_ROTATION_DOT_THRESHOLD: f32 = 0.9995;
 
 fn blend_rotation(previous: Quat, current: Quat, alpha: f32) -> Quat {
     let previous = previous.normalize();

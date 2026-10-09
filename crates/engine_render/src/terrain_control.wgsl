@@ -27,10 +27,10 @@ struct Job {
 @group(0) @binding(3) var control: texture_storage_2d<r32uint, write>;
 
 // Texels along a layer's side: a tile's samples and their border.
-const SIZE: u32 = 259u;
+const TILE_STRIDE: u32 = 259u;
 const NONE: u32 = 0xffffffffu;
-const STACK: u32 = 16u;
-const MATERIALS: u32 = 64u;
+const MAX_STACK: u32 = 16u;
+const MAX_MATERIALS: u32 = 64u;
 const RIVER_FAR: f32 = 1.0e9;
 const PATH_FAR: f32 = 1.0e9;
 
@@ -402,7 +402,7 @@ fn height_at(column: u32, row: u32) -> f32 {
 }
 
 fn sample_inputs(column: u32, row: u32) -> Inputs {
-    let last = SIZE - 1u;
+    let last = TILE_STRIDE - 1u;
     let up = select(row - 1u, 0u, row == 0u);
     let down = min(row + 1u, last);
     let left = select(column - 1u, 0u, column == 0u);
@@ -477,12 +477,12 @@ fn input_ramp(code: u32, inputs: Inputs, low: f32, high: f32) -> f32 {
 
 // The mask whose code starts at `start`.
 fn evaluate(start: u32, inputs: Inputs) -> f32 {
-    var stack: array<f32, STACK>;
+    var stack: array<f32, MAX_STACK>;
     var top = 0u;
     var pc = start;
     loop {
         let code = data[pc];
-        if code == OP_END || top > STACK {
+        if code == OP_END || top > MAX_STACK {
             break;
         }
         switch code {
@@ -554,7 +554,7 @@ fn evaluate(start: u32, inputs: Inputs) -> f32 {
 
 @compute @workgroup_size(8, 8)
 fn tile_control(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= SIZE || id.y >= SIZE {
+    if id.x >= TILE_STRIDE || id.y >= TILE_STRIDE {
         return;
     }
     let inputs = sample_inputs(id.x, id.y);
@@ -563,8 +563,8 @@ fn tile_control(@builtin(global_invocation_id) id: vec3<u32>) {
     // Later biomes and layers paint over earlier ones: walk them from the
     // last, each taking what the later ones left, until nothing is left;
     // materials' weights in the order they first weigh.
-    var materials: array<u32, MATERIALS>;
-    var weights: array<f32, MATERIALS>;
+    var materials: array<u32, MAX_MATERIALS>;
+    var weights: array<f32, MAX_MATERIALS>;
     var count = 0u;
     var remaining = 1.0;
     var biome = 0u;
@@ -605,7 +605,7 @@ fn tile_control(@builtin(global_invocation_id) id: vec3<u32>) {
                             break;
                         }
                     }
-                    if !placed && count < MATERIALS {
+                    if !placed && count < MAX_MATERIALS {
                         materials[count] = material;
                         weights[count] = weight;
                         count += 1u;

@@ -15,14 +15,12 @@ use crate::browser::FramePoses;
 use crate::buffers::{ReadbackRing, entry};
 use crate::cached::Cached;
 use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_LEVELS};
+use crate::gpu_layouts::constants::DIRTY_WORDS;
 use crate::profiling::{GpuProfiler, Span};
 use crate::shadow_fit::TILE_WORDS;
 
 // Bindings need at least one element; exceeds every record stride.
 const MIN_STORAGE_BYTES: u64 = 256;
-// Dirty tiles of the kept map, then of each kept level, then
-// the four caster totals, read back together.
-const DIRTY_WORDS: usize = TILE_WORDS * (1 + MAX_LEVELS);
 const READBACK_BYTES: u64 = (DIRTY_WORDS as u64 + 4) * 4;
 // Bytes of a slot's stillness: its pose key, its still-frame count and
 // kept-map tiles, and its footprint in the kept levels.

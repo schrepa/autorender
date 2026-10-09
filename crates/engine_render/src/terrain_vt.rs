@@ -41,7 +41,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use bytemuck::{Pod, Zeroable};
 use engine_core::glam::Vec3;
 use engine_core::math::{max, min};
 use engine_core::{RenderTerrains, TerrainSettings, TileKey};
@@ -50,17 +49,12 @@ use crate::bindings::{
     TERRAIN_VT_BAKE, TERRAIN_VT_CAMERA, TERRAIN_VT_FEEDBACK, TERRAIN_VT_TERRAIN,
 };
 use crate::buffers::{READBACKS, ReadbackRing};
+use crate::gpu_layouts::constants::VT_MIPS as MIPS;
+pub(crate) use crate::gpu_layouts::constants::VT_PAGE_TEXELS as PAGE_TEXELS;
+pub(crate) use crate::gpu_layouts::constants::VT_SLOT_TEXELS as SLOT_TEXELS;
+use crate::gpu_layouts::constants::VT_WINDOW as WINDOW;
+use crate::gpu_layouts::constants::{VT_FEEDBACK_BLOCK, VT_FEEDBACK_GROUP};
 
-/// Texels along a page's side, the border around it, and a slot's side.
-pub(crate) const PAGE_TEXELS: u32 = 128;
-const BORDER_TEXELS: u32 = 8;
-pub(crate) const SLOT_TEXELS: u32 = PAGE_TEXELS + 2 * BORDER_TEXELS;
-/// Pages along a side of each mip's window around the eye: as many as
-/// cover the distances where pixels read the mip, whatever it is.
-const WINDOW: i32 = 64;
-/// Mips, and the meters mip 0's texels span: about the material maps'
-/// own texels where they repeat every few meters.
-const MIPS: usize = 18;
 const TEXEL: f32 = 1.0 / 256.0;
 /// Words a textured terrain's windows and tables take in the directory
 /// buffer, and its bits of pages wanted.
@@ -91,14 +85,7 @@ struct PageKey {
     page: [i32; 2],
 }
 
-/// WGSL `TerrainVtBake`: a page's slot, mip and page along x and z.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-struct BakeRecord {
-    slot: u32,
-    mip: u32,
-    page: [i32; 2],
-}
+use crate::gpu_layouts::terrain_vt::BakeRecord;
 
 /// A textured terrain: its index this frame (its windows' and tables'
 /// place, and its feedback bits'), its windows' first pages, its table
@@ -1041,7 +1028,9 @@ impl VirtualTexture {
                     continue;
                 };
                 pass.set_bind_group(1, &terrain_group, &[0, uniform]);
-                pass.dispatch_workgroups(size.0.div_ceil(64), size.1.div_ceil(64), 1);
+                // Each invocation tests one pixel of an 8 by 8 block.
+                let span = VT_FEEDBACK_GROUP * VT_FEEDBACK_BLOCK;
+                pass.dispatch_workgroups(size.0.div_ceil(span), size.1.div_ceil(span), 1);
             }
         }
         let snapshot: Snapshot = self

@@ -10,38 +10,27 @@
 
 use std::collections::HashMap;
 
-use bytemuck::{Pod, Zeroable};
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::{RenderTerrain, RenderTerrains, TerrainSettings, TileKey};
 
 use crate::bindings::TERRAIN_HORIZON;
+use crate::gpu_layouts::constants::HORIZON_GROUP as GROUP;
+use crate::gpu_layouts::constants::MISSING;
 
 /// A horizon map texel: the horizon above the ground, its distance and the
 /// ground's height, filtered.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The records' texels: two per terrain.
 const RECORD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
-/// Lines of a grid a workgroup sweeps.
-const GROUP: u32 = 64;
 /// Uniform offset alignment between terrains' builds.
 const SLOT: u64 = 256;
-/// A source tile no resident level holds.
-const MISSING: u32 = u32::MAX;
 /// The steepest rise toward the sun builds sweep with, near the zenith.
 const MOST_RISE: f32 = 1.0e3;
 /// Texels of the horizon map within which terrain still draws into the
 /// near cascades, which shadow fine detail its texels miss.
 const CASCADE_TEXELS: f32 = 4.0;
 
-/// WGSL `Build` (`terrain_horizon.wgsl`).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct BuildUniform {
-    place: [f32; 4],
-    shape: [f32; 4],
-    origin: [f32; 4],
-    counts: [u32; 4],
-}
+use crate::gpu_layouts::terrain_horizons::BuildUniform;
 
 /// What a terrain's layer was built from: its build's uniform (whose last
 /// word, the table's place, is ignored) and its tile table.

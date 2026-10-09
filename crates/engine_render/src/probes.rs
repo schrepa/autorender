@@ -12,6 +12,7 @@ use engine_core::{
 #[cfg(target_arch = "wasm32")]
 use crate::cached::Cached;
 use crate::gpu_data::STILL_FRAMES;
+use crate::gpu_layouts::constants::PROBE_ENTRY_WORDS;
 
 /// Cube faces, in the order WebGPU samples them: +X, -X, +Y, -Y, +Z, -Z.
 pub(crate) const FACES: usize = 6;
@@ -403,24 +404,27 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
     // Each entry holds its probe's record: surfaces read no index first.
     for &index in lists.iter().flatten() {
         let (probe, cube) = probes[index as usize];
-        words.push([
-            probe.center.x.to_bits(),
-            probe.center.y.to_bits(),
-            probe.center.z.to_bits(),
-            probe.blend.to_bits(),
-        ]);
-        words.push([
-            probe.extent.x.to_bits(),
-            probe.extent.y.to_bits(),
-            probe.extent.z.to_bits(),
-            cube,
-        ]);
         let interior = probe.interior;
-        words.push([
-            interior.map_or(1.0, |interior| interior.sky).to_bits(),
-            interior.map_or(1.0, |interior| interior.sun).to_bits(),
-            u32::from(interior.is_some()),
-            u32::from(cube != 0),
-        ]);
+        let entry: [[u32; 4]; PROBE_ENTRY_WORDS] = [
+            [
+                probe.center.x.to_bits(),
+                probe.center.y.to_bits(),
+                probe.center.z.to_bits(),
+                probe.blend.to_bits(),
+            ],
+            [
+                probe.extent.x.to_bits(),
+                probe.extent.y.to_bits(),
+                probe.extent.z.to_bits(),
+                cube,
+            ],
+            [
+                interior.map_or(1.0, |interior| interior.sky).to_bits(),
+                interior.map_or(1.0, |interior| interior.sun).to_bits(),
+                u32::from(interior.is_some()),
+                u32::from(cube != 0),
+            ],
+        ];
+        words.extend(entry);
     }
 }

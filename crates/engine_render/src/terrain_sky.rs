@@ -12,33 +12,23 @@
 
 use std::collections::HashMap;
 
-use bytemuck::{Pod, Zeroable};
 use engine_core::{RenderTerrain, RenderTerrains, TerrainSettings, TileKey};
 
 use crate::bindings::TERRAIN_SKY;
+use crate::gpu_layouts::constants::MISSING;
+use crate::gpu_layouts::constants::SKY_MAP_GROUP as GROUP;
 use crate::terrain_horizons::{source_level, tile_table};
 
 /// A sky map texel: the visibility in red.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-/// Workgroup side of a build.
-const GROUP: u32 = 8;
 /// Texels a frame builds of each terrain's map.
 const TEXELS_PER_FRAME: u32 = 65_536;
 /// How far horizons are looked for, in meters.
-const REACH: f32 = 3_000.0;
+const HORIZON_REACH: f32 = 3_000.0;
 /// Uniform offset alignment between terrains' builds.
 const SLOT: u64 = 256;
-/// A source tile no resident level holds.
-const MISSING: u32 = u32::MAX;
 
-/// WGSL `Build` (`terrain_sky.wgsl`).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct BuildUniform {
-    shape: [f32; 4],
-    counts: [u32; 4],
-    rows: [u32; 4],
-}
+use crate::gpu_layouts::terrain_sky::BuildUniform;
 
 /// What a terrain's layer is built from: its build's shape and counts
 /// (without the table's place), and its tile table.
@@ -366,7 +356,7 @@ fn build_uniform(terrain: &RenderTerrain, settings: &TerrainSettings, size: u32)
     let extent = pyramid.extent();
     let [tiles_x, tiles_z] = pyramid.tiles(level);
     BuildUniform {
-        shape: [extent.x, extent.y, pyramid.spacing(level), REACH],
+        shape: [extent.x, extent.y, pyramid.spacing(level), HORIZON_REACH],
         counts: [size, tiles_x, tiles_z, 0],
         rows: [0; 4],
     }

@@ -33,7 +33,7 @@ struct Build {
 @group(0) @binding(3) var sky: texture_storage_2d<rgba8unorm, write>;
 
 const MISSING: u32 = 0xffffffffu;
-const TILE_SAMPLES: f32 = 256.0;
+const TILE_QUADS: f32 = 256.0;
 const DIRECTIONS: u32 = 16u;
 const PI: f32 = 3.14159265;
 // How much each step outward grows.
@@ -49,8 +49,8 @@ const RIDGE_SCALE: f32 = 80.0;
 // tile.
 fn source_height(point: vec2<f32>, fallback: f32) -> f32 {
     let tiles = build.counts.yz;
-    let samples = clamp(point / build.shape.z, vec2<f32>(0.0), vec2<f32>(tiles) * TILE_SAMPLES);
-    let tile = min(vec2<u32>(samples / TILE_SAMPLES), tiles - vec2<u32>(1u));
+    let samples = clamp(point / build.shape.z, vec2<f32>(0.0), vec2<f32>(tiles) * TILE_QUADS);
+    let tile = min(vec2<u32>(samples / TILE_QUADS), tiles - vec2<u32>(1u));
     let entry = tile_layers[build.counts.w + tile.y * tiles.x + tile.x];
     if entry == MISSING {
         return fallback;

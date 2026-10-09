@@ -5,8 +5,9 @@
 
 use super::{LEVEL_VIEW, SHADOW_FORMAT, VIEW_STRIDE};
 use crate::bindings::{SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW};
+use crate::gpu_data::Vertex;
 use crate::gpu_data::{SHADOW_SHADER, ShadowCullUniform};
-use crate::pipelines::{group, layout};
+use crate::pipelines::{group, layout, vertex_attributes};
 
 /// Shadow pipelines and their fixed bindings, created with the first frame
 /// that has shadows: games without them never compile them.
@@ -97,13 +98,7 @@ fn caster_pipeline(
 }
 
 impl ShadowPipelines {
-    /// `layout`: the renderer's mesh vertex stride and the texture
-    /// coordinate offset in a vertex.
-    pub(super) fn new(
-        device: &wgpu::Device,
-        (vertex_stride, uv_offset): (u64, u64),
-        material_layout: &wgpu::BindGroupLayout,
-    ) -> Self {
+    pub(super) fn new(device: &wgpu::Device, material_layout: &wgpu::BindGroupLayout) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/shadows.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHADOW_SHADER.into()),
@@ -138,28 +133,20 @@ impl ShadowPipelines {
         // Slot poses, and slot colors and palettes for masked and skinned
         // casters.
         let pose_layout = layout(device, &SHADOW_POSES);
-        let vertex_attributes = wgpu::vertex_attr_array![0 => Float32x3];
-        let masked_vertex_attributes = [
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
-                offset: 0,
-                shader_location: 0,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: uv_offset,
-                shader_location: 7,
-            },
-        ];
+        let vertex_attributes = vertex_attributes!(Vertex { 0 => position as Float32x3 });
+        let masked_vertex_attributes = vertex_attributes!(Vertex {
+            0 => position as Float32x3,
+            7 => uv as Float32x2,
+        });
         let slot_attributes = wgpu::vertex_attr_array![2 => Uint32];
         let skin_layout = crate::browser::skin_layout();
         let mesh_layout = wgpu::VertexBufferLayout {
-            array_stride: vertex_stride,
+            array_stride: size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &vertex_attributes,
         };
         let masked_mesh_layout = wgpu::VertexBufferLayout {
-            array_stride: vertex_stride,
+            array_stride: size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &masked_vertex_attributes,
         };

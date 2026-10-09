@@ -21,22 +21,23 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use bytemuck::{Pod, Zeroable};
+use bytemuck::Zeroable;
 use engine_core::glam::{DVec3, Mat4, Vec3, Vec4};
 use engine_core::{RenderTerrain, RenderTerrains, TileKey};
 use wgpu::util::DeviceExt;
 
 use crate::bindings::{SHADOW_VIEW, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS};
 use crate::cached::Cached;
+use crate::gpu_layouts::constants::NOT_RESIDENT;
+use crate::gpu_layouts::constants::TERRAIN_GRID as GRID;
+use crate::gpu_layouts::constants::TERRAIN_GRID_VERTICES as GRID_VERTICES;
+use crate::gpu_layouts::constants::{CONTROL_GROUP, NORMALS_GROUP};
 use crate::mipmaps::MipGenerator;
 use crate::render_graph::Targets;
 use crate::terrain_horizons::Horizons;
 use crate::terrain_maps::TerrainMaps;
 use crate::terrain_sky::SkyMaps;
 
-/// Vertices along a patch side, and the grid's before the skirts'.
-const GRID: u32 = engine_core::terrain_data::PATCH_QUADS + 1;
-const GRID_VERTICES: u32 = GRID * GRID;
 /// Triangles a patch draws: its grid's and its skirts'.
 pub(crate) const PATCH_TRIANGLES: u32 = 2 * (GRID - 1) * (GRID - 1) + 8 * (GRID - 1);
 /// Texels along each side of a layer: a tile's samples with their border.
@@ -51,32 +52,12 @@ const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Snorm;
 /// Each tile's control values: its samples' two strongest
 /// materials, their blend and biome, read texel by texel.
 const CONTROL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
-/// Surface materials every terrain together can show: as many as fit the
-/// 16 KiB uniform binding every device allows.
-const PALETTE_ENTRIES: usize = 16_384 / size_of::<PaletteEntry>();
-/// Bytes of the palette.
-pub(crate) const PALETTE_BYTES: usize = PALETTE_ENTRIES * size_of::<PaletteEntry>();
-/// WGSL `CoverSpec` (`cover_grow.wgsl`): a surface material's cover,
-/// at its palette entry's index: blades per square meter,
-/// the shortest and tallest blades and their root width, then its tip
-/// color and sway.
-type CoverEntry = [f32; 8];
+use crate::gpu_layouts::terrain::{CoverEntry, PALETTE_BYTES, PALETTE_ENTRIES, PaletteEntry};
 /// The generations of what the terrain group binds: the atlas, uniforms,
 /// hole bits, directory, material maps, sky maps and deformation map.
 type GroupKey = (u64, u64, u64, u64, u64, u64, u64);
-/// A directory entry of a tile not resident.
-const NOT_RESIDENT: u32 = u32::MAX;
 
-/// A patch as `PatchInput` reads it.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub(crate) struct PatchRecord {
-    first: [i32; 2],
-    shape: [f32; 4],
-    atlas: [u32; 4],
-    holes: u32,
-    fade: f32,
-}
+pub(crate) use crate::gpu_layouts::terrain::PatchRecord;
 
 /// Seconds over which a tile that arrived grows out of its parent level,
 /// its patches drawn morphed into the parent's at first, and
@@ -89,44 +70,12 @@ const NO_HOLES: u32 = u32::MAX;
 /// 32-bit words of a tile's hole bits.
 const HOLE_WORDS: usize = ((LAYER_SIZE - 2) * (LAYER_SIZE - 2)).div_ceil(32) as usize;
 
-/// WGSL `TerrainView`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct ViewUniform {
-    relative_view_projection: [[f32; 4]; 4],
-    eye_offset: [f32; 4],
-    inverse_relative_view_projection: [[f32; 4]; 4],
-}
+use crate::gpu_layouts::terrain::ViewUniform;
 
-/// WGSL `TerrainUniform`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct TerrainUniform {
-    anchor: [f32; 4],
-    eye: [f32; 4],
-    origin: [f32; 4],
-    directory: [u32; 4],
-    relief: [f32; 4],
-    deform_grid: [i32; 4],
-    deform: [f32; 4],
-    cover: [f32; 4],
-    vt: [u32; 4],
-    vt_scale: [f32; 4],
-    vt_layout: [u32; 4],
-}
+use crate::gpu_layouts::terrain::TerrainUniform;
 
 /// Bytes of a terrain's uniform.
 pub(crate) const TERRAIN_UNIFORM_BYTES: usize = size_of::<TerrainUniform>();
-
-/// WGSL `TerrainPaletteEntry`: a surface material's linear color (its
-/// base color factor with maps) and roughness; its tiling, height
-/// contrast, projection and maps' layer plus one (0 without maps); its
-/// normal scale, occlusion strength, metalness and mean occlusion; its
-/// maps' mean color and roughness, its factors applied; the meters its
-/// relief spans and tracks sink it at most;
-/// and its cover's canopy: the linear color its blades show
-/// seen from afar and their leaves' area per square meter of ground.
-type PaletteEntry = [f32; 24];
 
 /// What ground cover's growth reads of the terrain pass.
 pub(crate) struct CoverSources<'a> {
@@ -1251,7 +1200,11 @@ impl TerrainPass {
                     ],
                 );
                 pass.set_bind_group(0, &group, &[]);
-                pass.dispatch_workgroups(LAYER_SIZE.div_ceil(8), LAYER_SIZE.div_ceil(8), 1);
+                pass.dispatch_workgroups(
+                    LAYER_SIZE.div_ceil(CONTROL_GROUP),
+                    LAYER_SIZE.div_ceil(CONTROL_GROUP),
+                    1,
+                );
             }
         }
         queue.submit([encoder.finish()]);
@@ -1341,7 +1294,11 @@ impl TerrainPass {
                     ],
                 );
                 pass.set_bind_group(0, &group, &[]);
-                pass.dispatch_workgroups(LAYER_SIZE.div_ceil(16), LAYER_SIZE.div_ceil(16), 1);
+                pass.dispatch_workgroups(
+                    LAYER_SIZE.div_ceil(NORMALS_GROUP),
+                    LAYER_SIZE.div_ceil(NORMALS_GROUP),
+                    1,
+                );
             }
         }
         queue.submit([encoder.finish()]);
@@ -1432,32 +1389,19 @@ impl TerrainPass {
                                 cover.density * height * cover.width * 0.6,
                             ]
                         });
-                        [
-                            color[0],
-                            color[1],
-                            color[2],
-                            roughness,
-                            look.tiling,
-                            look.height_contrast,
-                            projection,
-                            layer.map_or(0.0, |layer| (layer + 1) as f32),
-                            scale,
-                            occlusion,
-                            metalness,
-                            far_occlusion,
-                            far[0],
-                            far[1],
-                            far[2],
-                            far[3],
-                            look.relief,
-                            look.deform,
-                            slopes,
-                            0.0,
-                            canopy[0],
-                            canopy[1],
-                            canopy[2],
-                            canopy[3],
-                        ]
+                        PaletteEntry {
+                            color: [color[0], color[1], color[2], roughness],
+                            params: [
+                                look.tiling,
+                                look.height_contrast,
+                                projection,
+                                layer.map_or(0.0, |layer| (layer + 1) as f32),
+                            ],
+                            maps: [scale, occlusion, metalness, far_occlusion],
+                            far,
+                            relief: [look.relief, look.deform, slopes, 0.0],
+                            canopy,
+                        }
                     }),
             );
         }
@@ -1492,17 +1436,9 @@ impl TerrainPass {
                     [0.0; 2]
                 });
             entries.extend(kept.iter().map(|look| {
-                look.cover.map_or([0.0; 8], |cover| {
-                    [
-                        cover.density,
-                        cover.height[0],
-                        cover.height[1],
-                        cover.width,
-                        cover.color[0],
-                        cover.color[1],
-                        cover.color[2],
-                        cover.sway,
-                    ]
+                look.cover.map_or(CoverEntry::zeroed(), |cover| CoverEntry {
+                    shape: [cover.density, cover.height[0], cover.height[1], cover.width],
+                    color: [cover.color[0], cover.color[1], cover.color[2], cover.sway],
                 })
             }));
         }

@@ -85,7 +85,7 @@ struct Batch {
     start: u32,
     count: u32,
     index_count: u32,
-    pad: u32,
+    group: u32,
     bounds_min: vec4<f32>,
     bounds_max: vec4<f32>,
     // The mesh's first index and base vertex in the mesh arena, and the

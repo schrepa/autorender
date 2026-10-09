@@ -14,45 +14,24 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use bytemuck::{Pod, Zeroable};
 use engine_core::GroundCover;
 use engine_core::glam::{Mat4, Vec3, Vec4};
 
 use crate::bindings::{COVER_DRAW, COVER_GROW};
 use crate::buffers::ReadbackRing;
 use crate::cached::Cached;
+use crate::gpu_layouts::constants::BLADE_BYTES;
 use crate::render_graph::Targets;
 use crate::terrain::TerrainPass;
 
-/// Bytes of a blade (`CoverBlade`).
-const BLADE_BYTES: u64 = 32;
 /// Uniform offset alignment between terrains' growth.
 const SLOT: u64 = 256;
 /// Bytes of the growth's uniform (`Grow`).
 pub(crate) const GROW_BYTES: u64 = size_of::<GrowUniform>() as u64;
 
-/// WGSL `Grow` of `cover_grow.wgsl`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct GrowUniform {
-    origin: [f32; 4],
-    eye: [f32; 4],
-    grid: [i32; 4],
-    counts: [u32; 4],
-    scale: [f32; 4],
-    tier: [f32; 4],
-    planes: [[f32; 4]; 6],
-    deform_grid: [i32; 4],
-    deform: [f32; 4],
-    ranges: [[f32; 4]; 2],
-}
+use crate::gpu_layouts::ground_cover::GrowUniform;
 
-/// WGSL `CoverFrame` of `meshes/cover.wgsl`.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-struct FrameUniform {
-    wind: [f32; 4],
-}
+use crate::gpu_layouts::ground_cover::FrameUniform;
 
 /// One tier of one terrain's growth this frame: its uniform's offset and
 /// its grid's cells along each side.
@@ -334,7 +313,7 @@ impl GroundCoverPass {
                     crate::buffers::entry("counts", &self.counts),
                     crate::buffers::entry("args", &self.args),
                     crate::buffers::entry("deformation", sources.deformation),
-                    ("sky", crate::pipelines::view(sources.sky)),
+                    ("sky_maps", crate::pipelines::view(sources.sky)),
                 ],
             );
             self.grow_group.set(key, group);

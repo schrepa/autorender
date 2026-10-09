@@ -167,17 +167,17 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     // fragments show as much as a repeat's pixels do, cards taking over
     // where a texel spans a pixel.
     let footprint = max(length(dpdx(uv)), length(dpdy(uv)));
-    if material_flag(4096u, WORLD_MAPPING) {
+    if material_flag(VARIANT_WORLD_MAPPING, WORLD_MAPPING) {
         texels = world_mean_texels(texels,
             select(0.0, world_map_detail(footprint), footprint > 0.0), geometric);
     }
     var normal = geometric;
-    if material_flag(2u, NORMAL_MAP) {
+    if material_flag(VARIANT_NORMAL_MAP, NORMAL_MAP) {
         normal = mapped_normal(geometric, local_dx, local_dy, texels.normal_dx,
             texels.normal_dy, texels.normal, material_maps.params.x);
     }
     var albedo = texels.base.rgb * color.rgb;
-    if material_flag(8192u, TOP_LAYER) {
+    if material_flag(VARIANT_TOP_LAYER, TOP_LAYER) {
         // The top layer settles on the faces turned up as fragments settle
         // it, its noise's breakup averaged over the texel.
         let up = stable_normalize(normal).y;
@@ -188,7 +188,7 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     }
     var emissive = vec3<f32>(0.0);
     var occlusion = 1.0;
-    if material_flag(1u, MATERIAL_MAPS) {
+    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
         emissive = texels.emissive;
         occlusion = 1.0 + material_maps.params.y * (texels.occlusion - 1.0);
     }

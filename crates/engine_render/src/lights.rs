@@ -9,7 +9,9 @@
 //! grows to what a frame read back needed. Everything here is created with
 //! the first frame that has lights.
 
-use bytemuck::{Pod, Zeroable};
+use crate::gpu_layouts::constants::GROUP_LIGHTS as LIGHTS;
+pub(crate) use crate::gpu_layouts::constants::LIGHT_BYTES;
+use crate::gpu_layouts::constants::NO_SLOT;
 use engine_core::{RenderLight, glam::Mat4};
 
 /// Screen tiles across and down, and exponential depth slices.
@@ -18,37 +20,13 @@ pub(crate) const TILES_Y: u32 = 9;
 pub(crate) const SLICES: u32 = 24;
 #[cfg(target_arch = "wasm32")]
 const CLUSTERS: u64 = (TILES_X * TILES_Y * SLICES) as u64;
-const NO_SLOT: u32 = u32::MAX;
-/// Lights each binning workgroup places (`LIGHTS` of lights.wgsl).
-#[cfg(target_arch = "wasm32")]
-const LIGHTS: u32 = 8;
-/// Bytes of a binned light (WGSL `Light`).
-pub(crate) const LIGHT_BYTES: u64 = 48;
 // Three counters, padded.
 #[cfg(target_arch = "wasm32")]
 const TOTALS_BYTES: u64 = 16;
 /// The per-cluster budget of clusters without one.
 pub(crate) const NO_BUDGET: u32 = u32::MAX;
 
-/// WGSL `Clusters` of `lights.wgsl` and `meshes/declarations.wgsl`: 144 bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct ClusterUniform {
-    pub view_projection: [[f32; 4]; 4],
-    /// Depth along the view of point p: dot(xyz, p) + w (clip w).
-    pub depth: [f32; 4],
-    /// x and y projection scales, clustered depth range start and end.
-    pub projection: [f32; 4],
-    /// Tile width and height in pixels; slice = log2(depth) * z + w.
-    pub grid: [f32; 4],
-    /// Tiles across and down, depth slices, and the per-cluster budget
-    /// ([`NO_BUDGET`] without one).
-    pub counts: [u32; 4],
-    /// Lights, an unused word, the entries the cluster lists' storage holds,
-    /// and 1 when only lights without a slot or on still slots are binned
-    /// (reflection probe faces).
-    pub lights: [u32; 4],
-}
+pub(crate) use crate::gpu_layouts::lights::ClusterUniform;
 
 impl ClusterUniform {
     /// Clusters of a `width` x `height` frame seen through the unjittered
@@ -111,19 +89,7 @@ impl ClusterUniform {
     }
 }
 
-/// WGSL `Input` of `lights.wgsl`: one extracted light, 64 bytes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-pub(crate) struct LightInput {
-    pub position: [f32; 3],
-    pub range: f32,
-    pub color: [f32; 3],
-    pub slot: u32,
-    pub direction: [f32; 3],
-    pub cos_inner: f32,
-    pub cos_outer: f32,
-    pub pad: [f32; 3],
-}
+pub(crate) use crate::gpu_layouts::lights::LightInput;
 
 impl From<&RenderLight> for LightInput {
     fn from(light: &RenderLight) -> Self {

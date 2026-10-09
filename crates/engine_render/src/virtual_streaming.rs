@@ -14,7 +14,7 @@
 use engine_core::VirtualMesh;
 
 /// No page in a slot, or no slot for a page.
-pub(crate) const NONE: u32 = u32::MAX;
+pub(crate) const NO_PAGE: u32 = u32::MAX;
 /// Frames a page must go unused before it makes room for another: longer
 /// than the read-backs reporting use take.
 const EVICT_AFTER: u64 = 8;
@@ -124,7 +124,7 @@ fn bits(words: &[u32]) -> impl Iterator<Item = u32> + '_ {
 pub(crate) struct Residency {
     pages: Vec<Page>,
     groups: Vec<Group>,
-    // Page in each slot, or NONE.
+    // Page in each slot, or NO_PAGE.
     slots: Vec<u32>,
     free: Vec<u32>,
     resident: usize,
@@ -222,7 +222,7 @@ impl Residency {
         self.slots
             .iter()
             .enumerate()
-            .filter(|&(_, &page)| page != NONE)
+            .filter(|&(_, &page)| page != NO_PAGE)
             .map(|(slot, &page)| (page, slot as u32))
             .collect()
     }
@@ -238,7 +238,7 @@ impl Residency {
             ) else {
                 continue;
             };
-            if entry.state != PageState::Absent || *held != NONE {
+            if entry.state != PageState::Absent || *held != NO_PAGE {
                 continue;
             }
             entry.state = PageState::Resident(slot);
@@ -252,7 +252,7 @@ impl Residency {
         }
         self.free = (0..self.slots.len() as u32)
             .rev()
-            .filter(|&slot| self.slots[slot as usize] == NONE)
+            .filter(|&slot| self.slots[slot as usize] == NO_PAGE)
             .collect();
         self.table_dirty = true;
         self.refresh(groups);
@@ -261,7 +261,7 @@ impl Residency {
     /// Adds `count` free slots (the pool grew).
     pub(crate) fn add_slots(&mut self, count: usize) {
         let start = self.slots.len() as u32;
-        self.slots.extend(std::iter::repeat_n(NONE, count));
+        self.slots.extend(std::iter::repeat_n(NO_PAGE, count));
         self.free.extend((start..start + count as u32).rev());
     }
 
@@ -349,7 +349,7 @@ impl Residency {
         let evictable = self
             .slots
             .iter()
-            .filter(|&&held| held != NONE && self.evictable(held, frame))
+            .filter(|&&held| held != NO_PAGE && self.evictable(held, frame))
             .count();
         limit
             .saturating_sub(self.resident)
@@ -378,7 +378,7 @@ impl Residency {
                 .slots
                 .iter()
                 .enumerate()
-                .filter(|&(_, &held)| held != NONE && self.evictable(held, frame))
+                .filter(|&(_, &held)| held != NO_PAGE && self.evictable(held, frame))
                 .min_by_key(|&(_, &held)| self.pages[held as usize].last_used)
                 .map(|(slot, &held)| (slot as u32, held));
             match victim {
@@ -427,7 +427,7 @@ impl Residency {
             let victim = self
                 .slots
                 .iter()
-                .filter(|&&held| held != NONE && !self.pages[held as usize].pinned)
+                .filter(|&&held| held != NO_PAGE && !self.pages[held as usize].pinned)
                 .min_by_key(|&&held| self.pages[held as usize].last_used)
                 .copied();
             let Some(victim) = victim else {
@@ -446,7 +446,7 @@ impl Residency {
             return;
         };
         self.pages[page as usize].state = PageState::Absent;
-        self.slots[slot as usize] = NONE;
+        self.slots[slot as usize] = NO_PAGE;
         self.resident -= 1;
         self.table_dirty = true;
         let groups = self.pages[page as usize].groups.clone();
@@ -488,7 +488,7 @@ impl Residency {
         })
     }
 
-    /// Each page's slot (NONE when absent), and whether it changed since the
+    /// Each page's slot (NO_PAGE when absent), and whether it changed since the
     /// last call.
     pub(crate) fn take_table(&mut self) -> Option<Vec<u32>> {
         std::mem::take(&mut self.table_dirty).then(|| {
@@ -496,7 +496,7 @@ impl Residency {
                 .iter()
                 .map(|page| match page.state {
                     PageState::Resident(slot) => slot,
-                    _ => NONE,
+                    _ => NO_PAGE,
                 })
                 .collect()
         })

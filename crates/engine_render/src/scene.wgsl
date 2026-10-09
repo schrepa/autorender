@@ -802,7 +802,7 @@ fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
 // cells of the sunlight passing the cloud layer up from its base, two cells
 // along x a word in half floats.
 const CLOUD_SHADOW_CELLS: u32 = 128u;
-@group(0) @binding(19) var<storage, read> cloud_shadows: array<u32>;
+@group(0) @binding(19) var<storage, read> cloud_shadows: array<u32, CLOUD_SHADOW_CELLS * CLOUD_SHADOW_CELLS / 2u>;
 
 fn cloud_shadow_cell(x: u32, z: u32) -> f32 {
     let index = z * CLOUD_SHADOW_CELLS + x;

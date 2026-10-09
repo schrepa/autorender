@@ -7,9 +7,9 @@
 use crate::bindings::{PYRAMID_DOWN, PYRAMID_EXTENT_BYTES, PYRAMID_FIRST};
 use crate::cached::Cached;
 use crate::gpu_data::{DEPTH_PYRAMID_SHADER, mip_levels};
+use crate::gpu_layouts::constants::PYRAMID_GROUP as GROUP;
 use crate::profiling::Span;
 
-const GROUP: u32 = 8;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
 struct Levels {

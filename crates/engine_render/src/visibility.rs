@@ -9,11 +9,11 @@ use crate::bindings::VISIBILITY_CLASSIFY;
 use crate::buffers::{storage, uniform};
 use crate::cached::Cached;
 use crate::gpu_data::VISIBILITY_SHADER;
+use crate::gpu_layouts::constants::RESOLVE_ARGS_GROUP;
+use crate::gpu_layouts::constants::VISIBILITY_TILE as TILE;
 
 /// Each pixel's visible entry plus one (0: none) and its triangle | bin << 7.
 pub(crate) const ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
-/// Pixels across a tile's side.
-const TILE: u32 = 8;
 /// Bytes between draws' uniforms: the uniform offset alignment every device
 /// supports.
 pub(crate) const DRAW_STRIDE: u64 = 256;
@@ -208,7 +208,7 @@ impl VisibilityBuffer {
         pass.set_pipeline(&self.classify);
         pass.dispatch_workgroups(self.tiles.0, self.tiles.1, 1);
         pass.set_pipeline(&self.args);
-        pass.dispatch_workgroups((bins as u32).div_ceil(64).max(1), 1, 1);
+        pass.dispatch_workgroups((bins as u32).div_ceil(RESOLVE_ARGS_GROUP).max(1), 1, 1);
     }
 
     /// The dynamic offset of the uniform of bin `bin`'s draws in phase

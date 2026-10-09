@@ -1,6 +1,7 @@
 mod authoring;
 mod benchmarking;
 mod development;
+mod gpu;
 mod importing;
 mod iteration_build;
 mod pipeline;
@@ -80,6 +81,7 @@ fn execute() -> Result<(), String> {
             authoring::write_schema(&root)?;
             authoring::write_generated(&root)
         }
+        "gpu" => gpu::check(&root),
         "wasm-bindgen-version" => {
             println!("{}", process::wasm_bindgen_version(&root)?);
             Ok(())
@@ -106,8 +108,9 @@ fn execute() -> Result<(), String> {
                           Measure fixed browser workloads with culling off/on; --output PATH, --baseline PATH, --max-regression-percent N\n\
                    schema Write the generated scene JSON schema, development protocol summary, client list and stats types\n\
                    smoke --list | --all | NAME...  List or run the browser smoke checks against a running dev server\n\
+                   gpu    Check the renderer's shaders against its Rust GPU layouts and bindings\n\
                    wasm-bindgen-version  Print the wasm-bindgen version Cargo.lock pins\n\
-                   lint   Check source/schema, formatting, native/Wasm Clippy, TypeScript\n\
+                   lint   Check source/schema, shaders against Rust (gpu), formatting, native/Wasm Clippy, TypeScript\n\
                    docs   Generate native workspace and browser API documentation\n\
                    help   Show this message"
             );

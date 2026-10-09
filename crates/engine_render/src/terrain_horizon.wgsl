@@ -40,17 +40,17 @@ const MISSING: u32 = 0xffffffffu;
 const OPEN: f32 = -1.0e6;
 // The lowest horizon above the ground maps store, within half floats.
 const LOWEST: f32 = -6.0e4;
-const TILE_SAMPLES: f32 = 256.0;
+const TILE_QUADS: f32 = 256.0;
 
 // The terrain's world height at terrain-local `point`, interpolated between
 // samples; OPEN outside it or where no level holds its tile.
 fn source_height(point: vec2<f32>) -> f32 {
     let samples = point / build.origin.z;
     let tiles = build.counts.yz;
-    if any(samples < vec2<f32>(0.0)) || any(samples > vec2<f32>(tiles) * TILE_SAMPLES) {
+    if any(samples < vec2<f32>(0.0)) || any(samples > vec2<f32>(tiles) * TILE_QUADS) {
         return OPEN;
     }
-    let tile = min(vec2<u32>(samples / TILE_SAMPLES), tiles - vec2<u32>(1u));
+    let tile = min(vec2<u32>(samples / TILE_QUADS), tiles - vec2<u32>(1u));
     let entry = tile_layers[build.counts.w + tile.y * tiles.x + tile.x];
     if entry == MISSING {
         return OPEN;

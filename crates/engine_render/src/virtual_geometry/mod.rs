@@ -33,28 +33,18 @@ use crate::cached::Cached;
 use crate::gpu_data::VIRTUAL_SHADER;
 use crate::shadows::VIRTUAL_SHADOW_PLANES as PLANES;
 
+pub(crate) use crate::gpu_layouts::constants::MAX_VIEWS;
+use crate::gpu_layouts::constants::NONE;
+use crate::gpu_layouts::constants::TEST_PREVIOUS;
+use crate::gpu_layouts::constants::TEST_SUBPIXEL;
+use crate::gpu_layouts::constants::VIRTUAL_GROUP as GROUP;
 use arena::VirtualArena;
 use feedback::Readbacks;
 use layouts::{Pipelines, ShadowDrawing};
 use selection::SelectionStorage;
 
-const NONE: u32 = u32::MAX;
-const GROUP: u32 = 64;
 /// Counters before the bins' (`virtual_geometry.wgsl`).
 const COUNTERS: usize = 12;
-/// Views one frame selects for: the camera's and those of the shadow maps
-/// drawn every frame (up to four cascades and the moving map).
-pub(crate) const MAX_VIEWS: usize = 8;
-/// Floats of a view record: its planes, the eye, the error projection and
-/// a direction.
-const VIEW_FLOATS: usize = PLANES * 4 + 12;
-/// Bytes of the uniform before its views: counts, two projections, the
-/// viewport, the camera's tests and the feedback's locations.
-const FRAME_BYTES: usize = 192;
-const UNIFORM_BYTES: u64 = (FRAME_BYTES + MAX_VIEWS * VIEW_FLOATS * 4) as u64;
-/// Camera tests (`virtual_geometry.wgsl`).
-const TEST_PREVIOUS: u32 = 1;
-const TEST_SUBPIXEL: u32 = 2;
 /// Bytes of an entry of the selected clusters: visible ID and cluster.
 pub(crate) const VISIBLE_BYTES: u64 = 8;
 /// ID sources of batches: the camera's, and the shadow maps' casters.

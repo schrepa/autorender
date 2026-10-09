@@ -35,9 +35,7 @@ struct Input {
     direction: vec3<f32>,
     cos_inner: f32,
     cos_outer: f32,
-    pad0: f32,
-    pad1: f32,
-    pad2: f32,
+    pad: array<f32, 3>,
 }
 
 struct Light {

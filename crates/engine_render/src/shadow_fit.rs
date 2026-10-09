@@ -8,6 +8,8 @@ use engine_core::{
 };
 
 use crate::gpu_data::{FAR_DEPTH, MAX_LEVELS, NEAR_DEPTH, frustum_uniform};
+pub(crate) use crate::gpu_layouts::constants::SHADOW_TILE_WORDS as TILE_WORDS;
+pub(crate) use crate::gpu_layouts::constants::SHADOW_TILES as TILES;
 
 /// World to light space: x and y across the sun's view, z away from the sun.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -245,12 +247,6 @@ pub(crate) fn receivers_from(
     (cosine > 0.0 && plane.is_finite()).then_some(plane)
 }
 
-/// Tiles across each side of the kept far map: kept casters
-/// that move mark the tiles under them dirty, and frames redraw them.
-pub(crate) const TILES: u32 = 16;
-/// Words of the dirty-tile mask, each holding two rows of tiles, as the
-/// selection pass marks them.
-pub(crate) const TILE_WORDS: usize = (TILES * TILES / 32) as usize;
 /// Tiles one refresh of the kept map redraws at most: a row's worth.
 pub(crate) const REFRESH_TILES: u32 = TILES;
 

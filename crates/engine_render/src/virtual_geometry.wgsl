@@ -39,11 +39,15 @@
 // groups their clusters, and clusters their group, the group they came from,
 // their mesh and their vertex and triangle words in the pages.
 
+// Planes of a view, and views a frame selects for.
+const VIEW_PLANES: u32 = 12u;
+const MAX_VIEWS: u32 = 8u;
+
 struct View {
     // Inward planes, normalized: the camera's frustum, or where a shadow
     // map's casters can darken what the camera sees; unused ones hold
     // everything.
-    planes: array<vec4<f32>, 12>,
+    planes: array<vec4<f32>, VIEW_PLANES>,
     // The camera's eye, and the smallest distance errors project from.
     eye: vec4<f32>,
     // cot(fovy / 2) / 2, the largest projected error drawn (a fraction of
@@ -67,7 +71,7 @@ struct Frame {
     // Counter words where used groups' and requested groups' bits start,
     // and the groups buffer's word where their residency bits start.
     feedback: vec4<u32>,
-    views: array<View, 8>,
+    views: array<View, MAX_VIEWS>,
 }
 
 // One batch of instances of a virtual mesh with one material: its IDs'
@@ -203,7 +207,7 @@ fn largest_scale(pose: Rows) -> f32 {
 }
 
 fn outside(view: u32, center: vec3<f32>, radius: f32) -> bool {
-    for (var plane = 0u; plane < 12u; plane++) {
+    for (var plane = 0u; plane < VIEW_PLANES; plane++) {
         let normal = frame.views[view].planes[plane];
         if dot(normal.xyz, center) + normal.w < -radius {
             return true;
