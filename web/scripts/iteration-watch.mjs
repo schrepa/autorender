@@ -16,7 +16,7 @@ const MAX_DEPTH = 64;
 const CHUNK_BYTES = 64 * 1024;
 // The patched glam (vendor/glam) compiles into every Wasm build; development
 // schemas are generated from crate sources at build time.
-const TREES = ["crates", "examples", ".cargo", "vendor/glam"];
+const TREES = ["crates", "apps", ".cargo", "vendor/glam"];
 const FILES = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 const IGNORED = new Set(["target", "pkg", "pkg-dev", "dist", ".git", "node_modules", ".tools"]);
 
