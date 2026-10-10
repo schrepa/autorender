@@ -42,6 +42,8 @@ mod pix;
 mod renderdoc;
 #[cfg(feature = "profiling")]
 pub mod sampler;
+#[cfg(feature = "profiling")]
+pub mod vendor;
 mod window;
 
 use std::process::ExitCode;

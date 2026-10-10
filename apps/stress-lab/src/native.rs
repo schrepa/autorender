@@ -58,10 +58,22 @@ Native options:
                        --features profiling)
   --counters on|LIST   with --profile, or --dev's profiles: each pass's GPU
                        hardware counters, where the driver offers Vulkan's
-                       performance queries (Intel's; Mesa's on Linux), and
-                       no privileges: the first set one run counts, or the
-                       comma-separated counters LIST names; the game then
+                       performance queries (Intel's; Mesa's on Linux), which
+                       need no privileges: the first set one run counts, or
+                       the comma-separated counters LIST names; the game then
                        draws on Vulkan, and counting perturbs its timings
+  --vendor pix|nsight  a deep dive through the GPU vendor's or platform's
+                       tool, set up once, into --vendor-dir: pix (with
+                       --offscreen, on D3D12) captures the last frame and
+                       replays each draw's hardware counters, summed per
+                       render-graph node; nsight (in a window, on NVIDIA's
+                       GPUs) runs the program again under Nsight's GPU Trace,
+                       --settle-ms after it starts, for 5 frames, with its
+                       shader profiler (builds with --features profiling)
+  --vendor-dir DIR     with --vendor: where its files go
+  --vendor-counters LIST
+                       with --vendor pix: the comma-separated counters (PIX's
+                       names) to replay in place of the summary's own
   --gpu-capture PATH   with --offscreen: the last frame's GPU work, frame-exact:
                        a PIX capture (.wpix) where PIX is installed and the
                        GPU interface is D3D12; else a RenderDoc capture
@@ -136,6 +148,9 @@ struct Options {
     gpu_capture: Option<PathBuf>,
     profile: Option<PathBuf>,
     counters: Option<String>,
+    vendor: Option<String>,
+    vendor_dir: Option<PathBuf>,
+    vendor_counters: Vec<String>,
     dev: bool,
     dev_artifacts: Option<PathBuf>,
 }
@@ -182,6 +197,9 @@ impl Options {
             gpu_capture: None,
             profile: None,
             counters: None,
+            vendor: None,
+            vendor_dir: None,
+            vendor_counters: Vec::new(),
             dev: false,
             dev_artifacts: None,
         };
@@ -296,6 +314,17 @@ impl Options {
                 "--gpu-capture" => options.gpu_capture = Some(value()?.into()),
                 "--profile" => options.profile = Some(value()?.into()),
                 "--counters" => options.counters = Some(value()?),
+                "--vendor" => {
+                    let tool = value()?;
+                    if tool != "pix" && tool != "nsight" {
+                        return Err(format!("--vendor is pix or nsight, not {tool}"));
+                    }
+                    options.vendor = Some(tool);
+                }
+                "--vendor-dir" => options.vendor_dir = Some(value()?.into()),
+                "--vendor-counters" => {
+                    options.vendor_counters = value()?.split(',').map(str::to_owned).collect();
+                }
                 "--dev" => {
                     if inline.is_some() {
                         return Err("--dev takes no value".into());
@@ -318,6 +347,21 @@ impl Options {
         if options.counters.is_some() && options.profile.is_none() && !options.dev {
             return Err("--counters counts profiles: --profile or --dev".into());
         }
+        match options.vendor.as_deref() {
+            Some(_) if !cfg!(feature = "profiling") => {
+                return Err("--vendor needs a build with --features profiling".into());
+            }
+            Some(_) if options.vendor_dir.is_none() => {
+                return Err("--vendor needs --vendor-dir".into());
+            }
+            Some("pix") if options.offscreen.is_none() => {
+                return Err("--vendor pix captures an --offscreen frame".into());
+            }
+            Some("nsight") if options.offscreen.is_some() || options.dev => {
+                return Err("--vendor nsight traces a window's frames".into());
+            }
+            _ => {}
+        }
         Ok(options)
     }
 
@@ -330,6 +374,10 @@ impl Options {
                 names => Selection::Named(names.split(',').map(str::to_owned).collect()),
             };
             engine_native::counters::enable(selection)?;
+        }
+        #[cfg(feature = "profiling")]
+        if let (Some("nsight"), Some(folder)) = (self.vendor.as_deref(), &self.vendor_dir) {
+            return self.run_nsight(folder);
         }
         let build = || self.build();
         if self.dev {
@@ -395,6 +443,30 @@ impl Options {
             set_view(&mut engine, view)?;
         }
         Ok((engine, lab))
+    }
+
+    /// Runs the program again in a window under Nsight's GPU Trace, with
+    /// these options but the deep dive's, into `folder`.
+    #[cfg(feature = "profiling")]
+    fn run_nsight(&self, folder: &Path) -> engine::Result<()> {
+        let mut arguments = Vec::new();
+        let mut given = std::env::args().skip(1);
+        while let Some(argument) = given.next() {
+            let name = argument.split('=').next().unwrap_or_default();
+            if ["--vendor", "--vendor-dir", "--vendor-counters"].contains(&name) {
+                if !argument.contains('=') {
+                    given.next();
+                }
+                continue;
+            }
+            arguments.push(argument);
+        }
+        if self.measure.is_none() {
+            arguments.extend(["--frames".to_owned(), "120".to_owned()]);
+        }
+        let trace = engine_native::vendor::nsight_trace(&arguments, self.settle_ms, 5, folder)?;
+        println!("{trace:#}");
+        Ok(())
     }
 
     /// Serves the development protocol over standard input and output.
@@ -554,8 +626,22 @@ impl Options {
         build: impl FnOnce() -> engine::Result<(Engine, StressLab)>,
     ) -> engine::Result<()> {
         let size = self.size.unwrap_or((1280, 720));
+        // PIX deep dives capture the last frame into their folder.
+        let pix_folder = self
+            .vendor_dir
+            .as_ref()
+            .filter(|_| self.vendor.as_deref() == Some("pix"));
+        if let Some(folder) = pix_folder {
+            std::fs::create_dir_all(folder).map_err(|error| {
+                Error::from(format!("cannot create {}: {error}", folder.display()))
+            })?;
+        }
+        let gpu_capture = self
+            .gpu_capture
+            .clone()
+            .or_else(|| pix_folder.map(|folder| folder.join("frame.wpix")));
         // PIX's capturer must be in the program before its D3D12 device.
-        let pix = self.gpu_capture.as_ref().and_then(|_| Pix::load());
+        let pix = gpu_capture.as_ref().and_then(|_| Pix::load());
         let started = Instant::now();
         let mut game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
         game.prepare(0.0)?;
@@ -570,7 +656,7 @@ impl Options {
         let mut captured = None;
         for frame in 0..frames {
             let timestamp = f64::from(frame) * 1000.0 / 60.0;
-            match &self.gpu_capture {
+            match &gpu_capture {
                 Some(path) if frame + 1 == frames => {
                     captured = Some(game.capture_frame(timestamp, pix.as_ref(), path)?);
                 }
@@ -601,6 +687,27 @@ impl Options {
         };
         #[cfg(not(feature = "profiling"))]
         let profile: Option<serde_json::Value> = None;
+        #[cfg(feature = "profiling")]
+        let vendor = match (pix_folder, &gpu_capture) {
+            (Some(folder), Some(path)) => {
+                if captured != Some("pix") {
+                    return Err(engine::Error::from(format!(
+                        "--vendor pix captures D3D12 frames where PIX is installed; this one drew on {} ({})",
+                        game.host().adapter().backend,
+                        captured.unwrap_or("no capture"),
+                    )));
+                }
+                let summary =
+                    engine_native::vendor::pix_counters(path, folder, &self.vendor_counters)?;
+                Some(serde_json::json!({
+                    "summary": folder.join("pix.summary.json").display().to_string(),
+                    "passes": summary["passes"].as_array().map(|passes| passes.iter().take(8).collect::<Vec<_>>()),
+                }))
+            }
+            _ => None,
+        };
+        #[cfg(not(feature = "profiling"))]
+        let vendor: Option<serde_json::Value> = None;
         if let Some(path) = &self.capture {
             game.save_png(path)?;
         }
@@ -616,7 +723,8 @@ impl Options {
             "cpu_ms": {"median": at(0.5), "p95": at(0.95)},
             "capture": self.capture.as_ref().map(|path| path.display().to_string()),
             "profile": profile,
-            "gpu_capture": self.gpu_capture.as_ref().map(|path| serde_json::json!({
+            "vendor": vendor,
+            "gpu_capture": gpu_capture.as_ref().map(|path| serde_json::json!({
                 "path": path.display().to_string(),
                 "by": captured,
                 "adapter": game.host().adapter().name,

@@ -72,7 +72,7 @@ fn perf_event_paranoid() -> Option<i32> {
 
 /// A program found on the path, or at one of `paths` (Windows install
 /// folders, where `*` matches a version folder).
-fn installed(program: &str, paths: &[&str]) -> Option<String> {
+pub(crate) fn installed(program: &str, paths: &[&str]) -> Option<String> {
     let executable = if cfg!(windows) {
         format!("{program}.exe")
     } else {
@@ -191,30 +191,31 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
             "each pass's shader-core activity, stalls and occupancy, sampler and memory traffic, depth-test rejects and pixels",
         )));
     }
+    if vendor(adapter) == "nvidia" {
+        layers.push(highly(layer(
+            "GPU cost per shader line, unit throughputs per pass",
+            "Nsight Graphics (GPU Trace with its real-time shader profiler; GPUs from 2020 on)",
+            installed("ngfx", &[r"C:\Program Files\NVIDIA Corporation\Nsight Graphics */host/windows-desktop-nomad-x64/ngfx.exe"]),
+            "install Nsight Graphics and have an administrator allow GPU performance counters for all users once (NVIDIA Control Panel: Desktop > Enable Developer Settings, then Developer > Manage GPU Performance Counters; Linux: the nvidia module's NVreg_RestrictProfilingToAdminUsers=0); then run in a window with `--vendor nsight --vendor-dir DIR`",
+            "per-shader-line warp stalls, SM, cache and memory throughputs per pass",
+        )));
+    }
+    if os == "windows" {
+        layers.push(highly(layer(
+            "GPU hardware counters per draw, replayed from a frame-exact capture",
+            "PIX (its counter plugins: Intel's, AMD's, NVIDIA's and Qualcomm's GPUs)",
+            installed("pixtool", &[r"C:\Program Files\Microsoft PIX\*/pixtool.exe"]),
+            "install PIX and turn on Windows Developer Mode, which replays need; then `--offscreen N --vendor pix --vendor-dir DIR` on D3D12 (dxcompiler.dll beside the program); NVIDIA's counters also need the performance-counter permission Nsight needs",
+            "each draw's and render-graph node's shader-core activity, stalls, occupancy, sampler and memory counters, and the capture, replayable in PIX",
+        )));
+    }
     match vendor(adapter) {
-        "nvidia" => layers.push(highly(layer(
-            "GPU cost per shader line, unit throughputs",
-            "Nsight Graphics (GPU Trace, real-time shader profiler; GPUs from 2020 on)",
-            installed(
-                "ngfx",
-                &[r"C:\Program Files\NVIDIA Corporation\Nsight Graphics */host/windows-desktop-nomad-x64/ngfx.exe"],
-            ),
-            "install Nsight Graphics; allow GPU performance counters for all users (NVIDIA App or Control Panel developer settings on Windows, NVreg_RestrictProfilingToAdminUsers=0 on Linux); then `ngfx --activity \"GPU Trace Profiler\" --real-time-shader-profiler --exe stress-lab-native ...`",
-            "per-shader-line warp stalls, SM and memory throughput per pass",
-        ))),
         "amd" => layers.push(highly(layer(
             "GPU cost per shader instruction",
             "Radeon GPU Profiler (instruction timing; RDNA 1 to 4)",
             installed("RadeonDeveloperPanelCLI", &[]).or_else(|| installed("RadeonGPUProfiler", &[])),
             "install the Radeon Developer Tool Suite and capture with `RadeonDeveloperPanelCLI --rgp-instruction-tracing`; on Linux with RADV, MESA_VK_TRACE=rgp",
             "per-instruction latency, wave occupancy, cache counters per pass",
-        ))),
-        "intel" => layers.push(highly(layer(
-            "GPU hardware counters per draw",
-            "PIX with Intel's counter plugin (D3D12)",
-            installed("pixtool", &[r"C:\Program Files\Microsoft PIX\*/pixtool.exe"]),
-            "install PIX; capture with `--gpu-capture frame.wpix` (D3D12, with dxcompiler.dll beside the program) and read counters with `pixtool open-capture frame.wpix save-event-list draws.csv --counters=...`",
-            "per-draw execution-unit activity, stalls, sampler and memory counters",
         ))),
         "apple" => layers.push(highly(layer(
             "GPU cost per shader line",
@@ -224,15 +225,6 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
             "per-shader-line cost and instruction counts",
         ))),
         _ => {}
-    }
-    if adapter.backend == "Dx12" || os == "windows" {
-        layers.push(layer(
-            "frame-exact D3D12 capture of every command",
-            "PIX",
-            installed("pixtool", &[r"C:\Program Files\Microsoft PIX\*/pixtool.exe"]),
-            "install PIX and Windows Developer Mode (for replay); then `--gpu-capture frame.wpix` captures the last offscreen frame with pass names",
-            "every command, resource and timing of one frame, replayable",
-        ));
     }
     if os != "macos" {
         layers.push(layer(
