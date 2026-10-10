@@ -2,7 +2,7 @@
 //!
 //! The root and [`prelude`] hold what games use; [`terrain`] holds terrain
 //! authoring, [`render`] the renderer's contract, [`stats`] the frame
-//! statistics and [`host`] what browser hosts wire.
+//! statistics and [`host`] what hosts wire.
 
 /// Opt-in collision geometry, filtered queries, and fixed-tick sensor events.
 pub use engine_collision as collision;
@@ -134,9 +134,10 @@ pub mod stats {
     };
 }
 
-/// What browser hosts wire: job workers, terrain tile fetches and the
-/// terrain's debug views.
+/// What hosts wire: job workers, terrain tile fetches and the terrain's
+/// debug views.
 pub mod host {
+    pub use crate::app_host::JobMessage;
     pub use engine_core::{
         FileHeader, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs, TerrainDebug,
         TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
@@ -147,10 +148,18 @@ pub mod host {
 #[cfg(feature = "dev")]
 pub use engine_dev as dev;
 
-#[cfg(all(feature = "dev", target_arch = "wasm32"))]
-mod dev_browser;
+mod app_host;
+#[cfg(feature = "dev")]
+mod dev_host;
+mod game_host;
+/// A native window hosts present to.
+#[cfg(not(target_arch = "wasm32"))]
+pub use engine_render::NativeWindow;
+/// Where hosts present, and what renderers fail with.
+pub use engine_render::{RenderError, RenderTarget};
+pub use game_host::GameHost;
 
-/// Browser lifecycle and rendering composition, owned by the main thread.
+/// The page's side of a hosted game, owned by the main thread.
 #[cfg(target_arch = "wasm32")]
 pub mod browser;
 

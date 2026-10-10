@@ -1,7 +1,7 @@
 //! The methods every exported game has: one table, which
 //! [`crate::export_game!`] turns into the game's `#[wasm_bindgen]` methods and
 //! [`runtime_typescript`] into the page's `Runtime` interface, so the two
-//! cannot differ. `GameHost` implements each.
+//! cannot differ. `PageHost` implements each, mostly as `GameHost`.
 
 /// Calls `$callback` with the game surface after `{ $context }`, in groups:
 /// methods taking `&mut self` or `&self`, in every build, development builds
@@ -121,7 +121,7 @@ macro_rules! __export_game {
         $(#[$meta])*
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
         $vis struct $name {
-            host: $crate::browser::GameHost<$game>,
+            host: $crate::browser::PageHost<$game>,
         }
 
         // The frame takes every input axis and action edge as it is.
@@ -159,17 +159,17 @@ macro_rules! __export_game {
                 build: impl FnOnce() -> Result<($crate::Engine, $game), E>,
             ) -> Result<Self, $crate::__private::JsValue> {
                 Ok(Self {
-                    host: $crate::browser::GameHost::launch(canvas, build).await?,
+                    host: $crate::browser::PageHost::launch(canvas, build).await?,
                 })
             }
 
             /// The engine and game the page runs.
-            pub fn host(&self) -> &$crate::browser::GameHost<$game> {
+            pub fn host(&self) -> &$crate::GameHost<$game> {
                 &self.host
             }
 
             /// The engine and game the page runs, to change them.
-            pub fn host_mut(&mut self) -> &mut $crate::browser::GameHost<$game> {
+            pub fn host_mut(&mut self) -> &mut $crate::GameHost<$game> {
                 &mut self.host
             }
         }

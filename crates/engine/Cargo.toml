@@ -20,10 +20,10 @@ engine_collision.workspace = true
 engine_scene.workspace = true
 engine_dev = { workspace = true, optional = true }
 engine_settings.workspace = true
+engine_render.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-engine_render.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true

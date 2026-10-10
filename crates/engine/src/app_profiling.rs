@@ -1,16 +1,21 @@
 //! Optional capture composition. No recorder logic belongs in the frame loop.
-use super::BrowserApp;
+use super::{AppHost, now_ms};
 use serde_json::{Value, json};
 
-fn now_ms() -> f64 {
-    thread_local! {
-        static CLOCK: web_sys::Performance = web_sys::window()
-            .and_then(|window| window.performance()).expect("browser clock");
+/// Bytes of Wasm linear memory, which grows and never shrinks; native hosts
+/// have none.
+fn linear_memory_bytes() -> Option<usize> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        Some(core::arch::wasm32::memory_size(0) * 65536)
     }
-    CLOCK.with(web_sys::Performance::now)
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        None
+    }
 }
 
-impl BrowserApp {
+impl AppHost {
     pub(super) fn begin_profile_frame(&mut self) {
         self.profile_frame = self.profile_frame.saturating_add(1);
         engine_profile::set_frame(self.profile_frame);
@@ -28,14 +33,13 @@ impl BrowserApp {
                 "memory.requested_bytes_total",
                 memory.requested_bytes as f64,
             );
-            engine_profile::counter(
-                "memory.wasm_linear_bytes",
-                (core::arch::wasm32::memory_size(0) * 65536) as f64,
-            );
+            if let Some(bytes) = linear_memory_bytes() {
+                engine_profile::counter("memory.wasm_linear_bytes", bytes as f64);
+            }
         }
     }
 
-    /// Start one bounded capture for this Wasm instance. Calls while capturing fail.
+    /// Start one bounded capture for this host. Calls while capturing fail.
     pub fn profiling_start(&mut self, max_events: usize) -> Result<(), &'static str> {
         engine_profile::set_clock(now_ms);
         let id = engine_profile::start(max_events)?;
@@ -51,11 +55,11 @@ impl BrowserApp {
         }
         self.renderer.profile_poll();
         let cpu = engine_profile::finish();
-        Ok(json!({
-            "cpu": cpu, "gpu": self.renderer.profile_report(),
-            "memory": {"wasm_linear_bytes": core::arch::wasm32::memory_size(0) * 65536,
-                "scope": "Wasm linear memory capacity, not live allocation bytes or process memory"}
-        }))
+        let memory = linear_memory_bytes().map(|bytes| {
+            json!({"wasm_linear_bytes": bytes,
+                "scope": "Wasm linear memory capacity, not live allocation bytes or process memory"})
+        });
+        Ok(json!({"cpu": cpu, "gpu": self.renderer.profile_report(), "memory": memory}))
     }
 
     pub fn profiling_poll(&mut self) {

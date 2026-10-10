@@ -1,16 +1,16 @@
-//! Optional browser adapter for the shared development interface.
+//! A host's side of the shared development interface, a page's or a
+//! native window's.
 //!
-//! Calls are synchronous between browser frames. Input is a temporary batch,
+//! Calls are synchronous between frames. Input is a temporary batch,
 //! replaced by each input command and consumed only by explicit stepping.
-use crate::browser::BrowserApp;
+use crate::app_host::AppHost;
 use engine_core::ErrorCode;
 use engine_core::{ActionInput, DevStepError, InputState};
 use engine_dev::{BrowserControl, Context, DevError, DevTools, RenderedMesh, RendererFacts};
 use engine_scene::SceneInstance;
 use serde_json::{Value, json};
-use wasm_bindgen::JsValue;
 
-/// What the page's renderer made of the world's assets, for inspectors.
+/// What the host's renderer made of the world's assets, for inspectors.
 struct Facts<'a>(&'a engine_render::Renderer);
 
 impl RendererFacts for Facts<'_> {
@@ -38,7 +38,7 @@ impl RendererFacts for Facts<'_> {
 
 /// Per-session temporary control state; excluded from ordinary builds.
 #[derive(Default)]
-pub(crate) struct DevBrowser {
+pub(crate) struct DevHost {
     pub(crate) tools: DevTools,
     input: InputBatch,
     // Terrain edits undo took away, latest last.
@@ -60,7 +60,7 @@ struct InputBatch {
     released: u32,
 }
 
-impl DevBrowser {
+impl DevHost {
     pub fn clear_input(&mut self) {
         self.input = InputBatch::default();
     }
@@ -94,7 +94,7 @@ impl DevBrowser {
     /// pause and resume requires it.
     pub fn command(
         &mut self,
-        app: &mut BrowserApp,
+        app: &mut AppHost,
         scene: Option<&SceneInstance>,
         source: &str,
         width: u32,
@@ -133,7 +133,7 @@ impl DevBrowser {
     /// `status` replies name the build too.
     fn tools_request(
         &mut self,
-        app: &mut BrowserApp,
+        app: &mut AppHost,
         scene: Option<&SceneInstance>,
         source: &str,
         status: bool,
@@ -150,11 +150,11 @@ impl DevBrowser {
         envelope.to_string()
     }
 
-    /// Runs the browser control `op` in `source` on a `size` canvas: its
+    /// Runs the control `op` in `source` on a `size` view: its
     /// result.
     fn control(
         &mut self,
-        app: &mut BrowserApp,
+        app: &mut AppHost,
         scene: Option<&SceneInstance>,
         source: &str,
         op: &str,
@@ -224,7 +224,7 @@ impl DevBrowser {
             BrowserControl::Environment(control) => {
                 // The sections of a scene environment, validated alike; the
                 // named ones replace their resources, the others stay.
-                let current = |app: &BrowserApp| {
+                let current = |app: &AppHost| {
                     serde_json::to_value(engine_scene::SceneEnvironment::current(
                         app.engine.app.world(),
                     ))
@@ -494,19 +494,19 @@ impl DevBrowser {
                     DevError::new(
                         ErrorCode::RenderFailed,
                         "$",
-                        format!("simulation may have advanced: {error:?}"),
+                        format!("simulation may have advanced: {error}"),
                     )
                 })?;
                 Ok(json!({"ticks":ticks,"temporary":true}))
             }
             BrowserControl::Render { .. } => {
                 app.dev_render(width, height).map_err(|error| {
-                    DevError::new(ErrorCode::RenderFailed, "$", format!("{error:?}"))
+                    DevError::new(ErrorCode::RenderFailed, "$", error.to_string())
                 })?;
                 Ok(json!({"rendered":true}))
             }
-            // The browser host runs these: it receives them validated, with
-            // their defaults.
+            // The host runs these: it receives them validated, with their
+            // defaults.
             control @ (BrowserControl::Benchmark { .. }
             | BrowserControl::Pause { .. }
             | BrowserControl::Resume { .. }
@@ -519,7 +519,7 @@ impl DevBrowser {
     /// Produce a result from a game-specific development operation.
     pub fn result(
         &mut self,
-        app: &mut BrowserApp,
+        app: &mut AppHost,
         scene: Option<&SceneInstance>,
         result: Value,
     ) -> String {
@@ -529,10 +529,10 @@ impl DevBrowser {
         envelope.to_string()
     }
 
-    /// Preserve a structured game/authoring error at the browser boundary.
+    /// Preserve a structured game/authoring error at the host boundary.
     pub fn error(
         &mut self,
-        app: &mut BrowserApp,
+        app: &mut AppHost,
         scene: Option<&SceneInstance>,
         code: ErrorCode,
         path: &str,
@@ -548,7 +548,7 @@ impl DevBrowser {
         envelope.to_string()
     }
 
-    fn observation(&mut self, app: &mut BrowserApp, scene: Option<&SceneInstance>) -> Value {
+    fn observation(&mut self, app: &mut AppHost, scene: Option<&SceneInstance>) -> Value {
         let status = json!({"version": engine_dev::PROTOCOL_VERSION, "op": "status"});
         serde_json::from_str(&execute(&self.tools, app, scene, &status.to_string()))
             .expect("development tools serialize an object envelope")
@@ -558,7 +558,7 @@ impl DevBrowser {
 /// `tools`' reply to `source` about `app`'s engine, with its renderer's facts.
 fn execute(
     tools: &DevTools,
-    app: &mut BrowserApp,
+    app: &mut AppHost,
     scene: Option<&SceneInstance>,
     source: &str,
 ) -> String {
@@ -572,12 +572,12 @@ fn execute(
 }
 
 /// What rendering after `what` came to: a development error when it failed.
-impl DevBrowser {
+impl DevHost {
     /// Edits, undoes or redoes the terrain `name` names, then
     /// renders.
     fn terrain_editing(
         &mut self,
-        app: &mut BrowserApp,
+        app: &mut AppHost,
         scene: Option<&SceneInstance>,
         name: Option<&str>,
         editing: engine_dev::TerrainEditing,
@@ -625,12 +625,12 @@ fn overlay(base: &mut Value, patch: Value) {
     }
 }
 
-fn rendered(outcome: Result<(), JsValue>, what: &str) -> Result<(), DevError> {
+fn rendered(outcome: crate::Result<()>, what: &str) -> Result<(), DevError> {
     outcome.map_err(|error| {
         DevError::new(
             ErrorCode::RenderFailed,
             "$",
-            format!("{what} before render failed: {error:?}"),
+            format!("{what} before render failed: {error}"),
         )
     })
 }

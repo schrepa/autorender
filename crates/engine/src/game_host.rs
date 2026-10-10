@@ -1,29 +1,28 @@
-//! The engine's side of an exported game: the page's app, the game and the
-//! development tools, behind the methods [`crate::export_game!`] exports.
-use super::{BrowserApp, SceneFileSet};
+//! The engine's side of a game a host runs, on a page or in a native
+//! window: its app, the game and the development tools.
+use crate::app_host::{AppHost, JobMessage};
 use crate::game::Game;
-use engine_core::{ActionInput, Engine, InputState};
-use wasm_bindgen::prelude::*;
-use web_sys::HtmlCanvasElement;
+use engine_core::{ActionInput, Engine, InputState, JobId};
+use engine_render::RenderTarget;
+use engine_scene::SceneFiles;
 
-/// An exported game's engine, game and development tools.
+/// A hosted game's engine, game and development tools.
 pub struct GameHost<G: Game> {
-    app: BrowserApp,
+    app: AppHost,
     game: G,
     #[cfg(feature = "dev")]
-    development: crate::dev_browser::DevBrowser,
+    development: crate::dev_host::DevHost,
 }
 
 impl<G: Game> GameHost<G> {
-    /// Starts the renderer of `canvas` and, while the browser compiles its
-    /// pipelines, the engine and game `build` makes.
+    /// Starts the renderer presenting to `target` and, while the GPU
+    /// compiles its pipelines, the engine and game `build` makes.
     pub async fn launch<E: Into<crate::Error>>(
-        canvas: HtmlCanvasElement,
+        target: RenderTarget,
         build: impl FnOnce() -> Result<(Engine, G), E>,
-    ) -> Result<Self, JsValue> {
-        console_error_panic_hook::set_once();
+    ) -> crate::Result<Self> {
         let mut game = None;
-        let app = BrowserApp::launch(canvas, || {
+        let app = AppHost::launch(target, || {
             let (engine, built) = build().map_err(Into::into)?;
             game = Some(built);
             Ok(engine)
@@ -32,7 +31,7 @@ impl<G: Game> GameHost<G> {
         let game = game.expect("launching built the game");
         #[cfg(feature = "dev")]
         let development = {
-            let mut development = crate::dev_browser::DevBrowser::default();
+            let mut development = crate::dev_host::DevHost::default();
             G::inspectors(&mut crate::game::Inspectors::new(&mut development.tools));
             development
         };
@@ -65,28 +64,27 @@ impl<G: Game> GameHost<G> {
         (self.app.engine_mut(), &mut self.game)
     }
 
-    /// Runs `engine` from the next frame, wired to the page as the first
-    /// was and under the page's culling and antialiasing choices.
+    /// Runs `engine` from the next frame, wired to the host as the first
+    /// was and under the host's culling and antialiasing choices.
     pub fn replace_engine(&mut self, engine: Engine) {
         self.app.replace_engine(engine);
         self.suspend();
     }
 
+    /// Runs one frame at `timestamp` milliseconds on a `width` × `height`
+    /// view with `input` and the action bits `held`, `pressed` and
+    /// `released` since the last frame.
     #[allow(clippy::too_many_arguments)]
     pub fn frame(
         &mut self,
         timestamp: f64,
         width: u32,
         height: u32,
-        forward: f32,
-        right: f32,
-        up: f32,
-        yaw: f32,
-        pitch: f32,
+        input: InputState,
         held: u32,
         pressed: u32,
         released: u32,
-    ) -> Result<(), JsValue> {
+    ) -> crate::Result<()> {
         let engine = self.app.engine_mut();
         self.game.before_frame(engine);
         engine
@@ -94,18 +92,7 @@ impl<G: Game> GameHost<G> {
             .world_mut()
             .resource_mut::<ActionInput>()
             .ingest(held, pressed, released);
-        self.app.frame(
-            timestamp,
-            width,
-            height,
-            InputState {
-                move_forward: forward,
-                move_right: right,
-                move_up: up,
-                look_yaw: yaw,
-                look_pitch: pitch,
-            },
-        )
+        self.app.frame(timestamp, width, height, input)
     }
 
     pub fn work(&mut self, width: u32, height: u32) {
@@ -120,23 +107,23 @@ impl<G: Game> GameHost<G> {
         self.app.set_job_workers(workers);
     }
 
-    pub fn take_jobs(&mut self) -> js_sys::Array {
+    pub fn take_jobs(&mut self) -> Vec<JobMessage> {
         self.app.take_jobs()
     }
 
-    pub fn complete_job(&mut self, id: f64, output: Vec<u8>) {
+    pub fn complete_job(&mut self, id: JobId, output: Vec<u8>) {
         self.app.complete_job(id, output);
     }
 
-    pub fn fail_job(&mut self, id: f64, error: String) {
+    pub fn fail_job(&mut self, id: JobId, error: String) {
         self.app.fail_job(id, error);
     }
 
-    pub fn part_job(&mut self, id: f64, part: Vec<u8>) {
+    pub fn part_job(&mut self, id: JobId, part: Vec<u8>) {
         self.app.part_job(id, part);
     }
 
-    pub fn report_job_cache(&mut self, hits: f64, misses: f64, bytes: f64, mismatches: f64) {
+    pub fn report_job_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {
         self.app.report_job_cache(hits, misses, bytes, mismatches);
     }
 
@@ -151,9 +138,9 @@ impl<G: Game> GameHost<G> {
         self.suspend();
     }
 
-    pub fn reload_scene(&mut self, source: &str, files: SceneFileSet) -> Result<(), JsValue> {
+    pub fn reload_scene(&mut self, source: &str, files: &SceneFiles) -> crate::Result<()> {
         self.game
-            .reload_scene(self.app.engine_mut(), source, files.files())
+            .reload_scene(self.app.engine_mut(), source, files)
             .map_err(crate::Error::from)?;
         self.app.apply_overrides();
         self.suspend();
@@ -180,6 +167,12 @@ impl<G: Game> GameHost<G> {
         self.app.set_subpixel_culling(enabled);
     }
 
+    /// The last frame's statistics.
+    pub fn frame_stats(&self) -> engine_core::FrameStats {
+        self.app.stats()
+    }
+
+    /// The last frame's statistics, as the JSON object `FrameStats` types.
     pub fn stats(&self) -> String {
         self.app.stats_json()
     }
@@ -226,11 +219,12 @@ impl<G: Game> GameHost<G> {
         source: &str,
         expected_revision: &str,
         revision: &str,
-        files: Option<SceneFileSet>,
+        files: Option<&SceneFiles>,
     ) -> String {
         use engine_core::ErrorCode;
         use engine_scene::{SceneDocument, SceneError};
-        let files = files.unwrap_or_default();
+        let none = SceneFiles::default();
+        let files = files.unwrap_or(&none);
         let result = (|| {
             let Some(scene) = self.game.scene() else {
                 return Err(SceneError {
@@ -263,8 +257,7 @@ impl<G: Game> GameHost<G> {
                     message: "saved scene ID and revision must match the requested scene".into(),
                 });
             }
-            self.game
-                .reload_scene(self.app.engine_mut(), source, files.files())
+            self.game.reload_scene(self.app.engine_mut(), source, files)
         })();
         match result {
             Ok(()) => {
@@ -289,28 +282,25 @@ impl<G: Game> GameHost<G> {
 
 #[cfg(feature = "profiling")]
 impl<G: Game> GameHost<G> {
-    pub fn profiling_start(&mut self, max_events: u32) -> Result<(), JsValue> {
-        self.app
-            .profiling_start(max_events as usize)
-            .map_err(JsValue::from_str)
+    /// Starts a capture of at most `max_events` CPU events.
+    pub fn profiling_start(&mut self, max_events: usize) -> Result<(), &'static str> {
+        self.app.profiling_start(max_events)
     }
 
-    pub fn profiling_stop(&mut self) -> Result<String, JsValue> {
-        self.app
-            .profiling_stop()
-            .map(|report| report.to_string())
-            .map_err(JsValue::from_str)
+    /// Stops the capture: its report.
+    pub fn profiling_stop(&mut self) -> Result<serde_json::Value, &'static str> {
+        self.app.profiling_stop()
     }
 
     pub fn profiling_poll(&mut self) {
         self.app.profiling_poll();
     }
 
-    pub fn profiling_report(&mut self) -> String {
-        self.app.profiling_report().to_string()
+    pub fn profiling_report(&mut self) -> serde_json::Value {
+        self.app.profiling_report()
     }
 
-    pub fn profiling_status(&self) -> String {
-        self.app.profiling_status().to_string()
+    pub fn profiling_status(&self) -> serde_json::Value {
+        self.app.profiling_status()
     }
 }

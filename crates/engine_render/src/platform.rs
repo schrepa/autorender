@@ -218,8 +218,8 @@ pub(crate) fn poll(device: &wgpu::Device) {
 
 /// Reads bytes `range` of the file `url` names and hands them, or the
 /// failure, to `arrive` once read: the browser fetches them, native
-/// renderers read the file at that path.
-pub(crate) fn read_range(
+/// hosts read the file at that path.
+pub fn read_range(
     url: &str,
     range: std::ops::Range<u64>,
     arrive: impl FnOnce(Result<Vec<u8>, ()>) + 'static,

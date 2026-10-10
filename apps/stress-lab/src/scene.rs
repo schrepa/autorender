@@ -27,8 +27,8 @@ pub(crate) struct Motion {
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Animation;
 
-/// Creates an independently owned world. Failed configuration leaves any active
-/// BrowserApp untouched. Distinct AssetLibrary identities prevent GPU aliasing.
+/// Creates an independently owned world. Failed configuration leaves the
+/// running engine untouched. Distinct AssetLibrary identities prevent GPU aliasing.
 pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
     create_workload_with(config, &HashMap::new())
 }

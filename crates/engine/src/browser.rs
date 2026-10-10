@@ -1,26 +1,12 @@
-//! Coarse frame boundary between the TypeScript host and Rust engine.
-use engine_core::{Engine, FrameReport, InputState, PresentationMode};
-use engine_render::{Renderer, StartingRenderer};
+//! The page's side of a hosted game: the files a scene references, decoded
+//! by the page, and [`PageHost`], a [`GameHost`] with the page's types,
+//! which [`crate::export_game!`] exports.
+use crate::GameHost;
+use crate::game::Game;
+use crate::host::JobMessage;
+use engine_core::{Engine, InputState, JobId, JobShare};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
-
-#[cfg(feature = "profiling")]
-#[path = "browser_profiling.rs"]
-mod profiling;
-
-#[path = "game_host.rs"]
-mod game_host;
-pub use game_host::GameHost;
-
-/// Milliseconds on the page's clock, which terrain times its work by;
-/// 0 without one.
-fn page_clock() -> f64 {
-    thread_local! {
-        static CLOCK: Option<web_sys::Performance> =
-            web_sys::window().and_then(|window| window.performance());
-    }
-    CLOCK.with(|clock| clock.as_ref().map_or(0.0, web_sys::Performance::now))
-}
 
 /// Decoded images and buffers of the files a scene references,
 /// filled by the page before the scene loads.
@@ -151,426 +137,83 @@ pub fn terrain_prefix_bytes(header: &[u8]) -> Option<u32> {
         .map(|bytes| bytes as u32)
 }
 
-/// Terrain tiles in flight: fetched by byte range from their
-/// files' URLs and handed back to the engine's terrains the next frame.
-#[derive(Default)]
-struct TerrainFetches {
-    inbox: std::rc::Rc<std::cell::RefCell<Vec<TerrainArrival>>>,
-    requests: Vec<engine_core::TileRequest>,
+/// A hosted game as the page calls it: the game surface's methods whose
+/// types are the page's convert here; the others are [`GameHost`]'s own,
+/// which it dereferences to.
+pub struct PageHost<G: Game> {
+    host: GameHost<G>,
 }
 
-/// A fetched tile: its terrain, key and bytes, `None` when the fetch
-/// failed.
-type TerrainArrival = (
-    engine_core::bevy_ecs::entity::Entity,
-    engine_core::TileKey,
-    Option<Vec<u8>>,
-);
+impl<G: Game> std::ops::Deref for PageHost<G> {
+    type Target = GameHost<G>;
 
-impl TerrainFetches {
-    /// Hands arrived tiles to `engine`'s terrains and starts fetching the
-    /// tiles they request.
-    fn exchange(&mut self, engine: &mut Engine) {
-        let Some(mut terrains) = engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::Terrains>()
-        else {
-            return;
-        };
-        for (terrain, key, bytes) in self.inbox.borrow_mut().drain(..) {
-            terrains.deliver(terrain, key, bytes);
-        }
-        terrains.take_requests(&mut self.requests);
-        for request in self.requests.drain(..) {
-            fetch_tile(request, std::rc::Rc::clone(&self.inbox));
-        }
+    fn deref(&self) -> &GameHost<G> {
+        &self.host
     }
 }
 
-/// Fetches `request`'s byte range into `inbox` (a server ignoring ranges
-/// sends the whole file, which is cut to the range).
-fn fetch_tile(
-    request: engine_core::TileRequest,
-    inbox: std::rc::Rc<std::cell::RefCell<Vec<TerrainArrival>>>,
-) {
-    let range = request.offset..request.offset + u64::from(request.length);
-    let fetch = (|| {
-        let init = web_sys::RequestInit::new();
-        init.set_method("GET");
-        let headers = web_sys::Headers::new().ok()?;
-        headers
-            .set("Range", &format!("bytes={}-{}", range.start, range.end - 1))
-            .ok()?;
-        init.set_headers(&headers);
-        let request = web_sys::Request::new_with_str_and_init(&request.url, &init).ok()?;
-        Some(web_sys::window()?.fetch_with_request(&request))
-    })();
-    wasm_bindgen_futures::spawn_local(async move {
-        let bytes = async {
-            let response: web_sys::Response = wasm_bindgen_futures::JsFuture::from(fetch?)
-                .await
-                .ok()?
-                .dyn_into()
-                .ok()?;
-            if !response.ok() {
-                return None;
-            }
-            let whole = response.status() == 200;
-            let buffer = wasm_bindgen_futures::JsFuture::from(response.array_buffer().ok()?)
-                .await
-                .ok()?;
-            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-            if whole {
-                bytes
-                    .get(range.start as usize..range.end as usize)
-                    .map(<[u8]>::to_vec)
-            } else {
-                Some(bytes)
-            }
-        }
-        .await;
-        inbox
-            .borrow_mut()
-            .push((request.terrain, request.key, bytes));
-    });
-}
-
-/// Wires `engine` to the page `renderer` draws on: terrain residency never
-/// exceeds the device's texture array layers and its work runs for the
-/// settings' time a frame by the page's clock; jobs run on the host's
-/// `workers`.
-fn wire(engine: &mut Engine, renderer: &Renderer, workers: u32) {
-    let world = engine.app.world_mut();
-    if let Some(mut terrains) = world.get_resource_mut::<engine_core::Terrains>() {
-        terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
-        terrains.set_clock(page_clock);
-    }
-    if let Some(mut jobs) = world.get_resource_mut::<engine_core::Jobs>() {
-        jobs.set_workers(workers);
+impl<G: Game> std::ops::DerefMut for PageHost<G> {
+    fn deref_mut(&mut self) -> &mut GameHost<G> {
+        &mut self.host
     }
 }
 
-/// What a frame observed, as hosts and agents read it: the JSON object
-/// [`BrowserApp::stats_json`] returns.
-pub use engine_core::FrameStats;
-
-/// Owns the runtime, extracted data, and GPU state for one canvas.
-pub(crate) struct BrowserApp {
-    // Replaced only through `replace_engine`, which wires each engine to
-    // this page.
-    pub(crate) engine: Engine,
-    pub(crate) renderer: Renderer,
-    last_timestamp_ms: Option<f64>,
-    performance: web_sys::Performance,
-    stats: FrameStats,
-    size: (u32, u32),
-    // Ordinary interpolated frames blend, compose and cull on the GPU.
-    gpu_presentation: bool,
-    // GPU-presented frames start the next fixed tick ahead of its due frame.
-    tick_pipelining: bool,
-    // The last GPU frame was not submitted, so the renderer missed its gather.
-    gpu_inputs_stale: bool,
-    // Terrain tiles fetched by byte range.
-    terrain_fetches: TerrainFetches,
-    // The page's culling and antialiasing choices over each engine's own
-    // settings: unset, an engine keeps its own.
-    overrides: Overrides,
-    #[cfg(feature = "profiling")]
-    profile_frame: u64,
-}
-
-#[derive(Clone, Copy, Default)]
-struct Overrides {
-    temporal_antialiasing: Option<bool>,
-    occlusion_culling: Option<bool>,
-    subpixel_culling: Option<bool>,
-}
-
-/// What a submitted frame shows. Only development controls submit exact
-/// frames and previews.
-#[derive(Clone, Copy)]
-#[cfg_attr(not(feature = "dev"), allow(dead_code))]
-enum FrameKind {
-    /// An ordinary frame at fraction `alpha` of the fixed tick: GPU-presented
-    /// unless the game opted out, and blended by temporal antialiasing.
-    Display { alpha: f32 },
-    /// The exact current state: steps, renders and captures.
-    Exact,
-    /// Fraction `alpha` of the latest completed tick, presented on the GPU
-    /// when `gpu`, else exactly.
-    Preview { alpha: f32, gpu: bool },
-}
-
-/// A [`BrowserApp`] whose renderer's startup pipelines may still compile:
-/// build the engine meanwhile, then [`Self::finish`].
-struct StartingApp {
-    renderer: StartingRenderer,
-    performance: web_sys::Performance,
-}
-
-impl StartingApp {
-    /// The app running `engine`, once the renderer's startup pipelines passed
-    /// validation.
-    async fn finish(self, engine: Engine) -> Result<BrowserApp, JsValue> {
-        let renderer = self.renderer.finish().await.map_err(render_failure)?;
-        Ok(BrowserApp::with(engine, renderer, self.performance))
-    }
-}
-
-impl BrowserApp {
+impl<G: Game> PageHost<G> {
     /// Starts the renderer of `canvas` and, while the browser compiles its
-    /// startup pipelines, the engine `build` makes.
-    pub(crate) async fn launch(
+    /// pipelines, the engine and game `build` makes.
+    pub async fn launch<E: Into<crate::Error>>(
         canvas: HtmlCanvasElement,
-        build: impl FnOnce() -> crate::Result<Engine>,
+        build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> Result<Self, JsValue> {
-        let starting = Self::start(canvas).await?;
-        let engine = build()?;
-        starting.finish(engine).await
-    }
-
-    async fn start(canvas: HtmlCanvasElement) -> Result<StartingApp, JsValue> {
-        let performance = web_sys::window()
-            .and_then(|window| window.performance())
-            .ok_or_else(|| JsValue::from_str("A browser performance clock is required."))?;
-        let renderer = Renderer::start(engine_render::RenderTarget::Canvas(canvas))
-            .await
-            .map_err(render_failure)?;
-        Ok(StartingApp {
-            renderer,
-            performance,
+        console_error_panic_hook::set_once();
+        let target = engine_render::RenderTarget::Canvas(canvas);
+        Ok(Self {
+            host: GameHost::launch(target, build).await?,
         })
     }
 
-    fn with(mut engine: Engine, renderer: Renderer, performance: web_sys::Performance) -> Self {
-        wire(&mut engine, &renderer, 0);
-        Self {
-            engine,
-            renderer,
-            last_timestamp_ms: None,
-            performance,
-            stats: FrameStats::default(),
-            size: (0, 0),
-            gpu_presentation: true,
-            tick_pipelining: true,
-            gpu_inputs_stale: false,
-            terrain_fetches: TerrainFetches::default(),
-            overrides: Overrides::default(),
-            #[cfg(feature = "profiling")]
-            profile_frame: 0,
-        }
-    }
-
-    /// The running engine.
-    pub fn engine(&self) -> &Engine {
-        &self.engine
-    }
-
-    /// The running engine, to change its world.
-    pub fn engine_mut(&mut self) -> &mut Engine {
-        &mut self.engine
-    }
-
-    /// Runs `engine` from the next frame, wired to this page as the first
-    /// was; returns the replaced one.
-    pub fn replace_engine(&mut self, mut engine: Engine) -> Engine {
-        let workers = self
-            .engine
-            .app
-            .world()
-            .get_resource::<engine_core::Jobs>()
-            .map_or(0, engine_core::Jobs::workers);
-        wire(&mut engine, &self.renderer, workers);
-        // Tiles in flight belong to the replaced engine's terrains.
-        self.terrain_fetches = TerrainFetches::default();
-        self.gpu_inputs_stale = false;
-        let replaced = std::mem::replace(&mut self.engine, engine);
-        self.apply_overrides();
-        self.suspend();
-        replaced
-    }
-
-    /// Sets the page's culling and antialiasing choices over the world's
-    /// own settings, which a new engine or scene brought.
-    pub fn apply_overrides(&mut self) {
-        let Overrides {
-            temporal_antialiasing,
-            occlusion_culling,
-            subpixel_culling,
-        } = self.overrides;
-        let world = self.engine.app.world_mut();
-        if let Some(enabled) = temporal_antialiasing {
-            world.insert_resource(engine_core::TemporalAntialiasing { enabled });
-        }
-        if let Some(enabled) = occlusion_culling {
-            world.insert_resource(engine_core::OcclusionCulling { enabled });
-        }
-        if let Some(enabled) = subpixel_culling {
-            world.insert_resource(engine_core::SubpixelCulling { enabled });
-        }
-    }
-
-    /// Selects GPU blending, composition and culling for ordinary interpolated
-    /// frames (the default) or the exact CPU path. Development
-    /// steps, renders and captures always use the exact CPU path.
-    pub fn set_gpu_presentation(&mut self, enabled: bool) {
-        self.gpu_presentation = enabled;
-        if !enabled {
-            self.engine.complete_pending_tick();
-        }
-    }
-
-    pub fn gpu_presentation(&self) -> bool {
-        self.gpu_presentation
-    }
-
-    /// Splits each fixed tick across the frames around its due time when GPU
-    /// presentation is enabled (the default): after a frame is submitted, the
-    /// next tick's gameplay stage starts if the tick will be due by the next
-    /// frame, and its propagation stage runs when due. See
-    /// [`Engine::run_ahead`]. Disabling completes a started tick.
-    pub fn set_tick_pipelining(&mut self, enabled: bool) {
-        self.tick_pipelining = enabled;
-        if !enabled {
-            self.engine.complete_pending_tick();
-        }
-    }
-
-    pub fn tick_pipelining(&self) -> bool {
-        self.tick_pipelining
-    }
-
-    /// Temporally antialiases ordinary GPU-presented frames, in this and
-    /// later engines: sets the world's [`engine_core::TemporalAntialiasing`]
-    /// settings (a scene environment's `temporal_antialiasing` section),
-    /// which the next frame follows. Off by default.
-    pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
-        self.overrides.temporal_antialiasing = Some(enabled);
-        self.apply_overrides();
-    }
-
-    pub fn temporal_antialiasing(&self) -> bool {
-        self.engine
-            .app
-            .world()
-            .get_resource::<engine_core::TemporalAntialiasing>()
-            .is_some_and(|settings| settings.enabled)
-    }
-
-    /// Occlusion culling of GPU-presented frames, in this and later engines:
-    /// sets the world's [`engine_core::OcclusionCulling`] settings (a scene
-    /// environment's `occlusion_culling` section). On by default.
-    pub fn set_occlusion_culling(&mut self, enabled: bool) {
-        self.overrides.occlusion_culling = Some(enabled);
-        self.apply_overrides();
-    }
-
-    pub fn occlusion_culling(&self) -> bool {
-        self.engine
-            .app
-            .world()
-            .get_resource::<engine_core::OcclusionCulling>()
-            .is_some_and(|settings| settings.enabled)
-    }
-
-    /// Sub-pixel culling of GPU-presented frames, in this and later engines:
-    /// sets the world's [`engine_core::SubpixelCulling`] settings (a scene
-    /// environment's `subpixel_culling` section). On by default.
-    pub fn set_subpixel_culling(&mut self, enabled: bool) {
-        self.overrides.subpixel_culling = Some(enabled);
-        self.apply_overrides();
-    }
-
-    pub fn subpixel_culling(&self) -> bool {
-        self.engine
-            .app
-            .world()
-            .get_resource::<engine_core::SubpixelCulling>()
-            .is_some_and(|settings| settings.enabled)
-    }
-
-    /// Streams terrains for a frame's work time on a `width` × `height`
-    /// canvas without simulating or rendering: hosts call it
-    /// in place of frames while the GPU compiles pipelines, which frames
-    /// would only queue behind, so loading goes on meanwhile.
-    pub fn work(&mut self, width: u32, height: u32) {
-        let viewport = engine_core::Viewport {
-            width: width.max(1),
-            height: height.max(1),
+    #[allow(clippy::too_many_arguments)]
+    pub fn frame(
+        &mut self,
+        timestamp: f64,
+        width: u32,
+        height: u32,
+        forward: f32,
+        right: f32,
+        up: f32,
+        yaw: f32,
+        pitch: f32,
+        held: u32,
+        pressed: u32,
+        released: u32,
+    ) -> Result<(), JsValue> {
+        let input = InputState {
+            move_forward: forward,
+            move_right: right,
+            move_up: up,
+            look_yaw: yaw,
+            look_pitch: pitch,
         };
-        let world = self.engine.app.world_mut();
-        if world.get_resource::<engine_core::Viewport>() != Some(&viewport) {
-            world.insert_resource(viewport);
-        }
-        self.terrain_fetches.exchange(&mut self.engine);
-        self.engine.stream_terrain();
+        Ok(self
+            .host
+            .frame(timestamp, width, height, input, held, pressed, released)?)
     }
 
-    /// Loads terrain for `milliseconds` between frames: hosts
-    /// call it after a frame with the time left before the next one is due,
-    /// while the last frame found tiles to load. Returns whether tiles are
-    /// still to load.
-    pub fn work_between_frames(&mut self, milliseconds: f64) -> bool {
-        if !milliseconds.is_finite() || milliseconds <= 0.0 {
-            return false;
-        }
-        self.terrain_fetches.exchange(&mut self.engine);
-        self.engine.work_terrain(milliseconds)
-    }
-
-    /// Workers the host runs jobs on: with any, terrains bake
-    /// and generate tiles and agents search walks there; with none, the
-    /// default, that work stays in the engine, which takes back every job
-    /// handed out.
-    pub fn set_job_workers(&mut self, workers: u32) {
-        if let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
-        {
-            jobs.set_workers(workers);
-        }
-    }
-
-    /// What to hand workers since the last call, in order:
-    /// `{cancel}` for jobs handed out that their owners cancelled, which
-    /// their workers stop, `{clear: true}` to drop every
-    /// share an earlier engine made, `{share, bytes}` to hold bytes as a key
-    /// and `{unshare}` to drop one, to every worker, then
-    /// `{id, kind, input, priority}` jobs, each to one, lower priorities
-    /// first.
+    /// [`GameHost::take_jobs`] as the page's workers read them:
+    /// `{cancel}`, `{clear: true}`, `{share, bytes}`, `{unshare}` and
+    /// `{id, kind, input, priority, identity?}`.
     pub fn take_jobs(&mut self) -> js_sys::Array {
         let out = js_sys::Array::new();
-        let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
-        else {
-            return out;
-        };
-        let mut cancels = Vec::new();
-        let mut shares = Vec::new();
-        let mut requests = Vec::new();
-        jobs.take_cancels(&mut cancels);
-        jobs.take_shares(&mut shares);
-        jobs.take_requests(&mut requests);
         let set = |object: &js_sys::Object, field: &str, value: &JsValue| {
             // Setting a field of a plain new object cannot fail.
             let _ = js_sys::Reflect::set(object, &JsValue::from_str(field), value);
         };
-        for id in cancels {
+        for message in self.host.take_jobs() {
             let object = js_sys::Object::new();
-            set(&object, "cancel", &JsValue::from_f64(id.0 as f64));
-            out.push(&object);
-        }
-        for share in shares {
-            let object = js_sys::Object::new();
-            match share {
-                engine_core::JobShare::Clear => set(&object, "clear", &JsValue::TRUE),
-                engine_core::JobShare::Set { key, bytes } => {
+            match message {
+                JobMessage::Cancel(id) => set(&object, "cancel", &JsValue::from_f64(id.0 as f64)),
+                JobMessage::Share(JobShare::Clear) => set(&object, "clear", &JsValue::TRUE),
+                JobMessage::Share(JobShare::Set { key, bytes }) => {
                     set(&object, "share", &JsValue::from_str(&key));
                     set(
                         &object,
@@ -578,53 +221,55 @@ impl BrowserApp {
                         &js_sys::Uint8Array::from(bytes.as_slice()),
                     );
                 }
-                engine_core::JobShare::Remove { key } => {
+                JobMessage::Share(JobShare::Remove { key }) => {
                     set(&object, "unshare", &JsValue::from_str(&key));
                 }
-            }
-            out.push(&object);
-        }
-        for request in requests {
-            let object = js_sys::Object::new();
-            set(&object, "id", &JsValue::from_f64(request.id.0 as f64));
-            set(&object, "kind", &JsValue::from_str(request.kind));
-            set(
-                &object,
-                "input",
-                &js_sys::Uint8Array::from(request.input.as_slice()),
-            );
-            set(
-                &object,
-                "priority",
-                &JsValue::from_f64(f64::from(request.priority)),
-            );
-            // What hosts may keep its output by.
-            if let Some(identity) = &request.identity {
-                set(
-                    &object,
-                    "identity",
-                    &js_sys::Uint8Array::from(identity.as_slice()),
-                );
+                JobMessage::Run(request) => {
+                    set(&object, "id", &JsValue::from_f64(request.id.0 as f64));
+                    set(&object, "kind", &JsValue::from_str(request.kind));
+                    set(
+                        &object,
+                        "input",
+                        &js_sys::Uint8Array::from(request.input.as_slice()),
+                    );
+                    set(
+                        &object,
+                        "priority",
+                        &JsValue::from_f64(f64::from(request.priority)),
+                    );
+                    // What hosts may keep its output by.
+                    if let Some(identity) = &request.identity {
+                        set(
+                            &object,
+                            "identity",
+                            &js_sys::Uint8Array::from(identity.as_slice()),
+                        );
+                    }
+                }
             }
             out.push(&object);
         }
         out
     }
 
-    /// Job `id`'s output from its worker.
     pub fn complete_job(&mut self, id: f64, output: Vec<u8>) {
-        self.finish_job(id, Ok(output));
+        if let Some(id) = job_id(id) {
+            self.host.complete_job(id, output);
+        }
     }
 
-    /// Job `id` failed on its worker, for `error`: its owner
-    /// takes the work back.
     pub fn fail_job(&mut self, id: f64, error: String) {
-        self.finish_job(id, Err(error));
+        if let Some(id) = job_id(id) {
+            self.host.fail_job(id, error);
+        }
     }
 
-    /// The host's output cache's counters: outputs handed
-    /// back from it, jobs it lacked, its bytes and, verifying, outputs that
-    /// differed from a fresh run.
+    pub fn part_job(&mut self, id: f64, part: Vec<u8>) {
+        if let Some(id) = job_id(id) {
+            self.host.part_job(id, part);
+        }
+    }
+
     pub fn report_job_cache(&mut self, hits: f64, misses: f64, bytes: f64, mismatches: f64) {
         let count = |value: f64| {
             if value.is_finite() && value > 0.0 {
@@ -633,337 +278,58 @@ impl BrowserApp {
                 0
             }
         };
-        if let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
-        {
-            jobs.report_cache(count(hits), count(misses), count(bytes), count(mismatches));
-        }
+        self.host
+            .report_job_cache(count(hits), count(misses), count(bytes), count(mismatches));
     }
 
-    /// A part of job `id`'s output its worker handed back before the rest,
-    /// such as a tile's shape.
-    pub fn part_job(&mut self, id: f64, part: Vec<u8>) {
-        if !(id.is_finite() && id >= 1.0) {
-            return;
-        }
-        if let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
-        {
-            jobs.part(engine_core::JobId(id as u64), part);
-        }
-    }
-
-    fn finish_job(&mut self, id: f64, output: Result<Vec<u8>, String>) {
-        if !(id.is_finite() && id >= 1.0) {
-            return;
-        }
-        if let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
-        {
-            jobs.complete(engine_core::JobId(id as u64), output);
-        }
-    }
-
-    /// Advance once per animation frame; input is a bounded, owned value.
-    pub fn frame(
-        &mut self,
-        timestamp_ms: f64,
-        width: u32,
-        height: u32,
-        input: InputState,
-    ) -> Result<(), JsValue> {
-        if !timestamp_ms.is_finite() {
-            return Err(JsValue::from_str("Frame timestamp must be finite."));
-        }
-        #[cfg(feature = "profiling")]
-        self.begin_profile_frame();
-        let _profile = engine_profile::span("cpu", "browser.frame");
-        let delta = self
-            .last_timestamp_ms
-            .map_or(0.0, |last| (timestamp_ms - last).max(0.0) * 0.001);
-        self.last_timestamp_ms = Some(timestamp_ms);
-        self.set_input(input);
-        let start = self.performance.now();
-        let report = self.engine.advance(delta);
-        let simulation_ms = self.performance.now() - start;
-        self.render_frame(
-            width,
-            height,
-            simulation_ms,
-            report,
-            FrameKind::Display {
-                alpha: report.interpolation,
-            },
-        )?;
-        // After submission, so the GPU draws this frame while the next tick's
-        // first stage runs; the frame interval predicts the next one.
-        if self.gpu_presentation && self.tick_pipelining {
-            let start = self.performance.now();
-            if self.engine.run_ahead(delta) {
-                // A tick just completed ahead: stage its current poses now, so
-                // the frame that gathers them only records their GPU copy.
-                if self.engine.tick_completed_ahead()
-                    && let Some(current) = self.engine.gpu_current()
-                {
-                    self.renderer.prestage_gpu_current(current);
-                }
-                self.stats.simulation_ms += self.performance.now() - start;
-            }
-        }
-        Ok(())
-    }
-
-    /// Runs exact fixed ticks and submits the resulting state while paused.
-    ///
-    /// Uses [`Engine::step_fixed`]'s count and presentation contract. Rejected
-    /// tick counts leave the engine, input, timestamp, and renderer untouched.
-    /// Merge action input before this call, after validating the count. This
-    /// method preserves those edges and clears the real-time timestamp baseline
-    /// so the next ordinary frame excludes time spent in development control.
-    #[cfg(feature = "dev")]
-    pub fn dev_step(
-        &mut self,
-        ticks: u32,
-        width: u32,
-        height: u32,
-        input: InputState,
-    ) -> Result<(), JsValue> {
-        engine_core::DevStepError::validate(ticks)
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        #[cfg(feature = "profiling")]
-        self.begin_profile_frame();
-        let _profile = engine_profile::span("cpu", "browser.step");
-        self.engine.complete_pending_tick();
-        self.last_timestamp_ms = None;
-        self.set_input(input);
-        let start = self.performance.now();
-        let report = self
-            .engine
-            .step_fixed(ticks)
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        let simulation_ms = self.performance.now() - start;
-        self.render_frame(width, height, simulation_ms, report, FrameKind::Exact)
-    }
-
-    /// Extracts and submits current state without running either schedule.
-    ///
-    /// Intended for captures and scene replacement while paused. Frame/tick
-    /// counters, time, and input are unchanged; submission diagnostics report
-    /// zero simulation time and fixed steps, retaining cumulative dropped time.
-    #[cfg(feature = "dev")]
-    pub fn dev_render(&mut self, width: u32, height: u32) -> Result<(), JsValue> {
-        #[cfg(feature = "profiling")]
-        self.begin_profile_frame();
-        self.render_frame(width, height, 0.0, FrameReport::default(), FrameKind::Exact)
-    }
-
-    /// Render a selected fraction of the last fixed tick without running schedules.
-    /// Invalid fractions are rejected before touching the engine or renderer.
-    /// Ordinary development rendering and captures use current simulation state.
-    /// `gpu` presents the fraction through GPU presentation instead of the
-    /// exact CPU path, e.g. to compare both.
-    #[cfg(feature = "dev")]
-    pub fn dev_present(
-        &mut self,
-        alpha: f32,
-        width: u32,
-        height: u32,
-        gpu: bool,
-    ) -> Result<(), JsValue> {
-        if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
-            return Err(JsValue::from_str(
-                "Presentation alpha must be finite and in [0, 1].",
-            ));
-        }
-        #[cfg(feature = "profiling")]
-        self.begin_profile_frame();
-        // Previews show the latest completed tick.
-        self.engine.complete_pending_tick();
-        self.engine.reveal_ticks_ahead();
-        self.render_frame(
-            width,
-            height,
-            0.0,
-            FrameReport::default(),
-            FrameKind::Preview { alpha, gpu },
-        )
-    }
-
-    fn set_input(&mut self, input: InputState) {
-        let _profile = engine_profile::span("cpu", "browser.input");
-        fn bounded(value: f32, limit: f32) -> f32 {
-            if value.is_finite() {
-                engine_core::math::clamp(value, -limit, limit)
-            } else {
-                0.0
-            }
-        }
-        *self.engine.app.world_mut().resource_mut::<InputState>() = InputState {
-            move_forward: bounded(input.move_forward, 1.0),
-            move_right: bounded(input.move_right, 1.0),
-            move_up: bounded(input.move_up, 1.0),
-            look_yaw: bounded(input.look_yaw, 1000.0),
-            look_pitch: bounded(input.look_pitch, 1000.0),
-        };
-    }
-
-    fn render_frame(
-        &mut self,
-        width: u32,
-        height: u32,
-        simulation_ms: f64,
-        report: FrameReport,
-        kind: FrameKind,
-    ) -> Result<(), JsValue> {
-        if self.size != (width, height) {
-            self.renderer.resize(width, height);
-            self.size = (width, height);
-            // Terrain level of detail measures pixels.
-            self.engine
-                .app
-                .world_mut()
-                .insert_resource(engine_core::Viewport {
-                    width: width.max(1),
-                    height: height.max(1),
-                });
-        }
-        // Tiles that arrived stream in with this frame's extraction.
-        self.terrain_fetches.exchange(&mut self.engine);
-        let (frame_number, tick) = {
-            let world = self.engine.app.world();
-            (
-                world.resource::<engine_core::FrameTime>().frame,
-                world.resource::<engine_core::FixedTime>().tick,
-            )
-        };
-        let before_extraction = self.performance.now();
-        let culling_enabled = self.engine.frustum_culling();
-        let aspect = width.max(1) as f32 / height.max(1) as f32;
-        let gpu = match kind {
-            FrameKind::Display { .. } => self.gpu_presentation,
-            FrameKind::Exact => false,
-            FrameKind::Preview { gpu, .. } => gpu,
-        };
-        if gpu && self.gpu_inputs_stale {
-            // The renderer missed a gather. Current poses are the hierarchy's
-            // own locals, so an earlier interval can no longer be uploaded:
-            // complete and present the latest tick instead.
-            self.engine.complete_pending_tick();
-            self.engine.reveal_ticks_ahead();
-        }
-        let frame = match kind {
-            FrameKind::Display { alpha } | FrameKind::Preview { alpha, .. } if gpu => {
-                self.engine.extract_gpu_frame(aspect, alpha)
-            }
-            FrameKind::Display { alpha } | FrameKind::Preview { alpha, .. } => self
-                .engine
-                .extract_frame(aspect, PresentationMode::Interpolated { alpha }),
-            FrameKind::Exact => self.engine.extract_frame(aspect, PresentationMode::Current),
-        }
-        .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        let after_extraction = self.performance.now();
-        let rendered = if let FrameKind::Display { .. } = kind {
-            self.renderer
-                .render_display_frame(frame)
-                .map_err(render_failure)?
-        } else {
-            self.renderer.render_frame(frame).map_err(render_failure)?
-        };
-        if frame.gpu().is_some() {
-            self.gpu_inputs_stale = !rendered.submitted;
-        }
-        let snapshot = frame.snapshot();
-        // GPU-culled frames list their valid candidates as visible; culling and
-        // budget counts come from a GPU read-back a few frames old.
-        let listed = snapshot.visible_instances.min(u32::MAX as usize) as u32;
-        let (visible, culled, dropped) = if frame.gpu().is_some() {
-            let visible = rendered.gpu_visible.unwrap_or(listed);
-            (
-                visible,
-                listed.saturating_sub(visible),
-                visible.saturating_sub(rendered.instances),
-            )
-        } else {
-            (
-                listed,
-                snapshot.culled_instances.min(u32::MAX as usize) as u32,
-                snapshot.dropped_instances.min(u32::MAX as usize) as u32,
-            )
-        };
-        self.stats = FrameStats {
-            frame: frame_number,
-            tick,
-            simulation_ms,
-            extraction_ms: after_extraction - before_extraction,
-            render_ms: self.performance.now() - after_extraction,
-            invalid_transforms: snapshot.invalid_transforms.min(u32::MAX as usize) as u32,
-            render_candidates: snapshot.render_candidates.min(u32::MAX as usize) as u32,
-            visible_instances: visible,
-            culled_instances: culled,
-            dropped_instances: dropped,
-            missing_assets: snapshot.missing_assets.min(u32::MAX as usize) as u32,
-            culling_enabled,
-            fixed_steps: report.fixed_steps,
-            dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
-            pipelines_compiling: false,
-            loading: false,
-            jobs: engine_core::JobStats::default(),
-            navigation: engine_core::NavStats::default(),
-            render: rendered,
-        };
-        Ok(())
-    }
-
-    pub fn stats(&self) -> FrameStats {
-        FrameStats {
-            pipelines_compiling: self.renderer.pipelines_compiling(),
-            loading: self
-                .engine
-                .app
-                .world()
-                .get_resource::<engine_core::Terrains>()
-                .is_some_and(engine_core::Terrains::loading),
-            navigation: self
-                .engine
-                .app
-                .world()
-                .get_resource::<engine_core::NavAgents>()
-                .map(engine_core::NavAgents::stats)
-                .unwrap_or_default(),
-            jobs: self
-                .engine
-                .app
-                .world()
-                .get_resource::<engine_core::Jobs>()
-                .map(engine_core::Jobs::stats)
-                .unwrap_or_default(),
-            ..self.stats
-        }
-    }
-
-    /// [`Self::stats`] as the JSON object hosts and agents read.
-    pub fn stats_json(&self) -> String {
-        serde_json::to_string(&self.stats()).expect("frame stats serialize")
-    }
-
-    /// Drop suspension time and held input before the next frame.
-    pub fn suspend(&mut self) {
-        self.last_timestamp_ms = None;
-        self.engine.reset_clock();
-        *self.engine.app.world_mut().resource_mut::<InputState>() = InputState::default();
+    pub fn reload_scene(&mut self, source: &str, files: SceneFileSet) -> Result<(), JsValue> {
+        Ok(self.host.reload_scene(source, files.files())?)
     }
 }
 
-/// The renderer's failure as the page receives it.
-fn render_failure(error: engine_render::RenderError) -> JsValue {
-    JsValue::from_str(&error.0)
+#[cfg(feature = "dev")]
+impl<G: Game> PageHost<G> {
+    pub fn dev_reload(
+        &mut self,
+        source: &str,
+        expected_revision: &str,
+        revision: &str,
+        files: Option<SceneFileSet>,
+    ) -> String {
+        self.host.dev_reload(
+            source,
+            expected_revision,
+            revision,
+            files.as_ref().map(SceneFileSet::files),
+        )
+    }
+}
+
+#[cfg(feature = "profiling")]
+impl<G: Game> PageHost<G> {
+    pub fn profiling_start(&mut self, max_events: u32) -> Result<(), JsValue> {
+        self.host
+            .profiling_start(max_events as usize)
+            .map_err(JsValue::from_str)
+    }
+
+    pub fn profiling_stop(&mut self) -> Result<String, JsValue> {
+        self.host
+            .profiling_stop()
+            .map(|report| report.to_string())
+            .map_err(JsValue::from_str)
+    }
+
+    pub fn profiling_report(&mut self) -> String {
+        self.host.profiling_report().to_string()
+    }
+
+    pub fn profiling_status(&self) -> String {
+        self.host.profiling_status().to_string()
+    }
+}
+
+/// The job the page's `id` names: none unless finite and at least 1.
+fn job_id(id: f64) -> Option<JobId> {
+    (id.is_finite() && id >= 1.0).then_some(JobId(id as u64))
 }
