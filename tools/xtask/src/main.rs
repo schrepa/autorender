@@ -9,6 +9,7 @@ mod pipeline;
 mod process;
 mod profiling;
 mod scaffold;
+mod shader_report;
 mod smoke;
 
 use std::{env, process::ExitCode};
@@ -52,6 +53,9 @@ fn execute() -> Result<(), String> {
     }
     if task == "new" {
         return scaffold::new(&root, &options);
+    }
+    if task == "gpu" && !options.is_empty() {
+        return shader_report::run(&root, &options);
     }
     if task == "build-dev" {
         let [option, output] = options.as_slice() else {
@@ -123,6 +127,7 @@ fn commands() -> Vec<(String, &'static str)> {
         ("new app NAME".into(), "Start a game in apps/NAME with its page web/NAME.html, from the engine's app template"),
         ("smoke --list | --all | NAME...".into(), "List or run the browser smoke checks against a running dev server"),
         ("gpu".into(), "Check the renderer's shaders against its Rust GPU layouts and bindings"),
+        ("gpu --report DIR [--no-rga]".into(), "Report every shader entry point's cost offline, on any machine: naga's counts and SPIR-V, and with Radeon GPU Analyzer (downloaded once, Windows and Linux) its AMD machine code, registers and memory on RDNA 2, 3 and 4"),
         ("wasm-bindgen-version".into(), "Print the wasm-bindgen version Cargo.lock pins"),
         ("lint".into(), "Check sources, generated files, shaders against Rust, formatting, native and Wasm Clippy and the web host"),
         ("docs".into(), "Generate native workspace and browser API documentation"),

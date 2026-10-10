@@ -8,7 +8,9 @@ publish = false
 engine_scene = { workspace = true, features = ["schema"] }
 engine_dev.workspace = true
 engine_render.workspace = true
-naga = { version = "=30.0.1", features = ["wgsl-in"] }
+naga = { version = "=30.0.1", features = ["wgsl-in", "spv-out"] }
+# The shader report checks the analyzer it downloads.
+sha2.workspace = true
 engine_assetc.workspace = true
 # The game surface's types and the TypeScript generator.
 engine.workspace = true

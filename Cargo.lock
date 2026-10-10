@@ -3683,6 +3683,7 @@ dependencies = [
  "engine_scene",
  "naga",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
