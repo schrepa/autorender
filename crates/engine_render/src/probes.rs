@@ -9,7 +9,6 @@ use engine_core::{
     math,
 };
 
-#[cfg(target_arch = "wasm32")]
 use crate::cached::Cached;
 use crate::gpu_data::STILL_FRAMES;
 use crate::gpu_layouts::constants::PROBE_ENTRY_WORDS;
@@ -231,7 +230,6 @@ impl ProbeSlots {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub(crate) struct ProbePass {
     pub(crate) slots: ProbeSlots,
     // The camera of each face being captured.
@@ -245,7 +243,6 @@ pub(crate) struct ProbePass {
     generation: u64,
 }
 
-#[cfg(target_arch = "wasm32")]
 impl ProbePass {
     pub(crate) fn new(device: &wgpu::Device, camera_bytes: u64) -> Self {
         let cameras = std::array::from_fn(|_| {
@@ -325,7 +322,6 @@ impl ProbePass {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 const GRID_LABEL: &str = "engine/probe-grid";
 
 /// The view-projection of cube face `face` (in WebGPU's sampling order and

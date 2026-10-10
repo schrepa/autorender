@@ -140,7 +140,6 @@ pub(crate) fn grown_layers(needed: u32, limit: u32) -> u32 {
     needed.max(16).next_power_of_two().min(limit).max(needed)
 }
 
-#[cfg(target_arch = "wasm32")]
 mod gpu {
     use std::collections::HashMap;
 
@@ -919,7 +918,6 @@ mod gpu {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub(crate) use gpu::{
     BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas, ImpostorPipelines, draw_pipeline,
 };

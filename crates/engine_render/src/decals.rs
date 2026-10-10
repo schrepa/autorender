@@ -68,7 +68,6 @@ pub(crate) fn pack_decals(
     decals.len() - fitting.len()
 }
 
-#[cfg(target_arch = "wasm32")]
 mod gpu {
     use std::collections::HashMap;
 
@@ -344,5 +343,4 @@ mod gpu {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub(crate) use gpu::{DecalFrame, DecalPass};

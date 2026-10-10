@@ -18,10 +18,8 @@ use engine_core::{RenderLight, glam::Mat4};
 pub(crate) const TILES_X: u32 = 16;
 pub(crate) const TILES_Y: u32 = 9;
 pub(crate) const SLICES: u32 = 24;
-#[cfg(target_arch = "wasm32")]
 const CLUSTERS: u64 = (TILES_X * TILES_Y * SLICES) as u64;
 // Three counters, padded.
-#[cfg(target_arch = "wasm32")]
 const TOTALS_BYTES: u64 = 16;
 /// The per-cluster budget of clusters without one.
 pub(crate) const NO_BUDGET: u32 = u32::MAX;
@@ -107,7 +105,6 @@ impl From<&RenderLight> for LightInput {
 }
 
 /// GPU binning, wasm32 only like the renderer.
-#[cfg(target_arch = "wasm32")]
 mod gpu {
     use std::{cell::Cell, rc::Rc};
 
@@ -560,5 +557,4 @@ mod gpu {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub(crate) use gpu::{LightFrame, LightPass};

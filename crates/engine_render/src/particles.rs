@@ -109,7 +109,6 @@ fn same_instances(a: &[EmitterData], b: &[EmitterData]) -> bool {
             .all(|(a, b)| a.first == b.first && a.count == b.count)
 }
 
-#[cfg(target_arch = "wasm32")]
 mod gpu {
     use engine_core::RenderSnapshot;
 
@@ -460,5 +459,4 @@ mod gpu {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
 pub(crate) use gpu::{ParticleFrame, ParticlePass};

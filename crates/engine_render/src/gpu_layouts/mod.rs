@@ -7,7 +7,6 @@
 //! and nowhere else (the lint refuses `Pod` derives outside this module), so
 //! none goes unchecked.
 // Native builds read only the layouts; Wasm builds upload the structs.
-#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 
 /// A WGSL struct mirroring a Rust one: its name, in one shader module or in
 /// every module declaring it.

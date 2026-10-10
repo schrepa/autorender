@@ -342,14 +342,17 @@ mod capture {
             };
             let slot = &self.slots[index];
             let mapped = Rc::clone(&slot.mapped);
-            slot.readback
-                .map_async(wgpu::MapMode::Read, .., move |result| {
+            slot.readback.map_async(
+                wgpu::MapMode::Read,
+                ..,
+                crate::platform::map_callback(move |result| {
                     mapped.set(if result.is_ok() {
                         MapState::Ready
                     } else {
                         MapState::Failed
                     });
-                });
+                }),
+            );
         }
 
         pub(crate) fn poll(&mut self) {

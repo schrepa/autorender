@@ -9,7 +9,6 @@
 //! so the graph keeps the declared order and holds no GPU objects: the
 //! renderer encodes each kept pass by its [`Pass`] with the derived
 //! operations. [`plan`] declares the renderer's frame from its [`FrameShape`].
-#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 
 /// Builds [`Resource`], the list of every resource and each one's
 /// [`Lifetime`] from one table: `Name: Lifetime`.

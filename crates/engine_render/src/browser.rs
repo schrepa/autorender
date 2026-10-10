@@ -4,9 +4,9 @@ use std::{
 };
 
 use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, TextureHandle};
-use wasm_bindgen::JsValue;
-use web_sys::HtmlCanvasElement;
 use wgpu::util::DeviceExt;
+
+use crate::platform::{RenderError, RenderTarget, render_error};
 
 use crate::RenderStats;
 use crate::batches::{BatchPlan, DrawBatch};
@@ -293,49 +293,34 @@ pub struct StartingRenderer {
 
 impl StartingRenderer {
     /// The renderer, once its startup pipelines passed validation.
-    pub async fn finish(self) -> Result<Renderer, JsValue> {
+    pub async fn finish(self) -> Result<Renderer, RenderError> {
         if let Some(error) = self.validation.await {
-            return Err(js_error("WebGPU pipeline initialization failed", error));
+            return Err(render_error("WebGPU pipeline initialization failed", error));
         }
         Ok(self.renderer)
     }
 }
 
-/// Lets the browser run one task: commands issued before it reach the GPU
-/// process before the caller's next synchronous work.
-async fn yield_to_browser() {
-    let promise = js_sys::Promise::new(&mut |resolve, _| {
-        let scheduled = web_sys::window()
-            .is_some_and(|window| window.set_timeout_with_callback(&resolve).is_ok());
-        if !scheduled {
-            let _ = resolve.call0(&JsValue::NULL);
-        }
-    });
-    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
-}
-
 impl Renderer {
-    /// Create an engine-owned WebGPU context on a canvas in a secure context.
+    /// Create an engine-owned GPU context presenting to `target`: a canvas
+    /// in a secure context, or a native window.
     ///
     /// Returns an actionable error when no compatible WebGPU adapter exists,
     /// device creation fails, or pipeline validation fails. Ordinary builds require
     /// no optional GPU features. Profiling builds request timestamps when supported;
     /// there is deliberately no WebGL fallback in this milestone.
-    pub async fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
-        Self::start(canvas).await?.finish().await
+    pub async fn new(target: RenderTarget) -> Result<Self, RenderError> {
+        Self::start(target).await?.finish().await
     }
 
     /// [`Self::new`] without waiting for its startup pipelines: the browser
     /// compiles and validates them while the caller builds its world, the
     /// usual startup cost, until [`StartingRenderer::finish`].
-    pub async fn start(canvas: HtmlCanvasElement) -> Result<StartingRenderer, JsValue> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU,
-            ..wgpu::InstanceDescriptor::new_without_display_handle()
-        });
-        let surface = instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
-            .map_err(|error| js_error("Could not create the WebGPU canvas", error))?;
+    pub async fn start(target: RenderTarget) -> Result<StartingRenderer, RenderError> {
+        let instance = target.instance();
+        let surface = target
+            .surface(&instance)
+            .map_err(|error| render_error("Could not create the GPU surface", error))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -344,7 +329,7 @@ impl Renderer {
                 ..Default::default()
             })
             .await
-            .map_err(|error| js_error("No WebGPU adapter is available. Use a WebGPU-capable browser on HTTPS or localhost", error))?;
+            .map_err(|error| render_error("No WebGPU adapter is available. Use a WebGPU-capable browser on HTTPS or localhost", error))?;
         let adapter_limits = adapter.limits();
         // Buffers as large as the adapter allows: content, not constants,
         // sizes them.
@@ -389,7 +374,7 @@ impl Renderer {
                 ..Default::default()
             })
             .await
-            .map_err(|error| js_error("Could not initialize the WebGPU device", error))?;
+            .map_err(|error| render_error("Could not initialize the WebGPU device", error))?;
 
         let failure = Arc::new(Mutex::new(None));
         let lost_failure = Arc::clone(&failure);
@@ -410,10 +395,10 @@ impl Renderer {
         }));
 
         let device_limits = device.limits();
-        let display = Display::new(
+        let mut display = Display::new(
             instance,
             surface,
-            canvas,
+            target,
             &adapter,
             (
                 device_limits.max_texture_dimension_2d,
@@ -544,7 +529,7 @@ impl Renderer {
             failure,
             profiler,
         };
-        yield_to_browser().await;
+        crate::platform::yield_now().await;
         Ok(StartingRenderer {
             renderer,
             validation,
@@ -576,7 +561,7 @@ impl Renderer {
     /// loss and validation errors permanently fail this renderer, and frame
     /// source errors return before uploads or cache changes. The frame is
     /// exact: never jittered or blended with earlier frames.
-    pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, JsValue> {
+    pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, RenderError> {
         self.render_inner(frame, false)
     }
 
@@ -584,7 +569,10 @@ impl Renderer {
     /// antialiasing enabled, GPU-presented frames rasterize with a sub-pixel
     /// jitter and blend with the reprojected output of the previous display
     /// frame. Any other frame ends that history.
-    pub fn render_display_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, JsValue> {
+    pub fn render_display_frame(
+        &mut self,
+        frame: RenderFrame<'_>,
+    ) -> Result<RenderStats, RenderError> {
         self.render_inner(frame, true)
     }
 
@@ -756,8 +744,4 @@ fn canvas_clear() -> [f64; 4] {
     let encode = |linear: f64| 1.055 * linear.powf(1.0 / 2.4) - 0.055;
     let [r, g, b, a] = crate::render_graph::SCENE_CLEAR;
     [encode(r), encode(g), encode(b), a]
-}
-
-fn js_error(context: &str, error: impl std::fmt::Display) -> JsValue {
-    JsValue::from_str(&format!("{context}: {error}"))
 }

@@ -151,9 +151,9 @@ impl<T: Copy + 'static> ReadbackRing<T> {
             let state = Rc::clone(&slot.state);
             let buffer = slot.buffer.clone();
             let (read, tag) = (read.clone(), slot.tag);
-            slot.buffer
-                .slice(..)
-                .map_async(wgpu::MapMode::Read, move |result| {
+            slot.buffer.slice(..).map_async(
+                wgpu::MapMode::Read,
+                crate::platform::map_callback(move |result| {
                     if result.is_ok() {
                         if let Ok(view) = buffer.slice(..).get_mapped_range() {
                             read(&Words(&view), tag);
@@ -161,7 +161,8 @@ impl<T: Copy + 'static> ReadbackRing<T> {
                         buffer.unmap();
                     }
                     state.set(State::Idle);
-                });
+                }),
+            );
         }
     }
 

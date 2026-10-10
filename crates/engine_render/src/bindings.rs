@@ -6,7 +6,6 @@
 //! and groups bind resources by name.
 
 // Native builds read only the tables; Wasm builds build layouts from them.
-#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 
 pub(crate) use crate::gpu_layouts::constants::PYRAMID_EXTENT_BYTES;
 use crate::gpu_layouts::impostors::{ImpostorBakeUniform, ImpostorRecord};

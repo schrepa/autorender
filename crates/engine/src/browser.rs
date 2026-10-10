@@ -313,7 +313,7 @@ impl StartingApp {
     /// The app running `engine`, once the renderer's startup pipelines passed
     /// validation.
     async fn finish(self, engine: Engine) -> Result<BrowserApp, JsValue> {
-        let renderer = self.renderer.finish().await?;
+        let renderer = self.renderer.finish().await.map_err(render_failure)?;
         Ok(BrowserApp::with(engine, renderer, self.performance))
     }
 }
@@ -334,7 +334,9 @@ impl BrowserApp {
         let performance = web_sys::window()
             .and_then(|window| window.performance())
             .ok_or_else(|| JsValue::from_str("A browser performance clock is required."))?;
-        let renderer = Renderer::start(canvas).await?;
+        let renderer = Renderer::start(engine_render::RenderTarget::Canvas(canvas))
+            .await
+            .map_err(render_failure)?;
         Ok(StartingApp {
             renderer,
             performance,
@@ -870,9 +872,11 @@ impl BrowserApp {
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
         let after_extraction = self.performance.now();
         let rendered = if let FrameKind::Display { .. } = kind {
-            self.renderer.render_display_frame(frame)?
+            self.renderer
+                .render_display_frame(frame)
+                .map_err(render_failure)?
         } else {
-            self.renderer.render_frame(frame)?
+            self.renderer.render_frame(frame).map_err(render_failure)?
         };
         if frame.gpu().is_some() {
             self.gpu_inputs_stale = !rendered.submitted;
@@ -957,4 +961,9 @@ impl BrowserApp {
         self.engine.reset_clock();
         *self.engine.app.world_mut().resource_mut::<InputState>() = InputState::default();
     }
+}
+
+/// The renderer's failure as the page receives it.
+fn render_failure(error: engine_render::RenderError) -> JsValue {
+    JsValue::from_str(&error.0)
 }

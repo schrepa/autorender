@@ -11,7 +11,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use engine_core::{CLUSTER_WORDS, GROUP_WORDS, MeshHandle, NODE_WORDS, PAGE_WORDS, VirtualMesh};
-use wasm_bindgen::JsCast;
 
 use super::NONE;
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
@@ -106,54 +105,14 @@ fn pool(device: &wgpu::Device, table_words: u64, slots: usize) -> wgpu::Buffer {
     })
 }
 
-/// Fetches bytes `range` of `url` into `inbox` as `arrival` (a server
-/// ignoring ranges sends the whole file, which is cut to the range).
+/// Fetches bytes `range` of `url` into `inbox` as `arrival`.
 fn fetch(
     url: &str,
     range: std::ops::Range<u64>,
     arrival: Arrival,
     inbox: Rc<RefCell<Vec<Arrival>>>,
 ) {
-    let request = (|| {
-        let init = web_sys::RequestInit::new();
-        init.set_method("GET");
-        let headers = web_sys::Headers::new().ok()?;
-        headers
-            .set("Range", &format!("bytes={}-{}", range.start, range.end - 1))
-            .ok()?;
-        init.set_headers(&headers);
-        web_sys::Request::new_with_str_and_init(url, &init).ok()
-    })();
-    let promise = request
-        .zip(web_sys::window())
-        .map(|(request, window)| window.fetch_with_request(&request));
-    wasm_bindgen_futures::spawn_local(async move {
-        let bytes = async {
-            let response: web_sys::Response =
-                wasm_bindgen_futures::JsFuture::from(promise.ok_or(())?)
-                    .await
-                    .map_err(|_| ())?
-                    .dyn_into()
-                    .map_err(|_| ())?;
-            if !response.ok() {
-                return Err(());
-            }
-            let whole = response.status() == 200;
-            let buffer =
-                wasm_bindgen_futures::JsFuture::from(response.array_buffer().map_err(|_| ())?)
-                    .await
-                    .map_err(|_| ())?;
-            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-            if whole {
-                bytes
-                    .get(range.start as usize..range.end as usize)
-                    .map(<[u8]>::to_vec)
-                    .ok_or(())
-            } else {
-                Ok(bytes)
-            }
-        }
-        .await;
+    crate::platform::read_range(url, range, move |bytes| {
         inbox.borrow_mut().push(Arrival { bytes, ..arrival });
     });
 }

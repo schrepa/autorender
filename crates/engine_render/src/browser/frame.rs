@@ -167,13 +167,13 @@ impl Renderer {
         &mut self,
         frame: RenderFrame<'_>,
         display: bool,
-    ) -> Result<RenderStats, JsValue> {
+    ) -> Result<RenderStats, RenderError> {
         let snapshot = frame.snapshot();
         let _profile = engine_profile::span("render", "render_snapshot");
         if let Ok(failure) = self.failure.lock()
             && let Some(message) = failure.as_ref()
         {
-            return Err(JsValue::from_str(message));
+            return Err(RenderError(message.to_string()));
         }
         let (kind, gpu) = self.plan_frame(frame, display)?;
         if self.display.suspended {
@@ -267,7 +267,7 @@ impl Renderer {
         render_graph::plan(&mut graph, &state.shape);
         if let Err(unwritten) = graph.compile() {
             self.graph = graph;
-            return Err(JsValue::from_str(&format!(
+            return Err(RenderError(format!(
                 "The render graph's {} pass reads {:?} before any pass writes it.",
                 unwritten.pass.name(),
                 unwritten.resource,
@@ -318,13 +318,13 @@ impl Renderer {
         &mut self,
         frame: RenderFrame<'f>,
         display: bool,
-    ) -> Result<(FrameKind, Option<engine_core::GpuPresentation<'f>>), JsValue> {
+    ) -> Result<(FrameKind, Option<engine_core::GpuPresentation<'f>>), RenderError> {
         let snapshot = frame.snapshot();
         {
             let _profile = engine_profile::span("render", "batch_plan");
             self.plan
                 .prepare_frame(&frame)
-                .map_err(|error| js_error("Invalid render frame", error))?;
+                .map_err(|error| render_error("Invalid render frame", error))?;
         }
         let gpu = frame.gpu();
         let gpu_mode = gpu.is_some();
@@ -343,7 +343,7 @@ impl Renderer {
         let profile_residency = engine_profile::span("render", "validate_and_retire");
         for source in snapshot.textures.iter().chain(&snapshot.decal_textures) {
             if source.texture.width().max(source.texture.height()) > self.display.max_dimension {
-                return Err(JsValue::from_str(&format!(
+                return Err(RenderError(format!(
                     "Texture {:?} exceeds the device's {}-pixel dimension limit.",
                     source.handle, self.display.max_dimension,
                 )));
@@ -2849,6 +2849,9 @@ impl Renderer {
         }
         self.profiler.submitted();
         self.queue.present(frame);
+        // Native interfaces run finished work's callbacks, read-backs and
+        // staging maps among them, when polled.
+        crate::platform::poll(&self.device);
         drop(profile_submit);
     }
 }

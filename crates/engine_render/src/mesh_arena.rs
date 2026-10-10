@@ -6,7 +6,6 @@
 //! browsers' WebGPU layers charge per call.
 
 /// A mesh's vertex streams: its class of arena buffers.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Streams {
     Plain = 0,
@@ -15,7 +14,6 @@ pub(crate) enum Streams {
 }
 
 /// Where a mesh's data lies in the arena.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Placement {
     pub first_index: u32,
@@ -78,7 +76,6 @@ impl Space {
 
 /// The capacity (in elements of `bytes` each) a full space grows to for
 /// `length` more: doubled, and at least enough, within `limit` bytes.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn grown_capacity(space: &Space, length: u32, bytes: u64, limit: u64) -> Option<u32> {
     let needed = u64::from(space.capacity) + u64::from(length);
     let grown = (u64::from(space.capacity) * 2).max(needed).max(1024);
@@ -87,10 +84,8 @@ fn grown_capacity(space: &Space, length: u32, bytes: u64, limit: u64) -> Option<
     (capacity >= needed).then_some(capacity as u32)
 }
 
-#[cfg(target_arch = "wasm32")]
 pub(crate) use gpu::*;
 
-#[cfg(target_arch = "wasm32")]
 mod gpu {
     use super::*;
 

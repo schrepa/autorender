@@ -1,13 +1,13 @@
-//! The canvas the renderer presents to: its WebGPU surface, configured at
-//! the canvas's size within the device's limits, suspended at size zero and
-//! reconfigured at the render boundary after a resize.
+//! What the renderer presents to, a canvas or a window: its surface,
+//! configured at the target's size within the device's limits, suspended at
+//! size zero and reconfigured at the render boundary after a resize.
 
 use super::*;
 
 pub(super) struct Display {
     instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
-    canvas: HtmlCanvasElement,
+    target: RenderTarget,
     configuration: wgpu::SurfaceConfiguration,
     pub(super) max_dimension: u32,
     // Layers a texture array holds, read once.
@@ -17,28 +17,31 @@ pub(super) struct Display {
 }
 
 impl Display {
-    /// The display of `surface` on `canvas`, sized as the canvas within
+    /// The display of `surface` on `target`, sized as the target within
     /// `max_dimension` (suspended when it has no area), not yet configured.
     pub(super) fn new(
         instance: wgpu::Instance,
         surface: wgpu::Surface<'static>,
-        canvas: HtmlCanvasElement,
+        target: RenderTarget,
         adapter: &wgpu::Adapter,
         (max_dimension, max_layers): (u32, u32),
-    ) -> Result<Self, JsValue> {
-        let extent = clamped_extent(canvas.width(), canvas.height(), max_dimension);
+    ) -> Result<Self, RenderError> {
+        let (width, height) = target.size();
+        let extent = clamped_extent(width, height, max_dimension);
         let (width, height) = extent.unwrap_or((1, 1));
         let mut configuration = surface
             .get_default_config(adapter, width, height)
             .ok_or_else(|| {
-                JsValue::from_str("This adapter cannot present to the supplied canvas.")
+                RenderError("This adapter cannot present to the supplied canvas.".into())
             })?;
         configuration.present_mode = wgpu::PresentMode::Fifo;
+        // Shaders encode their output for a UNORM target, as canvases are.
+        configuration.format = configuration.format.remove_srgb_suffix();
         configuration.desired_maximum_frame_latency = 2;
         Ok(Self {
             instance,
             surface,
-            canvas,
+            target,
             configuration,
             max_dimension,
             max_layers,
@@ -47,11 +50,11 @@ impl Display {
         })
     }
 
-    /// Sizes the canvas and configures the surface, unless suspended.
-    pub(super) fn configure(&self, device: &wgpu::Device) {
+    /// Sizes the target and configures the surface, unless suspended.
+    pub(super) fn configure(&mut self, device: &wgpu::Device) {
         if !self.suspended {
-            self.canvas.set_width(self.configuration.width);
-            self.canvas.set_height(self.configuration.height);
+            self.target
+                .set_size((self.configuration.width, self.configuration.height));
             self.surface.configure(device, &self.configuration);
         }
     }
@@ -80,8 +83,7 @@ impl Display {
         self.suspended = false;
         self.configuration.width = width;
         self.configuration.height = height;
-        self.canvas.set_width(width);
-        self.canvas.set_height(height);
+        self.target.set_size((width, height));
         self.reconfigure_next_frame = true;
         // Reconfiguration happens at the next render boundary after checking
         // device loss, so resize never touches a known-lost GPU device.
@@ -94,7 +96,7 @@ impl Display {
         &mut self,
         device: &wgpu::Device,
         depth: &mut DepthTarget,
-    ) -> Result<Option<wgpu::SurfaceTexture>, JsValue> {
+    ) -> Result<Option<wgpu::SurfaceTexture>, RenderError> {
         let _profile = engine_profile::span("render", "surface_acquisition");
         if self.reconfigure_next_frame {
             self.surface.configure(device, &self.configuration);
@@ -116,15 +118,15 @@ impl Display {
             }
             wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface = self
-                    .instance
-                    .create_surface(wgpu::SurfaceTarget::Canvas(self.canvas.clone()))
-                    .map_err(|error| js_error("Could not recover the WebGPU surface", error))?;
+                    .target
+                    .surface(&self.instance)
+                    .map_err(|error| render_error("Could not recover the GPU surface", error))?;
                 self.reconfigure_next_frame = true;
                 return Ok(None);
             }
             wgpu::CurrentSurfaceTexture::Validation => {
-                return Err(JsValue::from_str(
-                    "WebGPU surface validation failed. Reload to recreate the engine.",
+                return Err(RenderError(
+                    "WebGPU surface validation failed. Reload to recreate the engine.".into(),
                 ));
             }
         };

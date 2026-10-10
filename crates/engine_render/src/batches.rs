@@ -184,7 +184,6 @@ pub(crate) struct BatchPlan {
 
 impl BatchPlan {
     /// A plan that rejects snapshots of more than `limit` instances.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub(crate) fn with_instance_limit(limit: usize) -> Self {
         Self {
             instance_limit: Some(limit),

@@ -3,7 +3,6 @@
 //! Poses need no packing here: core keeps every slot's pose in the upload
 //! layout (`RenderFrame::pose_rows`) and this cache only selects changed slots.
 
-#[cfg(target_arch = "wasm32")]
 use engine_core::RenderFrame;
 use engine_core::RenderInstance;
 
@@ -95,13 +94,11 @@ pub(crate) struct PreparedRetained {
 
 impl RetainedUploads {
     /// A new buffer, layout, or non-retained submission invalidates GPU contents.
-    #[cfg(target_arch = "wasm32")]
     pub fn invalidate(&mut self) {
         self.committed = None;
         self.pending = None;
     }
 
-    #[cfg(target_arch = "wasm32")]
     pub fn prepare(
         &mut self,
         frame: &RenderFrame<'_>,
@@ -213,12 +210,10 @@ impl RetainedUploads {
         self.committed = self.pending.take();
     }
 
-    #[cfg(target_arch = "wasm32")]
     pub fn capacity_bytes(&self) -> usize {
         size_of::<Self>() + self.stamps.capacity() * size_of::<(u64, u64)>()
     }
 
-    #[cfg(target_arch = "wasm32")]
     pub const fn range_scratch_bytes() -> usize {
         2 * size_of::<[UploadRange; MAX_WRITE_RANGES]>()
     }

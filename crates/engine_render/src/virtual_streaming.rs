@@ -34,7 +34,6 @@ pub(crate) struct MeshLinks {
 }
 
 impl MeshLinks {
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub(crate) fn of(mesh: &VirtualMesh) -> Self {
         Self {
             pages: mesh.page_count() as u32,

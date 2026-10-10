@@ -152,26 +152,22 @@ impl StagingRing {
             return Staged::NoMappedBuffer;
         };
         let staging = &self.buffers[index];
-        {
-            let Ok(view) = staging.buffer.slice(0..bytes as u64).get_mapped_range() else {
-                staging.state.set(State::Failed);
-                return Staged::NoMappedBuffer;
-            };
-            // Writing through the JS view copies Wasm bytes directly into the
-            // browser's persistent mapping; wgpu's Rust-side write view would
-            // first copy the whole mapping into Wasm and back.
-            let target = view.as_uint8array();
-            let mut offset = 0;
-            for segment in segments {
-                let stride = segment.stride;
-                for range in segment.ranges {
-                    let source = &segment.records[range.start * stride..range.end * stride];
-                    target
-                        .subarray(offset as u32, (offset + source.len()) as u32)
-                        .copy_from(source);
-                    offset += source.len();
-                }
-            }
+        let mut offset = 0;
+        let writes = segments.iter().flat_map(|segment| {
+            let stride = segment.stride;
+            segment
+                .ranges
+                .iter()
+                .map(move |range| &segment.records[range.start * stride..range.end * stride])
+        });
+        let writes = writes.map(|source| {
+            let at = offset;
+            offset += source.len();
+            (at, source)
+        });
+        if !crate::platform::write_mapped(staging.buffer.slice(0..bytes as u64), writes) {
+            staging.state.set(State::Failed);
+            return Staged::NoMappedBuffer;
         }
         staging.buffer.unmap();
         staging.state.set(State::Recorded);
@@ -198,18 +194,10 @@ impl StagingRing {
     pub(crate) fn prestage(&mut self, device: &wgpu::Device, bytes: &[u8]) -> Option<Prestaged> {
         let index = self.mapped(device, bytes.len())?;
         let staging = &self.buffers[index];
+        if !crate::platform::write_mapped(staging.buffer.slice(0..bytes.len() as u64), [(0, bytes)])
         {
-            let Ok(view) = staging
-                .buffer
-                .slice(0..bytes.len() as u64)
-                .get_mapped_range()
-            else {
-                staging.state.set(State::Failed);
-                return None;
-            };
-            view.as_uint8array()
-                .subarray(0, bytes.len() as u32)
-                .copy_from(bytes);
+            staging.state.set(State::Failed);
+            return None;
         }
         staging.buffer.unmap();
         staging.state.set(State::Prestaged);
@@ -265,16 +253,16 @@ impl StagingRing {
             }
             staging.state.set(State::Pending);
             let state = Rc::clone(&staging.state);
-            staging
-                .buffer
-                .slice(..)
-                .map_async(wgpu::MapMode::Write, move |result| {
+            staging.buffer.slice(..).map_async(
+                wgpu::MapMode::Write,
+                crate::platform::map_callback(move |result| {
                     state.set(if result.is_ok() {
                         State::Mapped
                     } else {
                         State::Failed
                     });
-                });
+                }),
+            );
         }
     }
 
