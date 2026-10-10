@@ -217,6 +217,12 @@ fn ensure_commit(root: &Path, sha: &str, pull: Option<u64>) -> Result<(), String
     git(root, &["cat-file", "-e", &commit]).map(drop)
 }
 
+/// `text` as a full commit id: 40 hexadecimal digits, as tasks name them.
+pub fn commit_id<'a>(text: Option<&'a str>, what: &str) -> Result<&'a str, String> {
+    text.filter(|text| text.len() == 40 && text.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| format!("{what} is a full commit id (40 hexadecimal digits)"))
+}
+
 /// DXC's library (Windows): `DXC_PATH`, else `dxcompiler.dll` on the path,
 /// else the one Firefox or the newest Chrome ships.
 fn dxc() -> Option<PathBuf> {
@@ -971,10 +977,8 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
     } else {
         "discrete"
     };
-    let base_sha = spec["base_sha"]
-        .as_str()
-        .ok_or("the task has no base_sha")?;
-    let candidate_sha = spec["sha"].as_str().ok_or("the task has no sha")?;
+    let base_sha = commit_id(spec["base_sha"].as_str(), "the task's base_sha")?;
+    let candidate_sha = commit_id(spec["sha"].as_str(), "the task's sha")?;
     let pull = spec["pr"].as_u64().or_else(|| task["pr"].as_u64());
     if previous.as_ref().is_some_and(|previous| {
         previous["task"] != task_id

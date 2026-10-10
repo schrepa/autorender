@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::bench::hex;
-use crate::measure::{checkout, git, iso, output, read_json};
+use crate::measure::{checkout, commit_id, git, iso, output, read_json};
 
 /// Attempts a check gets in all.
 const ATTEMPTS: usize = 3;
@@ -195,9 +195,10 @@ pub fn run(
     fs::create_dir_all(folder).map_err(|error| error.to_string())?;
     let mut by_commit: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
     for check in checks {
-        let sha = check["sha"]
-            .as_str()
-            .ok_or("a check names its commit (sha)")?;
+        let sha = commit_id(check["sha"].as_str(), "a check's sha")?;
+        if !check["scripts_sha"].is_null() {
+            commit_id(check["scripts_sha"].as_str(), "a check's scripts_sha")?;
+        }
         by_commit.entry(sha).or_default().push(check);
     }
     let (mut entries, mut incomplete) = (Vec::new(), false);
