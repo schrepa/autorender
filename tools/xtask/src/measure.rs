@@ -1190,25 +1190,6 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
     if let Some(static_part) = static_part {
         report["static"] = static_part;
     }
-    if let Some(formats) = &options.formats {
-        let formats = read_json(formats)?;
-        let schema = if formats["schemas"].is_object() {
-            &formats["schemas"]["measure"]
-        } else {
-            &formats["measure"]
-        };
-        if !schema.is_object() {
-            return Err("the formats file holds no measure schema (schemas.measure)".into());
-        }
-        let problems = crate::formats::problems(schema, &with_file_hashes(&report));
-        if !problems.is_empty() {
-            return Err(format!(
-                "the report does not match the factory's format:\n  {}",
-                problems.join("\n  ")
-            ));
-        }
-        eprintln!("The report matches the factory's measure format.");
-    }
     fs::write(
         &options.out,
         serde_json::to_string_pretty(&report).expect("reports serialize") + "\n",
@@ -1216,6 +1197,39 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
     .map_err(|error| format!("cannot write {}: {error}", options.out.display()))?;
     print_summary(&report);
     println!("Wrote {}.", options.out.display());
+    match &options.formats {
+        Some(formats) => check_format(&report, formats, "measure"),
+        None => Ok(()),
+    }
+}
+
+/// Whether `report` matches the factory's `kind` format in the `formats`
+/// file (its `/api/formats`), with its local files as the hashes the
+/// factory's command line uploads them as.
+pub fn check_format(report: &Value, formats: &Path, kind: &str) -> Result<(), String> {
+    let formats = read_json(formats)?;
+    let schema = if formats["schemas"].is_object() {
+        &formats["schemas"][kind]
+    } else {
+        &formats[kind]
+    };
+    if !schema.is_object() {
+        return Err(format!(
+            "the formats file holds no {kind} schema (schemas.{kind})"
+        ));
+    }
+    let problems = crate::formats::problems(schema, &with_file_hashes(report));
+    if !problems.is_empty() {
+        return Err(format!(
+            "the report does not match the factory's {kind} format:
+  {}",
+            problems.join(
+                "
+  "
+            )
+        ));
+    }
+    println!("The report matches the factory's {kind} format.");
     Ok(())
 }
 

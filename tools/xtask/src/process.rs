@@ -190,12 +190,12 @@ pub fn check_wasm_bindgen(root: &Path) -> Result<(), (&'static str, String)> {
             ),
         ));
     }
-    let version = String::from_utf8_lossy(&output.stdout);
+    let printed = String::from_utf8_lossy(&output.stdout);
     let expected = format!("wasm-bindgen {version}");
-    if version.trim() != expected {
+    if printed.trim() != expected {
         return Err((
             "bindgen_version",
-            format!("expected {expected}, found {:?}; {install}", version.trim()),
+            format!("expected {expected}, found {:?}; {install}", printed.trim()),
         ));
     }
     Ok(())

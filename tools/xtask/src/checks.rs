@@ -307,13 +307,12 @@ fn attempt(web: &Path, name: &str, url: &str, log: &Path) -> Result<i32, String>
 /// `cargo xtask checks`: a check task (its pull request merged into main,
 /// `sha`, and main, `main_sha`) as the factory's check report.
 pub fn check_task(root: &Path, arguments: &[String]) -> Result<(), String> {
-    let usage =
-        "usage: cargo xtask checks --task TASK.json --profile PROFILE.json --out REPORT.json";
+    let usage = "usage: cargo xtask checks --task TASK.json --profile PROFILE.json --out REPORT.json [--formats FORMATS.json]";
     let mut found: BTreeMap<&str, PathBuf> = BTreeMap::new();
     let mut given = arguments.iter();
     while let Some(name) = given.next() {
         let key = match name.as_str() {
-            "--task" | "--profile" | "--out" => &name[2..],
+            "--task" | "--profile" | "--out" | "--formats" => &name[2..],
             _ => return Err(format!("unknown option {name}\n{usage}")),
         };
         let value = given
@@ -390,5 +389,8 @@ pub fn check_task(root: &Path, arguments: &[String]) -> Result<(), String> {
         );
     }
     println!("Wrote {}.", out.display());
-    Ok(())
+    match found.remove("formats") {
+        Some(formats) => crate::measure::check_format(&report, &formats, "check"),
+        None => Ok(()),
+    }
 }
