@@ -1,5 +1,5 @@
 //! An optional gameplay plugin: fly-camera controls through public schedules.
-use engine_core::prelude::*;
+use crate::prelude::*;
 
 /// Ordering point for camera control in `Presentation`.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]

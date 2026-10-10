@@ -8,11 +8,19 @@ publish.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# Prints the generated files for `cargo xtask schema`.
+[[bin]]
+name = "schema"
+required-features = ["schema"]
+
+# A browser game: xtask builds it and serves stress.html, which tools
+# select as `stress`.
+[package.metadata.engine]
+page = "stress.html"
+game = "stress"
+
 [features]
 default = []
-dev = ["engine/dev"]
-profiling = ["engine/profiling"]
-attribution = ["engine/attribution"]
 # Schemas of the configuration and snapshot, for `cargo xtask schema`.
 schema = ["dep:schemars", "engine/schema"]
 
@@ -26,7 +34,6 @@ schemars = { workspace = true, optional = true }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 web-sys.workspace = true
-console_error_panic_hook.workspace = true
 
 [lints]
 workspace = true

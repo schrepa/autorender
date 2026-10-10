@@ -1,9 +1,21 @@
-//! TypeScript declarations of the JSON schemas Rust generates, so the web
-//! host's type check catches a renamed or retyped field.
+//! What tooling generates from Rust: TypeScript declarations of the JSON
+//! schemas Rust generates, so the web host's type check catches a renamed
+//! or retyped field, and the files an app generates for `cargo xtask schema`.
 
 use std::fmt::Write;
 
 use serde_json::Value;
+
+/// Prints an app's generated `files`, by path from the repository root, as
+/// the JSON object `cargo xtask schema` writes and lint checks: what an
+/// app's `schema` binary does.
+pub fn print_generated(files: &[(&str, String)]) {
+    let files: serde_json::Map<String, Value> = files
+        .iter()
+        .map(|(path, contents)| ((*path).to_owned(), Value::from(contents.as_str())))
+        .collect();
+    println!("{}", Value::Object(files));
+}
 
 /// Interfaces for a schema's root object, named `root`, and each of its
 /// definitions, documented by the schema's descriptions.

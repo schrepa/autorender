@@ -6,8 +6,8 @@ mod iteration_build;
 mod pipeline;
 mod process;
 mod profiling;
+mod scaffold;
 mod smoke;
-mod typescript;
 
 use std::{env, process::ExitCode};
 
@@ -48,6 +48,9 @@ fn execute() -> Result<(), String> {
     if task == "smoke" {
         return smoke::smoke(&root, &options);
     }
+    if task == "new" {
+        return scaffold::new(&root, &options);
+    }
     if task == "build-dev" {
         let [option, output] = options.as_slice() else {
             return Err("usage: build-dev --output web/pkg-iterations/GENERATION".into());
@@ -85,7 +88,7 @@ fn execute() -> Result<(), String> {
                 "Usage: cargo xtask <command>\n\n\
                  Commands:\n\
                    build  Build all release Wasm clients and bundle the web host\n\
-                   profile [--attribution]  Build an isolated instrumented Stress Lab in web/dist-profile\n\
+                   profile [--attribution]  Build isolated instrumented games in web/dist-profile\n\
                           --attribution: hot helpers out of line for sampling profilers, in web/dist-attribution\n\
                    dev [--port N]  Build and serve on loopback (default port 5173)\n\
                    agent watch [--web-port N] [--port N] [--game {games}]\n\
@@ -97,7 +100,8 @@ fn execute() -> Result<(), String> {
                           Import a static textured GLB with structured results; dense opaque primitives\n\
                           (512 triangles and up by default) become virtual meshes\n\
                    assets Validate authored scene sources without changing them\n\
-                   schema Write the generated development protocol summary, client list and stats types\n\
+                   schema Write the generated protocol summary, client list, stats and game surface types, and each app's own\n\
+                   new app NAME  Start a game in apps/NAME with its page web/NAME.html, from the engine's app template\n\
                    smoke --list | --all | NAME...  List or run the browser smoke checks against a running dev server\n\
                    gpu    Check the renderer's shaders against its Rust GPU layouts and bindings\n\
                    wasm-bindgen-version  Print the wasm-bindgen version Cargo.lock pins\n\

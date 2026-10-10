@@ -594,7 +594,7 @@ impl City {
 
 /// Transform nodes the city may add beyond its renderables.
 fn node_room(renderables: u32) -> u32 {
-    (MAX_TRANSFORM_NODES as u32).saturating_sub(renderables)
+    (engine::MAX_TRANSFORM_NODES as u32).saturating_sub(renderables)
 }
 
 /// Moving and static renderables of `config`'s city, and its radius in

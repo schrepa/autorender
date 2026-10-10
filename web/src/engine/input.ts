@@ -1,8 +1,7 @@
-// Fixed action bits match the public ActionId defaults. Physical bindings live here.
-const bindings: Record<string, number> = { Space: 1, KeyF: 4 };
 const movement = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
 const MAX_TOUCH_POINTERS = 32;
-const supported = (key: string) => movement.has(key) || Object.hasOwn(bindings, key);
+// Rust's `ActionId` holds 32 actions.
+const MAX_ACTIONS = 32;
 
 /** Bounded input accumulation. One batch per frame; no growing event queue. */
 export class BrowserInput {
@@ -21,7 +20,16 @@ export class BrowserInput {
   pressed = 0;
   released = 0;
 
-  constructor(canvas: HTMLCanvasElement) {
+  // Each bound key's action bit.
+  private bindings: Map<string, number>;
+
+  /** Input on `canvas`, with the game's `actions`: keys by action index. */
+  constructor(canvas: HTMLCanvasElement, actions: Record<string, number>) {
+    this.bindings = new Map(Object.entries(actions).map(([key, action]) => {
+      if (!Number.isInteger(action) || action < 0 || action >= MAX_ACTIONS) throw new Error(`Action ${action} of ${key} must be 0 to ${MAX_ACTIONS - 1}.`);
+      return [key, 1 << action];
+    }));
+    const supported = (key: string) => movement.has(key) || this.bindings.has(key);
     const options = { signal: this.abort.signal };
     canvas.addEventListener("keydown", event => {
       if (supported(event.code)) {
@@ -73,7 +81,7 @@ export class BrowserInput {
     const sources = this.keys.get(key) ?? 0;
     this.keys.set(key, sources + 1);
     if (sources > 0) return;
-    const bit = bindings[key] ?? 0;
+    const bit = this.bindings.get(key) ?? 0;
     this.held |= bit; this.pressed |= bit;
   }
   private up(key: string) {
@@ -81,7 +89,7 @@ export class BrowserInput {
     if (sources === undefined) return;
     if (sources > 1) { this.keys.set(key, sources - 1); return; }
     this.keys.delete(key);
-    const bit = bindings[key] ?? 0;
+    const bit = this.bindings.get(key) ?? 0;
     this.held &= ~bit; this.released |= bit;
   }
   get forward() { return Number(this.keys.has("KeyW") || this.keys.has("ArrowUp")) - Number(this.keys.has("KeyS") || this.keys.has("ArrowDown")); }

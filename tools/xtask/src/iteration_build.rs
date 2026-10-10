@@ -18,7 +18,7 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::process::{
-    CLIENTS, WASM_TARGET, check_wasm_bindgen, client_crates, client_dev_features, client_packages,
+    DEV_FEATURES, WASM_TARGET, check_wasm_bindgen, client_crates, client_packages, clients,
 };
 
 const MAX_LINE_BYTES: usize = 256 * 1024;
@@ -71,7 +71,6 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
 
     report["build"]["stage"] = json!("cargo");
     let target_dir = root.join("target/iteration-wasm");
-    let features = client_dev_features();
     let compiled = capture(
         Command::new("cargo")
             .current_dir(&root)
@@ -79,7 +78,7 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
             .args(client_packages())
             .args([
                 "--features",
-                &features,
+                DEV_FEATURES,
                 "--target",
                 WASM_TARGET,
                 "--release",
@@ -96,7 +95,7 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
     // Validate all compiler artifacts before admitting any generated bindings.
     // The dedicated target directory keeps ordinary dev/lint builds from
     // replacing a compiled artifact while wasm-bindgen reads it.
-    let mut artifacts = Vec::with_capacity(CLIENTS.len());
+    let mut artifacts = Vec::with_capacity(clients().len());
     let artifact_root = target_dir.join(WASM_TARGET).join("release");
     for package in client_crates() {
         let expected = artifact_root.join(format!("{package}.wasm"));
@@ -134,7 +133,7 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
         )
     })?;
     report["build"]["stage"] = json!("bindings");
-    let mut packages = Vec::with_capacity(CLIENTS.len());
+    let mut packages = Vec::with_capacity(clients().len());
     for (package, artifact) in artifacts {
         let generated = capture(
             Command::new("wasm-bindgen")

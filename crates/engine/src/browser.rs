@@ -8,6 +8,10 @@ use web_sys::HtmlCanvasElement;
 #[path = "browser_profiling.rs"]
 mod profiling;
 
+#[path = "game_host.rs"]
+mod game_host;
+pub use game_host::GameHost;
+
 /// Milliseconds on the page's clock, which terrain times its work by;
 /// 0 without one.
 fn page_clock() -> f64 {
@@ -252,7 +256,7 @@ fn wire(engine: &mut Engine, renderer: &Renderer, workers: u32) {
 pub use engine_core::FrameStats;
 
 /// Owns the runtime, extracted data, and GPU state for one canvas.
-pub struct BrowserApp {
+pub(crate) struct BrowserApp {
     // Replaced only through `replace_engine`, which wires each engine to
     // this page.
     pub(crate) engine: Engine,
@@ -269,8 +273,18 @@ pub struct BrowserApp {
     gpu_inputs_stale: bool,
     // Terrain tiles fetched by byte range.
     terrain_fetches: TerrainFetches,
+    // The page's culling and antialiasing choices over each engine's own
+    // settings: unset, an engine keeps its own.
+    overrides: Overrides,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Overrides {
+    temporal_antialiasing: Option<bool>,
+    occlusion_culling: Option<bool>,
+    subpixel_culling: Option<bool>,
 }
 
 /// What a submitted frame shows. Only development controls submit exact
@@ -290,7 +304,7 @@ enum FrameKind {
 
 /// A [`BrowserApp`] whose renderer's startup pipelines may still compile:
 /// build the engine meanwhile, then [`Self::finish`].
-pub struct StartingApp {
+struct StartingApp {
     renderer: StartingRenderer,
     performance: web_sys::Performance,
 }
@@ -298,21 +312,25 @@ pub struct StartingApp {
 impl StartingApp {
     /// The app running `engine`, once the renderer's startup pipelines passed
     /// validation.
-    pub async fn finish(self, engine: Engine) -> Result<BrowserApp, JsValue> {
+    async fn finish(self, engine: Engine) -> Result<BrowserApp, JsValue> {
         let renderer = self.renderer.finish().await?;
         Ok(BrowserApp::with(engine, renderer, self.performance))
     }
 }
 
 impl BrowserApp {
-    pub async fn new(canvas: HtmlCanvasElement, engine: Engine) -> Result<Self, JsValue> {
-        Self::start(canvas).await?.finish(engine).await
+    /// Starts the renderer of `canvas` and, while the browser compiles its
+    /// startup pipelines, the engine `build` makes.
+    pub(crate) async fn launch(
+        canvas: HtmlCanvasElement,
+        build: impl FnOnce() -> Result<Engine, String>,
+    ) -> Result<Self, JsValue> {
+        let starting = Self::start(canvas).await?;
+        let engine = build().map_err(|error| JsValue::from_str(&error))?;
+        starting.finish(engine).await
     }
 
-    /// Starts the renderer of `canvas` before the engine exists: the browser
-    /// compiles its startup pipelines while the caller builds the engine for
-    /// [`StartingApp::finish`].
-    pub async fn start(canvas: HtmlCanvasElement) -> Result<StartingApp, JsValue> {
+    async fn start(canvas: HtmlCanvasElement) -> Result<StartingApp, JsValue> {
         let performance = web_sys::window()
             .and_then(|window| window.performance())
             .ok_or_else(|| JsValue::from_str("A browser performance clock is required."))?;
@@ -336,6 +354,7 @@ impl BrowserApp {
             tick_pipelining: true,
             gpu_inputs_stale: false,
             terrain_fetches: TerrainFetches::default(),
+            overrides: Overrides::default(),
             #[cfg(feature = "profiling")]
             profile_frame: 0,
         }
@@ -365,8 +384,29 @@ impl BrowserApp {
         self.terrain_fetches = TerrainFetches::default();
         self.gpu_inputs_stale = false;
         let replaced = std::mem::replace(&mut self.engine, engine);
+        self.apply_overrides();
         self.suspend();
         replaced
+    }
+
+    /// Sets the page's culling and antialiasing choices over the world's
+    /// own settings, which a new engine or scene brought.
+    pub fn apply_overrides(&mut self) {
+        let Overrides {
+            temporal_antialiasing,
+            occlusion_culling,
+            subpixel_culling,
+        } = self.overrides;
+        let world = self.engine.app.world_mut();
+        if let Some(enabled) = temporal_antialiasing {
+            world.insert_resource(engine_core::TemporalAntialiasing { enabled });
+        }
+        if let Some(enabled) = occlusion_culling {
+            world.insert_resource(engine_core::OcclusionCulling { enabled });
+        }
+        if let Some(enabled) = subpixel_culling {
+            world.insert_resource(engine_core::SubpixelCulling { enabled });
+        }
     }
 
     /// Selects GPU blending, composition and culling for ordinary interpolated
@@ -399,16 +439,13 @@ impl BrowserApp {
         self.tick_pipelining
     }
 
-    /// Temporally antialiases ordinary GPU-presented frames: sets the
-    /// world's [`engine_core::TemporalAntialiasing`] settings (a scene
-    /// environment's `temporal_antialiasing` section), which the next frame
-    /// follows, creating or releasing its pipelines and targets. Off by
-    /// default.
+    /// Temporally antialiases ordinary GPU-presented frames, in this and
+    /// later engines: sets the world's [`engine_core::TemporalAntialiasing`]
+    /// settings (a scene environment's `temporal_antialiasing` section),
+    /// which the next frame follows. Off by default.
     pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
-        self.engine
-            .app
-            .world_mut()
-            .insert_resource(engine_core::TemporalAntialiasing { enabled });
+        self.overrides.temporal_antialiasing = Some(enabled);
+        self.apply_overrides();
     }
 
     pub fn temporal_antialiasing(&self) -> bool {
@@ -419,14 +456,12 @@ impl BrowserApp {
             .is_some_and(|settings| settings.enabled)
     }
 
-    /// Occlusion culling of GPU-presented frames: sets the world's
-    /// [`engine_core::OcclusionCulling`] settings (a scene environment's
-    /// `occlusion_culling` section). On by default.
+    /// Occlusion culling of GPU-presented frames, in this and later engines:
+    /// sets the world's [`engine_core::OcclusionCulling`] settings (a scene
+    /// environment's `occlusion_culling` section). On by default.
     pub fn set_occlusion_culling(&mut self, enabled: bool) {
-        self.engine
-            .app
-            .world_mut()
-            .insert_resource(engine_core::OcclusionCulling { enabled });
+        self.overrides.occlusion_culling = Some(enabled);
+        self.apply_overrides();
     }
 
     pub fn occlusion_culling(&self) -> bool {
@@ -437,14 +472,12 @@ impl BrowserApp {
             .is_some_and(|settings| settings.enabled)
     }
 
-    /// Sub-pixel culling of GPU-presented frames: sets the world's
-    /// [`engine_core::SubpixelCulling`] settings (a scene environment's
-    /// `subpixel_culling` section). On by default.
+    /// Sub-pixel culling of GPU-presented frames, in this and later engines:
+    /// sets the world's [`engine_core::SubpixelCulling`] settings (a scene
+    /// environment's `subpixel_culling` section). On by default.
     pub fn set_subpixel_culling(&mut self, enabled: bool) {
-        self.engine
-            .app
-            .world_mut()
-            .insert_resource(engine_core::SubpixelCulling { enabled });
+        self.overrides.subpixel_culling = Some(enabled);
+        self.apply_overrides();
     }
 
     pub fn subpixel_culling(&self) -> bool {

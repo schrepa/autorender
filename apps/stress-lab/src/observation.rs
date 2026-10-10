@@ -150,7 +150,11 @@ pub fn stress_observation(engine: &Engine, generation: u32) -> StressSnapshot {
     StressSnapshot {
         version: 1,
         generation,
-        config: config.clone(),
+        // The culling development controls change too.
+        config: StressConfig {
+            culling: engine.frustum_culling(),
+            ..config.clone()
+        },
         frame: world.resource::<FrameTime>().frame.to_string(),
         tick: world.resource::<FixedTime>().tick.to_string(),
         renderables: config.renderables,

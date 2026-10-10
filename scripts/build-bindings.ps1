@@ -6,7 +6,8 @@ $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'activate.ps1')
 $clients = Get-Content -Raw (Join-Path $root 'web/src/generated/clients.json') | ConvertFrom-Json
 $packages = $clients | ForEach-Object { '-p'; $_.package }
-$development = ($clients | ForEach-Object { "$($_.package)/dev" }) -join ','
+# Clients declare no features of their own: development builds enable the engine's.
+$development = 'engine/dev'
 Push-Location $root
 try {
     foreach ($variant in @(@{ out = 'web/pkg'; features = @() }, @{ out = 'web/pkg-dev'; features = @('--features', $development) })) {

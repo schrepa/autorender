@@ -25,6 +25,15 @@ export function requireWasmSimd(): void {
   }
 }
 
+/** Game `wasm`'s bindings, once SIMD is known to work: the build a watched
+ * browser is pinned to, else those `load` imports from the game's package,
+ * which the development server serves from its development build. */
+export async function loadGame<T>(wasm: string, load: () => Promise<T>): Promise<T> {
+  requireWasmSimd();
+  const pinned = generationModule(wasm);
+  return pinned ? import(/* @vite-ignore */ pinned) as Promise<T> : load();
+}
+
 /** Pin a watched browser to one complete immutable Rust build. */
 export function generationModule(name: string): string | undefined {
   if (!import.meta.env.DEV) return;

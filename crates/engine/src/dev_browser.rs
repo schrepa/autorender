@@ -2,7 +2,8 @@
 //!
 //! Calls are synchronous between browser frames. Input is a temporary batch,
 //! replaced by each input command and consumed only by explicit stepping.
-use crate::{ActionInput, DevStepError, InputState, browser::BrowserApp};
+use crate::browser::BrowserApp;
+use engine_core::{ActionInput, DevStepError, InputState};
 use engine_dev::{BrowserControl, DevError, DevTools};
 use engine_scene::SceneInstance;
 use serde_json::{Value, json};
@@ -10,8 +11,8 @@ use wasm_bindgen::JsValue;
 
 /// Per-session temporary control state; excluded from ordinary builds.
 #[derive(Default)]
-pub struct DevBrowser {
-    pub tools: DevTools,
+pub(crate) struct DevBrowser {
+    pub(crate) tools: DevTools,
     input: InputBatch,
     // Terrain edits undo took away, latest last.
     terrain_redo: Vec<(
@@ -35,6 +36,29 @@ struct InputBatch {
 impl DevBrowser {
     pub fn clear_input(&mut self) {
         self.input = InputBatch::default();
+    }
+
+    /// Whether `source` is a valid control that submits a frame on a host
+    /// `paused` or not.
+    pub fn submits_frame(&self, source: &str, paused: bool) -> bool {
+        if source.len() > engine_dev::MAX_REQUEST_BYTES {
+            return false;
+        }
+        let Ok(control) = serde_json::from_str::<BrowserControl>(source) else {
+            return false;
+        };
+        if control.validate().is_err() || (control.needs_pause() && !paused) {
+            return false;
+        }
+        !matches!(
+            control,
+            BrowserControl::Input { .. }
+                | BrowserControl::Benchmark { .. }
+                | BrowserControl::Pause { .. }
+                | BrowserControl::Resume { .. }
+                | BrowserControl::Capture { .. }
+                | BrowserControl::Reload { .. }
+        )
     }
 
     /// Execute an on-demand request, then attach the observed frame and

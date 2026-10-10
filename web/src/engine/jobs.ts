@@ -18,30 +18,24 @@
 // (job-cache.ts).
 
 import workerWasmUrl from "../../pkg/engine_worker_bg.wasm?url";
+import type { Runtime } from "../generated/runtime";
 import { engineWorkerModule } from "./bindings";
 import { JobCache, jobCacheSettings } from "./job-cache";
 import type { TranscodedImage } from "./ktx2";
 
-/** The engine bindings a pool serves (Rust `BrowserApp`'s job methods). */
-export interface JobRuntime {
-  set_job_workers?(workers: number): void;
-  take_jobs?(): unknown;
-  complete_job?(id: number, output: Uint8Array): void;
-  fail_job?(id: number, error: string): void;
-  part_job?(id: number, part: Uint8Array): void;
-  report_job_cache?(hits: number, misses: number, bytes: number, mismatches: number): void;
-}
+/** The game methods a pool serves. */
+export type JobRuntime = Pick<Runtime, "set_job_workers" | "take_jobs" | "complete_job" | "fail_job" | "part_job" | "report_job_cache">;
 
 /** A job `take_jobs` lists: its identity where its output may be kept. */
-interface JobMessage { id: number; kind: string; input: Uint8Array; priority: number; identity?: Uint8Array }
+interface JobRequest { id: number; kind: string; input: Uint8Array; priority: number; identity?: Uint8Array }
 
 /** What `take_jobs` lists, in order. */
-type EngineMessage =
+export type JobMessage =
   | { cancel: number }
   | { clear: true }
   | { share: string; bytes: Uint8Array }
   | { unshare: string }
-  | JobMessage;
+  | JobRequest;
 
 /** What workers send back. */
 type WorkerMessage =
@@ -108,7 +102,6 @@ export class JobPool {
    * on, and the pool polls it for them between frames too, so jobs made
    * by development commands in paused sessions run. */
   attach(runtime: JobRuntime) {
-    if (!runtime.take_jobs || !runtime.set_job_workers) return;
     this.runtime = runtime;
     runtime.set_job_workers(this.size);
     clearInterval(this.timer);
@@ -125,8 +118,8 @@ export class JobPool {
   /** Hands workers what the attached runtime made since the last exchange. */
   exchange() {
     const runtime = this.runtime;
-    if (!runtime?.take_jobs) return;
-    const messages = runtime.take_jobs() as EngineMessage[];
+    if (!runtime) return;
+    const messages = runtime.take_jobs();
     for (const message of messages) {
       if ("cancel" in message) {
         if (this.looking.has(message.cancel)) {
@@ -158,10 +151,10 @@ export class JobPool {
   }
 
   /** Hands `message`'s job to the worker with the fewest in flight. */
-  private dispatch(runtime: JobRuntime, message: JobMessage) {
+  private dispatch(runtime: JobRuntime, message: JobRequest) {
     const slot = this.least();
     if (!slot) {
-      runtime.fail_job?.(message.id, "no workers");
+      runtime.fail_job(message.id, "no workers");
       return;
     }
     slot.jobs.set(message.id, message.priority);
@@ -171,7 +164,7 @@ export class JobPool {
   /** Answers a keepable job from the cache, or hands it to
    * a worker and keeps its output once done; verifying, runs it anyway
    * and compares. */
-  private async cached(runtime: JobRuntime, message: JobMessage, identity: Uint8Array) {
+  private async cached(runtime: JobRuntime, message: JobRequest, identity: Uint8Array) {
     this.looking.add(message.id);
     try {
       const cache = await this.cache;
@@ -179,14 +172,14 @@ export class JobPool {
       const kept = cache && key ? await cache.lookup(key) : undefined;
       if (this.dropped.has(message.id) || this.runtime !== runtime) return;
       if (kept) {
-        runtime.complete_job?.(message.id, kept);
+        runtime.complete_job(message.id, kept);
         if (!cache?.verify) return;
         this.verifying.set(message.id, kept);
       }
       if (key) this.keys.set(message.id, key);
       this.dispatch(runtime, message);
     } catch (error) {
-      runtime.fail_job?.(message.id, String(error));
+      runtime.fail_job(message.id, String(error));
     } finally {
       this.looking.delete(message.id);
       this.dropped.delete(message.id);
@@ -196,14 +189,14 @@ export class JobPool {
   /** Tells the runtime the cache's counters when they change. */
   private report() {
     const runtime = this.runtime;
-    if (!runtime?.report_job_cache) return;
+    if (!runtime) return;
     void this.cache.then(cache => {
       if (!cache) return;
       const { hits, misses, bytes, mismatches } = cache.stats();
       const text = `${hits} ${misses} ${bytes} ${mismatches}`;
       if (text === this.reported || this.runtime !== runtime) return;
       this.reported = text;
-      runtime.report_job_cache?.(hits, misses, bytes, mismatches);
+      runtime.report_job_cache(hits, misses, bytes, mismatches);
     });
   }
 
@@ -302,12 +295,12 @@ export class JobPool {
           if (key && !sameBytes(kept, message.output)) void this.cache.then(cache => cache?.mismatch(key));
           break;
         }
-        this.runtime?.complete_job?.(message.id, message.output);
+        this.runtime?.complete_job(message.id, message.output);
         if (key) void this.cache.then(cache => cache?.store(key, message.output));
         break;
       }
       case "part":
-        if (slot.jobs.has(message.id)) this.runtime?.part_job?.(message.id, message.output);
+        if (slot.jobs.has(message.id)) this.runtime?.part_job(message.id, message.output);
         break;
       case "failed":
         this.keys.delete(message.id);
@@ -315,7 +308,7 @@ export class JobPool {
           slot.jobs.delete(message.id);
           break;
         }
-        if (slot.jobs.delete(message.id)) this.runtime?.fail_job?.(message.id, message.error);
+        if (slot.jobs.delete(message.id)) this.runtime?.fail_job(message.id, message.error);
         break;
       case "task":
         slot.tasks.delete(message.task);
@@ -343,7 +336,7 @@ export class JobPool {
     console.warn(`An engine worker stopped: ${error}`);
     for (const id of slot.jobs.keys()) {
       this.keys.delete(id);
-      if (!this.verifying.delete(id)) this.runtime?.fail_job?.(id, error);
+      if (!this.verifying.delete(id)) this.runtime?.fail_job(id, error);
     }
     slot.jobs.clear();
     for (const task of slot.tasks) {
@@ -355,7 +348,7 @@ export class JobPool {
       this.restarts++;
       this.slots[this.slots.indexOf(slot)] = this.spawn();
     }
-    this.runtime?.set_job_workers?.(this.size);
+    this.runtime?.set_job_workers(this.size);
   }
 }
 

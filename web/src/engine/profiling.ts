@@ -33,7 +33,7 @@ function copy(value: JsonObject): JsonObject {
   if (source.length > 32 * 1024) throw new Error("Profiling metadata exceeds 32 KiB");
   return JSON.parse(source) as JsonObject;
 }
-export function supportsProfiling(runtime: Runtime): runtime is ProfilingRuntime {
+export function supportsProfiling<T extends Runtime>(runtime: T): runtime is T & ProfilingRuntime {
   return [runtime.profiling_start, runtime.profiling_stop, runtime.profiling_status, runtime.profiling_poll, runtime.profiling_report].every(value => typeof value === "function");
 }
 

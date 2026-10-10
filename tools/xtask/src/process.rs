@@ -20,54 +20,109 @@ pub fn repository_root() -> Result<PathBuf, String> {
 
 /// A browser client: its Cargo package, its Wasm crate's name, and for
 /// games the name tools select it by and the page serving it.
-#[derive(Clone, Copy)]
 pub struct Client {
-    pub package: &'static str,
-    pub wasm: &'static str,
-    pub game: Option<&'static str>,
-    pub page: Option<&'static str>,
+    pub package: String,
+    pub wasm: String,
+    pub game: Option<String>,
+    pub page: Option<String>,
+    /// Whether the client has a `schema` binary printing its generated
+    /// files.
+    pub schema: bool,
 }
 
-/// The browser clients: the one list of them, which `cargo xtask schema`
-/// writes for the web host and scripts.
-pub const CLIENTS: [Client; 2] = [
-    Client {
-        package: "stress-lab",
-        wasm: "stress_lab",
-        game: Some("stress"),
-        page: Some("stress.html"),
-    },
-    // The job workers run beside the game.
-    Client {
-        package: "engine_worker",
-        wasm: "engine_worker",
-        game: None,
-        page: None,
-    },
-];
+/// The browser clients: the workspace members whose manifests declare
+/// `[package.metadata.engine]` (a game's `page` and `game`, or `worker`),
+/// in Cargo's order. `cargo xtask schema` writes them for the web host and
+/// scripts.
+pub fn clients() -> &'static [Client] {
+    static CLIENTS: std::sync::OnceLock<Vec<Client>> = std::sync::OnceLock::new();
+    CLIENTS.get_or_init(|| {
+        read_clients().unwrap_or_else(|error| panic!("cannot list the browser clients: {error}"))
+    })
+}
+
+fn read_clients() -> Result<Vec<Client>, String> {
+    let root = repository_root()?;
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps", "--locked"])
+        .current_dir(&root)
+        .output()
+        .map_err(|error| format!("cannot run cargo metadata: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("cargo metadata is not JSON: {error}"))?;
+    let mut clients = Vec::new();
+    for package in metadata["packages"].as_array().into_iter().flatten() {
+        let engine = &package["metadata"]["engine"];
+        if engine.is_null() {
+            continue;
+        }
+        let name = package["name"].as_str().unwrap_or_default();
+        let wasm = package["targets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|target| {
+                target["crate_types"]
+                    .as_array()
+                    .is_some_and(|types| types.iter().any(|kind| kind == "cdylib"))
+            })
+            .and_then(|target| target["name"].as_str())
+            .ok_or_else(|| {
+                format!("{name} declares [package.metadata.engine] but builds no cdylib")
+            })?;
+        let schema = package["targets"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|target| {
+                target["name"] == "schema"
+                    && target["kind"]
+                        .as_array()
+                        .is_some_and(|kinds| kinds.iter().any(|kind| kind == "bin"))
+            });
+        let field = |key: &str| engine[key].as_str().map(str::to_owned);
+        let (game, page) = (field("game"), field("page"));
+        if game.is_some() != page.is_some() || (game.is_none() && engine["worker"] != true) {
+            return Err(format!(
+                "{name}'s [package.metadata.engine] declares a game's `page` and `game`, or `worker = true`"
+            ));
+        }
+        clients.push(Client {
+            package: name.to_owned(),
+            wasm: wasm.to_owned(),
+            game,
+            page,
+            schema,
+        });
+    }
+    Ok(clients)
+}
 
 /// `-p PACKAGE` for every client.
-pub fn client_packages<'a>() -> impl Iterator<Item = &'a str> {
-    CLIENTS
-        .into_iter()
-        .flat_map(|client| ["-p", client.package])
+pub fn client_packages() -> impl Iterator<Item = &'static str> {
+    clients()
+        .iter()
+        .flat_map(|client| ["-p", client.package.as_str()])
 }
 
 /// Every client's Wasm crate name.
-pub fn client_crates() -> [&'static str; CLIENTS.len()] {
-    CLIENTS.map(|client| client.wasm)
+pub fn client_crates() -> Vec<&'static str> {
+    clients()
+        .iter()
+        .map(|client| client.wasm.as_str())
+        .collect()
 }
 
-/// Every client's `dev` feature, as `--features` takes them.
-pub fn client_dev_features() -> String {
-    CLIENTS
-        .map(|client| format!("{}/dev", client.package))
-        .join(",")
-}
+/// The engine features of development builds, as `--features` takes them:
+/// clients declare none of their own.
+pub const DEV_FEATURES: &str = "engine/dev";
 
 /// The clients as the web host and scripts read them.
 pub fn clients_json() -> serde_json::Value {
-    CLIENTS
+    clients()
         .iter()
         .map(|client| {
             serde_json::json!({
@@ -82,9 +137,9 @@ pub fn clients_json() -> serde_json::Value {
 
 /// The games tools select by name, as `a|b|c`.
 pub fn game_names() -> String {
-    CLIENTS
+    clients()
         .iter()
-        .filter_map(|client| client.game)
+        .filter_map(|client| client.game.as_deref())
         .collect::<Vec<_>>()
         .join("|")
 }

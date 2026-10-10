@@ -1,13 +1,9 @@
-use engine::browser::{BrowserApp, SceneFileSet};
-use engine::prelude::*;
+use engine::browser::SceneFileSet;
 use wasm_bindgen::prelude::*;
 
 use std::collections::HashMap;
 
-use crate::{
-    AuthoredScene, FrameMetrics, StressConfig, StressFile, StressScene, create_workload_with, look,
-    set_view, stress_observation, stress_reflections, stress_shafts,
-};
+use crate::{StressConfig, StressFile, StressLab, set_view, stress_observation};
 
 /// Files workloads read, by name: the dense scene's virtual meshes,
 /// whose prefixes the page fetches, and the highlands'
@@ -69,62 +65,22 @@ impl StressFiles {
     }
 }
 
-#[wasm_bindgen]
-pub struct StressGame {
-    app: BrowserApp,
-    generation: u32,
-    // Files the page supplied, kept for later workloads.
-    files: HashMap<String, StressFile>,
-    // The lighting preset and effect selection, kept across workload changes.
-    look: String,
-    effects: String,
-    // Settings of the world's resources, kept across workload changes, which
-    // replace the world: levels of detail and impostors
-    // and the visibility buffer.
-    level_of_detail: bool,
-    impostors: bool,
-    visibility_buffer: bool,
-    // Culling and antialiasing the page chose over each workload's own
-    // settings; unset, a workload keeps its own.
-    occlusion_culling: Option<bool>,
-    subpixel_culling: Option<bool>,
-    temporal_antialiasing: Option<bool>,
-    // An authored scene in place of a workload, when the page loads one.
-    authored: Option<AuthoredScene>,
-    #[cfg(feature = "dev")]
-    development: engine::dev_browser::DevBrowser,
-}
+engine::export_game!(
+    /// The Stress Lab: a deterministic workload or an authored scene.
+    pub struct StressGame(StressLab);
+);
 
 #[wasm_bindgen]
 impl StressGame {
+    /// The workload `config_json` configures, with the `files` it reads.
     pub async fn create(
         canvas: web_sys::HtmlCanvasElement,
         config_json: &str,
         files: Option<StressFiles>,
-    ) -> Result<Self, JsValue> {
-        console_error_panic_hook::set_once();
-        let files = files.map(|files| files.files).unwrap_or_default();
+    ) -> Result<StressGame, JsValue> {
         let config = StressConfig::from_json(config_json).map_err(js_error)?;
-        // The browser compiles the renderer's pipelines while the workload
-        // builds.
-        let starting = BrowserApp::start(canvas).await?;
-        let engine = create_workload_with(config, &files).map_err(js_error)?;
-        Ok(Self {
-            app: starting.finish(engine).await?,
-            generation: 1,
-            files,
-            look: "scene".into(),
-            effects: "all".into(),
-            level_of_detail: true,
-            impostors: true,
-            visibility_buffer: false,
-            occlusion_culling: None,
-            subpixel_culling: None,
-            temporal_antialiasing: None,
-            authored: None,
-            #[cfg(feature = "dev")]
-            development: development_tools(),
-        })
+        let files = files.map(|files| files.files).unwrap_or_default();
+        Self::launch(canvas, move || StressLab::workload(config, files)).await
     }
 
     /// The authored scene `source` in place of a workload, with the image
@@ -133,583 +89,93 @@ impl StressGame {
         canvas: web_sys::HtmlCanvasElement,
         source: &str,
         files: SceneFileSet,
-    ) -> Result<Self, JsValue> {
-        console_error_panic_hook::set_once();
-        let starting = BrowserApp::start(canvas).await?;
-        let (engine, authored) = AuthoredScene::new(source, files.files()).map_err(scene_error)?;
-        Ok(Self {
-            app: starting.finish(engine).await?,
-            generation: 1,
-            files: HashMap::new(),
-            look: "scene".into(),
-            effects: "all".into(),
-            level_of_detail: true,
-            impostors: true,
-            visibility_buffer: false,
-            occlusion_culling: None,
-            subpixel_culling: None,
-            temporal_antialiasing: None,
-            authored: Some(authored),
-            #[cfg(feature = "dev")]
-            development: development_tools(),
-        })
-    }
-
-    /// Replaces the authored scene with `source`; a scene that fails keeps
-    /// the current one.
-    pub fn reload_scene(&mut self, source: &str, files: SceneFileSet) -> Result<(), JsValue> {
-        let Some(authored) = self.authored.as_mut() else {
-            return Err(js_error("no authored scene is loaded".into()));
-        };
-        authored
-            .reload(self.app.engine_mut(), source, files.files())
-            .map_err(scene_error)?;
-        self.apply_world_settings();
-        self.suspend();
-        Ok(())
+    ) -> Result<StressGame, JsValue> {
+        Self::launch(canvas, || StressLab::authored(source, files.files())).await
     }
 
     /// The authored scene's ID, revision, frame, player position and asset
     /// counts, as a JSON object (`null` for workloads).
     pub fn scene_progress(&self) -> String {
-        self.authored
-            .as_ref()
-            .map_or(serde_json::Value::Null, |authored| {
-                authored.progress(self.app.engine())
-            })
-            .to_string()
+        let host = self.host();
+        host.game().scene_progress(host.engine()).to_string()
     }
 
-    /// Build first, then replace the complete Engine at a browser frame boundary.
-    /// Asset library IDs separate old renderer snapshots from the new world.
+    /// Builds the workload `config_json` configures, then runs it in place
+    /// of the current one at a frame boundary.
     pub fn configure(
         &mut self,
         config_json: &str,
         files: Option<StressFiles>,
     ) -> Result<(), JsValue> {
-        if let Some(files) = files {
-            self.files.extend(files.files);
-        }
-        let engine = create_workload_with(
-            StressConfig::from_json(config_json).map_err(js_error)?,
-            &self.files,
-        )
-        .map_err(js_error)?;
-        self.app.replace_engine(engine);
-        // A workload replaces an authored scene's world with its own.
-        self.authored = None;
-        self.generation = self.generation.saturating_add(1);
-        self.set_look(&self.look.clone())?;
-        self.set_effects(&self.effects.clone())?;
-        self.apply_world_settings();
-        self.suspend();
-        Ok(())
+        let config = StressConfig::from_json(config_json).map_err(js_error)?;
+        let files = files.map(|files| files.files).unwrap_or_default();
+        let host = self.host_mut();
+        let engine = host.game_mut().configure(config, files).map_err(js_error)?;
+        host.replace_engine(engine);
+        let (engine, lab) = host.parts_mut();
+        lab.configured(engine).map_err(js_error)
     }
 
     /// Rendering effects: `all`, `none`, or comma-separated `no-<effect>`
     /// exclusions.
     pub fn set_effects(&mut self, name: &str) -> Result<(), JsValue> {
-        use crate::scene::EFFECTS;
-        let mut on = [true; EFFECTS.len()];
-        match name {
-            "all" => {}
-            "none" => on = [false; EFFECTS.len()],
-            _ => {
-                for token in name.split(',') {
-                    let excluded = token
-                        .strip_prefix("no-")
-                        .and_then(|effect| EFFECTS.iter().position(|(name, _)| *name == effect));
-                    match excluded {
-                        Some(index) => on[index] = false,
-                        None => {
-                            return Err(js_error(format!(
-                                "effects must be all, none or comma-separated no-<effect> for {}",
-                                EFFECTS.map(|(name, _)| name).join(", ")
-                            )));
-                        }
-                    }
-                }
-            }
-        }
-        let [
-            shadows,
-            occlusion,
-            bloom,
-            lights,
-            shafts,
-            reflections,
-            particles,
-            refraction,
-            probes,
-        ] = on;
-        let scene = self
-            .app
-            .engine()
-            .app
-            .world()
-            .resource::<StressConfig>()
-            .scene;
-        let (_, lamps) = look(scene, &self.look).map_err(js_error)?;
-        let world = self.app.engine_mut().app.world_mut();
-        world.resource_mut::<Shadows>().enabled = shadows;
-        world.resource_mut::<AmbientOcclusion>().intensity = if occlusion {
-            AmbientOcclusion::default().intensity
-        } else {
-            0.0
-        };
-        world.resource_mut::<Bloom>().intensity = if bloom {
-            Bloom::default().intensity
-        } else {
-            0.0
-        };
-        // Opt-in effects are removed entirely when off.
-        if shafts {
-            world.insert_resource(stress_shafts());
-        } else {
-            world.remove_resource::<SunShafts>();
-        }
-        if reflections {
-            world.insert_resource(stress_reflections(scene));
-        } else {
-            world.remove_resource::<Reflections>();
-        }
-        {
-            let mut local = world.resource_mut::<LocalLights>();
-            local.enabled = lights;
-            local.intensity = lamps;
-        }
-        world.resource_mut::<Particles>().enabled = particles;
-        // Only the metro has glass that refracts.
-        if refraction && scene == StressScene::Metro {
-            world.insert_resource(Refraction::default());
-        } else {
-            world.remove_resource::<Refraction>();
-        }
-        // Reflection probes capture nothing where none stand.
-        if probes {
-            world.insert_resource(ReflectionProbes::default());
-        } else {
-            world.remove_resource::<ReflectionProbes>();
-        }
-        self.effects = name.into();
-        Ok(())
+        let (engine, lab) = self.host_mut().parts_mut();
+        lab.set_effects(engine, name).map_err(js_error)
     }
 
     /// Lighting preset: `scene` (the scene's own), `golden`, `dusk`,
     /// `night` or `day`.
     pub fn set_look(&mut self, name: &str) -> Result<(), JsValue> {
-        let scene = self
-            .app
-            .engine()
-            .app
-            .world()
-            .resource::<StressConfig>()
-            .scene;
-        let (atmosphere, lamps) = look(scene, name).map_err(js_error)?;
-        self.app.engine_mut().app.insert_resource(atmosphere);
-        crate::scene::apply_sky(self.app.engine_mut().app.world_mut(), scene, name);
-        if let Some(mut local) = self
-            .app
-            .engine_mut()
-            .app
-            .world_mut()
-            .get_resource_mut::<LocalLights>()
-        {
-            local.intensity = lamps;
-        }
-        self.look = name.into();
-        Ok(())
+        let (engine, lab) = self.host_mut().parts_mut();
+        lab.set_look(engine, name).map_err(js_error)
     }
 
-    /// One frame at `timestamp`: the Stress Lab reads no action buttons, so
-    /// it takes the host's input axes only.
-    #[allow(clippy::too_many_arguments)]
-    pub fn frame(
-        &mut self,
-        timestamp: f64,
-        width: u32,
-        height: u32,
-        forward: f32,
-        right: f32,
-        up: f32,
-        yaw: f32,
-        pitch: f32,
-    ) -> Result<(), JsValue> {
-        self.app
-            .engine_mut()
-            .app
-            .world_mut()
-            .resource_mut::<FrameMetrics>()
-            .begin_frame();
-        self.app.frame(
-            timestamp,
-            width,
-            height,
-            InputState {
-                move_forward: forward,
-                move_right: right,
-                move_up: up,
-                look_yaw: yaw,
-                look_pitch: pitch,
-            },
-        )
-    }
-
-    /// Loading work in place of a frame while the GPU compiles pipelines;
-    /// see `BrowserApp::work`.
-    pub fn work(&mut self, width: u32, height: u32) {
-        self.app.work(width, height);
-    }
-
-    /// Terrain loading between frames; see
-    /// `BrowserApp::work_between_frames`.
-    pub fn work_between_frames(&mut self, milliseconds: f64) -> bool {
-        self.app.work_between_frames(milliseconds)
-    }
-
-    /// Workers the page runs jobs on; see
-    /// `BrowserApp::set_job_workers`.
-    pub fn set_job_workers(&mut self, workers: u32) {
-        self.app.set_job_workers(workers);
-    }
-
-    /// Shares and jobs to hand workers; see
-    /// `BrowserApp::take_jobs`.
-    pub fn take_jobs(&mut self) -> JsValue {
-        self.app.take_jobs().into()
-    }
-
-    /// A worker's output of job `id`.
-    pub fn complete_job(&mut self, id: f64, output: Vec<u8>) {
-        self.app.complete_job(id, output);
-    }
-
-    /// Job `id` failed on its worker.
-    pub fn fail_job(&mut self, id: f64, error: String) {
-        self.app.fail_job(id, error);
-    }
-
-    /// A part of job `id`'s output from its worker.
-    pub fn part_job(&mut self, id: f64, part: Vec<u8>) {
-        self.app.part_job(id, part);
-    }
-
-    /// The page's job output cache counters.
-    pub fn report_job_cache(&mut self, hits: f64, misses: f64, bytes: f64, mismatches: f64) {
-        self.app.report_job_cache(hits, misses, bytes, mismatches);
-    }
-
-    /// The last frame's statistics as a JSON object.
-    pub fn stats(&self) -> String {
-        self.app.stats_json()
-    }
+    /// The workload's snapshot, as JSON.
     pub fn stress_stats(&self) -> String {
-        serde_json::to_string(&stress_observation(self.app.engine(), self.generation))
+        let host = self.host();
+        serde_json::to_string(&stress_observation(host.engine(), host.game().generation()))
             .expect("snapshots serialize")
     }
+
     /// [`crate::stress_sample`]: a recording's per-frame workload numbers.
     pub fn frame_sample(&self) -> Vec<f64> {
-        crate::stress_sample(self.app.engine()).values()
+        crate::stress_sample(self.host().engine()).values()
     }
+
     pub fn set_view(&mut self, view: &str) -> Result<(), JsValue> {
-        set_view(self.app.engine_mut(), view).map_err(js_error)
+        set_view(self.host_mut().engine_mut(), view).map_err(js_error)
     }
+
     pub fn set_culling(&mut self, enabled: bool) {
-        self.app.engine_mut().set_frustum_culling(enabled);
-        if let Some(mut config) = self
-            .app
-            .engine_mut()
-            .app
-            .world_mut()
-            .get_resource_mut::<StressConfig>()
-        {
+        let engine = self.host_mut().engine_mut();
+        engine.set_frustum_culling(enabled);
+        if let Some(mut config) = engine.app.world_mut().get_resource_mut::<StressConfig>() {
             config.culling = enabled;
         }
     }
-    /// GPU (default) or exact CPU presentation of ordinary frames.
-    pub fn set_gpu_presentation(&mut self, enabled: bool) {
-        self.app.set_gpu_presentation(enabled);
-    }
-    /// Splits fixed ticks across frames around their due time (default).
-    pub fn set_tick_pipelining(&mut self, enabled: bool) {
-        self.app.set_tick_pipelining(enabled);
-    }
-    /// Temporal antialiasing of GPU-presented frames in this and later
-    /// workloads, over their own settings (the highlands' is on).
-    pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
-        self.temporal_antialiasing = Some(enabled);
-        self.apply_world_settings();
-    }
-    pub fn temporal_antialiasing(&self) -> bool {
-        self.app.temporal_antialiasing()
-    }
-    /// Occlusion culling of GPU-presented frames in this and later
-    /// workloads, over their own settings (on).
-    pub fn set_occlusion_culling(&mut self, enabled: bool) {
-        self.occlusion_culling = Some(enabled);
-        self.apply_world_settings();
-    }
-    pub fn occlusion_culling(&self) -> bool {
-        self.app.occlusion_culling()
-    }
-    /// Sub-pixel culling of GPU-presented frames in this and later
-    /// workloads, over their own settings (on).
-    pub fn set_subpixel_culling(&mut self, enabled: bool) {
-        self.subpixel_culling = Some(enabled);
-        self.apply_world_settings();
-    }
-    pub fn subpixel_culling(&self) -> bool {
-        self.app.subpixel_culling()
-    }
-    /// Whether instances draw at levels of detail (on by
-    /// default) or always as their mesh, in this and later workloads.
+
+    /// Whether instances draw at levels of detail (on by default) or always
+    /// as their mesh, in this and later workloads.
     pub fn set_level_of_detail(&mut self, enabled: bool) {
-        self.level_of_detail = enabled;
-        self.apply_world_settings();
+        let (engine, lab) = self.host_mut().parts_mut();
+        lab.set_level_of_detail(engine, enabled);
     }
-    /// Whether draw groups draw impostors where they fit (on
-    /// by default) or only their meshes' levels, in this and later
-    /// workloads.
+
+    /// Whether draw groups draw impostors where they fit (on by default) or
+    /// only their meshes' levels, in this and later workloads.
     pub fn set_impostors(&mut self, enabled: bool) {
-        self.impostors = enabled;
-        self.apply_world_settings();
+        let (engine, lab) = self.host_mut().parts_mut();
+        lab.set_impostors(engine, enabled);
     }
-    /// Whether virtual geometry shades through the visibility buffer
-    /// or as it draws (the default), in this and later
-    /// workloads.
+
+    /// Whether virtual geometry shades through the visibility buffer or as
+    /// it draws (the default), in this and later workloads.
     pub fn set_visibility_buffer(&mut self, enabled: bool) {
-        self.visibility_buffer = enabled;
-        self.apply_world_settings();
-    }
-    /// The workload's overview, or the authored scene's player back where
-    /// it started.
-    pub fn reset_camera(&mut self) {
-        match &self.authored {
-            Some(authored) => authored.reset_player(self.app.engine_mut()),
-            None => set_view(self.app.engine_mut(), "overview").expect("known view"),
-        }
-        #[cfg(feature = "dev")]
-        self.development.clear_input();
-    }
-    pub fn suspend(&mut self) {
-        self.app.suspend();
-        #[cfg(feature = "dev")]
-        self.development.clear_input();
-    }
-}
-
-#[cfg(feature = "dev")]
-#[wasm_bindgen]
-impl StressGame {
-    pub fn dev_command(&mut self, request: &str, width: u32, height: u32, paused: bool) -> String {
-        // Read-only polls retain the timings belonging to the last frame.
-        let submitted = serde_json::from_str::<serde_json::Value>(request)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("op")
-                    .and_then(|op| op.as_str())
-                    .map(|op| matches!(op, "step" | "render" | "present" | "camera" | "culling"))
-            })
-            == Some(true);
-        let previous = *self.app.engine().app.world().resource::<FrameMetrics>();
-        if submitted {
-            self.app
-                .engine_mut()
-                .app
-                .world_mut()
-                .resource_mut::<FrameMetrics>()
-                .begin_frame();
-        }
-        let reply = self.development.command(
-            &mut self.app,
-            self.authored.as_ref().and_then(AuthoredScene::instance),
-            request,
-            width,
-            height,
-            paused,
-        );
-        if submitted {
-            if serde_json::from_str::<serde_json::Value>(&reply)
-                .ok()
-                .is_some_and(|value| value["ok"] == true)
-            {
-                let enabled = self.app.engine().frustum_culling();
-                if let Some(mut config) = self
-                    .app
-                    .engine_mut()
-                    .app
-                    .world_mut()
-                    .get_resource_mut::<StressConfig>()
-                {
-                    config.culling = enabled;
-                }
-            } else {
-                *self
-                    .app
-                    .engine_mut()
-                    .app
-                    .world_mut()
-                    .resource_mut::<FrameMetrics>() = previous;
-            }
-        }
-        reply
-    }
-
-    /// Reloads the authored scene's saved source when the active revision
-    /// is `expected_revision` and the saved one `revision`.
-    pub fn dev_reload(
-        &mut self,
-        source: &str,
-        expected_revision: &str,
-        revision: &str,
-        files: Option<SceneFileSet>,
-    ) -> String {
-        let files = files.unwrap_or_default();
-        let result = (|| {
-            let Some(authored) = self.authored.as_mut() else {
-                return Err(engine::scene::SceneError {
-                    code: "unsupported_command",
-                    path: "$.op".into(),
-                    message: "workloads have no authored scene to reload".into(),
-                });
-            };
-            let (Ok(expected), Ok(target)) =
-                (expected_revision.parse::<u64>(), revision.parse::<u64>())
-            else {
-                return Err(engine::scene::SceneError {
-                    code: "invalid_revision",
-                    path: "$.revision".into(),
-                    message: "revisions must be unsigned decimal strings".into(),
-                });
-            };
-            if authored.revision() != expected {
-                return Err(engine::scene::SceneError {
-                    code: "revision_conflict",
-                    path: "$.expected_revision".into(),
-                    message: format!("active revision is {}", authored.revision()),
-                });
-            }
-            let document = SceneDocument::from_json(source)?;
-            if document.id != authored.scene_id() || document.revision != target {
-                return Err(engine::scene::SceneError {
-                    code: "revision_conflict",
-                    path: "$.revision".into(),
-                    message: "saved scene ID and revision must match the requested scene".into(),
-                });
-            }
-            authored.reload(self.app.engine_mut(), source, files.files())
-        })();
-        let instance = self.authored.as_ref().and_then(AuthoredScene::instance);
-        match result {
-            Ok(()) => {
-                self.app.suspend();
-                self.development.clear_input();
-                self.development.result(
-                    &mut self.app,
-                    instance,
-                    serde_json::json!({"reloaded":true,"saved_by_reload":false}),
-                )
-            }
-            Err(error) => self.development.error(
-                &mut self.app,
-                instance,
-                error.code,
-                &error.path,
-                &error.message,
-            ),
-        }
+        let (engine, lab) = self.host_mut().parts_mut();
+        lab.set_visibility_buffer(engine, enabled);
     }
 }
 
 fn js_error(message: String) -> JsValue {
     JsValue::from_str(&message)
-}
-
-fn scene_error(error: engine::scene::SceneError) -> JsValue {
-    JsValue::from_str(&error.to_string())
-}
-
-#[cfg(feature = "profiling")]
-#[wasm_bindgen]
-impl StressGame {
-    pub fn profiling_start(&mut self, max_events: u32) -> Result<(), JsValue> {
-        self.app
-            .profiling_start(max_events as usize)
-            .map_err(JsValue::from_str)
-    }
-    pub fn profiling_stop(&mut self) -> Result<String, JsValue> {
-        self.app
-            .profiling_stop()
-            .map(|report| report.to_string())
-            .map_err(JsValue::from_str)
-    }
-    pub fn profiling_poll(&mut self) {
-        self.app.profiling_poll();
-    }
-    pub fn profiling_status(&self) -> String {
-        self.app.profiling_status().to_string()
-    }
-    pub fn profiling_report(&mut self) -> String {
-        self.app.profiling_report().to_string()
-    }
-}
-
-#[cfg(feature = "dev")]
-fn development_tools() -> engine::dev_browser::DevBrowser {
-    use engine::dev::InspectorDescriptor;
-    // The types' schemas, as `cargo xtask schema` generates them.
-    let schemas: serde_json::Value =
-        serde_json::from_str(include_str!("generated/inspectors.json"))
-            .expect("the generated inspector schemas are JSON");
-    let mut development = engine::dev_browser::DevBrowser::default();
-    development
-        .tools
-        .register_resource::<StressConfig>(
-            InspectorDescriptor::generated(&schemas, "StressConfig"),
-            |config| serde_json::to_value(config).expect("configurations serialize"),
-        )
-        .expect("stress inspector registration is valid");
-    development
-        .tools
-        .register_resource::<FrameMetrics>(
-            InspectorDescriptor::generated(&schemas, "StressMetrics"),
-            |metrics| {
-                serde_json::to_value(crate::StressMetrics::from(metrics))
-                    .expect("metrics serialize")
-            },
-        )
-        .expect("stress metrics registration is valid");
-    development
-        .tools
-        .register_resource::<crate::PlayerWalk>(
-            InspectorDescriptor::generated(&schemas, "PlayerWalk"),
-            |walk| serde_json::to_value(walk).expect("walk counts serialize"),
-        )
-        .expect("player walk registration is valid");
-    development
-}
-
-impl StressGame {
-    /// Writes the kept settings into the current world's resources: each
-    /// workload builds a new world with their defaults.
-    fn apply_world_settings(&mut self) {
-        let world = self.app.engine_mut().app.world_mut();
-        if let Some(mut settings) = world.get_resource_mut::<LevelOfDetail>() {
-            settings.enabled = self.level_of_detail;
-            settings.impostors = self.impostors;
-        }
-        if let Some(mut settings) = world.get_resource_mut::<VirtualGeometry>() {
-            settings.visibility_buffer = self.visibility_buffer;
-        }
-        if let Some(enabled) = self.occlusion_culling {
-            self.app.set_occlusion_culling(enabled);
-        }
-        if let Some(enabled) = self.subpixel_culling {
-            self.app.set_subpixel_culling(enabled);
-        }
-        if let Some(enabled) = self.temporal_antialiasing {
-            self.app.set_temporal_antialiasing(enabled);
-        }
-    }
 }

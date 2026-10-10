@@ -1,14 +1,14 @@
 [
   {
-    "game": "stress",
-    "package": "stress-lab",
-    "page": "stress.html",
-    "wasm": "stress_lab"
-  },
-  {
     "game": null,
     "package": "engine_worker",
     "page": null,
     "wasm": "engine_worker"
+  },
+  {
+    "game": "stress",
+    "package": "stress-lab",
+    "page": "stress.html",
+    "wasm": "stress_lab"
   }
 ]

@@ -1,6 +1,6 @@
 import { stressBindings } from "./bindings";
-import { boot, type FrameStats, readStats, type HostControls } from "../engine/host";
-import { StressRecorder, type StressRecordingReport } from "./recording";
+import { type FrameStats, type HostControls, readStats, startGame } from "../engine/host";
+import { Recorder, type RecordingReport } from "../engine/recording";
 import type { DetailedProfiler, DetailedProfileReport } from "../engine/profiling";
 import type { StressFiles, StressGame } from "../../pkg/stress_lab";
 import { fetchVirtualPrefix } from "../engine/virtual-mesh";
@@ -61,7 +61,7 @@ const presets: Record<string, { title: string; note: string; config: StressConfi
 };
 let activeConfig = { ...baseline }, activeTitle = presets.visual.title;
 let game: StressGame | undefined, controls: HostControls<StressGame> | undefined;
-let latest: StressSnapshot | undefined, report: StressRecordingReport | undefined;
+let latest: StressSnapshot | undefined, report: RecordingReport | undefined;
 let previousTimestamp: number | undefined, recordStarted = 0;
 let profiler: DetailedProfiler | undefined, detailedReport: DetailedProfileReport | undefined;
 let wasmMemory: WebAssembly.Memory | undefined;
@@ -139,7 +139,8 @@ function snapshot(runtime: StressGame): StressSnapshot { return JSON.parse(runti
 /** What a recording or a detailed profile notes about the run it measures, on a `canvas` sized canvas. */
 function runMetadata(data: StressSnapshot, canvas: [number, number]) {
   return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-    culling: data.config.culling, resolution_scale: number("resolution"), canvas, presentation, pipeline,
+    culling: data.config.culling, resolution_scale: number("resolution"), canvas,
+    presentation: game?.gpu_presentation() === false ? "cpu" : "gpu", pipeline: game?.tick_pipelining() === false ? "off" : "on",
     taa: game?.temporal_antialiasing() ? "on" : "off", occlusion: game?.occlusion_culling() ? "on" : "off",
     subpixel: game?.subpixel_culling() ? "on" : "off", visibility, lod, impostors,
     look: choice("look").value, effects: choice("effects").value,
@@ -173,7 +174,7 @@ function lock() {
   el("profile").textContent = profiler?.active ? "Stop profile" : profiler?.busy ? "Collecting GPU results…" : "Detailed profile · 5 seconds";
   el<HTMLButtonElement>("profile-export").disabled = !detailedReport || value;
 }
-const recorder = new StressRecorder(value => {
+const recorder = new Recorder(value => {
   report = value; lock();
   el<HTMLButtonElement>("export").disabled = false;
   const total = value.cpu_ms.total, cadence = value.frame_interval_ms;
@@ -308,22 +309,6 @@ function poll(runtime: StressGame) {
 }
 
 const params = new URLSearchParams(location.search);
-/** A ?name=on|off choice over each workload's own setting, or null. */
-function toggle(name: string): "on" | "off" | null {
-  const value = params.get(name);
-  return value === "on" || value === "off" ? value : null;
-}
-// Ordinary frames blend, compose and cull on the GPU unless ?presentation=cpu,
-// and GPU-presented frames split fixed ticks across frames unless
-// ?pipeline=off. ?taa=on|off temporally antialiases them or not (the
-// highlands' do), ?occlusion=off draws every frustum-visible object, and
-// ?subpixel=off also those covering no pixel center, for A/B; each sets the
-// world's settings over every workload's own.
-const presentation = params.get("presentation") === "cpu" ? "cpu" : "gpu";
-const pipeline = params.get("pipeline") === "off" ? "off" : "on";
-const taa = toggle("taa");
-const occlusion = toggle("occlusion");
-const subpixel = toggle("subpixel");
 // ?visibility=on shades virtual geometry through the visibility buffer
 // instead of as it draws, for A/B.
 const visibility = params.get("visibility") === "on" ? "on" : "off";
@@ -371,7 +356,7 @@ if (!params.has("config") && requestedPreset && requestedPreset in presets) {
 }
 fill(activeConfig);
 
-boot({
+startGame({
   async create(canvas) {
     // Job workers start while the game's module loads.
     jobPool();
@@ -389,11 +374,6 @@ boot({
   },
   ready(runtime, host) {
     game = runtime; controls = host;
-    runtime.set_gpu_presentation(presentation === "gpu");
-    runtime.set_tick_pipelining(pipeline === "on");
-    if (taa) runtime.set_temporal_antialiasing(taa === "on");
-    if (occlusion) runtime.set_occlusion_culling(occlusion === "on");
-    if (subpixel) runtime.set_subpixel_culling(subpixel === "on");
     runtime.set_visibility_buffer(visibility === "on");
     runtime.set_level_of_detail(lod === "on");
     runtime.set_impostors(impostors === "on");

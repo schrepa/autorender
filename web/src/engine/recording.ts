@@ -2,14 +2,14 @@
  * Call abort when configuration, camera, resolution, visibility or pause changes.
  * sample copies primitive values; callers still own/free any Wasm stats binding.
  */
-import { type Distribution, percentiles } from "../engine/statistics.ts";
+import { type Distribution, percentiles } from "./statistics.ts";
 
-type StressJson = null | boolean | number | string | StressJson[] | { [key: string]: StressJson };
-type StressRecordingMetadata = Record<string, unknown>;
-type StressRecordingOptions = {
+type RecordingJson = null | boolean | number | string | RecordingJson[] | { [key: string]: RecordingJson };
+type RecordingMetadata = Record<string, unknown>;
+type RecordingOptions = {
   warmup?: number; duration_ms?: number; timeout_ms?: number; max_samples?: number;
 };
-type StressFrameInput = {
+type FrameInput = {
   timestamp: number;
   simulation_ms: number; extraction_ms: number; render_ms: number;
   dropped_seconds: number;
@@ -18,19 +18,19 @@ type StressFrameInput = {
   /** Per-frame aggregate counters; retained as first/last/ranges, not summed. */
   counters?: Record<string, number | boolean>;
 };
-type Options = Required<StressRecordingOptions>;
+type Options = Required<RecordingOptions>;
 type Frame = {
   elapsed_ms: number; frame_interval_ms: number;
   simulation_ms: number; extraction_ms: number; render_ms: number; total_cpu_ms: number;
   phases_ms: Record<string, number>;
 };
 type Counters = Record<string, number | boolean>;
-type Pending = StressFrameInput & { phases_ms: Record<string, number>; counters: Counters };
-type Diagnostic = { elapsed_ms: number; measured: boolean; snapshot: StressJson };
+type Pending = FrameInput & { phases_ms: Record<string, number>; counters: Counters };
+type Diagnostic = { elapsed_ms: number; measured: boolean; snapshot: RecordingJson };
 type Range = { min: number; max: number };
-export type StressRecordingReport = {
-  version: 1; kind: "stress_recording"; complete: boolean; reason: string;
-  started_at: string; metadata: StressJson; environment: Record<string, StressJson>;
+export type RecordingReport = {
+  version: 2; kind: "frame_recording"; complete: boolean; reason: string;
+  started_at: string; metadata: RecordingJson; environment: Record<string, RecordingJson>;
   options: Options; warmup_frames: number; samples: number;
   elapsed_ms: number; measured_ms: number;
   frame_interval_ms: Distribution | null;
@@ -44,7 +44,7 @@ export type StressRecordingReport = {
 const DEFAULTS: Options = { warmup: 30, duration_ms: 10_000, timeout_ms: 30_000, max_samples: 1800 };
 const MAX_DIAGNOSTICS = 121;
 
-function jsonCopy(value: unknown, maxBytes: number): StressJson {
+function jsonCopy(value: unknown, maxBytes: number): RecordingJson {
   const source = JSON.stringify(value, (_key, item: unknown) => {
     if (typeof item === "number" && !Number.isFinite(item)) throw new Error("recording metadata must contain finite numbers");
     if (typeof item === "bigint" || typeof item === "function" || typeof item === "symbol" || item === undefined) {
@@ -53,10 +53,10 @@ function jsonCopy(value: unknown, maxBytes: number): StressJson {
     return item;
   });
   if (!source || new TextEncoder().encode(source).length > maxBytes) throw new Error("recording JSON exceeds its byte limit");
-  return JSON.parse(source) as StressJson;
+  return JSON.parse(source) as RecordingJson;
 }
 
-function checkedOptions(options: StressRecordingOptions): Options {
+function checkedOptions(options: RecordingOptions): Options {
   const result = { ...DEFAULTS, ...options };
   if (Object.keys(options).some(key => !Object.hasOwn(DEFAULTS, key)) || Object.values(result).some(value => !Number.isInteger(value)) ||
       result.warmup < 0 || result.warmup > 120 || result.duration_ms < 1 || result.duration_ms > 10_000 ||
@@ -84,7 +84,7 @@ function distribution(input: number[]): Distribution | null {
 /** No adapter request/device allocation: pass the runtime's existing adapter info
  * in start metadata if available. Browser hints do not prove physical GPU use.
  */
-function environment(): Record<string, StressJson> {
+function environment(): Record<string, RecordingJson> {
   const browser = globalThis.navigator;
   const memory = (browser as Navigator & { deviceMemory?: number } | undefined)?.deviceMemory;
   return {
@@ -100,12 +100,12 @@ function environment(): Record<string, StressJson> {
 /** A single bounded recording. Incomplete reports remain exportable, clearly
  * marked with the interruption reason. Starting while active throws.
  */
-export class StressRecorder {
+export class Recorder {
   private running = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private options: Options = DEFAULTS;
-  private metadata: StressJson = null;
-  private browser: Record<string, StressJson> = {};
+  private metadata: RecordingJson = null;
+  private browser: Record<string, RecordingJson> = {};
   private startedAt = "";
   private started = 0;
   private firstTimestamp: number | undefined;
@@ -124,11 +124,11 @@ export class StressRecorder {
   private counterKeys: string | undefined;
   private phaseKeys: string | undefined;
 
-  constructor(private readonly onComplete: (report: StressRecordingReport) => void) {}
+  constructor(private readonly onComplete: (report: RecordingReport) => void) {}
   get active(): boolean { return this.running; }
 
-  start(metadata: StressRecordingMetadata, options: StressRecordingOptions = {}): void {
-    if (this.running) throw new Error("a stress recording is already active");
+  start(metadata: RecordingMetadata, options: RecordingOptions = {}): void {
+    if (this.running) throw new Error("a recording is already active");
     // Validate before mutating the previous recording state.
     const configured = checkedOptions(options);
     const copied = jsonCopy(metadata, 16 * 1024);
@@ -143,7 +143,7 @@ export class StressRecorder {
     this.timer = setTimeout(() => this.finish(false, "timeout"), configured.timeout_ms);
   }
 
-  sample(input: StressFrameInput): void {
+  sample(input: FrameInput): void {
     if (!this.running) return;
     if (performance.now() - this.started >= this.options.timeout_ms) { this.finish(false, "timeout"); return; }
     try {
@@ -215,8 +215,8 @@ export class StressRecorder {
     this.running = false;
     clearTimeout(this.timer); this.timer = undefined; this.previous = undefined;
     const phaseNames = Object.keys(this.frames[0]?.phases_ms ?? {});
-    const report: StressRecordingReport = {
-      version: 1, kind: "stress_recording", complete, reason,
+    const report: RecordingReport = {
+      version: 2, kind: "frame_recording", complete, reason,
       started_at: this.startedAt, metadata: this.metadata, environment: this.browser, options: this.options,
       warmup_frames: Math.min(this.processed, this.options.warmup), samples: this.frames.length,
       elapsed_ms: performance.now() - this.started, measured_ms: this.measured,

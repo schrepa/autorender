@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use engine::prelude::*;
+use engine::terrain::*;
 
 use crate::{StressConfig, StressFile};
 

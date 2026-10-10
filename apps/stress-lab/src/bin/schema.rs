@@ -1,0 +1,59 @@
+//! The Stress Lab's generated files, printed for `cargo xtask schema`,
+//! which writes them; lint checks they are current.
+
+fn main() {
+    engine::tooling::print_generated(&[
+        ("web/src/generated/stress.ts", page()),
+        (
+            "apps/stress-lab/src/generated/inspectors.json",
+            inspectors(),
+        ),
+    ]);
+}
+
+/// The page's types (its snapshot, configuration and scenes), its
+/// configuration's limits and its catalog of choices.
+fn page() -> String {
+    let snapshot = serde_json::to_value(schemars::schema_for!(stress_lab::StressSnapshot))
+        .expect("schemas serialize");
+    let mut page = engine::tooling::interfaces(&snapshot, "StressSnapshot", "stress_lab");
+    let config = &snapshot["$defs"]["StressConfig"]["properties"];
+    let limits: serde_json::Map<String, serde_json::Value> = config
+        .as_object()
+        .expect("the configuration is an object")
+        .iter()
+        .filter_map(|(field, property)| {
+            let limits: serde_json::Map<String, serde_json::Value> = ["minimum", "maximum", "enum"]
+                .into_iter()
+                .filter_map(|key| Some((key.to_owned(), property.get(key)?.clone())))
+                .collect();
+            (!limits.is_empty()).then(|| (field.clone(), limits.into()))
+        })
+        .collect();
+    page.push_str(
+        "\n/** Each configuration field's bounds or values, as validation keeps them. */\n",
+    );
+    page.push_str(&format!(
+        "export const STRESS_CONFIG_LIMITS = {} as const;\n",
+        serde_json::to_string_pretty(&limits).expect("limits serialize")
+    ));
+    page.push_str(
+        "\n/** The scenes, looks, effects, views and mesh batches the page offers, and the\n * per-frame sample's field names in order. */\n",
+    );
+    page.push_str(&format!(
+        "export const STRESS_CATALOG = {} as const;\n",
+        serde_json::to_string_pretty(&stress_lab::catalog()).expect("the catalog serializes")
+    ));
+    page.push_str("\n/** A field of the per-frame sample. */\nexport type StressSampleField = (typeof STRESS_CATALOG.sample)[number];\n");
+    page
+}
+
+/// The schemas of the Stress Lab's inspectors, by name.
+fn inspectors() -> String {
+    let schemas = serde_json::json!({
+        "StressConfig": schemars::schema_for!(stress_lab::StressConfig),
+        "StressMetrics": schemars::schema_for!(stress_lab::StressMetrics),
+        "PlayerWalk": schemars::schema_for!(stress_lab::PlayerWalk),
+    });
+    serde_json::to_string_pretty(&schemas).expect("schemas serialize") + "\n"
+}

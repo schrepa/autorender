@@ -3,8 +3,7 @@ use std::{fs, path::Path};
 use crate::{
     authoring,
     process::{
-        NPM, WASM_TARGET, client_crates, client_dev_features, client_packages, run,
-        verify_wasm_bindgen,
+        DEV_FEATURES, NPM, WASM_TARGET, client_crates, client_packages, run, verify_wasm_bindgen,
     },
 };
 
@@ -60,16 +59,34 @@ pub fn lint(root: &Path) -> Result<(), String> {
         ],
     )?;
     // The clients for the browser, without and with their development tools.
-    let features = client_dev_features();
     for development in [false, true] {
         let mut arguments: Vec<&str> = vec!["clippy"];
         arguments.extend(client_packages());
         if development {
-            arguments.extend(["--features", features.as_str()]);
+            arguments.extend(["--features", DEV_FEATURES]);
         }
         arguments.extend(["--target", WASM_TARGET, "--locked", "--", "-D", "warnings"]);
         run(root, "cargo", &arguments)?;
     }
+    // The app template, as new apps start from it.
+    run(
+        root,
+        "cargo",
+        &[
+            "clippy",
+            "-p",
+            "engine",
+            "--examples",
+            "--features",
+            "dev",
+            "--target",
+            WASM_TARGET,
+            "--locked",
+            "--",
+            "-D",
+            "warnings",
+        ],
+    )?;
     // The host imports generated declarations, including on a clean checkout.
     build_wasm(root, false)?;
     build_wasm(root, true)?;
@@ -111,12 +128,11 @@ pub fn docs(root: &Path) -> Result<(), String> {
 
 pub(crate) fn build_wasm(root: &Path, development: bool) -> Result<(), String> {
     verify_wasm_bindgen(root)?;
-    let features = client_dev_features();
     let mut arguments: Vec<&str> = vec!["build"];
     arguments.extend(client_packages());
     arguments.extend(["--target", WASM_TARGET, "--release", "--locked"]);
     if development {
-        arguments.extend(["--features", features.as_str()]);
+        arguments.extend(["--features", DEV_FEATURES]);
     }
     run(root, "cargo", &arguments)?;
     for name in client_crates() {

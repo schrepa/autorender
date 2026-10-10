@@ -8,6 +8,8 @@ import clients from "./src/generated/clients.json";
 // Instrumented Stress Lab builds (`cargo xtask profile [--attribution]`) by
 // mode: the suffix of their binding and output directories.
 const instrumented = new Map([["profiling", "profile"], ["attribution", "attribution"]]);
+// The games: clients with a page.
+const games = clients.flatMap(({ wasm, game, page }) => game && page ? [{ wasm, game, page }] : []);
 
 export default defineConfig(({ command, mode }) => ({
   // Authored saves become visible only through an explicit revision-checked reload.
@@ -66,9 +68,10 @@ export default defineConfig(({ command, mode }) => ({
     },
   }],
   resolve: {
-    alias: instrumented.has(mode) ? [{
-      find: /^(?:\.\.\/)+pkg\/stress_lab$/, replacement: resolve(import.meta.dirname, `pkg-${instrumented.get(mode)}/stress_lab.js`),
-    }] : command === "serve" ? clients.map(client => client.wasm).flatMap(name => [{
+    // Instrumented builds load every game's instrumented bindings.
+    alias: instrumented.has(mode) ? games.map(({ wasm }) => ({
+      find: new RegExp(`^(?:\\.\\./)+pkg/${wasm}$`), replacement: resolve(import.meta.dirname, `pkg-${instrumented.get(mode)}/${wasm}.js`),
+    })) : command === "serve" ? clients.map(client => client.wasm).flatMap(name => [{
       find: new RegExp(`^(?:\\.\\./)+pkg/${name}$`), replacement: resolve(import.meta.dirname, `pkg-dev/${name}.js`),
     }, {
       // The module's bytes, which job workers compile, from the same build.
@@ -81,9 +84,8 @@ export default defineConfig(({ command, mode }) => ({
   build: {
     outDir: instrumented.has(mode) ? `dist-${instrumented.get(mode)}` : "dist",
     rollupOptions: {
-      input: instrumented.has(mode) ? { stress: resolve(import.meta.dirname, "stress.html") } : {
-        stress: resolve(import.meta.dirname, "stress.html"),
-      },
+      // Every game's page.
+      input: Object.fromEntries(games.map(({ game, page }) => [game, resolve(import.meta.dirname, page)])),
     },
   },
 }));

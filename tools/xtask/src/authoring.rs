@@ -51,89 +51,82 @@ fn scene_paths(directory: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(paths)
 }
 
-/// The files the web host, scripts and the Stress Lab read that Rust
-/// generates: the development protocol's summary, the browser clients, the
-/// frame stats' types, the Stress Lab page's types and catalog, and its
-/// inspectors' schemas.
-fn generated() -> [(&'static str, String); 5] {
+/// The files Rust generates for the web host, scripts and apps, by path
+/// from the repository root: the development protocol's summary, the
+/// browser clients, the frame stats' and game surface's types, and each
+/// app's own, which its `schema` binary prints.
+fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     let clients = serde_json::to_string_pretty(&crate::process::clients_json())
         .expect("the client list serializes")
-        + "\n";
+        + "
+";
     let stats: serde_json::Value =
         serde_json::from_str(engine_dev::FRAME_STATS_SCHEMA).expect("generated schema is JSON");
-    [
+    let mut files = vec![
         (
-            "web/src/generated/protocol.json",
+            "web/src/generated/protocol.json".to_owned(),
             engine_dev::PROTOCOL_SUMMARY.to_owned(),
         ),
-        ("web/src/generated/clients.json", clients),
+        ("web/src/generated/clients.json".to_owned(), clients),
         (
-            "web/src/generated/stats.ts",
-            crate::typescript::interfaces(&stats, "FrameStats", "engine_core::FrameStats"),
+            "web/src/generated/stats.ts".to_owned(),
+            engine::tooling::interfaces(&stats, "FrameStats", "engine_core::FrameStats"),
         ),
-        ("web/src/generated/stress.ts", stress_page()),
         (
-            "apps/stress-lab/src/generated/inspectors.json",
-            stress_inspectors(),
+            "web/src/generated/runtime.ts".to_owned(),
+            engine::runtime_typescript(),
         ),
-    ]
-}
-
-/// The Stress Lab page's types (its snapshot, configuration and scenes),
-/// its configuration's limits and its catalog of choices.
-fn stress_page() -> String {
-    let snapshot = serde_json::to_value(schemars::schema_for!(stress_lab::StressSnapshot))
-        .expect("schemas serialize");
-    let mut page = crate::typescript::interfaces(&snapshot, "StressSnapshot", "stress_lab");
-    let config = &snapshot["$defs"]["StressConfig"]["properties"];
-    let limits: serde_json::Map<String, serde_json::Value> = config
-        .as_object()
-        .expect("the configuration is an object")
+    ];
+    for client in crate::process::clients()
         .iter()
-        .filter_map(|(field, property)| {
-            let limits: serde_json::Map<String, serde_json::Value> = ["minimum", "maximum", "enum"]
-                .into_iter()
-                .filter_map(|key| Some((key.to_owned(), property.get(key)?.clone())))
-                .collect();
-            (!limits.is_empty()).then(|| (field.clone(), limits.into()))
-        })
-        .collect();
-    page.push_str(
-        "\n/** Each configuration field's bounds or values, as validation keeps them. */\n",
-    );
-    page.push_str(&format!(
-        "export const STRESS_CONFIG_LIMITS = {} as const;\n",
-        serde_json::to_string_pretty(&limits).expect("limits serialize")
-    ));
-    page.push_str(
-        "\n/** The scenes, looks, effects, views and mesh batches the page offers, and the\n * per-frame sample's field names in order. */\n",
-    );
-    page.push_str(&format!(
-        "export const STRESS_CATALOG = {} as const;\n",
-        serde_json::to_string_pretty(&stress_lab::catalog()).expect("the catalog serializes")
-    ));
-    page.push_str("\n/** A field of the per-frame sample. */\nexport type StressSampleField = (typeof STRESS_CATALOG.sample)[number];\n");
-    page
-}
-
-/// The schemas of the Stress Lab's inspectors, by name.
-fn stress_inspectors() -> String {
-    let schemas = serde_json::json!({
-        "StressConfig": schemars::schema_for!(stress_lab::StressConfig),
-        "StressMetrics": schemars::schema_for!(stress_lab::StressMetrics),
-        "PlayerWalk": schemars::schema_for!(stress_lab::PlayerWalk),
-    });
-    serde_json::to_string_pretty(&schemas).expect("schemas serialize") + "\n"
+        .filter(|client| client.schema)
+    {
+        let output = std::process::Command::new("cargo")
+            .args([
+                "run",
+                "-q",
+                "--locked",
+                "-p",
+                &client.package,
+                "--bin",
+                "schema",
+            ])
+            .args(["--features", &format!("{}/schema", client.package)])
+            .current_dir(root)
+            .output()
+            .map_err(|error| format!("cannot run {}'s schema binary: {error}", client.package))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{}'s schema binary failed: {}",
+                client.package,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let printed: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_slice(&output.stdout).map_err(|error| {
+                format!(
+                    "{}'s schema binary printed no JSON object: {error}",
+                    client.package
+                )
+            })?;
+        for (path, contents) in printed {
+            let contents = contents
+                .as_str()
+                .ok_or_else(|| format!("{}'s {path} is not a string", client.package))?;
+            files.push((path, contents.to_owned()));
+        }
+    }
+    Ok(files)
 }
 
 /// Writes the generated files the web host and scripts read.
 pub fn write_generated(root: &Path) -> Result<(), String> {
-    for (path, contents) in generated() {
-        if let Some(directory) = Path::new(path).parent() {
+    for (path, contents) in generated(root)? {
+        if let Some(directory) = Path::new(&path).parent() {
             fs::create_dir_all(root.join(directory))
                 .map_err(|error| format!("cannot create {}: {error}", directory.display()))?;
         }
-        fs::write(root.join(path), contents)
+        fs::write(root.join(&path), contents)
             .map_err(|error| format!("cannot write {path}: {error}"))?;
         println!("Generated {path}.");
     }
@@ -141,8 +134,8 @@ pub fn write_generated(root: &Path) -> Result<(), String> {
 }
 
 pub fn check_generated(root: &Path) -> Result<(), String> {
-    for (path, contents) in generated() {
-        let saved = fs::read_to_string(root.join(path))
+    for (path, contents) in generated(root)? {
+        let saved = fs::read_to_string(root.join(&path))
             .map_err(|error| format!("cannot read {path}: {error}; run `cargo xtask schema`"))?;
         if saved.replace("\r\n", "\n") != contents {
             return Err(format!("{path} is out of date; run `cargo xtask schema`"));

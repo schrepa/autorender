@@ -8,11 +8,9 @@ publish.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[features]
-default = []
-# Every client builds with `dev` for development bindings; workers add
-# nothing to them.
-dev = []
+# Job workers beside the games: xtask builds them as a browser client.
+[package.metadata.engine]
+worker = true
 
 [dependencies]
 engine_terrain.workspace = true

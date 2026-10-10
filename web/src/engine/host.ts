@@ -1,35 +1,16 @@
+import type { Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
 import { BrowserInput } from "./input";
-import { type JobPool, type JobRuntime, jobPool } from "./jobs";
+import { type JobPool, jobPool } from "./jobs";
 import "./style.css";
 
-export type { FrameStats };
+export type { FrameStats, Runtime };
 /** The last frame's statistics of `runtime`: the JSON `Runtime.stats`
  * returns, typed from Rust's `FrameStats`. */
 export function readStats(runtime: { stats(): string }): FrameStats {
   return JSON.parse(runtime.stats()) as FrameStats;
 }
-export interface Runtime extends JobRuntime {
-  /** Games without action buttons (the Stress Lab) declare only the axes; JavaScript drops the rest. */
-  frame(timestamp: number, width: number, height: number, forward: number, right: number, up: number, yaw: number, pitch: number, held: number, pressed: number, released: number): void;
-  stats(): string;
-  /** Loading work in place of a frame while the GPU compiles pipelines. */
-  work?(width: number, height: number): void;
-  /** Terrain loading for some milliseconds between frames; whether tiles remain. */
-  work_between_frames?(milliseconds: number): boolean;
-  suspend(): void;
-  reset_camera(): void;
-  set_count?(count: number): void;
-  dev_command?(request: string, width: number, height: number, paused: boolean): string;
-  dev_reload?(source: string, expectedRevision: string, revision: string, files?: unknown): string;
-  profiling_start?(maxEvents: number): void;
-  profiling_stop?(): string;
-  profiling_status?(): string;
-  profiling_poll?(): void;
-  profiling_report?(): string;
-  free(): void;
-}
-/** Optional controls for example-specific panels; mutations run between frames. */
+/** Controls for a game's own panels; mutations run between frames. */
 export interface HostControls<T extends Runtime> {
   mutate(action: (game: T) => void): void;
   setResolutionScale(scale: number): void;
@@ -38,6 +19,47 @@ export interface HostControls<T extends Runtime> {
   paused(): boolean;
   busy(): boolean;
 }
+/** The elements the host fills, by ID. */
+const PAGE_ELEMENTS = ["scene", "status", "message", "pause", "reset", "fps", "simulation", "extraction", "draws", "uploads", "render-time"];
+
+/** A page without a canvas `#scene` gets the engine's own page; a page with
+ * one must have every element the host fills. */
+function ensurePage() {
+  if (!document.getElementById("scene")) {
+    document.body.classList.add("engine-page");
+    document.body.insertAdjacentHTML("afterbegin", `<canvas id="scene" tabindex="0" aria-label="Game view"></canvas>
+<div class="engine-hud"><span id="status" role="status"><i></i>Initializing</span><strong id="fps">—</strong>
+<span>simulation <span id="simulation">—</span></span><span>extraction <span id="extraction">—</span></span>
+<span>draws <span id="draws">—</span></span><span id="uploads"></span><span id="render-time"></span>
+<button id="pause" type="button">Pause</button><button id="reset" type="button">Reset view</button></div>
+<div id="message" class="message" role="status">Loading…</div>`);
+  }
+  const missing = PAGE_ELEMENTS.filter(id => !document.getElementById(id));
+  if (missing.length) {
+    throw new Error(`The page lacks elements the host fills: ${missing.map(id => `#${id}`).join(", ")}; leave out #scene to use the engine's own page.`);
+  }
+}
+
+/** Sets the game's presentation, pipelining, antialiasing and culling from
+ * the page's `?presentation=gpu|cpu`, `?pipeline=on|off`, `?taa=on|off`,
+ * `?occlusion=on|off` and `?subpixel=on|off`; another value fails. */
+function applySwitches(game: Runtime) {
+  const params = new URLSearchParams(location.search);
+  const switches: [string, [string, string], (enabled: boolean) => void][] = [
+    ["presentation", ["gpu", "cpu"], enabled => game.set_gpu_presentation(enabled)],
+    ["pipeline", ["on", "off"], enabled => game.set_tick_pipelining(enabled)],
+    ["taa", ["on", "off"], enabled => game.set_temporal_antialiasing(enabled)],
+    ["occlusion", ["on", "off"], enabled => game.set_occlusion_culling(enabled)],
+    ["subpixel", ["on", "off"], enabled => game.set_subpixel_culling(enabled)],
+  ];
+  for (const [name, [on, off], set] of switches) {
+    const value = params.get(name);
+    if (value === null) continue;
+    if (value !== on && value !== off) throw new Error(`?${name} must be ${on} or ${off}, not ${value}.`);
+    set(value === on);
+  }
+}
+
 function element<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
   if (!found) throw new Error(`Missing element #${id}`);
@@ -119,8 +141,13 @@ class FrameHud {
   }
 }
 
-export function boot<T extends Runtime>(options: {
-  create(canvas: HTMLCanvasElement, count: number, signal: AbortSignal): Promise<T>;
+/** What a game's page starts it with. */
+export interface GameOptions<T extends Runtime> {
+  /** Creates the game on `canvas`. */
+  create(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<T>;
+  /** The keys (`KeyboardEvent.code`) of the game's actions, by action
+   * index (Rust's `ActionId`): `{ Space: 0 }` unless given. */
+  actions?: Record<string, number>;
   poll?(game: T): void;
   reload?(game: T, signal: AbortSignal): Promise<void>;
   source?: { url: string; load(signal: AbortSignal): Promise<string>; files?(source: string, signal: AbortSignal): Promise<unknown> };
@@ -129,7 +156,13 @@ export function boot<T extends Runtime>(options: {
   afterFrame?(game: T, timestamp: number): void;
   afterHostFrame?(game: T, timestamp: number): void;
   interrupted?(reason: string): void;
-}) {
+}
+
+/** Runs the game `options.create` makes on the page: frames, input, job
+ * workers, loading, the page's switches, statistics and, in development
+ * builds with `?engine_dev=1`, the development tools. */
+export function startGame<T extends Runtime>(options: GameOptions<T>) {
+ensurePage();
 
 const lifecycle = new AbortController();
 const listenerOptions = { signal: lifecycle.signal };
@@ -138,10 +171,9 @@ let disposed = false;
 const canvas = element<HTMLCanvasElement>("scene");
 const status = element("status");
 const message = element("message");
-const count = document.getElementById("count") as HTMLSelectElement | null;
 const pause = element<HTMLButtonElement>("pause");
 const reset = element<HTMLButtonElement>("reset");
-const input = new BrowserInput(canvas);
+const input = new BrowserInput(canvas, options.actions ?? { Space: 0 });
 let game: T | undefined;
 const instrumented = import.meta.env.MODE === "profiling" || import.meta.env.MODE === "attribution";
 const development = (import.meta.env.DEV || instrumented) && new URLSearchParams(location.search).get("engine_dev") === "1";
@@ -239,7 +271,6 @@ function fail(error: unknown) {
   message.hidden = false;
   message.textContent = `Unable to start or continue the engine.\n${String(error)}\nWebGPU requires a supported browser on localhost or HTTPS.`;
   pause.disabled = true;
-  if (count) count.disabled = true;
   reset.disabled = true;
   console.error(error);
 }
@@ -247,7 +278,7 @@ function fail(error: unknown) {
 /** Terrain loading until shortly before the frame due at `due`. */
 function workBetweenFrames(due: number) {
   between = 0;
-  if (disposed || !game || paused || document.hidden || failed || preparing || !game.work_between_frames) return;
+  if (disposed || !game || paused || document.hidden || failed || preparing) return;
   const start = performance.now();
   const spare = due - start - BETWEEN_MARGIN_MS;
   if (spare > 1) game.work_between_frames(spare);
@@ -261,7 +292,7 @@ function scheduleBetweenFrames(timestamp: number) {
   betweenSpent = 0;
   if (lastFrameAt > 0 && interval > 0 && interval < 100) frameInterval += (interval - frameInterval) * 0.1;
   lastFrameAt = timestamp;
-  if (between || !betweenFrames || !game?.work_between_frames) return;
+  if (between || !betweenFrames || !game) return;
   const due = timestamp + frameInterval;
   between = window.setTimeout(() => workBetweenFrames(due), 0);
 }
@@ -269,7 +300,7 @@ function scheduleBetweenFrames(timestamp: number) {
 /** Loading work in tasks while preparation waits on compiles. */
 function workWhileCompiling() {
   working = 0;
-  if (disposed || !game || paused || document.hidden || failed || !preparing || !game.work) return;
+  if (disposed || !game || paused || document.hidden || failed || !preparing) return;
   if (!readStats(game).pipelines_compiling) return;
   game.work(pixelWidth, pixelHeight);
   jobs?.exchange();
@@ -357,10 +388,6 @@ function setPaused(value: boolean) {
 pause.addEventListener("click", () => {
   if (!developmentBusy) setPaused(!paused);
 }, listenerOptions);
-count?.addEventListener("change", () => {
-  if (developmentBusy) return;
-  try { game?.set_count?.(Number(count.value)); } catch (error) { fail(error); }
-}, listenerOptions);
 reset.addEventListener("click", () => { if (!developmentBusy) game?.reset_camera(); }, listenerOptions);
 const reload = document.getElementById("reload") as HTMLButtonElement | null;
 reload?.addEventListener("click", async () => {
@@ -382,22 +409,19 @@ reload?.addEventListener("click", async () => {
 async function start() {
   if (disposed) return;
   pause.disabled = true;
-  if (count) count.disabled = true;
   reset.disabled = true;
   if (!("gpu" in navigator)) throw new Error("WebGPU is not available in this browser or execution context.");
-  const created = await options.create(canvas, Number(count?.value ?? 10000), lifecycle.signal);
+  const created = await options.create(canvas, lifecycle.signal);
   // GPU initialization may finish after teardown even when fetch was aborted.
   if (disposed) { created.free(); return; }
   game = created;
-  // Games handing out jobs run them on the page's workers.
-  if (created.take_jobs) {
-    jobs = jobPool();
-    jobs?.attach(created);
-  }
+  applySwitches(created);
+  // The game's jobs run on the page's workers.
+  jobs = jobPool();
+  jobs?.attach(created);
   resize();
   message.hidden = true;
   pause.disabled = false;
-  if (count) count.disabled = false;
   reset.disabled = false;
   options.ready?.(created, {
     mutate(action) {
