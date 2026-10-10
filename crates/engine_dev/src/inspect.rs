@@ -55,15 +55,15 @@ impl InspectorDescriptor {
         }
     }
 
-    /// A built-in inspector's descriptor with the schema build.rs generated
-    /// under its name: a name without one is a programming error.
-    /// The descriptor of the schema build.rs generated for `name`, described
-    /// by its type's doc comment (the build checks every one has one).
-    pub(crate) fn generated(schemas: &Value, name: &str) -> Self {
+    /// The descriptor of the generated schema named `name` in `schemas`,
+    /// described by its type's doc comment: the engine's are build.rs's, an
+    /// app's are its tooling's. A name without a schema, or a schema without
+    /// a description, is a programming error.
+    pub fn generated(schemas: &Value, name: &str) -> Self {
         let schema = schemas
             .get(name)
             .cloned()
-            .unwrap_or_else(|| panic!("build.rs generates no schema named {name}"));
+            .unwrap_or_else(|| panic!("no schema named {name} was generated"));
         let description = schema["description"]
             .as_str()
             .unwrap_or_else(|| panic!("the schema of {name} has no description"))

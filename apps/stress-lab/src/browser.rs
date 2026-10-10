@@ -209,18 +209,7 @@ impl StressGame {
     /// Rendering effects: `all`, `none`, or comma-separated `no-<effect>`
     /// exclusions.
     pub fn set_effects(&mut self, name: &str) -> Result<(), JsValue> {
-        // `all`, `none`, or comma-separated `no-<effect>` exclusions.
-        const EFFECTS: [&str; 9] = [
-            "shadows",
-            "occlusion",
-            "bloom",
-            "lights",
-            "shafts",
-            "reflections",
-            "particles",
-            "refraction",
-            "probes",
-        ];
+        use crate::scene::EFFECTS;
         let mut on = [true; EFFECTS.len()];
         match name {
             "all" => {}
@@ -229,13 +218,13 @@ impl StressGame {
                 for token in name.split(',') {
                     let excluded = token
                         .strip_prefix("no-")
-                        .and_then(|effect| EFFECTS.iter().position(|name| *name == effect));
+                        .and_then(|effect| EFFECTS.iter().position(|(name, _)| *name == effect));
                     match excluded {
                         Some(index) => on[index] = false,
                         None => {
                             return Err(js_error(format!(
                                 "effects must be all, none or comma-separated no-<effect> for {}",
-                                EFFECTS.join(", ")
+                                EFFECTS.map(|(name, _)| name).join(", ")
                             )));
                         }
                     }
@@ -403,11 +392,12 @@ impl StressGame {
         self.app.stats_json()
     }
     pub fn stress_stats(&self) -> String {
-        stress_observation(&self.app.engine, self.generation).to_string()
+        serde_json::to_string(&stress_observation(&self.app.engine, self.generation))
+            .expect("snapshots serialize")
     }
     /// [`crate::stress_sample`]: a recording's per-frame workload numbers.
     pub fn frame_sample(&self) -> Vec<f64> {
-        crate::stress_sample(&self.app.engine).to_vec()
+        crate::stress_sample(&self.app.engine).values()
     }
     pub fn set_view(&mut self, view: &str) -> Result<(), JsValue> {
         set_view(&mut self.app.engine, view).map_err(js_error)
@@ -656,75 +646,33 @@ impl StressGame {
 #[cfg(feature = "dev")]
 fn development_tools() -> engine::dev_browser::DevBrowser {
     use engine::dev::InspectorDescriptor;
+    // The types' schemas, as `cargo xtask schema` generates them.
+    let schemas: serde_json::Value =
+        serde_json::from_str(include_str!("generated/inspectors.json"))
+            .expect("the generated inspector schemas are JSON");
     let mut development = engine::dev_browser::DevBrowser::default();
-    // Scenes and fields come from the types; the schema adds their ranges.
-    let fields = serde_json::to_value(StressConfig::default())
-        .expect("configuration contains finite integer values");
-    let required: Vec<&String> = fields
-        .as_object()
-        .expect("a configuration serializes as an object")
-        .keys()
-        .collect();
-    development.tools.register_resource::<StressConfig>(
-        InspectorDescriptor::new("StressConfig", "Applied deterministic stress workload; changes rebuild its runtime", serde_json::json!({
-            "type":"object", "additionalProperties":false,
-            "properties":{
-                "seed":{"type":"integer","minimum":0,"maximum":4294967295u64},
-                "renderables":{"type":"integer","minimum":1,"maximum":4000000},
-                "moving_percent":{"type":"integer","minimum":0,"maximum":100},
-                "hierarchy":{"type":"boolean"}, "interpolation":{"type":"boolean"},
-                "colliders":{"type":"integer","minimum":0,"maximum":10000},
-                "sensor_percent":{"type":"integer","minimum":0,"maximum":100},
-                "dense_colliders":{"type":"boolean"},
-                "queries_per_tick":{"type":"integer","minimum":0,"maximum":512},
-                "mesh_variety":{"enum":[1,8,32,64]}, "textured":{"type":"boolean"}, "culling":{"type":"boolean"},
-                "scene":{"enum":StressScene::ALL}, "compressed_textures":{"type":"boolean"}
+    development
+        .tools
+        .register_resource::<StressConfig>(
+            InspectorDescriptor::generated(&schemas, "StressConfig"),
+            |config| serde_json::to_value(config).expect("configurations serialize"),
+        )
+        .expect("stress inspector registration is valid");
+    development
+        .tools
+        .register_resource::<FrameMetrics>(
+            InspectorDescriptor::generated(&schemas, "StressMetrics"),
+            |metrics| {
+                serde_json::to_value(crate::StressMetrics::from(metrics))
+                    .expect("metrics serialize")
             },
-            "required":required
-        })),
-        |config| serde_json::to_value(config).expect("configuration contains finite integer values"),
-    ).expect("stress inspector registration is valid");
-    development.tools.register_resource::<FrameMetrics>(
-        InspectorDescriptor::new("StressMetrics", "Last frame CPU simulation subsets and bounded spatial query counters", serde_json::json!({
-            "type":"object", "additionalProperties":false,
-            "properties":{
-                "sync_pre_ms":{"type":"number","minimum":0},
-                "sync_post_ms":{"type":"number","minimum":0},
-                "sensor_ms":{"type":"number","minimum":0},
-                "queries_ms":{"type":"number","minimum":0},
-                "animation_ms":{"type":"number","minimum":0},
-                "query_calls":{"type":"integer","minimum":0},
-                "query_hits":{"type":"integer","minimum":0},
-                "query_errors":{"type":"integer","minimum":0},
-                "total_calls":{"type":"string","pattern":"^[0-9]+$"},
-                "total_hits":{"type":"string","pattern":"^[0-9]+$"},
-                "total_errors":{"type":"string","pattern":"^[0-9]+$"},
-                "last_error":{"type":["string","null"]}
-            },
-            "required":["sync_pre_ms","sync_post_ms","sensor_ms","queries_ms","animation_ms",
-                "query_calls","query_hits","query_errors","total_calls","total_hits","total_errors","last_error"]
-        })),
-        |metrics| serde_json::json!({
-            "sync_pre_ms":metrics.sync_pre_ms,"sync_post_ms":metrics.sync_post_ms,
-            "sensor_ms":metrics.sensor_ms,"queries_ms":metrics.queries_ms,"animation_ms":metrics.animation_ms,
-            "query_calls":metrics.query_calls,"query_hits":metrics.query_hits,"query_errors":metrics.query_errors,
-            "total_calls":metrics.total_calls.to_string(),"total_hits":metrics.total_hits.to_string(),
-            "total_errors":metrics.total_errors.to_string(),"last_error":metrics.last_error,
-        }),
-    ).expect("stress metrics registration is valid");
+        )
+        .expect("stress metrics registration is valid");
     development
         .tools
         .register_resource::<crate::PlayerWalk>(
-            InspectorDescriptor::new(
-                "PlayerWalk",
-                "The authored scene's player's failed movement queries",
-                serde_json::json!({
-                    "type":"object", "additionalProperties":false,
-                    "properties":{"collision_errors":{"type":"integer","minimum":0}},
-                    "required":["collision_errors"]
-                }),
-            ),
-            |walk| serde_json::json!({"collision_errors":walk.collision_errors}),
+            InspectorDescriptor::generated(&schemas, "PlayerWalk"),
+            |walk| serde_json::to_value(walk).expect("walk counts serialize"),
         )
         .expect("player walk registration is valid");
     development

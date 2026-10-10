@@ -1,8 +1,10 @@
 use engine::prelude::*;
+use engine::settings::{ExtraRules, InvalidSetting, Setting, settings};
 use serde::{Deserialize, Serialize};
 
 /// The world a workload builds from its configuration.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum StressScene {
     /// A grid of towers (the original workload).
@@ -33,50 +35,108 @@ impl StressScene {
         Self::Dense,
         Self::Highlands,
     ];
-}
 
-/// Configuration changes rebuild the owned workload outside the frame loop.
-/// Configurations without `scene` build the tower field.
-#[derive(Resource, Clone, Debug, Deserialize, Serialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct StressConfig {
-    pub seed: u32,
-    pub renderables: u32,
-    pub moving_percent: u32,
-    pub hierarchy: bool,
-    pub interpolation: bool,
-    pub colliders: u32,
-    pub sensor_percent: u32,
-    pub dense_colliders: bool,
-    pub queries_per_tick: u32,
-    pub mesh_variety: u32,
-    pub textured: bool,
-    pub culling: bool,
-    pub scene: StressScene,
-    /// Metro textures as BC7 blocks with their mip chains,
-    /// for devices with `texture-compression-bc`; RGBA8 otherwise.
-    pub compressed_textures: bool,
-}
-
-impl Default for StressConfig {
-    fn default() -> Self {
-        Self {
-            seed: 1337,
-            renderables: 10_000,
-            moving_percent: 25,
-            hierarchy: true,
-            interpolation: true,
-            colliders: 1_000,
-            sensor_percent: 10,
-            dense_colliders: false,
-            queries_per_tick: 32,
-            mesh_variety: 8,
-            textured: true,
-            culling: true,
-            scene: StressScene::Field,
-            compressed_textures: false,
+    /// The scene's name in configurations.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Field => "field",
+            Self::City => "city",
+            Self::Metro => "metro",
+            Self::Dense => "dense",
+            Self::Highlands => "highlands",
         }
     }
+
+    /// The scene's name in menus.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Field => "Tower field",
+            Self::City => "Wild city",
+            Self::Metro => "Metro",
+            Self::Dense => "Dense geometry",
+            Self::Highlands => "Highlands",
+        }
+    }
+}
+
+impl Setting for StressScene {}
+
+/// The mesh batches a workload may draw its renderables from.
+pub const MESH_VARIETIES: [u32; 4] = [1, 8, 32, 64];
+
+settings! {
+    /// A deterministic stress workload. Configuration changes rebuild the
+    /// owned workload outside the frame loop; configurations without `scene`
+    /// build the tower field. The bounds are sanity bounds for URLs and the
+    /// page: the engine sets none.
+    #[derive(Resource, Clone, Debug, Deserialize, Serialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct StressConfig {
+        /// Seed of every random choice the workload makes.
+        pub seed: u32 = 1337 => range(0, u32::MAX),
+        /// Renderable objects.
+        pub renderables: u32 = 10_000 => range(1, 4_000_000),
+        /// Share of the renderables that move, in percent.
+        pub moving_percent: u32 = 25 => range(0, 100),
+        /// Whether moving renderables form parent hierarchies.
+        pub hierarchy: bool = true => any,
+        /// Whether moving renderables interpolate between fixed ticks.
+        pub interpolation: bool = true => any,
+        /// Colliders, at most one per renderable.
+        pub colliders: u32 = 1_000 => range(0, 10_000),
+        /// Share of the colliders that are sensors, in percent.
+        pub sensor_percent: u32 = 10 => range(0, 100),
+        /// Whether colliders gather in dense clusters past pair budgets.
+        pub dense_colliders: bool = false => any,
+        /// Ray, overlap and sweep queries each fixed tick.
+        pub queries_per_tick: u32 = 32 => range(0, 512),
+        /// Mesh batches the renderables draw from: one of
+        /// [`MESH_VARIETIES`].
+        #[cfg_attr(feature = "schema", schemars(transform = mesh_varieties))]
+        pub mesh_variety: u32 = 8 => any,
+        /// Whether materials are textured.
+        pub textured: bool = true => any,
+        /// Whether frustum culling runs.
+        pub culling: bool = true => any,
+        /// The world the workload builds.
+        pub scene: StressScene = StressScene::Field => any,
+        /// Metro textures as BC7 blocks with their mip chains,
+        /// for devices with `texture-compression-bc`; RGBA8 otherwise.
+        pub compressed_textures: bool = false => any,
+    }
+}
+
+impl ExtraRules for StressConfig {
+    fn check_extra(&self) -> Result<(), InvalidSetting> {
+        if !MESH_VARIETIES.contains(&self.mesh_variety) {
+            return Err(InvalidSetting::new(
+                "mesh_variety",
+                format!("must be one of {MESH_VARIETIES:?}"),
+            ));
+        }
+        if self.colliders > self.renderables {
+            return Err(InvalidSetting::new(
+                "colliders",
+                "must be at most renderables",
+            ));
+        }
+        Ok(())
+    }
+
+    fn sanitize_extra(mut self) -> Self {
+        if !MESH_VARIETIES.contains(&self.mesh_variety) {
+            self.mesh_variety = Self::default().mesh_variety;
+        }
+        self.colliders = self.colliders.min(self.renderables);
+        self
+    }
+}
+
+/// The schema of `mesh_variety`: one of [`MESH_VARIETIES`].
+#[cfg(feature = "schema")]
+fn mesh_varieties(schema: &mut schemars::Schema) {
+    schema.insert("enum".into(), serde_json::json!(MESH_VARIETIES));
 }
 
 impl StressConfig {
@@ -85,27 +145,7 @@ impl StressConfig {
             return Err("configuration exceeds 4096 bytes".into());
         }
         let config: Self = serde_json::from_str(source).map_err(|error| error.to_string())?;
-        config.validate()?;
+        config.validate().map_err(|error| error.to_string())?;
         Ok(config)
-    }
-
-    pub fn validate(&self) -> Result<(), String> {
-        // A sanity bound for URLs and the page: the engine sets none.
-        if !(1..=4_000_000).contains(&self.renderables) {
-            return Err("renderables must be in 1..=4000000".into());
-        }
-        if self.moving_percent > 100 || self.sensor_percent > 100 {
-            return Err("moving_percent and sensor_percent must be in 0..=100".into());
-        }
-        if self.colliders > 10_000 || self.colliders > self.renderables {
-            return Err("colliders must be in 0..=min(renderables,10000)".into());
-        }
-        if self.queries_per_tick > 512 {
-            return Err("queries_per_tick must be in 0..=512".into());
-        }
-        if ![1, 8, 32, 64].contains(&self.mesh_variety) {
-            return Err("mesh_variety must be 1, 8, 32 or 64".into());
-        }
-        Ok(())
     }
 }

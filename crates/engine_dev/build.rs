@@ -116,6 +116,8 @@ pub const {name}: [&str; {}] = {:?};
     let summary = serde_json::json!({
         "version": protocol::PROTOCOL_VERSION,
         "max_request_bytes": protocol::MAX_REQUEST_BYTES,
+        // Profiling captures, which the agent's bridge requests.
+        "profile_max_events": engine_profile::MAX_EVENTS,
         "queries": queries,
         "controls": controls,
     });

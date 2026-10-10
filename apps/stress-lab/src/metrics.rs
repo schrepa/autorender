@@ -1,4 +1,44 @@
 use engine::prelude::*;
+use serde::Serialize;
+
+/// The last frame's CPU simulation subsets in milliseconds and the bounded
+/// spatial query counters, every frame's totals as decimal strings.
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct StressMetrics {
+    pub sync_pre_ms: f64,
+    pub sync_post_ms: f64,
+    pub sensor_ms: f64,
+    pub queries_ms: f64,
+    pub animation_ms: f64,
+    pub query_calls: u32,
+    pub query_hits: u32,
+    pub query_errors: u32,
+    pub total_calls: String,
+    pub total_hits: String,
+    pub total_errors: String,
+    /// The last query's error code.
+    pub last_error: Option<String>,
+}
+
+impl From<&FrameMetrics> for StressMetrics {
+    fn from(metrics: &FrameMetrics) -> Self {
+        Self {
+            sync_pre_ms: metrics.sync_pre_ms,
+            sync_post_ms: metrics.sync_post_ms,
+            sensor_ms: metrics.sensor_ms,
+            queries_ms: metrics.queries_ms,
+            animation_ms: metrics.animation_ms,
+            query_calls: metrics.query_calls,
+            query_hits: metrics.query_hits,
+            query_errors: metrics.query_errors,
+            total_calls: metrics.total_calls.to_string(),
+            total_hits: metrics.total_hits.to_string(),
+            total_errors: metrics.total_errors.to_string(),
+            last_error: metrics.last_error.map(str::to_owned),
+        }
+    }
+}
 
 /// Demo-only wall-clock brackets, reset at each browser submission boundary.
 #[derive(Resource, Default, Clone, Copy)]

@@ -7,39 +7,40 @@ import { fetchVirtualPrefix } from "../engine/virtual-mesh";
 import { isKtx2, readRgba8Ktx2 } from "../engine/ktx2";
 import { adapterFeatures } from "../engine/adapter";
 import { jobPool } from "../engine/jobs";
+import {
+  STRESS_CATALOG, STRESS_CONFIG_LIMITS, type StressConfig, type StressSampleField, type StressScene, type StressSnapshot,
+} from "../generated/stress";
 import "./stress.css";
 
-type Scene = "field" | "city" | "metro" | "dense" | "highlands";
-type Config = {
-  seed: number; renderables: number; moving_percent: number; hierarchy: boolean;
-  interpolation: boolean; colliders: number; sensor_percent: number; dense_colliders: boolean;
-  queries_per_tick: number; mesh_variety: number; textured: boolean; culling: boolean; scene: Scene;
-  compressed_textures: boolean;
-};
-type Snapshot = {
-  version: number; generation: number; frame: string; tick: string; config: Config;
-  renderables: number; transform_nodes: number; moving_nodes: number; sensor_nodes: number;
-  timings: { sync_pre_ms: number; sync_post_ms: number; sensor_ms: number; queries_ms: number; animation_ms: number; scope: string };
-  collision: { colliders: number; active_colliders: number; invalid_colliders: number; overflow_colliders: number; complete: boolean;
-    bvh_nodes: number; cache_bytes: number; error: string | null; sensor_pairs: number; sensor_events: number; sensor_complete: boolean;
-    sensor_candidates: number; sensor_error: string | null; sensor_attempted_tick: string | null };
-  queries: { calls: number; hits: number; errors: number; total_errors: string; last_error: string | null };
-  camera: { position: number[]; target: number[]; vertical_fov_radians: number; near: number; far: number };
-};
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const choice = (id: string) => el<HTMLSelectElement>(id);
 const number = (id: string) => Number(el<HTMLInputElement>(id).value);
 const checked = (id: string) => el<HTMLInputElement>(id).checked;
-/** The values select `id` offers: the page's one list of scenes, looks and effects. */
+/** The values select `id` offers. */
 const options = (id: string) => [...choice(id).options].map(option => option.value);
-const scenes = options("scene-select") as Scene[];
+/** Fills select `id` with `choices`, which the generated catalog holds. */
+function offer(id: string, choices: readonly { value: string | number; label?: string }[]) {
+  choice(id).replaceChildren(...choices.map(({ value, label }) => new Option(label ?? String(value), String(value))));
+}
+offer("scene-select", STRESS_CATALOG.scenes);
+offer("look", STRESS_CATALOG.looks);
+offer("effects", STRESS_CATALOG.effects);
+offer("view", STRESS_CATALOG.views);
+offer("meshes", STRESS_CATALOG.mesh_varieties.map(value => ({ value })));
+// Number inputs take the bounds validation keeps.
+for (const [id, field] of [["colliders", "colliders"], ["sensors", "sensor_percent"], ["seed", "seed"]] as const) {
+  const limits = STRESS_CONFIG_LIMITS[field];
+  el<HTMLInputElement>(id).min = String(limits.minimum);
+  el<HTMLInputElement>(id).max = String(limits.maximum);
+}
+const scenes: StressScene[] = STRESS_CATALOG.scenes.map(scene => scene.value);
 const format = (value: number) => value.toLocaleString("en-US");
 const ms = (value: number) => `${value.toFixed(2)} ms`;
 const bytes = (value: number) => `${(value / 1048576).toFixed(2)} MiB`;
-const baseline: Config = { seed: 1337, renderables: 90000, moving_percent: 0, hierarchy: false, interpolation: false,
+const baseline: StressConfig = { seed: 1337, renderables: 90000, moving_percent: 0, hierarchy: false, interpolation: false,
   colliders: 0, sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 32, textured: true, culling: true, scene: "field",
   compressed_textures: false };
-const presets: Record<string, { title: string; note: string; config: Config }> = {
+const presets: Record<string, { title: string; note: string; config: StressConfig }> = {
   visual: { title: "MAXIMUM VISUAL LOAD", note: "Rendering, extraction, batching and texture sampling at maximum object count.", config: baseline },
   city: { title: "WILD CITY", note: "52 building, vehicle and machine shapes: skyscrapers, traffic, trains, drones, cranes and Ferris wheels. Moving objects are the traffic.",
     config: { ...baseline, scene: "city", moving_percent: 10, hierarchy: true, interpolation: true, mesh_variety: 64 } },
@@ -60,7 +61,7 @@ const presets: Record<string, { title: string; note: string; config: Config }> =
 };
 let activeConfig = { ...baseline }, activeTitle = presets.visual.title;
 let game: StressGame | undefined, controls: HostControls<StressGame> | undefined;
-let latest: Snapshot | undefined, report: StressRecordingReport | undefined;
+let latest: StressSnapshot | undefined, report: StressRecordingReport | undefined;
 let previousTimestamp: number | undefined, recordStarted = 0;
 let profiler: DetailedProfiler | undefined, detailedReport: DetailedProfileReport | undefined;
 let wasmMemory: WebAssembly.Memory | undefined;
@@ -123,7 +124,7 @@ async function highlandsFiles(): Promise<StressFiles | undefined> {
   return files;
 }
 /** The files `config`'s scene reads that the game lacks. */
-async function sceneFiles(config: Config): Promise<StressFiles | undefined> {
+async function sceneFiles(config: StressConfig): Promise<StressFiles | undefined> {
   if (config.scene === "dense") return denseFiles();
   if (config.scene === "highlands") return highlandsFiles();
   return undefined;
@@ -134,9 +135,9 @@ const listeners = new AbortController();
 const listenerOptions = { signal: listeners.signal };
 const intervals: number[] = [], chart: [number, number, number][] = [];
 
-function snapshot(runtime: StressGame): Snapshot { return JSON.parse(runtime.stress_stats()) as Snapshot; }
+function snapshot(runtime: StressGame): StressSnapshot { return JSON.parse(runtime.stress_stats()) as StressSnapshot; }
 /** What a recording or a detailed profile notes about the run it measures, on a `canvas` sized canvas. */
-function runMetadata(data: Snapshot, canvas: [number, number]) {
+function runMetadata(data: StressSnapshot, canvas: [number, number]) {
   return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
     culling: data.config.culling, resolution_scale: number("resolution"), canvas, presentation, pipeline,
     taa: game?.temporal_antialiasing() ? "on" : "off", occlusion: game?.occlusion_culling() ? "on" : "off",
@@ -180,7 +181,7 @@ const recorder = new StressRecorder(value => {
   el("record-status").textContent = `${state} · ${value.samples} frames · CPU median ${total?.median.toFixed(2) ?? "—"} ms / p95 ${total?.p95.toFixed(2) ?? "—"} ms · frame p95 ${cadence?.p95.toFixed(2) ?? "—"} ms. Export includes diagnostics.`;
 });
 
-function fill(config: Config) {
+function fill(config: StressConfig) {
   for (const [id, field] of [["objects", "renderables"], ["moving", "moving_percent"], ["colliders", "colliders"],
     ["sensors", "sensor_percent"], ["queries", "queries_per_tick"], ["meshes", "mesh_variety"], ["seed", "seed"]] as const) {
     const input = el<HTMLInputElement | HTMLSelectElement>(id);
@@ -195,11 +196,11 @@ function fill(config: Config) {
   }
   choice("scene-select").value = config.scene;
 }
-function readConfig(): Config {
+function readConfig(): StressConfig {
   return { seed: number("seed"), renderables: number("objects"), moving_percent: number("moving"), colliders: number("colliders"),
     sensor_percent: number("sensors"), queries_per_tick: number("queries"), mesh_variety: number("meshes"), hierarchy: checked("hierarchy"),
     interpolation: checked("interpolation"), textured: checked("textures"), dense_colliders: checked("dense"), culling: checked("culling"),
-    scene: choice("scene-select").value as Scene, compressed_textures: checked("compressed") };
+    scene: choice("scene-select").value as StressScene, compressed_textures: checked("compressed") };
 }
 /** One fingerprint of the module, taken in the background at startup,
  * outside measurement windows: exports made before it ends carry none.
@@ -228,14 +229,14 @@ async function detectBlockCompression(): Promise<boolean> {
   return (await adapterFeatures()).has("texture-compression-bc");
 }
 /** `config` with compressed textures off where BC7 is unavailable. */
-function supported(config: Config): Config {
+function supported(config: StressConfig): StressConfig {
   if (!config.compressed_textures || blockCompression !== false) return config;
   notice("This GPU lacks texture-compression-bc: textures stay RGBA8.", true);
   const fallback = { ...config, compressed_textures: false };
   fill(fallback);
   return fallback;
 }
-async function apply(requested: Config, title: string) {
+async function apply(requested: StressConfig, title: string) {
   if (!controls) return;
   const config = supported(requested);
   if (profiler?.busy || recorder.active) { notice("Finish the active capture before changing the workload.", true); return; }
@@ -345,7 +346,7 @@ if (params.has("config")) {
   try {
     const source = params.get("config")!;
     if (source.length > 2000) throw new Error("Workload link is too large.");
-    const parsed = JSON.parse(source) as Partial<Config>;
+    const parsed = JSON.parse(source) as Partial<StressConfig>;
     // Links from before scenes existed build the tower field.
     // and before compressed textures, without them.
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
@@ -353,10 +354,10 @@ if (params.has("config")) {
       parsed.compressed_textures ??= false;
     }
     if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" || Object.keys(parsed).length !== Object.keys(baseline).length ||
-        Object.entries(baseline).some(([key, value]) => typeof parsed[key as keyof Config] !== typeof value) || !scenes.includes(parsed.scene as Scene)) {
+        Object.entries(baseline).some(([key, value]) => typeof parsed[key as keyof StressConfig] !== typeof value) || !scenes.includes(parsed.scene as StressScene)) {
       throw new Error("Expected the complete workload configuration.");
     }
-    activeConfig = parsed as Config;
+    activeConfig = parsed as StressConfig;
     activeTitle = "SHARED WORKLOAD";
   } catch (error) { notice(`Invalid workload link; using visual preset. ${String(error)}`, true); activeConfig = { ...baseline }; }
 }
@@ -451,19 +452,19 @@ boot({
     if (!recorder.active) return;
     // The workload's numbers without its full snapshot, read every 250 ms.
     const stats = readStats(runtime);
-    const [syncMs, sensorMs, queriesMs, animationMs, activeColliders, invalidColliders, overflowColliders, collisionComplete,
-      sensorPairs, sensorCandidates, sensorComplete, queryCalls, queryHits, queryErrors] = runtime.frame_sample();
+    const values = runtime.frame_sample();
+    const sample = Object.fromEntries(STRESS_CATALOG.sample.map((field, index) => [field, values[index]])) as Record<StressSampleField, number>;
     recorder.sample({ timestamp, simulation_ms: stats.simulation_ms, extraction_ms: stats.extraction_ms, render_ms: stats.render_ms,
       dropped_seconds: stats.dropped_seconds,
-      phases_ms: { collision_sync: syncMs, sensors: sensorMs, queries: queriesMs, animation: animationMs },
+      phases_ms: { collision_sync: sample.sync_ms, sensors: sample.sensor_ms, queries: sample.queries_ms, animation: sample.animation_ms },
       counters: { instances: stats.instances, candidates: stats.render_candidates, visible: stats.visible_instances, culled: stats.culled_instances,
         draws: stats.draw_calls, upload_bytes: stats.upload_bytes, fixed_steps: stats.fixed_steps, missing_assets: stats.missing_assets,
         invalid_transforms: stats.invalid_transforms, dropped_instances: stats.dropped_instances, culling: stats.culling_enabled,
         gpu_mesh_bytes: stats.resident_mesh_bytes, gpu_texture_bytes: stats.resident_texture_bytes,
         mesh_upload_bytes: stats.mesh_upload_bytes, texture_upload_bytes: stats.texture_upload_bytes,
-        colliders: activeColliders, collision_complete: collisionComplete === 1, invalid_colliders: invalidColliders,
-        overflow_colliders: overflowColliders, sensor_complete: sensorComplete === 1, sensor_pairs: sensorPairs,
-        sensor_candidates: sensorCandidates, query_calls: queryCalls, query_hits: queryHits, query_errors: queryErrors },
+        colliders: sample.active_colliders, collision_complete: sample.collision_complete === 1, invalid_colliders: sample.invalid_colliders,
+        overflow_colliders: sample.overflow_colliders, sensor_complete: sample.sensor_complete === 1, sensor_pairs: sample.sensor_pairs,
+        sensor_candidates: sample.sensor_candidates, query_calls: sample.query_calls, query_hits: sample.query_hits, query_errors: sample.query_errors },
     });
     if (timestamp - lastDiagnostic >= 250) { recorder.diagnostic(timestamp, snapshot(runtime)); lastDiagnostic = timestamp; }
   },

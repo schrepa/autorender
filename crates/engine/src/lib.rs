@@ -6,6 +6,8 @@ pub use engine_core::*;
 pub use engine_profile as profiling;
 /// Versioned authoring, validation, and explicit scene ownership.
 pub use engine_scene as scene;
+/// Settings declared once with their rules (`settings!`), as the engine's own are.
+pub use engine_settings as settings;
 pub mod camera;
 
 /// Optional, bounded development inspection. No inspection runs automatically.

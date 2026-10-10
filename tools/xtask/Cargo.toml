@@ -10,6 +10,9 @@ engine_dev.workspace = true
 engine_render.workspace = true
 naga = { version = "=30.0.1", features = ["wgsl-in"] }
 engine_assetc.workspace = true
+# The Stress Lab's schemas and catalog, for its generated files.
+stress-lab = { path = "../../apps/stress-lab", features = ["schema"] }
+schemars.workspace = true
 serde_json.workspace = true
 
 [lints]

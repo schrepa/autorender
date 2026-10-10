@@ -43,12 +43,12 @@
             <div class="controls-grid">
               <label>Objects<select id="objects"><option>1000</option><option>10000</option><option>25000</option><option>50000</option><option selected>90000</option><option>120000</option><option>150000</option><option>200000</option><option>250000</option><option>500000</option><option>1000000</option></select></label>
               <label>Moving objects<select id="moving"><option value="0">0%</option><option value="10">10%</option><option value="25">25%</option><option value="50">50%</option><option value="100">100%</option></select></label>
-              <label>Colliders<input id="colliders" type="number" min="0" max="10000" step="100" value="0" /></label>
-              <label>Sensors<input id="sensors" type="number" min="0" max="100" value="0" /><span class="field-unit">% of colliders</span></label>
+              <label>Colliders<input id="colliders" type="number" step="100" value="0" /></label>
+              <label>Sensors<input id="sensors" type="number" value="0" /><span class="field-unit">% of colliders</span></label>
               <label>Queries / tick<select id="queries"><option>0</option><option>32</option><option>128</option><option>256</option><option>512</option></select></label>
-              <label>Mesh batches<select id="meshes"><option>1</option><option>8</option><option selected>32</option><option>64</option></select></label>
-              <label>Scene<select id="scene-select"><option value="field" selected>Tower field</option><option value="city">Wild city</option><option value="metro">Metro</option><option value="dense">Dense geometry</option><option value="highlands">Highlands</option></select></label>
-              <label>Seed<input id="seed" type="number" min="0" max="4294967295" value="1337" /></label>
+              <label>Mesh batches<select id="meshes"></select></label>
+              <label>Scene<select id="scene-select"></select></label>
+              <label>Seed<input id="seed" type="number" value="1337" /></label>
             </div>
             <div class="toggle-grid">
               <label><input id="hierarchy" type="checkbox" /> Parent hierarchies</label>
@@ -60,10 +60,10 @@
             <button id="apply" class="primary" type="button">Apply &amp; restart workload</button>
           </fieldset>
           <div class="view-controls">
-            <label>View<select id="view" disabled><option value="overview">Overview</option><option value="close">Inside the field</option><option value="away">Look away</option></select></label>
+            <label>View<select id="view" disabled></select></label>
             <label>Resolution<select id="resolution" disabled><option value="0.5">50%</option><option value="0.75">75%</option><option value="1" selected>100%</option><option value="1.5">150%</option></select></label>
-            <label class="control-wide">Lighting<select id="look" disabled><option value="scene" selected>Scene default</option><option value="golden">Golden hour</option><option value="dusk">Dusk</option><option value="night">Night</option><option value="day">Day</option><option value="sky">Physical sky</option></select></label>
-            <label class="control-wide">Effects<select id="effects" disabled><option value="all" selected>All effects</option><option value="none">None</option><option value="no-shadows">No shadows</option><option value="no-occlusion">No ambient occlusion</option><option value="no-bloom">No bloom</option><option value="no-lights">No local lights</option><option value="no-shafts">No sun shafts</option><option value="no-reflections">No reflections</option><option value="no-particles">No particles</option><option value="no-refraction">No refraction</option><option value="no-probes">No reflection probes</option></select></label>
+            <label class="control-wide">Lighting<select id="look" disabled></select></label>
+            <label class="control-wide">Effects<select id="effects" disabled></select></label>
             <label class="check-control"><input id="culling" type="checkbox" checked disabled /> Frustum culling</label>
           </div>
           <p id="notice" class="panel-note" role="status">Changes apply together. Same seed and settings reproduce the same field.</p>

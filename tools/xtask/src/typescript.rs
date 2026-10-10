@@ -20,6 +20,11 @@ pub fn interfaces(schema: &Value, root: &str, source: &str) -> String {
 fn interface(output: &mut String, name: &str, schema: &Value) {
     output.push('\n');
     comment(output, "", &schema["description"]);
+    // Enumerations and other non-objects are type aliases.
+    if schema.get("properties").is_none() {
+        writeln!(output, "export type {name} = {};", type_of(schema)).expect("strings write");
+        return;
+    }
     writeln!(output, "export interface {name} {{").expect("strings write");
     for (field, property) in schema["properties"].as_object().into_iter().flatten() {
         comment(output, "  ", &property["description"]);
@@ -50,6 +55,31 @@ fn type_of(schema: &Value) -> String {
             .next()
             .expect("references name a definition")
             .to_owned();
+    }
+    // String constants and enumerations are unions of their literals; numbers
+    // stay numbers.
+    if let Some(value) = schema.get("const").filter(|value| value.is_string()) {
+        return value.to_string();
+    }
+    if let Some(values) = schema["enum"]
+        .as_array()
+        .filter(|values| values.iter().all(Value::is_string))
+    {
+        return values
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join(" | ");
+    }
+    if let Some(members) = schema["oneOf"].as_array().or(schema["anyOf"].as_array()) {
+        let mut types: Vec<String> = Vec::new();
+        for member in members {
+            let member = type_of(member);
+            if !types.contains(&member) {
+                types.push(member);
+            }
+        }
+        return types.join(" | ");
     }
     let types: Vec<&str> = match &schema["type"] {
         Value::String(name) => vec![name.as_str()],

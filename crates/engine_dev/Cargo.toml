@@ -20,6 +20,7 @@ engine_settings = { workspace = true, features = ["schema"] }
 engine_scene = { workspace = true, features = ["schema"] }
 
 [build-dependencies]
+engine_profile.workspace = true
 engine_settings = { workspace = true, features = ["schema"] }
 engine_core = { workspace = true, features = ["schema"] }
 engine_scene = { workspace = true, features = ["schema"] }

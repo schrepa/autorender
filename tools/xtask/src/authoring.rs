@@ -46,10 +46,11 @@ fn scene_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(paths)
 }
 
-/// The files the web host and scripts read that Rust generates: the
-/// development protocol's summary, the browser clients and the frame stats'
-/// types.
-fn generated() -> [(&'static str, String); 3] {
+/// The files the web host, scripts and the Stress Lab read that Rust
+/// generates: the development protocol's summary, the browser clients, the
+/// frame stats' types, the Stress Lab page's types and catalog, and its
+/// inspectors' schemas.
+fn generated() -> [(&'static str, String); 5] {
     let clients = serde_json::to_string_pretty(&crate::process::clients_json())
         .expect("the client list serializes")
         + "\n";
@@ -65,14 +66,68 @@ fn generated() -> [(&'static str, String); 3] {
             "web/src/generated/stats.ts",
             crate::typescript::interfaces(&stats, "FrameStats", "engine_core::FrameStats"),
         ),
+        ("web/src/generated/stress.ts", stress_page()),
+        (
+            "apps/stress-lab/src/generated/inspectors.json",
+            stress_inspectors(),
+        ),
     ]
+}
+
+/// The Stress Lab page's types (its snapshot, configuration and scenes),
+/// its configuration's limits and its catalog of choices.
+fn stress_page() -> String {
+    let snapshot = serde_json::to_value(schemars::schema_for!(stress_lab::StressSnapshot))
+        .expect("schemas serialize");
+    let mut page = crate::typescript::interfaces(&snapshot, "StressSnapshot", "stress_lab");
+    let config = &snapshot["$defs"]["StressConfig"]["properties"];
+    let limits: serde_json::Map<String, serde_json::Value> = config
+        .as_object()
+        .expect("the configuration is an object")
+        .iter()
+        .filter_map(|(field, property)| {
+            let limits: serde_json::Map<String, serde_json::Value> = ["minimum", "maximum", "enum"]
+                .into_iter()
+                .filter_map(|key| Some((key.to_owned(), property.get(key)?.clone())))
+                .collect();
+            (!limits.is_empty()).then(|| (field.clone(), limits.into()))
+        })
+        .collect();
+    page.push_str(
+        "\n/** Each configuration field's bounds or values, as validation keeps them. */\n",
+    );
+    page.push_str(&format!(
+        "export const STRESS_CONFIG_LIMITS = {} as const;\n",
+        serde_json::to_string_pretty(&limits).expect("limits serialize")
+    ));
+    page.push_str(
+        "\n/** The scenes, looks, effects, views and mesh batches the page offers, and the\n * per-frame sample's field names in order. */\n",
+    );
+    page.push_str(&format!(
+        "export const STRESS_CATALOG = {} as const;\n",
+        serde_json::to_string_pretty(&stress_lab::catalog()).expect("the catalog serializes")
+    ));
+    page.push_str("\n/** A field of the per-frame sample. */\nexport type StressSampleField = (typeof STRESS_CATALOG.sample)[number];\n");
+    page
+}
+
+/// The schemas of the Stress Lab's inspectors, by name.
+fn stress_inspectors() -> String {
+    let schemas = serde_json::json!({
+        "StressConfig": schemars::schema_for!(stress_lab::StressConfig),
+        "StressMetrics": schemars::schema_for!(stress_lab::StressMetrics),
+        "PlayerWalk": schemars::schema_for!(stress_lab::PlayerWalk),
+    });
+    serde_json::to_string_pretty(&schemas).expect("schemas serialize") + "\n"
 }
 
 /// Writes the generated files the web host and scripts read.
 pub fn write_generated(root: &Path) -> Result<(), String> {
-    fs::create_dir_all(root.join("web/src/generated"))
-        .map_err(|error| format!("cannot create the generated directory: {error}"))?;
     for (path, contents) in generated() {
+        if let Some(directory) = Path::new(path).parent() {
+            fs::create_dir_all(root.join(directory))
+                .map_err(|error| format!("cannot create {}: {error}", directory.display()))?;
+        }
         fs::write(root.join(path), contents)
             .map_err(|error| format!("cannot write {path}: {error}"))?;
         println!("Generated {path}.");

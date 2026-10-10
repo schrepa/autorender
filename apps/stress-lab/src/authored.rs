@@ -126,9 +126,10 @@ impl AuthoredScene {
     }
 }
 
-/// The player's movement queries that failed, which stop it rather than
-/// move it through geometry.
-#[derive(Resource, Default, Clone, Copy, Debug)]
+/// The authored scene's player's movement queries that failed, which stop
+/// it rather than move it through geometry.
+#[derive(Resource, Default, Clone, Copy, Debug, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PlayerWalk {
     pub collision_errors: u32,
 }

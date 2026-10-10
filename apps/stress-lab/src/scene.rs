@@ -49,7 +49,7 @@ pub fn create_workload_with(
     config: StressConfig,
     files: &HashMap<String, StressFile>,
 ) -> Result<Engine, String> {
-    config.validate()?;
+    config.validate().map_err(|error| error.to_string())?;
     let mut engine = Engine::new(EngineConfig {
         frustum_culling: config.culling,
         ..EngineConfig::default()
@@ -503,17 +503,42 @@ pub fn stress_reflections(scene: StressScene) -> Reflections {
     }
 }
 
-/// A lighting preset: its name, atmosphere and street lamp brightness.
-type Look = (&'static str, fn() -> Atmosphere, f32);
+/// A lighting preset: its name, its name in menus, its atmosphere and its
+/// street lamp brightness.
+pub(crate) type Look = (&'static str, &'static str, fn() -> Atmosphere, f32);
+
+/// The look `scene`: each scene's own (see [`look`]).
+pub(crate) const SCENE_LOOK: (&str, &str) = ("scene", "Scene default");
 
 /// The lighting presets; lamps are off by day. `sky` is the physically
 /// based sky at a time of day, under a neutral grade.
-const LOOKS: [Look; 5] = [
-    ("golden", Atmosphere::golden_hour, 0.35),
-    ("dusk", Atmosphere::dusk, 0.8),
-    ("night", Atmosphere::night, 1.0),
-    ("day", Atmosphere::day, 0.0),
-    ("sky", physical_look, 0.5),
+pub(crate) const LOOKS: [Look; 5] = [
+    ("golden", "Golden hour", Atmosphere::golden_hour, 0.35),
+    ("dusk", "Dusk", Atmosphere::dusk, 0.8),
+    ("night", "Night", Atmosphere::night, 1.0),
+    ("day", "Day", Atmosphere::day, 0.0),
+    ("sky", "Physical sky", physical_look, 0.5),
+];
+
+/// The rendering effects the page can switch off (`no-NAME`): each one's
+/// name and what it is in menus.
+pub(crate) const EFFECTS: [(&str, &str); 9] = [
+    ("shadows", "shadows"),
+    ("occlusion", "ambient occlusion"),
+    ("bloom", "bloom"),
+    ("lights", "local lights"),
+    ("shafts", "sun shafts"),
+    ("reflections", "reflections"),
+    ("particles", "particles"),
+    ("refraction", "refraction"),
+    ("probes", "reflection probes"),
+];
+
+/// The camera views: each one's name and its name in menus.
+pub(crate) const VIEWS: [(&str, &str); 3] = [
+    ("overview", "Overview"),
+    ("close", "Inside the field"),
+    ("away", "Look away"),
 ];
 
 /// The grade under the physically based sky: its light at
@@ -559,8 +584,13 @@ pub fn look(scene: StressScene, name: &str) -> Result<(Atmosphere, f32), String>
     LOOKS
         .iter()
         .find(|(look, ..)| *look == name)
-        .map(|&(_, atmosphere, lamps)| (atmosphere(), lamps))
-        .ok_or_else(|| "look must be scene, golden, dusk, night, day or sky".into())
+        .map(|&(_, _, atmosphere, lamps)| (atmosphere(), lamps))
+        .ok_or_else(|| {
+            let names: Vec<&str> = std::iter::once(SCENE_LOOK.0)
+                .chain(LOOKS.iter().map(|(name, ..)| *name))
+                .collect();
+            format!("look must be one of {}", names.join(", "))
+        })
 }
 
 /// Look `name` of `scene`, `scene` resolved to the scene's own.
@@ -659,7 +689,10 @@ pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {
                 ..Camera::default()
             }
         }
-        _ => return Err("view must be overview, close or away".into()),
+        _ => {
+            let names: Vec<&str> = VIEWS.iter().map(|(name, _)| *name).collect();
+            return Err(format!("view must be one of {}", names.join(", ")));
+        }
     };
     // The highlands' camera crosses kilometers.
     let speed = if config.scene == StressScene::Highlands {

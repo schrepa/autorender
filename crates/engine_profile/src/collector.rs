@@ -1,9 +1,7 @@
-use crate::{AllocationSnapshot, allocation_snapshot};
+use crate::{AllocationSnapshot, MAX_EVENTS, allocation_snapshot};
 use serde::Serialize;
 use std::cell::RefCell;
 use std::{marker::PhantomData, rc::Rc};
-
-pub const MAX_EVENTS: usize = 65_536;
 
 /// `aggregate` durations are summed samples, not continuous timeline spans.
 #[derive(Debug, Serialize)]
@@ -122,7 +120,7 @@ pub fn set_frame(frame: u64) {
 /// Allocate the entire event budget before opening the measured window.
 pub fn start(max_events: usize) -> Result<u64, &'static str> {
     if !(1..=MAX_EVENTS).contains(&max_events) {
-        return Err("event budget must be 1..=65536");
+        return Err("event budget must be at least 1 and at most MAX_EVENTS");
     }
     COLLECTOR.with_borrow_mut(|collector| {
         if collector.active {

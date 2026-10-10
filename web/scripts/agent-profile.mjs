@@ -1,17 +1,26 @@
 /** Optional tooling only: one bounded capture, artifacts instead of huge replies. */
+import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { relative, resolve, sep } from "node:path";
 import { AgentError } from "./agent-protocol.mjs";
 
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
+const protocol = JSON.parse(readFileSync(new URL("../src/generated/protocol.json", import.meta.url), "utf8"));
+/** Each numeric option's bounds and default: the schema states them and
+ * requests are checked against them; a capture holds at most the
+ * collector's events. */
+const LIMITS = {
+  duration_ms: { minimum: 100, maximum: 5000, default: 5000 },
+  max_events: { minimum: 256, maximum: protocol.profile_max_events, default: protocol.profile_max_events },
+};
 
 export const profileDescriptor = {
   name: "ProfileCapture", kind: "tooling", description: "Bounded CPU/GPU/collision/memory/browser capture; artifacts saved by the local bridge.",
   schema: {
     type: "object", additionalProperties: false, required: ["op"], properties: {
-      op: { const: "profile" }, duration_ms: { type: "integer", minimum: 100, maximum: 5000, default: 5000 },
-      max_events: { type: "integer", minimum: 256, maximum: 65536, default: 65536 }, cpu_samples: { type: "boolean", default: true },
+      op: { const: "profile" }, duration_ms: { type: "integer", ...LIMITS.duration_ms },
+      max_events: { type: "integer", ...LIMITS.max_events }, cpu_samples: { type: "boolean", default: true },
     },
   },
   constraints: "Requires paused profiling build. Runs ordinary frames for the capture, clears input, then pauses. Does not save source. Optional CDP sampling adds overhead. Inspect capture completeness, capabilities and dropped counts before comparing.",
@@ -21,12 +30,13 @@ export async function captureProfile({ page, requestBrowser, command, artifacts,
   if (Object.keys(command).some(key => !["op", "duration_ms", "max_events", "cpu_samples"].includes(key))) {
     throw new AgentError("invalid_request", "profile accepts duration_ms, max_events, and cpu_samples only.");
   }
-  const duration = command.duration_ms === undefined ? 5000 : command.duration_ms;
-  const maxEvents = command.max_events === undefined ? 65536 : command.max_events;
-  if (!Number.isInteger(duration) || duration < 100 || duration > 5000 ||
-      !Number.isInteger(maxEvents) || maxEvents < 256 || maxEvents > 65536 ||
+  const within = (value, { minimum, maximum }) => Number.isInteger(value) && value >= minimum && value <= maximum;
+  const duration = command.duration_ms === undefined ? LIMITS.duration_ms.default : command.duration_ms;
+  const maxEvents = command.max_events === undefined ? LIMITS.max_events.default : command.max_events;
+  if (!within(duration, LIMITS.duration_ms) || !within(maxEvents, LIMITS.max_events) ||
       (command.cpu_samples !== undefined && typeof command.cpu_samples !== "boolean")) {
-    throw new AgentError("invalid_request", "duration_ms must be 100..5000, max_events 256..65536, and cpu_samples boolean.");
+    const range = name => `${LIMITS[name].minimum}..${LIMITS[name].maximum}`;
+    throw new AgentError("invalid_request", `duration_ms must be ${range("duration_ms")}, max_events ${range("max_events")}, and cpu_samples boolean.`);
   }
   const before = await requestBrowser({ op: "status" });
   if (!before.ok) return before;

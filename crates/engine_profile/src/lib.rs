@@ -4,6 +4,9 @@
 //! millisecond clock. Profiling builds pay allocator accounting costs even when
 //! not capturing; ordinary builds contain neither collector nor allocator hooks.
 
+/// Events one capture holds at most; tooling bounds its requests by it.
+pub const MAX_EVENTS: usize = 65_536;
+
 #[cfg(feature = "enabled")]
 #[allow(unsafe_code)]
 mod allocator;

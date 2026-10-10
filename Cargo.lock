@@ -634,6 +634,7 @@ version = "0.1.0"
 dependencies = [
  "engine_collision",
  "engine_core",
+ "engine_profile",
  "engine_scene",
  "engine_settings",
  "schemars",
@@ -1608,6 +1609,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "engine",
+ "schemars",
  "serde",
  "serde_json",
  "wasm-bindgen",
@@ -2052,7 +2054,9 @@ dependencies = [
  "engine_render",
  "engine_scene",
  "naga",
+ "schemars",
  "serde_json",
+ "stress-lab",
 ]
 
 [[package]]
