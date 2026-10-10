@@ -15,7 +15,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use bevy_ecs::prelude::*;
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::math::{clamp, max, min};
@@ -517,7 +517,7 @@ fn cell_range((low, high): (Vec2, Vec2)) -> ((i32, i32), (i32, i32)) {
 /// from where it pressed the tick before (or where it stands, if it did
 /// not, or jumped) to where it stands, at the tick's time. Runs once the
 /// tick's transforms are final.
-pub(crate) fn press(world: &mut World, deformers: &mut QueryState<(Entity, &Deformer)>) {
+pub(crate) fn press(world: &mut World, deformers: &mut QueryState<(Entity, &'static Deformer)>) {
     let settings = world
         .get_resource::<Deformation>()
         .copied()
@@ -685,60 +685,91 @@ pub struct RenderDeformation {
     pub dropped: u64,
 }
 
-/// Lays each frame's deformation map around the camera and lists the stamps
-/// it presses.
-#[derive(Default)]
-pub(crate) struct DeformationExtraction {
+impl RenderDeformation {
+    /// Becomes `other`, keeping its own allocation.
+    pub(crate) fn copy_from(&mut self, other: &Self) {
+        self.map = other.map;
+        self.reset = other.reset;
+        self.tracks.clone_from(&other.tracks);
+        self.logged = other.logged;
+        self.dropped = other.dropped;
+    }
+}
+
+/// The frame's deformation map around the camera and the stamps it
+/// presses, which extraction hands renderers, and the last map laid.
+#[derive(Resource, Default)]
+pub(crate) struct DeformationFrame {
+    pub(crate) out: RenderDeformation,
     map: Option<DeformationMap>,
 }
 
-impl DeformationExtraction {
-    pub(crate) fn extract(&mut self, world: &mut World, out: &mut RenderDeformation) {
-        out.tracks.clear();
-        out.reset = false;
-        let settings = world
-            .get_resource::<Deformation>()
-            .copied()
-            .map(Deformation::sanitized)
-            .filter(|settings| settings.enabled);
-        let eye = world.get_resource::<Camera>().map(Camera::eye);
-        let Some(mut tracks) = world.get_resource_mut::<Tracks>() else {
-            out.map = None;
-            self.map = None;
-            return;
-        };
-        out.logged = tracks.len();
-        out.dropped = tracks.dropped;
-        let (Some(settings), Some(eye)) = (settings, eye) else {
-            tracks.pending.clear();
-            out.map = None;
-            self.map = None;
-            return;
-        };
-        let map = DeformationMap::around(eye, &settings);
-        let cleared = std::mem::take(&mut tracks.cleared);
-        let reset = cleared
-            || self
-                .map
-                .is_none_or(|last| last.texel != map.texel || last.resolution != map.resolution);
-        let moved = self.map.is_some_and(|last| last.first != map.first);
-        if (reset || moved) && !settings.persist {
-            let (low, high) = map.bounds();
-            tracks.retain_within(low, high);
-        }
-        if reset {
-            tracks.pending.clear();
-            tracks.within(&[map.bounds()], &mut out.tracks);
-        } else {
-            if let Some(last) = self.map.filter(|_| moved) {
-                tracks.within(&map.uncovered(&last), &mut out.tracks);
-            }
-            out.tracks.append(&mut tracks.pending);
-        }
-        out.reset = reset;
-        out.map = Some(map);
-        out.logged = tracks.len();
-        out.dropped = tracks.dropped;
-        self.map = Some(map);
+/// Lays the frame's deformation map around the camera and lists the stamps
+/// it presses: [`crate::ViewSyncSystems::FollowDeformation`].
+pub(crate) fn follow_camera(
+    settings: Option<Res<Deformation>>,
+    camera: Option<Res<Camera>>,
+    tracks: Option<ResMut<Tracks>>,
+    mut frame: ResMut<DeformationFrame>,
+) {
+    let frame = &mut *frame;
+    follow(
+        settings.map(|settings| *settings),
+        camera.map(|camera| camera.eye()),
+        tracks.map(ResMut::into_inner),
+        &mut frame.map,
+        &mut frame.out,
+    );
+}
+
+/// Lays the map of `settings` around `eye` into `out` with the stamps of
+/// `tracks` it presses, `last` the map laid before.
+pub(crate) fn follow(
+    settings: Option<Deformation>,
+    eye: Option<Vec3>,
+    tracks: Option<&mut Tracks>,
+    last: &mut Option<DeformationMap>,
+    out: &mut RenderDeformation,
+) {
+    out.tracks.clear();
+    out.reset = false;
+    let settings = settings
+        .map(Deformation::sanitized)
+        .filter(|settings| settings.enabled);
+    let Some(tracks) = tracks else {
+        out.map = None;
+        *last = None;
+        return;
+    };
+    out.logged = tracks.len();
+    out.dropped = tracks.dropped;
+    let (Some(settings), Some(eye)) = (settings, eye) else {
+        tracks.pending.clear();
+        out.map = None;
+        *last = None;
+        return;
+    };
+    let map = DeformationMap::around(eye, &settings);
+    let cleared = std::mem::take(&mut tracks.cleared);
+    let reset = cleared
+        || last.is_none_or(|last| last.texel != map.texel || last.resolution != map.resolution);
+    let moved = last.is_some_and(|last| last.first != map.first);
+    if (reset || moved) && !settings.persist {
+        let (low, high) = map.bounds();
+        tracks.retain_within(low, high);
     }
+    if reset {
+        tracks.pending.clear();
+        tracks.within(&[map.bounds()], &mut out.tracks);
+    } else {
+        if let Some(last) = last.filter(|_| moved) {
+            tracks.within(&map.uncovered(&last), &mut out.tracks);
+        }
+        out.tracks.append(&mut tracks.pending);
+    }
+    out.reset = reset;
+    out.map = Some(map);
+    out.logged = tracks.len();
+    out.dropped = tracks.dropped;
+    *last = Some(map);
 }

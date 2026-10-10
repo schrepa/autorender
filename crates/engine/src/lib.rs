@@ -43,7 +43,8 @@ pub use engine_core::{
 pub use engine_core::{
     ActionId, ActionInput, AnimationPlayer, AnimationSystems, App, Atmosphere, Camera, Cube,
     Engine, EngineConfig, ErrorCode, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
-    FixedTime, FrameReport, FrameTime, InputState, Plugin, Presentation, PresentedTime,
+    FixedTickEnd, FixedTickEndSystems, FixedTime, FrameReport, FrameTime, InputState, Plugin,
+    Presentation, PresentedTime, ViewSync, ViewSyncSystems, WorldSync, WorldSyncSystems,
 };
 pub use engine_core::{
     AmbientOcclusion, Bloom, Clouds, ContactShadows, DecalSettings, Deformation, Environment,
@@ -196,9 +197,10 @@ pub mod prelude {
     };
     pub use crate::{
         ActionId, ActionInput, AnimationPlayer, AnimationSystems, App, Atmosphere, Camera, Cube,
-        Engine, EngineConfig, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FixedTime,
-        FrameReport, FrameTime, Game, InputState, Inspectors, Plugin, Presentation, PresentedTime,
-        math,
+        Engine, EngineConfig, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
+        FixedTickEnd, FixedTickEndSystems, FixedTime, FrameReport, FrameTime, Game, InputState,
+        Inspectors, Plugin, Presentation, PresentedTime, ViewSync, ViewSyncSystems, WorldSync,
+        WorldSyncSystems, math,
     };
     pub use crate::{
         AmbientOcclusion, Bloom, Clouds, ContactShadows, DecalSettings, Deformation, Environment,

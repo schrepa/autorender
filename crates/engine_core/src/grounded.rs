@@ -40,13 +40,8 @@ pub struct GroundedAt {
     pub level: Option<u32>,
 }
 
-/// The unparented grounded entities, which [`Grounding::settle`] reads
-/// each extraction.
-pub(crate) struct Grounding {
-    query: GroundedQuery,
-}
-
-type GroundedQuery = QueryState<
+/// The unparented grounded entities, which [`settle`] stands.
+pub(crate) type GroundedQuery = QueryState<
     (
         Entity,
         &'static Grounded,
@@ -57,57 +52,49 @@ type GroundedQuery = QueryState<
     Without<Parent>,
 >;
 
-impl Grounding {
-    pub(crate) fn new(world: &mut World) -> Self {
-        Self {
-            query: world.query_filtered(),
+/// Stands every grounded entity that moved, or whose ground may have
+/// become finer, on the terrain: [`crate::WorldSyncSystems::Ground`].
+pub(crate) fn settle(world: &mut World, query: &mut GroundedQuery) {
+    let Some(terrains) = world.get_resource::<Terrains>() else {
+        return;
+    };
+    let revision = terrains.revision();
+    let mut settled = Vec::new();
+    for (entity, grounded, transform, at, walk) in query.iter(world) {
+        if walk.is_some_and(|walk| walk.status == crate::NavStatus::Walking) {
+            continue;
         }
+        let position = Vec2::new(transform.translation.x, transform.translation.z);
+        let stale = at.is_none_or(|at| {
+            at.position != position
+                || at.offset != grounded.offset
+                || (at.revision != revision && at.level != Some(0))
+        });
+        if !stale {
+            continue;
+        }
+        let sample = terrains
+            .sample(position.x, position.y)
+            .filter(|sample| !sample.hole);
+        settled.push((
+            entity,
+            sample.map(|sample| sample.height + grounded.offset),
+            GroundedAt {
+                position,
+                offset: grounded.offset,
+                revision,
+                level: sample.map(|sample| sample.level),
+            },
+        ));
     }
-
-    /// Stands every grounded entity that moved, or whose ground may have
-    /// become finer, on the terrain.
-    pub(crate) fn settle(&mut self, world: &mut World) {
-        let Some(terrains) = world.get_resource::<Terrains>() else {
-            return;
-        };
-        let revision = terrains.revision();
-        let mut settled = Vec::new();
-        for (entity, grounded, transform, at, walk) in self.query.iter(world) {
-            if walk.is_some_and(|walk| walk.status == crate::NavStatus::Walking) {
-                continue;
-            }
-            let position = Vec2::new(transform.translation.x, transform.translation.z);
-            let stale = at.is_none_or(|at| {
-                at.position != position
-                    || at.offset != grounded.offset
-                    || (at.revision != revision && at.level != Some(0))
-            });
-            if !stale {
-                continue;
-            }
-            let sample = terrains
-                .sample(position.x, position.y)
-                .filter(|sample| !sample.hole);
-            settled.push((
-                entity,
-                sample.map(|sample| sample.height + grounded.offset),
-                GroundedAt {
-                    position,
-                    offset: grounded.offset,
-                    revision,
-                    level: sample.map(|sample| sample.level),
-                },
-            ));
+    for (entity, height, at) in settled {
+        let mut entity = world.entity_mut(entity);
+        if let Some(height) = height
+            && let Some(mut transform) = entity.get_mut::<Transform>()
+            && transform.translation.y != height
+        {
+            transform.translation.y = height;
         }
-        for (entity, height, at) in settled {
-            let mut entity = world.entity_mut(entity);
-            if let Some(height) = height
-                && let Some(mut transform) = entity.get_mut::<Transform>()
-                && transform.translation.y != height
-            {
-                transform.translation.y = height;
-            }
-            entity.insert(at);
-        }
+        entity.insert(at);
     }
 }

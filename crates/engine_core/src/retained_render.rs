@@ -1145,22 +1145,16 @@ impl RetainedRender {
     }
 
     /// Lays the frame's deformation map and lists its stamps.
-    pub(crate) fn extract_deformation(
-        &mut self,
-        world: &mut World,
-        deformation: &mut crate::deformation::DeformationExtraction,
-    ) {
-        deformation.extract(world, &mut self.snapshot.deformation);
+    pub(crate) fn extract_deformation(&mut self, world: &World) {
+        match world.get_resource::<crate::deformation::DeformationFrame>() {
+            Some(frame) => self.snapshot.deformation.copy_from(&frame.out),
+            None => self.snapshot.deformation = crate::RenderDeformation::default(),
+        }
     }
 
     /// Lists the frame's terrains.
-    pub(crate) fn extract_terrain(
-        &mut self,
-        world: &World,
-        terrain: &mut crate::terrain::TerrainExtraction,
-        aspect: f32,
-    ) {
-        terrain.extract(world, aspect, &mut self.snapshot);
+    pub(crate) fn extract_terrain(&mut self, world: &World, aspect: f32) {
+        crate::terrain::extract_terrains(world, aspect, &mut self.snapshot);
     }
 
     /// Creates the source stamp window used by GPU-presented frames.

@@ -205,6 +205,52 @@ pub struct Presentation;
 #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TransformPropagation;
 
+/// Once per rendered frame before its transforms refresh: the world follows
+/// the camera. Streamed cells load and unload, grounded entities stand on
+/// the ground, and bridges, waterfalls and spline meshes spawn and build, in
+/// [`WorldSyncSystems`] order; game systems order against those sets. Paused
+/// frames run it too; GPU frames presenting the interval before a tick in
+/// flight do not.
+#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WorldSync;
+
+/// Once per rendered frame after its transforms refresh, before extraction:
+/// what follows the camera's view. Terrains stream toward it and the
+/// deformation map follows it, in [`ViewSyncSystems`] order. Transforms
+/// changed here propagate at the next boundary.
+#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ViewSync;
+
+/// Once per fixed tick after its final propagation, reading the tick's
+/// settled transforms: deformers press tracks where the tick left them
+/// ([`FixedTickEndSystems`]). Transforms changed here propagate at the next
+/// boundary.
+#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FixedTickEnd;
+
+/// The engine's work in [`WorldSync`], in this order.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WorldSyncSystems {
+    StreamCells,
+    Ground,
+    Bridges,
+    Waterfalls,
+    Splines,
+}
+
+/// The engine's work in [`ViewSync`], in this order.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ViewSyncSystems {
+    StreamTerrains,
+    FollowDeformation,
+}
+
+/// The engine's work in [`FixedTickEnd`].
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FixedTickEndSystems {
+    PressTracks,
+}
+
 /// The most fixed ticks one development step request advances.
 pub const MAX_DEV_TICKS: u32 = 120;
 
@@ -264,14 +310,6 @@ pub struct Engine {
     skins: skin::SkinExtraction,
     decals: decals::DecalExtraction,
     probes: probes::ProbeExtraction,
-    terrain: terrain::TerrainExtraction,
-    // Runtime deformation: the deformers pressing each tick,
-    // and each frame's map.
-    deformers: QueryState<(Entity, &'static Deformer)>,
-    deformation: deformation::DeformationExtraction,
-    // World streaming and grounded objects.
-    streaming: streaming::StreamingExtraction,
-    grounding: grounded::Grounding,
     plugins_finalized: bool,
     tick_ahead: TickAhead,
 }
@@ -336,6 +374,52 @@ impl Engine {
                 animation::animate.in_set(AnimationSystems::Animate),
             )
             .add_systems(FixedSimulation, ocean::float.in_set(OceanSystems::Float))
+            .init_schedule(WorldSync)
+            .init_schedule(ViewSync)
+            .init_schedule(FixedTickEnd)
+            // Before the frame's transforms refresh, the world follows the
+            // camera; after, what follows its view.
+            .add_systems(
+                WorldSync,
+                (
+                    streaming::stream_cells.in_set(WorldSyncSystems::StreamCells),
+                    grounded::settle.in_set(WorldSyncSystems::Ground),
+                    bridges::sync.in_set(WorldSyncSystems::Bridges),
+                    waterfalls::sync.in_set(WorldSyncSystems::Waterfalls),
+                    spline_mesh::build.in_set(WorldSyncSystems::Splines),
+                ),
+            )
+            .configure_sets(
+                WorldSync,
+                (
+                    WorldSyncSystems::StreamCells,
+                    WorldSyncSystems::Ground,
+                    WorldSyncSystems::Bridges,
+                    WorldSyncSystems::Waterfalls,
+                    WorldSyncSystems::Splines,
+                )
+                    .chain(),
+            )
+            .add_systems(
+                ViewSync,
+                (
+                    terrain::stream_terrains.in_set(ViewSyncSystems::StreamTerrains),
+                    deformation::follow_camera.in_set(ViewSyncSystems::FollowDeformation),
+                ),
+            )
+            .configure_sets(
+                ViewSync,
+                (
+                    ViewSyncSystems::StreamTerrains,
+                    ViewSyncSystems::FollowDeformation,
+                )
+                    .chain(),
+            )
+            // Deformers press tracks where each tick left them.
+            .add_systems(
+                FixedTickEnd,
+                deformation::press.in_set(FixedTickEndSystems::PressTracks),
+            )
             // The time of day moves the sun.
             .add_systems(Presentation, sky::advance_time_of_day)
             // Navigation agents walk.
@@ -370,6 +454,15 @@ impl Engine {
             .edit_schedule(TransformPropagation, |schedule| {
                 schedule.set_executor(SingleThreadedExecutor::new());
             })
+            .edit_schedule(WorldSync, |schedule| {
+                schedule.set_executor(SingleThreadedExecutor::new());
+            })
+            .edit_schedule(ViewSync, |schedule| {
+                schedule.set_executor(SingleThreadedExecutor::new());
+            })
+            .edit_schedule(FixedTickEnd, |schedule| {
+                schedule.set_executor(SingleThreadedExecutor::new());
+            })
             .insert_resource(FixedTime {
                 delta_seconds: clock.step_seconds() as f32,
                 elapsed_seconds: 0.0,
@@ -380,6 +473,7 @@ impl Engine {
             .init_resource::<Camera>()
             .init_resource::<Atmosphere>()
             .init_resource::<Tracks>()
+            .init_resource::<deformation::DeformationFrame>()
             .init_resource::<WorldCells>()
             .init_resource::<WorldChanges>()
             .init_resource::<NavAgents>()
@@ -406,29 +500,22 @@ impl Engine {
         let skins = skin::SkinExtraction::new(app.world_mut());
         let decals = decals::DecalExtraction::new(app.world_mut());
         let probes = probes::ProbeExtraction::new(app.world_mut());
-        let terrain = terrain::TerrainExtraction::new(app.world_mut());
-        let deformers = app.world_mut().query::<(Entity, &Deformer)>();
-        let streaming = streaming::StreamingExtraction::new(app.world_mut());
-        let grounding = grounded::Grounding::new(app.world_mut());
+        let mut retained = retained_render::RetainedRender::new(
+            cube_mesh,
+            config.frustum_culling,
+            config.max_render_instances,
+        );
+        retained.ensure_source_scan(app.world_mut());
         Self {
             app,
             clock,
             render_query,
-            retained: retained_render::RetainedRender::new(
-                cube_mesh,
-                config.frustum_culling,
-                config.max_render_instances,
-            ),
+            retained,
             lights,
             particles,
             skins,
             decals,
             probes,
-            terrain,
-            deformers,
-            deformation: deformation::DeformationExtraction::default(),
-            streaming,
-            grounding,
             plugins_finalized: false,
             tick_ahead: TickAhead::None,
         }
@@ -693,7 +780,10 @@ impl Engine {
             self.refresh_transforms();
         }
         // Deformers press tracks where the tick left them.
-        deformation::press(self.app.world_mut(), &mut self.deformers);
+        {
+            let _profile = engine_profile::span("ecs", "FixedTickEnd");
+            self.app.world_mut().run_schedule(FixedTickEnd);
+        }
         interpolation::end_tick(self.app.world_mut());
         self.app
             .world_mut()
@@ -718,14 +808,17 @@ impl Engine {
     /// simulating or extracting a frame: hosts call it while
     /// the GPU compiles pipelines, so loading goes on meanwhile.
     pub fn stream_terrain(&mut self) {
-        self.terrain.update(self.app.world_mut());
+        self.app
+            .world_mut()
+            .run_system_cached(terrain::stream_terrains)
+            .expect("terrain streaming takes no input");
     }
 
     /// Loads terrain tiles the last frame found missing for `milliseconds`
     /// between frames, where frames leave time free while the
     /// GPU draws them; whether tiles are still to load.
     pub fn work_terrain(&mut self, milliseconds: f64) -> bool {
-        self.terrain.work(self.app.world_mut(), milliseconds)
+        terrain::work_between_frames(self.app.world_mut(), milliseconds)
     }
 
     /// Refreshes world matrices without advancing simulation or frame counters.
@@ -811,17 +904,11 @@ impl Engine {
             PresentationMode::Current => None,
             PresentationMode::Interpolated { alpha } => Some(alpha),
         });
-        // Streamed cells load and unload, grounded objects
-        // stand on the ground, and bridges, waterfalls
-        // and spline meshes spawn and build
-        // before transforms refresh, so paused frames draw them too.
-        self.streaming.stream(self.app.world_mut());
-        self.grounding.settle(self.app.world_mut());
-        bridges::sync(self.app.world_mut());
-        waterfalls::sync(self.app.world_mut());
-        spline_mesh::build(self.app.world_mut());
+        // Before transforms refresh, so paused frames draw it too.
+        self.sync_world();
         self.refresh_transforms();
         interpolation::prepare(self.app.world_mut(), mode);
+        self.sync_view();
         Ok(self.extract_retained(aspect, false))
     }
 
@@ -850,15 +937,26 @@ impl Engine {
             // consumers keep presenting the inputs they applied before.
             interpolation::present_gpu_fraction(self.app.world_mut(), alpha, gathered);
         } else {
-            self.streaming.stream(self.app.world_mut());
-            self.grounding.settle(self.app.world_mut());
-            bridges::sync(self.app.world_mut());
-            waterfalls::sync(self.app.world_mut());
-            spline_mesh::build(self.app.world_mut());
+            self.sync_world();
             self.refresh_transforms();
             interpolation::prepare_gpu(self.app.world_mut(), alpha);
         }
+        self.sync_view();
         Ok(self.extract_retained(aspect, true))
+    }
+
+    /// The world follows the camera, before the frame's transforms refresh:
+    /// [`WorldSync`].
+    fn sync_world(&mut self) {
+        let _profile = engine_profile::span("ecs", "WorldSync");
+        self.app.world_mut().run_schedule(WorldSync);
+    }
+
+    /// What follows the camera's view, after the frame's transforms
+    /// refresh: [`ViewSync`].
+    fn sync_view(&mut self) {
+        let _profile = engine_profile::span("ecs", "ViewSync");
+        self.app.world_mut().run_schedule(ViewSync);
     }
 
     /// Records the simulation time this frame presents ([`PresentedTime`]): the
@@ -883,13 +981,8 @@ impl Engine {
     /// poses and culling to the GPU and skip the instance pass while
     /// nothing structural changed.
     fn extract_retained(&mut self, aspect: f32, gpu: bool) -> RenderFrame<'_> {
-        if gpu {
-            self.retained.ensure_source_scan(self.app.world_mut());
-        }
-        self.terrain.update(self.app.world_mut());
-        self.retained
-            .extract_deformation(self.app.world_mut(), &mut self.deformation);
         let world = self.app.world();
+        self.retained.extract_deformation(world);
         self.retained
             .prepare(world, &mut self.render_query, aspect, gpu);
         self.retained.extract_lights_and_particles(
@@ -901,8 +994,7 @@ impl Engine {
         self.retained.extract_skins(world, &mut self.skins, gpu);
         self.retained.extract_decals(world, &mut self.decals, gpu);
         self.retained.extract_probes(world, &mut self.probes);
-        self.retained
-            .extract_terrain(world, &mut self.terrain, aspect);
+        self.retained.extract_terrain(world, aspect);
         self.retained
             .set_cells(world.resource::<WorldCells>().stats());
         if gpu {
@@ -960,6 +1052,9 @@ impl Engine {
             FixedPostSimulation.intern(),
             Presentation.intern(),
             TransformPropagation.intern(),
+            WorldSync.intern(),
+            ViewSync.intern(),
+            FixedTickEnd.intern(),
         ];
         let schedules = self.app.world().resource::<Schedules>();
         for (label, schedule) in schedules.iter() {

@@ -530,113 +530,107 @@ pub fn remove_streamed(world: &mut World, set: StreamSet) {
     });
 }
 
-/// What streaming reads each extraction: the terrain focus entities, which
-/// are streaming sources.
-pub(crate) struct StreamingExtraction {
-    focus: QueryState<Entity, With<TerrainFocus>>,
+/// The terrain focus entities, which are streaming sources.
+pub(crate) type FocusQuery = QueryState<Entity, With<TerrainFocus>>;
+
+/// Loads cells streaming sources came near and unloads those they left,
+/// before transforms refresh: [`crate::WorldSyncSystems::StreamCells`].
+pub(crate) fn stream_cells(world: &mut World, focus: &mut FocusQuery) {
+    if !world.contains_resource::<WorldCells>() {
+        return;
+    }
+    let _profile = engine_profile::span("cpu", "world_streaming");
+    let settings = world.get_resource::<WorldStreaming>().copied().map_or(
+        WorldStreaming {
+            enabled: false,
+            ..WorldStreaming::default()
+        },
+        WorldStreaming::sanitized,
+    );
+    if !world.contains_resource::<WorldChanges>() {
+        world.init_resource::<WorldChanges>();
+    }
+    world.resource_scope(|world, mut cells: Mut<WorldCells>| {
+        let cells = &mut *cells;
+        cells.stats.spawned = 0;
+        cells.stats.despawned = 0;
+        cells.stats.pending = 0;
+        if !cells.cells.is_empty() {
+            sources(world, focus, cells, settings);
+            world.resource_scope(|world, mut tracked: Mut<WorldChanges>| {
+                // What gameplay and changes removed or restored first.
+                let (before, revision) = (tracked.revision(), cells.changes);
+                let changes = tracked.bypass_change_detection();
+                for cell in cells.cells.iter_mut().filter(|cell| cell.loaded) {
+                    let [despawned, spawned] = cell.reconcile(world, changes, revision);
+                    cells.stats.despawned += despawned;
+                    cells.stats.spawned += spawned;
+                }
+                cells.changes = changes.revision();
+                load_and_unload(world, cells, changes, settings);
+                if tracked.revision() != before {
+                    tracked.set_changed();
+                }
+            });
+        }
+        cells.stats.cells = cells.cells.len() as u32;
+        cells.stats.loaded = cells.cells.iter().filter(|cell| cell.loaded).count() as u32;
+        cells.stats.items = cells.items() as u32;
+        cells.stats.entities = cells.cells.iter().map(|cell| cell.spawned).sum();
+    });
 }
 
-impl StreamingExtraction {
-    pub(crate) fn new(world: &mut World) -> Self {
-        Self {
-            focus: world.query_filtered::<Entity, With<TerrainFocus>>(),
+/// This frame's streaming sources into `cells.sources`: the camera,
+/// every terrain `focus`, and where the camera's motion takes it
+/// `prefetch` seconds ahead.
+fn sources(
+    world: &World,
+    focus: &mut FocusQuery,
+    cells: &mut WorldCells,
+    settings: WorldStreaming,
+) {
+    let eye = world.resource::<Camera>().eye();
+    let frame = world.resource::<FrameTime>();
+    let (number, elapsed) = (frame.frame, frame.elapsed_seconds);
+    let motion = &mut cells.motion;
+    match motion.last {
+        Some((last_frame, last_elapsed, last)) if number != last_frame => {
+            let seconds = (elapsed - last_elapsed) as f32;
+            let velocity = if seconds > 0.0 {
+                (eye - last) / seconds
+            } else {
+                Vec3::ZERO
+            };
+            motion.velocity = if velocity.is_finite() && velocity.length() <= JUMP_SPEED {
+                velocity
+            } else {
+                Vec3::ZERO
+            };
+            motion.last = Some((number, elapsed, eye));
+        }
+        // Later extractions of a frame (paused renders) keep its first
+        // position: motion is measured frame to frame.
+        Some(_) => {}
+        None => {
+            motion.velocity = Vec3::ZERO;
+            motion.last = Some((number, elapsed, eye));
         }
     }
-
-    /// Loads cells streaming sources came near and unloads those they left.
-    /// Runs at extraction, before transforms refresh.
-    pub(crate) fn stream(&mut self, world: &mut World) {
-        if !world.contains_resource::<WorldCells>() {
-            return;
-        }
-        let _profile = engine_profile::span("cpu", "world_streaming");
-        let settings = world.get_resource::<WorldStreaming>().copied().map_or(
-            WorldStreaming {
-                enabled: false,
-                ..WorldStreaming::default()
-            },
-            WorldStreaming::sanitized,
-        );
-        if !world.contains_resource::<WorldChanges>() {
-            world.init_resource::<WorldChanges>();
-        }
-        world.resource_scope(|world, mut cells: Mut<WorldCells>| {
-            let cells = &mut *cells;
-            cells.stats.spawned = 0;
-            cells.stats.despawned = 0;
-            cells.stats.pending = 0;
-            if !cells.cells.is_empty() {
-                self.sources(world, cells, settings);
-                world.resource_scope(|world, mut tracked: Mut<WorldChanges>| {
-                    // What gameplay and changes removed or restored first.
-                    let (before, revision) = (tracked.revision(), cells.changes);
-                    let changes = tracked.bypass_change_detection();
-                    for cell in cells.cells.iter_mut().filter(|cell| cell.loaded) {
-                        let [despawned, spawned] = cell.reconcile(world, changes, revision);
-                        cells.stats.despawned += despawned;
-                        cells.stats.spawned += spawned;
-                    }
-                    cells.changes = changes.revision();
-                    load_and_unload(world, cells, changes, settings);
-                    if tracked.revision() != before {
-                        tracked.set_changed();
-                    }
-                });
-            }
-            cells.stats.cells = cells.cells.len() as u32;
-            cells.stats.loaded = cells.cells.iter().filter(|cell| cell.loaded).count() as u32;
-            cells.stats.items = cells.items() as u32;
-            cells.stats.entities = cells.cells.iter().map(|cell| cell.spawned).sum();
-        });
+    let flat = |point: Vec3| Vec2::new(point.x, point.z);
+    cells.sources.clear();
+    cells.sources.push(flat(eye));
+    let ahead = eye + motion.velocity * settings.prefetch;
+    if ahead.distance_squared(eye) > 1.0 {
+        cells.sources.push(flat(ahead));
     }
-
-    /// This frame's streaming sources into `cells.sources`: the camera,
-    /// every terrain focus, and where the camera's motion takes it
-    /// `prefetch` seconds ahead.
-    fn sources(&mut self, world: &World, cells: &mut WorldCells, settings: WorldStreaming) {
-        let eye = world.resource::<Camera>().eye();
-        let frame = world.resource::<FrameTime>();
-        let (number, elapsed) = (frame.frame, frame.elapsed_seconds);
-        let motion = &mut cells.motion;
-        match motion.last {
-            Some((last_frame, last_elapsed, last)) if number != last_frame => {
-                let seconds = (elapsed - last_elapsed) as f32;
-                let velocity = if seconds > 0.0 {
-                    (eye - last) / seconds
-                } else {
-                    Vec3::ZERO
-                };
-                motion.velocity = if velocity.is_finite() && velocity.length() <= JUMP_SPEED {
-                    velocity
-                } else {
-                    Vec3::ZERO
-                };
-                motion.last = Some((number, elapsed, eye));
-            }
-            // Later extractions of a frame (paused renders) keep its first
-            // position: motion is measured frame to frame.
-            Some(_) => {}
-            None => {
-                motion.velocity = Vec3::ZERO;
-                motion.last = Some((number, elapsed, eye));
-            }
-        }
-        let flat = |point: Vec3| Vec2::new(point.x, point.z);
-        cells.sources.clear();
-        cells.sources.push(flat(eye));
-        let ahead = eye + motion.velocity * settings.prefetch;
-        if ahead.distance_squared(eye) > 1.0 {
-            cells.sources.push(flat(ahead));
-        }
-        let globals = world.resource::<GlobalTransforms>();
-        for entity in self.focus.iter(world) {
-            if let Some(position) = globals
-                .get(entity)
-                .and_then(|global| global.translation())
-                .filter(|position| position.is_finite())
-            {
-                cells.sources.push(flat(position));
-            }
+    let globals = world.resource::<GlobalTransforms>();
+    for entity in focus.iter(world) {
+        if let Some(position) = globals
+            .get(entity)
+            .and_then(|global| global.translation())
+            .filter(|position| position.is_finite())
+        {
+            cells.sources.push(flat(position));
         }
     }
 }
