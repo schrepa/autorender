@@ -9,7 +9,7 @@ use glam::{Mat4, Vec3};
 
 use crate::{
     bvh::Bvh,
-    geometry::{AffineShape, Bounds, NarrowScratch, intersects},
+    geometry::{AffineShape, Bounds, Narrow, intersects},
     placed::PlacedShapes,
     terrain::TerrainFields,
     types::*,
@@ -114,7 +114,6 @@ pub struct CollisionWorld {
     previous_entries: Vec<Entry>,
     bounds: Vec<Bounds>,
     bvh: Bvh,
-    narrow: NarrowScratch,
     next_pairs: Vec<SensorPair>,
     report: CollisionReport,
     last_error: Option<CollisionError>,
@@ -132,7 +131,6 @@ impl FromWorld for CollisionWorld {
             previous_entries: Vec::new(),
             bounds: Vec::new(),
             bvh: Bvh::default(),
-            narrow: NarrowScratch::default(),
             next_pairs: Vec::new(),
             report: CollisionReport::default(),
             last_error: None,
@@ -454,7 +452,7 @@ impl CollisionWorld {
     }
 
     pub fn cast_shape(
-        &mut self,
+        &self,
         shape: ColliderShape,
         matrix: Mat4,
         displacement: Vec3,
@@ -480,10 +478,9 @@ impl CollisionWorld {
             &mut broad,
         ) {
             let entry = entry?;
-            if let Some((fraction, point, normal, started_overlapping)) = precise.measure(|| {
-                self.narrow
-                    .cast(&shape, &entry.affine, displacement, options)
-            })? {
+            if let Some((fraction, point, normal, started_overlapping)) =
+                precise.measure(|| Narrow::cast(&shape, &entry.affine, displacement, options))?
+            {
                 let hit = ShapeHit {
                     entity: entry.entity,
                     fraction,
@@ -497,9 +494,7 @@ impl CollisionWorld {
                 }
             }
         }
-        let placed = self
-            .placed
-            .cast(&mut self.narrow, &shape, displacement, filter, options)?;
+        let placed = self.placed.cast(&shape, displacement, filter, options)?;
         let terrain = self.terrain.cast(&shape, displacement, filter, options)?;
         for hit in [placed, terrain].into_iter().flatten() {
             if nearest.is_none_or(|old| (hit.fraction, hit.entity) < (old.fraction, old.entity)) {

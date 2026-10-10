@@ -71,6 +71,7 @@ impl InspectorDescriptor {
         Self::new(name, description, schema)
     }
 
+    #[must_use]
     pub fn with_default(mut self, value: Value) -> Self {
         self.default = Some(value);
         self

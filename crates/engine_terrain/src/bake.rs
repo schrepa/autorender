@@ -319,6 +319,7 @@ impl Layers {
     }
 
     /// This stack with layer `index` baked as `baked` found.
+    #[must_use]
     pub fn with_baked(&self, index: usize, baked: Baked) -> Self {
         let mut layers = self.clone();
         match (layers.layer_mut(index), baked) {
@@ -338,6 +339,7 @@ impl Layers {
 
     /// This stack with every bake done at once, as tools that write terrain
     /// files need it; engines bake within frame budgets.
+    #[must_use]
     pub fn bake_all(&self, pyramid: &Pyramid) -> Self {
         let mut layers = self.clone();
         while let Some((index, kind)) = layers.unbaked() {

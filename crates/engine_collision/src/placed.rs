@@ -16,7 +16,7 @@ use engine_core::{DECK_DEPTH, DECK_MARGIN, DECK_RISE, PlacedShape, Terrains, Til
 use glam::{Mat4, Quat, Vec2, Vec3};
 
 use crate::bvh::Bvh;
-use crate::geometry::{AffineShape, Bounds, NarrowScratch, intersects};
+use crate::geometry::{AffineShape, Bounds, Narrow, intersects};
 use crate::{
     ColliderShape, CollisionError, CollisionLayers, CollisionRay, PlacedPart, QueryFilter, RayHit,
     SensorFilter, ShapeCastOptions, ShapeHit,
@@ -268,7 +268,6 @@ impl PlacedShapes {
     /// The first object `shape` meets moving by `displacement`.
     pub(crate) fn cast(
         &self,
-        narrow: &mut NarrowScratch,
         shape: &AffineShape,
         displacement: Vec3,
         filter: QueryFilter,
@@ -285,7 +284,7 @@ impl PlacedShapes {
                 continue;
             }
             if let Some((fraction, point, normal, started_overlapping)) =
-                narrow.cast(shape, &object.affine, displacement, options)?
+                Narrow::cast(shape, &object.affine, displacement, options)?
                 && nearest.is_none_or(|old| fraction < old.fraction)
             {
                 nearest = Some(ShapeHit {

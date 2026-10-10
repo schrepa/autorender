@@ -85,10 +85,12 @@ impl Collider {
     pub fn sphere(radius: f32) -> Result<Self, CollisionError> {
         Self::new(ColliderShape::Sphere { radius })
     }
+    #[must_use]
     pub fn with_layers(mut self, layers: CollisionLayers) -> Self {
         self.layers = layers;
         self
     }
+    #[must_use]
     pub fn with_sensor(mut self, sensor: bool) -> Self {
         self.sensor = sensor;
         self

@@ -1170,6 +1170,7 @@ impl Layers {
     /// meets this stack's at that region's edges and turns into its noise
     /// away from them. Offsets keep the noise only as whole multiples of
     /// four samples of every level drawn.
+    #[must_use]
     pub fn surroundings(&self, offset: Vec2, (low, high): (Vec2, Vec2), blend: f32) -> Self {
         Self {
             offset,
@@ -1237,6 +1238,7 @@ impl Layers {
     }
 
     /// The stack of the layers before `index`, which a bake there reads.
+    #[must_use]
     pub fn below(&self, index: usize) -> Self {
         Self {
             layers: self.layers[..index].to_vec(),

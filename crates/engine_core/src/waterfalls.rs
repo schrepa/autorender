@@ -92,7 +92,7 @@ fn foam_texture() -> Texture {
             ]);
         }
     }
-    Texture::with_alpha(ALONG, ACROSS, rgba).expect("the foam texture is valid")
+    Texture::from_rgba(ALONG, ACROSS, rgba).expect("the foam texture is valid")
 }
 
 /// Every fall's ribbon in one mesh, terrain-local: a strip the river's

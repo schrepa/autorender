@@ -1074,7 +1074,7 @@ fn surface(
     }
     // Spruces of a few shapes over one bark and needle atlas, their needles
     // cut out by its alpha.
-    let atlas = Texture::with_alpha(
+    let atlas = Texture::from_rgba(
         crate::trees::ATLAS,
         crate::trees::ATLAS,
         crate::trees::atlas(),
@@ -1706,7 +1706,7 @@ fn maps(
         let Some([width, height]) = file.size else {
             return Ok(None);
         };
-        let texture = Texture::with_alpha(width, height, file.bytes.clone())
+        let texture = Texture::from_rgba(width, height, file.bytes.clone())
             .map_err(|error| format!("{file_name}: {error}"))?;
         let texture = assets
             .insert_texture(texture)
@@ -1754,7 +1754,7 @@ fn scanned(
         let Some([width, height]) = file.size else {
             return Ok(None);
         };
-        let texture = Texture::with_alpha(width, height, file.bytes.clone())
+        let texture = Texture::from_rgba(width, height, file.bytes.clone())
             .map_err(|error| format!("{file_name}: {error}"))?;
         textures.push(
             assets

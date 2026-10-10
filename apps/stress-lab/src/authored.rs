@@ -174,7 +174,7 @@ const WORLD_LAYER: u32 = 1;
 fn walk(
     time: Res<FixedTime>,
     input: Res<InputState>,
-    mut collisions: ResMut<CollisionWorld>,
+    collisions: Res<CollisionWorld>,
     mut errors: ResMut<PlayerWalk>,
     mut players: Query<(Entity, &Collider, &mut Transform, &mut Player)>,
 ) {

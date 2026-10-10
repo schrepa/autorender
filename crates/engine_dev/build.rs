@@ -79,6 +79,18 @@ fn main() {
     }
     let mut sections = Sections(serde_json::Map::new());
     engine_scene::SceneEnvironment::default().visit(&mut sections);
+    // A settings section is never named as the plural of a component, which
+    // reads as a store of them: `LocalLight`'s settings are
+    // `LocalLightSettings`, not `LocalLights`.
+    for name in sections.0.keys() {
+        if let Some(component) = name.strip_suffix('s')
+            && schemas.get(component).is_some()
+        {
+            panic!(
+                "settings {name} read as a store of {component}s: name them {component}Settings"
+            );
+        }
+    }
     schemas
         .as_object_mut()
         .expect("schemas are an object")

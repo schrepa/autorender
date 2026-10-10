@@ -263,6 +263,7 @@ impl Atmosphere {
 
     /// This atmosphere when [`Self::validate`] accepts it, otherwise the
     /// default.
+    #[must_use]
     pub fn sanitized(self) -> Self {
         if self.validate().is_ok() {
             self

@@ -42,25 +42,25 @@ pub use engine_core::{
     FrameReport, FrameTime, InputState, Plugin, Presentation, PresentedTime,
 };
 pub use engine_core::{
-    AmbientOcclusion, Bloom, Clouds, ContactShadows, Decals, Deformation, Environment,
-    EnvironmentSection, GroundCover, InvalidSetting, LevelOfDetail, LocalLights, Navigation,
-    OcclusionCulling, Occupancy, Ocean, Particles, ReflectionProbes, Reflections, Refraction,
-    Shadows, Sky, SubpixelCulling, SunShafts, TemporalAntialiasing, TerrainSettings, TimeOfDay,
-    VirtualGeometry, Water, Wind, WorldStreaming,
+    AmbientOcclusion, Bloom, Clouds, ContactShadows, DecalSettings, Deformation, Environment,
+    EnvironmentSection, GroundCover, InvalidSetting, LevelOfDetail, LocalLightSettings, Navigation,
+    OcclusionCulling, Occupancy, Ocean, ParticleSettings, ReflectionProbeSettings, Reflections,
+    Refraction, Shadows, Sky, SubpixelCulling, SunShafts, TemporalAntialiasing, TerrainSettings,
+    TimeOfDay, VirtualGeometry, Water, Wind, WorldStreaming,
 };
 // The fallback mesh size `Mesh::from_virtual` takes by default.
 pub use engine_core::DEFAULT_FALLBACK_TRIANGLES;
 pub use engine_core::{
-    Cover, Decal, DecalBlend, Deformer, Floating, GlobalTransform, GlobalTransforms, Grounded,
-    HierarchyError, HierarchyReport, Interior, InterpolateTransform, InterpolationError,
-    LocalLight, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, Mesh3d, NavAgent, NavAgents, NavStatus,
-    NavSystems, NavWalk, OceanPoint, OceanSurface, OceanSystems, OceanWave, OceanWaves, Parent,
-    ParticleBlend, ParticleEmitter, PresentationState, PresentedTransform, PresentedTransforms,
-    ReflectionProbe, Skin, SplineChunks, SplineMesh, Spot, StreamSet, Streamed, StreamedId,
-    StreamedItem, Terrain, TerrainFocus, TerrainSample, Terrains, Tint, Track, TrackDepth, Tracks,
-    Transform, TransformEditError, TransformNodeLimit, Viewport, WorldCells, WorldChanges,
-    edit_transform, remove_streamed, reset_all_interpolation, reset_interpolation, set_parent,
-    set_parents,
+    Cover, Decal, DecalBlend, Deformer, EngineEntityCommands, Floating, GlobalTransform,
+    GlobalTransforms, Grounded, HierarchyError, HierarchyReport, Interior, InterpolateTransform,
+    InterpolationError, LocalLight, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, Mesh3d, NavAgent,
+    NavAgents, NavStatus, NavSystems, NavWalk, OceanPoint, OceanSurface, OceanSystems, OceanWave,
+    OceanWaves, Parent, ParticleBlend, ParticleEmitter, PresentationState, PresentedTransform,
+    PresentedTransforms, ReflectionProbe, Skin, SplineChunks, SplineMesh, Spot, StreamSet,
+    Streamed, StreamedId, StreamedItem, Terrain, TerrainFocus, TerrainSample, Terrains, Tint,
+    Track, TrackDepth, Tracks, Transform, TransformEditError, TransformNodeLimit, Viewport,
+    WorldCells, WorldChanges, edit_transform, remove_streamed, reset_all_interpolation,
+    reset_interpolation, set_parent, set_parents,
 };
 // The bounds settings and components validate against.
 pub use engine_core::{
@@ -197,21 +197,22 @@ pub mod prelude {
         math,
     };
     pub use crate::{
-        AmbientOcclusion, Bloom, Clouds, ContactShadows, Decals, Deformation, Environment,
-        GroundCover, LevelOfDetail, LocalLights, Navigation, OcclusionCulling, Occupancy, Ocean,
-        Particles, ReflectionProbes, Reflections, Refraction, Shadows, Sky, SubpixelCulling,
-        SunShafts, TemporalAntialiasing, TerrainSettings, TimeOfDay, VirtualGeometry, Water, Wind,
-        WorldStreaming,
+        AmbientOcclusion, Bloom, Clouds, ContactShadows, DecalSettings, Deformation, Environment,
+        GroundCover, LevelOfDetail, LocalLightSettings, Navigation, OcclusionCulling, Occupancy,
+        Ocean, ParticleSettings, ReflectionProbeSettings, Reflections, Refraction, Shadows, Sky,
+        SubpixelCulling, SunShafts, TemporalAntialiasing, TerrainSettings, TimeOfDay,
+        VirtualGeometry, Water, Wind, WorldStreaming,
     };
     pub use crate::{
-        Cover, Decal, DecalBlend, Deformer, Floating, GlobalTransform, GlobalTransforms, Grounded,
-        HierarchyError, Interior, InterpolateTransform, InterpolationError, LocalLight, Mesh3d,
-        NavAgent, NavAgents, NavStatus, NavSystems, NavWalk, OceanSystems, Parent, ParticleBlend,
-        ParticleEmitter, PresentationState, PresentedTransform, PresentedTransforms,
-        ReflectionProbe, Skin, SplineMesh, Spot, StreamSet, Streamed, StreamedId, StreamedItem,
-        Terrain, TerrainFocus, TerrainSample, Terrains, Tint, Track, TrackDepth, Tracks, Transform,
-        TransformEditError, WorldCells, WorldChanges, edit_transform, remove_streamed,
-        reset_all_interpolation, reset_interpolation, set_parent, set_parents,
+        Cover, Decal, DecalBlend, Deformer, EngineEntityCommands, Floating, GlobalTransform,
+        GlobalTransforms, Grounded, HierarchyError, Interior, InterpolateTransform,
+        InterpolationError, LocalLight, Mesh3d, NavAgent, NavAgents, NavStatus, NavSystems,
+        NavWalk, OceanSystems, Parent, ParticleBlend, ParticleEmitter, PresentationState,
+        PresentedTransform, PresentedTransforms, ReflectionProbe, Skin, SplineMesh, Spot,
+        StreamSet, Streamed, StreamedId, StreamedItem, Terrain, TerrainFocus, TerrainSample,
+        Terrains, Tint, Track, TrackDepth, Tracks, Transform, TransformEditError, WorldCells,
+        WorldChanges, edit_transform, remove_streamed, reset_all_interpolation,
+        reset_interpolation, set_parent, set_parents,
     };
     pub use engine_collision::{
         Collider, ColliderShape, CollisionLayers, CollisionPlugin, CollisionRay, CollisionSystems,

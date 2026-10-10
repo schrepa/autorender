@@ -442,7 +442,7 @@ mod gpu {
             face: usize,
             view_projection: Mat4,
             size: u32,
-            settings: &engine_core::LocalLights,
+            settings: &engine_core::LocalLightSettings,
             frame: &LightFrame,
             poses: FramePoses<'_>,
             still: (&wgpu::Buffer, u64),

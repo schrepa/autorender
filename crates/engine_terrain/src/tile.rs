@@ -139,6 +139,7 @@ impl Tile {
     }
 
     /// The tile with `placed` standing on it.
+    #[must_use]
     pub fn with_placed(mut self, placed: Vec<crate::Placed>) -> Self {
         self.placed = (!placed.is_empty()).then(|| Arc::from(placed));
         self
@@ -571,6 +572,7 @@ impl Generator {
     /// The generator leaving its tile without control values,
     /// which the GPU gives to rendering and the rules to gameplay at
     /// the samples it asks for; it still places objects.
+    #[must_use]
     pub fn with_materials(mut self, materials: bool) -> Self {
         self.materials = materials;
         self
@@ -644,12 +646,14 @@ impl Generator {
     }
 
     /// The generator giving its tile `surface`'s control values.
+    #[must_use]
     pub fn with_surface(mut self, surface: Arc<BiomeRules>) -> Self {
         self.surface = Some(surface);
         self
     }
 
     /// The generator placing only `placing`'s objects.
+    #[must_use]
     pub fn with_placing(mut self, placing: Placing) -> Self {
         self.placing = placing;
         self
@@ -658,6 +662,7 @@ impl Generator {
     /// The generator handing out its tile's shape, its heights and holes,
     /// once they are done: [`Self::take_shape`] it while the
     /// surface and objects follow.
+    #[must_use]
     pub fn with_staged(mut self, staged: bool) -> Self {
         self.staged = staged;
         self

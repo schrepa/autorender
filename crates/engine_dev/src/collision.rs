@@ -108,8 +108,8 @@ pub(crate) fn execute(
             refresh_collision_world(engine.app.world_mut()).map_err(native_error)?;
             let hit = engine
                 .app
-                .world_mut()
-                .resource_mut::<CollisionWorld>()
+                .world()
+                .resource::<CollisionWorld>()
                 .cast_shape(shape, matrix, displacement, filter, options)
                 .map_err(native_error)?;
             let world = engine.app.world();

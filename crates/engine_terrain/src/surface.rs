@@ -861,6 +861,7 @@ impl BiomeRules {
 
     /// These rules choosing materials alone, placing no objects: what a
     /// terrain's surroundings follow.
+    #[must_use]
     pub fn without_placements(&self) -> Self {
         let mut rules = self.clone();
         rules.authored.assets.clear();

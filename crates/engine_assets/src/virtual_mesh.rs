@@ -305,6 +305,7 @@ impl VirtualMesh {
 
     /// This mesh, fetching the pages its prefix lacks from `url` (the whole
     /// file, by byte ranges: [`Self::page_bytes`]).
+    #[must_use]
     pub fn with_source(mut self, url: impl Into<String>) -> Self {
         self.source = Some(url.into());
         self

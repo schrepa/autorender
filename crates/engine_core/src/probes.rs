@@ -74,12 +74,14 @@ impl ReflectionProbe {
         }
     }
 
+    #[must_use]
     pub fn with_blend(mut self, blend: f32) -> Self {
         self.blend = blend;
         self
     }
 
     /// The probe as an interior letting in `interior`'s light.
+    #[must_use]
     pub fn with_interior(mut self, interior: Interior) -> Self {
         self.interior = Some(interior);
         self
@@ -106,7 +108,7 @@ settings! {
         schemars(rename = "SceneReflectionProbes")
     )]
     #[serde(default, deny_unknown_fields)]
-    pub struct ReflectionProbes {
+    pub struct ReflectionProbeSettings {
         /// Whether surfaces reflect probes.
         pub enabled: bool = true => any,
         /// Texels across each face of every environment map, the sky's
@@ -123,9 +125,9 @@ settings! {
     }
 }
 
-impl ExtraRules for ReflectionProbes {}
+impl ExtraRules for ReflectionProbeSettings {}
 
-impl ReflectionProbes {
+impl ReflectionProbeSettings {
     /// What a world without these settings reads as: no reflection probes.
     pub fn off() -> Self {
         Self {

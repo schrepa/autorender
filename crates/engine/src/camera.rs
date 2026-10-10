@@ -48,6 +48,7 @@ impl FlyCameraController {
         self.pitch = aligned.pitch;
     }
 
+    #[must_use]
     pub fn with_speed(mut self, units_per_second: f32) -> Self {
         if units_per_second.is_finite() {
             self.speed = math::clamp(units_per_second, 0.0, 1000.0);

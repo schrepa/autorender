@@ -118,7 +118,7 @@ impl SceneTexture {
                     )
                 })?;
                 let texture = if alpha {
-                    Texture::with_alpha(width, height, pixels)
+                    Texture::from_rgba(width, height, pixels)
                 } else {
                     Texture::new(width, height, pixels)
                 };

@@ -149,11 +149,11 @@ impl StressLab {
             world.remove_resource::<Reflections>();
         }
         {
-            let mut local = world.resource_mut::<LocalLights>();
+            let mut local = world.resource_mut::<LocalLightSettings>();
             local.enabled = lights;
             local.intensity = lamps;
         }
-        world.resource_mut::<Particles>().enabled = particles;
+        world.resource_mut::<ParticleSettings>().enabled = particles;
         // Only the metro has glass that refracts.
         if refraction && scene == StressScene::Metro {
             world.insert_resource(Refraction::default());
@@ -162,9 +162,9 @@ impl StressLab {
         }
         // Reflection probes capture nothing where none stand.
         if probes {
-            world.insert_resource(ReflectionProbes::default());
+            world.insert_resource(ReflectionProbeSettings::default());
         } else {
-            world.remove_resource::<ReflectionProbes>();
+            world.remove_resource::<ReflectionProbeSettings>();
         }
         self.effects = name.into();
         Ok(())
@@ -177,7 +177,11 @@ impl StressLab {
         let (atmosphere, lamps) = look(scene, name)?;
         engine.app.insert_resource(atmosphere);
         crate::scene::apply_sky(engine.app.world_mut(), scene, name);
-        if let Some(mut local) = engine.app.world_mut().get_resource_mut::<LocalLights>() {
+        if let Some(mut local) = engine
+            .app
+            .world_mut()
+            .get_resource_mut::<LocalLightSettings>()
+        {
             local.intensity = lamps;
         }
         self.look = name.into();

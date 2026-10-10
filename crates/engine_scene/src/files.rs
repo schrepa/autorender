@@ -166,7 +166,7 @@ impl SceneFiles {
         }
         let (width, height, pixels) = self.images.get(uri).ok_or_else(|| missing(uri, path))?;
         let texture = if alpha {
-            Texture::with_alpha(*width, *height, pixels.clone())
+            Texture::from_rgba(*width, *height, pixels.clone())
         } else {
             Texture::new(*width, *height, pixels.clone())
         };

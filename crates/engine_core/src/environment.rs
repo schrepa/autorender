@@ -35,6 +35,7 @@ pub trait EnvironmentSection:
     /// The first invalid field and the rule it breaks, if any.
     fn section_check(&self) -> Result<(), InvalidSetting>;
     /// Every value usable: out-of-range values clamp, unusable ones fall back.
+    #[must_use]
     fn section_sanitized(self) -> Self;
     /// The section's JSON schema.
     #[cfg(feature = "schema")]
@@ -57,13 +58,13 @@ macro_rules! environment_sections {
             shadows: Shadows { since: 5, opt_in: false },
             ambient_occlusion: AmbientOcclusion { since: 5, opt_in: false },
             bloom: Bloom { since: 5, opt_in: false },
-            local_lights: LocalLights { since: 6, opt_in: false },
+            local_lights: LocalLightSettings { since: 6, opt_in: false },
             sun_shafts: SunShafts { since: 6, opt_in: true },
             reflections: Reflections { since: 6, opt_in: true },
-            particles: Particles { since: 6, opt_in: false },
+            particles: ParticleSettings { since: 6, opt_in: false },
             refraction: Refraction { since: 8, opt_in: true },
-            decals: Decals { since: 8, opt_in: false },
-            reflection_probes: ReflectionProbes { since: 8, opt_in: false },
+            decals: DecalSettings { since: 8, opt_in: false },
+            reflection_probes: ReflectionProbeSettings { since: 8, opt_in: false },
             virtual_geometry: VirtualGeometry { since: 8, opt_in: false },
             level_of_detail: LevelOfDetail { since: 8, opt_in: false },
             terrain: TerrainSettings { since: 9, opt_in: false },
@@ -144,6 +145,7 @@ macro_rules! core_sections {
             }
 
             /// Every section sanitized: usable for rendering whatever it held.
+            #[must_use]
             pub fn sanitized(self) -> Self {
                 Self {
                     atmosphere: self.atmosphere.sanitized(),

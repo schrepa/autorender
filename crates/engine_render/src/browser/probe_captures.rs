@@ -17,7 +17,7 @@ impl Renderer {
         faces: u32,
         odd: bool,
         seconds: f32,
-        lights: Option<(&LightFrame, &engine_core::LocalLights)>,
+        lights: Option<(&LightFrame, &engine_core::LocalLightSettings)>,
     ) -> u32 {
         let lights = lights.filter(|_| self.lights.is_some());
         let kind = PassKind::probe(lights.is_some());

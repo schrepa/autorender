@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use engine_core::math;
 use glam::{DMat3, DVec3, Mat3, Mat4, Vec3};
@@ -410,14 +410,17 @@ fn intersects_support_maps(a: &AffineShape, b: &AffineShape) -> Result<bool, Col
     }
 }
 
-#[derive(Default)]
-pub(crate) struct NarrowScratch {
-    epa: EPA,
+thread_local! {
+    // The polytope expansion's buffers, which every shape cast on this
+    // thread reuses.
+    static EPA_SCRATCH: RefCell<EPA> = RefCell::new(EPA::default());
 }
 
-impl NarrowScratch {
+/// The narrow phase of shape casts.
+pub(crate) struct Narrow;
+
+impl Narrow {
     pub fn cast(
-        &mut self,
         a: &AffineShape,
         b: &AffineShape,
         displacement: Vec3,
@@ -455,9 +458,8 @@ impl NarrowScratch {
             return Err(CollisionError::NumericalFailure);
         }
         let contact = match proximity {
-            GJKResult::Intersection => self
-                .epa
-                .closest_points(&pose, &a_support, &b_support, &simplex),
+            GJKResult::Intersection => EPA_SCRATCH
+                .with_borrow_mut(|epa| epa.closest_points(&pose, &a_support, &b_support, &simplex)),
             GJKResult::ClosestPoints(p1, p2, normal) => Some((p1, p2, normal)),
             _ => None,
         };

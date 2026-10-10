@@ -28,6 +28,7 @@ impl InvalidSetting {
     }
 
     /// The error of a field nested in `parent`.
+    #[must_use]
     pub fn within(self, parent: &'static str) -> Self {
         Self {
             field: Cow::Owned(format!("{parent}.{}", self.field)),
@@ -321,6 +322,7 @@ pub trait ExtraRules: Sized {
 
     /// The value made to keep the extra rules, after every field was made to
     /// keep its own.
+    #[must_use]
     fn sanitize_extra(self) -> Self {
         self
     }
@@ -337,6 +339,7 @@ pub trait Setting: Clone {
     }
 
     /// The value made to keep `rule`, `default` where it is unusable.
+    #[must_use]
     fn kept(self, rule: Rule, default: Self) -> Self {
         let _ = (rule, default);
         self

@@ -153,6 +153,7 @@ impl<'a> SimplifyInput<'a> {
 
     /// With `stride` attribute values per vertex, the first `weights.len()`
     /// of them weighted.
+    #[must_use]
     pub fn with_attributes(mut self, values: &'a [f32], stride: usize, weights: &'a [f32]) -> Self {
         self.attributes = Some(VertexAttributes {
             values,
@@ -163,6 +164,7 @@ impl<'a> SimplifyInput<'a> {
     }
 
     /// With one set of flags per vertex.
+    #[must_use]
     pub fn with_vertex_flags(mut self, flags: &'a [VertexFlags]) -> Self {
         self.vertex_flags = Some(flags);
         self

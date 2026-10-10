@@ -1306,8 +1306,7 @@ impl Tex {
                 pixels.extend_from_slice(&[rgb[0], rgb[1], rgb[2], if emits { 255 } else { 0 }]);
             }
         }
-        Texture::with_emission_mask(width as u32, height as u32, pixels)
-            .map_err(|error| error.to_string())
+        Texture::from_rgba(width as u32, height as u32, pixels).map_err(|error| error.to_string())
     }
 
     /// A texel's color and whether it emits.

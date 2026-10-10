@@ -125,6 +125,7 @@ impl LocalLight {
     }
 
     /// This light at local `offset` from its entity's origin.
+    #[must_use]
     pub fn with_offset(mut self, offset: Vec3) -> Self {
         self.offset = offset;
         self
@@ -140,7 +141,7 @@ settings! {
         schemars(rename = "SceneLocalLights")
     )]
     #[serde(default, deny_unknown_fields)]
-    pub struct LocalLights {
+    pub struct LocalLightSettings {
         /// Whether frames shade local lights.
         pub enabled: bool = true => any,
         /// An optional budget of lights a frame shades; beyond it the nearest to
@@ -159,9 +160,9 @@ settings! {
     }
 }
 
-impl ExtraRules for LocalLights {}
+impl ExtraRules for LocalLightSettings {}
 
-impl LocalLights {
+impl LocalLightSettings {
     /// What a world without these settings reads as: no local lights.
     pub fn off() -> Self {
         Self {
@@ -242,7 +243,7 @@ pub(crate) struct LightExtraction {
     last_scan: Option<Tick>,
     count: usize,
     source_revision: Option<u64>,
-    settings: Option<LocalLights>,
+    settings: Option<LocalLightSettings>,
     // Every usable light: entity, component, and slot when it has one.
     lights: Vec<(Entity, LocalLight, Option<u32>)>,
     // Indices into `lights` of those without a slot: their world poses are

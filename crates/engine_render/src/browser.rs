@@ -435,7 +435,7 @@ impl Renderer {
         let environment = Environment::new(
             &device,
             &lighting_buffer,
-            engine_core::ReflectionProbes::default().resolution,
+            engine_core::ReflectionProbeSettings::default().resolution,
             clouds.dome(),
             sky.bindings(),
         );

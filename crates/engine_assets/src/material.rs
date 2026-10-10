@@ -265,16 +265,19 @@ impl TextureRef {
         }
     }
 
+    #[must_use]
     pub const fn with_tex_coord(mut self, tex_coord: u32) -> Self {
         self.tex_coord = tex_coord;
         self
     }
 
+    #[must_use]
     pub const fn with_sampler(mut self, sampler: Sampler) -> Self {
         self.sampler = sampler;
         self
     }
 
+    #[must_use]
     pub const fn with_transform(mut self, transform: UvTransform) -> Self {
         self.transform = transform;
         self
@@ -573,6 +576,7 @@ impl Material {
 
     /// This material drawn from both sides, back faces lit with the normal
     /// flipped.
+    #[must_use]
     pub fn with_double_sided(mut self, double_sided: bool) -> Self {
         self.double_sided = double_sided;
         self

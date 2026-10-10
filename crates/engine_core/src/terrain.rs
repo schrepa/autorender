@@ -585,12 +585,14 @@ impl Terrain {
         }
     }
 
+    #[must_use]
     pub fn with_surface(mut self, surface: TerrainSurface) -> Self {
         self.surface = surface;
         self
     }
 
     /// The terrain with ground generated around it to the horizon.
+    #[must_use]
     pub fn with_surroundings(mut self, surroundings: Surroundings) -> Self {
         self.surroundings = Some(surroundings);
         self

@@ -127,7 +127,7 @@ settings! {
         schemars(rename = "SceneParticles")
     )]
     #[serde(default, deny_unknown_fields)]
-    pub struct Particles {
+    pub struct ParticleSettings {
         /// Whether frames draw particles.
         pub enabled: bool = true => any,
         /// An optional budget of particles a frame draws; beyond it the emitters
@@ -137,9 +137,9 @@ settings! {
     }
 }
 
-impl ExtraRules for Particles {}
+impl ExtraRules for ParticleSettings {}
 
-impl Particles {
+impl ParticleSettings {
     /// What a world without these settings reads as: no particles.
     pub fn off() -> Self {
         Self {

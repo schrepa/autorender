@@ -10,6 +10,7 @@ mod atmosphere;
 mod bridges;
 mod clock;
 mod clouds;
+mod commands;
 mod contact_shadows;
 mod culling;
 mod decals;
@@ -58,8 +59,9 @@ pub use bevy_ecs;
 pub use bridges::{DECK_DEPTH, DECK_MARGIN, DECK_RISE};
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime, PresentedTime};
 pub use clouds::Clouds;
+pub use commands::EngineEntityCommands;
 pub use contact_shadows::ContactShadows;
-pub use decals::{Decal, DecalBlend, Decals, RenderDecal};
+pub use decals::{Decal, DecalBlend, DecalSettings, RenderDecal};
 pub use deformation::{
     DEFORMATION_GRAIN, Deformation, DeformationMap, Deformer, MAX_TRACK_DEPTH, RIM_REACH,
     RIM_START, RenderDeformation, Track, TrackDepth, Tracks, carve_profile, rim_profile,
@@ -121,7 +123,8 @@ pub use jobs::{
 };
 pub use level_of_detail::LevelOfDetail;
 pub use lights::{
-    LocalLight, LocalLights, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES, RenderLight, Spot,
+    LocalLight, LocalLightSettings, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES,
+    RenderLight, Spot,
 };
 pub use navigation::{NavAgent, NavAgents, NavStats, NavStatus, NavSystems, NavWalk, Navigation};
 pub use occupancy::Occupancy;
@@ -129,10 +132,10 @@ pub use ocean::{
     Floating, MAX_OCEAN_WAVES, Ocean, OceanPoint, OceanSurface, OceanSystems, OceanWave, OceanWaves,
 };
 pub use particles::{
-    MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter, Particles,
+    MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter, ParticleSettings,
     RenderEmitter,
 };
-pub use probes::{Interior, ReflectionProbe, ReflectionProbes, RenderReflectionProbe};
+pub use probes::{Interior, ReflectionProbe, ReflectionProbeSettings, RenderReflectionProbe};
 pub use retained_render::{PoseRows, RenderFrame};
 pub use scene::{
     Camera, Cube, InputState, Mesh3d, RenderInstance, RenderMaterial, RenderMesh, RenderSnapshot,
@@ -338,6 +341,18 @@ impl Engine {
             .add_systems(
                 FixedSimulation,
                 navigation::walk_agents.in_set(NavSystems::Walk),
+            )
+            // The engine's own work in a tick, in one order: agents walk,
+            // floating objects ride the waves, then players pose their
+            // targets. Gameplay orders itself against these sets.
+            .configure_sets(
+                FixedSimulation,
+                (
+                    NavSystems::Walk,
+                    OceanSystems::Float,
+                    AnimationSystems::Animate,
+                )
+                    .chain(),
             )
             .edit_schedule(FixedSimulation, |schedule| {
                 schedule.set_executor(SingleThreadedExecutor::new());
@@ -965,7 +980,6 @@ impl Default for Engine {
     }
 }
 
-/// Common gameplay imports; Bevy types are intentionally part of the SDK.
 /// The bounds GPU presentation's shaders share with the CPU reference
 /// (`presentation.wgsl`): culling's coefficient and rounding limits, the
 /// hierarchy validator's common admission path and interpolation's linear
@@ -974,85 +988,4 @@ pub mod presentation_bounds {
     pub use crate::culling::{MAX_COEFFICIENT, MAX_PRODUCT_BOUND, ROUNDING_MARGIN};
     pub use crate::hierarchy::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN, MIN_LINEAR_SCALE};
     pub use crate::interpolation::LINEAR_ROTATION_DOT_THRESHOLD;
-}
-
-pub mod prelude {
-    #[cfg(feature = "dev")]
-    pub use crate::DevStepError;
-    pub use crate::math;
-    pub use crate::{
-        Aabb, AlphaMode, AmbientOcclusion, App, AssetBudget, AssetError, AssetLibrary, Atmosphere,
-        Bloom, Camera, Cube, Engine, EngineConfig, Filter, FixedSimulation, FixedTime, FrameReport,
-        FrameTime, GlobalTransform, GlobalTransforms, Grounding, HierarchyError, HierarchyReport,
-        InputState, InterpolateTransform, InterpolationError, MAX_HIERARCHY_DEPTH,
-        MAX_TRANSFORM_NODES, Material, MaterialBinding, MaterialHandle, Mesh, Mesh3d, MeshHandle,
-        MeshVertex, Parent, Plugin, Presentation, PresentationMode, PresentationState,
-        PresentedTransform, PresentedTransforms, RenderFrame, RenderInstance, RenderMaterial,
-        RenderMesh, RenderSnapshot, RenderTexture, Sampler, Shadows, Skin, Surface, Texture,
-        TextureHandle, TextureRef, Tint, TopLayer, Transform, TransformIndex, TransformNodeLimit,
-        TransformPropagation, UvTransform, Wrap, propagate_transforms, reset_all_interpolation,
-        reset_interpolation, set_parent, set_parents, valid_global_matrix,
-    };
-    pub use crate::{ActionId, ActionInput};
-    pub use crate::{
-        AnimatedProperty, AnimationChannel, AnimationClip, AnimationPlayer, AnimationSystems,
-        ClipHandle, KeyInterpolation, Keyframes,
-    };
-    pub use crate::{
-        AuthoredPlacement, Biome, BiomeLayer, Biomes, Blend, ErosionLayer, ErosionStage,
-        FarPlacement, HeightImage, HeightmapLayer, HydrologyLayer, HydrologyStage, Layer, Layers,
-        Mask, MotionDetail, NoiseLayer, NoiseMask, PathLayer, PathStage, PlacedCollider,
-        PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, Pyramid, Remap,
-        Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain, TerrainFocus,
-        TerrainPrefetch, TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains,
-        TileKey, Viewport,
-    };
-    pub use crate::{Clouds, Deformation, Deformer, Track, TrackDepth, Tracks};
-    pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Ocean, Water, Wind};
-    pub use crate::{Decal, DecalBlend, Decals};
-    pub use crate::{FixedPostSimulation, FixedPreSimulation};
-    pub use crate::{
-        Grounded, StreamSet, Streamed, StreamedId, StreamedItem, WorldCells, WorldChanges,
-        WorldStreaming, remove_streamed,
-    };
-    pub use crate::{
-        Interior, LevelOfDetail, ReflectionProbe, ReflectionProbes, RenderReflectionProbe,
-        VirtualGeometry,
-    };
-    pub use crate::{
-        LocalLight, LocalLights, MAX_SHADOW_CASCADES, ParticleBlend, ParticleEmitter, Particles,
-        Reflections, Refraction, RenderEmitter, RenderLight, Spot, SunShafts, Transmission,
-    };
-    pub use crate::{NavAgent, NavStatus, NavSystems, NavWalk, Navigation, Sky, TimeOfDay};
-    pub use crate::{OcclusionCulling, SubpixelCulling, TemporalAntialiasing};
-    pub use crate::{SplineChunks, SplineMesh};
-    pub use crate::{TransformEditError, edit_transform};
-    // Bevy derives resolve this name in client scope when only the engine
-    // facade is a direct dependency, so expose the crate beside the parts of
-    // its prelude the engine runs: not its hierarchy (the engine's is
-    // `Parent`) nor message queues (which need schedules it never runs).
-    pub use bevy_ecs::{
-        self,
-        bundle::Bundle,
-        change_detection::{DetectChanges, DetectChangesMut, Mut, Ref},
-        component::Component,
-        entity::Entity,
-        error::{BevyError, Result},
-        event::{EntityEvent, Event},
-        lifecycle::{Add, Despawn, Insert, Remove, RemovedComponents},
-        name::Name,
-        observer::{Observer, On},
-        query::{Added, AnyOf, Changed, Has, Or, QueryState, With, Without},
-        resource::Resource,
-        schedule::{
-            ApplyDeferred, IntoScheduleConfigs, IntoSystemSet, Schedule, Schedules,
-            SystemCondition, SystemSet, common_conditions::*,
-        },
-        system::{
-            Command, Commands, EntityCommand, EntityCommands, In, IntoSystem, Local, ParamSet,
-            Populated, Query, Res, ResMut, Single, System,
-        },
-        world::{EntityMut, EntityRef, EntityWorldMut, FromWorld, World},
-    };
-    pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 }

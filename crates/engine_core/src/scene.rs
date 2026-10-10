@@ -23,15 +23,72 @@ pub struct Transform {
 
 impl Default for Transform {
     fn default() -> Self {
-        Self {
-            translation: Vec3::ZERO,
-            rotation: Quat::IDENTITY,
-            scale: Vec3::ONE,
-        }
+        Self::IDENTITY
     }
 }
 
 impl Transform {
+    /// No translation, rotation or scaling.
+    pub const IDENTITY: Self = Self {
+        translation: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
+
+    /// At `translation`, unrotated and unscaled.
+    #[must_use]
+    pub const fn from_translation(translation: Vec3) -> Self {
+        Self {
+            translation,
+            ..Self::IDENTITY
+        }
+    }
+
+    /// At `(x, y, z)`, unrotated and unscaled.
+    #[must_use]
+    pub const fn from_xyz(x: f32, y: f32, z: f32) -> Self {
+        Self::from_translation(Vec3::new(x, y, z))
+    }
+
+    /// Rotated by the normalized `rotation`, at the origin and unscaled.
+    #[must_use]
+    pub const fn from_rotation(rotation: Quat) -> Self {
+        Self {
+            rotation,
+            ..Self::IDENTITY
+        }
+    }
+
+    /// Scaled by `scale`, at the origin and unrotated.
+    #[must_use]
+    pub const fn from_scale(scale: Vec3) -> Self {
+        Self {
+            scale,
+            ..Self::IDENTITY
+        }
+    }
+
+    /// This transform at `translation`.
+    #[must_use]
+    pub const fn with_translation(mut self, translation: Vec3) -> Self {
+        self.translation = translation;
+        self
+    }
+
+    /// This transform rotated by the normalized `rotation` instead.
+    #[must_use]
+    pub const fn with_rotation(mut self, rotation: Quat) -> Self {
+        self.rotation = rotation;
+        self
+    }
+
+    /// This transform scaled by `scale` instead.
+    #[must_use]
+    pub const fn with_scale(mut self, scale: Vec3) -> Self {
+        self.scale = scale;
+        self
+    }
+
     /// The pose in upload layout, `[t.x, t.y, t.z, s.x, r.x, r.y, r.z, r.w,
     /// s.y, s.z]`: the hierarchy's cached copy doubles as GPU input.
     #[inline]

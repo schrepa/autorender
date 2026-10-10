@@ -148,10 +148,10 @@ pub fn create_workload_with(
     // city, brighter as the look darkens.
     world.insert_resource(stress_shafts());
     world.insert_resource(stress_reflections(config.scene));
-    world.insert_resource(LocalLights {
+    world.insert_resource(LocalLightSettings {
         distance: 220.0,
         intensity: lamps,
-        ..LocalLights::default()
+        ..LocalLightSettings::default()
     });
     if collision_enabled {
         refresh_collision_world(world).map_err(|error| error.to_string())?;
@@ -373,8 +373,7 @@ fn create_assets(assets: &mut AssetLibrary, config: &StressConfig) -> Result<Vec
                 }
                 let texture = assets
                     .insert_texture(
-                        Texture::with_emission_mask(64, 64, pixels)
-                            .map_err(|error| error.to_string())?,
+                        Texture::from_rgba(64, 64, pixels).map_err(|error| error.to_string())?,
                     )
                     .map_err(|error| error.to_string())?;
                 Material::textured(color, texture)
@@ -429,7 +428,7 @@ fn query_workload(
     config: Res<StressConfig>,
     time: Res<FixedTime>,
     globals: Res<GlobalTransforms>,
-    mut collision: ResMut<CollisionWorld>,
+    collision: Res<CollisionWorld>,
     mut workload: ResMut<Workload>,
     mut metrics: ResMut<FrameMetrics>,
 ) {

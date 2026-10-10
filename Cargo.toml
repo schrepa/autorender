@@ -52,6 +52,8 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
+# A builder whose result is dropped did nothing.
+return_self_not_must_use = "deny"
 
 [profile.release]
 lto = "thin"

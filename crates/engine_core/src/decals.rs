@@ -70,16 +70,19 @@ impl Decal {
         }
     }
 
+    #[must_use]
     pub fn with_blend(mut self, blend: DecalBlend) -> Self {
         self.blend = blend;
         self
     }
 
+    #[must_use]
     pub fn with_opacity(mut self, opacity: f32) -> Self {
         self.opacity = opacity;
         self
     }
 
+    #[must_use]
     pub fn with_fade_angle(mut self, radians: f32) -> Self {
         self.fade_angle = radians;
         self
@@ -106,7 +109,7 @@ settings! {
         schemars(rename = "SceneDecals")
     )]
     #[serde(default, deny_unknown_fields)]
-    pub struct Decals {
+    pub struct DecalSettings {
         /// Whether frames draw decals.
         pub enabled: bool = true => any,
         /// An optional budget of decals a frame draws; beyond it the decals
@@ -116,9 +119,9 @@ settings! {
     }
 }
 
-impl ExtraRules for Decals {}
+impl ExtraRules for DecalSettings {}
 
-impl Decals {
+impl DecalSettings {
     /// What a world without these settings reads as: no decals.
     pub fn off() -> Self {
         Self {

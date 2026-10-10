@@ -56,7 +56,7 @@ impl Texture {
     /// Takes ownership of exactly `width * height * 4` bytes. Dimensions must be
     /// nonzero and at most [`MAX_TEXTURE_DIMENSION`]; every alpha byte must be 255.
     pub fn new(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, AssetError> {
-        let texture = Self::with_emission_mask(width, height, rgba8)?;
+        let texture = Self::from_rgba(width, height, rgba8)?;
         if let Some(pixel) = texture
             .pixels()
             .as_chunks::<4>()
@@ -72,14 +72,7 @@ impl Texture {
     /// [`Self::new`] with any alpha: coverage for masked and blended
     /// materials; for opaque ones it masks the emission, from
     /// 0 (none) to 255 (the material's full emission).
-    pub fn with_alpha(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, AssetError> {
-        Self::with_emission_mask(width, height, rgba8)
-    }
-
-    /// [`Self::with_alpha`], named for its use by opaque materials: alpha
-    /// masks the emission of materials using this texture, from 0 (none) to
-    /// 255 (the material's full emission).
-    pub fn with_emission_mask(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, AssetError> {
+    pub fn from_rgba(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, AssetError> {
         if width == 0
             || height == 0
             || width > MAX_TEXTURE_DIMENSION
@@ -114,7 +107,7 @@ impl Texture {
     /// texture in a compressed `format`: the base level first, each next
     /// level half as large (rounding down, at least 1), at most down to
     /// 1 × 1, each exactly its whole blocks. Dimensions are multiples of 4,
-    /// as WebGPU requires. Alpha is kept, as [`Self::with_alpha`] keeps it.
+    /// as WebGPU requires. Alpha is kept, as [`Self::from_rgba`] keeps it.
     pub fn compressed(
         format: TextureFormat,
         width: u32,
