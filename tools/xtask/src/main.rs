@@ -77,10 +77,7 @@ fn execute() -> Result<(), String> {
         "lint" => pipeline::lint(&root),
         "docs" => pipeline::docs(&root),
         "assets" => authoring::validate_sources(&root),
-        "schema" => {
-            authoring::write_schema(&root)?;
-            authoring::write_generated(&root)
-        }
+        "schema" => authoring::write_generated(&root),
         "gpu" => gpu::check(&root),
         "wasm-bindgen-version" => {
             println!("{}", process::wasm_bindgen_version(&root)?);
@@ -106,7 +103,7 @@ fn execute() -> Result<(), String> {
                    assets Validate authored scene sources without changing them\n\
                    benchmark [--url URL] [--samples N] [--warmup N] [--repeats N] [--mode step|render|present] [--setup-ticks N]\n\
                           Measure fixed browser workloads with culling off/on; --output PATH, --baseline PATH, --max-regression-percent N\n\
-                   schema Write the generated scene JSON schema, development protocol summary, client list and stats types\n\
+                   schema Write the generated development protocol summary, client list and stats types\n\
                    smoke --list | --all | NAME...  List or run the browser smoke checks against a running dev server\n\
                    gpu    Check the renderer's shaders against its Rust GPU layouts and bindings\n\
                    wasm-bindgen-version  Print the wasm-bindgen version Cargo.lock pins\n\

@@ -1156,7 +1156,7 @@ impl DevTools {
     fn describe(&self, name: Option<&str>, definition: Option<&str>) -> Result<Value, DevError> {
         let Some(name) = name else {
             let mut types: Vec<Value> = self.inspectors.values().map(|inspector| json!({"name": inspector.descriptor.name, "kind": inspector.kind, "description": inspector.descriptor.description})).collect();
-            types.push(json!({"name": "SceneDocument", "kind": "authoring", "source": engine_scene::schema_path()}));
+            types.push(json!({"name": "SceneDocument", "kind": "authoring"}));
             types.push(json!({"name": "protocol", "kind": "protocol"}));
             types.push(json!({"name": "BrowserControl", "kind": "protocol"}));
             types.push(json!({"name": "FrameStats", "kind": "observation"}));
@@ -1164,7 +1164,7 @@ impl DevTools {
         };
         match name {
             "SceneDocument" => Ok(
-                json!({"name": name, "kind": "authoring", "source": engine_scene::schema_path(), "schema": scene_schema(definition)?, "constraints": format!("Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Fields newer than version 1 require the version that introduced them: {}. Every older version stays accepted with its own semantics. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state; the opt-in ones ({}) are then off.", engine_scene::version_features(), SceneEnvironment::opt_in_sections().join(", "))}),
+                json!({"name": name, "kind": "authoring", "schema": scene_schema(definition)?, "constraints": format!("Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Fields newer than version 1 require the version that introduced them: {}. Every older version stays accepted with its own semantics. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state; the opt-in ones ({}) are then off.", engine_scene::version_features(), SceneEnvironment::opt_in_sections().join(", "))}),
             ),
             "protocol" | "BrowserControl" => {
                 let schemas: Value = serde_json::from_str(include_str!(concat!(

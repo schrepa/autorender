@@ -30,7 +30,7 @@ pub use collider::{SceneCollider, SceneColliderShape};
 pub use decal::{SceneDecal, SceneDecalBlend};
 pub use document::{
     MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
-    SceneSurface, SceneTransform, SceneVertex, schema_path,
+    SceneSurface, SceneTransform, SceneVertex,
 };
 pub use engine_core::EnvironmentSection;
 pub use environment::{AtmospherePreset, SceneAtmosphere, SceneEnvironment, SectionVisitor};
