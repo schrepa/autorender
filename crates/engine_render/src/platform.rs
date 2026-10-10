@@ -93,6 +93,27 @@ fn native(mut descriptor: wgpu::InstanceDescriptor) -> wgpu::InstanceDescriptor 
     descriptor
 }
 
+/// How native renderers start their GPU instances in place of wgpu's own
+/// start, where a tool must see the GPU interface's calls (`engine_native`'s
+/// hardware counters do).
+#[cfg(not(target_arch = "wasm32"))]
+static NATIVE_START: std::sync::OnceLock<fn(wgpu::InstanceDescriptor) -> wgpu::Instance> =
+    std::sync::OnceLock::new();
+
+/// Starts native renderers' GPU instances with `start`, given the
+/// descriptor wgpu's own start would take, from now on; set before the
+/// first renderer starts, once per process. Whether it was the first set.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn start_native_instances_with(start: fn(wgpu::InstanceDescriptor) -> wgpu::Instance) -> bool {
+    NATIVE_START.set(start).is_ok()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn start_native(descriptor: wgpu::InstanceDescriptor) -> wgpu::Instance {
+    let start = NATIVE_START.get().copied().unwrap_or(wgpu::Instance::new);
+    start(native(descriptor))
+}
+
 /// DXC's library beside the program or on the path, on Windows.
 #[cfg(not(target_arch = "wasm32"))]
 fn dxc() -> Option<std::path::PathBuf> {
@@ -132,13 +153,13 @@ impl RenderTarget {
                 ..wgpu::InstanceDescriptor::new_without_display_handle()
             }),
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Window { window, .. } => wgpu::Instance::new(native(
+            Self::Window { window, .. } => start_native(
                 wgpu::InstanceDescriptor::new_with_display_handle(Box::new(window.clone())),
-            )),
+            ),
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Offscreen { .. } => wgpu::Instance::new(native(
-                wgpu::InstanceDescriptor::new_without_display_handle(),
-            )),
+            Self::Offscreen { .. } => {
+                start_native(wgpu::InstanceDescriptor::new_without_display_handle())
+            }
         }
     }
 

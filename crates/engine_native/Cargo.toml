@@ -19,6 +19,8 @@ profiling = [
     "dep:windows-sys",
     "dep:libc",
     "dep:mach2",
+    "dep:ash",
+    "dep:wgpu",
 ]
 
 [dependencies]
@@ -33,6 +35,8 @@ pollster.workspace = true
 backtrace = { workspace = true, optional = true }
 iced-x86 = { workspace = true, optional = true }
 fxprof-processed-profile = { workspace = true, optional = true }
+ash = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true, features = ["vulkan"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, optional = true }
@@ -49,9 +53,10 @@ mach2 = { workspace = true, optional = true }
 name = "app_native"
 
 # The workspace forbids unsafe code; loading PIX's capturer, calling PIX's
-# and RenderDoc's capture functions and sampling threads need it, so only
-# `src/pix.rs`, `src/renderdoc.rs` and `src/sampler/` allow it (as
-# `engine_profile` does for its allocator).
+# and RenderDoc's capture functions, sampling threads and counting through
+# Vulkan need it, so only `src/pix.rs`, `src/renderdoc.rs`, `src/sampler/`
+# and `src/counters.rs` allow it (as `engine_profile` does for its
+# allocator).
 [lints.rust]
 unsafe_code = "deny"
 

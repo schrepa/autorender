@@ -154,9 +154,10 @@ mod dev_host;
 mod game_host;
 /// Where hosts present, and what renderers fail with.
 pub use engine_render::{AdapterInfo, RenderError, RenderTarget};
-/// A native window hosts present to, and the GPU they ask for.
+/// A native window hosts present to, the GPU they ask for, and how tools
+/// that must see the GPU interface's calls start its instances.
 #[cfg(not(target_arch = "wasm32"))]
-pub use engine_render::{GpuPreference, NativeWindow};
+pub use engine_render::{GpuPreference, NativeWindow, start_native_instances_with};
 pub use game_host::GameHost;
 
 /// The page's side of a hosted game, owned by the main thread.

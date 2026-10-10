@@ -3,7 +3,7 @@
 //! (system-wide CPU sampling, exact instruction counts, GPU per-shader-line
 //! costs and hardware counters) with whether their tools are installed and
 //! how to set them up. None of these run by default; profiles recommend
-//! them.
+//! them, the GPU vendor's tools and hardware counters highly.
 
 use serde_json::{Value, json};
 
@@ -111,11 +111,19 @@ fn installed(program: &str, paths: &[&str]) -> Option<String> {
 fn layer(what: &str, tool: &str, found: Option<String>, setup: &str, adds: &str) -> Value {
     json!({
         "layer": what,
+        "priority": "recommended",
         "tool": tool,
         "installed": found,
         "setup": setup,
         "adds": adds,
     })
+}
+
+/// `layer`, highly recommended: what this GPU's own counters and tools
+/// tell.
+fn highly(mut layer: Value) -> Value {
+    layer["priority"] = "highly recommended".into();
+    layer
 }
 
 /// The deeper layers this machine could add, beyond the default profile's,
@@ -168,8 +176,23 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
         "run a short offscreen capture under the tool; 20 to 50 times slower, so only a few frames",
         "every instruction executed and every cache miss, deterministic",
     ));
+    // Vulkan's performance queries: Intel's drivers, and Mesa's on Linux.
+    let counted = match vendor(adapter) {
+        "intel" => os == "windows" || os == "linux",
+        "amd" | "qualcomm" => os == "linux",
+        _ => false,
+    };
+    if counted {
+        layers.push(highly(layer(
+            "GPU hardware counters per pass, in process",
+            "the GPU driver's Vulkan performance queries",
+            Some("with the driver".into()),
+            "none: profile with `--counters on` (or a comma-separated list of the driver's counter names); the game then draws on Vulkan, and counting perturbs timings, so time without it",
+            "each pass's shader-core activity, stalls and occupancy, sampler and memory traffic, depth-test rejects and pixels",
+        )));
+    }
     match vendor(adapter) {
-        "nvidia" => layers.push(layer(
+        "nvidia" => layers.push(highly(layer(
             "GPU cost per shader line, unit throughputs",
             "Nsight Graphics (GPU Trace, real-time shader profiler; GPUs from 2020 on)",
             installed(
@@ -178,28 +201,28 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
             ),
             "install Nsight Graphics; allow GPU performance counters for all users (NVIDIA App or Control Panel developer settings on Windows, NVreg_RestrictProfilingToAdminUsers=0 on Linux); then `ngfx --activity \"GPU Trace Profiler\" --real-time-shader-profiler --exe stress-lab-native ...`",
             "per-shader-line warp stalls, SM and memory throughput per pass",
-        )),
-        "amd" => layers.push(layer(
+        ))),
+        "amd" => layers.push(highly(layer(
             "GPU cost per shader instruction",
             "Radeon GPU Profiler (instruction timing; RDNA 1 to 4)",
             installed("RadeonDeveloperPanelCLI", &[]).or_else(|| installed("RadeonGPUProfiler", &[])),
             "install the Radeon Developer Tool Suite and capture with `RadeonDeveloperPanelCLI --rgp-instruction-tracing`; on Linux with RADV, MESA_VK_TRACE=rgp",
             "per-instruction latency, wave occupancy, cache counters per pass",
-        )),
-        "intel" => layers.push(layer(
+        ))),
+        "intel" => layers.push(highly(layer(
             "GPU hardware counters per draw",
             "PIX with Intel's counter plugin (D3D12)",
             installed("pixtool", &[r"C:\Program Files\Microsoft PIX\*/pixtool.exe"]),
             "install PIX; capture with `--gpu-capture frame.wpix` (D3D12, with dxcompiler.dll beside the program) and read counters with `pixtool open-capture frame.wpix save-event-list draws.csv --counters=...`",
             "per-draw execution-unit activity, stalls, sampler and memory counters",
-        )),
-        "apple" => layers.push(layer(
+        ))),
+        "apple" => layers.push(highly(layer(
             "GPU cost per shader line",
             "Xcode (Metal frame capture, shader profiler)",
             installed("xcrun", &[]),
             "install Xcode; capture with MTL_CAPTURE_ENABLED=1 and `--gpu-capture frame.gputrace`, then open it in Xcode (per-line costs; heat maps on M3 and later)",
             "per-shader-line cost and instruction counts",
-        )),
+        ))),
         _ => {}
     }
     if adapter.backend == "Dx12" || os == "windows" {

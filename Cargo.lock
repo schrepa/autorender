@@ -898,6 +898,7 @@ dependencies = [
 name = "engine_native"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "backtrace",
  "engine",
  "engine_worker",
@@ -909,6 +910,7 @@ dependencies = [
  "pollster",
  "serde_json",
  "sha2",
+ "wgpu",
  "windows-sys 0.61.2",
  "winit",
  "zune-jpeg",

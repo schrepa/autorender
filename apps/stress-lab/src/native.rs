@@ -56,6 +56,12 @@ Native options:
                        each frame's GPU passes and draws, and the deeper
                        layers recommended here; files in DIR (builds with
                        --features profiling)
+  --counters on|LIST   with --profile, or --dev's profiles: each pass's GPU
+                       hardware counters, where the driver offers Vulkan's
+                       performance queries (Intel's; Mesa's on Linux), and
+                       no privileges: the first set one run counts, or the
+                       comma-separated counters LIST names; the game then
+                       draws on Vulkan, and counting perturbs its timings
   --gpu-capture PATH   with --offscreen: the last frame's GPU work, frame-exact:
                        a PIX capture (.wpix) where PIX is installed and the
                        GPU interface is D3D12; else a RenderDoc capture
@@ -129,6 +135,7 @@ struct Options {
     capture: Option<PathBuf>,
     gpu_capture: Option<PathBuf>,
     profile: Option<PathBuf>,
+    counters: Option<String>,
     dev: bool,
     dev_artifacts: Option<PathBuf>,
 }
@@ -174,6 +181,7 @@ impl Options {
             capture: None,
             gpu_capture: None,
             profile: None,
+            counters: None,
             dev: false,
             dev_artifacts: None,
         };
@@ -287,6 +295,7 @@ impl Options {
                 "--capture" => options.capture = Some(value()?.into()),
                 "--gpu-capture" => options.gpu_capture = Some(value()?.into()),
                 "--profile" => options.profile = Some(value()?.into()),
+                "--counters" => options.counters = Some(value()?),
                 "--dev" => {
                     if inline.is_some() {
                         return Err("--dev takes no value".into());
@@ -302,13 +311,26 @@ impl Options {
         {
             return Err("--capture, --gpu-capture and --profile need --offscreen".into());
         }
-        if options.profile.is_some() && !cfg!(feature = "profiling") {
-            return Err("--profile needs a build with --features profiling".into());
+        if (options.profile.is_some() || options.counters.is_some()) && !cfg!(feature = "profiling")
+        {
+            return Err("--profile and --counters need a build with --features profiling".into());
+        }
+        if options.counters.is_some() && options.profile.is_none() && !options.dev {
+            return Err("--counters counts profiles: --profile or --dev".into());
         }
         Ok(options)
     }
 
     fn run(&self) -> engine::Result<()> {
+        #[cfg(feature = "profiling")]
+        if let Some(counters) = &self.counters {
+            use engine_native::counters::Selection;
+            let selection = match counters.as_str() {
+                "on" => Selection::First,
+                names => Selection::Named(names.split(',').map(str::to_owned).collect()),
+            };
+            engine_native::counters::enable(selection)?;
+        }
         let build = || self.build();
         if self.dev {
             return self.run_dev(build);

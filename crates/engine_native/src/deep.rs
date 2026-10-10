@@ -13,7 +13,9 @@
 //!   submission, and memory counters;
 //! - a summary for agents and people: each thread's hottest functions,
 //!   the hottest source lines and annotated instructions, GPU pass and draw
-//!   costs, what was captured, and the deeper layers recommended to set up.
+//!   costs, each pass's hardware counters where they were enabled
+//!   ([`crate::counters`]), what was captured, and the deeper layers
+//!   recommended to set up.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -54,6 +56,7 @@ impl DeepCapture {
         max_events: usize,
     ) -> Result<Self, String> {
         host.profiling_start(max_events).map_err(String::from)?;
+        crate::counters::begin();
         let sampler = (!threads.is_empty())
             .then(|| Sampler::start(threads, INTERVAL, engine::host::now_ms))
             .flatten();
@@ -77,6 +80,9 @@ impl DeepCapture {
         host.profiling_poll();
         report["gpu"] = host.profiling_report();
         report["context"] = context;
+        if let Some(counters) = crate::counters::end() {
+            report["gpu_counters"] = counters;
+        }
         let symbols = Symbols::of(samples.as_ref());
         let profile = firefox_profile(&report, samples.as_ref(), &symbols, host.adapter());
         let summary = summary(&report, samples.as_ref(), &symbols, host.adapter());
@@ -636,6 +642,7 @@ fn summary(
         "hot_instructions": instructions,
         "gpu_passes_ms": passes.iter().take(40).map(|(name, ms, frames)| json!({"name": name, "median_ms": ms, "frames": frames})).collect::<Vec<_>>(),
         "gpu_draws_ms": draws.iter().take(25).map(|(label, ms, statistics)| json!({"draw": label, "median_ms": ms, "statistics": statistics})).collect::<Vec<_>>(),
+        "gpu_counters": report["gpu_counters"],
         "recommended": crate::capabilities::recommended(adapter, sampled && deepest < 8),
         "open": "Load the .firefox.json file at https://profiler.firefox.com (Load a profile from file; it stays on this machine) or at https://ui.perfetto.dev",
     })

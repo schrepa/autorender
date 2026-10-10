@@ -5,6 +5,30 @@
 
 #[cfg(feature = "profiling")]
 mod capabilities;
+#[cfg(all(feature = "profiling", not(target_vendor = "apple")))]
+pub mod counters;
+/// Hardware counters per pass count through Vulkan, which Apple's GPUs
+/// draw through Metal in place of: Xcode's Metal tools count there.
+#[cfg(all(feature = "profiling", target_vendor = "apple"))]
+pub mod counters {
+    /// Which counters to count.
+    #[derive(Clone, Debug)]
+    pub enum Selection {
+        First,
+        Named(Vec<String>),
+    }
+
+    pub fn enable(_: Selection) -> Result<(), String> {
+        Err("hardware counters count through Vulkan; on Apple's GPUs, Xcode's Metal              tools (Instruments' Metal System Trace) count"
+            .into())
+    }
+
+    pub(crate) fn begin() {}
+
+    pub(crate) fn end() -> Option<serde_json::Value> {
+        None
+    }
+}
 #[cfg(feature = "profiling")]
 mod deep;
 #[cfg(feature = "dev")]

@@ -59,4 +59,4 @@ mod water;
 pub use browser::{Renderer, StartingRenderer};
 pub use platform::{AdapterInfo, RenderError, RenderTarget, read_range};
 #[cfg(not(target_arch = "wasm32"))]
-pub use platform::{GpuPreference, NativeWindow};
+pub use platform::{GpuPreference, NativeWindow, start_native_instances_with};
