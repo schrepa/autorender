@@ -84,7 +84,7 @@ impl FrameMetrics {
             Err(error) => {
                 self.query_errors += 1;
                 self.total_errors = self.total_errors.saturating_add(1);
-                self.last_error = Some(error.code());
+                self.last_error = Some(error.code().as_str());
             }
         }
     }

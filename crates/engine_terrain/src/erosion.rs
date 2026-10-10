@@ -12,7 +12,7 @@
 
 use crate::MAX_LEVEL;
 use engine_math::{max, min};
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 use serde::{Deserialize, Serialize};
 
 use crate::hydrology::{Drainage, drainage, image_level};
@@ -36,8 +36,6 @@ settings! {
         pub creep: f32 = 20.0 => range(0.0, 1000.0),
     }
 }
-
-impl ExtraRules for ErosionLayer {}
 
 /// What an erosion bake did: samples it eroded, rounds, and the most it
 /// wore away and filled (meters).

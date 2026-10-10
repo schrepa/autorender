@@ -2,6 +2,7 @@
 //! copies of one of the document's meshes along a curve.
 
 use engine_core::{MAX_SPLINE_POINTS, MaterialHandle, MeshHandle, SplineMesh, glam::Vec3};
+use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
 use crate::SceneError;
@@ -55,7 +56,7 @@ impl SceneSpline {
     pub(crate) fn validate(&self, path: &str) -> Result<(), SceneError> {
         if !(2..=MAX_SPLINE_POINTS).contains(&self.points.len()) {
             return Err(SceneError::new(
-                "invalid_spline",
+                ErrorCode::InvalidSpline,
                 format!("{path}.points"),
                 format!("a curve names 2 to {MAX_SPLINE_POINTS} points"),
             ));
@@ -66,7 +67,7 @@ impl SceneSpline {
                 .all(|value| value.is_finite() && value.abs() <= 1.0e7)
         }) {
             return Err(SceneError::new(
-                "invalid_spline",
+                ErrorCode::InvalidSpline,
                 format!("{path}.points[{index}]"),
                 "points must be finite and within 1e7",
             ));

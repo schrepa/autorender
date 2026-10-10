@@ -11,7 +11,7 @@
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 settings! {
     /// The cloud layer. Opt-in: a scene without a `clouds` section has none.
@@ -56,8 +56,6 @@ settings! {
         pub view_block: u32 = 4 => range(1, 16),
     }
 }
-
-impl ExtraRules for Clouds {}
 
 impl Clouds {
     /// What a world without these settings reads as: a clear sky.

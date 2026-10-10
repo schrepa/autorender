@@ -1,6 +1,7 @@
 use crate::protocol::bounds;
 use crate::{BrowserControl, DevError, PROTOCOL_VERSION, bounded};
 use engine_core::{Camera, glam::Vec3};
+use engine_settings::ErrorCode;
 
 impl BrowserControl {
     /// Checks what deserialization does not: the protocol version, and the
@@ -11,7 +12,7 @@ impl BrowserControl {
     pub fn validate(&self) -> Result<(), DevError> {
         if self.version() != PROTOCOL_VERSION {
             return Err(DevError::new(
-                "unsupported_version",
+                ErrorCode::UnsupportedVersion,
                 "$.version",
                 format!("accepted protocol version: {PROTOCOL_VERSION}"),
             ));
@@ -20,8 +21,18 @@ impl BrowserControl {
             Self::Benchmark {
                 warmup, samples, ..
             } => {
-                bounded(*warmup, bounds::WARMUP, "invalid_benchmark", "$.warmup")?;
-                bounded(*samples, bounds::SAMPLES, "invalid_benchmark", "$.samples")?;
+                bounded(
+                    *warmup,
+                    bounds::WARMUP,
+                    ErrorCode::InvalidBenchmark,
+                    "$.warmup",
+                )?;
+                bounded(
+                    *samples,
+                    bounds::SAMPLES,
+                    ErrorCode::InvalidBenchmark,
+                    "$.samples",
+                )?;
             }
             Self::Capture { alpha, gpu, .. } => match alpha {
                 Some(alpha) => {
@@ -29,7 +40,7 @@ impl BrowserControl {
                 }
                 None if *gpu => {
                     return Err(DevError::new(
-                        "invalid_request",
+                        ErrorCode::InvalidRequest,
                         "$.gpu",
                         "a GPU-presented capture needs an alpha",
                     ));
@@ -51,7 +62,7 @@ impl BrowserControl {
                         && value.parse::<u64>().is_ok();
                     if !decimal {
                         return Err(DevError::new(
-                            "invalid_revision",
+                            ErrorCode::InvalidRevision,
                             path,
                             "revisions are unsigned decimal strings without leading zeros",
                         ));
@@ -70,7 +81,7 @@ pub fn validated_presentation_alpha(alpha: f64) -> Result<f32, DevError> {
     bounded(
         alpha,
         bounds::ALPHA,
-        "invalid_presentation_alpha",
+        ErrorCode::InvalidPresentationAlpha,
         "$.alpha",
     )
     .map(|alpha| alpha as f32)
@@ -87,24 +98,23 @@ pub fn validated_camera(
 ) -> Result<Camera, DevError> {
     let position = Vec3::from_array(position);
     let target = Vec3::from_array(target);
-    if !position.is_finite()
-        || !target.is_finite()
-        || position.abs().max_element() > 1_000_000.0
-        || target.abs().max_element() > 1_000_000.0
-        || (target - position).try_normalize().is_none()
-        || !vertical_fov_radians.is_finite()
-        || !(0.01..3.13).contains(&vertical_fov_radians)
-        || !near.is_finite()
-        || !far.is_finite()
-        || near <= 0.0
-        || far <= near
-        || far > 10_000_000.0
-    {
-        return Err(DevError::new(
-            "invalid_camera",
-            "$",
-            "camera requires finite position/target within +/-1000000, distinct points, FOV in [0.01,3.13), and 0 < near < far <= 10000000",
-        ));
+    let fail = |path: &str, rule: &str| Err(DevError::new(ErrorCode::InvalidCamera, path, rule));
+    for (point, path) in [(position, "$.position"), (target, "$.target")] {
+        if !point.is_finite() || point.abs().max_element() > 1_000_000.0 {
+            return fail(path, "must be finite and within +/-1000000");
+        }
+    }
+    if (target - position).try_normalize().is_none() {
+        return fail("$.target", "must differ from position");
+    }
+    if !vertical_fov_radians.is_finite() || !(0.01..3.13).contains(&vertical_fov_radians) {
+        return fail("$.vertical_fov_radians", "must be in [0.01, 3.13)");
+    }
+    if !near.is_finite() || near <= 0.0 {
+        return fail("$.near", "must be finite and above 0");
+    }
+    if !far.is_finite() || far <= near || far > 10_000_000.0 {
+        return fail("$.far", "must be finite, above near and at most 10000000");
     }
     let camera = Camera {
         position,
@@ -115,7 +125,7 @@ pub fn validated_camera(
     };
     if !camera.view_projection(1.0).is_finite() {
         return Err(DevError::new(
-            "invalid_camera",
+            ErrorCode::InvalidCamera,
             "$",
             "camera must produce a finite projection",
         ));

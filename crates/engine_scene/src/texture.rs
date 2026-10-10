@@ -1,5 +1,6 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::{MAX_TEXTURE_DIMENSION, Texture};
+use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
 use crate::{SceneError, SceneFiles, files::valid_uri};
@@ -96,7 +97,7 @@ impl SceneTexture {
                     || !(1..=MAX_TEXTURE_DIMENSION).contains(&height)
                 {
                     return Err(SceneError::new(
-                        "invalid_texture",
+                        ErrorCode::InvalidTexture,
                         path,
                         format!("texture dimensions must be 1..{MAX_TEXTURE_DIMENSION}"),
                     ));
@@ -105,14 +106,14 @@ impl SceneTexture {
                 let encoded = bytes.div_ceil(3) * 4;
                 if rgba8.len() != encoded {
                     return Err(SceneError::new(
-                        "invalid_texture",
+                        ErrorCode::InvalidTexture,
                         format!("{path}.rgba8"),
                         "base64 length must match width × height × 4 bytes",
                     ));
                 }
                 let pixels = STANDARD.decode(rgba8).map_err(|error| {
                     SceneError::new(
-                        "invalid_texture",
+                        ErrorCode::InvalidTexture,
                         format!("{path}.rgba8"),
                         error.to_string(),
                     )
@@ -122,10 +123,12 @@ impl SceneTexture {
                 } else {
                     Texture::new(width, height, pixels)
                 };
-                texture.map_err(|error| SceneError::new("invalid_texture", path, error.to_string()))
+                texture.map_err(|error| {
+                    SceneError::new(ErrorCode::InvalidTexture, path, error.to_string())
+                })
             }
             _ => Err(SceneError::new(
-                "invalid_texture",
+                ErrorCode::InvalidTexture,
                 path,
                 "a texture has either width, height and rgba8, or a uri",
             )),

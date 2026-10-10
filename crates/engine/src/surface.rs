@@ -154,9 +154,9 @@ macro_rules! __export_game {
         impl $name {
             /// Starts the renderer of `canvas` and, while the browser compiles
             /// its pipelines, the engine and game `build` makes.
-            pub async fn launch(
+            pub async fn launch<E: Into<$crate::Error>>(
                 canvas: $crate::__private::web_sys::HtmlCanvasElement,
-                build: impl FnOnce() -> Result<($crate::Engine, $game), String>,
+                build: impl FnOnce() -> Result<($crate::Engine, $game), E>,
             ) -> Result<Self, $crate::__private::JsValue> {
                 Ok(Self {
                     host: $crate::browser::GameHost::launch(canvas, build).await?,

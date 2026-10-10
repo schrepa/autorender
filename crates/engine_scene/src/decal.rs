@@ -3,7 +3,8 @@
 //! box. Angles are in degrees.
 
 use engine_core::{Decal, DecalBlend, MaterialHandle};
-use engine_settings::{ExtraRules, Setting, settings};
+use engine_settings::ErrorCode;
+use engine_settings::{Setting, settings};
 use serde::{Deserialize, Serialize};
 
 use crate::error::broken_rule;
@@ -53,8 +54,6 @@ settings! {
         pub fade_degrees: f32 = default_fade() => range(0.0, Decal::MAX_FADE_DEGREES),
     }
 }
-
-impl ExtraRules for SceneDecal {}
 
 fn full_opacity() -> f32 {
     1.0
@@ -116,9 +115,13 @@ impl SceneDecal {
         materials: &[SceneMaterial],
     ) -> Result<PreparedDecal, SceneError> {
         self.validate()
-            .map_err(|invalid| broken_rule("invalid_decal", path, invalid))?;
+            .map_err(|invalid| broken_rule(ErrorCode::InvalidDecal, path, invalid))?;
         let invalid = |field: &str, rule: &str| {
-            SceneError::new("invalid_decal", format!("{path}.{field}"), rule.to_owned())
+            SceneError::new(
+                ErrorCode::InvalidDecal,
+                format!("{path}.{field}"),
+                rule.to_owned(),
+            )
         };
         let material = materials
             .iter()

@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use crate::MAX_LEVEL;
 use engine_math::{max, min};
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -46,8 +46,6 @@ settings! {
         pub max_samples: u32 = 1 << 20 => at_least(1024),
     }
 }
-
-impl ExtraRules for NavOptions {}
 
 /// A placed obstacle's footprint: its terrain-local center and radius.
 #[derive(Clone, Copy, Debug, PartialEq)]

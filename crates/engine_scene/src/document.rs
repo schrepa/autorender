@@ -1,4 +1,5 @@
 use engine_core::{Camera, Mesh, MeshVertex, Surface, Transform, glam};
+use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -70,13 +71,12 @@ impl SceneDocument {
     pub fn from_json(source: &str) -> Result<Self, SceneError> {
         if source.len() > MAX_SOURCE_BYTES {
             return Err(SceneError::new(
-                "source_too_large",
+                ErrorCode::SourceTooLarge,
                 "$",
                 format!("scene source must be at most {MAX_SOURCE_BYTES} bytes"),
             ));
         }
-        let document: Self = serde_json::from_str(source)
-            .map_err(|error| SceneError::new("invalid_json", "$", error.to_string()))?;
+        let document: Self = crate::parse_json(source)?;
         document.validate()?;
         Ok(document)
     }
@@ -119,7 +119,7 @@ impl SceneDocument {
         if output.exceeded {
             return Err(source_too_large());
         }
-        result.map_err(|error| SceneError::new("invalid_json", "$", error.to_string()))?;
+        result.map_err(|error| SceneError::new(ErrorCode::InvalidJson, "$", error.to_string()))?;
         if output.bytes.len() == MAX_SOURCE_BYTES {
             return Err(source_too_large());
         }
@@ -146,7 +146,7 @@ impl SceneDocument {
 
 fn source_too_large() -> SceneError {
     SceneError::new(
-        "source_too_large",
+        ErrorCode::SourceTooLarge,
         "$",
         format!("canonical scene source exceeds {MAX_SOURCE_BYTES} bytes"),
     )
@@ -186,6 +186,7 @@ fn default_camera() -> SceneCamera {
 }
 
 engine_settings::settings! {
+    extra_rules;
     /// Right-handed, Y-up perspective camera. Lens values are in world units.
     #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -384,7 +385,7 @@ impl MeshSource {
                 valid_uri(uri, &uri_path)?;
                 if *fallback_triangles == Some(0) {
                     return Err(SceneError::new(
-                        "invalid_mesh",
+                        ErrorCode::InvalidMesh,
                         format!("{path}.fallback_triangles"),
                         "must be at least 1",
                     ));
@@ -397,7 +398,9 @@ impl MeshSource {
                     std::sync::Arc::new(geometry),
                     fallback_triangles.unwrap_or(engine_core::DEFAULT_FALLBACK_TRIANGLES),
                 )
-                .map_err(|error| SceneError::new("invalid_mesh", uri_path, error.to_string()))
+                .map_err(|error| {
+                    SceneError::new(ErrorCode::InvalidMesh, uri_path, error.to_string())
+                })
             }
             Self::Inline { vertices, indices } => {
                 // Vertices carry colors and second coordinates all or none.
@@ -405,7 +408,7 @@ impl MeshSource {
                     let count = vertices.iter().filter(|vertex| present(vertex)).count();
                     if count != 0 && count != vertices.len() {
                         Err(SceneError::new(
-                            "invalid_mesh",
+                            ErrorCode::InvalidMesh,
                             format!("{path}.vertices"),
                             format!("either every vertex has {what} or none does"),
                         ))
@@ -427,7 +430,7 @@ impl MeshSource {
                         .any(|vertex| vertex.joints.is_none() || vertex.weights.is_none())
                 {
                     return Err(SceneError::new(
-                        "invalid_mesh",
+                        ErrorCode::InvalidMesh,
                         format!("{path}.vertices"),
                         "either every vertex has joints and weights or none does",
                     ));
@@ -476,8 +479,9 @@ fn with_extras(
     skin: Option<crate::files::SkinStreams>,
     path: &str,
 ) -> Result<Mesh, SceneError> {
-    let invalid =
-        |error: engine_core::AssetError| SceneError::new("invalid_mesh", path, error.to_string());
+    let invalid = |error: engine_core::AssetError| {
+        SceneError::new(ErrorCode::InvalidMesh, path, error.to_string())
+    };
     let mut mesh = mesh.map_err(invalid)?;
     if let Some(colors) = colors {
         mesh = mesh.with_colors(colors).map_err(invalid)?;
@@ -676,10 +680,6 @@ engine_settings::settings! {
     }
 }
 
-/// Its components keep their own rules; references, names and tags are
-/// checked with the document.
-impl engine_settings::ExtraRules for SceneObject {}
-
 engine_settings::settings! {
     /// Local transform with Euler XYZ rotation expressed in degrees.
     ///
@@ -698,8 +698,6 @@ engine_settings::settings! {
         pub scale: [f32; 3] = [1.0; 3] => range(0.0001, 10_000.0),
     }
 }
-
-impl engine_settings::ExtraRules for SceneTransform {}
 
 impl SceneTransform {
     pub(crate) fn transform(self) -> Transform {

@@ -87,7 +87,7 @@ async function cullingSettings(label) {
   assert.equal(without.subpixel_culling.instances, null);
   assert.ok(!without.render_passes.includes("occlusion_test"), "no occlusion test runs while it is off");
   const invalid = await command("environment", { occlusion_culling: { enabled: true, phases: 2 } }, false);
-  assert.equal(invalid.error.code, "invalid_request", "unknown occlusion culling fields are rejected");
+  assert.equal(invalid.error.code, "unknown_field", "unknown occlusion culling fields are rejected");
   await command("environment", { occlusion_culling: { enabled: true }, subpixel_culling: { enabled: true } });
   assert.equal((await preview(`${label}-culling-again`)).occlusion_culling.active, true);
 }

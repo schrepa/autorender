@@ -84,6 +84,7 @@ pub use engine_assets::{
     CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, DEFAULT_FALLBACK_TRIANGLES, GROUP_WORDS,
     NODE_WORDS, PAGE_WORDS, VIRTUAL_MESH_MAGIC, VirtualMesh,
 };
+pub use engine_settings::ErrorCode;
 /// Heightfield terrain data: tile pyramids, layer stacks,
 /// tiles, patches and the `ETR1` format.
 pub use engine_terrain as terrain_data;

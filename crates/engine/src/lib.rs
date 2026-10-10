@@ -13,7 +13,9 @@ pub use engine_scene as scene;
 /// Settings declared once with their rules (`settings!`), as the engine's own are.
 pub use engine_settings as settings;
 pub mod camera;
+mod error;
 pub mod game;
+pub use error::{Error, Result};
 #[doc(hidden)]
 pub mod surface;
 pub use game::{Game, Inspectors};
@@ -38,8 +40,8 @@ pub use engine_core::{
 };
 pub use engine_core::{
     ActionId, ActionInput, AnimationPlayer, AnimationSystems, App, Atmosphere, Camera, Cube,
-    Engine, EngineConfig, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FixedTime,
-    FrameReport, FrameTime, InputState, Plugin, Presentation, PresentedTime,
+    Engine, EngineConfig, ErrorCode, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
+    FixedTime, FrameReport, FrameTime, InputState, Plugin, Presentation, PresentedTime,
 };
 pub use engine_core::{
     AmbientOcclusion, Bloom, Clouds, ContactShadows, DecalSettings, Deformation, Environment,

@@ -5,6 +5,7 @@ use engine_core::{
     AlphaMode, Filter, Material, Sampler, TextureHandle, TextureRef, Transmission, UvTransform,
     Wrap,
 };
+use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
 use crate::{SceneError, SceneSurface};
@@ -373,7 +374,11 @@ impl SceneMaterial {
     /// document of `version`.
     pub(crate) fn prepare(&self, path: &str, version: u32) -> Result<PreparedMaterial, SceneError> {
         let invalid = |field: &str, message: String| {
-            SceneError::new("invalid_material", format!("{path}.{field}"), message)
+            SceneError::new(
+                ErrorCode::InvalidMaterial,
+                format!("{path}.{field}"),
+                message,
+            )
         };
         let mut material =
             Material::new(self.color).map_err(|error| invalid("color", error.to_string()))?;

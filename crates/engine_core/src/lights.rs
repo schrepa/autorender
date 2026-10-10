@@ -35,6 +35,7 @@ pub const MAX_LIGHT_RANGE: f32 = 10_000.0;
 
 settings! {
     unauthored;
+    extra_rules;
     /// The cone of a spot light.
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct Spot {
@@ -89,8 +90,6 @@ settings! {
         pub spot: Option<Spot> = None => any,
     }
 }
-
-impl ExtraRules for LocalLight {}
 
 impl LocalLight {
     /// Light in every direction from the entity's origin.
@@ -159,8 +158,6 @@ settings! {
         pub distance: f32 = 250.0 => range(1.0, 100_000.0),
     }
 }
-
-impl ExtraRules for LocalLightSettings {}
 
 impl LocalLightSettings {
     /// What a world without these settings reads as: no local lights.
@@ -249,6 +246,8 @@ pub(crate) struct LightExtraction {
     // Indices into `lights` of those without a slot: their world poses are
     // read every frame.
     world_lights: Vec<usize>,
+    // Lights the last rebuild found breaking their rules.
+    invalid: usize,
     // Lights with an authoritative pose, by distance, when lights exceed the
     // budget: their distance and index.
     ranked: Vec<(f32, usize)>,
@@ -267,6 +266,7 @@ impl LightExtraction {
             settings: None,
             lights: Vec::new(),
             world_lights: Vec::new(),
+            invalid: 0,
             ranked: Vec::new(),
             nearest: Nearest::default(),
             revision: 0,
@@ -287,6 +287,7 @@ impl LightExtraction {
         // Extracted sanitized with the environment, before this.
         let settings = snapshot.environment.local_lights;
         snapshot.dropped_lights = 0;
+        snapshot.invalid_lights = 0;
         if !settings.active() {
             snapshot.lights.clear();
             self.last_scan = None;
@@ -310,8 +311,10 @@ impl LightExtraction {
         if changed {
             self.lights.clear();
             self.world_lights.clear();
+            self.invalid = 0;
             for (entity, light) in self.query.iter(world) {
                 if light.validate().is_err() {
+                    self.invalid += 1;
                     continue;
                 }
                 let slot = slot_of(entity);
@@ -330,8 +333,10 @@ impl LightExtraction {
                 .is_none_or(|budget| self.lights.len() <= budget as usize)
         {
             // Unchanged lights that all follow slots: the records stand.
+            snapshot.invalid_lights = self.invalid;
             return;
         }
+        snapshot.invalid_lights = self.invalid;
         self.revision += 1;
         let globals = world.resource::<GlobalTransforms>();
         let poses = Poses::of(world, gpu);

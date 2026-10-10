@@ -100,7 +100,7 @@ impl Error for ImportError {}
 
 impl From<SceneError> for ImportError {
     fn from(error: SceneError) -> Self {
-        Self::new(error.code, error.path, error.message)
+        Self::new(error.code.as_str(), error.path, error.message)
     }
 }
 

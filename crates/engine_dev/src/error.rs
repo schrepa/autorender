@@ -1,15 +1,16 @@
+use engine_settings::ErrorCode;
 use serde::Serialize;
 
 /// Stable machine-readable code and affected field; messages are for people.
 #[derive(Debug, Clone, Serialize)]
 pub struct DevError {
-    pub code: &'static str,
+    pub code: ErrorCode,
     pub path: String,
     pub message: String,
 }
 
 impl DevError {
-    pub fn new(code: &'static str, path: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn new(code: ErrorCode, path: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code,
             path: path.into(),

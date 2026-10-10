@@ -281,12 +281,15 @@ impl<'a> RenderFrame<'a> {
             environment,
             lights,
             dropped_lights,
+            invalid_lights,
             emitters,
             dropped_particles,
+            invalid_emitters,
             decals,
             decal_materials,
             decal_textures,
             dropped_decals,
+            invalid_decals,
             reflection_probes,
             dropped_reflection_probes,
             terrain,
@@ -311,6 +314,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.environment = *environment;
         snapshot.lights.clear();
         snapshot.dropped_lights = *dropped_lights;
+        snapshot.invalid_lights = *invalid_lights;
         for light in lights {
             let Some(slot) = light.slot else {
                 snapshot.lights.push(*light);
@@ -334,10 +338,12 @@ impl<'a> RenderFrame<'a> {
         }
         snapshot.emitters.clone_from(emitters);
         snapshot.dropped_particles = *dropped_particles;
+        snapshot.invalid_emitters = *invalid_emitters;
         snapshot.decals.clone_from(decals);
         snapshot.decal_materials.clone_from(decal_materials);
         snapshot.decal_textures.clone_from(decal_textures);
         snapshot.dropped_decals = *dropped_decals;
+        snapshot.invalid_decals = *invalid_decals;
         snapshot.reflection_probes.clone_from(reflection_probes);
         snapshot.dropped_reflection_probes = *dropped_reflection_probes;
         snapshot.terrain.clone_from(terrain);

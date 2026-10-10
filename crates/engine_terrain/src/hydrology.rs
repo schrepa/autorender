@@ -21,7 +21,7 @@ use std::collections::BinaryHeap;
 
 use crate::MAX_LEVEL;
 use engine_math::{max, min};
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
@@ -61,8 +61,6 @@ settings! {
         pub stream_area: f32 = 0.0 => range(0.0, 1.0e10),
     }
 }
-
-impl ExtraRules for HydrologyLayer {}
 
 fn is_zero(value: &f32) -> bool {
     *value == 0.0

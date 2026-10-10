@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::extraction::Nearest;
 use crate::{GlobalTransforms, RenderSnapshot, TransformIndex};
-use engine_settings::{ExtraRules, settings};
+use engine_settings::{InvalidSetting, settings};
 
 /// Captures its surroundings from its entity's world position into an
 /// environment map, which surfaces inside its box reflect.
@@ -61,8 +61,6 @@ settings! {
     }
 }
 
-impl ExtraRules for Interior {}
-
 impl ReflectionProbe {
     /// A probe covering the box `extent` from its entity along each axis,
     /// fading over its outer world unit.
@@ -87,15 +85,24 @@ impl ReflectionProbe {
         self
     }
 
-    /// Whether renderers can capture and reflect this probe.
-    pub fn is_usable(&self) -> bool {
-        self.extent.is_finite()
-            && self.extent.cmpgt(Vec3::ZERO).all()
-            && self.blend.is_finite()
-            && self.blend >= 0.0
-            && self
-                .interior
-                .is_none_or(|interior| interior.validate().is_ok())
+    /// The first value breaking its rule, if any: renderers capture and
+    /// reflect only valid probes.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        if !(self.extent.is_finite() && self.extent.cmpgt(Vec3::ZERO).all()) {
+            return Err(InvalidSetting::new("extent", "must be finite and above 0"));
+        }
+        if !(self.blend.is_finite() && self.blend >= 0.0) {
+            return Err(InvalidSetting::new(
+                "blend",
+                "must be finite and at least 0",
+            ));
+        }
+        match self.interior {
+            Some(interior) => interior
+                .validate()
+                .map_err(|invalid| invalid.within("interior")),
+            None => Ok(()),
+        }
     }
 }
 
@@ -124,8 +131,6 @@ settings! {
         pub faces_per_frame: u32 = 1 => at_least(1),
     }
 }
-
-impl ExtraRules for ReflectionProbeSettings {}
 
 impl ReflectionProbeSettings {
     /// What a world without these settings reads as: no reflection probes.
@@ -184,7 +189,7 @@ impl ProbeExtraction {
         let eye = snapshot.camera_position;
         self.candidates.clear();
         for (position, (entity, probe)) in self.query.iter(world).enumerate() {
-            if !probe.is_usable() {
+            if probe.validate().is_err() {
                 continue;
             }
             if self.hints.len() <= position {

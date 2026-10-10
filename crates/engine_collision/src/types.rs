@@ -1,10 +1,15 @@
 use bevy_ecs::prelude::*;
+use engine_core::ErrorCode;
 use glam::{Mat3, Mat4, Vec3};
 
 pub use engine_core::{MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT};
 pub const MAX_COLLISION_COORDINATE: f32 = 1.0e6;
 pub const MAX_COLLISION_NODES: usize = 100_000;
 pub const MAX_QUERY_HITS: usize = 4_096;
+/// The most sensor candidate pairs one detection examines.
+pub const MAX_CANDIDATE_PAIRS: usize = 1_000_000;
+/// The most sensor pairs one detection keeps.
+pub const MAX_SENSOR_PAIRS: usize = 65_536;
 
 /// A local convex primitive. Affine world transforms preserve shear/stretch.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -145,39 +150,56 @@ pub(crate) fn valid_position(position: Vec3) -> bool {
     position.is_finite() && position.abs().max_element() <= MAX_COLLISION_COORDINATE
 }
 
-/// Runtime budgets. Changes become effective at the next query-cache refresh.
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CollisionConfig {
-    pub max_colliders: usize,
-    pub max_candidate_pairs: usize,
-    pub max_sensor_pairs: usize,
-    pub max_query_candidates: usize,
-    pub max_query_hits: usize,
-}
-impl Default for CollisionConfig {
-    fn default() -> Self {
-        Self {
-            max_colliders: 10_000,
-            max_candidate_pairs: 100_000,
-            max_sensor_pairs: 16_384,
-            max_query_candidates: 10_000,
-            max_query_hits: 1024,
-        }
+engine_settings::settings! {
+    /// Collision budgets, none by default: the collision world's own
+    /// limits bound colliders, sensor pairs and query results. Past a budget
+    /// the world reports itself incomplete or a query fails with its
+    /// budget's code. Changes apply at the next refresh.
+    #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct CollisionConfig {
+        /// Colliders the world admits; the rest leave it incomplete.
+        pub max_colliders: Option<u32> = None => budget,
+        /// Sensor candidate pairs one detection examines.
+        pub max_candidate_pairs: Option<u32> = None => budget,
+        /// Sensor pairs one detection keeps.
+        pub max_sensor_pairs: Option<u32> = None => budget,
+        /// Candidates one query examines.
+        pub max_query_candidates: Option<u32> = None => budget,
+        /// Hits one query returns.
+        pub max_query_hits: Option<u32> = None => budget,
     }
 }
+
 impl CollisionConfig {
-    pub fn validate(self) -> Result<(), CollisionError> {
-        if self.max_colliders > MAX_COLLISION_NODES
-            || self.max_candidate_pairs > 1_000_000
-            || self.max_sensor_pairs > 65_536
-            || self.max_query_candidates > MAX_COLLISION_NODES
-            || self.max_query_hits > MAX_QUERY_HITS
-        {
-            Err(CollisionError::InvalidConfig)
-        } else {
-            Ok(())
-        }
+    /// Colliders the world admits: the budget within the world's limit.
+    pub fn colliders(&self) -> usize {
+        within(self.max_colliders, MAX_COLLISION_NODES)
     }
+
+    /// Sensor candidate pairs one detection examines.
+    pub fn candidate_pairs(&self) -> usize {
+        within(self.max_candidate_pairs, MAX_CANDIDATE_PAIRS)
+    }
+
+    /// Sensor pairs one detection keeps.
+    pub fn sensor_pairs(&self) -> usize {
+        within(self.max_sensor_pairs, MAX_SENSOR_PAIRS)
+    }
+
+    /// Candidates one query examines.
+    pub fn query_candidates(&self) -> usize {
+        within(self.max_query_candidates, MAX_COLLISION_NODES)
+    }
+
+    /// Hits one query returns.
+    pub fn query_hits(&self) -> usize {
+        within(self.max_query_hits, MAX_QUERY_HITS)
+    }
+}
+
+/// `budget` within `limit`, or `limit` without one.
+fn within(budget: Option<u32>, limit: usize) -> usize {
+    budget.map_or(limit, |budget| (budget as usize).min(limit))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,19 +235,19 @@ impl std::fmt::Display for CollisionError {
 }
 impl std::error::Error for CollisionError {}
 impl CollisionError {
-    pub fn code(self) -> &'static str {
+    pub fn code(self) -> ErrorCode {
         match self {
-            Self::MissingPlugin => "collision_missing_plugin",
-            Self::InvalidShape => "collision_invalid_shape",
-            Self::InvalidTransform => "collision_invalid_transform",
-            Self::InvalidRay => "collision_invalid_ray",
-            Self::InvalidCast => "collision_invalid_cast",
-            Self::InvalidConfig => "collision_invalid_config",
-            Self::IncompleteWorld => "collision_incomplete_world",
-            Self::CandidateBudget => "collision_candidate_budget",
-            Self::PairBudget => "collision_pair_budget",
-            Self::ResultBudget => "collision_result_budget",
-            Self::NumericalFailure => "collision_numerical_failure",
+            Self::MissingPlugin => ErrorCode::CollisionMissingPlugin,
+            Self::InvalidShape => ErrorCode::CollisionInvalidShape,
+            Self::InvalidTransform => ErrorCode::CollisionInvalidTransform,
+            Self::InvalidRay => ErrorCode::CollisionInvalidRay,
+            Self::InvalidCast => ErrorCode::CollisionInvalidCast,
+            Self::InvalidConfig => ErrorCode::CollisionInvalidConfig,
+            Self::IncompleteWorld => ErrorCode::CollisionIncompleteWorld,
+            Self::CandidateBudget => ErrorCode::CollisionCandidateBudget,
+            Self::PairBudget => ErrorCode::CollisionPairBudget,
+            Self::ResultBudget => ErrorCode::CollisionResultBudget,
+            Self::NumericalFailure => ErrorCode::CollisionNumericalFailure,
         }
     }
 }

@@ -1,5 +1,6 @@
 use engine_collision::{Collider, ColliderShape, CollisionLayers, validate_collider_transform};
 use engine_core::glam::Mat4;
+use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
 use crate::SceneError;
@@ -77,7 +78,7 @@ impl SceneCollider {
             })
             .map_err(|error| {
                 SceneError::new(
-                    "invalid_collider",
+                    ErrorCode::InvalidCollider,
                     format!("{path}.shape"),
                     error.to_string(),
                 )
@@ -85,7 +86,8 @@ impl SceneCollider {
     }
 
     pub(crate) fn validate_world(self, matrix: Mat4, path: &str) -> Result<(), SceneError> {
-        validate_collider_transform(self.shape.runtime(), matrix)
-            .map_err(|error| SceneError::new("invalid_collider_transform", path, error.to_string()))
+        validate_collider_transform(self.shape.runtime(), matrix).map_err(|error| {
+            SceneError::new(ErrorCode::InvalidColliderTransform, path, error.to_string())
+        })
     }
 }

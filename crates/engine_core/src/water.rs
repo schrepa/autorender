@@ -9,7 +9,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 settings! {
     /// Water settings. Requires version 9.
@@ -37,8 +37,6 @@ settings! {
         pub foam_width: f32 = 0.6 => range(0.05, 10.0),
     }
 }
-
-impl ExtraRules for Water {}
 
 impl Water {
     /// What a world without these settings reads as: no water.

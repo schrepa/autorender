@@ -65,6 +65,7 @@ pub const MAX_SHADOW_CASCADES: u32 = 4;
 pub const MAX_KEPT_LEVELS: u32 = 3;
 
 settings! {
+    extra_rules;
     /// Sun shadows; omitted fields take the engine defaults.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
@@ -244,8 +245,6 @@ settings! {
     }
 }
 
-impl ExtraRules for AmbientOcclusion {}
-
 impl AmbientOcclusion {
     /// What a world without these settings reads as: no ambient occlusion.
     pub fn off() -> Self {
@@ -276,8 +275,6 @@ settings! {
         pub threshold: f32 = 2.0 => at_least(0.0),
     }
 }
-
-impl ExtraRules for Bloom {}
 
 impl Bloom {
     /// What a world without these settings reads as: no bloom.
@@ -314,8 +311,6 @@ settings! {
     }
 }
 
-impl ExtraRules for SunShafts {}
-
 impl SunShafts {
     /// What a world without these settings reads as: no sun shafts.
     pub fn off() -> Self {
@@ -350,8 +345,6 @@ settings! {
     }
 }
 
-impl ExtraRules for Reflections {}
-
 impl Reflections {
     /// What a world without these settings reads as: no screen-space reflections.
     pub fn off() -> Self {
@@ -384,8 +377,6 @@ settings! {
         pub blur: f32 = 12.0 => range(0.0, 64.0),
     }
 }
-
-impl ExtraRules for Refraction {}
 
 impl Refraction {
     /// What a world without these settings reads as: no refraction.

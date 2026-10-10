@@ -1,3 +1,4 @@
+use engine_settings::ErrorCode;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -279,7 +280,7 @@ impl SceneDocument {
             .map(|entity| {
                 if entity.source.terrain.is_some() {
                     return Err(SceneError::new(
-                        "invalid_streamed",
+                        ErrorCode::InvalidStreamed,
                         format!("{}.terrain", entity.path),
                         "terrains stream their own tiles; author them in entities",
                     ));
@@ -451,7 +452,7 @@ impl SceneDocument {
         for (index, animation) in self.animations.iter().enumerate() {
             if animation.name.len() > 128 || animation.name.chars().any(char::is_control) {
                 return Err(SceneError::new(
-                    "invalid_name",
+                    ErrorCode::InvalidName,
                     format!("$.animations[{index}].name"),
                     "names must be at most 128 UTF-8 bytes without control characters",
                 ));
@@ -561,7 +562,7 @@ impl SceneDocument {
                 .expect("referenced mesh exists")];
             if mesh.joint_count() as usize > skin.joints.len() {
                 return Err(SceneError::new(
-                    "invalid_skin",
+                    ErrorCode::InvalidSkin,
                     format!("{}.skin", entity.path),
                     format!(
                         "the mesh's vertices name {} joints but skin '{}' has {}",
@@ -589,7 +590,7 @@ impl SceneDocument {
                 Ok(Tint(tint))
             } else {
                 Err(SceneError::new(
-                    "invalid_tint",
+                    ErrorCode::InvalidTint,
                     format!("{path}.tint"),
                     "tint factors must be finite and in [0, 1]",
                 ))
@@ -638,14 +639,14 @@ impl SceneDocument {
         reference(&player.clip, animation_ids, &format!("{path}.clip"))?;
         if !player.speed.is_finite() || player.speed.abs() > 1000.0 {
             return Err(SceneError::new(
-                "invalid_animation",
+                ErrorCode::InvalidAnimation,
                 format!("{path}.speed"),
                 "speed must be finite and within ±1000",
             ));
         }
         if !player.time.is_finite() || player.time < 0.0 {
             return Err(SceneError::new(
-                "invalid_animation",
+                ErrorCode::InvalidAnimation,
                 format!("{path}.time"),
                 "time must be finite and not negative",
             ));
@@ -661,7 +662,7 @@ impl SceneDocument {
             .map(|target| {
                 resolve(entity, target).ok_or_else(|| {
                     SceneError::new(
-                        "unknown_reference",
+                        ErrorCode::UnknownReference,
                         format!("{path}.clip"),
                         format!(
                             "target '{target}' of animation '{}' matches no entity of this placement or scene",
@@ -694,7 +695,7 @@ impl SceneDocument {
         reference(id, skin_ids, &path)?;
         if entity.source.mesh.is_none() {
             return Err(SceneError::new(
-                "invalid_skin",
+                ErrorCode::InvalidSkin,
                 path,
                 "a skin deforms its entity's mesh; give the entity a mesh and material",
             ));
@@ -710,7 +711,7 @@ impl SceneDocument {
             .map(|joint| {
                 resolve(entity, joint).ok_or_else(|| {
                     SceneError::new(
-                        "unknown_reference",
+                        ErrorCode::UnknownReference,
                         path.clone(),
                         format!(
                             "joint '{joint}' of skin '{id}' matches no entity of this placement or scene"
@@ -725,7 +726,7 @@ impl SceneDocument {
     fn validate_camera(&self) -> Result<(), SceneError> {
         self.camera
             .validate()
-            .map_err(|invalid| broken_rule("invalid_camera", "$.camera", invalid))
+            .map_err(|invalid| broken_rule(ErrorCode::InvalidCamera, "$.camera", invalid))
     }
 }
 
@@ -757,7 +758,7 @@ pub(crate) fn identifier(id: &str, path: &str) -> Result<(), SceneError> {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
     {
         return Err(SceneError::new(
-            "invalid_id",
+            ErrorCode::InvalidId,
             path,
             "IDs must contain 1 to 64 ASCII letters, digits, underscores, hyphens or periods",
         ));
@@ -775,7 +776,7 @@ pub(crate) fn unique_ids<'a>(
         identifier(id, &path)?;
         if !known.insert(id) {
             return Err(SceneError::new(
-                "duplicate_id",
+                ErrorCode::DuplicateId,
                 path,
                 format!("authored ID '{id}' is already used in this collection"),
             ));
@@ -788,7 +789,7 @@ pub(crate) fn reference(id: &str, known: &BTreeSet<&str>, path: &str) -> Result<
     identifier(id, path)?;
     if !known.contains(id) {
         return Err(SceneError::new(
-            "unknown_reference",
+            ErrorCode::UnknownReference,
             path,
             format!("no authored object in this collection has ID '{id}'"),
         ));
@@ -800,7 +801,7 @@ fn bounded_vector(value: [f32; 3], path: &str, maximum: f32) -> Result<(), Scene
     for (index, coordinate) in value.iter().enumerate() {
         if !coordinate.is_finite() || coordinate.abs() > maximum {
             return Err(SceneError::new(
-                "invalid_number",
+                ErrorCode::InvalidNumber,
                 format!("{path}[{index}]"),
                 format!("value must be finite and within ±{maximum}"),
             ));
@@ -812,6 +813,6 @@ fn bounded_vector(value: [f32; 3], path: &str, maximum: f32) -> Result<(), Scene
 pub(crate) fn transform(source: &SceneTransform, path: &str) -> Result<Transform, SceneError> {
     source
         .validate()
-        .map_err(|invalid| broken_rule("invalid_transform", path, invalid))?;
+        .map_err(|invalid| broken_rule(ErrorCode::InvalidTransform, path, invalid))?;
     Ok(source.transform())
 }

@@ -1,7 +1,7 @@
 //! Materials: glTF 2.0 metallic-roughness factors and texture maps
 //! with the engine's surface extensions.
 
-use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
+use engine_settings::{InvalidSetting, Rule, Setting, settings};
 
 use crate::{AssetError, TextureHandle};
 
@@ -40,8 +40,6 @@ settings! {
     }
 }
 
-impl ExtraRules for Surface {}
-
 impl Surface {
     /// Broad, dim highlights and no emission: the default.
     pub const MATTE: Self = Self {
@@ -74,8 +72,6 @@ settings! {
     }
 }
 
-impl ExtraRules for TopLayer {}
-
 /// The meters one repeat of a world-mapped material's maps may cover at
 /// most.
 pub const MAX_WORLD_TILING: f32 = 10_000.0;
@@ -97,8 +93,6 @@ settings! {
         pub height: f32 = 1.0 => above_to(0.0, MAX_GROUNDING_HEIGHT),
     }
 }
-
-impl ExtraRules for Grounding {}
 
 /// The mesh units a ground stain may reach up at most.
 pub const MAX_GROUNDING_HEIGHT: f32 = 10_000.0;
@@ -123,8 +117,6 @@ settings! {
         pub thickness: f32 = Transmission::NONE.thickness => at_least(0.0),
     }
 }
-
-impl ExtraRules for Transmission {}
 
 impl Transmission {
     /// No light passes through: the default.

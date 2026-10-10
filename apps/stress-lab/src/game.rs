@@ -1,6 +1,7 @@
 //! The Stress Lab as a game the engine hosts: a workload or an authored
 //! scene, and the page's choices that outlive each workload's world.
 
+use engine::ErrorCode;
 use std::collections::HashMap;
 
 use engine::prelude::*;
@@ -263,7 +264,7 @@ impl Game for StressLab {
     ) -> Result<(), SceneError> {
         let Some(authored) = self.authored.as_mut() else {
             return Err(SceneError {
-                code: "unsupported_command",
+                code: ErrorCode::UnsupportedCommand,
                 path: "$.op".into(),
                 message: "workloads have no authored scene to reload".into(),
             });

@@ -1,6 +1,7 @@
 //! Authored animation clips and players, and skins.
 //! Version 8.
 
+use engine_settings::ErrorCode;
 use std::sync::Arc;
 
 use engine_core::{
@@ -145,7 +146,7 @@ impl SceneSkin {
     pub(crate) fn inverse_binds(&self, path: &str) -> Result<Arc<[glam::Mat4]>, SceneError> {
         if self.joints.is_empty() {
             return Err(SceneError::new(
-                "invalid_skin",
+                ErrorCode::InvalidSkin,
                 format!("{path}.joints"),
                 "a skin needs at least one joint",
             ));
@@ -155,7 +156,7 @@ impl SceneSkin {
         }
         if self.inverse_binds.len() != self.joints.len() {
             return Err(SceneError::new(
-                "invalid_skin",
+                ErrorCode::InvalidSkin,
                 format!("{path}.inverse_binds"),
                 format!(
                     "a skin of {} joints needs as many inverse bind matrices, or none",
@@ -171,7 +172,7 @@ impl SceneSkin {
                 let row = matrix.row(3);
                 if !matrix.is_finite() || (row - glam::Vec4::W).abs().max_element() > 0.001 {
                     return Err(SceneError::new(
-                        "invalid_skin",
+                        ErrorCode::InvalidSkin,
                         format!("{path}.inverse_binds[{index}]"),
                         "inverse bind matrices must be finite and affine",
                     ));
@@ -195,7 +196,11 @@ impl SceneAnimation {
         files: Option<&SceneFiles>,
     ) -> Result<AnimationClip, SceneError> {
         let invalid = |field: &str, message: String| {
-            SceneError::new("invalid_animation", format!("{path}{field}"), message)
+            SceneError::new(
+                ErrorCode::InvalidAnimation,
+                format!("{path}{field}"),
+                message,
+            )
         };
         let channels = match (&self.channels, &self.uri) {
             (Some(channels), None) => channels

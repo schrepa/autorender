@@ -205,6 +205,7 @@ impl Renderer {
                 } else {
                     0
                 },
+                invalid: snapshot.invalid_lights.min(u32::MAX as usize) as u32,
                 visible: light_totals.map(|totals| totals[0]),
                 cluster_overflow: light_totals.map(|totals| totals[1]),
             },
@@ -216,6 +217,7 @@ impl Renderer {
             },
             particles: Drawn {
                 drawn: particle_frame.as_ref().map_or(0, |frame| frame.total),
+                invalid: snapshot.invalid_emitters.min(u32::MAX as usize) as u32,
                 dropped: (snapshot.dropped_particles as u64
                     + particle_frame.as_ref().map_or(0, |frame| frame.dropped))
                 .min(u64::from(u32::MAX)) as u32,
@@ -225,6 +227,7 @@ impl Renderer {
             },
             decals: Drawn {
                 drawn: decal_frame.as_ref().map_or(0, |frame| frame.drawn),
+                invalid: snapshot.invalid_decals.min(u32::MAX as usize) as u32,
                 dropped: (snapshot.dropped_decals as u64
                     + decal_frame
                         .as_ref()

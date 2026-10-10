@@ -56,7 +56,10 @@ pub fn create_workload_with(
     });
     let collision_enabled = config.colliders > 0 || config.queries_per_tick > 0;
     if collision_enabled {
-        engine.app.add_plugins(CollisionPlugin);
+        engine
+            .app
+            .add_plugins(CollisionPlugin)
+            .insert_resource(stress_collision_budgets());
     }
     engine.app.insert_resource(config.clone());
     let (atmosphere, lamps) = look(config.scene, "scene")?;
@@ -482,6 +485,18 @@ fn query_workload(
 }
 
 /// Sun shafts strong enough to read over the scenes' light fog.
+/// The collision budgets workloads measure under: the dense sensor
+/// workload exceeds the pair budgets on purpose.
+pub(crate) fn stress_collision_budgets() -> engine::collision::CollisionConfig {
+    engine::collision::CollisionConfig {
+        max_colliders: Some(10_000),
+        max_candidate_pairs: Some(100_000),
+        max_sensor_pairs: Some(16_384),
+        max_query_candidates: Some(10_000),
+        max_query_hits: Some(1024),
+    }
+}
+
 pub fn stress_shafts() -> SunShafts {
     SunShafts {
         intensity: 1.5,

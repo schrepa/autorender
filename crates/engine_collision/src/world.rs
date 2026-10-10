@@ -175,7 +175,7 @@ impl CollisionWorld {
         let count = colliders.iter().len();
         self.report.frame = frame;
         self.report.tick = tick;
-        let limit = config.max_colliders.min(MAX_COLLISION_NODES);
+        let limit = config.colliders();
         let admitted = count.min(limit);
         // Collider shape, identity and pose revision determine every cached
         // value. Revisions change whenever matrix bits or validity change.
@@ -313,7 +313,7 @@ impl CollisionWorld {
         let mut nearest: Option<RayHit> = None;
         for entry in candidates(
             (&self.bvh, &self.entries),
-            self.config.max_query_candidates,
+            self.config.query_candidates(),
             |bounds| bounds.ray(ray),
             filter,
             &mut broad,
@@ -364,7 +364,7 @@ impl CollisionWorld {
             self.validate_limit(limit)?;
             for entry in candidates(
                 (&self.bvh, &self.entries),
-                self.config.max_query_candidates,
+                self.config.query_candidates(),
                 |bounds| bounds.ray(ray),
                 filter,
                 &mut broad,
@@ -424,7 +424,7 @@ impl CollisionWorld {
             self.validate_limit(limit)?;
             for entry in candidates(
                 (&self.bvh, &self.entries),
-                self.config.max_query_candidates,
+                self.config.query_candidates(),
                 |bounds| bounds.overlaps(shape.bounds),
                 filter,
                 &mut broad,
@@ -472,7 +472,7 @@ impl CollisionWorld {
         let mut nearest: Option<ShapeHit> = None;
         for entry in candidates(
             (&self.bvh, &self.entries),
-            self.config.max_query_candidates,
+            self.config.query_candidates(),
             |bounds| bounds.overlaps(swept),
             filter,
             &mut broad,
@@ -505,7 +505,7 @@ impl CollisionWorld {
     }
 
     fn validate_limit(&self, limit: usize) -> Result<(), CollisionError> {
-        if limit > self.config.max_query_hits {
+        if limit > self.config.query_hits() {
             Err(CollisionError::ResultBudget)
         } else {
             Ok(())
@@ -541,12 +541,12 @@ impl CollisionWorld {
                     if b.collider.is_sensor() && other < index {
                         continue;
                     }
-                    candidate(&mut events.candidate_pairs, self.config.max_candidate_pairs)?;
+                    candidate(&mut events.candidate_pairs, self.config.candidate_pairs())?;
                     if !a.collider.layers().interacts(b.collider.layers()) {
                         continue;
                     }
                     if precise.measure(|| intersects(&a.affine, &b.affine))? {
-                        if self.next_pairs.len() == self.config.max_sensor_pairs {
+                        if self.next_pairs.len() == self.config.sensor_pairs() {
                             return Err(CollisionError::PairBudget);
                         }
                         self.next_pairs.push(SensorPair::new(a.entity, b.entity));

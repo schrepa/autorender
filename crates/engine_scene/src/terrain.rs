@@ -3,6 +3,7 @@
 //! file beside the scene, and its surface: the materials its
 //! ground is made of and the biomes deciding where each lies.
 
+use engine_settings::ErrorCode;
 use std::sync::Arc;
 
 use engine_core::{
@@ -437,7 +438,11 @@ impl SceneTerrain {
         meshes: &[SceneMesh],
     ) -> Result<(TerrainSurface, Vec<Option<usize>>, Vec<PreparedAsset>), SceneError> {
         let invalid = |field: String, rule: String| {
-            SceneError::new("invalid_terrain", format!("{path}.surface.{field}"), rule)
+            SceneError::new(
+                ErrorCode::InvalidTerrain,
+                format!("{path}.surface.{field}"),
+                rule,
+            )
         };
         let Some(surface) = &self.surface else {
             let looks = TerrainSurface::default();
@@ -571,7 +576,7 @@ impl SceneTerrain {
                     .position(|material| material.id == *id)
                     .ok_or_else(|| {
                         SceneError::new(
-                            "invalid_terrain",
+                            ErrorCode::InvalidTerrain,
                             format!("{path}.surface.bridge"),
                             "must name a material of this document",
                         )
@@ -607,7 +612,7 @@ impl SceneTerrain {
         surface: TerrainSurface,
     ) -> Result<Terrain, SceneError> {
         let invalid = |field: &str, rule: String| {
-            SceneError::new("invalid_terrain", format!("{path}.{field}"), rule)
+            SceneError::new(ErrorCode::InvalidTerrain, format!("{path}.{field}"), rule)
         };
         if !self.origin.iter().all(|value| value.is_finite()) {
             return Err(invalid("origin", "must be finite".into()));
@@ -737,7 +742,7 @@ impl SceneTerrain {
             .collect::<Result<Vec<_>, SceneError>>()?;
         Layers::new(layers).map_err(|error| {
             SceneError::new(
-                "invalid_terrain",
+                ErrorCode::InvalidTerrain,
                 format!("{path}.layers[{}].{}", error.layer, error.field),
                 error.rule,
             )
@@ -863,7 +868,7 @@ impl SceneHeightmap {
                 .is_some_and(|text| text.chars().count() > MAX_CREDIT)
             {
                 return Err(SceneError::new(
-                    "invalid_terrain",
+                    ErrorCode::InvalidTerrain,
                     format!("{path}.{field}"),
                     format!("must hold at most {MAX_CREDIT} characters"),
                 ));
@@ -872,7 +877,7 @@ impl SceneHeightmap {
         if !(2..=MAX_HEIGHTMAP).contains(&self.width) || !(2..=MAX_HEIGHTMAP).contains(&self.height)
         {
             return Err(SceneError::new(
-                "invalid_terrain",
+                ErrorCode::InvalidTerrain,
                 format!("{path}.width"),
                 format!("width and height must be 2 to {MAX_HEIGHTMAP} samples"),
             ));
@@ -882,7 +887,7 @@ impl SceneHeightmap {
                 let bytes = files.buffer(&self.uri, &format!("{path}.uri"))?;
                 HeightImage::from_le_bytes(self.width, self.height, bytes).ok_or_else(|| {
                     SceneError::new(
-                        "invalid_terrain",
+                        ErrorCode::InvalidTerrain,
                         format!("{path}.uri"),
                         format!(
                             "a {} by {} heightmap holds {} bytes of 16-bit samples",

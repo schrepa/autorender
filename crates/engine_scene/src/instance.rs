@@ -1,3 +1,4 @@
+use engine_settings::ErrorCode;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -99,7 +100,7 @@ fn insert_each<T, H>(
     for (index, item) in items.into_iter().enumerate() {
         let handle = insert(item).map_err(|error| {
             SceneError::new(
-                "asset_budget_exceeded",
+                ErrorCode::AssetBudgetExceeded,
                 format!("$.{field}[{index}]"),
                 error.to_string(),
             )
@@ -271,7 +272,7 @@ impl SceneDocument {
             }
             owned.remove(&mut world.resource_mut::<AssetLibrary>());
             return Err(SceneError::new(
-                "hierarchy_install_failed",
+                ErrorCode::HierarchyInstallFailed,
                 "$.entities",
                 error.to_string(),
             ));
@@ -347,7 +348,7 @@ impl SceneDocument {
         let mut owned = OwnedAssets::default();
         let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {
             SceneError::new(
-                "missing_asset_library",
+                ErrorCode::MissingAssetLibrary,
                 "$",
                 "install AssetLibrary in the world before instantiating a scene",
             )

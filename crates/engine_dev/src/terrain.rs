@@ -6,6 +6,7 @@
 //! tracks pressed.
 
 use engine_collision::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
+use engine_settings::ErrorCode;
 use std::sync::Arc;
 
 use engine_core::{
@@ -52,7 +53,7 @@ pub fn nav_go(
             .all(|value| value.is_finite() && value.abs() <= 1.0e6)
     {
         return Err(DevError::new(
-            "invalid_request",
+            ErrorCode::OutOfRange,
             "$.destination",
             "must be finite and within 1000000 meters",
         ));
@@ -63,7 +64,7 @@ pub fn nav_go(
         .filter(|&entity| world.get::<engine_core::NavAgent>(entity).is_some())
         .ok_or_else(|| {
             DevError::new(
-                "not_found",
+                ErrorCode::UnknownTerrain,
                 "$.entity",
                 format!("no navigation agent {id} in the scene"),
             )
@@ -87,14 +88,14 @@ pub fn change_world(
     for (ids, path) in [(remove, "$.remove"), (restore, "$.restore")] {
         if ids.len() > bounds::MAX_CHANGES {
             return Err(DevError::new(
-                "invalid_request",
+                ErrorCode::OutOfRange,
                 path,
                 format!("at most {} IDs", bounds::MAX_CHANGES),
             ));
         }
         if let Some(index) = ids.iter().position(|id| id.is_empty() || id.len() > 192) {
             return Err(DevError::new(
-                "invalid_request",
+                ErrorCode::OutOfRange,
                 format!("{path}[{index}]"),
                 "IDs are 1 to 192 bytes",
             ));
@@ -133,7 +134,7 @@ pub fn press_track(engine: &mut Engine, press: Press) -> Result<Value, DevError>
         (press.flatness, "flatness"),
     ] {
         let rule = engine_core::Deformer::rule_of(field).expect("deformers declare the field");
-        bounded(value, rule, "invalid_request", &format!("$.{field}"))?;
+        bounded(value, rule, ErrorCode::OutOfRange, &format!("$.{field}"))?;
     }
     let world = engine.app.world_mut();
     let seconds = world.resource::<FixedTime>().elapsed_seconds;
@@ -196,7 +197,7 @@ pub fn edit_terrain(
             .filter(|&entity| world.get::<Terrain>(entity).is_some())
             .ok_or_else(|| {
                 DevError::new(
-                    "not_found",
+                    ErrorCode::UnknownTerrain,
                     "$.terrain",
                     format!("no terrain entity {name} in the scene"),
                 )
@@ -206,12 +207,12 @@ pub fn edit_terrain(
             .iter(world)
             .map(|(entity, _)| entity)
             .next()
-            .ok_or_else(|| DevError::new("not_found", "$.terrain", "no terrain"))?,
+            .ok_or_else(|| DevError::new(ErrorCode::UnknownTerrain, "$.terrain", "no terrain"))?,
     };
     let terrain = world.get::<Terrain>(entity).cloned().expect("found above");
     if !matches!(terrain.source, TerrainSource::Generated(_)) {
         return Err(DevError::new(
-            "not_generated",
+            ErrorCode::NotGenerated,
             "$.terrain",
             "only terrains generated from layers take edits",
         ));
@@ -242,7 +243,7 @@ pub fn edit_terrain(
                     .all(|byte| byte.is_ascii_alphanumeric() || b"_-.".contains(&byte))
             {
                 return Err(DevError::new(
-                    "invalid_request",
+                    ErrorCode::InvalidRequest,
                     "$.id",
                     format!("id must be 1 to {MAX_EDIT_ID} letters, digits, '_', '-' and '.'"),
                 ));
@@ -278,15 +279,19 @@ pub fn edit_terrain(
                     Some(rest) => format!("change{rest}"),
                     None => invalid.field.into_owned(),
                 };
-                DevError::new("invalid_request", format!("$.{field}"), invalid.rule)
+                DevError::new(ErrorCode::OutOfRange, format!("$.{field}"), invalid.rule)
             })?;
             let terrains = world.resource::<Terrains>();
             let before = terrains.layers(entity).ok_or_else(|| {
-                DevError::new("not_generated", "$.terrain", "the terrain holds no layers")
+                DevError::new(
+                    ErrorCode::NotGenerated,
+                    "$.terrain",
+                    "the terrain holds no layers",
+                )
             })?;
-            let after = before
-                .with_stamps(&[stamp])
-                .map_err(|error| DevError::new("invalid_request", "$.change", error.to_string()))?;
+            let after = before.with_stamps(&[stamp]).map_err(|error| {
+                DevError::new(ErrorCode::InvalidRequest, "$.change", error.to_string())
+            })?;
             // The most the ground moved across the edit's reach.
             let span = radius + falloff;
             let mut largest = 0.0_f32;
@@ -353,7 +358,7 @@ pub fn edit_terrain(
 }
 
 fn coordinate(value: f64, path: &str) -> Result<f32, DevError> {
-    bounded(value, bounds::COORDINATE, "invalid_request", path).map(|value| value as f32)
+    bounded(value, bounds::COORDINATE, ErrorCode::OutOfRange, path).map(|value| value as f32)
 }
 
 /// A terrain's authored ID, or its entity bits outside scenes.
@@ -373,7 +378,7 @@ pub(crate) fn execute(
         DevRequest::TerrainHeight { points, .. } => {
             if points.is_empty() || points.len() > MAX_POINTS {
                 return Err(DevError::new(
-                    "invalid_request",
+                    ErrorCode::OutOfRange,
                     "$.points",
                     format!("name 1 to {MAX_POINTS} points"),
                 ));
@@ -443,7 +448,7 @@ pub(crate) fn execute(
             let options = options.unwrap_or_default();
             options.validate().map_err(|invalid| {
                 DevError::new(
-                    "invalid_request",
+                    ErrorCode::OutOfRange,
                     format!("$.options.{}", invalid.field),
                     invalid.rule,
                 )
@@ -454,7 +459,9 @@ pub(crate) fn execute(
                 .iter(world)
                 .find(|(_, terrain)| matches!(terrain.source, TerrainSource::Generated(_)))
                 .map(|(entity, _)| entity)
-                .ok_or_else(|| DevError::new("not_found", "$", "no generated terrain"))?;
+                .ok_or_else(|| {
+                    DevError::new(ErrorCode::UnknownTerrain, "$", "no generated terrain")
+                })?;
             let walk = world
                 .resource::<Terrains>()
                 .walk(entity, from, to, &options);
@@ -475,7 +482,7 @@ pub(crate) fn execute(
         } => {
             if points.is_empty() || points.len() > MAX_POINTS {
                 return Err(DevError::new(
-                    "invalid_request",
+                    ErrorCode::OutOfRange,
                     "$.points",
                     format!("name 1 to {MAX_POINTS} points"),
                 ));
@@ -485,7 +492,7 @@ pub(crate) fn execute(
                 Some(seconds) if seconds.is_finite() && seconds.abs() <= 1.0e9 => seconds,
                 Some(_) => {
                     return Err(DevError::new(
-                        "invalid_request",
+                        ErrorCode::OutOfRange,
                         "$.seconds",
                         "seconds must be finite and within +/-1e9",
                     ));
@@ -532,7 +539,7 @@ pub(crate) fn execute(
         } => {
             if points.is_empty() || points.len() > MAX_POINTS {
                 return Err(DevError::new(
-                    "invalid_request",
+                    ErrorCode::OutOfRange,
                     "$.points",
                     format!("name 1 to {MAX_POINTS} points"),
                 ));
@@ -543,7 +550,7 @@ pub(crate) fn execute(
                 Some(seconds) if seconds.is_finite() && seconds.abs() <= 1.0e9 => seconds,
                 Some(_) => {
                     return Err(DevError::new(
-                        "invalid_request",
+                        ErrorCode::OutOfRange,
                         "$.seconds",
                         "seconds must be finite and within +/-1e9",
                     ));
@@ -602,13 +609,13 @@ pub(crate) fn execute(
             bounded(
                 half_extent,
                 bounds::SWEEP_EXTENT,
-                "invalid_request",
+                ErrorCode::OutOfRange,
                 "$.half_extent",
             )?;
             bounded(
                 samples,
                 bounds::SWEEP_SAMPLES,
-                "invalid_request",
+                ErrorCode::OutOfRange,
                 "$.samples",
             )?;
             sweep(engine, Vec2::new(cx, cz), half_extent as f32, samples)
@@ -638,7 +645,7 @@ pub(crate) fn execute(
             };
             options.validate().map_err(|invalid| {
                 DevError::new(
-                    "invalid_request",
+                    ErrorCode::OutOfRange,
                     format!("$.{}", invalid.field),
                     invalid.rule,
                 )
@@ -647,14 +654,14 @@ pub(crate) fn execute(
             let terrains = world.resource::<Terrains>();
             let Some(sample) = terrains.sample(from.x, from.y) else {
                 return Err(DevError::new(
-                    "invalid_request",
+                    ErrorCode::InvalidRequest,
                     "$.from",
                     "no resident terrain lies under from",
                 ));
             };
             let Some(terrain) = terrains.terrain(sample.terrain) else {
                 return Err(DevError::new(
-                    "invalid_request",
+                    ErrorCode::InvalidRequest,
                     "$.from",
                     "no terrain lies under from",
                 ));

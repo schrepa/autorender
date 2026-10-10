@@ -17,14 +17,14 @@ pub struct GameHost<G: Game> {
 impl<G: Game> GameHost<G> {
     /// Starts the renderer of `canvas` and, while the browser compiles its
     /// pipelines, the engine and game `build` makes.
-    pub async fn launch(
+    pub async fn launch<E: Into<crate::Error>>(
         canvas: HtmlCanvasElement,
-        build: impl FnOnce() -> Result<(Engine, G), String>,
+        build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> Result<Self, JsValue> {
         console_error_panic_hook::set_once();
         let mut game = None;
         let app = BrowserApp::launch(canvas, || {
-            let (engine, built) = build()?;
+            let (engine, built) = build().map_err(Into::into)?;
             game = Some(built);
             Ok(engine)
         })
@@ -154,7 +154,7 @@ impl<G: Game> GameHost<G> {
     pub fn reload_scene(&mut self, source: &str, files: SceneFileSet) -> Result<(), JsValue> {
         self.game
             .reload_scene(self.app.engine_mut(), source, files.files())
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+            .map_err(crate::Error::from)?;
         self.app.apply_overrides();
         self.suspend();
         Ok(())
@@ -228,12 +228,13 @@ impl<G: Game> GameHost<G> {
         revision: &str,
         files: Option<SceneFileSet>,
     ) -> String {
+        use engine_core::ErrorCode;
         use engine_scene::{SceneDocument, SceneError};
         let files = files.unwrap_or_default();
         let result = (|| {
             let Some(scene) = self.game.scene() else {
                 return Err(SceneError {
-                    code: "unsupported_command",
+                    code: ErrorCode::UnsupportedCommand,
                     path: "$.op".into(),
                     message: "this game runs no authored scene to reload".into(),
                 });
@@ -242,14 +243,14 @@ impl<G: Game> GameHost<G> {
                 (expected_revision.parse::<u64>(), revision.parse::<u64>())
             else {
                 return Err(SceneError {
-                    code: "invalid_revision",
+                    code: ErrorCode::InvalidRevision,
                     path: "$.revision".into(),
                     message: "revisions must be unsigned decimal strings".into(),
                 });
             };
             if scene.revision() != expected {
                 return Err(SceneError {
-                    code: "revision_conflict",
+                    code: ErrorCode::RevisionConflict,
                     path: "$.expected_revision".into(),
                     message: format!("active revision is {}", scene.revision()),
                 });
@@ -257,7 +258,7 @@ impl<G: Game> GameHost<G> {
             let document = SceneDocument::from_json(source)?;
             if document.id != scene.id() || document.revision != target {
                 return Err(SceneError {
-                    code: "revision_conflict",
+                    code: ErrorCode::RevisionConflict,
                     path: "$.revision".into(),
                     message: "saved scene ID and revision must match the requested scene".into(),
                 });

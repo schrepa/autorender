@@ -6,7 +6,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 settings! {
     /// Occlusion culling settings: whether GPU-presented frames draw what the
@@ -26,8 +26,6 @@ settings! {
         pub enabled: bool = true => any,
     }
 }
-
-impl ExtraRules for OcclusionCulling {}
 
 impl OcclusionCulling {
     /// What a world without these settings reads as: no occlusion culling.
@@ -53,8 +51,6 @@ settings! {
         pub enabled: bool = true => any,
     }
 }
-
-impl ExtraRules for SubpixelCulling {}
 
 impl SubpixelCulling {
     /// What a world without these settings reads as: no sub-pixel culling.

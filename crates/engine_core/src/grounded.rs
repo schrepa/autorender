@@ -7,7 +7,7 @@
 //! stand on the ground the frame they spawn.
 
 use bevy_ecs::prelude::*;
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
@@ -28,8 +28,6 @@ settings! {
         pub offset: f32 = 0.0 => range(-10_000.0, 10_000.0),
     }
 }
-
-impl ExtraRules for Grounded {}
 
 /// Where a grounded entity last sampled the ground: its x and z, the
 /// offset it applied, the terrains' revision then, and the level of the

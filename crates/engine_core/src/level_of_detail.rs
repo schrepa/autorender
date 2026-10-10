@@ -15,7 +15,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 settings! {
     /// Level of detail settings: whether instances draw
@@ -44,8 +44,6 @@ settings! {
         pub fade_seconds: f32 = 0.5 => range(0.0, 4.0),
     }
 }
-
-impl ExtraRules for LevelOfDetail {}
 
 impl LevelOfDetail {
     /// What a world without these settings reads as: every instance at full detail.

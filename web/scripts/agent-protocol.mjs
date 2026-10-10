@@ -38,7 +38,7 @@ function envelope(request, session, response) {
 
 function validate(request, session) {
   if (!request || typeof request !== "object" || Array.isArray(request)) throw new AgentError("invalid_request", "Expected a request object.");
-  if (request.version !== VERSION) throw new AgentError("protocol_version", "Only protocol version 1 is supported.", "version");
+  if (request.version !== VERSION) throw new AgentError("unsupported_version", "Only protocol version 1 is supported.", "version");
   if (typeof request.id !== "string" || !ID_PATTERN.test(request.id)) throw new AgentError("invalid_request_id", "Use 1–96 ASCII letters, digits, underscores, dots, colons, or hyphens.", "id");
   if (request.session !== session) throw new AgentError("session_mismatch", "This request names a different development session.", "session");
   if (!request.command || typeof request.command !== "object" || Array.isArray(request.command) || typeof request.command.op !== "string") {

@@ -18,14 +18,14 @@ function options(args) {
   const result = {};
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i];
-    if (!key.startsWith("--") || !args[i + 1] || args[i + 1].startsWith("--") || key.slice(2) in result) throw new AgentError("arguments", `Expected unique --name value options; received ${key}.`);
+    if (!key.startsWith("--") || !args[i + 1] || args[i + 1].startsWith("--") || key.slice(2) in result) throw new AgentError("invalid_arguments", `Expected unique --name value options; received ${key}.`);
     result[key.slice(2)] = args[i + 1];
   }
   return result;
 }
 
 function portValue(value = "7331") {
-  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65_535) throw new AgentError("arguments", "Port must be an integer from 1 to 65535.", "port");
+  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65_535) throw new AgentError("invalid_arguments", "Port must be an integer from 1 to 65535.", "port");
   return Number(value);
 }
 
@@ -45,7 +45,7 @@ async function readJson(path) {
 }
 
 function checkOptions(values, names) {
-  for (const key of Object.keys(values)) if (!names.includes(key)) throw new AgentError("arguments", `Unknown option --${key}.`);
+  for (const key of Object.keys(values)) if (!names.includes(key)) throw new AgentError("invalid_arguments", `Unknown option --${key}.`);
 }
 
 async function serve(values) {
@@ -97,7 +97,7 @@ async function client(verb, values) {
   if (verb === "sessions" || verb === "development") {
     return fetchJson(endpoint, `/${verb}`, { signal: AbortSignal.timeout(5_000) });
   }
-  if (values.file && values.json) throw new AgentError("arguments", "Use either --file or --json, not both.");
+  if (values.file && values.json) throw new AgentError("invalid_arguments", "Use either --file or --json, not both.");
   const data = values.file ? await readJson(values.file) : values.json ? JSON.parse(values.json) : {};
   let request;
   if (verb === "request" && data.version !== undefined) {
@@ -105,7 +105,7 @@ async function client(verb, values) {
     if (values.session && values.session !== request.session) throw new AgentError("session_mismatch", "The --session option must match the request file.");
     if (values.id && values.id !== request.id) throw new AgentError("invalid_request_id", "The --id option must match the request file.");
   } else {
-    if (!values.session) throw new AgentError("arguments", "Provide --session from the serve or sessions response.");
+    if (!values.session) throw new AgentError("invalid_arguments", "Provide --session from the serve or sessions response.");
     const command = verb === "request" ? data : { ...data, op: verb };
     request = { version: VERSION, id: values.id ?? randomUUID(), session: values.session, command };
   }
@@ -139,7 +139,7 @@ async function main() {
     await startIteration(values);
     return;
   }
-  if (verb !== "sessions" && verb !== "development" && verb !== "request" && !verbs.has(verb)) throw new AgentError("arguments", `Use watch, serve, development, sessions, request, or ${[...verbs].join(", ")}.`);
+  if (verb !== "sessions" && verb !== "development" && verb !== "request" && !verbs.has(verb)) throw new AgentError("invalid_arguments", `Use watch, serve, development, sessions, request, or ${[...verbs].join(", ")}.`);
   const response = await client(verb, values);
   console.log(JSON.stringify(response));
   if (response.ok === false) process.exitCode = 1;

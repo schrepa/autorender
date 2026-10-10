@@ -174,14 +174,14 @@ pub fn stress_observation(engine: &Engine, generation: u32) -> StressSnapshot {
             complete: report.complete,
             error: collision
                 .and_then(CollisionWorld::last_error)
-                .map(|error| error.code().to_owned()),
+                .map(|error| error.code().as_str().to_owned()),
             sensor_pairs: events.map_or(0, |events| events.pairs().len()),
             sensor_events: events.map_or(0, |events| events.events().len()),
             sensor_complete: events.is_none_or(SensorEvents::complete),
             sensor_candidates: events.map_or(0, SensorEvents::candidate_pairs),
             sensor_error: events
                 .and_then(SensorEvents::error)
-                .map(|error| error.code().to_owned()),
+                .map(|error| error.code().as_str().to_owned()),
             sensor_attempted_tick: events
                 .and_then(SensorEvents::tick)
                 .map(|tick| tick.to_string()),

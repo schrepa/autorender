@@ -61,6 +61,7 @@ impl PathSample {
 }
 
 settings! {
+    extra_rules;
     /// A road or track along the ground.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -820,8 +821,6 @@ settings! {
         pub turn_cost: f32 = 40.0 => range(0.0, 1.0e6),
     }
 }
-
-impl ExtraRules for RouteOptions {}
 
 /// A route found: its terrain-local points, corners rounded, the meters
 /// along its walk between samples, the steepest grade of its steps within

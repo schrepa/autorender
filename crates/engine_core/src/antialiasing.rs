@@ -6,7 +6,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 settings! {
     /// Temporal antialiasing settings: whether ordinary GPU-presented frames
@@ -24,8 +24,6 @@ settings! {
         pub enabled: bool = false => any,
     }
 }
-
-impl ExtraRules for TemporalAntialiasing {}
 
 impl TemporalAntialiasing {
     /// What a world without these settings reads as: no temporal antialiasing.

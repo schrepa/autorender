@@ -8,7 +8,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 settings! {
     /// Occupancy settings. Requires version 9.
@@ -34,8 +34,6 @@ settings! {
         pub far_radius: f32 = 4096.0 => range(0.0, 65536.0),
     }
 }
-
-impl ExtraRules for Occupancy {}
 
 impl Occupancy {
     /// What a world without these settings reads as: no darkening under cover.

@@ -520,5 +520,5 @@ fn io_error(path: &Path, error: std::io::Error) -> ImportError {
     ImportError::new("source_io", path.display().to_string(), error.to_string())
 }
 fn dev_error(error: engine_dev::DevError) -> ImportError {
-    ImportError::new(error.code, error.path, error.message)
+    ImportError::new(error.code.as_str(), error.path, error.message)
 }

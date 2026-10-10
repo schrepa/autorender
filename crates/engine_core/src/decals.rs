@@ -23,7 +23,7 @@ use crate::{
     extraction::{Nearest, Poses},
     retained_render::{IDENTITY_ROWS, pose_rows},
 };
-use engine_settings::{ExtraRules, Rule, Setting, settings};
+use engine_settings::{InvalidSetting, Rule, Setting, settings};
 
 /// How a decal combines with the surface it lies on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -93,10 +93,14 @@ impl Decal {
     /// The widest [`Self::fade_angle`], in degrees: a right angle.
     pub const MAX_FADE_DEGREES: f32 = 90.0;
 
-    /// Whether renderers can draw this decal: its values keep their rules.
-    pub fn is_usable(&self) -> bool {
-        self.opacity.check("opacity", Self::OPACITY).is_ok()
-            && (0.0..=Self::MAX_FADE_DEGREES.to_radians()).contains(&self.fade_angle)
+    /// The first value breaking its rule, if any: frames draw only valid
+    /// decals and count the others.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        self.opacity.check("opacity", Self::OPACITY)?;
+        self.fade_angle.check(
+            "fade_angle",
+            Rule::Range(0.0, f64::from(Self::MAX_FADE_DEGREES.to_radians())),
+        )
     }
 }
 
@@ -118,8 +122,6 @@ settings! {
         pub max_decals: Option<u32> = None => budget,
     }
 }
-
-impl ExtraRules for DecalSettings {}
 
 impl DecalSettings {
     /// What a world without these settings reads as: no decals.
@@ -206,6 +208,7 @@ impl DecalExtraction {
         snapshot.decal_materials.clear();
         snapshot.decal_textures.clear();
         snapshot.dropped_decals = 0;
+        snapshot.invalid_decals = 0;
         if !settings.enabled {
             return;
         }
@@ -214,7 +217,8 @@ impl DecalExtraction {
         let eye = snapshot.camera_position;
         self.candidates.clear();
         for (position, (entity, decal)) in self.query.iter(world).enumerate() {
-            if !decal.is_usable() {
+            if decal.validate().is_err() {
+                snapshot.invalid_decals += 1;
                 continue;
             }
             if self.hints.len() <= position {

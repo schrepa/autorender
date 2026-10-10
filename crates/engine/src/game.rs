@@ -1,6 +1,7 @@
 //! Games the page runs: the state beside an [`Engine`] that
 //! [`crate::export_game!`] exports with the methods every game has.
 
+use engine_core::ErrorCode;
 use engine_core::{Engine, bevy_ecs::resource::Resource};
 use engine_scene::{SceneError, SceneFiles, SceneInstance};
 
@@ -31,7 +32,7 @@ pub trait Game: 'static {
         _files: &SceneFiles,
     ) -> Result<(), SceneError> {
         Err(SceneError {
-            code: "unsupported_command",
+            code: ErrorCode::UnsupportedCommand,
             path: "$.op".into(),
             message: "this game runs no authored scene".into(),
         })

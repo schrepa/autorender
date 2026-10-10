@@ -1,3 +1,4 @@
+use engine_settings::ErrorCode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::{MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix};
@@ -58,7 +59,7 @@ impl SceneDocument {
         for entity in &streamed.entities {
             if known.contains(entity.source.id.as_str()) {
                 return Err(SceneError::new(
-                    "duplicate_id",
+                    ErrorCode::DuplicateId,
                     format!("{}.id", entity.path),
                     format!(
                         "expanded entity ID '{}' is already used by an entity",
@@ -92,7 +93,7 @@ impl SceneDocument {
                 let path = format!("{path}[{local_index}]");
                 if entity.prefab.is_some() {
                     return Err(SceneError::new(
-                        "nested_prefab",
+                        ErrorCode::NestedPrefab,
                         format!("{path}.prefab"),
                         "prefab definitions cannot reference another prefab",
                     ));
@@ -181,7 +182,7 @@ fn expand_list(
     for entity in &entities {
         if !ids.insert(entity.source.id.as_str()) {
             return Err(SceneError::new(
-                "duplicate_id",
+                ErrorCode::DuplicateId,
                 format!("{}.id", entity.path),
                 format!("expanded entity ID '{}' is already used", entity.source.id),
             ));
@@ -189,7 +190,7 @@ fn expand_list(
         // Agents walk unparented.
         if entity.source.nav_agent.is_some() && entity.source.parent.is_some() {
             return Err(SceneError::new(
-                "invalid_nav_agent",
+                ErrorCode::InvalidNavAgent,
                 format!("{}.nav_agent", entity.path),
                 "only roots walk; give the placement or root the agent instead",
             ));
@@ -198,7 +199,7 @@ fn expand_list(
         // themselves.
         if entity.source.grounded.is_some() && entity.source.parent.is_some() {
             return Err(SceneError::new(
-                "invalid_grounded",
+                ErrorCode::InvalidGrounded,
                 format!("{}.grounded", entity.path),
                 "only roots stand on the ground; ground the placement or root instead",
             ));
@@ -234,7 +235,7 @@ fn validate_object(
         (None, None) => {}
         _ => {
             return Err(SceneError::new(
-                "invalid_renderable",
+                ErrorCode::InvalidRenderable,
                 path,
                 "an entity requires both mesh and material, or neither; prefab instance roots cannot also render",
             ));
@@ -253,7 +254,7 @@ fn validate_object(
     // Every field keeps its rule, each component its own.
     entity
         .validate()
-        .map_err(|invalid| crate::error::broken_rule("invalid_value", path, invalid))?;
+        .map_err(|invalid| crate::error::broken_rule(ErrorCode::InvalidValue, path, invalid))?;
     if let Some(spline) = &entity.spline {
         spline.validate(&format!("{path}.spline"))?;
         reference(&spline.mesh, mesh_ids, &format!("{path}.spline.mesh"))?;
@@ -268,7 +269,7 @@ fn validate_object(
     }
     if entity.name.len() > 128 || entity.name.chars().any(char::is_control) {
         return Err(SceneError::new(
-            "invalid_name",
+            ErrorCode::InvalidName,
             format!("{path}.name"),
             "names must be at most 128 UTF-8 bytes without control characters",
         ));
@@ -279,7 +280,7 @@ fn validate_object(
         identifier(tag, &path)?;
         if !tags.insert(tag) {
             return Err(SceneError::new(
-                "duplicate_tag",
+                ErrorCode::DuplicateTag,
                 path,
                 format!("tag '{tag}' is repeated"),
             ));
@@ -307,7 +308,7 @@ fn validate_graph<'a>(
                 .map(|parent| {
                     ids.get(parent.as_str()).copied().ok_or_else(|| {
                         SceneError::new(
-                            "unknown_parent",
+                            ErrorCode::UnknownParent,
                             format!("{path}.parent"),
                             format!("no entity in this scope has ID '{parent}'"),
                         )
@@ -333,14 +334,14 @@ fn validate_graph<'a>(
             }
             if path.contains(&index) {
                 return Err(SceneError::new(
-                    "hierarchy_cycle",
+                    ErrorCode::HierarchyCycle,
                     format!("{}.parent", entries[index].1),
                     "parent references form a cycle",
                 ));
             }
             if path.len() > MAX_DEPTH {
                 return Err(SceneError::new(
-                    "hierarchy_depth",
+                    ErrorCode::HierarchyDepth,
                     format!("{}.parent", entries[start].1),
                     "hierarchies allow at most 64 parent edges",
                 ));
@@ -357,7 +358,7 @@ fn validate_graph<'a>(
             });
             if depth > MAX_DEPTH {
                 return Err(SceneError::new(
-                    "hierarchy_depth",
+                    ErrorCode::HierarchyDepth,
                     format!("{}.parent", entries[index].1),
                     "hierarchies allow at most 64 parent edges",
                 ));
@@ -371,7 +372,7 @@ fn validate_graph<'a>(
                 );
             if !valid_global_matrix(matrix) {
                 return Err(SceneError::new(
-                    "invalid_world_transform",
+                    ErrorCode::InvalidWorldTransform,
                     format!("{}.transform", entries[index].1),
                     format!(
                         "composed transform for '{}' must be finite and invertible, with finite normal data and normalized normal-matrix inverse infinity norm <= 10000; reduce extreme anisotropy or shear",

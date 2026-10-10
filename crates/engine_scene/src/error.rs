@@ -1,5 +1,6 @@
 use std::{error::Error, fmt};
 
+use engine_settings::ErrorCode;
 use serde::Serialize;
 
 /// Actionable load failure. `code` is stable; `message` is intended for people.
@@ -8,14 +9,14 @@ use serde::Serialize;
 /// include their line and column in `message` and use `$` for the path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SceneError {
-    pub code: &'static str,
+    pub code: ErrorCode,
     pub path: String,
     pub message: String,
 }
 
 impl SceneError {
     pub(crate) fn new(
-        code: &'static str,
+        code: ErrorCode,
         path: impl Into<String>,
         message: impl Into<String>,
     ) -> Self {
@@ -42,7 +43,7 @@ impl Error for SceneError {}
 /// The error of a value at authored path `path` breaking its field's rule:
 /// code `code`, the field's own path, and the rule.
 pub(crate) fn broken_rule(
-    code: &'static str,
+    code: ErrorCode,
     path: &str,
     invalid: engine_settings::InvalidSetting,
 ) -> SceneError {

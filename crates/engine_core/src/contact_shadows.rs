@@ -6,7 +6,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 settings! {
     /// Contact shadow settings. Requires version 9.
@@ -29,8 +29,6 @@ settings! {
         pub distance: f32 = 80.0 => range(1.0, 1000.0),
     }
 }
-
-impl ExtraRules for ContactShadows {}
 
 impl ContactShadows {
     /// What a world without these settings reads as: no contact shadows.

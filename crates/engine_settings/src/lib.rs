@@ -10,6 +10,9 @@ use std::borrow::Cow;
 
 use glam::Vec3;
 
+mod codes;
+pub use codes::ErrorCode;
+
 /// A field outside its valid values: its name and the rule it breaks, such
 /// as `must be in [0, 1]`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -582,9 +585,10 @@ impl Setting for Vec3 {
 /// `power_of_two(min, max)`, `multiple(step, min, max)`, or
 /// `same(Other::rule_of("field"))` for a field mirroring another type's). The
 /// caller derives what the type needs (the JSON schema included, which states
-/// the rules when the caller's `schema` feature is on) and implements
-/// [`ExtraRules`] for it. A declared type nests in others as a field of rule
-/// `any`, checked by its own rules.
+/// the rules when the caller's `schema` feature is on). A type with rules
+/// across its fields starts with `extra_rules;` and implements
+/// [`ExtraRules`] itself; the others keep none. A declared type nests in
+/// others as a field of rule `any`, checked by its own rules.
 ///
 /// A type with no JSON schema of its own, such as a runtime type an authored
 /// one mirrors, starts with `unauthored;`; its mirror's schema states the
@@ -592,7 +596,7 @@ impl Setting for Vec3 {
 #[macro_export]
 macro_rules! settings {
     (
-        @declare [$($schema:tt)*]
+        @declare [$($schema:tt)*] $rules:ident
         $(#[$meta:meta])*
         pub struct $name:ident {
             $(
@@ -614,6 +618,8 @@ macro_rules! settings {
                 }
             }
         }
+
+        $crate::settings!(@rules $rules $name);
 
         impl $name {
             /// Ok when every field keeps its rule, as the schema states it,
@@ -677,12 +683,27 @@ macro_rules! settings {
             }
         }
     };
+    // Types without rules across fields keep none; `extra_rules;` types
+    // implement `ExtraRules` themselves.
+    (@rules fields $name:ident) => {
+        impl $crate::ExtraRules for $name {}
+    };
+    (@rules extra $name:ident) => {};
+    (unauthored; extra_rules; $($rest:tt)*) => {
+        $crate::settings!(@declare [] extra $($rest)*);
+    };
     (unauthored; $($rest:tt)*) => {
-        $crate::settings!(@declare [] $($rest)*);
+        $crate::settings!(@declare [] fields $($rest)*);
+    };
+    (extra_rules; $($rest:tt)*) => {
+        $crate::settings!(
+            @declare [#[cfg_attr(feature = "schema", schemars(transform = Self::state_rules))]] extra
+            $($rest)*
+        );
     };
     ($($rest:tt)*) => {
         $crate::settings!(
-            @declare [#[cfg_attr(feature = "schema", schemars(transform = Self::state_rules))]]
+            @declare [#[cfg_attr(feature = "schema", schemars(transform = Self::state_rules))]] fields
             $($rest)*
         );
     };

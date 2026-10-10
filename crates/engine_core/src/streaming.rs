@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::math::{max, min};
 use crate::{Camera, FrameTime, GlobalTransforms, TerrainFocus};
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 /// One grid items stream in: its cells' side and the meters from a source
 /// within which they load (at [`WorldStreaming::distance`] 1), and the
@@ -98,8 +98,6 @@ settings! {
         pub frozen: bool = false => any,
     }
 }
-
-impl ExtraRules for WorldStreaming {}
 
 impl WorldStreaming {
     /// What a world without these settings reads as: nothing streamed.

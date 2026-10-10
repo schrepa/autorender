@@ -6,6 +6,7 @@
 //! files are read, with [`version_required`].
 
 use crate::{MeshSource, SCENE_VERSION, SceneDocument, SceneEnvironment, SceneError, SceneObject};
+use engine_settings::ErrorCode;
 
 /// A feature a scene version introduced: the version, what it is (as
 /// messages and descriptions name it) and the authored path of a
@@ -325,7 +326,7 @@ fn rules() -> [Rule; 27] {
 /// `since`.
 pub(crate) fn version_required(path: impl Into<String>, what: &str, since: u32) -> SceneError {
     SceneError::new(
-        "version_required",
+        ErrorCode::VersionRequired,
         path,
         format!(
             "{what} require scene version {since}; set version to {since} and increment revision"
@@ -365,7 +366,7 @@ impl SceneDocument {
     pub(crate) fn check_version(&self) -> Result<(), SceneError> {
         if !(1..=SCENE_VERSION).contains(&self.version) {
             return Err(SceneError::new(
-                "unsupported_version",
+                ErrorCode::UnsupportedVersion,
                 "$.version",
                 format!(
                     "expected version 1 through {SCENE_VERSION}; found {}",

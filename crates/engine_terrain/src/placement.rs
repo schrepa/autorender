@@ -97,9 +97,8 @@ settings! {
     }
 }
 
-impl ExtraRules for PlacementChoice {}
-
 settings! {
+    extra_rules;
     /// One layer of objects on a surface.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -192,8 +191,6 @@ settings! {
     }
 }
 
-impl ExtraRules for FarPlacement {}
-
 /// The smallest and largest scale placed objects take.
 const MIN_SCALE: f32 = 0.001;
 const MAX_SCALE: f32 = 1000.0;
@@ -245,8 +242,6 @@ settings! {
         pub level: u8 = 0 => range(0, MAX_LEVEL),
     }
 }
-
-impl ExtraRules for AuthoredPlacement {}
 
 fn is_one(value: &f32) -> bool {
     *value == 1.0

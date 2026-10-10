@@ -14,6 +14,7 @@ use engine_core::{
     Atmosphere, Environment, EnvironmentSection, InvalidSetting, Shadows, bevy_ecs::prelude::World,
     glam::Vec3,
 };
+use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
 use crate::SceneError;
@@ -147,7 +148,7 @@ impl SceneAtmosphere {
 /// The error of section `path`'s `invalid` field.
 fn section_error(path: &str, invalid: InvalidSetting) -> SceneError {
     SceneError::new(
-        "invalid_environment",
+        ErrorCode::InvalidEnvironment,
         format!("{path}.{}", invalid.field),
         invalid.rule,
     )

@@ -1,6 +1,7 @@
 //! Native source authoring shared by command-line clients. Saves preserve the
 //! validated candidate bytes and replace the source only after revision checks.
 
+use engine_settings::ErrorCode;
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
@@ -62,7 +63,7 @@ pub fn read_scene_source(path: &Path) -> Result<String, DevError> {
         > MAX_SOURCE_BYTES as u64
     {
         return Err(DevError::new(
-            "source_too_large",
+            ErrorCode::SourceTooLarge,
             path.display().to_string(),
             format!("scene source exceeds {MAX_SOURCE_BYTES} bytes"),
         ));
@@ -73,14 +74,14 @@ pub fn read_scene_source(path: &Path) -> Result<String, DevError> {
         .map_err(|error| io_error(path, error))?;
     if bytes.len() > MAX_SOURCE_BYTES {
         return Err(DevError::new(
-            "source_too_large",
+            ErrorCode::SourceTooLarge,
             path.display().to_string(),
             format!("scene source exceeds {MAX_SOURCE_BYTES} bytes"),
         ));
     }
     String::from_utf8(bytes).map_err(|error| {
         DevError::new(
-            "invalid_utf8",
+            ErrorCode::InvalidUtf8,
             path.display().to_string(),
             error.to_string(),
         )
@@ -105,14 +106,14 @@ pub fn save_scene(
     let candidate_scene = SceneDocument::from_json(candidate)?;
     let next = expected_revision.checked_add(1).ok_or_else(|| {
         DevError::new(
-            "revision_exhausted",
+            ErrorCode::RevisionExhausted,
             "$.revision",
             "scene revision cannot advance past u64::MAX",
         )
     })?;
     if candidate_scene.revision != next {
         return Err(DevError::new(
-            "invalid_revision",
+            ErrorCode::InvalidRevision,
             "$.revision",
             format!("candidate revision must be {next}"),
         ));
@@ -122,7 +123,7 @@ pub fn save_scene(
         .file_name()
         .ok_or_else(|| {
             DevError::new(
-                "invalid_path",
+                ErrorCode::InvalidPath,
                 path.display().to_string(),
                 "source must name a file",
             )
@@ -131,7 +132,7 @@ pub fn save_scene(
     let lock_path = path.with_file_name(format!(".{name}.engine-dev.lock"));
     let lock_file = OpenOptions::new().write(true).create_new(true).open(&lock_path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::AlreadyExists {
-            DevError::new("source_locked", lock_path.display().to_string(), "another save owns this source lock; after a crashed save, confirm no writer is running before removing the lock")
+            DevError::new(ErrorCode::SourceLocked, lock_path.display().to_string(), "another save owns this source lock; after a crashed save, confirm no writer is running before removing the lock")
         } else { io_error(&lock_path, error) }
     })?;
     let _lock = TemporaryFile {
@@ -142,7 +143,7 @@ pub fn save_scene(
     let current = SceneDocument::from_json(&original)?;
     if current.revision != expected_revision {
         return Err(DevError::new(
-            "revision_conflict",
+            ErrorCode::RevisionConflict,
             "$.revision",
             format!(
                 "expected revision {expected_revision}, saved source is {}",
@@ -152,7 +153,7 @@ pub fn save_scene(
     }
     if candidate_scene.id != current.id {
         return Err(DevError::new(
-            "scene_id_mismatch",
+            ErrorCode::SceneIdMismatch,
             "$.id",
             "candidate must retain the saved scene ID",
         ));
@@ -184,7 +185,7 @@ pub fn save_scene(
     // this best-effort check as a filesystem compare-and-swap guarantee.
     if read_scene_source(&path)? != original {
         return Err(DevError::new(
-            "source_changed",
+            ErrorCode::SourceChanged,
             path.display().to_string(),
             "source changed during save; re-read it before retrying",
         ));
@@ -212,5 +213,9 @@ impl Drop for TemporaryFile {
 }
 
 fn io_error(path: &Path, error: std::io::Error) -> DevError {
-    DevError::new("source_io", path.display().to_string(), error.to_string())
+    DevError::new(
+        ErrorCode::SourceIo,
+        path.display().to_string(),
+        error.to_string(),
+    )
 }

@@ -132,6 +132,11 @@ pub const {name}: [&str; {}] = {:?};
         "profile_max_events": engine_profile::MAX_EVENTS,
         "queries": queries,
         "controls": controls,
+        // Every error code replies answer with and what it means.
+        "errors": engine_settings::ErrorCode::ALL
+            .iter()
+            .map(|&(code, name, _)| (name.to_owned(), serde_json::json!(code.description())))
+            .collect::<serde_json::Map<_, _>>(),
     });
     std::fs::write(
         output.join("protocol.json"),

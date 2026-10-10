@@ -6,6 +6,7 @@ use engine_core::{
     LocalLight, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MIN_SPOT_DEGREES, ParticleBlend,
     ParticleEmitter, Spot, glam::Vec3,
 };
+use engine_settings::ErrorCode;
 use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
 use serde::{Deserialize, Serialize};
 
@@ -36,9 +37,8 @@ settings! {
     }
 }
 
-impl ExtraRules for SceneLight {}
-
 settings! {
+    extra_rules;
     /// The cone of a spot light.
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -79,7 +79,7 @@ impl SceneLight {
     /// The component at authored path `path`, validated.
     pub fn runtime(&self, path: &str) -> Result<LocalLight, SceneError> {
         self.validate()
-            .map_err(|invalid| broken_rule("invalid_light", path, invalid))?;
+            .map_err(|invalid| broken_rule(ErrorCode::InvalidLight, path, invalid))?;
         let spot = self.spot.map(|spot| spot.spot());
         Ok(LocalLight {
             color: Vec3::from_array(self.color),
@@ -127,6 +127,7 @@ fn default_emitter() -> SceneEmitter {
 }
 
 settings! {
+    extra_rules;
     /// A particle emitter on this entity. Requires version 6.
     /// Omitted fields take the engine's defaults.
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -212,7 +213,7 @@ impl SceneEmitter {
     /// The component at authored path `path`, validated.
     pub fn runtime(&self, path: &str) -> Result<ParticleEmitter, SceneError> {
         self.validate()
-            .map_err(|invalid| broken_rule("invalid_particles", path, invalid))?;
+            .map_err(|invalid| broken_rule(ErrorCode::InvalidParticles, path, invalid))?;
         Ok(self.emitter())
     }
 

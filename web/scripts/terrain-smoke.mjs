@@ -417,7 +417,7 @@ try {
   assert.ok(Math.hypot(first[0] + 400, first[1] - 100) < 3 && Math.hypot(last[0] - 300, last[1] + 250) < 3, `the route joins its ends: ${JSON.stringify([first, last])}`);
   assert.ok(route.length >= Math.hypot(700, 350) - 8, `a route is no shorter than its ends' distance: ${route.length}`);
   const unrouted = await command("terrain_route", { from: [-400, 100], to: [300, -250], level: 99 }, false);
-  assert.equal(unrouted.error.code, "invalid_request");
+  assert.equal(unrouted.error.code, "out_of_range");
   checks.push({ check: "route", points: route.points.length, length: route.length, steepest: route.steepest });
 
   // Heights: the plateau is flat at 30 m, the hole is a hole, outside is null.

@@ -64,7 +64,7 @@ fn scene_command(arguments: &[String]) -> Result<Value, DevError> {
         {
             let revision = revision.parse::<u64>().map_err(|_| {
                 DevError::new(
-                    "invalid_revision",
+                    engine_dev::ErrorCode::InvalidRevision,
                     "--expected-revision",
                     "expected an unsigned 64-bit decimal integer",
                 )
@@ -80,7 +80,7 @@ fn scene_command(arguments: &[String]) -> Result<Value, DevError> {
             Ok(json!({"schema":engine_scene::SceneDocument::schema_json()}))
         }
         _ => Err(DevError::new(
-            "invalid_arguments",
+            engine_dev::ErrorCode::InvalidArguments,
             "$",
             "usage: cargo xtask scene validate --file PATH | save --file TARGET --candidate PATH --expected-revision N | schema",
         )),

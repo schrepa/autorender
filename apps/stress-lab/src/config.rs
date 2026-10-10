@@ -65,6 +65,7 @@ impl Setting for StressScene {}
 pub const MESH_VARIETIES: [u32; 4] = [1, 8, 32, 64];
 
 settings! {
+    extra_rules;
     /// A deterministic stress workload. Configuration changes rebuild the
     /// owned workload outside the frame loop; configurations without `scene`
     /// build the tower field. The bounds are sanity bounds for URLs and the

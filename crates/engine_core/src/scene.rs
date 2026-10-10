@@ -390,11 +390,15 @@ pub struct RenderSnapshot {
     pub lights: Vec<crate::RenderLight>,
     /// Usable lights beyond the budget, or without a valid pose.
     pub dropped_lights: usize,
+    /// Lights breaking their rules, which no frame draws.
+    pub invalid_lights: usize,
     /// This frame's particle emitters, within the particle
     /// budget.
     pub emitters: Vec<crate::RenderEmitter>,
     /// Particles of emitters skipped beyond the budget.
     pub dropped_particles: usize,
+    /// Emitters breaking their rules, which no frame draws.
+    pub invalid_emitters: usize,
     /// This frame's decals, within the settings' budget.
     pub decals: Vec<crate::RenderDecal>,
     /// Materials with maps that decals draw with, each once, and their
@@ -403,6 +407,8 @@ pub struct RenderSnapshot {
     pub decal_textures: Vec<RenderTexture>,
     /// Usable decals beyond the budget.
     pub dropped_decals: usize,
+    /// Decals breaking their rules, which no frame draws.
+    pub invalid_decals: usize,
     /// This frame's usable reflection probes, nearest the
     /// camera first, within the settings' budget.
     pub reflection_probes: Vec<crate::RenderReflectionProbe>,

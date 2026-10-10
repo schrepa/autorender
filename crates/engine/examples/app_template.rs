@@ -31,7 +31,7 @@ fn turn(time: Res<FixedTime>, mut cubes: Query<&mut Transform, With<Turning>>) {
 }
 
 /// The game's engine and state.
-pub fn build() -> Result<(Engine, Template), String> {
+pub fn build() -> engine::Result<(Engine, Template)> {
     let mut engine = Engine::default();
     engine
         .app

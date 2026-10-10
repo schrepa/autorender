@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::math::{clamp, max, min};
 use crate::{Camera, FixedTime, GlobalTransforms, Terrains};
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 /// The most meters a stamp sinks the ground.
 pub const MAX_TRACK_DEPTH: f32 = 10.0;
@@ -75,8 +75,6 @@ settings! {
     }
 }
 
-impl ExtraRules for Deformation {}
-
 impl Deformation {
     /// What a world without these settings reads as: no tracks.
     pub fn off() -> Self {
@@ -119,8 +117,6 @@ settings! {
         pub flatness: f32 = 0.5 => range(0.0, 1.0),
     }
 }
-
-impl ExtraRules for Deformer {}
 
 /// One stamp: a capsule over the ground from world `from` to `to` (x and
 /// z) of `radius` meters (0.01 to 50), sinking ground as deformable as that

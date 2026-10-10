@@ -3,6 +3,7 @@
 //! Calls are synchronous between browser frames. Input is a temporary batch,
 //! replaced by each input command and consumed only by explicit stepping.
 use crate::browser::BrowserApp;
+use engine_core::ErrorCode;
 use engine_core::{ActionInput, DevStepError, InputState};
 use engine_dev::{BrowserControl, DevError, DevTools};
 use engine_scene::SceneInstance;
@@ -77,14 +78,16 @@ impl DevBrowser {
             return self.error(
                 app,
                 scene,
-                "request_too_large",
+                ErrorCode::RequestTooLarge,
                 "$",
                 &format!("command exceeds {} bytes", engine_dev::MAX_REQUEST_BYTES),
             );
         }
         let request: Value = match serde_json::from_str(source) {
             Ok(value) => value,
-            Err(error) => return self.error(app, scene, "invalid_json", "$", &error.to_string()),
+            Err(error) => {
+                return self.error(app, scene, ErrorCode::InvalidJson, "$", &error.to_string());
+            }
         };
         // Commands observe and control completed ticks only.
         app.engine.complete_pending_tick();
@@ -93,7 +96,8 @@ impl DevBrowser {
             let assets = op == Some("assets");
             return self.tools_request(app, scene, source, assets);
         }
-        match self.control(app, scene, request, (width, height), paused) {
+        let op = op.unwrap_or_default().to_owned();
+        match self.control(app, scene, source, &op, (width, height), paused) {
             Ok(result) => self.result(app, scene, result),
             Err(error) => self.error(app, scene, error.code, &error.path, &error.message),
         }
@@ -128,7 +132,7 @@ impl DevBrowser {
             return self.error(
                 app,
                 scene,
-                "response_too_large",
+                ErrorCode::ResponseTooLarge,
                 "$",
                 "asset response exceeds 64 KiB",
             );
@@ -136,22 +140,22 @@ impl DevBrowser {
         response
     }
 
-    /// Runs the browser control `request` on a `size` canvas: its result.
+    /// Runs the browser control `op` in `source` on a `size` canvas: its
+    /// result.
     fn control(
         &mut self,
         app: &mut BrowserApp,
         scene: Option<&SceneInstance>,
-        request: Value,
+        source: &str,
+        op: &str,
         (width, height): (u32, u32),
         paused: bool,
     ) -> Result<Value, DevError> {
-        let op = request["op"].as_str().unwrap_or_default().to_owned();
-        let control: BrowserControl = serde_json::from_value(request)
-            .map_err(|error| DevError::new("invalid_request", "$", error.to_string()))?;
+        let control: BrowserControl = engine_scene::parse_json(source)?;
         control.validate()?;
         if control.needs_pause() && !paused {
             return Err(DevError::new(
-                "pause_required",
+                ErrorCode::PauseRequired,
                 "$",
                 format!("pause the host before {op}"),
             ));
@@ -289,11 +293,16 @@ impl DevBrowser {
             } => {
                 let world = app.engine.app.world_mut();
                 if let Some(pixel_error) = pixel_error {
-                    if !(pixel_error.is_finite() && (1.0..=64.0).contains(&pixel_error)) {
+                    // The settings' own rule.
+                    let rule = engine_core::TerrainSettings::rule_of("pixel_error")
+                        .expect("terrain settings declare pixel_error");
+                    if let Err(invalid) =
+                        engine_settings::Setting::check(&pixel_error, "pixel_error", rule)
+                    {
                         return Err(DevError::new(
-                            "invalid_request",
+                            ErrorCode::OutOfRange,
                             "$.pixel_error",
-                            "pixel_error must be in [1, 64]",
+                            invalid.to_string(),
                         ));
                     }
                     let mut settings = world
@@ -359,7 +368,7 @@ impl DevBrowser {
                 ] {
                     if let Err(invalid) = value.check(field, rule) {
                         return Err(DevError::new(
-                            "invalid_input",
+                            ErrorCode::InvalidInput,
                             format!("$.{field}"),
                             invalid.rule,
                         ));
@@ -378,8 +387,9 @@ impl DevBrowser {
                 Ok(json!({"temporary":true,"applies_on":"next_step"}))
             }
             BrowserControl::Step { ticks, .. } => {
-                DevStepError::validate(ticks)
-                    .map_err(|error| DevError::new("invalid_step", "$.ticks", error.to_string()))?;
+                DevStepError::validate(ticks).map_err(|error| {
+                    DevError::new(ErrorCode::InvalidStep, "$.ticks", error.to_string())
+                })?;
                 app.engine
                     .app
                     .world_mut()
@@ -399,7 +409,7 @@ impl DevBrowser {
                 self.input.pitch = 0.0;
                 app.dev_step(ticks, width, height, input).map_err(|error| {
                     DevError::new(
-                        "render_failed",
+                        ErrorCode::RenderFailed,
                         "$",
                         format!("simulation may have advanced: {error:?}"),
                     )
@@ -407,8 +417,9 @@ impl DevBrowser {
                 Ok(json!({"ticks":ticks,"temporary":true}))
             }
             BrowserControl::Render { .. } => {
-                app.dev_render(width, height)
-                    .map_err(|error| DevError::new("render_failed", "$", format!("{error:?}")))?;
+                app.dev_render(width, height).map_err(|error| {
+                    DevError::new(ErrorCode::RenderFailed, "$", format!("{error:?}"))
+                })?;
                 Ok(json!({"rendered":true}))
             }
             // The browser host runs these: it receives them validated, with
@@ -439,7 +450,7 @@ impl DevBrowser {
         &mut self,
         app: &mut BrowserApp,
         scene: Option<&SceneInstance>,
-        code: &str,
+        code: ErrorCode,
         path: &str,
         message: &str,
     ) -> String {
@@ -490,7 +501,7 @@ impl DevBrowser {
 fn rendered(outcome: Result<(), JsValue>, what: &str) -> Result<(), DevError> {
     outcome.map_err(|error| {
         DevError::new(
-            "render_failed",
+            ErrorCode::RenderFailed,
             "$",
             format!("{what} before render failed: {error:?}"),
         )

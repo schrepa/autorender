@@ -11,7 +11,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 settings! {
     /// Virtual geometry settings: whether meshes built as cluster
@@ -42,8 +42,6 @@ settings! {
         pub visibility_buffer: bool = false => any,
     }
 }
-
-impl ExtraRules for VirtualGeometry {}
 
 /// Scenes omit the visibility buffer while it is off.
 fn is_false(value: &bool) -> bool {

@@ -46,6 +46,7 @@ pub enum ParticleBlend {
 
 settings! {
     unauthored;
+    extra_rules;
     /// Emits particles from its entity.
     ///
     /// Particle `k` is born at `k / rate` seconds of presentation time at the
@@ -137,8 +138,6 @@ settings! {
     }
 }
 
-impl ExtraRules for ParticleSettings {}
-
 impl ParticleSettings {
     /// What a world without these settings reads as: no particles.
     pub fn off() -> Self {
@@ -213,6 +212,7 @@ impl ParticleExtraction {
         let settings = snapshot.environment.particles;
         snapshot.emitters.clear();
         snapshot.dropped_particles = 0;
+        snapshot.invalid_emitters = 0;
         if !settings.enabled {
             self.motion.clear();
             return;
@@ -223,6 +223,7 @@ impl ParticleExtraction {
         let mut wanted = 0_u64;
         for (position, (entity, emitter)) in self.query.iter(world).enumerate() {
             if emitter.validate().is_err() {
+                snapshot.invalid_emitters += 1;
                 continue;
             }
             if self.hints.len() <= position {

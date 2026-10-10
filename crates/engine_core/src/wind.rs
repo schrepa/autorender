@@ -6,7 +6,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 settings! {
     /// The wind. Requires version 9.
@@ -24,8 +24,6 @@ settings! {
         pub gusts: f32 = 0.45 => range(0.0, 1.0),
     }
 }
-
-impl ExtraRules for Wind {}
 
 impl Wind {
     /// What a world without these settings reads as: still air.

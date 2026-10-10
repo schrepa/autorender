@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::math::{clamp, max};
 use crate::{FixedTime, JobId, Jobs, Parent, Terrains, Transform};
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 settings! {
     /// Navigation. Requires version 9.
@@ -38,8 +38,6 @@ settings! {
         pub samples_per_tick: u32 = 32_768 => at_least(1024),
     }
 }
-
-impl ExtraRules for Navigation {}
 
 impl Navigation {
     /// What a world without these settings reads as: no agents walking.
@@ -78,8 +76,6 @@ settings! {
         pub level: u32 = 0 => same(engine_terrain::NavOptions::rule_of("level")),
     }
 }
-
-impl ExtraRules for NavAgent {}
 
 impl NavAgent {
     /// How its walks are searched.

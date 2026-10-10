@@ -1,4 +1,5 @@
 //! Read-only spatial observations. Cache synchronization never commits sensor events.
+use engine_settings::ErrorCode;
 use std::collections::HashMap;
 
 use engine_collision::{
@@ -129,7 +130,12 @@ pub(crate) fn execute(
             ..
         } => {
             page(limit)?;
-            bounded(offset, bounds::EVENT_OFFSET, "invalid_page", "$.offset")?;
+            bounded(
+                offset,
+                bounds::EVENT_OFFSET,
+                ErrorCode::InvalidPage,
+                "$.offset",
+            )?;
             let entity = entity
                 .as_deref()
                 .map(|id| resolve_entity(engine.app.world(), scene, id, false, "$.entity"))
@@ -157,7 +163,7 @@ pub(crate) fn execute(
             )
         }
         _ => Err(DevError::new(
-            "invalid_request",
+            ErrorCode::InvalidRequest,
             "$.op",
             "expected a collision query",
         )),
@@ -180,11 +186,11 @@ pub(crate) fn world_value(value: &CollisionWorld) -> Value {
         complete: report.complete,
         placed_colliders: report.placed_colliders,
         limits: CollisionLimitsView {
-            max_colliders: config.max_colliders,
-            max_candidate_pairs: config.max_candidate_pairs,
-            max_sensor_pairs: config.max_sensor_pairs,
-            max_query_candidates: config.max_query_candidates,
-            max_query_hits: config.max_query_hits
+            max_colliders: config.colliders(),
+            max_candidate_pairs: config.candidate_pairs(),
+            max_sensor_pairs: config.sensor_pairs(),
+            max_query_candidates: config.query_candidates(),
+            max_query_hits: config.query_hits()
         },
     })
 }
@@ -226,7 +232,7 @@ pub(crate) fn native_error(error: CollisionError) -> DevError {
 }
 
 fn page(limit: usize) -> Result<(), DevError> {
-    bounded(limit, bounds::PAGE, "invalid_page", "$.limit").map(|_| ())
+    bounded(limit, bounds::PAGE, ErrorCode::InvalidPage, "$.limit").map(|_| ())
 }
 
 fn shape(source: CollisionShapeRequest) -> Result<ColliderShape, DevError> {
@@ -235,7 +241,7 @@ fn shape(source: CollisionShapeRequest) -> Result<ColliderShape, DevError> {
             engine_core::MIN_COLLIDER_EXTENT,
             engine_core::MAX_COLLIDER_EXTENT,
         );
-        bounded(value, extents, "invalid_shape", "$.shape").map(|value| value as f32)
+        bounded(value, extents, ErrorCode::InvalidShape, "$.shape").map(|value| value as f32)
     };
     let shape = match source {
         CollisionShapeRequest::Cuboid {
@@ -257,7 +263,7 @@ fn position(values: [f64; 3], path: &str) -> Result<Vec3, DevError> {
         .any(|value| value.check("value", bounds::COORDINATE).is_err())
     {
         return Err(DevError::new(
-            "invalid_position",
+            ErrorCode::InvalidPosition,
             path,
             bounds::COORDINATE.describe(),
         ));
@@ -273,7 +279,7 @@ fn pose(translation: [f64; 3], rotation: [f64; 4]) -> Result<Mat4, DevError> {
         || (length_squared - 1.0).abs() > 0.001
     {
         return Err(DevError::new(
-            "invalid_rotation",
+            ErrorCode::InvalidRotation,
             "$.rotation",
             "rotation must be a finite normalized XYZW quaternion (squared length within 0.001 of one)",
         ));
@@ -287,7 +293,7 @@ fn ray(origin: [f64; 3], direction: [f64; 3], max_distance: f64) -> Result<Colli
     bounded(
         max_distance,
         bounds::DISTANCE,
-        "invalid_ray",
+        ErrorCode::InvalidRay,
         "$.max_distance",
     )?;
     let scale = direction
@@ -295,7 +301,7 @@ fn ray(origin: [f64; 3], direction: [f64; 3], max_distance: f64) -> Result<Colli
         .fold(0.0_f64, |maximum, value| maximum.max(value.abs()));
     if direction.iter().any(|value| !value.is_finite()) || scale == 0.0 {
         return Err(DevError::new(
-            "invalid_ray",
+            ErrorCode::InvalidRay,
             "$.direction",
             "direction must be a finite nonzero vector",
         ));
@@ -309,7 +315,7 @@ fn ray(origin: [f64; 3], direction: [f64; 3], max_distance: f64) -> Result<Colli
         .any(|(origin, direction)| (origin + direction * max_distance).abs() > 1.0e6)
     {
         return Err(DevError::new(
-            "invalid_ray",
+            ErrorCode::InvalidRay,
             "$.max_distance",
             "ray endpoint must remain within +/-1000000",
         ));
@@ -367,24 +373,28 @@ fn resolve_entity(
             .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
     {
         return Err(DevError::new(
-            "invalid_selector",
+            ErrorCode::InvalidSelector,
             path,
             "expected a bounded authored entity ID",
         ));
     }
     let scene = scene.ok_or_else(|| {
         DevError::new(
-            "no_active_scene",
+            ErrorCode::NoScene,
             path,
             "entity selectors require an active scene",
         )
     })?;
     let entity = crate::inspect::authored_entity(world, scene, id).ok_or_else(|| {
-        DevError::new("unknown_entity", path, "entity is not in the active scene")
+        DevError::new(
+            ErrorCode::UnknownEntity,
+            path,
+            "entity is not in the active scene",
+        )
     })?;
     if require_alive && world.get_entity(entity).is_err() {
         return Err(DevError::new(
-            "entity_removed",
+            ErrorCode::EntityRemoved,
             path,
             "the authored entity is no longer alive",
         ));
@@ -401,7 +411,7 @@ impl<'a> Identities<'a> {
     fn new(scene: Option<&'a SceneInstance>) -> Result<Self, DevError> {
         if scene.is_some_and(|scene| scene.entity_count() > MAX_SCAN_ENTITIES) {
             return Err(DevError::new(
-                "scan_limit",
+                ErrorCode::ScanLimit,
                 "$.scene",
                 "collision identity lookup admits at most 10000 authored entities",
             ));

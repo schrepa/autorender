@@ -6,6 +6,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
+# JSON schemas of the collision budgets (`settings!`).
+schema = ["engine_settings/schema"]
 default = []
 profiling = ["engine_profile/enabled", "engine_core/profiling"]
 attribution = ["engine_core/attribution"]
@@ -13,6 +15,7 @@ attribution = ["engine_core/attribution"]
 [dependencies]
 engine_core.workspace = true
 engine_profile.workspace = true
+engine_settings.workspace = true
 bevy_app.workspace = true
 bevy_ecs.workspace = true
 glam.workspace = true

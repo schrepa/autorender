@@ -3,6 +3,7 @@
 //! it by revision, and an entity tagged `player` walks with the movement
 //! input, blocked by authored colliders, so fixtures can move something.
 
+use engine::ErrorCode;
 use engine::prelude::*;
 use engine::scene::{SceneError, SceneFiles};
 
@@ -46,7 +47,7 @@ impl AuthoredScene {
             .collect();
         if players.len() > 1 {
             return Err(SceneError {
-                code: "player_count",
+                code: ErrorCode::GameRule,
                 path: "$.entities".into(),
                 message: "at most one entity may be tagged player".into(),
             });
@@ -55,7 +56,7 @@ impl AuthoredScene {
             && (player.parent.is_some() || player.collider.is_none())
         {
             return Err(SceneError {
-                code: "player_transform",
+                code: ErrorCode::GameRule,
                 path: "$.entities".into(),
                 message: format!(
                     "expanded entity {}: the player walks with a root transform and an authored collider",
@@ -159,7 +160,8 @@ struct PlayerPlugin;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         if !app.is_plugin_added::<CollisionPlugin>() {
-            app.add_plugins(CollisionPlugin);
+            app.add_plugins(CollisionPlugin)
+                .insert_resource(crate::scene::stress_collision_budgets());
         }
         app.init_resource::<PlayerWalk>();
         app.add_systems(FixedSimulation, walk);

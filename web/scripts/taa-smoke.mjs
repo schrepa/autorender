@@ -161,7 +161,7 @@ try {
   assert.equal(plainFrame.temporal_antialiasing.active, false, "turned off, ordinary frames do not resolve temporally");
   assert.ok(!plainFrame.render_passes.includes("temporal_resolve"));
   const invalid = await command("environment", { temporal_antialiasing: { enabled: true, samples: 8 } }, false);
-  assert.equal(invalid.error.code, "invalid_request", "unknown temporal antialiasing fields are rejected");
+  assert.equal(invalid.error.code, "unknown_field", "unknown temporal antialiasing fields are rejected");
   await command("environment", { temporal_antialiasing: { enabled: true } });
   await run("taa-again", 500);
   assert.equal((await observed()).temporal_antialiasing.active, true, "turned on again, ordinary frames resolve temporally");

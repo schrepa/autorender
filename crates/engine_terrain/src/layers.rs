@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use engine_math::{clamp, max, min};
-use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
+use engine_settings::{InvalidSetting, Rule, Setting, settings};
 use glam::{Vec2, Vec4};
 use serde::{Deserialize, Serialize};
 
@@ -84,8 +84,6 @@ settings! {
     }
 }
 
-impl ExtraRules for NoiseLayer {}
-
 /// The most meters a layer raises, lowers or offsets the ground.
 pub const MAX_HEIGHT: f32 = 20_000.0;
 
@@ -141,8 +139,6 @@ settings! {
         pub op: StampOp = StampOp::Hole => any,
     }
 }
-
-impl ExtraRules for Stamp {}
 
 impl Stamp {
     /// The stamp's strength at terrain-local `(x, z)`, 0 to 1.

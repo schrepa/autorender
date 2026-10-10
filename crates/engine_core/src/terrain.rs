@@ -252,8 +252,6 @@ settings! {
     }
 }
 
-impl ExtraRules for SurfaceMaterial {}
-
 /// How a surface material's textures lie on the ground: from above, or
 /// on steep ground also from the side, so cliffs don't stretch them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -332,15 +330,27 @@ impl TerrainSurface {
         Ok(self)
     }
 
-    /// Whether every material is usable and one exists per material and
-    /// asset the rules name.
-    pub fn is_usable(&self) -> bool {
-        self.materials.len() == self.rules.authored().materials.len()
-            && self.assets.len() == self.rules.authored().assets.len()
-            && self
-                .materials
-                .iter()
-                .all(|material| material.validate().is_ok())
+    /// The first value breaking its rule, if any: one material and asset
+    /// for each the rules name, every material valid.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        if self.materials.len() != self.rules.authored().materials.len() {
+            return Err(InvalidSetting::new(
+                "materials",
+                "must hold one material for each the rules name",
+            ));
+        }
+        if self.assets.len() != self.rules.authored().assets.len() {
+            return Err(InvalidSetting::new(
+                "assets",
+                "must hold one asset for each the rules name",
+            ));
+        }
+        for material in &self.materials {
+            material
+                .validate()
+                .map_err(|invalid| invalid.within("materials"))?;
+        }
+        Ok(())
     }
 
     /// The default surface's rules as authored: grass, bare dirt where noise
@@ -475,8 +485,6 @@ settings! {
     }
 }
 
-impl ExtraRules for Surroundings {}
-
 impl Surroundings {
     /// The most meters surroundings reach past a terrain's edges or blend
     /// over.
@@ -598,9 +606,15 @@ impl Terrain {
         self
     }
 
-    /// Whether streaming can use this terrain.
-    pub fn is_usable(&self) -> bool {
-        self.origin.is_finite() && self.surface.is_usable()
+    /// The first value breaking its rule, if any: streaming uses only
+    /// valid terrains.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        if !self.origin.is_finite() {
+            return Err(InvalidSetting::new("origin", "must be finite"));
+        }
+        self.surface
+            .validate()
+            .map_err(|invalid| invalid.within("surface"))
     }
 }
 
@@ -656,8 +670,6 @@ settings! {
         pub reach: f32 = LOAD_REACH => range(0.0, 8.0),
     }
 }
-
-impl ExtraRules for TerrainPrefetch {}
 
 /// The size in pixels of the viewport frames render to, which terrain level
 /// of detail measures pixels on; hosts set it each frame. Without it,
@@ -780,9 +792,8 @@ settings! {
     }
 }
 
-impl ExtraRules for TerrainSettings {}
-
 settings! {
+    extra_rules;
     /// How terrain loads while the camera moves fast: the
     /// finest levels' tiles in its view wait, more of them the faster it
     /// moves, and tiles out of its view wait until it settles. The coarsest
@@ -3098,7 +3109,7 @@ impl Terrains {
         let requests = &mut self.requests;
         let mut remaining = false;
         for state in &mut self.entries {
-            if !state.terrain.is_usable() || !settings.enabled {
+            if state.terrain.validate().is_err() || !settings.enabled {
                 continue;
             }
             let mut missing: Vec<(TileKey, u32)> = std::mem::take(&mut state.missing)
@@ -3311,7 +3322,7 @@ impl Terrains {
                 .sum::<u64>(),
         );
         for state in &mut self.entries {
-            if !state.terrain.is_usable() {
+            if state.terrain.validate().is_err() {
                 continue;
             }
             // Surroundings leave the ground they surround to

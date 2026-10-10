@@ -215,6 +215,8 @@ pub struct Drawn {
     pub drawn: u32,
     /// Items a budget or the GPU's bindings left out.
     pub dropped: u32,
+    /// Items breaking their rules, which no frame draws.
+    pub invalid: u32,
 }
 
 /// What GPU culling ran and left undrawn.
@@ -266,6 +268,8 @@ pub struct LightStats {
     pub shaded: u32,
     /// Usable lights beyond the budget or without a valid pose.
     pub dropped: u32,
+    /// Lights breaking their rules, which no frame draws.
+    pub invalid: u32,
     /// Lights that reached a view cluster, read back a few frames late;
     /// `None` before the first read-back or without lights.
     pub visible: Option<u32>,

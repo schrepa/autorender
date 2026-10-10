@@ -1,3 +1,4 @@
+use engine_settings::ErrorCode;
 use std::{collections::BTreeMap, io::Write};
 
 use engine_collision::{Collider, CollisionWorld, refresh_collision_world};
@@ -889,7 +890,7 @@ fn scene_schema(definition: Option<&str>) -> Result<Value, DevError> {
     match definition {
         Some(name) => definitions.get(name).cloned().ok_or_else(|| {
             DevError::new(
-                "unknown_definition",
+                ErrorCode::UnknownDefinition,
                 "$.definition",
                 "not a definition of the scene schema; describe SceneDocument lists them",
             )
@@ -960,7 +961,7 @@ impl DevTools {
             || self.inspectors.contains_key(name)
         {
             return Err(DevError::new(
-                "duplicate_inspector",
+                ErrorCode::DuplicateInspector,
                 "$.name",
                 "inspector name is already registered or reserved",
             ));
@@ -969,7 +970,7 @@ impl DevTools {
             && self.inspectors.len() >= builtins + MAX_INSPECTORS
         {
             return Err(DevError::new(
-                "inspector_limit",
+                ErrorCode::InspectorLimit,
                 "$.name",
                 format!("a game may register at most {MAX_INSPECTORS} inspectors"),
             ));
@@ -978,7 +979,7 @@ impl DevTools {
             || encode(&inspector.descriptor, MAX_INSPECTOR_BYTES).is_err()
         {
             return Err(DevError::new(
-                "inspector_too_large",
+                ErrorCode::InspectorTooLarge,
                 "$.schema",
                 format!(
                     "descriptor must fit {MAX_INSPECTOR_BYTES} bytes and description {MAX_DESCRIPTION_BYTES} bytes"
@@ -1017,7 +1018,7 @@ impl DevTools {
         };
         encode(&response, MAX_RESPONSE_BYTES).unwrap_or_else(|_| {
             json!({"version": PROTOCOL_VERSION, "ok": false, "observation": observation,
-                "error": DevError::new("response_too_large", "$", "response exceeds 65536 bytes; reduce limit or select one component")}).to_string()
+                "error": DevError::new(ErrorCode::ResponseTooLarge, "$", "response exceeds 65536 bytes; reduce limit or select one component")}).to_string()
         })
     }
 
@@ -1029,23 +1030,22 @@ impl DevTools {
     ) -> Result<Value, DevError> {
         if source.len() > MAX_REQUEST_BYTES {
             return Err(DevError::new(
-                "request_too_large",
+                ErrorCode::RequestTooLarge,
                 "$",
                 format!("request must fit {MAX_REQUEST_BYTES} UTF-8 bytes"),
             ));
         }
-        let request: DevRequest = serde_json::from_str(source)
-            .map_err(|error| DevError::new("invalid_request", "$", error.to_string()))?;
+        let request: DevRequest = engine_scene::parse_json(source)?;
         if request.version() != PROTOCOL_VERSION {
             return Err(DevError::new(
-                "unsupported_version",
+                ErrorCode::UnsupportedVersion,
                 "$.version",
                 format!("accepted protocol version: {PROTOCOL_VERSION}"),
             ));
         }
         if scene.is_some_and(|scene| !scene.belongs_to(engine.app.world())) {
             return Err(DevError::new(
-                "wrong_world",
+                ErrorCode::WrongWorld,
                 "$.scene",
                 "scene instance belongs to a different engine world",
             ));
@@ -1102,7 +1102,7 @@ impl DevTools {
             DevRequest::Assets { .. } => {
                 let assets = world.get_resource::<AssetLibrary>().ok_or_else(|| {
                     DevError::new(
-                        "missing_resource",
+                        ErrorCode::MissingResource,
                         "$.assets",
                         "AssetLibrary is not installed",
                     )
@@ -1195,7 +1195,7 @@ impl DevTools {
         validate_name(name, "$.component")?;
         self.inspectors.get(name).ok_or_else(|| {
             DevError::new(
-                "unknown_inspector",
+                ErrorCode::UnknownInspector,
                 "$.component",
                 "use describe to discover registered inspectors",
             )
@@ -1217,14 +1217,14 @@ impl DevTools {
         } = selector;
         if entity.is_some() && parent.is_some() {
             return Err(DevError::new(
-                "invalid_selector",
+                ErrorCode::InvalidSelector,
                 "$.parent",
                 "entity and parent selectors are mutually exclusive",
             ));
         }
         if !(1..=MAX_PAGE_SIZE).contains(&limit) || offset > MAX_SCAN_ENTITIES {
             return Err(DevError::new(
-                "invalid_page",
+                ErrorCode::InvalidPage,
                 "$.limit",
                 "limit must be 1..100 and offset 0..10000",
             ));
@@ -1235,7 +1235,7 @@ impl DevTools {
         {
             if entity.is_some() || parent.is_some() || offset != 0 {
                 return Err(DevError::new(
-                    "invalid_selector",
+                    ErrorCode::InvalidSelector,
                     "$.entity",
                     "resources have no entity or parent selector or pagination offset",
                 ));
@@ -1245,14 +1245,14 @@ impl DevTools {
         }
         let scene = scene.ok_or_else(|| {
             DevError::new(
-                "no_scene",
+                ErrorCode::NoScene,
                 "$.entity",
                 "authored entity inspection requires an active scene instance",
             )
         })?;
         if scene.entity_count() > MAX_SCAN_ENTITIES {
             return Err(DevError::new(
-                "scan_limit",
+                ErrorCode::ScanLimit,
                 "$.scene",
                 "scene exceeds the 10000 authored-record scan budget",
             ));
@@ -1261,21 +1261,21 @@ impl DevTools {
             validate_name(id, "$.entity")?;
             if offset != 0 {
                 return Err(DevError::new(
-                    "invalid_selector",
+                    ErrorCode::InvalidSelector,
                     "$.offset",
                     "a selected entity has no pagination offset",
                 ));
             }
             let entity = authored_entity(world, scene, id).ok_or_else(|| {
                 DevError::new(
-                    "unknown_entity",
+                    ErrorCode::UnknownEntity,
                     "$.entity",
                     "authored ID does not exist in the active scene (streamed entities only while their cell is loaded)",
                 )
             })?;
             if world.get_entity(entity).is_err() {
                 return Err(DevError::new(
-                    "entity_removed",
+                    ErrorCode::EntityRemoved,
                     "$.entity",
                     "gameplay removed this authored entity",
                 ));
@@ -1287,14 +1287,14 @@ impl DevTools {
                 validate_name(id, "$.parent")?;
                 let entity = authored_entity(world, scene, id).ok_or_else(|| {
                     DevError::new(
-                        "unknown_entity",
+                        ErrorCode::UnknownEntity,
                         "$.parent",
                         "parent authored ID does not exist in the active scene",
                     )
                 })?;
                 if world.get_entity(entity).is_err() {
                     return Err(DevError::new(
-                        "entity_removed",
+                        ErrorCode::EntityRemoved,
                         "$.parent",
                         "gameplay removed this authored parent",
                     ));
@@ -1358,14 +1358,14 @@ fn read_value(
 ) -> Result<Value, DevError> {
     let value = (inspector.read)(world, entity, scene).ok_or_else(|| {
         DevError::new(
-            "missing_component",
+            ErrorCode::MissingComponent,
             "$.component",
             "selected component or resource is absent",
         )
     })?;
     encode(&value, MAX_INSPECTOR_BYTES).map_err(|_| {
         DevError::new(
-            "inspector_too_large",
+            ErrorCode::InspectorTooLarge,
             "$.component",
             "inspector projection exceeds 16384 encoded bytes",
         )
@@ -1381,7 +1381,7 @@ fn validate_name(name: &str, path: &str) -> Result<(), DevError> {
             .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
     {
         return Err(DevError::new(
-            "invalid_name",
+            ErrorCode::InvalidName,
             path,
             "names require 1..64 ASCII letters, digits, underscores, dots, or hyphens",
         ));

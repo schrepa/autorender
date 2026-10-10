@@ -8,7 +8,7 @@
 //! agree on the samples they share.
 
 use engine_math::{clamp, max, min, sin_cos};
-use engine_settings::{ExtraRules, Rule, Setting, settings};
+use engine_settings::{Rule, Setting, settings};
 use serde::{Deserialize, Serialize};
 
 use crate::PathSample;
@@ -103,8 +103,6 @@ settings! {
     }
 }
 
-impl ExtraRules for NoiseMask {}
-
 fn one_octave() -> u32 {
     1
 }
@@ -155,8 +153,6 @@ settings! {
         pub opacity: f32 = one() => range(0.0, 1.0),
     }
 }
-
-impl ExtraRules for BiomeLayer {}
 
 /// A biome: where it applies (`fitness`, everywhere when omitted) and the
 /// layers of its ground. Later biomes paint over earlier ones where they

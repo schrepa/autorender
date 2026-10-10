@@ -323,10 +323,10 @@ impl BrowserApp {
     /// startup pipelines, the engine `build` makes.
     pub(crate) async fn launch(
         canvas: HtmlCanvasElement,
-        build: impl FnOnce() -> Result<Engine, String>,
+        build: impl FnOnce() -> crate::Result<Engine>,
     ) -> Result<Self, JsValue> {
         let starting = Self::start(canvas).await?;
-        let engine = build().map_err(|error| JsValue::from_str(&error))?;
+        let engine = build()?;
         starting.finish(engine).await
     }
 

@@ -4,6 +4,7 @@
 //! runtime carries no image decoder and scene sources stay small. KTX2
 //! images the host transcodes to a block-compressed format its GPU samples.
 
+use engine_settings::ErrorCode;
 use std::collections::HashMap;
 
 use engine_core::{MeshVertex, Texture, TextureFormat, VirtualMesh};
@@ -120,7 +121,7 @@ impl SceneFiles {
             ),
         };
         let header = engine_core::FileHeader::parse(bytes)
-            .map_err(|error| SceneError::new("invalid_terrain", path, error.to_string()))?;
+            .map_err(|error| SceneError::new(ErrorCode::InvalidTerrain, path, error.to_string()))?;
         // The file's end: after its last tile.
         let end = header
             .pyramid()
@@ -136,7 +137,7 @@ impl SceneFiles {
         let whole = bytes.len() as u64 >= end;
         if url.is_none() && !whole {
             return Err(SceneError::new(
-                "invalid_terrain",
+                ErrorCode::InvalidTerrain,
                 path,
                 "a terrain file's prefix needs the URL its tiles stream from",
             ));
@@ -161,8 +162,9 @@ impl SceneFiles {
                     8,
                 ));
             }
-            return Texture::compressed(*format, *width, *height, levels.clone())
-                .map_err(|error| SceneError::new("invalid_texture", path, error.to_string()));
+            return Texture::compressed(*format, *width, *height, levels.clone()).map_err(
+                |error| SceneError::new(ErrorCode::InvalidTexture, path, error.to_string()),
+            );
         }
         let (width, height, pixels) = self.images.get(uri).ok_or_else(|| missing(uri, path))?;
         let texture = if alpha {
@@ -170,7 +172,7 @@ impl SceneFiles {
         } else {
             Texture::new(*width, *height, pixels.clone())
         };
-        texture.map_err(|error| SceneError::new("invalid_texture", path, error.to_string()))
+        texture.map_err(|error| SceneError::new(ErrorCode::InvalidTexture, path, error.to_string()))
     }
 
     /// Buffer `uri` decoded as a mesh buffer.
@@ -190,7 +192,7 @@ impl SceneFiles {
             ),
         };
         let mesh = VirtualMesh::decode(bytes)
-            .map_err(|error| SceneError::new("invalid_mesh", path, error.to_string()))?;
+            .map_err(|error| SceneError::new(ErrorCode::InvalidMesh, path, error.to_string()))?;
         Ok(match url {
             Some(url) => mesh.with_source(url),
             None => mesh,
@@ -210,7 +212,7 @@ impl SceneFiles {
 
 fn missing(uri: &str, path: &str) -> SceneError {
     SceneError::new(
-        "missing_file",
+        ErrorCode::MissingFile,
         path,
         format!("the scene references {uri}, which was not supplied"),
     )
@@ -231,7 +233,7 @@ pub(crate) fn valid_uri(uri: &str, path: &str) -> Result<(), SceneError> {
         Ok(())
     } else {
         Err(SceneError::new(
-            "invalid_uri",
+            ErrorCode::InvalidUri,
             path,
             "must be a relative path of letters, digits, '_', '.', '-' and '/' inside the scene's folder",
         ))
@@ -351,7 +353,7 @@ pub(crate) struct MeshBuffer {
 }
 
 fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
-    let invalid = |rule: &str| SceneError::new("invalid_mesh", path, rule.to_owned());
+    let invalid = |rule: &str| SceneError::new(ErrorCode::InvalidMesh, path, rule.to_owned());
     let word = |offset: usize| {
         bytes
             .get(offset..offset + 4)
@@ -517,7 +519,7 @@ pub(crate) fn animation_buffer(
     path: &str,
 ) -> Result<Vec<engine_core::AnimationChannel>, SceneError> {
     use engine_core::{AnimatedProperty, AnimationChannel, KeyInterpolation, Keyframes, glam};
-    let invalid = |rule: String| SceneError::new("invalid_animation", path, rule);
+    let invalid = |rule: String| SceneError::new(ErrorCode::InvalidAnimation, path, rule);
     let word = |offset: usize| {
         bytes
             .get(offset..offset + 4)

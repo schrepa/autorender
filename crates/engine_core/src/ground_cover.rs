@@ -12,6 +12,7 @@ use crate::environment::InvalidSetting;
 use engine_settings::{ExtraRules, settings};
 
 settings! {
+    extra_rules;
     /// The cover growing where a surface material lies.
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -80,8 +81,6 @@ settings! {
         pub max_blades: Option<u32> = None => budget,
     }
 }
-
-impl ExtraRules for GroundCover {}
 
 impl GroundCover {
     /// What a world without these settings reads as: no ground cover.

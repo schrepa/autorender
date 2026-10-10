@@ -250,6 +250,8 @@ export interface Drawn {
   drawn: number;
   /** Items a budget or the GPU's bindings left out. */
   dropped: number;
+  /** Items breaking their rules, which no frame draws. */
+  invalid: number;
 }
 
 /** Ground cover. */
@@ -303,6 +305,8 @@ export interface LightStats {
   cluster_overflow: number | null;
   /** Usable lights beyond the budget or without a valid pose. */
   dropped: number;
+  /** Lights breaking their rules, which no frame draws. */
+  invalid: number;
   /** Local lights the frame shaded within the budget. */
   shaded: number;
   /**

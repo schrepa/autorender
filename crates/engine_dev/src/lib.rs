@@ -16,6 +16,7 @@ mod views;
 pub mod authoring;
 
 pub use controls::{validated_camera, validated_presentation_alpha};
+pub use engine_settings::ErrorCode;
 pub use error::DevError;
 pub use inspect::{DevTools, InspectorDescriptor, InspectorKind};
 pub use protocol::bounds;
@@ -55,7 +56,7 @@ pub const MAX_SCAN_ENTITIES: usize = 10_000;
 pub(crate) fn bounded<T: engine_settings::Setting>(
     value: T,
     rule: engine_settings::Rule,
-    code: &'static str,
+    code: engine_settings::ErrorCode,
     path: &str,
 ) -> Result<T, DevError> {
     match value.check("value", rule) {

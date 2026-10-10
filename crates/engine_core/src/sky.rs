@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::FrameTime;
 use crate::math::{max, sin_cos};
-use engine_settings::{ExtraRules, settings};
+use engine_settings::settings;
 
 settings! {
     /// A physically based sky. Defaults are Earth's. Opt-in. Requires version 9.
@@ -70,8 +70,6 @@ settings! {
     }
 }
 
-impl ExtraRules for Sky {}
-
 impl Sky {
     /// What a world without these settings reads as: the atmosphere's sky.
     pub fn off() -> Self {
@@ -108,8 +106,6 @@ settings! {
         pub north: f32 = 0.0 => range(-360.0, 360.0),
     }
 }
-
-impl ExtraRules for TimeOfDay {}
 
 impl TimeOfDay {
     /// What a world without these settings reads as: the atmosphere's sun.

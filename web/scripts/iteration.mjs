@@ -20,18 +20,18 @@ const builtArtifact = new RegExp(`^/_engine/builds/([A-Za-z0-9_-]{1,100})/(${was
 const GENERATION = /^[A-Za-z0-9_-]{1,100}$/;
 function port(value, fallback) {
   const text = value ?? String(fallback);
-  if (!/^\d+$/.test(text) || Number(text) < 1 || Number(text) > 65535) throw new AgentError("arguments", "Ports must be integers from 1 to 65535.");
+  if (!/^\d+$/.test(text) || Number(text) < 1 || Number(text) > 65535) throw new AgentError("invalid_arguments", "Ports must be integers from 1 to 65535.");
   return Number(text);
 }
 
 /** One foreground process owns Vite, a bridge, one build, and at most two browsers. */
 export async function startIteration(values) {
-  for (const key of Object.keys(values)) if (!["web-port", "port", "game", "browser"].includes(key)) throw new AgentError("arguments", `Unknown option --${key}.`);
+  for (const key of Object.keys(values)) if (!["web-port", "port", "game", "browser"].includes(key)) throw new AgentError("invalid_arguments", `Unknown option --${key}.`);
   const webPort = port(values["web-port"], 5174);
   const bridgePort = port(values.port, 7331);
-  if (webPort === bridgePort) throw new AgentError("arguments", "Web and bridge ports must differ.");
+  if (webPort === bridgePort) throw new AgentError("invalid_arguments", "Web and bridge ports must differ.");
   const game = values.game ?? "stress";
-  if (!(game in gamePages)) throw new AgentError("arguments", `Game must be one of ${Object.keys(gamePages).join(", ")}.`);
+  if (!(game in gamePages)) throw new AgentError("invalid_arguments", `Game must be one of ${Object.keys(gamePages).join(", ")}.`);
   const executable = process.env.ENGINE_XTASK_BIN ?? resolve(workspace, "target/debug", process.platform === "win32" ? "xtask.exe" : "xtask");
   await access(executable).catch(() => { throw new AgentError("build_worker_unavailable", "Start with cargo xtask agent watch to compile the native build worker.", executable); });
   const outputRoot = resolve(workspace, "web/pkg-iterations");

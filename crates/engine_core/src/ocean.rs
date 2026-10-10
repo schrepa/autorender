@@ -30,6 +30,7 @@ pub const MAX_OCEAN_WAVES: usize = 16;
 const GRAVITY: f32 = 9.81;
 
 settings! {
+    extra_rules;
     /// The sea. Requires version 9.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
@@ -274,8 +275,6 @@ settings! {
         pub tilt: f32 = 1.0 => range(0.0, 1.0),
     }
 }
-
-impl ExtraRules for Floating {}
 
 /// The sea's systems.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]

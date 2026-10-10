@@ -14,6 +14,7 @@ mod error;
 mod files;
 mod hierarchy;
 mod instance;
+mod json;
 mod lighting;
 mod material;
 mod probe;
@@ -41,6 +42,7 @@ pub use files::{
     encode_mesh_buffer_with,
 };
 pub use instance::{SceneEntity, SceneInstance};
+pub use json::parse_json;
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use material::{
     SceneAlphaMode, SceneFilter, SceneGrounding, SceneMap, SceneMaterial, SceneMipmapFilter,
