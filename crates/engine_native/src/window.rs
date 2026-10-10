@@ -3,7 +3,7 @@
 //! loading between frames.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use engine::{Engine, Game, GameHost, GpuPreference, InputState, RenderTarget};
 use winit::application::ApplicationHandler;
@@ -31,6 +31,31 @@ pub struct Window {
     /// Frames wait for the display's refresh (the default), or show as they
     /// finish, for measurements.
     pub vsync: bool,
+    /// Frames to measure, after which the window closes and [`run`]
+    /// reports them; none keeps it open until closed.
+    pub measure: Option<Measure>,
+}
+
+/// Frames a measured window draws: `frames` of play after `settle`.
+#[derive(Clone, Copy, Debug)]
+pub struct Measure {
+    pub settle: Duration,
+    pub frames: u32,
+}
+
+/// What a measured window drew.
+#[derive(Clone, Debug)]
+pub struct WindowReport {
+    pub frames: u32,
+    /// From the first measured frame's start to the last's end.
+    pub elapsed_ms: f64,
+    /// Each measured frame's simulation, extraction and render time.
+    pub cpu_ms: Vec<f64>,
+    /// The last frame's statistics, as JSON.
+    pub stats: String,
+    pub adapter: engine::AdapterInfo,
+    /// Physical pixels.
+    pub size: (u32, u32),
 }
 
 impl Window {
@@ -43,17 +68,19 @@ impl Window {
             gpu: GpuPreference::default(),
             jobs: JobOptions::default(),
             vsync: true,
+            measure: None,
         }
     }
 }
 
 type Build<'a, G> = Box<dyn FnOnce() -> engine::Result<(Engine, G)> + 'a>;
 
-/// Runs the game `build` makes in `window` until it closes.
+/// Runs the game `build` makes in `window` until it closes: what it
+/// measured, where `window` measures.
 pub fn run<'a, G: Game, E: Into<engine::Error>>(
     window: Window,
     build: impl FnOnce() -> Result<(Engine, G), E> + 'a,
-) -> engine::Result<()> {
+) -> engine::Result<Option<WindowReport>> {
     let actions: Vec<(&str, u32)> = window
         .actions
         .iter()
@@ -67,7 +94,7 @@ pub fn run<'a, G: Game, E: Into<engine::Error>>(
         build: Some(Box::new(move || build().map_err(Into::into))),
         input,
         running: None,
-        outcome: Ok(()),
+        outcome: Ok(None),
     };
     event_loop
         .run_app(&mut app)
@@ -80,7 +107,7 @@ struct App<'a, G: Game> {
     build: Option<Build<'a, G>>,
     input: Input,
     running: Option<Running<G>>,
-    outcome: engine::Result<()>,
+    outcome: engine::Result<Option<WindowReport>>,
 }
 
 /// The game running in its window.
@@ -95,6 +122,9 @@ struct Running<G: Game> {
     pace: Pace,
     title: Title,
     jobs: Option<JobPool>,
+    // When play started, and each measured frame's start and CPU time.
+    playing: Option<Instant>,
+    measured: Vec<(Instant, f64)>,
 }
 
 impl<'a, G: Game> App<'a, G> {
@@ -136,6 +166,8 @@ impl<'a, G: Game> App<'a, G> {
             pace: Pace::default(),
             title: Title::new(&self.options.title),
             jobs,
+            playing: None,
+            measured: Vec::new(),
         })
     }
 }
@@ -180,8 +212,16 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                 self.input.cursor((position.x, position.y));
             }
             WindowEvent::RedrawRequested => {
+                let start = Instant::now();
                 if let Err(error) = running.redraw(&mut self.input) {
                     self.outcome = Err(error);
+                    event_loop.exit();
+                    return;
+                }
+                if let Some(measure) = self.options.measure
+                    && let Some(report) = running.measured(measure, start)
+                {
+                    self.outcome = Ok(Some(report));
                     event_loop.exit();
                     return;
                 }
@@ -243,6 +283,34 @@ impl<G: Game> Running<G> {
         if let Some(jobs) = &mut self.jobs {
             jobs.exchange(&mut self.host);
         }
+    }
+
+    /// Counts the frame that started at `start` toward `measure` once play
+    /// settled: the report, once every frame was measured.
+    fn measured(&mut self, measure: Measure, start: Instant) -> Option<WindowReport> {
+        if self.preparation.is_some() {
+            return None;
+        }
+        let playing = *self.playing.get_or_insert(start);
+        if start.duration_since(playing) < measure.settle {
+            return None;
+        }
+        let stats = self.host.frame_stats();
+        self.measured.push((
+            start,
+            stats.simulation_ms + stats.extraction_ms + stats.render_ms,
+        ));
+        if self.measured.len() < measure.frames as usize {
+            return None;
+        }
+        Some(WindowReport {
+            frames: measure.frames,
+            elapsed_ms: self.measured[0].0.elapsed().as_secs_f64() * 1000.0,
+            cpu_ms: self.measured.iter().map(|&(_, cpu)| cpu).collect(),
+            stats: self.host.stats(),
+            adapter: self.host.adapter().clone(),
+            size: self.size,
+        })
     }
 }
 

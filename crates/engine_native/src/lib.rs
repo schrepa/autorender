@@ -22,7 +22,7 @@ pub use jobs::{CacheOptions, JobOptions, JobPool};
 pub use offscreen::Offscreen;
 pub use pix::Pix;
 pub use renderdoc::RenderDoc;
-pub use window::{Window, run};
+pub use window::{Measure, Window, WindowReport, run};
 
 /// [`run`] as a program's `main`: the game's failure printed, as the
 /// process's exit code.
@@ -30,7 +30,7 @@ pub fn main<G: engine::Game, E: Into<engine::Error>>(
     window: Window,
     build: impl FnOnce() -> Result<(engine::Engine, G), E>,
 ) -> ExitCode {
-    exit(run(window, build))
+    exit(run(window, build).map(drop))
 }
 
 /// `outcome` as a program's exit code, its failure printed.

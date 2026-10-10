@@ -9,7 +9,9 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use engine::{Engine, Error, ErrorCode, Feature};
-use engine_native::{CacheOptions, GpuPreference, JobOptions, Offscreen, Pix, Window, files};
+use engine_native::{
+    CacheOptions, GpuPreference, JobOptions, Measure, Offscreen, Pix, Window, files,
+};
 
 use crate::{DENSE_FILES, HIGHLANDS_FILES, ROCK_FILES, StressConfig, StressFile, StressLab};
 use crate::{StressScene, preset, presets, set_view};
@@ -34,6 +36,9 @@ Native options:
   --size WxH           window or offscreen size in physical pixels
   --vsync on|off       whether window frames wait for the display's refresh
                        (default on); off measures as browsers' frame rates do
+  --frames N           measure N window frames after --settle-ms, then close
+                       and print their rate and CPU times as JSON
+  --settle-ms MS       with --frames: play before measuring (default 20000)
   --gpu discrete|integrated
                        the GPU asked for where there are two (default discrete)
   --workers N|off      job worker threads (default half the logical
@@ -111,6 +116,8 @@ struct Options {
     gpu: GpuPreference,
     jobs: JobOptions,
     vsync: bool,
+    measure: Option<u32>,
+    settle_ms: u64,
     assets: PathBuf,
     offscreen: Option<u32>,
     capture: Option<PathBuf>,
@@ -152,6 +159,8 @@ impl Options {
             gpu: GpuPreference::HighPerformance,
             jobs: JobOptions::default(),
             vsync: true,
+            measure: None,
+            settle_ms: 20_000,
             // The page's public folder, beside this crate.
             assets: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public"),
             offscreen: None,
@@ -238,6 +247,22 @@ impl Options {
                     };
                 }
                 "--vsync" => options.vsync = switch(value()?)?,
+                "--frames" => {
+                    let frames = value()?;
+                    options.measure = Some(
+                        frames
+                            .parse()
+                            .ok()
+                            .filter(|&frames: &u32| frames > 0)
+                            .ok_or_else(|| format!("--frames takes a frame count, not {frames}"))?,
+                    );
+                }
+                "--settle-ms" => {
+                    let settle = value()?;
+                    options.settle_ms = settle
+                        .parse()
+                        .map_err(|_| format!("--settle-ms takes milliseconds, not {settle}"))?;
+                }
                 "--assets" => options.assets = value()?.into(),
                 "--offscreen" => {
                     let frames = value()?;
@@ -277,16 +302,26 @@ impl Options {
             return self.run_dev(build);
         }
         match self.offscreen {
-            None => engine_native::run(
-                Window {
-                    size: self.size,
-                    gpu: self.gpu,
-                    jobs: self.jobs,
-                    vsync: self.vsync,
-                    ..Window::new("Stress Lab")
-                },
-                build,
-            ),
+            None => {
+                let report = engine_native::run(
+                    Window {
+                        size: self.size,
+                        gpu: self.gpu,
+                        jobs: self.jobs,
+                        vsync: self.vsync,
+                        measure: self.measure.map(|frames| Measure {
+                            settle: std::time::Duration::from_millis(self.settle_ms),
+                            frames,
+                        }),
+                        ..Window::new("Stress Lab")
+                    },
+                    build,
+                )?;
+                if let Some(report) = report {
+                    print_window_report(&report);
+                }
+                Ok(())
+            }
             Some(frames) => self.run_offscreen(frames, build),
         }
     }
@@ -617,4 +652,23 @@ fn stress_files(assets: &Path, scene: StressScene) -> engine::Result<HashMap<Str
         _ => {}
     }
     Ok(found)
+}
+
+/// A measured window's frames as JSON: their rate, interval and CPU times.
+fn print_window_report(report: &engine_native::WindowReport) {
+    let mut cpu_ms = report.cpu_ms.clone();
+    cpu_ms.sort_by(f64::total_cmp);
+    let at = |share: f64| cpu_ms[((cpu_ms.len() - 1) as f64 * share).round() as usize];
+    let stats: serde_json::Value =
+        serde_json::from_str(&report.stats).expect("frame statistics are JSON");
+    let report = serde_json::json!({
+        "size": [report.size.0, report.size.1],
+        "frames": report.frames,
+        "fps": f64::from(report.frames) * 1000.0 / report.elapsed_ms,
+        "frame_ms": report.elapsed_ms / f64::from(report.frames),
+        "cpu_ms": {"median": at(0.5), "p95": at(0.95)},
+        "adapter": {"name": report.adapter.name, "backend": report.adapter.backend},
+        "stats": stats,
+    });
+    println!("{report:#}");
 }
