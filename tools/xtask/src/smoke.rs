@@ -5,14 +5,14 @@
 
 use std::{fs, path::Path, process::Command};
 
-/// Every smoke check: its name (`terrain` for `terrain-smoke.mjs`) and the
-/// first line of what it checks. A check without its opening comment is an
-/// error.
-fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
+/// Every smoke check's name (`terrain` for `terrain-smoke.mjs`), file name
+/// and source, by name. Local scratch scripts (`zz-`, which git ignores)
+/// are not checks.
+pub fn scripts(root: &Path) -> Result<Vec<(String, String, String)>, String> {
     let directory = root.join("web/scripts");
     let entries = fs::read_dir(&directory)
         .map_err(|error| format!("cannot read {}: {error}", directory.display()))?;
-    let mut smokes = Vec::new();
+    let mut scripts = Vec::new();
     for entry in entries {
         let file = entry
             .map_err(|error| format!("cannot read a script entry: {error}"))?
@@ -23,8 +23,22 @@ fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
         let Some(name) = file.strip_suffix("-smoke.mjs") else {
             continue;
         };
+        if name.starts_with("zz-") {
+            continue;
+        }
         let source = fs::read_to_string(directory.join(file))
             .map_err(|error| format!("cannot read {file}: {error}"))?;
+        scripts.push((name.to_owned(), file.to_owned(), source));
+    }
+    scripts.sort();
+    Ok(scripts)
+}
+
+/// Every smoke check: its name and the first line of what it checks. A
+/// check without its opening comment is an error.
+fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
+    let mut smokes = Vec::new();
+    for (name, file, source) in scripts(root)? {
         let summary = source
             .trim_start()
             .strip_prefix("/**")
@@ -40,9 +54,8 @@ fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
             })
             .filter(|summary| !summary.is_empty())
             .ok_or_else(|| format!("{file} must open with a /** comment saying what it checks"))?;
-        smokes.push((name.to_owned(), summary));
+        smokes.push((name, summary));
     }
-    smokes.sort();
     Ok(smokes)
 }
 

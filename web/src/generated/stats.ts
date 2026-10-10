@@ -470,6 +470,11 @@ export interface TerrainRenderStats {
   tiles: number;
   /** Triangles the camera drew. */
   triangles: number;
+  /**
+   * Resident tiles lacking objects their levels place with nothing
+   * under way to place them: none unless streaming lost track of them.
+   */
+  unplaced_tiles: number;
   /** Virtual texture pages baked this frame (absent or stale). */
   vt_bakes: number;
   /** Virtual texture pages evicted for others this frame. */

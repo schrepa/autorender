@@ -298,6 +298,9 @@ pub struct TerrainsView {
     /// Tiles that generated in bands of rows on several workers since
     /// terrains started.
     pub banded_tiles: u64,
+    /// Resident tiles lacking objects their levels place with nothing
+    /// under way to place them: none unless streaming lost track of them.
+    pub unplaced_tiles: u32,
     pub dropped_tiles: u32,
     pub patches: u32,
     pub fallback_patches: u32,

@@ -4,7 +4,7 @@
 //! web/src/generated/coverage.json; lint keeps it current, so a gap shows
 //! where agents and reviewers look.
 
-use std::{fs, path::Path};
+use std::path::Path;
 
 use serde_json::{Value, json};
 
@@ -17,22 +17,10 @@ macro_rules! section_names {
 
 pub fn coverage(root: &Path) -> Result<String, String> {
     let sections: &[(&str, &str)] = engine::environment_sections!(section_names);
-    let mut smokes = Vec::new();
-    for entry in fs::read_dir(root.join("web/scripts"))
-        .map_err(|error| format!("cannot read web/scripts: {error}"))?
-    {
-        let path = entry.map_err(|error| error.to_string())?.path();
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default();
-        if let Some(smoke) = name.strip_suffix("-smoke.mjs") {
-            let text = fs::read_to_string(&path)
-                .map_err(|error| format!("cannot read {name}: {error}"))?;
-            smokes.push((smoke.to_owned(), text));
-        }
-    }
-    smokes.sort();
+    let smokes: Vec<(String, String)> = crate::smoke::scripts(root)?
+        .into_iter()
+        .map(|(name, _, source)| (name, source))
+        .collect();
     // Smokes naming `word` whole, or `"word"` quoted.
     let naming = |word: &str, quoted: bool| -> Vec<String> {
         smokes

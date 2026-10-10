@@ -32,6 +32,7 @@ pub struct Tile {
     holes: Option<Box<[u64]>>,
     control: Option<Box<[u32]>>,
     placed: Option<Arc<[crate::Placed]>>,
+    placing: Option<Placing>,
     bounds: [f32; 2],
     patch_bounds: Box<[[f32; 2]]>,
     patch_holes: [u64; 4],
@@ -72,6 +73,7 @@ impl Tile {
             holes,
             control: None,
             placed: None,
+            placing: None,
             bounds: [0.0; 2],
             patch_bounds: vec![[0.0; 2]; (PATCHES_PER_TILE * PATCHES_PER_TILE) as usize]
                 .into_boxed_slice(),
@@ -138,10 +140,25 @@ impl Tile {
         self.placed.as_deref().unwrap_or(&[])
     }
 
-    /// The tile with `placed` standing on it.
+    /// Which of its level's objects the tile holds, all of them or
+    /// those of one distance: `None` before any were placed.
+    pub fn placing(&self) -> Option<Placing> {
+        self.placing
+    }
+
+    /// The tile with `placed` standing on it: the objects `placing` places.
     #[must_use]
-    pub fn with_placed(mut self, placed: Vec<crate::Placed>) -> Self {
+    pub fn with_placed(mut self, placed: Vec<crate::Placed>, placing: Placing) -> Self {
         self.placed = (!placed.is_empty()).then(|| Arc::from(placed));
+        self.placing = Some(placing);
+        self
+    }
+
+    /// The tile with none of its objects.
+    #[must_use]
+    pub fn without_placed(mut self) -> Self {
+        self.placed = None;
+        self.placing = None;
         self
     }
 
@@ -714,7 +731,7 @@ impl Generator {
             surface: Some(surface),
             control: None,
             weights: Vec::new(),
-            tile: Some(tile.with_placed(Vec::new())),
+            tile: Some(tile.without_placed()),
             placed: Vec::new(),
             placing,
             spans: Vec::new(),
@@ -1074,7 +1091,8 @@ impl Generator {
                                     .saturating_sub(surface.place_authored(tile, &mut self.placed));
                             }
                             let tile = self.tile.take()?;
-                            return Some(tile.with_placed(std::mem::take(&mut self.placed)));
+                            let placed = std::mem::take(&mut self.placed);
+                            return Some(tile.with_placed(placed, self.placing));
                         }
                     }
                 }
@@ -1247,8 +1265,9 @@ impl Layers {
     }
 }
 
-/// A tile's key, spacing, samples, holes, control values and placed
-/// objects; reading rebuilds its bounds as [`Tile::new`] does.
+/// A tile's key, spacing, samples, holes, control values, placed
+/// objects and which of them; reading rebuilds its bounds as [`Tile::new`]
+/// does.
 impl crate::codec::Codec for Tile {
     fn write(&self, out: &mut crate::codec::Writer) {
         out.put(&self.key)
@@ -1256,7 +1275,8 @@ impl crate::codec::Codec for Tile {
             .put(&self.heights)
             .put(&self.holes)
             .put(&self.control)
-            .put(&self.placed);
+            .put(&self.placed)
+            .put(&self.placing);
     }
 
     fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
@@ -1267,11 +1287,13 @@ impl crate::codec::Codec for Tile {
         let holes = input.get()?;
         let control: Option<Box<[u32]>> = input.get()?;
         let placed: Option<Arc<[crate::Placed]>> = input.get()?;
+        let placing = input.get()?;
         let mut tile = Self::new(key, spacing, heights, holes).ok_or(invalid)?;
         if let Some(control) = control {
             tile = tile.with_control(control).ok_or(invalid)?;
         }
         tile.placed = placed;
+        tile.placing = placing;
         Ok(tile)
     }
 }

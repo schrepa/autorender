@@ -169,7 +169,10 @@ async function settle() {
     rendering = (await command("render")).result.rendering ?? (await command("status")).result.rendering;
     const ready = rendering.terrain.tiles > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_patches === 0;
     resident = ready ? resident + 1 : 0;
-    if (resident > 1) return rendering;
+    if (resident > 1) {
+      assert.equal(rendering.terrain.unplaced_tiles, 0, `every resident tile holds the objects its level places: ${JSON.stringify(rendering.terrain)}`);
+      return rendering;
+    }
     if (!ready) await new Promise(resolve => setTimeout(resolve, 25));
   }
   assert.fail(`terrain did not settle: ${JSON.stringify(rendering)}`);

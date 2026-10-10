@@ -912,6 +912,10 @@ pub struct TerrainStats {
     /// Tiles that generated in bands of rows on several workers since
     /// terrains started.
     pub banded_tiles: u64,
+    /// Resident tiles lacking objects their levels place with nothing
+    /// under way to place them: none unless streaming lost
+    /// track of them.
+    pub unplaced_tiles: u32,
     /// Wanted tiles beyond the tile budget or the device's capacity.
     pub dropped_tiles: u32,
     /// Patches the camera draws, and of those how many stand in for finer
@@ -1057,7 +1061,7 @@ fn load_tiles(
                 return false;
             }
             // Tiles handed to workers that stopped generate here, whole.
-            for (key, (id, _, _, _)) in state.dispatched.drain() {
+            for (key, (id, _, _)) in state.dispatched.drain() {
                 if let Some(slots) = slots.as_deref_mut() {
                     slots.jobs.cancel(id);
                 }
@@ -1088,7 +1092,7 @@ fn load_tiles(
             }
             // The coarsest level always draws: generate it whole at once.
             let first = state.tiles.is_empty();
-            for &(key, _) in missing {
+            for &(key, priority) in missing {
                 let whole = first && u32::from(key.level) + 1 == pyramid.levels();
                 if !whole && *budget == 0 && !work.refill(budget) {
                     break;
@@ -1118,9 +1122,7 @@ fn load_tiles(
                 };
                 if let Some(tile) = tile {
                     state.jobs.remove(&key);
-                    state.stale.remove(&key);
-                    state.shaped.remove(&key);
-                    state.insert(tile);
+                    state.arrive(tile, priority, None);
                 } else if let Some(shape) = state.jobs.get_mut(&key).and_then(Generator::take_shape)
                 {
                     state.shape(shape);
@@ -1362,7 +1364,7 @@ fn generate_on_workers(
     // Tiles generating here stop: workers generate them.
     state.jobs.clear();
     // Work no longer wanted stops, so its workers take up what is.
-    state.dispatched.retain(|key, &mut (id, made, _, _)| {
+    state.dispatched.retain(|key, &mut (id, made, _)| {
         let wanted = made == revision && keep.contains(key);
         if !wanted {
             slots.jobs.cancel(id);
@@ -1403,14 +1405,14 @@ fn generate_on_workers(
         }
         wanted
     });
-    let handed: Vec<(TileKey, (JobId, u64, u32, Placing))> = state
+    let handed: Vec<(TileKey, (JobId, u64, u32))> = state
         .dispatched
         .iter()
         .map(|(&key, &job)| (key, job))
         .collect();
     let rules = state.terrain.surface.rules.clone();
     let mut inserted = false;
-    for (key, (id, made, priority, placing)) in handed {
+    for (key, (id, made, priority)) in handed {
         if inserted && (work.expired() || !work.uploads()) {
             break;
         }
@@ -1429,15 +1431,8 @@ fn generate_on_workers(
                 } else {
                     2 * TILE_ARRAY_BYTES
                 });
-                state.stale.remove(&key);
-                state.shaped.remove(&key);
                 state.failed.remove(&key);
-                state.far_jobs.remove(&key);
-                state.far_wanted.remove(&key);
-                if placing == Placing::Near {
-                    state.far_wanted.insert(key, priority);
-                }
-                state.insert(tile);
+                state.arrive(tile, priority, Some(&mut *slots.jobs));
                 inserted = true;
             }
             Some(_) => {}
@@ -1550,10 +1545,10 @@ fn generate_on_workers(
                 },
             );
             state.shaped.insert(key);
+            state.insert(tile);
         } else {
-            state.shaped.remove(&key);
+            state.arrive(tile, banding.priority, Some(&mut *slots.jobs));
         }
-        state.insert(tile);
         inserted = true;
     }
     // Then their objects, once every band of them is done,
@@ -1608,11 +1603,8 @@ fn generate_on_workers(
             .into_iter()
             .flat_map(|(_, objects)| objects.unwrap_or_default())
             .collect();
-        state.shaped.remove(&key);
-        if placements.placing == Placing::Near {
-            state.far_wanted.insert(key, placements.priority);
-        }
-        state.insert(Tile::clone(&tile).with_placed(objects));
+        let tile = Tile::clone(&tile).with_placed(objects, placements.placing);
+        state.arrive(tile, placements.priority, Some(&mut *slots.jobs));
         inserted = true;
     }
     // Tiles still generating hand out their shape first: it
@@ -1621,7 +1613,7 @@ fn generate_on_workers(
     let shaping: Vec<(TileKey, JobId, u64)> = state
         .dispatched
         .iter()
-        .map(|(&key, &(id, made, _, _))| (key, id, made))
+        .map(|(&key, &(id, made, _))| (key, id, made))
         .collect();
     for (key, id, made) in shaping {
         if inserted && (work.expired() || !work.uploads()) {
@@ -1662,7 +1654,7 @@ fn generate_on_workers(
         {
             Some(far) => {
                 let placed = merge_placed(tile.placed(), &far);
-                state.insert(Tile::clone(&tile).with_placed(placed));
+                state.insert(Tile::clone(&tile).with_placed(placed, Placing::All));
                 inserted = true;
             }
             None => {
@@ -1802,9 +1794,7 @@ fn generate_on_workers(
             let id = slots
                 .jobs
                 .submit_cacheable(TILE_JOB, input, priority, identity);
-            state
-                .dispatched
-                .insert(key, (id, revision, priority, placing));
+            state.dispatched.insert(key, (id, revision, priority));
         }
     }
     // With nothing else to hand out, a job a worker generates the nearest
@@ -2017,7 +2007,7 @@ struct TerrainState {
     /// revision it generates from and its priority) and its bakes running
     /// there, unless they failed there; and the tiles that failed there.
     recipe: Option<SharedRecipe>,
-    dispatched: HashMap<TileKey, (JobId, u64, u32, Placing)>,
+    dispatched: HashMap<TileKey, (JobId, u64, u32)>,
     /// Resident tiles without their objects standing far away,
     /// with their tiles' priorities, and the jobs placing those, each
     /// with the tile it places on.
@@ -2203,7 +2193,7 @@ impl TerrainState {
     fn retire(&self, retired: &mut Retired) {
         retired
             .jobs
-            .extend(self.dispatched.values().map(|&(id, _, _, _)| id));
+            .extend(self.dispatched.values().map(|&(id, _, _)| id));
         retired
             .jobs
             .extend(self.far_jobs.values().map(|&(id, _)| id));
@@ -2421,14 +2411,81 @@ impl TerrainState {
         self.revision += 1;
     }
 
+    /// Makes generated `tile` resident in place of whatever its key held:
+    /// its shape, a tile under edits since, or one waiting for its objects
+    /// standing far away, whose job in `jobs` stops. One without the
+    /// objects standing far away its level places wants them placed, at job
+    /// priority `priority`, whichever way it arrived.
+    fn arrive(&mut self, tile: Tile, priority: u32, jobs: Option<&mut Jobs>) {
+        let key = tile.key();
+        self.stale.remove(&key);
+        self.shaped.remove(&key);
+        self.far_wanted.remove(&key);
+        if let Some((id, _)) = self.far_jobs.remove(&key)
+            && let Some(jobs) = jobs
+        {
+            jobs.cancel(id);
+        }
+        let far = self.lacks_far(&tile);
+        self.insert(tile);
+        if far {
+            self.far_wanted.insert(key, priority);
+        }
+    }
+
+    /// Whether `tile` lacks objects standing far away its level places.
+    fn lacks_far(&self, tile: &Tile) -> bool {
+        tile.placing() != Some(Placing::All)
+            && self
+                .terrain
+                .surface
+                .rules
+                .places(tile.key().level, Placing::Far)
+    }
+
+    /// Resident tiles lacking objects their levels place with nothing under
+    /// way to place them, which no frame would finish:
+    /// [`TerrainStats::unplaced_tiles`].
+    fn unplaced_tiles(&self) -> u32 {
+        let rules = &self.terrain.surface.rules;
+        let levels: Vec<(bool, bool)> = (0..self.terrain.pyramid.levels())
+            .map(|level| {
+                let level = level as u8;
+                (
+                    rules.places(level, Placing::Near),
+                    rules.places(level, Placing::Far),
+                )
+            })
+            .collect();
+        let unplaced = self.tiles.iter().filter(|&(key, tile)| {
+            let Some(&(near, far)) = levels.get(usize::from(key.level)) else {
+                return false;
+            };
+            if self.shaped.contains(key)
+                || self.stale.contains(key)
+                || self.placements.contains_key(key)
+            {
+                return false;
+            }
+            let near = near && tile.placing().is_none();
+            let far = far
+                && tile.placing() != Some(Placing::All)
+                && !self.far_wanted.contains_key(key)
+                && !self.far_jobs.contains_key(key);
+            near || far
+        });
+        unplaced.count() as u32
+    }
+
     /// Keeps `tile`, leaving residency at frame `frame`, in memory
     /// where it is whole: not its shape alone, not under
-    /// edits since and not waiting for its objects standing far away.
+    /// edits since and not without its objects standing far away.
     fn cache_leaving(&mut self, key: TileKey, tile: Arc<Tile>, frame: u64) {
         if !(self.shaped.contains(&key)
             || self.stale.contains(&key)
             || self.far_wanted.contains_key(&key)
-            || self.far_jobs.contains_key(&key))
+            || self.far_jobs.contains_key(&key)
+            || self.lacks_far(&tile))
         {
             self.cache_tile(key, tile, frame);
         }
@@ -3655,6 +3712,7 @@ impl Terrains {
                 + state.banded.len()
                 + state.placements.len()) as u32;
             stats.banded_tiles += state.banded_tiles;
+            stats.unplaced_tiles += state.unplaced_tiles();
             if settings.enabled {
                 let tiles = &state.tiles;
                 engine_terrain::select_patches(

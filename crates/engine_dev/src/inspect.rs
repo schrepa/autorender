@@ -686,6 +686,7 @@ impl DevTools {
                     restored_tiles: stats.restored_tiles,
                     idle_tiles: stats.idle_tiles,
                     banded_tiles: stats.banded_tiles,
+                    unplaced_tiles: stats.unplaced_tiles,
                     dropped_tiles: stats.dropped_tiles,
                     patches: stats.patches,
                     fallback_patches: stats.fallback_patches,
