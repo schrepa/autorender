@@ -232,13 +232,30 @@ fn fetch_tile(
     });
 }
 
+/// Wires `engine` to the page `renderer` draws on: terrain residency never
+/// exceeds the device's texture array layers and its work runs for the
+/// settings' time a frame by the page's clock; jobs run on the host's
+/// `workers`.
+fn wire(engine: &mut Engine, renderer: &Renderer, workers: u32) {
+    let world = engine.app.world_mut();
+    if let Some(mut terrains) = world.get_resource_mut::<engine_core::Terrains>() {
+        terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
+        terrains.set_clock(page_clock);
+    }
+    if let Some(mut jobs) = world.get_resource_mut::<engine_core::Jobs>() {
+        jobs.set_workers(workers);
+    }
+}
+
 /// What a frame observed, as hosts and agents read it: the JSON object
 /// [`BrowserApp::stats_json`] returns.
 pub use engine_core::FrameStats;
 
 /// Owns the runtime, extracted data, and GPU state for one canvas.
 pub struct BrowserApp {
-    pub engine: Engine,
+    // Replaced only through `replace_engine`, which wires each engine to
+    // this page.
+    pub(crate) engine: Engine,
     renderer: Renderer,
     last_timestamp_ms: Option<f64>,
     performance: web_sys::Performance,
@@ -307,16 +324,7 @@ impl BrowserApp {
     }
 
     fn with(mut engine: Engine, renderer: Renderer, performance: web_sys::Performance) -> Self {
-        // Terrain residency never exceeds the device's texture array layers,
-        // and its work runs for the settings' time a frame.
-        if let Some(mut terrains) = engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::Terrains>()
-        {
-            terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
-            terrains.set_clock(page_clock);
-        }
+        wire(&mut engine, &renderer, 0);
         Self {
             engine,
             renderer,
@@ -331,6 +339,34 @@ impl BrowserApp {
             #[cfg(feature = "profiling")]
             profile_frame: 0,
         }
+    }
+
+    /// The running engine.
+    pub fn engine(&self) -> &Engine {
+        &self.engine
+    }
+
+    /// The running engine, to change its world.
+    pub fn engine_mut(&mut self) -> &mut Engine {
+        &mut self.engine
+    }
+
+    /// Runs `engine` from the next frame, wired to this page as the first
+    /// was; returns the replaced one.
+    pub fn replace_engine(&mut self, mut engine: Engine) -> Engine {
+        let workers = self
+            .engine
+            .app
+            .world()
+            .get_resource::<engine_core::Jobs>()
+            .map_or(0, engine_core::Jobs::workers);
+        wire(&mut engine, &self.renderer, workers);
+        // Tiles in flight belong to the replaced engine's terrains.
+        self.terrain_fetches = TerrainFetches::default();
+        self.gpu_inputs_stale = false;
+        let replaced = std::mem::replace(&mut self.engine, engine);
+        self.suspend();
+        replaced
     }
 
     /// Selects GPU blending, composition and culling for ordinary interpolated

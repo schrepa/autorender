@@ -68,9 +68,12 @@ export default defineConfig(({ command, mode }) => ({
   resolve: {
     alias: instrumented.has(mode) ? [{
       find: /^(?:\.\.\/)+pkg\/stress_lab$/, replacement: resolve(import.meta.dirname, `pkg-${instrumented.get(mode)}/stress_lab.js`),
-    }] : command === "serve" ? clients.map(client => client.wasm).map(name => ({
+    }] : command === "serve" ? clients.map(client => client.wasm).flatMap(name => [{
       find: new RegExp(`^(?:\\.\\./)+pkg/${name}$`), replacement: resolve(import.meta.dirname, `pkg-dev/${name}.js`),
-    })) : [],
+    }, {
+      // The module's bytes, which job workers compile, from the same build.
+      find: new RegExp(`^(?:\\.\\./)+pkg/${name}_bg\\.wasm\\?url$`), replacement: `${resolve(import.meta.dirname, `pkg-dev/${name}_bg.wasm`)}?url`,
+    }]) : [],
   },
   // Job workers are modules: they import the engine's job
   // worker bindings as the page imports the game's.

@@ -17,6 +17,7 @@
 // from the page's job cache where the same build made them before
 // (job-cache.ts).
 
+import workerWasmUrl from "../../pkg/engine_worker_bg.wasm?url";
 import { engineWorkerModule } from "./bindings";
 import { JobCache, jobCacheSettings } from "./job-cache";
 import type { TranscodedImage } from "./ktx2";
@@ -371,7 +372,7 @@ function workerWasm(): Promise<ArrayBuffer | undefined> {
 async function fetchWorkerWasm(): Promise<ArrayBuffer | undefined> {
   try {
     const pinned = engineWorkerModule();
-    const url = pinned ? pinned.replace(/\.js$/, "_bg.wasm") : new URL("../../pkg/engine_worker_bg.wasm", import.meta.url).href;
+    const url = pinned ? pinned.replace(/\.js$/, "_bg.wasm") : workerWasmUrl;
     const response = await fetch(url);
     if (!response.ok) throw new Error(`${url}: ${response.status}`);
     return await response.arrayBuffer();

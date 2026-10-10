@@ -13,3 +13,8 @@
 *.log
 # Generated dense Stress Lab geometry.
 /web/public/stress/
+# Local scratch experiments and benches.
+zz-*
+# Local scenes, some under licenses that forbid redistribution; the smokes
+# use the tracked fixtures.
+/web/public/scenes/

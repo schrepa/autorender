@@ -34,15 +34,20 @@ async function inspect(component) {
   return (await command("inspect", { component })).result.value;
 }
 
-/** Renders until every wanted tile has been resident for a few frames and
- * nothing bakes; job outputs arrive between commands. */
+/** Renders until every wanted tile has been resident for a few frames,
+ * no job runs and the frames draw the same: job outputs, placement's
+ * included, arrive between commands, later while the job cache is cold. */
 async function settle(label) {
   let terrains;
   let quiet = 0;
+  let previous;
   for (let attempt = 0; attempt < 600 && quiet < 3; attempt++) {
-    await command("render");
+    const frame = JSON.stringify(drawn((await command("render")).result.rendering));
     terrains = await inspect("Terrains");
-    const settled = terrains.resident_tiles > 0 && terrains.baking === 0 && terrains.loading_tiles === 0 && terrains.fallback_patches === 0;
+    const { running } = await inspect("Jobs");
+    const settled = terrains.resident_tiles > 0 && terrains.baking === 0 && terrains.loading_tiles === 0 && terrains.fallback_patches === 0
+      && running === 0 && frame === previous;
+    previous = frame;
     quiet = settled ? quiet + 1 : 0;
     if (!settled) await delay(50);
   }

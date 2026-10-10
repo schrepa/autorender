@@ -53,7 +53,7 @@ pub use antialiasing::TemporalAntialiasing;
 pub use atmosphere::Atmosphere;
 #[cfg(feature = "schema")]
 pub use atmosphere::state_atmosphere_rules;
-pub use bevy_app::{self, App, Plugin};
+pub use bevy_app::{App, Plugin};
 pub use bevy_ecs;
 pub use bridges::{DECK_DEPTH, DECK_MARGIN, DECK_RISE};
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime, PresentedTime};
@@ -312,7 +312,14 @@ impl Engine {
             .expect("an unlimited library holds a cube");
         assets.set_budget(config.asset_budget);
         let mut app = App::empty();
-        app.init_schedule(FixedSimulation)
+        // Bevy's message queues update in `First`, which the engine never
+        // runs: without it, registering a queue is refused like any system
+        // there.
+        app.world_mut()
+            .resource_mut::<Schedules>()
+            .remove(bevy_app::First);
+        app.add_observer(refuse_bevy_hierarchy)
+            .init_schedule(FixedSimulation)
             .init_schedule(FixedPreSimulation)
             .init_schedule(FixedPostSimulation)
             .init_schedule(Presentation)
@@ -905,6 +912,7 @@ impl Engine {
         if self.plugins_finalized {
             return;
         }
+        self.refuse_unrun_schedules();
         match self.app.plugins_state() {
             PluginsState::Adding => {
                 panic!("engine plugins must be ready before the first simulation frame")
@@ -918,6 +926,37 @@ impl Engine {
         }
         self.plugins_finalized = true;
     }
+}
+
+impl Engine {
+    /// Panics on systems in a schedule the engine never runs, such as Bevy's
+    /// `Update` or `Startup`, or the `First` that message queues add.
+    fn refuse_unrun_schedules(&self) {
+        let run = [
+            FixedPreSimulation.intern(),
+            FixedSimulation.intern(),
+            FixedPostSimulation.intern(),
+            Presentation.intern(),
+            TransformPropagation.intern(),
+        ];
+        let schedules = self.app.world().resource::<Schedules>();
+        for (label, schedule) in schedules.iter() {
+            assert!(
+                schedule.systems_len() == 0 || run.contains(&schedule.label()),
+                "{label:?} has systems, but the engine never runs it: add gameplay systems to \
+                 FixedPreSimulation, FixedSimulation, FixedPostSimulation or Presentation"
+            );
+        }
+    }
+}
+
+/// Panics on Bevy's `ChildOf`, which the engine does not read: entities get
+/// their parents as [`Parent`] components from [`set_parent`].
+fn refuse_bevy_hierarchy(add: On<Add, bevy_ecs::hierarchy::ChildOf>) {
+    panic!(
+        "{} was given Bevy's ChildOf, which the engine ignores: give it a parent with set_parent",
+        add.entity
+    );
 }
 
 impl Default for Engine {
@@ -989,7 +1028,31 @@ pub mod prelude {
     pub use crate::{SplineChunks, SplineMesh};
     pub use crate::{TransformEditError, edit_transform};
     // Bevy derives resolve this name in client scope when only the engine
-    // facade is a direct dependency, so expose the crate alongside its prelude.
-    pub use bevy_ecs::{self, prelude::*};
+    // facade is a direct dependency, so expose the crate beside the parts of
+    // its prelude the engine runs: not its hierarchy (the engine's is
+    // `Parent`) nor message queues (which need schedules it never runs).
+    pub use bevy_ecs::{
+        self,
+        bundle::Bundle,
+        change_detection::{DetectChanges, DetectChangesMut, Mut, Ref},
+        component::Component,
+        entity::Entity,
+        error::{BevyError, Result},
+        event::{EntityEvent, Event},
+        lifecycle::{Add, Despawn, Insert, Remove, RemovedComponents},
+        name::Name,
+        observer::{Observer, On},
+        query::{Added, AnyOf, Changed, Has, Or, QueryState, With, Without},
+        resource::Resource,
+        schedule::{
+            ApplyDeferred, IntoScheduleConfigs, IntoSystemSet, Schedule, Schedules,
+            SystemCondition, SystemSet, common_conditions::*,
+        },
+        system::{
+            Command, Commands, EntityCommand, EntityCommands, In, IntoSystem, Local, ParamSet,
+            Populated, Query, Res, ResMut, Single, System,
+        },
+        world::{EntityMut, EntityRef, EntityWorldMut, FromWorld, World},
+    };
     pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 }

@@ -162,7 +162,7 @@ impl StressGame {
             return Err(js_error("no authored scene is loaded".into()));
         };
         authored
-            .reload(&mut self.app.engine, source, files.files())
+            .reload(self.app.engine_mut(), source, files.files())
             .map_err(scene_error)?;
         self.apply_world_settings();
         self.suspend();
@@ -175,7 +175,7 @@ impl StressGame {
         self.authored
             .as_ref()
             .map_or(serde_json::Value::Null, |authored| {
-                authored.progress(&self.app.engine)
+                authored.progress(self.app.engine())
             })
             .to_string()
     }
@@ -195,7 +195,7 @@ impl StressGame {
             &self.files,
         )
         .map_err(js_error)?;
-        self.app.engine = engine;
+        self.app.replace_engine(engine);
         // A workload replaces an authored scene's world with its own.
         self.authored = None;
         self.generation = self.generation.saturating_add(1);
@@ -242,9 +242,15 @@ impl StressGame {
             refraction,
             probes,
         ] = on;
-        let scene = self.app.engine.app.world().resource::<StressConfig>().scene;
+        let scene = self
+            .app
+            .engine()
+            .app
+            .world()
+            .resource::<StressConfig>()
+            .scene;
         let (_, lamps) = look(scene, &self.look).map_err(js_error)?;
-        let world = self.app.engine.app.world_mut();
+        let world = self.app.engine_mut().app.world_mut();
         world.resource_mut::<Shadows>().enabled = shadows;
         world.resource_mut::<AmbientOcclusion>().intensity = if occlusion {
             AmbientOcclusion::default().intensity
@@ -292,13 +298,19 @@ impl StressGame {
     /// Lighting preset: `scene` (the scene's own), `golden`, `dusk`,
     /// `night` or `day`.
     pub fn set_look(&mut self, name: &str) -> Result<(), JsValue> {
-        let scene = self.app.engine.app.world().resource::<StressConfig>().scene;
+        let scene = self
+            .app
+            .engine()
+            .app
+            .world()
+            .resource::<StressConfig>()
+            .scene;
         let (atmosphere, lamps) = look(scene, name).map_err(js_error)?;
-        self.app.engine.app.insert_resource(atmosphere);
-        crate::scene::apply_sky(self.app.engine.app.world_mut(), scene, name);
+        self.app.engine_mut().app.insert_resource(atmosphere);
+        crate::scene::apply_sky(self.app.engine_mut().app.world_mut(), scene, name);
         if let Some(mut local) = self
             .app
-            .engine
+            .engine_mut()
             .app
             .world_mut()
             .get_resource_mut::<LocalLights>()
@@ -324,7 +336,7 @@ impl StressGame {
         pitch: f32,
     ) -> Result<(), JsValue> {
         self.app
-            .engine
+            .engine_mut()
             .app
             .world_mut()
             .resource_mut::<FrameMetrics>()
@@ -392,21 +404,21 @@ impl StressGame {
         self.app.stats_json()
     }
     pub fn stress_stats(&self) -> String {
-        serde_json::to_string(&stress_observation(&self.app.engine, self.generation))
+        serde_json::to_string(&stress_observation(self.app.engine(), self.generation))
             .expect("snapshots serialize")
     }
     /// [`crate::stress_sample`]: a recording's per-frame workload numbers.
     pub fn frame_sample(&self) -> Vec<f64> {
-        crate::stress_sample(&self.app.engine).values()
+        crate::stress_sample(self.app.engine()).values()
     }
     pub fn set_view(&mut self, view: &str) -> Result<(), JsValue> {
-        set_view(&mut self.app.engine, view).map_err(js_error)
+        set_view(self.app.engine_mut(), view).map_err(js_error)
     }
     pub fn set_culling(&mut self, enabled: bool) {
-        self.app.engine.set_frustum_culling(enabled);
+        self.app.engine_mut().set_frustum_culling(enabled);
         if let Some(mut config) = self
             .app
-            .engine
+            .engine_mut()
             .app
             .world_mut()
             .get_resource_mut::<StressConfig>()
@@ -473,8 +485,8 @@ impl StressGame {
     /// it started.
     pub fn reset_camera(&mut self) {
         match &self.authored {
-            Some(authored) => authored.reset_player(&mut self.app.engine),
-            None => set_view(&mut self.app.engine, "overview").expect("known view"),
+            Some(authored) => authored.reset_player(self.app.engine_mut()),
+            None => set_view(self.app.engine_mut(), "overview").expect("known view"),
         }
         #[cfg(feature = "dev")]
         self.development.clear_input();
@@ -500,10 +512,10 @@ impl StressGame {
                     .map(|op| matches!(op, "step" | "render" | "present" | "camera" | "culling"))
             })
             == Some(true);
-        let previous = *self.app.engine.app.world().resource::<FrameMetrics>();
+        let previous = *self.app.engine().app.world().resource::<FrameMetrics>();
         if submitted {
             self.app
-                .engine
+                .engine_mut()
                 .app
                 .world_mut()
                 .resource_mut::<FrameMetrics>()
@@ -522,10 +534,10 @@ impl StressGame {
                 .ok()
                 .is_some_and(|value| value["ok"] == true)
             {
-                let enabled = self.app.engine.frustum_culling();
+                let enabled = self.app.engine().frustum_culling();
                 if let Some(mut config) = self
                     .app
-                    .engine
+                    .engine_mut()
                     .app
                     .world_mut()
                     .get_resource_mut::<StressConfig>()
@@ -535,7 +547,7 @@ impl StressGame {
             } else {
                 *self
                     .app
-                    .engine
+                    .engine_mut()
                     .app
                     .world_mut()
                     .resource_mut::<FrameMetrics>() = previous;
@@ -586,7 +598,7 @@ impl StressGame {
                     message: "saved scene ID and revision must match the requested scene".into(),
                 });
             }
-            authored.reload(&mut self.app.engine, source, files.files())
+            authored.reload(self.app.engine_mut(), source, files.files())
         })();
         let instance = self.authored.as_ref().and_then(AuthoredScene::instance);
         match result {
@@ -682,7 +694,7 @@ impl StressGame {
     /// Writes the kept settings into the current world's resources: each
     /// workload builds a new world with their defaults.
     fn apply_world_settings(&mut self) {
-        let world = self.app.engine.app.world_mut();
+        let world = self.app.engine_mut().app.world_mut();
         if let Some(mut settings) = world.get_resource_mut::<LevelOfDetail>() {
             settings.enabled = self.level_of_detail;
             settings.impostors = self.impostors;

@@ -5,10 +5,16 @@ use std::{
 
 use engine_dev::authoring::{read_scene_source, validate_scene};
 
+/// Validates the tracked fixture scenes the smokes load and any local scenes
+/// in `web/public/scenes`, which a checkout need not have.
 pub fn validate_sources(root: &Path) -> Result<(), String> {
-    let paths = scene_paths(root)?;
+    let mut paths = scene_paths(&root.join("web/scripts/fixtures"))?;
     if paths.is_empty() {
-        return Err("no scene sources found in web/public/scenes/*.scene.json".to_owned());
+        return Err("no fixture scenes found in web/scripts/fixtures/*.scene.json".to_owned());
+    }
+    let local = root.join("web/public/scenes");
+    if local.is_dir() {
+        paths.extend(scene_paths(&local)?);
     }
     for path in &paths {
         let display = path.strip_prefix(root).unwrap_or(path).display();
@@ -25,10 +31,9 @@ pub fn validate_sources(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn scene_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
-    let directory = root.join("web/public/scenes");
+fn scene_paths(directory: &Path) -> Result<Vec<PathBuf>, String> {
     let mut paths = Vec::new();
-    let entries = fs::read_dir(&directory)
+    let entries = fs::read_dir(directory)
         .map_err(|error| format!("cannot read {}: {error}", directory.display()))?;
     for entry in entries {
         let entry = entry.map_err(|error| format!("cannot read scene directory entry: {error}"))?;
