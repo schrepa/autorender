@@ -316,19 +316,15 @@ pub struct TerrainsView {
     pub surroundings_patches: u32,
 }
 
-/// An animation player as a scene version 8 `animation` field with its clip's
-/// duration and its targets: every fixed tick it advances `time` by the tick
+/// An animation player as a scene version 8 `animation` field with its clip
+/// and its targets: every fixed tick it advances `time` by the tick
 /// times `speed`, wrapping when `loop` is set, and poses its targets'
 /// transforms.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct AnimationPlayerView {
-    /// The clip's authored animation ID; None when no scene instance owns it.
-    pub clip: Option<String>,
-    /// Whether the clip is still resident.
-    pub clip_alive: bool,
-    /// Seconds from the clip's start to its last key.
-    pub duration: Option<f32>,
+    /// The clip it plays; None once removed from the asset library.
+    pub clip: Option<ClipView>,
     pub time: f32,
     pub speed: f32,
     #[serde(rename = "loop")]
@@ -374,14 +370,59 @@ pub struct SplineMeshView {
     pub error: Option<String>,
 }
 
-/// The joints deforming this entity's mesh, as a scene version 8 `skin` names
-/// them: each vertex moves by its weighted joints' displayed world matrices
+/// A clip as a scene version 8 animation authors it, without its keys.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct ClipView {
+    /// Its authored animation ID; None when no scene instance owns it.
+    pub id: Option<String>,
+    pub name: Option<String>,
+    /// The authored IDs of the entities its channels animate, in order.
+    pub targets: Vec<String>,
+    /// How many channels it keys.
+    pub channels: usize,
+    /// Its clip file beside the scene, if not authored inline.
+    pub uri: Option<String>,
+    /// Seconds from its start to its last key.
+    pub duration: f32,
+}
+
+/// The skin deforming this entity's mesh, as a scene version 8 `skin` names
+/// it: each vertex moves by its weighted joints' displayed world matrices
 /// times their inverse bind matrices.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct SkinView {
+    /// The skin's authored ID; None when no scene instance made it.
+    pub skin: Option<String>,
     /// Each joint's authored entity ID; None when not authored.
     pub joints: Vec<Option<String>>,
+    /// How many inverse bind matrices it holds; joints beyond them bind
+    /// with the identity.
+    pub inverse_binds: usize,
+}
+
+/// What terrain streaming and level of detail follow, and what terrain
+/// shows: the `terrain` control's state.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct TerrainDebugView {
+    /// Where streaming is frozen; None follows the camera.
+    pub freeze: Option<[f32; 3]>,
+    pub view: engine_core::TerrainView,
+}
+
+/// The host input the last frame brought: movement held in [-1, 1], look
+/// deltas in CSS pixels, and the game actions held, by action number.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct InputView {
+    pub move_forward: f32,
+    pub move_right: f32,
+    pub move_up: f32,
+    pub look_yaw: f32,
+    pub look_pitch: f32,
+    pub held: Vec<u32>,
 }
 
 /// Local transform relative to Parent, or world transform for a root.
@@ -503,37 +544,105 @@ pub struct CameraView {
     pub far: f32,
 }
 
-/// Resolved immutable mesh/material readiness. Missing assets skip rendering.
-/// This view contains no persistent runtime handles.
+/// The mesh this entity draws and its material: the mesh's authored ID,
+/// source and geometry with what the renderer made of it, the material as a
+/// scene authors it, and the textures its maps read. Missing assets skip
+/// rendering.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct Mesh3dView {
-    pub mesh_alive: bool,
-    pub material_alive: bool,
-    pub vertices: Option<usize>,
-    pub indices: Option<usize>,
-    pub local_bounds: Option<MeshBoundsView>,
-    pub color: Option<[f32; 4]>,
-    /// Fraction of light behind the surface it covers; below 1 it draws
-    /// transparent.
-    pub opacity: Option<f32>,
-    /// The material's response to light.
-    pub surface: Option<SurfaceView>,
-    /// None denotes an untextured material; false denotes a missing dependency.
-    pub texture_alive: Option<bool>,
-    pub texture_dimensions: Option<[u32; 2]>,
-    /// Whether the texture's alpha limits emission to some texels.
-    pub texture_emission_mask: Option<bool>,
+    /// The mesh; None once removed from the asset library.
+    pub mesh: Option<MeshView>,
+    /// The material as a scene authors it, rebuilt from the one drawing,
+    /// every setting stated and its textures by authored ID; None once
+    /// removed from the asset library.
+    pub material: Option<engine_scene::SceneMaterial>,
+    /// The textures its material's maps read, in map order: base color,
+    /// metallic-roughness, normal, occlusion, emissive.
+    pub textures: Vec<TextureView>,
+    /// The level of detail GPU-culled frames drew it at, read back a few
+    /// frames late: 0 the mesh, 1 and 2 its simplifications, 3 its impostor
+    /// card. Inspecting watches it: None until a frame after that draws it
+    /// with levels of detail, or where no renderer answers.
+    pub drawn_level: Option<u32>,
 }
 
+/// A mesh as a scene authors it and what the renderer made of it.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct SurfaceView {
-    pub roughness: f32,
-    pub metalness: f32,
-    /// Emitted light as a multiple of the surface color, masked by texture alpha.
-    pub emission: f32,
-    pub ripples: f32,
+pub struct MeshView {
+    /// Its authored mesh ID; None when no scene instance owns it.
+    pub id: Option<String>,
+    /// Where a scene made it from; None for meshes games made.
+    pub source: Option<engine_scene::MeshOrigin>,
+    pub vertices: usize,
+    pub indices: usize,
+    pub local_bounds: MeshBoundsView,
+    /// Whether its vertices carry colors and second texture coordinates,
+    /// and how many joints their skin weights address (0 without).
+    pub colors: bool,
+    pub uv1: bool,
+    pub joints: u32,
+    /// Its cluster hierarchy, for virtual meshes.
+    pub virtual_geometry: Option<VirtualMeshView>,
+    /// What the renderer made of it; None where no renderer answers or before
+    /// it uploads.
+    pub rendered: Option<MeshRenderView>,
+}
+
+/// A virtual mesh's cluster hierarchy.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct VirtualMeshView {
+    pub levels: u32,
+    pub clusters: u32,
+    pub pages: u32,
+    pub triangles: u64,
+}
+
+/// What the renderer made of a mesh drawn with this entity's material.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct MeshRenderView {
+    /// Whether it uploaded with skin joints, which draw at full detail.
+    pub skinned: bool,
+    /// Its coarser levels of detail, finest first; GPU-culled frames choose
+    /// among them and the mesh itself by distance.
+    pub levels: Vec<LodLevelView>,
+    /// Whether an impostor card of it with this material is baked; None where
+    /// it never draws as one.
+    pub impostor: Option<bool>,
+}
+
+/// One coarser level of detail of a mesh.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct LodLevelView {
+    pub indices: u32,
+    /// Its largest geometric deviation from the mesh, in mesh units.
+    pub error: f32,
+}
+
+/// A texture as a scene authors it and its state.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct TextureView {
+    /// Its authored texture ID; None when no scene instance owns it.
+    pub id: Option<String>,
+    /// Its image file beside the scene; None for inline pixels and textures
+    /// games made.
+    pub uri: Option<String>,
+    /// Whether a scene authored its pixels inline (`rgba8`).
+    pub inline: bool,
+    /// Whether it is still in the asset library; its other fields are None
+    /// once removed.
+    pub alive: bool,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    /// Whether its alpha limits emission to some texels.
+    pub emission_mask: Option<bool>,
+    /// Whether it is resident on the GPU; None where no renderer answers.
+    pub gpu_resident: Option<bool>,
 }
 
 #[derive(Serialize)]

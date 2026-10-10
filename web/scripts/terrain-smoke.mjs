@@ -626,6 +626,9 @@ try {
   const baseline = await capture("view-shaded");
   const levels = await command("terrain", { view: "levels" });
   assert.equal(levels.result.view, "levels");
+  // The control's state inspects.
+  const debug = (await command("inspect", { component: "TerrainDebug" })).result.value;
+  assert.deepEqual(debug, { freeze: null, view: "levels" }, `the terrain debug state: ${JSON.stringify(debug)}`);
   const levelView = await capture("view-levels");
   assert.ok((await differentPixels(page, [baseline, levelView])).changed > 10_000, "the levels view differs");
   await command("terrain", { view: "tiles" });
@@ -753,6 +756,8 @@ try {
     // queries find there.
     await command("step", { ticks: 1 });
     const buoy = (await command("inspect", { entity: "buoy", component: "Transform" })).result.entity.components.Transform;
+    const floating = (await command("inspect", { entity: "buoy", component: "Floating" })).result.entity.components.Floating;
+    assert.deepEqual(floating, { draft: 0.25, tilt: 1 }, `the buoy inspects as authored: ${JSON.stringify(floating)}`);
     const swell = (await command("water_query", { points: [[400, -400]] })).result.samples[0].ocean;
     assert.ok(Math.abs(buoy.translation[1] - (swell.height - 0.25)) < 2e-3, `the buoy floats: ${JSON.stringify(buoy)} on ${JSON.stringify(swell)}`);
     // Under the sea its water veils everything: a camera a
@@ -939,7 +944,10 @@ try {
     const returned = await capture("tracks-returned");
     const replay = await differentPixels(page, [tracked, returned]);
     assert.ok(replay.changed * 2 < trackPixels.changed, `the track persists: ${replay.changed} pixels differ`);
-    // The roller presses where it stands each tick.
+    // The roller presses where it stands each tick, and inspects as authored.
+    const roller = (await command("inspect", { entity: "roller", component: "Deformer" })).result.entity.components.Deformer;
+    const authored = { radius: 0.5, depth: 0.2, contact: 0.5, flatness: 0.2 };
+    assert.deepEqual(roller, Object.fromEntries(Object.entries(authored).map(([key, value]) => [key, Math.fround(value)])), `the roller inspects as authored: ${JSON.stringify(roller)}`);
     const counted = (await command("inspect", { component: "Tracks" })).result.value;
     await command("step", { ticks: 3 });
     const rolled = (await command("inspect", { component: "Tracks" })).result.value;
@@ -1082,6 +1090,7 @@ try {
   await command("terrain", { view: "shaded" });
   const frozen = await command("terrain", { freeze: true });
   assert.ok(Array.isArray(frozen.result.frozen_at));
+  assert.deepEqual((await command("inspect", { component: "TerrainDebug" })).result.value.freeze, frozen.result.frozen_at);
   await command("render");
   const selected = async () => (await command("inspect", { component: "Terrains" })).result.value.patches;
   const before = await selected();

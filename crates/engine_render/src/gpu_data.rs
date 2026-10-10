@@ -15,6 +15,7 @@ pub(crate) use crate::gpu_layouts::constants::FLAG_PHASE2;
 pub(crate) use crate::gpu_layouts::constants::FLAG_PROBE;
 pub(crate) use crate::gpu_layouts::constants::FLAG_VISIBLE;
 pub(crate) use crate::gpu_layouts::constants::LOD_LEVELS;
+pub(crate) use crate::gpu_layouts::constants::LOD_STATE;
 pub(crate) use crate::gpu_layouts::constants::MOVED_SLOT;
 pub(crate) use crate::gpu_layouts::constants::STILL_FRAMES;
 pub(crate) use crate::gpu_layouts::scene::CameraUniform;

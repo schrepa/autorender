@@ -74,6 +74,35 @@ pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
 /// Bytes of one reply's JSON.
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
+/// Where each control's effect shows: the inspector reading the state it
+/// changes, `status` for the host's own, `GameControls` for the game's, or
+/// nothing for controls that act without leaving state to read. Every
+/// control is listed once and every inspector named exists: the build
+/// checks both.
+pub const CONTROL_STATE: &[(&str, &str)] = &[
+    ("present", "PresentationState"),
+    ("culling", "status"),
+    ("environment", "Environment"),
+    ("terrain", "TerrainDebug"),
+    ("terrain_edit", "Terrain"),
+    ("terrain_undo", "Terrain"),
+    ("terrain_redo", "Terrain"),
+    ("deform", "Tracks"),
+    ("nav_go", "NavAgent"),
+    ("animation", "AnimationPlayer"),
+    ("world_changes", "WorldChanges"),
+    ("camera", "Camera"),
+    ("benchmark", ""),
+    ("step", "PresentationState"),
+    ("input", "Input"),
+    ("render", ""),
+    ("pause", "status"),
+    ("resume", "status"),
+    ("capture", ""),
+    ("game", "GameControls"),
+    ("reload", "status"),
+];
+
 /// Where a query runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Handler {

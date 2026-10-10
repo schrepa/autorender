@@ -358,6 +358,11 @@ mod gpu {
             u64::from(layers) * size * size * 4 * 4 * 4 / 3 + self.records.size()
         }
 
+        /// Whether the impostor of `key` is baked.
+        pub(crate) fn contains(&self, key: ImpostorKey) -> bool {
+            self.baked.contains_key(&key)
+        }
+
         /// The impostor of `key`, when baked for `material`.
         pub(crate) fn record(
             &self,

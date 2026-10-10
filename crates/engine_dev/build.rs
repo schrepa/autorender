@@ -44,6 +44,8 @@ fn main() {
         "ReflectionProbe": schemars::schema_for!(engine_scene::SceneReflectionProbe),
         "Terrain": schemars::schema_for!(views::TerrainView),
         "Terrains": schemars::schema_for!(views::TerrainsView),
+        "TerrainDebug": schemars::schema_for!(views::TerrainDebugView),
+        "Input": schemars::schema_for!(views::InputView),
         "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
         "Tint": schemars::schema_for!(views::TintView),
@@ -122,6 +124,10 @@ fn main() {
     // The ops of queries and controls, from their schemas: no list to keep.
     let queries = ops(&schemas["protocol"]);
     let controls = ops(&schemas["BrowserControl"]);
+    control_state(&controls, &schemas);
+    let scene: serde_json::Value =
+        serde_json::from_str(&engine_scene::SceneDocument::schema_json()).expect("scene schema");
+    authored_parity(&scene, &schemas);
     let constant = |name: &str, what: &str, ops: &[String]| {
         format!(
             "/// The op of every {what}, as requests name it.
@@ -195,6 +201,207 @@ fn frame_stats() -> serde_json::Value {
         }
     }
     schema
+}
+
+/// Checks that every control names, once, where its state shows, and that
+/// the inspectors named exist.
+fn control_state(controls: &[String], schemas: &serde_json::Value) {
+    for op in controls {
+        let listed = protocol::CONTROL_STATE
+            .iter()
+            .filter(|(listed, _)| listed == op)
+            .count();
+        if listed != 1 {
+            panic!("control {op} must name where its state shows once in CONTROL_STATE");
+        }
+    }
+    for (op, shows) in protocol::CONTROL_STATE {
+        if !controls.iter().any(|control| control == op) {
+            panic!("CONTROL_STATE lists {op}, which is no control");
+        }
+        // The environment's inspector is its sections' together.
+        if !["", "status", "GameControls", "Environment"].contains(shows)
+            && schemas.get(*shows).is_none()
+        {
+            panic!("control {op}'s state shows in {shows}, which is no inspector");
+        }
+    }
+}
+
+/// Where each property scenes author on an entity shows when it is
+/// inspected: in every entity reply's header, as an inspector, or as one
+/// field of an inspector. A property shown as an object shows each of its
+/// fields there.
+const AUTHORED: &[(&str, &str)] = &[
+    ("id", "header"),
+    ("name", "header"),
+    ("tags", "header"),
+    ("mesh", "Mesh3d.mesh"),
+    ("material", "Mesh3d.material"),
+    ("parent", "Hierarchy.authored_parent"),
+    ("prefab", "Hierarchy.prefab_id"),
+    ("collider", "Collider"),
+    ("light", "LocalLight"),
+    ("particles", "ParticleEmitter"),
+    ("tint", "Tint"),
+    ("animation", "AnimationPlayer"),
+    ("skin", "Skin.skin"),
+    ("decal", "Decal"),
+    ("reflection_probe", "ReflectionProbe"),
+    ("terrain", "Terrain.terrain"),
+    ("spline", "SplineMesh"),
+    ("floating", "Floating"),
+    ("deformer", "Deformer"),
+    ("nav_agent", "NavAgent.agent"),
+    ("grounded", "Grounded"),
+    ("prefetch", "TerrainPrefetch"),
+    ("transform", "Transform"),
+];
+
+/// Where each top-level property of a scene shows: the definitions of the
+/// assets entities use, shown with them; the environment and camera, as
+/// their inspectors; and the document's structure, in the entities and
+/// replies' observations.
+const DOCUMENT: &[(&str, &str)] = &[
+    ("version", "structure"),
+    ("id", "structure"),
+    ("revision", "structure"),
+    ("entities", "structure"),
+    ("prefabs", "structure"),
+    ("streamed", "structure"),
+    ("environment", "Environment"),
+    ("camera", "Camera"),
+    ("meshes", "Mesh3d.mesh"),
+    ("materials", "Mesh3d.material"),
+    ("textures", "Mesh3d.textures"),
+    ("skins", "Skin"),
+    ("animations", "AnimationPlayer.clip"),
+];
+
+/// Authored fields inspectors show under another name: the scene's form and
+/// the runtime's.
+const RENAMED: &[(&str, &str)] = &[
+    ("SceneTransform.rotation_degrees", "rotation"),
+    ("SceneCamera.fov_degrees", "vertical_fov_radians"),
+    ("SceneTexture.rgba8", "inline"),
+    ("SceneSkin.id", "skin"),
+];
+
+/// Checks that whatever a scene authors, an inspector shows: each entity
+/// property and top-level property where [`AUTHORED`] and [`DOCUMENT`] say,
+/// every field of an object there, under its name or the one [`RENAMED`]
+/// gives. A property without an entry fails, so new ones come with their
+/// inspection.
+fn authored_parity(scene: &serde_json::Value, schemas: &serde_json::Value) {
+    let definitions = &scene["$defs"];
+    let check = |what: &str, property: &serde_json::Value, shows: &str| {
+        if ["header", "structure", "Environment"].contains(&shows) {
+            return;
+        }
+        let (inspector, field) = shows.split_once('.').unwrap_or((shows, ""));
+        let root = schemas
+            .get(inspector)
+            .unwrap_or_else(|| panic!("{what} shows in {inspector}, which is no inspector"));
+        let mut target = root;
+        if !field.is_empty() {
+            target = resolve(&root["$defs"], &root["properties"][field])
+                .unwrap_or_else(|| panic!("{what} shows in {shows}, which is no field"));
+        }
+        let target = resolve(&root["$defs"], target).unwrap_or(target);
+        let Some((name, authored)) = definition(definitions, property) else {
+            return;
+        };
+        let Some(fields) = authored["properties"].as_object() else {
+            return;
+        };
+        // A field holding the scene's own type refers agents to its
+        // definition there instead of repeating it.
+        let declared = format!("`{name}`");
+        if target.get("properties").is_none()
+            && target["description"]
+                .as_str()
+                .is_some_and(|description| description.contains(&declared))
+        {
+            return;
+        }
+        for field in fields.keys() {
+            let shown = RENAMED
+                .iter()
+                .find(|(renamed, _)| *renamed == format!("{name}.{field}"))
+                .map_or(field.as_str(), |(_, shown)| shown);
+            if target["properties"].get(shown).is_none() {
+                panic!(
+                    "{what}.{field} ({name}) is authored but {shows} does not show it: add a field named {shown}, or rename it in RENAMED"
+                );
+            }
+        }
+    };
+    let object = &definitions["SceneObject"]["properties"];
+    for (property, schema) in object.as_object().expect("entities have properties") {
+        let shows = AUTHORED
+            .iter()
+            .find(|(authored, _)| authored == property)
+            .unwrap_or_else(|| panic!("entity property {property} needs a place in AUTHORED"))
+            .1;
+        check(&format!("entities[].{property}"), schema, shows);
+    }
+    for (property, shows) in AUTHORED {
+        if object.get(*property).is_none() {
+            panic!("AUTHORED lists {property}, which entities do not author");
+        }
+        let _ = shows;
+    }
+    let document = &scene["properties"];
+    for (property, schema) in document.as_object().expect("documents have properties") {
+        let shows = DOCUMENT
+            .iter()
+            .find(|(authored, _)| authored == property)
+            .unwrap_or_else(|| panic!("scene property {property} needs a place in DOCUMENT"))
+            .1;
+        check(property, schema, shows);
+    }
+}
+
+/// The definition `schema` names, directly, as an option, or as the items
+/// of a list: its name and body.
+fn definition<'a>(
+    definitions: &'a serde_json::Value,
+    schema: &'a serde_json::Value,
+) -> Option<(String, &'a serde_json::Value)> {
+    if let Some(reference) = schema["$ref"].as_str() {
+        let name = reference.rsplit('/').next()?;
+        return Some((name.to_owned(), definitions.get(name)?));
+    }
+    for key in ["anyOf", "oneOf", "allOf"] {
+        for option in schema[key].as_array().into_iter().flatten() {
+            if let Some(found) = definition(definitions, option) {
+                return Some(found);
+            }
+        }
+    }
+    definition(definitions, schema.get("items")?)
+}
+
+/// The object schema `schema` resolves to through references, options and
+/// list items, within `definitions`.
+fn resolve<'a>(
+    definitions: &'a serde_json::Value,
+    schema: &'a serde_json::Value,
+) -> Option<&'a serde_json::Value> {
+    if schema.is_null() {
+        return None;
+    }
+    if schema.get("properties").is_some() {
+        return Some(schema);
+    }
+    definition(definitions, schema)
+        .map(|(_, body)| body)
+        .or_else(|| {
+            schema
+                .get("items")
+                .and_then(|items| resolve(definitions, items))
+        })
+        .or(Some(schema))
 }
 
 /// The `op` of every variant of an internally tagged request enum's schema.

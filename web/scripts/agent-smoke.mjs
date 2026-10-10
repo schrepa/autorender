@@ -143,7 +143,7 @@ try {
   const sections = (await cli("describe", { name: "Environment" })).result.descriptor.schema.properties;
   assert.deepEqual(Object.keys(look.result.value).sort(), Object.keys(sections).sort());
   const mesh = await cli("inspect", { entity: playerId, component: "Mesh3d" });
-  assert.equal(typeof mesh.result.entity.components.Mesh3d.surface.roughness, "number");
+  assert.equal(typeof mesh.result.entity.components.Mesh3d.material.surface.roughness, "number");
   const invalidLook = await cli("environment", { shadows: { resolution: 3000 } }, false);
   assert.equal(invalidLook.error.code, "invalid_environment");
   assert.equal(invalidLook.error.path, "$.shadows.resolution");
@@ -221,7 +221,7 @@ try {
   const emitter = await cli("inspect", { entity: "agent-lamp", component: "ParticleEmitter" });
   assert.equal(emitter.result.entity.components.ParticleEmitter.rate, 20);
   const glass = await cli("inspect", { entity: "agent-glass-box", component: "Mesh3d" });
-  assert.ok(Math.abs(glass.result.entity.components.Mesh3d.opacity - 0.4) < 1e-6);
+  assert.ok(Math.abs(glass.result.entity.components.Mesh3d.material.opacity - 0.4) < 1e-6);
   assert.ok(reloaded.result.rendering.local_lights.shaded >= 1);
   assert.ok(reloaded.result.rendering.particles.drawn > 0);
   assert.ok(reloaded.result.rendering.transparent_draws >= 1);

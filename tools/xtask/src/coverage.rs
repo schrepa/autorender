@@ -47,7 +47,7 @@ pub fn coverage(root: &Path) -> Result<String, String> {
     let tools = engine_dev::DevTools::default();
     let described: Value = serde_json::from_str(&tools.execute(
         &mut engine,
-        None,
+        engine_dev::Context::default(),
         &json!({"version": engine_dev::PROTOCOL_VERSION, "op": "describe"}).to_string(),
     ))
     .expect("replies are JSON");
@@ -91,4 +91,29 @@ pub fn coverage(root: &Path) -> Result<String, String> {
     }))
     .expect("coverage serializes")
         + "\n")
+}
+
+/// Fails unless some smoke checks every inspector, environment section and
+/// protocol op: what the engine offers agents is exercised.
+pub fn check(root: &Path) -> Result<(), String> {
+    let coverage: Value = serde_json::from_str(&coverage(root)?).expect("coverage is JSON");
+    let mut unchecked = Vec::new();
+    for (list, key) in [
+        ("inspectors", "inspector"),
+        ("sections", "section"),
+        ("ops", "op"),
+    ] {
+        for entry in coverage[list].as_array().into_iter().flatten() {
+            if entry["smokes"].as_array().is_none_or(Vec::is_empty) {
+                unchecked.push(format!("{key} {}", entry[key].as_str().unwrap_or_default()));
+            }
+        }
+    }
+    if unchecked.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "no smoke (web/scripts/*-smoke.mjs) checks {}: add one that does",
+        unchecked.join(", ")
+    ))
 }

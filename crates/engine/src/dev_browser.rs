@@ -5,10 +5,36 @@
 use crate::browser::BrowserApp;
 use engine_core::ErrorCode;
 use engine_core::{ActionInput, DevStepError, InputState};
-use engine_dev::{BrowserControl, DevError, DevTools};
+use engine_dev::{BrowserControl, Context, DevError, DevTools, RenderedMesh, RendererFacts};
 use engine_scene::SceneInstance;
 use serde_json::{Value, json};
 use wasm_bindgen::JsValue;
+
+/// What the page's renderer made of the world's assets, for inspectors.
+struct Facts<'a>(&'a engine_render::Renderer);
+
+impl RendererFacts for Facts<'_> {
+    fn texture_resident(&self, texture: engine_core::TextureHandle) -> bool {
+        self.0.is_texture_resident(texture)
+    }
+
+    fn mesh(&self, mesh: engine_core::MeshHandle) -> Option<RenderedMesh> {
+        let (skinned, levels) = self.0.mesh_levels(mesh)?;
+        Some(RenderedMesh { skinned, levels })
+    }
+
+    fn impostor(
+        &self,
+        mesh: engine_core::MeshHandle,
+        material: engine_core::MaterialHandle,
+    ) -> Option<bool> {
+        self.0.impostor_baked(mesh, material)
+    }
+
+    fn drawn_level(&self, slot: u32) -> Option<u32> {
+        self.0.drawn_level(slot)
+    }
+}
 
 /// Per-session temporary control state; excluded from ordinary builds.
 #[derive(Default)]
@@ -94,8 +120,7 @@ impl DevBrowser {
         app.engine.complete_pending_tick();
         let op = request.get("op").and_then(Value::as_str);
         if !op.is_some_and(|op| engine_dev::CONTROL_OPS.contains(&op)) {
-            let (assets, status) = (op == Some("assets"), op == Some("status"));
-            return self.tools_request(app, scene, source, assets, status);
+            return self.tools_request(app, scene, source, op == Some("status"));
         }
         let op = op.unwrap_or_default().to_owned();
         match self.control(app, scene, source, &op, (width, height), paused) {
@@ -104,50 +129,25 @@ impl DevBrowser {
         }
     }
 
-    /// A request the development tools answer; `assets` replies list each
-    /// texture's GPU residency too.
+    /// A request the development tools answer, with the renderer's facts;
+    /// `status` replies name the build too.
     fn tools_request(
         &mut self,
         app: &mut BrowserApp,
         scene: Option<&SceneInstance>,
         source: &str,
-        assets: bool,
         status: bool,
     ) -> String {
-        let response = self.tools.execute(&mut app.engine, scene, source);
-        if status {
-            let mut envelope: Value =
-                serde_json::from_str(&response).expect("development response is JSON");
-            if envelope["ok"] == true {
-                envelope["result"]["build"] = build_identity();
-            }
-            return envelope.to_string();
-        }
-        if !assets {
+        let response = execute(&self.tools, app, scene, source);
+        if !status {
             return response;
         }
         let mut envelope: Value =
             serde_json::from_str(&response).expect("development response is JSON");
-        if envelope["ok"] == true
-            && let (Some(scene), Some(rows)) =
-                (scene, envelope["result"]["texture_assets"].as_array_mut())
-        {
-            // These bounded rows and IDs were generated from the same instance.
-            for (row, (_, handle)) in rows.iter_mut().zip(scene.textures()) {
-                row["gpu_resident"] = json!(app.texture_resident(handle));
-            }
+        if envelope["ok"] == true {
+            envelope["result"]["build"] = build_identity();
         }
-        let response = envelope.to_string();
-        if response.len() > engine_dev::MAX_RESPONSE_BYTES {
-            return self.error(
-                app,
-                scene,
-                ErrorCode::ResponseTooLarge,
-                "$",
-                "asset response exceeds 64 KiB",
-            );
-        }
-        response
+        envelope.to_string()
     }
 
     /// Runs the browser control `op` in `source` on a `size` canvas: its
@@ -548,13 +548,26 @@ impl DevBrowser {
     }
 
     fn observation(&mut self, app: &mut BrowserApp, scene: Option<&SceneInstance>) -> Value {
-        serde_json::from_str(&self.tools.execute(
-            &mut app.engine,
-            scene,
-            &json!({"version": engine_dev::PROTOCOL_VERSION, "op": "status"}).to_string(),
-        ))
-        .expect("development tools serialize an object envelope")
+        let status = json!({"version": engine_dev::PROTOCOL_VERSION, "op": "status"});
+        serde_json::from_str(&execute(&self.tools, app, scene, &status.to_string()))
+            .expect("development tools serialize an object envelope")
     }
+}
+
+/// `tools`' reply to `source` about `app`'s engine, with its renderer's facts.
+fn execute(
+    tools: &DevTools,
+    app: &mut BrowserApp,
+    scene: Option<&SceneInstance>,
+    source: &str,
+) -> String {
+    let facts = Facts(&app.renderer);
+    let context = Context {
+        scene,
+        renderer: Some(&facts),
+        render_slot: None,
+    };
+    tools.execute(&mut app.engine, context, source)
 }
 
 /// What rendering after `what` came to: a development error when it failed.

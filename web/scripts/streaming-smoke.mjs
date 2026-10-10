@@ -110,7 +110,8 @@ try {
   const post = (await command("inspect", { entity: "lamp-far.post", component: "Hierarchy" })).result.entity.components.Hierarchy;
   assert.equal(post.parent, "lamp-far");
   const player = (await command("inspect", { entity: "spinner", component: "AnimationPlayer" })).result.entity.components.AnimationPlayer;
-  assert.equal(player.clip, "spin");
+  assert.equal(player.clip.id, "spin");
+  assert.deepEqual([player.clip.targets, player.clip.channels], [["spinner-blade"], 1]);
   assert.deepEqual(player.targets, ["spinner-blade"]);
   // The animation control sets a streamed player and answers before and after.
   const animated = (await command("animation", { entity: "spinner", time: 0.25, speed: 0 })).result;

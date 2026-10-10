@@ -20,7 +20,9 @@ pub use animation::{Animate, animate};
 pub use controls::{validated_camera, validated_presentation_alpha};
 pub use engine_settings::ErrorCode;
 pub use error::DevError;
-pub use inspect::{DevTools, InspectorDescriptor, InspectorKind};
+pub use inspect::{
+    Context, DevTools, InspectorDescriptor, InspectorKind, RenderedMesh, RendererFacts,
+};
 pub use protocol::bounds;
 pub use protocol::bounds::{MAX_DESCRIPTION_BYTES, MAX_PAGE_SIZE};
 pub use protocol::{

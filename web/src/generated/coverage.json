@@ -4,6 +4,7 @@
       "inspector": "AnimationPlayer",
       "kind": "component",
       "smokes": [
+        "meshes",
         "streaming"
       ]
     },
@@ -45,7 +46,9 @@
     {
       "inspector": "Deformer",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "terrain"
+      ]
     },
     {
       "inspector": "Environment",
@@ -60,7 +63,9 @@
     {
       "inspector": "Floating",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "terrain"
+      ]
     },
     {
       "inspector": "GlobalTransform",
@@ -83,6 +88,13 @@
       "smokes": [
         "hierarchy",
         "streaming"
+      ]
+    },
+    {
+      "inspector": "Input",
+      "kind": "resource",
+      "smokes": [
+        "texture"
       ]
     },
     {
@@ -112,6 +124,7 @@
       "smokes": [
         "agent",
         "hierarchy",
+        "meshes",
         "texture"
       ]
     },
@@ -163,7 +176,9 @@
     {
       "inspector": "Skin",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "meshes"
+      ]
     },
     {
       "inspector": "SplineMesh",
@@ -182,6 +197,13 @@
     {
       "inspector": "Terrain",
       "kind": "component",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "inspector": "TerrainDebug",
+      "kind": "resource",
       "smokes": [
         "terrain"
       ]
@@ -268,6 +290,7 @@
         "interpolation",
         "jobs",
         "lod",
+        "meshes",
         "spline",
         "streaming",
         "surfaces",
@@ -437,6 +460,7 @@
     {
       "op": "animation",
       "smokes": [
+        "meshes",
         "streaming"
       ]
     },
@@ -473,6 +497,7 @@
         "gpu-presentation",
         "hierarchy",
         "interpolation",
+        "meshes",
         "streaming",
         "taa",
         "terrain",
@@ -498,6 +523,7 @@
         "hierarchy",
         "interpolation",
         "jobs",
+        "meshes",
         "spline",
         "streaming",
         "surfaces",
@@ -514,6 +540,7 @@
         "gpu-presentation",
         "interpolation",
         "jobs",
+        "meshes",
         "taa",
         "terrain"
       ]
@@ -525,6 +552,7 @@
         "collision",
         "gpu-presentation",
         "interpolation",
+        "meshes",
         "taa",
         "terrain"
       ]
@@ -539,6 +567,7 @@
         "hierarchy",
         "interpolation",
         "lod",
+        "meshes",
         "spline",
         "surfaces",
         "taa",

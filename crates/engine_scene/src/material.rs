@@ -314,6 +314,62 @@ impl PreparedMaterial {
 }
 
 impl SceneMaterial {
+    /// `material` as a scene authors it, under ID `id`, its textures by
+    /// the IDs `texture` gives them: every setting stated, so what
+    /// draws reads back whole and copies into a scene as is.
+    pub fn from_runtime(
+        id: impl Into<String>,
+        material: &Material,
+        texture: impl Fn(TextureHandle) -> String,
+    ) -> Self {
+        let map = |map: Option<TextureRef>| {
+            map.map(|map| SceneMap::Map(SceneTextureMap::from_runtime(texture(map.texture), &map)))
+        };
+        let [red, green, blue, opacity] = material.color();
+        let surface = material.surface();
+        let transmission = material.transmission();
+        let (alpha_mode, alpha_cutoff) = match material.alpha_mode() {
+            AlphaMode::Opaque => (SceneAlphaMode::Opaque, None),
+            AlphaMode::Mask { cutoff } => (SceneAlphaMode::Mask, Some(cutoff)),
+            AlphaMode::Blend => (SceneAlphaMode::Blend, None),
+        };
+        Self {
+            id: id.into(),
+            color: [red, green, blue, 1.0],
+            texture: map(material.base_color_texture()),
+            surface: Some(SceneSurface {
+                roughness: surface.roughness,
+                metalness: surface.metalness,
+                emission: surface.emission,
+                ripples: surface.ripples,
+            }),
+            opacity: Some(opacity),
+            metallic_roughness_texture: map(material.metallic_roughness_texture()),
+            normal_texture: map(material.normal_texture()),
+            normal_scale: Some(material.normal_scale()),
+            occlusion_texture: map(material.occlusion_texture()),
+            occlusion_strength: Some(material.occlusion_strength()),
+            emissive: Some(material.emissive()),
+            emissive_texture: map(material.emissive_texture()),
+            alpha_mode: Some(alpha_mode),
+            alpha_cutoff,
+            double_sided: Some(material.is_double_sided()),
+            transmission: Some(transmission.factor),
+            ior: Some(transmission.ior),
+            thickness: Some(transmission.thickness),
+            world_tiling: material.world_tiling(),
+            top: material.top_layer().map(|top| SceneTopLayer {
+                color: top.color,
+                coverage: top.coverage,
+                roughness: Some(top.roughness),
+            }),
+            grounding: material.grounding().map(|grounding| SceneGrounding {
+                color: grounding.color,
+                height: grounding.height,
+            }),
+        }
+    }
+
     /// Map fields and the texture IDs they reference.
     pub(crate) fn texture_ids(&self) -> impl Iterator<Item = (&'static str, &str)> {
         self.maps()
@@ -546,6 +602,37 @@ impl SceneMaterial {
 }
 
 impl SceneTextureMap {
+    /// `map` of texture `id` with every sampling and placement setting
+    /// stated.
+    pub fn from_runtime(id: String, map: &TextureRef) -> Self {
+        let wrap = |wrap: Wrap| match wrap {
+            Wrap::Repeat => SceneWrap::Repeat,
+            Wrap::MirroredRepeat => SceneWrap::MirroredRepeat,
+            Wrap::ClampToEdge => SceneWrap::ClampToEdge,
+        };
+        let filter = |filter: Filter| match filter {
+            Filter::Nearest => SceneFilter::Nearest,
+            Filter::Linear => SceneFilter::Linear,
+        };
+        let sampler = map.sampler;
+        Self {
+            id,
+            wrap_u: Some(wrap(sampler.wrap_u)),
+            wrap_v: Some(wrap(sampler.wrap_v)),
+            mag_filter: Some(filter(sampler.mag_filter)),
+            min_filter: Some(filter(sampler.min_filter)),
+            mipmap_filter: Some(match sampler.mipmap_filter {
+                None => SceneMipmapFilter::None,
+                Some(Filter::Nearest) => SceneMipmapFilter::Nearest,
+                Some(Filter::Linear) => SceneMipmapFilter::Linear,
+            }),
+            offset: Some(map.transform.offset),
+            rotation: Some(map.transform.rotation),
+            scale: Some(map.transform.scale),
+            tex_coord: Some(map.tex_coord),
+        }
+    }
+
     fn sampler(&self) -> Sampler {
         let wrap = |wrap: Option<SceneWrap>| match wrap.unwrap_or(SceneWrap::Repeat) {
             SceneWrap::Repeat => Wrap::Repeat,

@@ -790,6 +790,11 @@ struct Pass {
 }
 
 impl RetainedRender {
+    /// The slot `entity` draws in, while it has one.
+    pub(crate) fn slot_of(&self, entity: Entity) -> Option<u32> {
+        self.entities.get(&entity).map(|&slot| slot as u32)
+    }
+
     /// Records that draw `Cube` components with `cube_mesh`, frustum cull
     /// when `culling`, and submit at most `budget` instances a frame.
     pub(crate) fn new(cube_mesh: MeshHandle, culling: bool, budget: usize) -> Self {

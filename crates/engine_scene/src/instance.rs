@@ -59,8 +59,78 @@ pub struct SceneInstance {
     mesh_ids: Vec<String>,
     texture_ids: Vec<String>,
     clip_ids: Vec<String>,
+    /// Where each asset came from, in source order, and its skins' IDs
+    /// with the inverse binds their entities share.
+    origins: Origins,
     /// Its streamed items, if it has any.
     streamed: Option<StreamSet>,
+}
+
+/// Where an instance's assets came from, without their data.
+#[derive(Debug, Default)]
+struct Origins {
+    meshes: Vec<MeshOrigin>,
+    textures: Vec<Option<String>>,
+    clips: Vec<ClipOrigin>,
+    skins: Vec<(String, Arc<[Mat4]>)>,
+}
+
+/// Where an instance's mesh came from, without its vertices: its
+/// [`crate::MeshSource`] as inspectors report it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MeshOrigin {
+    Cube,
+    Plane,
+    Octahedron,
+    /// Authored vertex by vertex: how many vertices and indices.
+    Inline {
+        vertices: usize,
+        indices: usize,
+    },
+    /// An engine mesh buffer file beside the scene.
+    Buffer {
+        uri: String,
+    },
+    /// A virtual mesh file beside the scene, drawn elsewhere as its most
+    /// detailed cut of at most `fallback_triangles` triangles.
+    Virtual {
+        uri: String,
+        fallback_triangles: Option<u32>,
+    },
+}
+
+impl From<&crate::MeshSource> for MeshOrigin {
+    fn from(source: &crate::MeshSource) -> Self {
+        match source {
+            crate::MeshSource::Cube {} => Self::Cube,
+            crate::MeshSource::Plane {} => Self::Plane,
+            crate::MeshSource::Octahedron {} => Self::Octahedron,
+            crate::MeshSource::Inline { vertices, indices } => Self::Inline {
+                vertices: vertices.len(),
+                indices: indices.len(),
+            },
+            crate::MeshSource::Buffer { uri } => Self::Buffer { uri: uri.clone() },
+            crate::MeshSource::Virtual {
+                uri,
+                fallback_triangles,
+            } => Self::Virtual {
+                uri: uri.clone(),
+                fallback_triangles: *fallback_triangles,
+            },
+        }
+    }
+}
+
+/// An instance's animation as authored, without its keyframes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClipOrigin {
+    pub name: String,
+    /// The authored IDs of the entities its channels animate, in order.
+    pub targets: Vec<String>,
+    /// Its clip file beside the scene, if not authored inline.
+    pub uri: Option<String>,
 }
 
 /// The assets one instantiation inserted, in source order, removed together.
@@ -172,6 +242,42 @@ impl SceneInstance {
             .iter()
             .zip(&self.assets.clips)
             .map(|(id, handle)| (id.as_str(), *handle))
+    }
+
+    /// The authored ID of mesh `handle` and where it came from.
+    pub fn mesh_origin(&self, handle: MeshHandle) -> Option<(&str, &MeshOrigin)> {
+        let index = self.assets.meshes.iter().position(|&mesh| mesh == handle)?;
+        Some((&self.mesh_ids[index], &self.origins.meshes[index]))
+    }
+
+    /// The authored ID of texture `handle` and its image file, if it was not
+    /// authored inline.
+    pub fn texture_origin(&self, handle: TextureHandle) -> Option<(&str, Option<&str>)> {
+        let index = self
+            .assets
+            .textures
+            .iter()
+            .position(|&texture| texture == handle)?;
+        Some((
+            &self.texture_ids[index],
+            self.origins.textures[index].as_deref(),
+        ))
+    }
+
+    /// The authored ID of clip `handle` and the animation it came from.
+    pub fn clip_origin(&self, handle: ClipHandle) -> Option<(&str, &ClipOrigin)> {
+        let index = self.assets.clips.iter().position(|&clip| clip == handle)?;
+        Some((&self.clip_ids[index], &self.origins.clips[index]))
+    }
+
+    /// The authored ID of the skin `skin` was made from, which its inverse
+    /// binds tell: every entity of a skin shares them.
+    pub fn skin_id(&self, skin: &Skin) -> Option<&str> {
+        self.origins
+            .skins
+            .iter()
+            .find(|(_, binds)| Arc::ptr_eq(binds, &skin.inverse_binds))
+            .map(|(id, _)| id.as_str())
     }
 
     /// Authored IDs in stable lexical order, including entities removed by gameplay.
@@ -334,6 +440,33 @@ impl SceneDocument {
                 .iter()
                 .map(|animation| animation.id.clone())
                 .collect(),
+            origins: Origins {
+                meshes: self
+                    .meshes
+                    .iter()
+                    .map(|mesh| MeshOrigin::from(&mesh.source))
+                    .collect(),
+                textures: self
+                    .textures
+                    .iter()
+                    .map(|texture| texture.uri.clone())
+                    .collect(),
+                clips: self
+                    .animations
+                    .iter()
+                    .map(|animation| ClipOrigin {
+                        name: animation.name.clone(),
+                        targets: animation.targets.clone(),
+                        uri: animation.uri.clone(),
+                    })
+                    .collect(),
+                skins: self
+                    .skins
+                    .iter()
+                    .map(|skin| skin.id.clone())
+                    .zip(prepared.skin_binds.iter().cloned())
+                    .collect(),
+            },
             streamed,
         })
     }

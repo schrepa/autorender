@@ -23,6 +23,9 @@ gpu_consts! {
     /// Levels of detail a draw group has at most: the mesh and two
     /// simplifications, each with its own plane of visible IDs and draws.
     pub(crate) const LOD_LEVELS: usize = 3 => ["LOD_LEVELS" in PRESENTATION_SHADER, "IMPOSTOR" in PRESENTATION_SHADER];
+    /// A slot's level of detail state's flag of being set: the slot drew
+    /// with its level tracked, which the state's low two bits hold.
+    pub(crate) const LOD_STATE: u32 = 1 << 31 => ["LOD_STATE" in PRESENTATION_SHADER];
     /// Indexed indirect draw arguments written by the GPU.
     pub(crate) const DRAW_ARGS_BYTES: u64 = 20 => ["size_of DrawArgs" in PRESENTATION_SHADER, "size_of DrawArgs" in SHADOW_SHADER];
     /// Composed active-parent record of `presentation.wgsl`.

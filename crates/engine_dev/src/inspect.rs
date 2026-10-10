@@ -3,15 +3,16 @@ use std::{collections::BTreeMap, io::Write};
 
 use engine_collision::{Collider, CollisionWorld, refresh_collision_world};
 use engine_core::{
-    AnimationPlayer, AssetLibrary, Atmosphere, Camera, Decal, Engine, FixedTime, FrameTime,
-    GlobalTransforms, InterpolateTransform, LocalLight, Mesh3d, Parent, ParticleEmitter,
-    PresentationMode, PresentationState, PresentedTransforms, ReflectionProbe, Skin, Tint,
-    Transform,
+    ActionId, ActionInput, AnimationPlayer, AssetLibrary, Atmosphere, Camera, Decal, Engine,
+    FixedTime, FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight,
+    MaterialHandle, Mesh3d, MeshHandle, Parent, ParticleEmitter, PresentationMode,
+    PresentationState, PresentedTransforms, ReflectionProbe, Skin, TerrainDebug, TextureHandle,
+    Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
     EnvironmentSection, SceneAtmosphere, SceneDecal, SceneEmitter, SceneEntity, SceneEnvironment,
-    SceneInstance, SceneLight, SceneReflectionProbe, SectionVisitor,
+    SceneInstance, SceneLight, SceneMaterial, SceneReflectionProbe, SectionVisitor,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -20,10 +21,11 @@ use crate::{
     DevError, DevRequest, MAX_DESCRIPTION_BYTES, MAX_INSPECTOR_BYTES, MAX_INSPECTORS,
     MAX_PAGE_SIZE, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
-        AnimationPlayerView, CameraView, DecalView, GlobalTransformView, HierarchyView,
-        InterpolateTransformView, Mesh3dView, MeshBoundsView, PresentationModeView,
-        PresentationStateView, PresentedTransformView, SkinView, SplineMeshView, SurfaceView,
-        TransformView,
+        AnimationPlayerView, CameraView, ClipView, DecalView, GlobalTransformView, HierarchyView,
+        InputView, InterpolateTransformView, LodLevelView, Mesh3dView, MeshBoundsView,
+        MeshRenderView, MeshView, PresentationModeView, PresentationStateView,
+        PresentedTransformView, SkinView, SplineMeshView, TerrainDebugView, TextureView,
+        TransformView, VirtualMeshView,
     },
 };
 
@@ -80,7 +82,45 @@ impl InspectorDescriptor {
 }
 
 type ReadInspector =
-    Box<dyn Fn(&World, Option<Entity>, Option<&SceneInstance>) -> Option<Value> + Send + Sync>;
+    Box<dyn Fn(&World, Option<Entity>, &Context<'_>) -> Option<Value> + Send + Sync>;
+
+/// What a host's renderer made of the world's assets, which inspectors
+/// report beside them. Hosts with a renderer answer it; without one, replies
+/// say None where it would.
+pub trait RendererFacts {
+    /// Whether `texture` is resident on the GPU.
+    fn texture_resident(&self, texture: TextureHandle) -> bool;
+    /// `mesh` as uploaded; None before it uploads.
+    fn mesh(&self, mesh: MeshHandle) -> Option<RenderedMesh>;
+    /// Whether an impostor card of `mesh` drawn with `material` is baked;
+    /// None where it never draws as one.
+    fn impostor(&self, mesh: MeshHandle, material: MaterialHandle) -> Option<bool>;
+    /// The level of detail render slot `slot` drew at, read back a few
+    /// frames late: 0 the mesh, 1 and 2 its simplifications, 3 its impostor
+    /// card. Asking watches the slot; None until a frame after that draws
+    /// it with levels of detail.
+    fn drawn_level(&self, slot: u32) -> Option<u32>;
+}
+
+/// A mesh as a renderer uploaded it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderedMesh {
+    /// Whether it uploaded with skin joints.
+    pub skinned: bool,
+    /// Its coarser levels of detail, finest first: each one's index count
+    /// and largest deviation from the mesh in mesh units.
+    pub levels: Vec<(u32, f32)>,
+}
+
+/// What inspectors read beside the world: the active scene, whose authored
+/// IDs name what it holds, the renderer's facts where the host has one, and
+/// the render slot each entity draws in.
+#[derive(Clone, Copy, Default)]
+pub struct Context<'a> {
+    pub scene: Option<&'a SceneInstance>,
+    pub renderer: Option<&'a dyn RendererFacts>,
+    pub render_slot: Option<&'a dyn Fn(Entity) -> Option<u32>>,
+}
 type HasInspector = Box<dyn Fn(&World, Option<Entity>) -> bool + Send + Sync>;
 
 struct Inspector {
@@ -141,7 +181,7 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<Transform>(entity).is_some())
             }),
-            read: Box::new(|world, entity, _scene| {
+            read: Box::new(|world, entity, _context| {
                 let entity = entity?;
                 world.get::<Transform>(entity)?;
                 let value = world
@@ -169,7 +209,7 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<Transform>(entity).is_some())
             }),
-            read: Box::new(|world, entity, _scene| {
+            read: Box::new(|world, entity, _context| {
                 let entity = entity?;
                 world.get::<Transform>(entity)?;
                 let value = world
@@ -197,7 +237,8 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<Transform>(entity).is_some())
             }),
-            read: Box::new(|world, entity, scene| {
+            read: Box::new(|world, entity, context| {
+                let scene = context.scene;
                 let entity = entity?;
                 world.get::<Transform>(entity)?;
                 let parent = world.get::<Parent>(entity).map(Parent::parent);
@@ -229,7 +270,7 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<Collider>(entity).is_some())
             }),
-            read: Box::new(|world, entity, _scene| {
+            read: Box::new(|world, entity, _context| {
                 crate::collision::collider_value(world, entity?)
             }),
         })
@@ -251,38 +292,10 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<Mesh3d>(entity).is_some())
             }),
-            read: Box::new(|world, entity, _scene| {
+            read: Box::new(|world, entity, context| {
                 let mesh3d = world.get::<Mesh3d>(entity?)?;
-                let assets = world.get_resource::<AssetLibrary>();
-                let mesh = assets.and_then(|assets| assets.mesh(mesh3d.mesh));
-                let material = assets.and_then(|assets| assets.material(mesh3d.material));
-                let texture_handle = material.and_then(|material| material.texture());
-                let texture = texture_handle
-                    .and_then(|handle| assets.and_then(|assets| assets.texture(handle)));
-                Some(json!(Mesh3dView {
-                    mesh_alive: mesh.is_some(),
-                    material_alive: material.is_some(),
-                    vertices: mesh.map(|mesh| mesh.vertices().len()),
-                    indices: mesh.map(|mesh| mesh.indices().len()),
-                    local_bounds: mesh.map(|mesh| MeshBoundsView {
-                        min: mesh.bounds().min().to_array(),
-                        max: mesh.bounds().max().to_array()
-                    }),
-                    color: material.map(|material| material.color()),
-                    opacity: material.map(|material| material.opacity()),
-                    surface: material.map(|material| {
-                        let surface = material.surface();
-                        SurfaceView {
-                            roughness: surface.roughness,
-                            metalness: surface.metalness,
-                            emission: surface.emission,
-                            ripples: surface.ripples,
-                        }
-                    }),
-                    texture_alive: texture_handle.map(|_| texture.is_some()),
-                    texture_dimensions: texture.map(|texture| [texture.width(), texture.height()]),
-                    texture_emission_mask: texture.map(|texture| texture.has_emission_mask()),
-                }))
+                let assets = world.get_resource::<AssetLibrary>()?;
+                Some(json!(mesh_view(assets, (entity?, mesh3d), context)))
             }),
         })
         .expect("built-in descriptor is bounded");
@@ -379,7 +392,7 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<engine_core::NavAgent>(entity).is_some())
             }),
-            read: Box::new(|world, entity, _scene| {
+            read: Box::new(|world, entity, _context| {
                 let entity = entity?;
                 let agent = *world.get::<engine_core::NavAgent>(entity)?;
                 let walk = world.get::<engine_core::NavWalk>(entity)?;
@@ -468,7 +481,7 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<engine_core::Grounded>(entity).is_some())
             }),
-            read: Box::new(|world, entity, _scene| {
+            read: Box::new(|world, entity, _context| {
                 let entity = entity?;
                 let grounded = world.get::<engine_core::Grounded>(entity)?;
                 let at = world.get::<engine_core::GroundedAt>(entity);
@@ -491,7 +504,8 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<Decal>(entity).is_some())
             }),
-            read: Box::new(|world, entity, scene| {
+            read: Box::new(|world, entity, context| {
+                let scene = context.scene;
                 let decal = world.get::<Decal>(entity?)?;
                 let assets = world.get_resource::<AssetLibrary>();
                 let material = scene.and_then(|scene| {
@@ -518,7 +532,8 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<engine_core::SplineMesh>(entity).is_some())
             }),
-            read: Box::new(|world, entity, scene| {
+            read: Box::new(|world, entity, context| {
+                let scene = context.scene;
                 let entity = entity?;
                 let spline = world.get::<engine_core::SplineMesh>(entity)?;
                 let chunks = world.get::<engine_core::SplineChunks>(entity);
@@ -558,7 +573,8 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<engine_core::Terrain>(entity).is_some())
             }),
-            read: Box::new(|world, entity, scene| {
+            read: Box::new(|world, entity, context| {
+                let scene = context.scene;
                 let entity = entity?;
                 let terrain = world.get::<engine_core::Terrain>(entity)?;
                 let mut levels = vec![0_u32; terrain.pyramid.levels() as usize];
@@ -671,6 +687,40 @@ impl DevTools {
             }),
         })
         .expect("built-in descriptor is bounded");
+        self.register_resource::<TerrainDebug>(
+            InspectorDescriptor::generated(schemas, "TerrainDebug"),
+            |debug| {
+                json!(TerrainDebugView {
+                    freeze: debug.freeze.map(|point| point.to_array()),
+                    view: debug.view,
+                })
+            },
+        )
+        .expect("built-in descriptor is bounded");
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::generated(schemas, "Input"),
+            kind: InspectorKind::Resource,
+            has: Box::new(|world, _| world.get_resource::<InputState>().is_some()),
+            read: Box::new(|world, _, _| {
+                let input = world.get_resource::<InputState>()?;
+                let actions = world.get_resource::<ActionInput>();
+                Some(json!(InputView {
+                    move_forward: input.move_forward,
+                    move_right: input.move_right,
+                    move_up: input.move_up,
+                    look_yaw: input.look_yaw,
+                    look_pitch: input.look_pitch,
+                    held: (0..32)
+                        .filter(|&index| {
+                            ActionId::new(index as u8).is_some_and(|action| {
+                                actions.is_some_and(|actions| actions.pressed(action))
+                            })
+                        })
+                        .collect(),
+                }))
+            }),
+        })
+        .expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Terrains>(
             InspectorDescriptor::generated(schemas, "Terrains"),
             |terrains| {
@@ -746,18 +796,27 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<AnimationPlayer>(entity).is_some())
             }),
-            read: Box::new(move |world, entity, scene| {
+            read: Box::new(move |world, entity, context| {
+                let scene = context.scene;
                 let player = world.get::<AnimationPlayer>(entity?)?;
                 let clip = world
                     .get_resource::<AssetLibrary>()
-                    .and_then(|assets| assets.clip(player.clip));
+                    .and_then(|assets| assets.clip(player.clip))
+                    .map(|clip| {
+                        let origin = scene.and_then(|scene| scene.clip_origin(player.clip));
+                        ClipView {
+                            id: origin.map(|(id, _)| id.to_owned()),
+                            name: origin.map(|(_, origin)| origin.name.clone()),
+                            targets: origin
+                                .map(|(_, origin)| origin.targets.clone())
+                                .unwrap_or_default(),
+                            channels: clip.channels().len(),
+                            uri: origin.and_then(|(_, origin)| origin.uri.clone()),
+                            duration: clip.duration(),
+                        }
+                    });
                 Some(json!(AnimationPlayerView {
-                    clip: scene.and_then(|scene| scene
-                        .clips()
-                        .find(|(_, handle)| *handle == player.clip)
-                        .map(|(id, _)| id.to_owned())),
-                    clip_alive: clip.is_some(),
-                    duration: clip.map(|clip| clip.duration()),
+                    clip,
                     time: player.time,
                     speed: player.speed,
                     looping: player.looping,
@@ -776,14 +835,19 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<Skin>(entity).is_some())
             }),
-            read: Box::new(move |world, entity, _scene| {
+            read: Box::new(move |world, entity, context| {
                 let skin = world.get::<Skin>(entity?)?;
                 Some(json!(SkinView {
+                    skin: context
+                        .scene
+                        .and_then(|scene| scene.skin_id(skin))
+                        .map(str::to_owned),
                     joints: skin
                         .joints
                         .iter()
                         .map(|&joint| authored(world, Some(joint)))
                         .collect(),
+                    inverse_binds: skin.inverse_binds.len(),
                 }))
             }),
         })
@@ -907,6 +971,106 @@ fn scene_schema(definition: Option<&str>) -> Result<Value, DevError> {
     }
 }
 
+/// What the Mesh3d inspector reads of `mesh3d`: its mesh, its material as
+/// a scene authors it and the textures its maps read, with what the renderer
+/// made of them.
+fn mesh_view(
+    assets: &AssetLibrary,
+    (entity, mesh3d): (Entity, &Mesh3d),
+    context: &Context<'_>,
+) -> Mesh3dView {
+    let Context {
+        scene,
+        renderer,
+        render_slot,
+    } = *context;
+    let mesh = assets.mesh(mesh3d.mesh).map(|mesh| {
+        let origin = scene.and_then(|scene| scene.mesh_origin(mesh3d.mesh));
+        let bounds = mesh.bounds();
+        MeshView {
+            id: origin.map(|(id, _)| id.to_owned()),
+            source: origin.map(|(_, source)| source.clone()),
+            vertices: mesh.vertices().len(),
+            indices: mesh.indices().len(),
+            local_bounds: MeshBoundsView {
+                min: bounds.min().to_array(),
+                max: bounds.max().to_array(),
+            },
+            colors: mesh.colors().is_some(),
+            uv1: mesh.uv1().is_some(),
+            joints: mesh.joint_count(),
+            virtual_geometry: mesh.virtual_geometry().map(|geometry| VirtualMeshView {
+                levels: geometry.levels(),
+                clusters: geometry.cluster_count() as u32,
+                pages: geometry.page_count() as u32,
+                triangles: u64::from(geometry.triangle_count()),
+            }),
+            rendered: renderer.and_then(|renderer| {
+                let rendered = renderer.mesh(mesh3d.mesh)?;
+                Some(MeshRenderView {
+                    skinned: rendered.skinned,
+                    levels: rendered
+                        .levels
+                        .iter()
+                        .map(|&(indices, error)| LodLevelView { indices, error })
+                        .collect(),
+                    impostor: renderer.impostor(mesh3d.mesh, mesh3d.material),
+                })
+            }),
+        }
+    });
+    let material = assets.material(mesh3d.material);
+    let textures = material
+        .map(|material| {
+            material
+                .maps()
+                .into_iter()
+                .flatten()
+                .map(|map| {
+                    let origin = scene.and_then(|scene| scene.texture_origin(map.texture));
+                    let texture = assets.texture(map.texture);
+                    TextureView {
+                        id: origin.map(|(id, _)| id.to_owned()),
+                        uri: origin.and_then(|(_, uri)| uri.map(str::to_owned)),
+                        inline: origin.is_some_and(|(_, uri)| uri.is_none()),
+                        alive: texture.is_some(),
+                        width: texture.map(|texture| texture.width()),
+                        height: texture.map(|texture| texture.height()),
+                        emission_mask: texture.map(|texture| texture.has_emission_mask()),
+                        gpu_resident: renderer
+                            .map(|renderer| renderer.texture_resident(map.texture)),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let material = material.map(|material| {
+        let id = scene
+            .and_then(|scene| {
+                scene
+                    .materials()
+                    .find(|&(_, handle)| handle == mesh3d.material)
+            })
+            .map(|(id, _)| id.to_owned());
+        let texture = |handle| {
+            scene
+                .and_then(|scene| scene.texture_origin(handle))
+                .map(|(id, _)| id.to_owned())
+                .unwrap_or_default()
+        };
+        SceneMaterial::from_runtime(id.unwrap_or_default(), material, texture)
+    });
+    let drawn_level = renderer
+        .zip(render_slot.and_then(|slot| slot(entity)))
+        .and_then(|(renderer, slot)| renderer.drawn_level(slot));
+    Mesh3dView {
+        mesh,
+        material,
+        textures,
+        drawn_level,
+    }
+}
+
 /// The first sentence of `doc`, within an inspector description's bytes.
 fn summary(doc: &str) -> String {
     let sentence = doc
@@ -937,7 +1101,7 @@ impl DevTools {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<T>(entity).is_some())
             }),
-            read: Box::new(move |world, entity, _scene| world.get::<T>(entity?).map(&inspect)),
+            read: Box::new(move |world, entity, _context| world.get::<T>(entity?).map(&inspect)),
         })
     }
 
@@ -951,7 +1115,7 @@ impl DevTools {
             descriptor,
             kind: InspectorKind::Resource,
             has: Box::new(|world, _| world.get_resource::<T>().is_some()),
-            read: Box::new(move |world, _, _scene| world.get_resource::<T>().map(&inspect)),
+            read: Box::new(move |world, _, _context| world.get_resource::<T>().map(&inspect)),
         })
     }
 
@@ -995,12 +1159,8 @@ impl DevTools {
     /// records are scanned, 100 rows returned, and 64 KiB encoded. Counters and
     /// revisions are decimal strings to retain u64 precision across JavaScript.
     /// Refreshes derived transforms without simulation advance, extraction, or GPU work.
-    pub fn execute(
-        &self,
-        engine: &mut Engine,
-        scene: Option<&SceneInstance>,
-        source: &str,
-    ) -> String {
+    pub fn execute(&self, engine: &mut Engine, context: Context<'_>, source: &str) -> String {
+        let scene = context.scene;
         let world = engine.app.world();
         let observation = json!({
             "frame": world.get_resource::<FrameTime>().map(|time| time.frame.to_string()),
@@ -1008,7 +1168,7 @@ impl DevTools {
             "scene": scene.map(|scene| json!({"id": scene.id(), "revision": scene.revision().to_string()})),
             "presentation": presentation_value(engine.presentation()),
         });
-        let result = self.parse_and_execute(engine, scene, source);
+        let result = self.parse_and_execute(engine, context, source);
         let response = match result {
             Ok(result) => {
                 json!({"version": PROTOCOL_VERSION, "ok": true, "observation": observation, "result": result})
@@ -1026,9 +1186,10 @@ impl DevTools {
     fn parse_and_execute(
         &self,
         engine: &mut Engine,
-        scene: Option<&SceneInstance>,
+        context: Context<'_>,
         source: &str,
     ) -> Result<Value, DevError> {
+        let scene = context.scene;
         if source.len() > MAX_REQUEST_BYTES {
             return Err(DevError::new(
                 ErrorCode::RequestTooLarge,
@@ -1069,7 +1230,7 @@ impl DevTools {
             // Validate selectors and pagination before refreshing any derived cache.
             self.inspect(
                 engine.app.world(),
-                scene,
+                context,
                 InspectSelector {
                     entity: entity.as_deref(),
                     parent: parent.as_deref(),
@@ -1088,6 +1249,12 @@ impl DevTools {
             engine.prepare_presented_transforms();
             engine.refresh_transforms();
         }
+        let engine = &*engine;
+        let slot = |entity| engine.render_slot(entity);
+        let context = Context {
+            render_slot: Some(&slot),
+            ..context
+        };
         let world = engine.app.world();
         match request {
             DevRequest::Status { .. } => Ok(json!({
@@ -1112,7 +1279,8 @@ impl DevTools {
                     let texture = assets.texture(handle);
                     json!({"id":id,"state":if texture.is_some() {"cpu_ready"} else {"missing"},
                         "width":texture.map(|texture| texture.width()), "height":texture.map(|texture| texture.height()),
-                        "bytes":texture.map(|texture| texture.byte_len())})
+                        "bytes":texture.map(|texture| texture.byte_len()),
+                        "gpu_resident":context.renderer.map(|renderer| renderer.texture_resident(handle))})
                 }).collect();
                 Ok(
                     json!({"meshes": assets.mesh_count(), "materials": assets.material_count(),
@@ -1133,7 +1301,7 @@ impl DevTools {
                 ..
             } => self.inspect(
                 world,
-                scene,
+                context,
                 InspectSelector {
                     entity: entity.as_deref(),
                     parent: parent.as_deref(),
@@ -1176,7 +1344,9 @@ impl DevTools {
                 )))
                 .expect("generated schemas are JSON");
                 Ok(
-                    json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": format!("version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need CollisionPlugin but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source.")}),
+                    json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": format!("version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need CollisionPlugin but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source."),
+                        // Where each control's effect shows: an inspector, status, the game's controls, or nothing.
+                        "control_state": crate::protocol::CONTROL_STATE.iter().map(|&(op, shows)| (op.to_owned(), json!(shows))).collect::<serde_json::Map<_, _>>()}),
                 )
             }
             "ErrorCodes" => Ok(json!({
@@ -1215,9 +1385,10 @@ impl DevTools {
     fn inspect(
         &self,
         world: &World,
-        scene: Option<&SceneInstance>,
+        context: Context<'_>,
         selector: InspectSelector<'_>,
     ) -> Result<Value, DevError> {
+        let scene = context.scene;
         let InspectSelector {
             entity,
             parent,
@@ -1250,7 +1421,7 @@ impl DevTools {
                     "resources have no entity or parent selector or pagination offset",
                 ));
             }
-            let value = read_value(inspector, world, None, scene)?;
+            let value = read_value(inspector, world, None, &context)?;
             return Ok(json!({"resource": inspector.descriptor.name, "value": value}));
         }
         let scene = scene.ok_or_else(|| {
@@ -1290,7 +1461,9 @@ impl DevTools {
                     "gameplay removed this authored entity",
                 ));
             }
-            return Ok(json!({"entity": self.entity_row(world, scene, id, entity, inspector)?}));
+            return Ok(
+                json!({"entity": self.entity_row(world, context, scene, id, entity, inspector)?}),
+            );
         }
         let parent = parent
             .map(|id| {
@@ -1324,7 +1497,7 @@ impl DevTools {
                 continue;
             }
             if total >= offset && rows.len() < limit {
-                rows.push(self.entity_row(world, scene, id, entity, inspector)?);
+                rows.push(self.entity_row(world, context, scene, id, entity, inspector)?);
             }
             total += 1;
         }
@@ -1337,6 +1510,7 @@ impl DevTools {
     fn entity_row(
         &self,
         world: &World,
+        context: Context<'_>,
         scene: &SceneInstance,
         id: &str,
         entity: Entity,
@@ -1345,7 +1519,7 @@ impl DevTools {
         let metadata = world.get::<SceneEntity>(entity);
         let mut row = json!({"id": id, "name": metadata.map(|metadata| metadata.name.as_str()).unwrap_or(""), "tags": metadata.map(|metadata| &metadata.tags)});
         if let Some(inspector) = inspector {
-            row["components"] = json!({inspector.descriptor.name.clone(): read_value(inspector, world, Some(entity), Some(scene))?});
+            row["components"] = json!({inspector.descriptor.name.clone(): read_value(inspector, world, Some(entity), &Context { scene: Some(scene), ..context })?});
         } else {
             row["components"] = json!(
                 self.inspectors
@@ -1364,9 +1538,9 @@ fn read_value(
     inspector: &Inspector,
     world: &World,
     entity: Option<Entity>,
-    scene: Option<&SceneInstance>,
+    context: &Context<'_>,
 ) -> Result<Value, DevError> {
-    let value = (inspector.read)(world, entity, scene).ok_or_else(|| {
+    let value = (inspector.read)(world, entity, context).ok_or_else(|| {
         DevError::new(
             ErrorCode::MissingComponent,
             "$.component",

@@ -204,6 +204,9 @@ pub(crate) struct GpuPresentationPass {
     fades: Fades,
     probes: ProbeFaces,
     totals: Totals,
+    // The slot whose level of detail state the totals carry, for
+    // development tools.
+    watched: std::cell::Cell<Option<u32>>,
     // Each frame's hidden and sub-pixel counts.
     occlusion_counts: wgpu::Buffer,
     // This frame draws in two phases around the occlusion test, and leaves
@@ -255,6 +258,7 @@ impl GpuPresentationPass {
                 uniform("engine/presentation-frame-probe")
             })),
             totals: Totals::new(device),
+            watched: std::cell::Cell::new(None),
             occlusion_counts: storage(
                 device,
                 "engine/presentation-occlusion-counts",
@@ -303,6 +307,34 @@ impl GpuPresentationPass {
     /// impostors.
     pub(crate) fn lod_instances(&self) -> Option<[u32; 4]> {
         self.totals.last().map(|totals| totals.levels)
+    }
+
+    /// Watches `slot`: later frames' totals carry its level of detail state.
+    pub(crate) fn watch(&self, slot: u32) {
+        self.watched.set(Some(slot));
+    }
+
+    /// The watched slot and its level of detail state, a few frames old.
+    pub(crate) fn watched(&self) -> Option<(u32, u32)> {
+        self.totals.last().and_then(|totals| totals.watched)
+    }
+
+    /// Copies the watched slot's level of detail state into the totals:
+    /// the slot, while the states cover it.
+    fn copy_watched(&self, encoder: &mut wgpu::CommandEncoder) -> Option<u32> {
+        let slot = self.watched.get()?;
+        let offset = u64::from(slot) * 4;
+        if offset + 4 > self.fades.states.size() {
+            return None;
+        }
+        encoder.copy_buffer_to_buffer(
+            &self.fades.states,
+            offset,
+            &self.totals.buffer,
+            totals::WATCHED_OFFSET,
+            4,
+        );
+        Some(slot)
     }
 
     /// Whether this frame draws in two phases around the occlusion test.
@@ -765,7 +797,8 @@ impl GpuPresentationPass {
             encoder.copy_buffer_to_buffer(&self.occlusion_counts, 4, totals, 12, 4);
             if !self.occlusion {
                 encoder.copy_buffer_to_buffer(&self.occlusion_counts, 8, totals, 48, 4);
-                self.totals.read_back(device, encoder);
+                let watched = self.copy_watched(encoder);
+                self.totals.read_back(device, encoder, watched);
             }
         }
     }
@@ -824,7 +857,8 @@ impl GpuPresentationPass {
         encoder.copy_buffer_to_buffer(scan, self.groups.level_offset(), totals, 32, 16);
         encoder.copy_buffer_to_buffer(&self.occlusion_counts, 0, totals, 8, 4);
         encoder.copy_buffer_to_buffer(&self.occlusion_counts, 8, totals, 48, 4);
-        self.totals.read_back(device, encoder);
+        let watched = self.copy_watched(encoder);
+        self.totals.read_back(device, encoder, watched);
     }
 
     /// Records a compaction over `group`: group sums, their scan, draw

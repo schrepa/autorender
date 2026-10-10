@@ -741,6 +741,12 @@ impl Engine {
         self.retained.set_culling(enabled);
     }
 
+    /// The renderer slot `entity` draws in, while it draws: what
+    /// development tools read the GPU's per-instance state by.
+    pub fn render_slot(&self, entity: Entity) -> Option<u32> {
+        self.retained.slot_of(entity)
+    }
+
     pub fn frustum_culling(&self) -> bool {
         self.retained.culling()
     }

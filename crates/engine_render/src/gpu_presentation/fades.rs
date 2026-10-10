@@ -31,7 +31,7 @@ impl Fades {
                 device,
                 "engine/presentation-lod-states",
                 0,
-                wgpu::BufferUsages::empty(),
+                wgpu::BufferUsages::COPY_SRC,
             ),
             cards: cards(device, 0),
             slots: 0,
@@ -54,7 +54,7 @@ impl Fades {
                 device,
                 "engine/presentation-lod-states",
                 slots * 4,
-                wgpu::BufferUsages::empty(),
+                wgpu::BufferUsages::COPY_SRC,
             );
             self.slots = slots;
             self.generation += 1;

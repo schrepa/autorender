@@ -260,7 +260,7 @@ pub(crate) struct BrowserApp {
     // Replaced only through `replace_engine`, which wires each engine to
     // this page.
     pub(crate) engine: Engine,
-    renderer: Renderer,
+    pub(crate) renderer: Renderer,
     last_timestamp_ms: Option<f64>,
     performance: web_sys::Performance,
     stats: FrameStats,
@@ -949,12 +949,6 @@ impl BrowserApp {
     /// [`Self::stats`] as the JSON object hosts and agents read.
     pub fn stats_json(&self) -> String {
         serde_json::to_string(&self.stats()).expect("frame stats serialize")
-    }
-
-    /// GPU residency reflects the last valid render boundary, not queue completion.
-    #[cfg(feature = "dev")]
-    pub(crate) fn texture_resident(&self, handle: engine_core::TextureHandle) -> bool {
-        self.renderer.is_texture_resident(handle)
     }
 
     /// Drop suspension time and held input before the next frame.

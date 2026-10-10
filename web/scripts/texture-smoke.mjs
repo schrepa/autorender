@@ -49,18 +49,29 @@ try {
   assert.equal(initialResidency.gpuTextures, initialResidency.textures);
   assert.equal(initialResidency.textureGpu, initialResidency.textureCpu);
   const meshViews = await command("inspect", { component: "Mesh3d", limit: 100 });
-  const texturedEntity = meshViews.result.entities.find(entity => entity.components.Mesh3d.texture_alive);
+  const texturedEntity = meshViews.result.entities.find(entity => entity.components.Mesh3d.textures.some(texture => texture.alive));
   assert.ok(texturedEntity, "A textured material must be used by scenery.");
-  const meshView = await command("inspect", { entity: texturedEntity.id, component: "Mesh3d" });
-  assert.equal(meshView.result.entity.components.Mesh3d.texture_alive, true);
+  const meshView = (await command("inspect", { entity: texturedEntity.id, component: "Mesh3d" })).result.entity.components.Mesh3d;
+  // The material reads back as authored, its texture by ID, resident.
+  const [texture] = meshView.textures;
+  assert.equal(texture.alive, true);
+  assert.equal(texture.gpu_resident, true);
+  assert.ok(source.textures.some(authored => authored.id === texture.id), `the texture's authored ID: ${texture.id}`);
+  assert.equal(meshView.material.texture.id, texture.id);
+  assert.ok(source.materials.some(material => material.id === meshView.material.id));
+  assert.ok(source.meshes.some(mesh => mesh.id === meshView.mesh.id && mesh.source.kind === meshView.mesh.source.kind), JSON.stringify(meshView.mesh));
   for (let frame = 0; frame < 3; frame++) {
     const warmed = await command("render");
     assert.equal(warmed.result.rendering.texture_upload_bytes, 0, "Warm frames must not upload texture pixels again.");
   }
 
   // Keep recognizable gameplay state so a rejected replacement cannot hide a reset.
-  await command("input", { forward: 1 });
+  await command("input", { forward: 1, held: 1 });
   await command("step", { ticks: 6 });
+  // What the step brought inspects.
+  const input = (await command("inspect", { component: "Input" })).result.value;
+  assert.equal(input.move_forward, 1, JSON.stringify(input));
+  assert.deepEqual(input.held, [0], JSON.stringify(input));
   await command("input", { forward: 0 });
   const playerBefore = await command("inspect", { entity: player, component: "Transform" });
   const progressBefore = await page.locator("canvas").evaluate(canvas => JSON.parse(canvas.dataset.progress));

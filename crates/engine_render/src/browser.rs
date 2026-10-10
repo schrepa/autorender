@@ -16,8 +16,8 @@ use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::entries::{MeshPass, PassKind, Streams};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment};
 use crate::gpu_data::{
-    CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, GroundData, LOD_LEVELS, LightingUniform,
-    PoseData, SHADER, SkinVertex, Variant, Vertex, clamped_extent,
+    CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, GroundData, LOD_LEVELS, LOD_STATE,
+    LightingUniform, PoseData, SHADER, SkinVertex, Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;
@@ -672,6 +672,43 @@ impl Renderer {
     /// when suspended. Device loss requires replacing this renderer.
     pub fn is_texture_resident(&self, handle: TextureHandle) -> bool {
         self.materials.is_texture_resident(handle)
+    }
+
+    /// Mesh `handle` as uploaded: whether with skin joints, and its coarser
+    /// levels of detail, finest first, each one's index count and largest
+    /// deviation in mesh units. None before it uploads.
+    pub fn mesh_levels(&self, handle: MeshHandle) -> Option<(bool, Vec<(u32, f32)>)> {
+        let mesh = self.meshes.get(&handle)?;
+        let levels = mesh
+            .lods
+            .iter()
+            .map(|&(_, count, error)| (count, error))
+            .collect();
+        Some((mesh.skinned, levels))
+    }
+
+    /// The level of detail the slot `slot` drew at, read back a few frames
+    /// late: 0 the mesh, 1 and 2 its simplifications, 3 its impostor card.
+    /// Asking watches the slot; None until a GPU-culled frame with levels of
+    /// detail on draws it after that.
+    pub fn drawn_level(&self, slot: u32) -> Option<u32> {
+        self.gpu_presentation.watch(slot);
+        match self.gpu_presentation.watched() {
+            // States carry their level once set; zero is undrawn.
+            Some((watched, state)) if watched == slot && state & LOD_STATE != 0 => Some(state & 3),
+            _ => None,
+        }
+    }
+
+    /// Whether an impostor card of mesh `mesh` drawn with `material` is
+    /// baked. None where it never draws as one: before upload, and for
+    /// skinned meshes and those of too few triangles.
+    pub fn impostor_baked(&self, mesh: MeshHandle, material: MaterialHandle) -> Option<bool> {
+        let gpu = self.meshes.get(&mesh)?;
+        if gpu.skinned || (gpu.index_count as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {
+            return None;
+        }
+        Some(self.impostors.atlas.contains((mesh, Some(material))))
     }
 
     /// Whether pipelines created by earlier frames may still be compiling:

@@ -9,14 +9,19 @@ use crate::buffers::ReadbackRing;
 // Totals read back: phase one's (or the only) visible count, phase two's,
 // the candidates phase two found hidden, and those covering no pixel center;
 // then phase one's and phase two's drawn counts per level of
-// detail; then the triangles both phases' draws submit.
-const TOTALS_BYTES: u64 = 52;
+// detail; then the triangles both phases' draws submit, and the level of
+// detail state of the slot development tools watch.
+const TOTALS_BYTES: u64 = 56;
+
+/// Where the watched slot's level of detail state lands in the totals.
+pub(super) const WATCHED_OFFSET: u64 = 52;
 
 /// One frame's totals: instances visible (drawn in either phase, hidden,
 /// or covering no pixel center), those occlusion culling left undrawn,
 /// those covering no pixel center, instances drawn at each level of detail
 /// (the mesh, its two simplifications, then impostors), and the triangles
-/// the camera's draws submitted.
+/// the camera's draws submitted, and the slot watched with its level of
+/// detail state.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct FrameTotals {
     pub(super) visible: u32,
@@ -24,12 +29,13 @@ pub(super) struct FrameTotals {
     pub(super) subpixel: u32,
     pub(super) levels: [u32; 4],
     pub(super) triangles: u32,
+    pub(super) watched: Option<(u32, u32)>,
 }
 
 pub(super) struct Totals {
     // The frame's totals, copied into a read-back buffer.
     pub(super) buffer: wgpu::Buffer,
-    readbacks: ReadbackRing<()>,
+    readbacks: ReadbackRing<Option<u32>>,
     last: Rc<Cell<Option<FrameTotals>>>,
 }
 
@@ -52,16 +58,22 @@ impl Totals {
         self.last.get()
     }
 
-    /// Records a copy of the totals into a free read-back buffer, if any.
-    pub(super) fn read_back(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+    /// Records a copy of the totals into a free read-back buffer, if any,
+    /// with the slot whose state they hold.
+    pub(super) fn read_back(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        watched: Option<u32>,
+    ) {
         self.readbacks
-            .record(device, encoder, &self.buffer, TOTALS_BYTES, ());
+            .record(device, encoder, &self.buffer, TOTALS_BYTES, watched);
     }
 
     /// Requests maps of read-backs recorded in the frame just submitted.
     pub(super) fn after_submit(&mut self) {
         let last = Rc::clone(&self.last);
-        self.readbacks.after_submit(move |words, ()| {
+        self.readbacks.after_submit(move |words, watched| {
             // Visible: drawn in either phase, hidden, or covering no pixel
             // center.
             let (hidden, tiny) = (words.get(2), words.get(3));
@@ -77,6 +89,7 @@ impl Totals {
                     words.get(4 + level).saturating_add(words.get(8 + level))
                 }),
                 triangles: words.get(12),
+                watched: watched.map(|slot| (slot, words.get(13))),
             }));
         });
     }
