@@ -14,9 +14,10 @@ use crate::{Error, Result};
 #[path = "app_profiling.rs"]
 mod profiling;
 
-/// Milliseconds on the host's clock, which terrain times its work by: the
-/// page's (0 without one), or natively since the first reading.
-pub(crate) fn now_ms() -> f64 {
+/// Milliseconds on the host's clock, which terrain times its work by and
+/// profiling captures time events by: the page's (0 without one), or
+/// natively since the first reading.
+pub fn now_ms() -> f64 {
     #[cfg(target_arch = "wasm32")]
     {
         thread_local! {

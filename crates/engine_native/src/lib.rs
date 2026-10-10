@@ -3,6 +3,10 @@
 //! without one, and the files games read from disk as the page fetches
 //! them.
 
+#[cfg(feature = "profiling")]
+mod capabilities;
+#[cfg(feature = "profiling")]
+mod deep;
 #[cfg(feature = "dev")]
 pub mod dev;
 pub mod files;
@@ -12,10 +16,14 @@ mod jobs;
 mod offscreen;
 mod pix;
 mod renderdoc;
+#[cfg(feature = "profiling")]
+pub mod sampler;
 mod window;
 
 use std::process::ExitCode;
 
+#[cfg(feature = "profiling")]
+pub use deep::{DeepCapture, ProfileFiles};
 pub use engine::GpuPreference;
 pub use job_cache::JobCache;
 pub use jobs::{CacheOptions, JobOptions, JobPool};

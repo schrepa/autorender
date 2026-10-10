@@ -41,6 +41,44 @@ impl<G: Game> Offscreen<G> {
         self.size
     }
 
+    /// Starts a deep profile of the frames drawn until
+    /// [`Self::finish_profile`]: the engine's capture of at most
+    /// `max_events` CPU events and every frame's GPU spans, and with
+    /// `cpu_samples` samples of the calling thread, which draws the game,
+    /// and the job workers.
+    #[cfg(feature = "profiling")]
+    pub fn start_profile(
+        &mut self,
+        max_events: usize,
+        cpu_samples: bool,
+    ) -> engine::Result<crate::DeepCapture> {
+        let threads = if cpu_samples {
+            crate::sampler::SampledThread::current("Main thread")
+                .into_iter()
+                .chain(self.jobs.iter().flat_map(JobPool::sampled_threads))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        crate::DeepCapture::start(&mut self.host, threads, max_events)
+            .map_err(|error| host_error("Profiling could not start", error))
+    }
+
+    /// Stops the deep profile `capture` and writes its files into `folder`
+    /// as `stem`, with `context` (what ran) in its summary.
+    #[cfg(feature = "profiling")]
+    pub fn finish_profile(
+        &mut self,
+        capture: crate::DeepCapture,
+        folder: &Path,
+        stem: &str,
+        context: serde_json::Value,
+    ) -> engine::Result<crate::ProfileFiles> {
+        capture
+            .finish(&mut self.host, folder, stem, context)
+            .map_err(|error| host_error("Profiling failed", error))
+    }
+
     /// Hands workers the jobs the engine made, and the engine what workers
     /// finished: frames do so, and hosts between them.
     pub fn exchange_jobs(&mut self) {

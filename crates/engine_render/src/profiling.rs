@@ -246,6 +246,8 @@ mod capture {
     /// A draw's measurements in a captured frame.
     struct DrawSample {
         label: String,
+        // From the frame's first timestamp.
+        start_ms: Option<f64>,
         duration_ms: Option<f64>,
         // Vertex shader invocations, primitives out of clipping, fragment
         // shader invocations.
@@ -260,6 +262,8 @@ mod capture {
         origin: Origin,
         // Each recorded span's duration, then the aggregates: in report order.
         spans: Vec<(&'static str, f64)>,
+        // Where each recorded span began, from the frame's first timestamp.
+        starts: Vec<(&'static str, f64)>,
         draws: Vec<DrawSample>,
     }
 
@@ -667,11 +671,22 @@ mod capture {
                         .filter(|value| value.is_finite())
                         .map(|interval| ("frame_gpu_interval", interval)),
                 );
+                let start_of = |begin: u64| {
+                    span.filter(|_| begin != 0)
+                        .and_then(|(first, _)| begin.checked_sub(first))
+                        .map(to_ms)
+                };
+                let starts = names
+                    .iter()
+                    .zip(&stamps)
+                    .filter_map(|(name, &(begin, _))| Some((*name, start_of(begin)?)))
+                    .collect();
                 let draws = labels
                     .into_iter()
                     .zip(draw_stamps.into_iter().zip(draw_statistics))
                     .map(|(label, (stamps, statistics))| DrawSample {
                         label,
+                        start_ms: timed.then(|| start_of(stamps.0)).flatten(),
                         duration_ms: timed.then(|| duration(stamps)).flatten(),
                         statistics: counted.then_some(statistics),
                     })
@@ -681,6 +696,7 @@ mod capture {
                 self.samples.push(Sample {
                     origin,
                     spans,
+                    starts,
                     draws,
                 });
             }
@@ -701,7 +717,7 @@ mod capture {
                 "reason": if self.supported { Value::Null } else { json!("timestamp-query unavailable on adapter") },
                 "capture_id": self.capture.map(|id| id.to_string()),
                 "active": active,
-                "scope": "every span the captured frames recorded, by name: opaque_meshes (the opaque passes), the passes and dispatch groups the renderer times, each group of spans whole under the group's name from its first begin to its last end, stage_<pass> for every render graph pass whole (with the copies and passes it records, timed or not), stage_lead, stage_gaps and stage_tail (the frame's GPU span before, between and after the passes: stalls inside passes with almost no gaps mean other work shares the GPU), pre_<what> for the command buffers submitted before the frame's, frame_gpu (the frame's first timed begin to last timed end, including other work between its passes), frame_gpu_gap (from the previous frame's last end, when consecutive) and frame_gpu_interval (first begin to first begin per frame); excludes uploads, queue latency, presentation and timestamp readback",
+                "scope": "every span the captured frames recorded, by name: opaque_meshes (the opaque passes), the passes and dispatch groups the renderer times, each group of spans whole under the group's name from its first begin to its last end, stage_<pass> for every render graph pass whole (with the copies and passes it records, timed or not), stage_lead, stage_gaps and stage_tail (the frame's GPU span before, between and after the passes: stalls inside passes with almost no gaps mean other work shares the GPU), pre_<what> for the command buffers submitted before the frame's, frame_gpu (the frame's first timed begin to last timed end, including other work between its passes), frame_gpu_gap (from the previous frame's last end, when consecutive) and frame_gpu_interval (first begin to first begin per frame); start_ms is where a recorded span (or draw) began, from the frame's first timestamp; excludes uploads, queue latency, presentation and timestamp readback",
                 "clock": "GPU duration only; frame/submission IDs correlate origin, clocks are not aligned",
                 "timestamp_period_ns": if self.supported { Some(self.period_ns) } else { None },
                 "precision": "browser may quantize timestamp values; zero durations remain valid samples",
@@ -737,11 +753,13 @@ mod capture {
                     .iter()
                     .flat_map(|sample| {
                         sample.spans.iter().map(|&(name, duration_ms)| {
+                            let start = sample.starts.iter().find(|&&(of, _)| of == name);
                             json!({
                                 "capture_id": sample.origin.capture.to_string(),
                                 "frame": sample.origin.frame.to_string(),
                                 "submission": sample.origin.submission.to_string(),
                                 "name": name,
+                                "start_ms": start.map(|&(_, start)| start),
                                 "duration_ms": duration_ms,
                             })
                         })
@@ -756,6 +774,7 @@ mod capture {
                             json!({
                                 "frame": sample.origin.frame.to_string(),
                                 "label": draw.label,
+                                "start_ms": draw.start_ms,
                                 "duration_ms": draw.duration_ms,
                                 "vertex_invocations": draw.statistics.map(|counts| counts[0]),
                                 "primitives": draw.statistics.map(|counts| counts[1]),

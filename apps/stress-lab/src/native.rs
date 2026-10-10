@@ -50,6 +50,12 @@ Native options:
   --offscreen FRAMES   draw FRAMES frames at 60 Hz offscreen and print their
                        statistics as JSON, without a window
   --capture PATH       with --offscreen: the last frame as a PNG file
+  --profile DIR        with --offscreen: a deep profile of the frames, on any
+                       machine without setup: CPU samples of every thread
+                       (functions, lines, instructions), the engine's spans,
+                       each frame's GPU passes and draws, and the deeper
+                       layers recommended here; files in DIR (builds with
+                       --features profiling)
   --gpu-capture PATH   with --offscreen: the last frame's GPU work, frame-exact:
                        a PIX capture (.wpix) where PIX is installed and the
                        GPU interface is D3D12; else a RenderDoc capture
@@ -122,6 +128,7 @@ struct Options {
     offscreen: Option<u32>,
     capture: Option<PathBuf>,
     gpu_capture: Option<PathBuf>,
+    profile: Option<PathBuf>,
     dev: bool,
     dev_artifacts: Option<PathBuf>,
 }
@@ -166,6 +173,7 @@ impl Options {
             offscreen: None,
             capture: None,
             gpu_capture: None,
+            profile: None,
             dev: false,
             dev_artifacts: None,
         };
@@ -278,6 +286,7 @@ impl Options {
                 }
                 "--capture" => options.capture = Some(value()?.into()),
                 "--gpu-capture" => options.gpu_capture = Some(value()?.into()),
+                "--profile" => options.profile = Some(value()?.into()),
                 "--dev" => {
                     if inline.is_some() {
                         return Err("--dev takes no value".into());
@@ -288,10 +297,13 @@ impl Options {
                 _ => return Err(format!("unknown option {name}")),
             }
         }
-        if (options.capture.is_some() || options.gpu_capture.is_some())
+        if (options.capture.is_some() || options.gpu_capture.is_some() || options.profile.is_some())
             && options.offscreen.is_none()
         {
-            return Err("--capture and --gpu-capture need --offscreen".into());
+            return Err("--capture, --gpu-capture and --profile need --offscreen".into());
+        }
+        if options.profile.is_some() && !cfg!(feature = "profiling") {
+            return Err("--profile needs a build with --features profiling".into());
         }
         Ok(options)
     }
@@ -526,6 +538,11 @@ impl Options {
         let mut game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
         game.prepare(0.0)?;
         let prepared_ms = started.elapsed().as_secs_f64() * 1000.0;
+        #[cfg(feature = "profiling")]
+        let profiling = match &self.profile {
+            Some(_) => Some(game.start_profile(engine::profiling::MAX_EVENTS, true)?),
+            None => None,
+        };
         let mut cpu_ms = Vec::with_capacity(frames as usize);
         let drawing = Instant::now();
         let mut captured = None;
@@ -541,6 +558,27 @@ impl Options {
             cpu_ms.push(stats.simulation_ms + stats.extraction_ms + stats.render_ms);
         }
         let frame_ms = drawing.elapsed().as_secs_f64() * 1000.0 / f64::from(frames);
+        #[cfg(feature = "profiling")]
+        let profile = match (profiling, &self.profile) {
+            (Some(capture), Some(folder)) => {
+                let context = serde_json::json!({
+                    "program": "stress-lab-native",
+                    "arguments": std::env::args().skip(1).collect::<Vec<_>>(),
+                    "frames": frames,
+                    "size": [size.0, size.1],
+                });
+                let files = game.finish_profile(capture, folder, "profile", context)?;
+                Some(serde_json::json!({
+                    "summary": files.summary.display().to_string(),
+                    "firefox": files.firefox.display().to_string(),
+                    "report": files.report.display().to_string(),
+                    "complete": files.complete,
+                }))
+            }
+            _ => None,
+        };
+        #[cfg(not(feature = "profiling"))]
+        let profile: Option<serde_json::Value> = None;
         if let Some(path) = &self.capture {
             game.save_png(path)?;
         }
@@ -555,6 +593,7 @@ impl Options {
             "frame_ms": frame_ms,
             "cpu_ms": {"median": at(0.5), "p95": at(0.95)},
             "capture": self.capture.as_ref().map(|path| path.display().to_string()),
+            "profile": profile,
             "gpu_capture": self.gpu_capture.as_ref().map(|path| serde_json::json!({
                 "path": path.display().to_string(),
                 "by": captured,

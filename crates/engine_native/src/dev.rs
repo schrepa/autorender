@@ -3,9 +3,9 @@
 //! the page runs them (`web/src/engine/dev.ts`). The engine answers each
 //! command, or hands back a control the host carries out: pause and resume,
 //! benchmarks, captures (PNG files), the game's own controls and scene
-//! reloads. Profiling builds also take the agent's `profile`: a bounded CPU
-//! and GPU capture whose report is written as a file, with each opaque
-//! draw's GPU time and pipeline statistics where the device has them.
+//! reloads. Profiling builds also take the agent's `profile`: a deep
+//! profile of the frames run meanwhile (see `deep.rs`), CPU samples of
+//! every thread included unless `cpu_samples` is false, written as files.
 //! Sessions draw offscreen and start paused, as the page's development
 //! sessions do; a first line says the session is ready.
 
@@ -467,9 +467,11 @@ impl<G: Game> DevSession<G> {
             );
         }
         let before = self.invoke_op("status");
-        if let Err(message) = self.game.host_mut().profiling_start(max_events as usize) {
-            return self.error("profiling_unavailable", "$", message);
-        }
+        let cpu_samples = command.get("cpu_samples") != Some(&json!(false));
+        let capture = match self.game.start_profile(max_events as usize, cpu_samples) {
+            Ok(capture) => capture,
+            Err(error) => return self.error("profiling_unavailable", "$", &error.message),
+        };
         let started = Instant::now();
         let mut failed = None;
         while started.elapsed() < Duration::from_millis(duration) {
@@ -479,17 +481,8 @@ impl<G: Game> DevSession<G> {
                 break;
             }
         }
-        let host = self.game.host_mut();
-        let mut report = match host.profiling_stop() {
-            Ok(report) => report,
-            Err(message) => return self.error("profiling_unavailable", "$", message),
-        };
-        // GPU read-backs of the last frames finish once the GPU did.
-        let _ = host.wait_for_gpu();
-        host.profiling_poll();
-        report["gpu"] = host.profiling_report();
         let after = self.invoke_op("status");
-        report["host"] = json!({
+        let context = json!({
             "program": "engine_native",
             "adapter": adapter(self.game.host()),
             "size": [self.game.size().0, self.game.size().1],
@@ -497,22 +490,26 @@ impl<G: Game> DevSession<G> {
             "observation_start": before["observation"],
             "observation_end": after["observation"],
             "frame_failed": failed,
-            "scope": "CPU events are the engine's spans; no browser trace or CPU sampling natively",
         });
-        let complete = report["gpu"]["complete"] == true && failed.is_none();
         self.captures += 1;
-        let path = self
-            .artifacts
-            .join(format!("profile-{}.json", self.captures));
-        let written = std::fs::create_dir_all(&self.artifacts)
-            .and_then(|()| std::fs::write(&path, report.to_string()));
-        if let Err(error) = written {
-            return self.error("capture_failed", "$", &error.to_string());
-        }
+        let stem = format!("profile-{}", self.captures);
+        let files = match self
+            .game
+            .finish_profile(capture, &self.artifacts, &stem, context)
+        {
+            Ok(files) => files,
+            Err(error) => return self.error("capture_failed", "$", &error.message),
+        };
+        let path = |path: &std::path::Path| path.display().to_string();
         json!({"ok": true, "observation": after["observation"], "result": {
-            "temporary": true, "paused": true, "complete": complete,
-            "artifacts": {"trace": path.display().to_string(), "cpu_profile": null},
-            "note": "Trace contains raw bounded measurements and capability gaps: gpu.draws says whether opaque draws are timed and counted.",
+            "temporary": true, "paused": true, "complete": files.complete && failed.is_none(),
+            "artifacts": {
+                "trace": path(&files.report),
+                "firefox": path(&files.firefox),
+                "summary": path(&files.summary),
+                "cpu_profile": null,
+            },
+            "note": "The summary lists the hottest functions, lines and instructions per thread, GPU pass and draw costs, what was captured and the deeper layers recommended to set up; the firefox file opens at profiler.firefox.com or ui.perfetto.dev.",
         }})
     }
 

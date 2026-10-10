@@ -98,6 +98,9 @@ enum Report {
 
 struct Slot {
     orders: Sender<Order>,
+    // The worker, as a sampler samples it.
+    #[cfg(feature = "profiling")]
+    sampled: Option<crate::sampler::SampledThread>,
     thread: Option<JoinHandle<()>>,
     // Jobs in flight, each with its priority (lower first).
     jobs: HashMap<u64, u32>,
@@ -124,12 +127,23 @@ impl JobPool {
             .map(|index| {
                 let (orders, inbox) = channel();
                 let report = report.clone();
+                // Each worker registers itself for sampling as it starts.
+                #[cfg(feature = "profiling")]
+                let (register, registered) = channel();
                 let thread = std::thread::Builder::new()
                     .name(format!("engine-jobs-{index}"))
-                    .spawn(move || work(index, &inbox, &report))
+                    .spawn(move || {
+                        #[cfg(feature = "profiling")]
+                        let _ = register.send(crate::sampler::SampledThread::current(format!(
+                            "Job worker {index}"
+                        )));
+                        work(index, &inbox, &report);
+                    })
                     .expect("threads start");
                 Slot {
                     orders,
+                    #[cfg(feature = "profiling")]
+                    sampled: registered.recv().ok().flatten(),
                     thread: Some(thread),
                     jobs: HashMap::new(),
                     broken: false,
@@ -144,6 +158,15 @@ impl JobPool {
             verifying: HashMap::new(),
             reported: None,
         }
+    }
+
+    /// The workers, as a sampler samples them.
+    #[cfg(feature = "profiling")]
+    pub fn sampled_threads(&self) -> Vec<crate::sampler::SampledThread> {
+        self.slots
+            .iter()
+            .filter_map(|slot| slot.sampled.clone())
+            .collect()
     }
 
     /// Workers able to run jobs.

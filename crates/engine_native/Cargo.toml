@@ -9,7 +9,17 @@ publish.workspace = true
 default = []
 # The engine's development tools and profiling, as games build them.
 dev = ["engine/dev"]
-profiling = ["engine/profiling"]
+# Deep profiles: in-process CPU samples, symbols and disassembly, merged
+# with the engine's spans and GPU timings into Firefox Profiler files.
+profiling = [
+    "engine/profiling",
+    "dep:backtrace",
+    "dep:iced-x86",
+    "dep:fxprof-processed-profile",
+    "dep:windows-sys",
+    "dep:libc",
+    "dep:mach2",
+]
 
 [dependencies]
 engine.workspace = true
@@ -20,15 +30,28 @@ serde_json.workspace = true
 zune-jpeg.workspace = true
 winit.workspace = true
 pollster.workspace = true
+backtrace = { workspace = true, optional = true }
+iced-x86 = { workspace = true, optional = true }
+fxprof-processed-profile = { workspace = true, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true, optional = true }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+mach2 = { workspace = true, optional = true }
 
 # A new game's native entry, as `cargo xtask new app` writes it; lint
 # compiles it with the app template.
 [[example]]
 name = "app_native"
 
-# The workspace forbids unsafe code; loading PIX's capturer and calling
-# PIX's and RenderDoc's capture functions needs it, so only `src/pix.rs` and
-# `src/renderdoc.rs` allow it (as `engine_profile` does for its allocator).
+# The workspace forbids unsafe code; loading PIX's capturer, calling PIX's
+# and RenderDoc's capture functions and sampling threads need it, so only
+# `src/pix.rs`, `src/renderdoc.rs` and `src/sampler/` allow it (as
+# `engine_profile` does for its allocator).
 [lints.rust]
 unsafe_code = "deny"
 

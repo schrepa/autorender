@@ -28,6 +28,7 @@ try {
   assert.equal(status.paused, true);
   assert.ok(status.adapter.name && status.adapter.backend, `the adapter is named: ${JSON.stringify(status.adapter)}`);
   assert.deepEqual(status.build.features, ["dev", "profiling"]);
+  assert.ok(status.adapter.backend, "status names the GPU interface");
 
   // The game's own controls and the program's options are discoverable.
   const types = (await run({ op: "describe" })).types;
@@ -61,13 +62,26 @@ try {
   assert.ok(benchmark.frame_interval_ms.median > 0 && benchmark.cpu_ms.total.median > 0, JSON.stringify(benchmark.cpu_ms));
   assert.equal(benchmark.environment.adapter.name, status.adapter.name);
 
-  // Profiling captures time the frames' GPU passes, and each opaque draw
-  // where the GPU interface times work inside passes.
+  // Profiles are deep without setup: the frames' GPU passes (and each
+  // opaque draw where the GPU interface times work inside passes), CPU
+  // samples of every thread symbolicated to the engine's functions, and a
+  // Firefox Profiler file; the summary says what was captured and what
+  // this machine could add.
   const profile = await run({ op: "profile", duration_ms: 500 });
-  const trace = JSON.parse(readFileSync(new URL(`../../${profile.artifacts.trace}`, import.meta.url), "utf8"));
+  const artifact = path => JSON.parse(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"));
+  const trace = artifact(profile.artifacts.trace);
   assert.ok(trace.gpu.completed > 0, `GPU spans were read back: ${JSON.stringify({ ...trace.gpu, samples: undefined, draw_samples: undefined })}`);
   assert.ok(trace.gpu.samples.some(sample => sample.name === "opaque_meshes"));
   if (trace.gpu.draws.timestamps) assert.ok(trace.gpu.draw_samples.some(draw => draw.duration_ms !== null), "opaque draws are timed");
+  const summary = artifact(profile.artifacts.summary);
+  assert.equal(summary.captured.privileges, "none: no admin, no system setting, no installed tool");
+  const main = summary.threads[0];
+  assert.ok(main.samples > 100, `the main thread was sampled: ${JSON.stringify(summary.captured.cpu_samples)}`);
+  assert.ok(main.total.some(entry => entry.name.startsWith("engine")), `samples name the engine's functions: ${JSON.stringify(main.total.slice(0, 5))}`);
+  assert.ok(summary.hot_lines.some(line => line.name.includes(".rs:")), "hot samples resolve to source lines");
+  assert.ok(Array.isArray(summary.recommended) && summary.recommended.length > 0);
+  const firefox = artifact(profile.artifacts.firefox);
+  assert.ok(firefox.meta && firefox.threads.length >= 3, "the Firefox Profiler file holds the threads");
 
   // The A/B harness alternates variants in ABBA windows: here the same
   // look twice against another.

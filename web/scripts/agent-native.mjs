@@ -22,9 +22,14 @@ const READY_TIMEOUT_MS = 300_000;
  * its profiling captures), or a path to one built so. */
 export function nativeProgram(native, { profiling = false } = {}) {
   if (!/^[a-z][a-z0-9-]*$/.test(native)) return resolve(native);
-  const features = profiling ? "dev,profiling" : "dev";
-  execFileSync("cargo", ["build", "-q", "-p", native, "--release", "--features", features], { cwd: workspace, stdio: ["ignore", "ignore", "inherit"] });
-  return resolve(workspace, "target", "release", process.platform === "win32" ? `${native}-native.exe` : `${native}-native`);
+  // Profiling builds keep line tables (the `profiling` profile) and, on
+  // Linux, frame pointers, which the in-process sampler follows there.
+  const [profile, features] = profiling ? ["profiling", "dev,profiling"] : ["release", "dev"];
+  const env = profiling && process.platform === "linux"
+    ? { ...process.env, RUSTFLAGS: `${process.env.RUSTFLAGS ?? ""} -Cforce-frame-pointers=yes`.trim() }
+    : process.env;
+  execFileSync("cargo", ["build", "-q", "-p", native, "--profile", profile, "--features", features], { cwd: workspace, env, stdio: ["ignore", "ignore", "inherit"] });
+  return resolve(workspace, "target", profile, process.platform === "win32" ? `${native}-native.exe` : `${native}-native`);
 }
 
 async function pruneSessions(root) {
@@ -199,8 +204,10 @@ export async function launchNativeSession({ program, args = [], session = random
           response.result.types.push({ name: "GameControls", kind: "tooling", description: "The game's own controls, which the game control runs by name with args", controls: identity.controls ?? {} });
           response.result.types.push({ name: "PageParameters", kind: "tooling", description: "The native program's options the host and game read", parameters: identity.parameters ?? {} });
         }
-        if (command.op === "profile" && response.ok && response.result?.artifacts?.trace) {
-          response.result.artifacts.trace = relative(workspace, response.result.artifacts.trace).split(sep).join("/");
+        if (command.op === "profile" && response.ok && response.result?.artifacts) {
+          for (const [kind, path] of Object.entries(response.result.artifacts)) {
+            if (typeof path === "string") response.result.artifacts[kind] = relative(workspace, path).split(sep).join("/");
+          }
         }
         if (command.op === "capture" && response.ok && response.result?.artifact) {
           const artifact = response.result.artifact;

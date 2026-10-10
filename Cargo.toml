@@ -53,6 +53,14 @@ console_error_panic_hook = "0.1.7"
 winit = "=0.30.13"
 pollster = "=0.4.0"
 zune-jpeg = "=0.5.15"
+# Native profiles: symbols, x86 disassembly, the Firefox Profiler's format,
+# and the operating systems' thread APIs the CPU sampler uses.
+backtrace = "=0.3.76"
+iced-x86 = { version = "=1.21.0", default-features = false, features = ["std", "decoder", "intel"] }
+fxprof-processed-profile = "=0.8.1"
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_WindowsProgramming"] }
+libc = "=0.2.189"
+mach2 = "=0.7.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
