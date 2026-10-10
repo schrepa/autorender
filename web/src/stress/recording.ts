@@ -2,7 +2,7 @@
  * Call abort when configuration, camera, resolution, visibility or pause changes.
  * sample copies primitive values; callers still own/free any Wasm stats binding.
  */
-import { type Distribution, percentiles } from "./statistics.ts";
+import { type Distribution, percentiles } from "../engine/statistics.ts";
 
 type StressJson = null | boolean | number | string | StressJson[] | { [key: string]: StressJson };
 type StressRecordingMetadata = Record<string, unknown>;

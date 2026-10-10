@@ -67,9 +67,9 @@ export default defineConfig(({ command, mode }) => ({
   }],
   resolve: {
     alias: instrumented.has(mode) ? [{
-      find: "../pkg/stress_lab", replacement: resolve(import.meta.dirname, `pkg-${instrumented.get(mode)}/stress_lab.js`),
+      find: /^(?:\.\.\/)+pkg\/stress_lab$/, replacement: resolve(import.meta.dirname, `pkg-${instrumented.get(mode)}/stress_lab.js`),
     }] : command === "serve" ? clients.map(client => client.wasm).map(name => ({
-      find: `../pkg/${name}`, replacement: resolve(import.meta.dirname, `pkg-dev/${name}.js`),
+      find: new RegExp(`^(?:\\.\\./)+pkg/${name}$`), replacement: resolve(import.meta.dirname, `pkg-dev/${name}.js`),
     })) : [],
   },
   // Job workers are modules: they import the engine's job

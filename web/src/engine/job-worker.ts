@@ -10,7 +10,7 @@
 // slice. A module that traps is unusable:
 // the worker then says it broke, and the pool replaces it.
 
-import type { JobWorker } from "../pkg/engine_worker";
+import type { JobWorker } from "../../pkg/engine_worker";
 import { decodeImagePixels } from "./decode";
 import { type TranscodedImage, transcodeWith, workerTranscoder } from "./ktx2";
 
@@ -129,7 +129,7 @@ async function work() {
 async function start(bindings?: string, compiled?: WebAssembly.Module) {
   const module = (bindings
     ? await import(/* @vite-ignore */ bindings)
-    : await import("../pkg/engine_worker")) as typeof import("../pkg/engine_worker");
+    : await import("../../pkg/engine_worker")) as typeof import("../../pkg/engine_worker");
   await module.default(compiled ? { module_or_path: compiled } : undefined);
   worker = new module.JobWorker();
   worker.warm();

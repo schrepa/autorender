@@ -3,7 +3,7 @@ import { readStats, type Runtime } from "./host";
 import { BenchmarkError, type BenchmarkOptions, type Reply, sampleBenchmark } from "./benchmark.ts";
 // The protocol's version, request limit and ops, generated from the engine
 // (`cargo xtask schema`).
-import protocol from "./generated/protocol.json";
+import protocol from "../generated/protocol.json";
 
 type Command = { op: string; [field: string]: unknown };
 interface Host {

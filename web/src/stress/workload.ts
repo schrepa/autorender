@@ -1,12 +1,12 @@
 import { stressBindings } from "./bindings";
-import { boot, type FrameStats, readStats, type HostControls } from "./host";
-import { StressRecorder, type StressRecordingReport } from "./stress-recording";
-import type { DetailedProfiler, DetailedProfileReport } from "./profiling";
-import type { StressFiles, StressGame } from "../pkg/stress_lab";
-import { fetchVirtualPrefix } from "./virtual-mesh";
-import { isKtx2, readRgba8Ktx2 } from "./ktx2";
-import { adapterFeatures } from "./adapter";
-import { jobPool } from "./jobs";
+import { boot, type FrameStats, readStats, type HostControls } from "../engine/host";
+import { StressRecorder, type StressRecordingReport } from "./recording";
+import type { DetailedProfiler, DetailedProfileReport } from "../engine/profiling";
+import type { StressFiles, StressGame } from "../../pkg/stress_lab";
+import { fetchVirtualPrefix } from "../engine/virtual-mesh";
+import { isKtx2, readRgba8Ktx2 } from "../engine/ktx2";
+import { adapterFeatures } from "../engine/adapter";
+import { jobPool } from "../engine/jobs";
 import "./stress.css";
 
 type Scene = "field" | "city" | "metro" | "dense" | "highlands";
@@ -405,7 +405,7 @@ boot({
     lock();
     el("active-preset").textContent = activeTitle;
     if (import.meta.env.MODE === "profiling") {
-      void import("./profiling").then(({ DetailedProfiler, supportsProfiling }) => {
+      void import("../engine/profiling").then(({ DetailedProfiler, supportsProfiling }) => {
         if (listeners.signal.aborted || !supportsProfiling(runtime)) {
           if (!listeners.signal.aborted) el("profile-status").textContent = "These bindings do not expose detailed profiling. Build the profiling target to enable capture.";
           return;

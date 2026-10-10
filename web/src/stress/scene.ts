@@ -1,6 +1,6 @@
 import { stressBindings } from "./bindings";
-import { boot } from "./host";
-import { loadSceneFiles, loadSceneSource } from "./source";
+import { boot } from "../engine/host";
+import { loadSceneFiles, loadSceneSource } from "../engine/source";
 import "./stress.css";
 
 // An authored scene in place of a workload, reloaded by revision through the

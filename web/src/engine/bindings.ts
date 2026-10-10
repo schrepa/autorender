@@ -12,7 +12,7 @@ const simdProbe = new Uint8Array([
 ]);
 let simdSupported: boolean | undefined;
 
-function requireWasmSimd(): void {
+export function requireWasmSimd(): void {
   if (simdSupported === undefined) {
     try {
       simdSupported = typeof WebAssembly !== "undefined" && WebAssembly.validate(simdProbe);
@@ -26,7 +26,7 @@ function requireWasmSimd(): void {
 }
 
 /** Pin a watched browser to one complete immutable Rust build. */
-function generationModule(name: string): string | undefined {
+export function generationModule(name: string): string | undefined {
   if (!import.meta.env.DEV) return;
   const generation = new URLSearchParams(location.search).get("engine_build");
   if (!generation) return;
@@ -38,10 +38,4 @@ function generationModule(name: string): string | undefined {
  * pinned to, for workers to import; none outside watched builds. */
 export function engineWorkerModule(): string | undefined {
   return generationModule("engine_worker");
-}
-
-export async function stressBindings(): Promise<typeof import("../pkg/stress_lab")> {
-  requireWasmSimd();
-  const module = generationModule("stress_lab");
-  return module ? import(/* @vite-ignore */ module) : import("../pkg/stress_lab");
 }

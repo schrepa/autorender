@@ -1,4 +1,4 @@
-import type { FrameStats } from "./generated/stats";
+import type { FrameStats } from "../generated/stats";
 import { BrowserInput } from "./input";
 import { type JobPool, type JobRuntime, jobPool } from "./jobs";
 import "./style.css";

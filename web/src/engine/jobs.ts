@@ -371,7 +371,7 @@ function workerWasm(): Promise<ArrayBuffer | undefined> {
 async function fetchWorkerWasm(): Promise<ArrayBuffer | undefined> {
   try {
     const pinned = engineWorkerModule();
-    const url = pinned ? pinned.replace(/\.js$/, "_bg.wasm") : new URL("../pkg/engine_worker_bg.wasm", import.meta.url).href;
+    const url = pinned ? pinned.replace(/\.js$/, "_bg.wasm") : new URL("../../pkg/engine_worker_bg.wasm", import.meta.url).href;
     const response = await fetch(url);
     if (!response.ok) throw new Error(`${url}: ${response.status}`);
     return await response.arrayBuffer();
