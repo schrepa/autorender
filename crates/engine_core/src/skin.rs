@@ -10,7 +10,7 @@ use bevy_ecs::{
 };
 use glam::Mat4;
 
-use crate::{MeshHandle, PoseRows, TransformIndex};
+use crate::{MeshHandle, TransformIndex};
 
 /// Deforms this entity's mesh by the displayed world poses of `joints`, as
 /// glTF skins do.
@@ -45,23 +45,6 @@ impl Skin {
             .copied()
             .unwrap_or(Mat4::IDENTITY)
     }
-}
-
-/// One joint of a skinned instance's palette, in
-/// [`crate::RenderSnapshot::joints`].
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RenderJoint {
-    /// The joint's hierarchy node in the index space of
-    /// [`crate::GpuPresentation`] records, or `u32::MAX` without a valid
-    /// pose. Set on GPU-presented frames, which compose the joint's
-    /// displayed pose as they do slots'.
-    pub node: u32,
-    /// The joint's inverse bind matrix, in upload layout.
-    pub inverse_bind: PoseRows,
-    /// CPU-prepared frames: the joint's displayed world matrix times its
-    /// inverse bind matrix, in upload layout. GPU-presented frames leave it
-    /// unset.
-    pub matrix: PoseRows,
 }
 
 /// Skinned entities' query, per-joint transform store hints, and what the

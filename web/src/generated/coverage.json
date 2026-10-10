@@ -64,6 +64,7 @@
       "inspector": "Floating",
       "kind": "component",
       "smokes": [
+        "plugins",
         "terrain"
       ]
     },
@@ -140,6 +141,7 @@
       "kind": "resource",
       "smokes": [
         "jobs",
+        "plugins",
         "terrain"
       ]
     },
@@ -234,6 +236,7 @@
       "inspector": "Tracks",
       "kind": "resource",
       "smokes": [
+        "plugins",
         "terrain"
       ]
     },
@@ -254,6 +257,7 @@
       "inspector": "WorldCells",
       "kind": "resource",
       "smokes": [
+        "plugins",
         "streaming"
       ]
     },
@@ -276,6 +280,7 @@
         "gpu-presentation",
         "hierarchy",
         "interpolation",
+        "plugins",
         "taa",
         "terrain"
       ]
@@ -291,6 +296,7 @@
         "jobs",
         "lod",
         "meshes",
+        "plugins",
         "spline",
         "streaming",
         "surfaces",
@@ -328,6 +334,7 @@
       "op": "raycast",
       "smokes": [
         "collision",
+        "plugins",
         "streaming",
         "terrain"
       ]
@@ -348,6 +355,7 @@
       "op": "terrain_height",
       "smokes": [
         "jobs",
+        "plugins",
         "streaming",
         "terrain"
       ]
@@ -413,6 +421,7 @@
         "culling",
         "gpu-presentation",
         "lod",
+        "plugins",
         "streaming",
         "surfaces",
         "taa",
@@ -423,6 +432,7 @@
     {
       "op": "terrain",
       "smokes": [
+        "plugins",
         "streaming",
         "terrain"
       ]
@@ -461,12 +471,14 @@
       "op": "animation",
       "smokes": [
         "meshes",
+        "plugins",
         "streaming"
       ]
     },
     {
       "op": "world_changes",
       "smokes": [
+        "plugins",
         "streaming"
       ]
     },
@@ -524,6 +536,7 @@
         "interpolation",
         "jobs",
         "meshes",
+        "plugins",
         "spline",
         "streaming",
         "surfaces",
@@ -541,6 +554,7 @@
         "interpolation",
         "jobs",
         "meshes",
+        "plugins",
         "taa",
         "terrain"
       ]
@@ -590,6 +604,7 @@
         "collision",
         "hierarchy",
         "interpolation",
+        "plugins",
         "spline",
         "streaming",
         "terrain",
@@ -706,6 +721,7 @@
       "smokes": [
         "agent",
         "jobs",
+        "plugins",
         "streaming",
         "terrain"
       ],
@@ -757,6 +773,7 @@
       "inspector": "Ocean",
       "section": "ocean",
       "smokes": [
+        "plugins",
         "terrain"
       ],
       "stats": true
@@ -765,6 +782,7 @@
       "inspector": "Deformation",
       "section": "deformation",
       "smokes": [
+        "plugins",
         "terrain"
       ],
       "stats": true
@@ -781,6 +799,7 @@
       "inspector": "WorldStreaming",
       "section": "world_streaming",
       "smokes": [
+        "plugins",
         "streaming"
       ],
       "stats": true
@@ -798,6 +817,7 @@
       "inspector": "TimeOfDay",
       "section": "time_of_day",
       "smokes": [
+        "plugins",
         "terrain"
       ],
       "stats": false
@@ -806,6 +826,7 @@
       "inspector": "Navigation",
       "section": "navigation",
       "smokes": [
+        "plugins",
         "terrain"
       ],
       "stats": true

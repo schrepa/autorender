@@ -24,6 +24,9 @@ pub fn animate(
     id: &str,
     change: Animate,
 ) -> Result<Value, DevError> {
+    if !engine_core::has_feature(engine.app.world(), engine_core::Feature::Animation) {
+        return Err(crate::terrain::missing(engine_core::Feature::Animation));
+    }
     let scene = scene.ok_or_else(|| {
         DevError::new(
             ErrorCode::NoScene,

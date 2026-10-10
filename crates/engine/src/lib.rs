@@ -15,10 +15,12 @@ pub use engine_settings as settings;
 pub mod camera;
 mod error;
 pub mod game;
+mod plugins;
 pub use error::{Error, Result};
 #[doc(hidden)]
 pub mod surface;
 pub use game::{Game, Inspectors};
+pub use plugins::EnginePlugins;
 #[cfg(not(target_arch = "wasm32"))]
 pub use surface::runtime_typescript;
 /// What tooling generates from Rust, for apps' `schema` binaries.
@@ -43,15 +45,23 @@ pub use engine_core::{
 pub use engine_core::{
     ActionId, ActionInput, AnimationPlayer, AnimationSystems, App, Atmosphere, Camera, Cube,
     Engine, EngineConfig, ErrorCode, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
-    FixedTickEnd, FixedTickEndSystems, FixedTime, FrameReport, FrameTime, InputState, Plugin,
-    Presentation, PresentedTime, ViewSync, ViewSyncSystems, WorldSync, WorldSyncSystems,
+    FixedSimulationSystems, FixedTickEnd, FixedTickEndSystems, FixedTime, FrameReport, FrameTime,
+    InputState, Plugin, PluginGroup, PluginGroupBuilder, Presentation, PresentedTime, ViewSync,
+    ViewSyncSystems, WorldSync, WorldSyncSystems,
 };
+// The engine's features, each a plugin of `EnginePlugins`, and the ground
+// what stands on it reads.
 pub use engine_core::{
     AmbientOcclusion, Bloom, Clouds, ContactShadows, DecalSettings, Deformation, Environment,
     EnvironmentSection, GroundCover, InvalidSetting, LevelOfDetail, LocalLightSettings, Navigation,
     OcclusionCulling, Occupancy, Ocean, ParticleSettings, ReflectionProbeSettings, Reflections,
     Refraction, Shadows, Sky, SubpixelCulling, SunShafts, TemporalAntialiasing, TerrainSettings,
     TimeOfDay, VirtualGeometry, Water, Wind, WorldStreaming,
+};
+pub use engine_core::{
+    AnimationPlugin, DeformationPlugin, Feature, Features, Ground, GroundSample, HeightHeld,
+    NavigationPlugin, OceanPlugin, TerrainPlugin, TimeOfDayPlugin, WorldStreamingPlugin,
+    has_feature,
 };
 // The fallback mesh size `Mesh::from_virtual` takes by default.
 pub use engine_core::DEFAULT_FALLBACK_TRIANGLES;
@@ -62,7 +72,7 @@ pub use engine_core::{
     NavAgents, NavStatus, NavSystems, NavWalk, OceanPoint, OceanSurface, OceanSystems, OceanWave,
     OceanWaves, Parent, ParticleBlend, ParticleEmitter, PresentationState, PresentedTransform,
     PresentedTransforms, ReflectionProbe, Skin, SplineChunks, SplineMesh, Spot, StreamSet,
-    Streamed, StreamedId, StreamedItem, Terrain, TerrainFocus, TerrainSample, Terrains, Tint,
+    Streamed, StreamedId, StreamedItem, StreamingFocus, Terrain, TerrainSample, Terrains, Tint,
     Track, TrackDepth, Tracks, Transform, TransformEditError, TransformNodeLimit, Viewport,
     WorldCells, WorldChanges, edit_transform, remove_streamed, reset_all_interpolation,
     reset_interpolation, set_parent, set_parents,
@@ -89,8 +99,8 @@ pub mod terrain {
         MIN_COLLIDER_EXTENT, Mask, MotionDetail, NoiseLayer, NoiseMask, Patch, PathLayer,
         PathProfile, PathStage, Placed, PlacedCollider, PlacedShape, PlacementAsset,
         PlacementChoice, PlacementLayer, PlacementLod, Pyramid, PyramidError, Remap, Route,
-        RouteOptions, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Surroundings,
-        SurroundingsStatus, Terrain, TerrainBakes, TerrainEdit, TerrainFocus, TerrainPrefetch,
+        RouteOptions, Stamp, StampOp, StreamingFocus, SurfaceMaterial, SurfaceProjection,
+        Surroundings, SurroundingsStatus, Terrain, TerrainBakes, TerrainEdit, TerrainPrefetch,
         TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains, Tile, TileKey,
         WaterGrid,
     };
@@ -198,9 +208,9 @@ pub mod prelude {
     pub use crate::{
         ActionId, ActionInput, AnimationPlayer, AnimationSystems, App, Atmosphere, Camera, Cube,
         Engine, EngineConfig, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
-        FixedTickEnd, FixedTickEndSystems, FixedTime, FrameReport, FrameTime, Game, InputState,
-        Inspectors, Plugin, Presentation, PresentedTime, ViewSync, ViewSyncSystems, WorldSync,
-        WorldSyncSystems, math,
+        FixedSimulationSystems, FixedTickEnd, FixedTickEndSystems, FixedTime, FrameReport,
+        FrameTime, Game, InputState, Inspectors, Plugin, PluginGroup, Presentation, PresentedTime,
+        ViewSync, ViewSyncSystems, WorldSync, WorldSyncSystems, math,
     };
     pub use crate::{
         AmbientOcclusion, Bloom, Clouds, ContactShadows, DecalSettings, Deformation, Environment,
@@ -210,12 +220,17 @@ pub mod prelude {
         VirtualGeometry, Water, Wind, WorldStreaming,
     };
     pub use crate::{
+        AnimationPlugin, DeformationPlugin, EnginePlugins, Feature, Ground, GroundSample,
+        HeightHeld, NavigationPlugin, OceanPlugin, TerrainPlugin, TimeOfDayPlugin,
+        WorldStreamingPlugin,
+    };
+    pub use crate::{
         Cover, Decal, DecalBlend, Deformer, EngineEntityCommands, Floating, GlobalTransform,
         GlobalTransforms, Grounded, HierarchyError, Interior, InterpolateTransform,
         InterpolationError, LocalLight, Mesh3d, NavAgent, NavAgents, NavStatus, NavSystems,
         NavWalk, OceanSystems, Parent, ParticleBlend, ParticleEmitter, PresentationState,
         PresentedTransform, PresentedTransforms, ReflectionProbe, Skin, SplineMesh, Spot,
-        StreamSet, Streamed, StreamedId, StreamedItem, Terrain, TerrainFocus, TerrainSample,
+        StreamSet, Streamed, StreamedId, StreamedItem, StreamingFocus, Terrain, TerrainSample,
         Terrains, Tint, Track, TrackDepth, Tracks, Transform, TransformEditError, WorldCells,
         WorldChanges, edit_transform, remove_streamed, reset_all_interpolation,
         reset_interpolation, set_parent, set_parents,

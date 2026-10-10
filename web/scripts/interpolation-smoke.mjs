@@ -109,7 +109,7 @@ try {
     let game;
     try {
       // The fixture references no files.
-      game = await StressGame.create_scene(canvas, JSON.stringify(fixture), new SceneFileSet());
+      game = await StressGame.create_scene(canvas, JSON.stringify(fixture), new SceneFileSet(), "");
       // Development commands between these frames would complete a pipelined
       // tick early; this check covers interpolation alone.
       game.set_tick_pipelining(false);

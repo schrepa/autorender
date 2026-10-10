@@ -16,10 +16,18 @@ pub struct AuthoredScene {
 }
 
 impl AuthoredScene {
-    /// An engine for authored scenes, with the scene loaded.
-    pub fn new(source: &str, files: &SceneFiles) -> Result<(Engine, Self), SceneError> {
+    /// An engine for authored scenes with every feature but those of
+    /// `without`, with the scene loaded.
+    pub fn new(
+        source: &str,
+        files: &SceneFiles,
+        without: &[Feature],
+    ) -> Result<(Engine, Self), SceneError> {
         let mut engine = Engine::default();
-        engine.app.add_plugins(PlayerPlugin);
+        engine
+            .app
+            .add_plugins(EnginePlugins::without(without.iter().copied()))
+            .add_plugins(PlayerPlugin);
         // Frames record the same metrics as workloads' frames.
         engine.app.init_resource::<FrameMetrics>();
         let mut scene = Self {
@@ -159,12 +167,14 @@ struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
+        // The player walks blocked by colliders: without collision,
+        // scenes have none.
         if !app.is_plugin_added::<CollisionPlugin>() {
-            app.add_plugins(CollisionPlugin)
-                .insert_resource(crate::scene::stress_collision_budgets());
+            return;
         }
-        app.init_resource::<PlayerWalk>();
-        app.add_systems(FixedSimulation, walk);
+        app.insert_resource(crate::scene::stress_collision_budgets())
+            .init_resource::<PlayerWalk>()
+            .add_systems(FixedSimulation, walk);
     }
 }
 

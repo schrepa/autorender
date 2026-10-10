@@ -343,6 +343,7 @@ impl SceneDocument {
         files: &SceneFiles,
     ) -> Result<SceneInstance, SceneError> {
         let mut prepared = self.prepare(Some(files))?;
+        self.check_features(world)?;
         let owned = self.insert_assets(world, &mut prepared)?;
         let lookups = Lookups::new(self, &owned);
         let spawned = self.spawn(world, &prepared, &lookups);

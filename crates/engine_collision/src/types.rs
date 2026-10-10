@@ -237,7 +237,7 @@ impl std::error::Error for CollisionError {}
 impl CollisionError {
     pub fn code(self) -> ErrorCode {
         match self {
-            Self::MissingPlugin => ErrorCode::CollisionMissingPlugin,
+            Self::MissingPlugin => ErrorCode::MissingPlugin,
             Self::InvalidShape => ErrorCode::CollisionInvalidShape,
             Self::InvalidTransform => ErrorCode::CollisionInvalidTransform,
             Self::InvalidRay => ErrorCode::CollisionInvalidRay,

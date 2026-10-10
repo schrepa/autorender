@@ -164,7 +164,7 @@ pub trait SectionVisitor {
 /// authored [`SceneEnvironment`], read back from a world, and the visit of
 /// its sections.
 macro_rules! scene_sections {
-    ($($key:ident: $settings:ident { since: $since:literal, opt_in: $opt_in:literal }),* $(,)?) => {
+    ($($key:ident: $settings:ident { since: $since:literal, opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
         /// A scene's look. In a document, every omitted section takes the
         /// engine's default state (opt-in sections: off); in a development
         /// control, omitted sections stay as they are. Each section is the
@@ -336,6 +336,9 @@ impl SceneEnvironment {
                     None if T::OPT_IN => {
                         self.0.remove_resource::<T>();
                     }
+                    // Sections of features the engine lacks stay absent.
+                    None if T::FEATURE
+                        .is_some_and(|feature| !engine_core::has_feature(self.0, feature)) => {}
                     None => self.0.insert_resource(T::default()),
                 }
             }

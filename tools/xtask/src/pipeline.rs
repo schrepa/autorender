@@ -44,6 +44,7 @@ pub fn lint(root: &Path) -> Result<(), String> {
     authoring::validate_sources(root)?;
     authoring::check_generated(root)?;
     crate::coverage::check(root)?;
+    crate::features::check(root)?;
     crate::gpu::check(root)?;
     run(root, "cargo", &["fmt", "--all", "--", "--check"])?;
     run(

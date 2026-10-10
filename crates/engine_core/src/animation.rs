@@ -3,6 +3,7 @@
 //! presents smoothly between ticks.
 
 use bevy_ecs::prelude::{Component, Entity, Local, Query, Res, SystemSet};
+use bevy_ecs::schedule::IntoScheduleConfigs;
 
 use crate::{AnimationSample, AssetLibrary, ClipHandle, FixedTime, Transform};
 
@@ -105,5 +106,26 @@ pub(crate) fn animate(
                 }
             }
         }
+    }
+}
+
+/// Clip players posing their targets, and skins:
+/// [`crate::Feature::Animation`].
+#[derive(Default)]
+pub struct AnimationPlugin;
+
+impl bevy_app::Plugin for AnimationPlugin {
+    fn build(&self, app: &mut bevy_app::App) {
+        app.world_mut()
+            .resource_mut::<crate::Features>()
+            .insert(crate::Feature::Animation);
+        app.add_systems(
+            crate::FixedSimulation,
+            animate.in_set(AnimationSystems::Animate),
+        )
+        .configure_sets(
+            crate::FixedSimulation,
+            AnimationSystems::Animate.in_set(crate::FixedSimulationSystems::Pose),
+        );
     }
 }

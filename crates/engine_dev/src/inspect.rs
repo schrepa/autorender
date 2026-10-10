@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, io::Write};
 use engine_collision::{Collider, CollisionWorld, refresh_collision_world};
 use engine_core::{
     ActionId, ActionInput, AnimationPlayer, AssetLibrary, Atmosphere, Camera, Decal, Engine,
-    FixedTime, FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight,
+    Feature, FixedTime, FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight,
     MaterialHandle, Mesh3d, MeshHandle, Parent, ParticleEmitter, PresentationMode,
     PresentationState, PresentedTransforms, ReflectionProbe, Skin, TerrainDebug, TextureHandle,
     Tint, Transform,
@@ -146,7 +146,31 @@ pub struct DevTools {
     // The engine's own inspectors, once registered: games register up to
     // MAX_INSPECTORS beyond them.
     builtins: Option<usize>,
+    // The feature of each inspector of a feature's type, by name.
+    features: BTreeMap<String, Feature>,
 }
+
+/// The feature of each engine inspector of a feature's component or
+/// resource (environment sections name their own): inspecting them answers
+/// `missing_plugin` without the feature's plugin.
+const INSPECTOR_FEATURES: &[(&str, Feature)] = &[
+    ("Terrain", Feature::Terrain),
+    ("Terrains", Feature::Terrain),
+    ("TerrainDebug", Feature::Terrain),
+    ("TerrainPrefetch", Feature::Terrain),
+    ("WorldCells", Feature::WorldStreaming),
+    ("WorldChanges", Feature::WorldStreaming),
+    ("StreamedId", Feature::WorldStreaming),
+    ("NavAgent", Feature::Navigation),
+    ("NavAgents", Feature::Navigation),
+    ("Floating", Feature::Ocean),
+    ("AnimationPlayer", Feature::Animation),
+    ("Skin", Feature::Animation),
+    ("Tracks", Feature::Deformation),
+    ("Deformer", Feature::Deformation),
+    ("Collider", Feature::Collision),
+    ("CollisionWorld", Feature::Collision),
+];
 
 impl Default for DevTools {
     fn default() -> Self {
@@ -156,6 +180,10 @@ impl Default for DevTools {
         let mut tools = Self {
             inspectors: BTreeMap::new(),
             builtins: None,
+            features: INSPECTOR_FEATURES
+                .iter()
+                .map(|&(name, feature)| (name.to_owned(), feature))
+                .collect(),
         };
         tools.register_poses(&schemas);
         tools.register_components(&schemas);
@@ -890,6 +918,9 @@ impl DevTools {
                         |settings| json!(settings),
                     )
                     .expect("built-in descriptor is bounded");
+                if let Some(feature) = T::FEATURE {
+                    self.tools.features.insert(T::NAME.to_owned(), feature);
+                }
             }
         }
         SceneEnvironment::default().visit(&mut Sections {
@@ -1262,6 +1293,8 @@ impl DevTools {
                 "authored_entities": scene.map(SceneInstance::entity_count),
                 "inspectors": self.inspectors.len(),
                 "culling_enabled": engine.frustum_culling(),
+                // The features whose plugins the engine has.
+                "features": world.get_resource::<engine_core::Features>().map(|features| features.iter().map(engine_core::Feature::name).collect::<Vec<_>>()),
                 "presentation": presentation_value(engine.presentation()),
                 "collision": world.get_resource::<CollisionWorld>().map(crate::collision::world_value),
                 "fixed_delta_seconds": world.get_resource::<FixedTime>().map(|time| time.delta_seconds),
@@ -1325,7 +1358,7 @@ impl DevTools {
 
     fn describe(&self, name: Option<&str>, definition: Option<&str>) -> Result<Value, DevError> {
         let Some(name) = name else {
-            let mut types: Vec<Value> = self.inspectors.values().map(|inspector| json!({"name": inspector.descriptor.name, "kind": inspector.kind, "description": inspector.descriptor.description})).collect();
+            let mut types: Vec<Value> = self.inspectors.values().map(|inspector| json!({"name": inspector.descriptor.name, "kind": inspector.kind, "description": inspector.descriptor.description, "feature": self.features.get(&inspector.descriptor.name).map(|feature| feature.name())})).collect();
             types.push(json!({"name": "SceneDocument", "kind": "authoring"}));
             types.push(json!({"name": "protocol", "kind": "protocol"}));
             types.push(json!({"name": "BrowserControl", "kind": "protocol"}));
@@ -1366,8 +1399,21 @@ impl DevTools {
             }
             _ => {
                 let inspector = self.inspector(name)?;
-                Ok(json!({"kind": inspector.kind, "descriptor": inspector.descriptor}))
+                Ok(
+                    json!({"kind": inspector.kind, "descriptor": inspector.descriptor, "feature": self.features.get(name).map(|feature| feature.name())}),
+                )
             }
+        }
+    }
+
+    /// Fails with `missing_plugin` when inspector `name` is of a feature
+    /// `world`'s engine lacks.
+    fn check_feature(&self, world: &World, name: &str) -> Result<(), DevError> {
+        match self.features.get(name) {
+            Some(&feature) if !engine_core::has_feature(world, feature) => {
+                Err(crate::terrain::missing(feature))
+            }
+            _ => Ok(()),
         }
     }
 
@@ -1421,6 +1467,7 @@ impl DevTools {
                     "resources have no entity or parent selector or pagination offset",
                 ));
             }
+            self.check_feature(world, &inspector.descriptor.name)?;
             let value = read_value(inspector, world, None, &context)?;
             return Ok(json!({"resource": inspector.descriptor.name, "value": value}));
         }
@@ -1519,6 +1566,7 @@ impl DevTools {
         let metadata = world.get::<SceneEntity>(entity);
         let mut row = json!({"id": id, "name": metadata.map(|metadata| metadata.name.as_str()).unwrap_or(""), "tags": metadata.map(|metadata| &metadata.tags)});
         if let Some(inspector) = inspector {
+            self.check_feature(world, &inspector.descriptor.name)?;
             row["components"] = json!({inspector.descriptor.name.clone(): read_value(inspector, world, Some(entity), &Context { scene: Some(scene), ..context })?});
         } else {
             row["components"] = json!(

@@ -11,7 +11,7 @@ use engine_settings::settings;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
-use crate::{Parent, Terrains, Transform};
+use crate::{Parent, Transform};
 
 settings! {
     /// Stands its entity on the terrain: its translation's y is
@@ -47,21 +47,22 @@ pub(crate) type GroundedQuery = QueryState<
         &'static Grounded,
         &'static Transform,
         Option<&'static GroundedAt>,
-        Option<&'static crate::NavWalk>,
+        Option<&'static crate::HeightHeld>,
     ),
     Without<Parent>,
 >;
 
 /// Stands every grounded entity that moved, or whose ground may have
-/// become finer, on the terrain: [`crate::WorldSyncSystems::Ground`].
+/// become finer, on the [`crate::Ground`]:
+/// [`crate::WorldSyncSystems::Ground`].
 pub(crate) fn settle(world: &mut World, query: &mut GroundedQuery) {
-    let Some(terrains) = world.get_resource::<Terrains>() else {
+    let Some(ground) = world.get_resource::<crate::Ground>().copied() else {
         return;
     };
-    let revision = terrains.revision();
+    let revision = (ground.revision)(world);
     let mut settled = Vec::new();
-    for (entity, grounded, transform, at, walk) in query.iter(world) {
-        if walk.is_some_and(|walk| walk.status == crate::NavStatus::Walking) {
+    for (entity, grounded, transform, at, held) in query.iter(world) {
+        if held.is_some_and(|held| held.0) {
             continue;
         }
         let position = Vec2::new(transform.translation.x, transform.translation.z);
@@ -73,9 +74,7 @@ pub(crate) fn settle(world: &mut World, query: &mut GroundedQuery) {
         if !stale {
             continue;
         }
-        let sample = terrains
-            .sample(position.x, position.y)
-            .filter(|sample| !sample.hole);
+        let sample = (ground.sample)(world, position.x, position.y);
         settled.push((
             entity,
             sample.map(|sample| sample.height + grounded.offset),

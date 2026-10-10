@@ -10,10 +10,11 @@ use engine_settings::ErrorCode;
 use std::sync::Arc;
 
 use engine_core::{
-    Deformation, Engine, FixedTime, Ocean, PresentedTime, RouteOptions, Terrain, TerrainEdit,
-    TerrainSource, Terrains, Track, Tracks,
-    bevy_ecs::prelude::{Entity, World},
+    Deformation, Engine, Feature, FixedTime, Ground, Ocean, PresentedTime, RouteOptions, Terrain,
+    TerrainEdit, TerrainSource, Terrains, Track, Tracks,
+    bevy_ecs::prelude::{Entity, Resource, World},
     glam::{Vec2, Vec3},
+    has_feature,
     terrain_data::{Stamp, StampOp},
 };
 use engine_scene::{SceneEntity, SceneInstance};
@@ -59,6 +60,9 @@ pub fn nav_go(
         ));
     }
     let world = engine.app.world_mut();
+    if !has_feature(world, Feature::Navigation) {
+        return Err(missing(Feature::Navigation));
+    }
     let entity = scene
         .and_then(|scene| crate::inspect::authored_entity(world, scene, id))
         .filter(|&entity| world.get::<engine_core::NavAgent>(entity).is_some())
@@ -101,10 +105,8 @@ pub fn change_world(
             ));
         }
     }
-    let mut changes = engine
-        .app
-        .world_mut()
-        .resource_mut::<engine_core::WorldChanges>();
+    let mut changes =
+        feature_mut::<engine_core::WorldChanges>(engine.app.world_mut(), Feature::WorldStreaming)?;
     if clear {
         changes.clear();
     }
@@ -148,7 +150,7 @@ pub fn press_track(engine: &mut Engine, press: Press) -> Result<Value, DevError>
         flatness: press.flatness as f32,
         seconds,
     };
-    let mut tracks = world.resource_mut::<Tracks>();
+    let mut tracks = feature_mut::<Tracks>(world, Feature::Deformation)?;
     if press.clear {
         tracks.clear();
     }
@@ -281,7 +283,7 @@ pub fn edit_terrain(
                 };
                 DevError::new(ErrorCode::OutOfRange, format!("$.{field}"), invalid.rule)
             })?;
-            let terrains = world.resource::<Terrains>();
+            let terrains = feature::<Terrains>(world, Feature::Terrain)?;
             let before = terrains.layers(entity).ok_or_else(|| {
                 DevError::new(
                     ErrorCode::NotGenerated,
@@ -384,7 +386,7 @@ pub(crate) fn execute(
                 ));
             }
             let world = engine.app.world();
-            let terrains = world.resource::<Terrains>();
+            let terrains = feature::<Terrains>(world, Feature::Terrain)?;
             let samples = points
                 .iter()
                 .enumerate()
@@ -463,7 +465,9 @@ pub(crate) fn execute(
                     DevError::new(ErrorCode::UnknownTerrain, "$", "no generated terrain")
                 })?;
             let walk = world
-                .resource::<Terrains>()
+                .get_resource::<Terrains>()
+                .filter(|_| has_feature(world, Feature::Terrain))
+                .ok_or_else(|| missing(Feature::Terrain))?
                 .walk(entity, from, to, &options);
             let round = |value: f32| (f64::from(value) * 100.0).round() / 100.0;
             Ok(json!({
@@ -506,8 +510,8 @@ pub(crate) fn execute(
                 .copied()
                 .unwrap_or_default()
                 .sanitized();
-            let tracks = world.resource::<Tracks>();
-            let terrains = world.resource::<Terrains>();
+            let tracks = feature::<Tracks>(world, Feature::Deformation)?;
+            let terrains = feature::<Terrains>(world, Feature::Terrain)?;
             // Tenths of millimeters keep responses small.
             let round = |value: f32| (f64::from(value) * 1.0e4).round() / 1.0e4;
             let samples = points
@@ -563,7 +567,6 @@ pub(crate) fn execute(
                 .get_resource::<Ocean>()
                 .filter(|ocean| ocean.enabled)
                 .map(|ocean| ocean.spectrum());
-            let terrains = world.resource::<Terrains>();
             let samples = points
                 .iter()
                 .enumerate()
@@ -573,7 +576,7 @@ pub(crate) fn execute(
                     let surface = waves
                         .as_ref()
                         .map(|waves| waves.surface(point[0], point[1], seconds));
-                    let ground = terrains.sample(x, z).map(|sample| sample.height);
+                    let ground = Ground::sample_in(world, x, z).map(|sample| sample.height);
                     // Millimeters and ten-thousandths keep responses small.
                     let round = |value: f64, step: f64| (value / step).round() * step;
                     Ok(json!({
@@ -651,7 +654,7 @@ pub(crate) fn execute(
                 )
             })?;
             let world = engine.app.world();
-            let terrains = world.resource::<Terrains>();
+            let terrains = feature::<Terrains>(world, Feature::Terrain)?;
             let Some(sample) = terrains.sample(from.x, from.y) else {
                 return Err(DevError::new(
                     ErrorCode::InvalidRequest,
@@ -724,7 +727,7 @@ fn sweep(
         refresh_collision_world(engine.app.world_mut()).map_err(crate::collision::native_error)?;
     }
     let world = engine.app.world();
-    let terrains = world.resource::<Terrains>();
+    let terrains = feature::<Terrains>(world, Feature::Terrain)?;
     let mut queried = 0;
     let mut level_zero = 0;
     let mut holes = 0;
@@ -778,7 +781,7 @@ fn sweep(
             }
             // The layers tiles generate from, their hydrology baked.
             if let Some(terrain) = world.get::<Terrain>(sample.terrain)
-                && let Some(stack) = world.resource::<Terrains>().layers(sample.terrain)
+                && let Some(stack) = terrains.layers(sample.terrain)
             {
                 let local = point - Vec2::new(terrain.origin.x, terrain.origin.z);
                 let height = terrain.origin.y + stack.height_at(&terrain.pyramid, local);
@@ -804,4 +807,43 @@ fn sweep(
         "layers": json!({"compared": layer_checks, "worst": layers.value()}),
         "examples": collected,
     }))
+}
+
+/// The `missing_plugin` error of requests about `feature`, which the engine
+/// lacks.
+pub(crate) fn missing(feature: Feature) -> DevError {
+    DevError::new(
+        ErrorCode::MissingPlugin,
+        "$.op",
+        format!(
+            "{} is not added: add it, or EnginePlugins, to the engine",
+            feature.plugin()
+        ),
+    )
+}
+
+/// `world`'s resource `R` of `feature`, or [`missing`].
+fn feature<R: Resource>(world: &World, feature: Feature) -> Result<&R, DevError> {
+    world
+        .get_resource::<R>()
+        .filter(|_| has_feature(world, feature))
+        .ok_or_else(|| missing(feature))
+}
+
+/// [`feature`]'s resource, mutably.
+fn feature_mut<
+    R: Resource
+        + engine_core::bevy_ecs::component::Component<
+            Mutability = engine_core::bevy_ecs::component::Mutable,
+        >,
+>(
+    world: &mut World,
+    feature: Feature,
+) -> Result<engine_core::bevy_ecs::prelude::Mut<'_, R>, DevError> {
+    if !has_feature(world, feature) {
+        return Err(missing(feature));
+    }
+    world
+        .get_resource_mut::<R>()
+        .ok_or_else(|| missing(feature))
 }

@@ -251,6 +251,7 @@ impl DevBrowser {
                     control.sections()
                 };
                 environment.validate("$")?;
+                environment.check_features(app.engine.app.world(), "$")?;
                 environment.apply_sections(app.engine.app.world_mut());
                 rendered(app.dev_render(width, height), "environment changed")?;
                 let after = current(app);

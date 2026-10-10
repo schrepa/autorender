@@ -22,7 +22,7 @@ startGame({
     const source = await loadScene(signal);
     const files = await loadFiles(source, signal);
     signal.throwIfAborted();
-    return StressGame.create_scene(canvas, source, files);
+    return StressGame.create_scene(canvas, source, files, params.get("without") ?? "");
   },
   async reload(game, signal) {
     const source = await loadScene(signal);

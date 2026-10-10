@@ -11,6 +11,7 @@ mod decal;
 mod document;
 mod environment;
 mod error;
+mod features;
 mod files;
 mod hierarchy;
 mod instance;

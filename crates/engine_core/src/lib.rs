@@ -19,6 +19,7 @@ mod effects;
 mod entity_indices;
 mod environment;
 mod extraction;
+mod features;
 mod frame_stats;
 mod gpu_culling;
 mod ground_cover;
@@ -43,18 +44,19 @@ mod sky;
 mod spline_mesh;
 mod streaming;
 mod terrain;
+mod time_of_day;
 mod transform_edits;
 mod virtual_geometry;
 mod water;
 mod waterfalls;
 mod wind;
 
-pub use animation::{AnimationPlayer, AnimationSystems};
+pub use animation::{AnimationPlayer, AnimationPlugin, AnimationSystems};
 pub use antialiasing::TemporalAntialiasing;
 pub use atmosphere::Atmosphere;
 #[cfg(feature = "schema")]
 pub use atmosphere::state_atmosphere_rules;
-pub use bevy_app::{App, Plugin};
+pub use bevy_app::{App, Plugin, PluginGroup, PluginGroupBuilder};
 pub use bevy_ecs;
 pub use bridges::{DECK_DEPTH, DECK_MARGIN, DECK_RISE};
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime, PresentedTime};
@@ -62,6 +64,7 @@ pub use clouds::Clouds;
 pub use commands::EngineEntityCommands;
 pub use contact_shadows::ContactShadows;
 pub use decals::{Decal, DecalBlend, DecalSettings, RenderDecal};
+pub use deformation::DeformationPlugin;
 pub use deformation::{
     DEFORMATION_GRAIN, Deformation, DeformationMap, Deformer, MAX_TRACK_DEPTH, RIM_REACH,
     RIM_START, RenderDeformation, Track, TrackDepth, Tracks, carve_profile, rim_profile,
@@ -97,6 +100,9 @@ pub use engine_terrain::{
     PyramidError, Remap, Route, RouteOptions, Stamp, StampOp, Tile, TileKey, WaterGrid,
 };
 pub use environment::{Environment, EnvironmentSection, InvalidSetting};
+pub use features::{
+    Feature, Features, Ground, GroundSample, HeightHeld, StreamingFocus, has_feature,
+};
 pub use frame_stats::{
     Applied, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn, FrameStats,
     GroundCoverStats, LightStats, OccupancyStats, OceanStats, ProbeStats, RenderPasses,
@@ -127,10 +133,13 @@ pub use lights::{
     LocalLight, LocalLightSettings, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES,
     RenderLight, Spot,
 };
-pub use navigation::{NavAgent, NavAgents, NavStats, NavStatus, NavSystems, NavWalk, Navigation};
+pub use navigation::{
+    NavAgent, NavAgents, NavStats, NavStatus, NavSystems, NavWalk, Navigation, NavigationPlugin,
+};
 pub use occupancy::Occupancy;
 pub use ocean::{
-    Floating, MAX_OCEAN_WAVES, Ocean, OceanPoint, OceanSurface, OceanSystems, OceanWave, OceanWaves,
+    Floating, MAX_OCEAN_WAVES, Ocean, OceanPlugin, OceanPoint, OceanSurface, OceanSystems,
+    OceanWave, OceanWaves,
 };
 pub use particles::{
     MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter, ParticleSettings,
@@ -139,24 +148,25 @@ pub use particles::{
 pub use probes::{Interior, ReflectionProbe, ReflectionProbeSettings, RenderReflectionProbe};
 pub use retained_render::{PoseRows, RenderFrame};
 pub use scene::{
-    Camera, Cube, InputState, Mesh3d, RenderInstance, RenderMaterial, RenderMesh, RenderSnapshot,
-    RenderTexture, Tint, Transform,
+    Camera, Cube, InputState, Mesh3d, RenderInstance, RenderJoint, RenderMaterial, RenderMesh,
+    RenderSnapshot, RenderTexture, Tint, Transform,
 };
-pub use skin::{RenderJoint, Skin};
-pub use sky::{Sky, TimeOfDay};
+pub use skin::Skin;
+pub use sky::Sky;
 pub use spline_mesh::{CHUNK_LENGTH, MAX_SPLINE_POINTS, SplineChunks, SplineMesh};
 pub use streaming::{
     CellStats, CellView, STREAMING_GRIDS, StreamSet, Streamed, StreamedId, StreamedItem,
-    StreamingGrid, WorldCells, WorldChanges, WorldStreaming, remove_streamed,
+    StreamingGrid, WorldCells, WorldChanges, WorldStreaming, WorldStreamingPlugin, remove_streamed,
 };
 pub use terrain::{
     MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS, MIN_COLLIDER_EXTENT, MotionDetail, PlacedCollider,
     PlacedShape, PlacementAsset, PlacementLod, RenderPlacementAsset, RenderSurfaceMaps,
     RenderTerrain, RenderTerrains, SurfaceMaterial, SurfaceProjection, Surroundings,
-    SurroundingsStatus, Terrain, TerrainBakes, TerrainDebug, TerrainEdit, TerrainFocus,
+    SurroundingsStatus, Terrain, TerrainBakes, TerrainDebug, TerrainEdit, TerrainPlugin,
     TerrainPrefetch, TerrainSample, TerrainSettings, TerrainSource, TerrainStats, TerrainSurface,
     TerrainView, Terrains, TileRequest, Viewport,
 };
+pub use time_of_day::{TimeOfDay, TimeOfDayPlugin};
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;
 pub use water::Water;
@@ -227,6 +237,17 @@ pub struct ViewSync;
 /// boundary.
 #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FixedTickEnd;
+
+/// The phases of [`FixedSimulation`] the engine's features join, in this
+/// order: agents move (navigation walks), things ride what moves under them
+/// (the ocean's floating entities), then animation poses its targets.
+/// Gameplay orders its systems against them or the features' own sets.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FixedSimulationSystems {
+    Move,
+    Ride,
+    Pose,
+}
 
 /// The engine's work in [`WorldSync`], in this order.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -369,23 +390,17 @@ impl Engine {
             .add_systems(TransformPropagation, |world: &mut World| {
                 propagate_transforms(world);
             })
-            .add_systems(
-                FixedSimulation,
-                animation::animate.in_set(AnimationSystems::Animate),
-            )
-            .add_systems(FixedSimulation, ocean::float.in_set(OceanSystems::Float))
             .init_schedule(WorldSync)
             .init_schedule(ViewSync)
             .init_schedule(FixedTickEnd)
             // Before the frame's transforms refresh, the world follows the
-            // camera; after, what follows its view.
+            // camera; after, what follows its view. Grounded entities stand
+            // on the ground and spline meshes build here; features add the
+            // rest.
             .add_systems(
                 WorldSync,
                 (
-                    streaming::stream_cells.in_set(WorldSyncSystems::StreamCells),
                     grounded::settle.in_set(WorldSyncSystems::Ground),
-                    bridges::sync.in_set(WorldSyncSystems::Bridges),
-                    waterfalls::sync.in_set(WorldSyncSystems::Waterfalls),
                     spline_mesh::build.in_set(WorldSyncSystems::Splines),
                 ),
             )
@@ -400,13 +415,6 @@ impl Engine {
                 )
                     .chain(),
             )
-            .add_systems(
-                ViewSync,
-                (
-                    terrain::stream_terrains.in_set(ViewSyncSystems::StreamTerrains),
-                    deformation::follow_camera.in_set(ViewSyncSystems::FollowDeformation),
-                ),
-            )
             .configure_sets(
                 ViewSync,
                 (
@@ -415,27 +423,13 @@ impl Engine {
                 )
                     .chain(),
             )
-            // Deformers press tracks where each tick left them.
-            .add_systems(
-                FixedTickEnd,
-                deformation::press.in_set(FixedTickEndSystems::PressTracks),
-            )
-            // The time of day moves the sun.
-            .add_systems(Presentation, sky::advance_time_of_day)
-            // Navigation agents walk.
-            .add_systems(
-                FixedSimulation,
-                navigation::walk_agents.in_set(NavSystems::Walk),
-            )
-            // The engine's own work in a tick, in one order: agents walk,
-            // floating objects ride the waves, then players pose their
-            // targets. Gameplay orders itself against these sets.
+            // The features' work in a tick, in one order.
             .configure_sets(
                 FixedSimulation,
                 (
-                    NavSystems::Walk,
-                    OceanSystems::Float,
-                    AnimationSystems::Animate,
+                    FixedSimulationSystems::Move,
+                    FixedSimulationSystems::Ride,
+                    FixedSimulationSystems::Pose,
                 )
                     .chain(),
             )
@@ -472,13 +466,8 @@ impl Engine {
             .init_resource::<PresentedTime>()
             .init_resource::<Camera>()
             .init_resource::<Atmosphere>()
-            .init_resource::<Tracks>()
-            .init_resource::<deformation::DeformationFrame>()
-            .init_resource::<WorldCells>()
-            .init_resource::<WorldChanges>()
-            .init_resource::<NavAgents>()
+            .init_resource::<Features>()
             .init_resource::<Jobs>()
-            .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
@@ -487,7 +476,7 @@ impl Engine {
             .insert_resource(TransformNodeLimit(config.max_transform_nodes))
             .init_resource::<GlobalTransforms>()
             .insert_resource(assets);
-        environment::init_sections(app.world_mut());
+        environment::init_sections(app.world_mut(), None);
         let render_query = app.world_mut().query_filtered::<(
             Entity,
             Has<Transform>,
@@ -899,6 +888,8 @@ impl Engine {
     ) -> Result<RenderFrame<'_>, InterpolationError> {
         let _profile = engine_profile::span("cpu", "extraction");
         mode.validate()?;
+        // Plugins are ready before any frame draws, simulated or not.
+        self.finalize_plugins();
         self.complete_pending_tick();
         self.mark_presented_time(match mode {
             PresentationMode::Current => None,
@@ -929,6 +920,7 @@ impl Engine {
     ) -> Result<RenderFrame<'_>, InterpolationError> {
         let _profile = engine_profile::span("cpu", "extraction");
         PresentationMode::Interpolated { alpha }.validate()?;
+        self.finalize_plugins();
         self.mark_presented_time(Some(alpha));
         if let Some(gathered) = self.tick_ahead.presents_previous() {
             // Mid-tick state, and a tick completed before it is due, are not
@@ -995,8 +987,12 @@ impl Engine {
         self.retained.extract_decals(world, &mut self.decals, gpu);
         self.retained.extract_probes(world, &mut self.probes);
         self.retained.extract_terrain(world, aspect);
-        self.retained
-            .set_cells(world.resource::<WorldCells>().stats());
+        self.retained.set_cells(
+            world
+                .get_resource::<WorldCells>()
+                .map(WorldCells::stats)
+                .unwrap_or_default(),
+        );
         if gpu {
             // Later source edits must be newer than the stamp window just
             // consumed.
@@ -1029,7 +1025,7 @@ impl Engine {
         self.refuse_unrun_schedules();
         match self.app.plugins_state() {
             PluginsState::Adding => {
-                panic!("engine plugins must be ready before the first simulation frame")
+                panic!("engine plugins must be ready before the first frame")
             }
             PluginsState::Ready => {
                 self.app.finish();

@@ -1,6 +1,7 @@
 mod authoring;
 mod coverage;
 mod development;
+mod features;
 mod gpu;
 mod importing;
 mod iteration_build;

@@ -9,7 +9,7 @@
 //! away. Cells are columns: distances are horizontal.
 //!
 //! Each extracted frame, before transforms refresh, cells come within
-//! their range of a streaming source (the camera, every [`TerrainFocus`],
+//! their range of a streaming source (the camera, every [`StreamingFocus`],
 //! and where the camera's motion takes it [`WorldStreaming::prefetch`]
 //! seconds ahead) load: their items spawn, the cells nearest their range's
 //! middle first, until the frame has spawned
@@ -32,7 +32,7 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::math::{max, min};
-use crate::{Camera, FrameTime, GlobalTransforms, TerrainFocus};
+use crate::{Camera, FrameTime, GlobalTransforms, StreamingFocus};
 use engine_settings::settings;
 
 /// One grid items stream in: its cells' side and the meters from a source
@@ -531,7 +531,7 @@ pub fn remove_streamed(world: &mut World, set: StreamSet) {
 }
 
 /// The terrain focus entities, which are streaming sources.
-pub(crate) type FocusQuery = QueryState<Entity, With<TerrainFocus>>;
+pub(crate) type FocusQuery = QueryState<Entity, With<StreamingFocus>>;
 
 /// Loads cells streaming sources came near and unloads those they left,
 /// before transforms refresh: [`crate::WorldSyncSystems::StreamCells`].
@@ -676,4 +676,24 @@ fn load_and_unload(
         }
     }
     stats.pending = (wanted.len() - loaded) as u32;
+}
+
+/// Streamed entities spawning near the camera:
+/// [`crate::Feature::WorldStreaming`].
+#[derive(Default)]
+pub struct WorldStreamingPlugin;
+
+impl bevy_app::Plugin for WorldStreamingPlugin {
+    fn build(&self, app: &mut bevy_app::App) {
+        app.world_mut()
+            .resource_mut::<crate::Features>()
+            .insert(crate::Feature::WorldStreaming);
+        crate::environment::init_sections(app.world_mut(), Some(crate::Feature::WorldStreaming));
+        app.init_resource::<WorldCells>()
+            .init_resource::<WorldChanges>()
+            .add_systems(
+                crate::WorldSync,
+                stream_cells.in_set(crate::WorldSyncSystems::StreamCells),
+            );
+    }
 }

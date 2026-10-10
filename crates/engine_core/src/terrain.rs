@@ -8,7 +8,7 @@
 //! keeps every terrain's resident tiles. Each extraction streams toward the
 //! camera: the coarsest levels stay resident everywhere, so the whole
 //! terrain always draws; finer levels load nearest and ahead of the camera
-//! first, and level-0 tiles load around the camera and [`TerrainFocus`]
+//! first, and level-0 tiles load around the camera and [`StreamingFocus`]
 //! entities for collision. Generating, decoding and baking share a frame's
 //! work time, larger until the camera's view first loads
 //! whole than after; past a tile budget or the device's capacity the least
@@ -46,6 +46,7 @@ use std::sync::Arc;
 use bevy_ecs::{
     prelude::{Component, Entity, FromWorld, Local, Resource, With, World},
     query::QueryState,
+    schedule::IntoScheduleConfigs,
 };
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
@@ -649,11 +650,6 @@ pub struct TerrainDebug {
     pub freeze: Option<Vec3>,
     pub view: TerrainView,
 }
-
-/// Keeps level-0 terrain tiles resident around its entity, as the camera
-/// does, so collision and queries hold there.
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TerrainFocus;
 
 settings! {
     /// Names a place the camera may be sent to, such as a spawn point:
@@ -4106,7 +4102,7 @@ pub struct RenderTerrains {
 /// entities and the places named for prefetch, with its lists of them.
 pub(crate) struct TerrainStreaming {
     terrains: QueryState<(Entity, &'static Terrain)>,
-    focus: QueryState<Entity, With<TerrainFocus>>,
+    focus: QueryState<Entity, With<crate::StreamingFocus>>,
     prefetch: QueryState<(Entity, &'static TerrainPrefetch)>,
     points: Vec<Vec3>,
     places: Vec<(Vec3, f32)>,
@@ -4116,7 +4112,7 @@ impl FromWorld for TerrainStreaming {
     fn from_world(world: &mut World) -> Self {
         Self {
             terrains: world.query::<(Entity, &Terrain)>(),
-            focus: world.query_filtered::<Entity, With<TerrainFocus>>(),
+            focus: world.query_filtered::<Entity, With<crate::StreamingFocus>>(),
             prefetch: world.query::<(Entity, &TerrainPrefetch)>(),
             points: Vec::new(),
             places: Vec::new(),
@@ -4384,4 +4380,53 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
             .extend(state.ranges.iter().map(|range| range * LOAD_REACH));
         render.ranges.clone_from(&state.ranges);
     }
+}
+
+/// Heightfield terrains streaming around the camera, with their bakes,
+/// placed objects, roads, bridges, inland water and waterfalls:
+/// [`crate::Feature::Terrain`]. It provides the [`crate::Ground`] grounded
+/// entities stand on and deformers press into.
+#[derive(Default)]
+pub struct TerrainPlugin;
+
+impl bevy_app::Plugin for TerrainPlugin {
+    fn build(&self, app: &mut bevy_app::App) {
+        app.world_mut()
+            .resource_mut::<crate::Features>()
+            .insert(crate::Feature::Terrain);
+        crate::environment::init_sections(app.world_mut(), Some(crate::Feature::Terrain));
+        app.init_resource::<Terrains>()
+            .insert_resource(crate::Ground {
+                sample: ground_sample,
+                revision: |world| {
+                    world
+                        .get_resource::<Terrains>()
+                        .map_or(0, Terrains::revision)
+                },
+            })
+            .add_systems(
+                crate::ViewSync,
+                stream_terrains.in_set(crate::ViewSyncSystems::StreamTerrains),
+            )
+            .add_systems(
+                crate::WorldSync,
+                (
+                    crate::bridges::sync.in_set(crate::WorldSyncSystems::Bridges),
+                    crate::waterfalls::sync.in_set(crate::WorldSyncSystems::Waterfalls),
+                ),
+            );
+    }
+}
+
+/// The terrains' ground under world `(x, z)`: their finest resident sample
+/// there, none over a hole.
+fn ground_sample(world: &World, x: f32, z: f32) -> Option<crate::GroundSample> {
+    let sample = world
+        .get_resource::<Terrains>()?
+        .sample(x, z)
+        .filter(|sample| !sample.hole)?;
+    Some(crate::GroundSample {
+        height: sample.height,
+        level: sample.level,
+    })
 }

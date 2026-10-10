@@ -19,7 +19,7 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::math::{clamp, max, min};
-use crate::{Camera, FixedTime, GlobalTransforms, Terrains};
+use crate::{Camera, FixedTime, GlobalTransforms};
 use engine_settings::settings;
 
 /// The most meters a stamp sinks the ground.
@@ -534,8 +534,8 @@ pub(crate) fn press(world: &mut World, deformers: &mut QueryState<(Entity, &'sta
     let mut presses = Vec::new();
     {
         let world = &*world;
-        let (Some(terrains), Some(globals)) = (
-            world.get_resource::<Terrains>(),
+        let (Some(ground), Some(globals)) = (
+            world.get_resource::<crate::Ground>(),
             world.get_resource::<GlobalTransforms>(),
         ) else {
             return;
@@ -544,7 +544,8 @@ pub(crate) fn press(world: &mut World, deformers: &mut QueryState<(Entity, &'sta
             let Some(at) = globals.get(entity).and_then(|global| global.translation()) else {
                 continue;
             };
-            let Some(ground) = terrains.height_at(at.x, at.z) else {
+            let Some(ground) = (ground.sample)(world, at.x, at.z).map(|sample| sample.height)
+            else {
                 continue;
             };
             let gap = at.y - ground;
@@ -772,4 +773,27 @@ pub(crate) fn follow(
     out.logged = tracks.len();
     out.dropped = tracks.dropped;
     *last = Some(map);
+}
+
+/// Tracks deformers press into the ground: [`crate::Feature::Deformation`].
+#[derive(Default)]
+pub struct DeformationPlugin;
+
+impl bevy_app::Plugin for DeformationPlugin {
+    fn build(&self, app: &mut bevy_app::App) {
+        app.world_mut()
+            .resource_mut::<crate::Features>()
+            .insert(crate::Feature::Deformation);
+        crate::environment::init_sections(app.world_mut(), Some(crate::Feature::Deformation));
+        app.init_resource::<Tracks>()
+            .init_resource::<DeformationFrame>()
+            .add_systems(
+                crate::ViewSync,
+                follow_camera.in_set(crate::ViewSyncSystems::FollowDeformation),
+            )
+            .add_systems(
+                crate::FixedTickEnd,
+                press.in_set(crate::FixedTickEndSystems::PressTracks),
+            );
+    }
 }

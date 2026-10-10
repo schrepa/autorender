@@ -84,13 +84,26 @@ impl StressGame {
     }
 
     /// The authored scene `source` in place of a workload, with the image
-    /// and buffer `files` it references.
+    /// and buffer `files` it references, on an engine with every feature but
+    /// the comma-separated ones `without` names (`terrain`, `navigation`...).
     pub async fn create_scene(
         canvas: web_sys::HtmlCanvasElement,
         source: &str,
         files: SceneFileSet,
+        without: &str,
     ) -> Result<StressGame, JsValue> {
-        Self::launch(canvas, || StressLab::authored(source, files.files())).await
+        let without = without
+            .split(',')
+            .filter(|name| !name.is_empty())
+            .map(|name| {
+                engine::Feature::from_name(name)
+                    .ok_or_else(|| JsValue::from_str(&format!("no feature is named {name}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::launch(canvas, move || {
+            StressLab::authored(source, files.files(), &without)
+        })
+        .await
     }
 
     /// The authored scene's ID, revision, frame, player position and asset

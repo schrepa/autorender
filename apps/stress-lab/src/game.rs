@@ -43,9 +43,13 @@ impl StressLab {
     }
 
     /// The authored scene `source` with the `files` it references.
-    pub fn authored(source: &str, files: &SceneFiles) -> Result<(Engine, Self), String> {
+    pub fn authored(
+        source: &str,
+        files: &SceneFiles,
+        without: &[Feature],
+    ) -> Result<(Engine, Self), String> {
         let (engine, authored) =
-            AuthoredScene::new(source, files).map_err(|error| error.to_string())?;
+            AuthoredScene::new(source, files, without).map_err(|error| error.to_string())?;
         Ok((engine, Self::new(HashMap::new(), Some(authored))))
     }
 

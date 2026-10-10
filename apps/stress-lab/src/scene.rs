@@ -54,12 +54,17 @@ pub fn create_workload_with(
         frustum_culling: config.culling,
         ..EngineConfig::default()
     });
+    // A workload with neither colliders nor queries leaves collision out.
     let collision_enabled = config.colliders > 0 || config.queries_per_tick > 0;
     if collision_enabled {
         engine
             .app
-            .add_plugins(CollisionPlugin)
+            .add_plugins(EnginePlugins)
             .insert_resource(stress_collision_budgets());
+    } else {
+        engine
+            .app
+            .add_plugins(EnginePlugins::without([Feature::Collision]));
     }
     engine.app.insert_resource(config.clone());
     let (atmosphere, lamps) = look(config.scene, "scene")?;

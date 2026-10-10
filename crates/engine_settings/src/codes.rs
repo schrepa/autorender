@@ -231,9 +231,11 @@ error_codes! {
     /// An environment section is invalid.
     InvalidEnvironment => "invalid_environment",
 
+    /// A request or scene needs a feature whose plugin the engine lacks:
+    /// its message names the plugin to add.
+    MissingPlugin => "missing_plugin",
+
     // Collision.
-    /// The world lacks CollisionPlugin.
-    CollisionMissingPlugin => "collision_missing_plugin",
     /// A collider's dimensions are not finite or out of bounds.
     CollisionInvalidShape => "collision_invalid_shape",
     /// A collider's world transform is unusable for collision.

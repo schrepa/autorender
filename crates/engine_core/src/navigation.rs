@@ -53,7 +53,7 @@ settings! {
     /// Walks its entity over the terrain under it to `destination`. Changing
     /// the destination searches anew; none stands still. Requires version 9.
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[require(NavWalk)]
+    #[require(NavWalk, crate::HeightHeld)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct NavAgent {
@@ -450,4 +450,45 @@ fn walk_height(walk: &NavWalk, position: Vec3) -> f32 {
         1.0
     };
     a.y + (b.y - a.y) * t
+}
+
+/// Navigation agents walking over terrain: [`crate::Feature::Navigation`].
+/// Needs [`crate::TerrainPlugin`], whose terrains it searches.
+#[derive(Default)]
+pub struct NavigationPlugin;
+
+impl bevy_app::Plugin for NavigationPlugin {
+    fn build(&self, app: &mut bevy_app::App) {
+        app.world_mut()
+            .resource_mut::<crate::Features>()
+            .insert(crate::Feature::Navigation);
+        crate::environment::init_sections(app.world_mut(), Some(crate::Feature::Navigation));
+        app.init_resource::<NavAgents>()
+            .add_systems(
+                crate::FixedSimulation,
+                (walk_agents, hold_heights).chain().in_set(NavSystems::Walk),
+            )
+            .configure_sets(
+                crate::FixedSimulation,
+                NavSystems::Walk.in_set(crate::FixedSimulationSystems::Move),
+            );
+    }
+
+    fn finish(&self, app: &mut bevy_app::App) {
+        assert!(
+            crate::has_feature(app.world(), crate::Feature::Terrain),
+            "NavigationPlugin walks over terrain: add TerrainPlugin too, or leave navigation out"
+        );
+    }
+}
+
+/// Walking agents keep their own heights on their paths' decks: grounding
+/// leaves them meanwhile.
+fn hold_heights(mut agents: Query<(&NavWalk, &mut crate::HeightHeld), Changed<NavWalk>>) {
+    for (walk, mut held) in &mut agents {
+        let walking = walk.status == NavStatus::Walking;
+        if held.0 != walking {
+            held.0 = walking;
+        }
+    }
 }

@@ -30,13 +30,24 @@ fn turn(time: Res<FixedTime>, mut cubes: Query<&mut Transform, With<Turning>>) {
     }
 }
 
+/// The game's own systems, as a plugin like the engine's features: it
+/// turns the cube each tick after the features moved and posed things.
+struct TemplatePlugin;
+
+impl Plugin for TemplatePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(FixedSimulation, turn.after(FixedSimulationSystems::Pose));
+    }
+}
+
 /// The game's engine and state.
 pub fn build() -> engine::Result<(Engine, Template)> {
     let mut engine = Engine::default();
+    // Every engine feature (or `EnginePlugins::without([...])`), the fly
+    // camera and the game's own.
     engine
         .app
-        .add_plugins(FlyCameraPlugin)
-        .add_systems(FixedSimulation, turn)
+        .add_plugins((EnginePlugins, FlyCameraPlugin, TemplatePlugin))
         // The look is data: presets, or a scene's `environment`.
         .insert_resource(Atmosphere::day());
     let world = engine.app.world_mut();
