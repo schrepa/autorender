@@ -172,6 +172,22 @@ impl<G: Game> GameHost<G> {
         self.app.renderer.adapter()
     }
 
+    /// Starts a capture in the graphics debugger the program runs under
+    /// (RenderDoc, Xcode); whether one started.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_debugger_capture(&mut self) -> bool {
+        self.app.renderer.start_debugger_capture()
+    }
+
+    /// Stops the debugger's capture once the GPU finished its work.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn stop_debugger_capture(&mut self) -> crate::Result<()> {
+        self.app
+            .renderer
+            .stop_debugger_capture()
+            .map_err(crate::app_host::render_failure)
+    }
+
     /// Waits until the GPU finished every frame submitted.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_gpu(&self) -> crate::Result<()> {

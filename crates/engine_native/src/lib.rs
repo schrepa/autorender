@@ -10,6 +10,8 @@ mod input;
 mod job_cache;
 mod jobs;
 mod offscreen;
+mod pix;
+mod renderdoc;
 mod window;
 
 use std::process::ExitCode;
@@ -18,6 +20,8 @@ pub use engine::GpuPreference;
 pub use job_cache::JobCache;
 pub use jobs::{CacheOptions, JobOptions, JobPool};
 pub use offscreen::Offscreen;
+pub use pix::Pix;
+pub use renderdoc::RenderDoc;
 pub use window::{Window, run};
 
 /// [`run`] as a program's `main`: the game's failure printed, as the

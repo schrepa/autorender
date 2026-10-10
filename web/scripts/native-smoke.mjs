@@ -1,16 +1,19 @@
 /** The native host: the Stress Lab built natively serves the development
  * protocol over standard input and output, drawing offscreen (status names
- * its GPU, captures write PNGs, the game's controls and benchmarks run),
- * and its job workers' outputs match those its job cache kept.
- * Builds `stress-lab` with `--release --features dev` (the cargo on PATH);
- * needs no development server. */
+ * its GPU, captures write PNGs, the game's controls, benchmarks and
+ * profiling captures with per-draw GPU times run, and the agent's A/B
+ * harness measures in it), and its job workers' outputs match those its
+ * job cache kept. Builds `stress-lab` with `--release --features
+ * dev,profiling` (the cargo on PATH); needs no development server. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+import { runAb } from "./agent-ab.mjs";
 import { launchNativeSession, nativeProgram } from "./agent-native.mjs";
 
 const workspace = fileURLToPath(new URL("../../", import.meta.url));
-const program = nativeProgram("stress-lab");
+const program = nativeProgram("stress-lab", { profiling: true });
 
 const session = await launchNativeSession({ program, args: ["--preset=visual", "--size=640x400", "--workers=2"] });
 try {
@@ -24,7 +27,7 @@ try {
   const status = await run({ op: "status" });
   assert.equal(status.paused, true);
   assert.ok(status.adapter.name && status.adapter.backend, `the adapter is named: ${JSON.stringify(status.adapter)}`);
-  assert.deepEqual(status.build.features, ["dev"]);
+  assert.deepEqual(status.build.features, ["dev", "profiling"]);
 
   // The game's own controls and the program's options are discoverable.
   const types = (await run({ op: "describe" })).types;
@@ -57,6 +60,24 @@ try {
   const benchmark = (await run({ op: "benchmark", mode: "render", warmup: 2, samples: 8 })).benchmark;
   assert.ok(benchmark.frame_interval_ms.median > 0 && benchmark.cpu_ms.total.median > 0, JSON.stringify(benchmark.cpu_ms));
   assert.equal(benchmark.environment.adapter.name, status.adapter.name);
+
+  // Profiling captures time the frames' GPU passes, and each opaque draw
+  // where the GPU interface times work inside passes.
+  const profile = await run({ op: "profile", duration_ms: 500 });
+  const trace = JSON.parse(readFileSync(new URL(`../../${profile.artifacts.trace}`, import.meta.url), "utf8"));
+  assert.ok(trace.gpu.completed > 0, `GPU spans were read back: ${JSON.stringify({ ...trace.gpu, samples: undefined, draw_samples: undefined })}`);
+  assert.ok(trace.gpu.samples.some(sample => sample.name === "opaque_meshes"));
+  if (trace.gpu.draws.timestamps) assert.ok(trace.gpu.draw_samples.some(draw => draw.duration_ms !== null), "opaque draws are timed");
+
+  // The A/B harness alternates variants in ABBA windows: here the same
+  // look twice against another.
+  const ab = await runAb(session, {
+    a: JSON.stringify({ op: "game", name: "look", args: { name: "day" } }),
+    b: JSON.stringify({ op: "game", name: "look", args: { name: "night" } }),
+    rounds: "1", samples: "4", warmup: "1",
+  });
+  assert.equal(ab.order, "abba");
+  assert.ok(ab.compared.cpu_ms.a > 0 && ab.compared.cpu_ms.b > 0, JSON.stringify(ab.compared));
 
   // Resuming runs frames in real time until paused again.
   await run({ op: "resume" });

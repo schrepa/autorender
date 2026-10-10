@@ -18,11 +18,12 @@ const SESSIONS_KEPT = 10;
 const READY_TIMEOUT_MS = 300_000;
 
 /** The program `native` names: a workspace package's native binary
- * (`NAME-native`), built with its development tools, or a path to one built
- * so. */
-export function nativeProgram(native) {
+ * (`NAME-native`), built with its development tools (and with `profiling`,
+ * its profiling captures), or a path to one built so. */
+export function nativeProgram(native, { profiling = false } = {}) {
   if (!/^[a-z][a-z0-9-]*$/.test(native)) return resolve(native);
-  execFileSync("cargo", ["build", "-q", "-p", native, "--release", "--features", "dev"], { cwd: workspace, stdio: ["ignore", "ignore", "inherit"] });
+  const features = profiling ? "dev,profiling" : "dev";
+  execFileSync("cargo", ["build", "-q", "-p", native, "--release", "--features", features], { cwd: workspace, stdio: ["ignore", "ignore", "inherit"] });
   return resolve(workspace, "target", "release", process.platform === "win32" ? `${native}-native.exe` : `${native}-native`);
 }
 
@@ -179,9 +180,13 @@ export async function launchNativeSession({ program, args = [], session = random
       session, url: `native:${relative(workspace, program).split(sep).join("/")}`, instance: identity.instance, build: identity.build ?? null,
       adapter: identity.adapter, close, setInvalidated,
       async execute(command) {
-        if (command.op === "profile" || (command.op === "describe" && command.name === "ProfileCapture")) {
+        if (command.op === "describe" && command.name === "ProfileCapture") {
+          if (Object.keys(command).some(key => !["op", "name"].includes(key))) throw new AgentError("invalid_request", "describe accepts only name.");
           const response = await request({ op: "status" });
-          return { ok: false, observation: response.observation, error: { code: "unsupported_command", path: "$.op", message: "native sessions capture no browser profiles" } };
+          if (!response.ok) return response;
+          const { profileDescriptor } = await import("./agent-profile.mjs");
+          response.result = { ...profileDescriptor, status: { available: identity.profiling === true, native: true } };
+          return response;
         }
         if (command.op === "compare") return compareCaptures(command, request);
         if (command.op === "diagnostics") {
@@ -193,6 +198,9 @@ export async function launchNativeSession({ program, args = [], session = random
         if (command.op === "describe" && command.name === undefined && response.ok && Array.isArray(response.result?.types)) {
           response.result.types.push({ name: "GameControls", kind: "tooling", description: "The game's own controls, which the game control runs by name with args", controls: identity.controls ?? {} });
           response.result.types.push({ name: "PageParameters", kind: "tooling", description: "The native program's options the host and game read", parameters: identity.parameters ?? {} });
+        }
+        if (command.op === "profile" && response.ok && response.result?.artifacts?.trace) {
+          response.result.artifacts.trace = relative(workspace, response.result.artifacts.trace).split(sep).join("/");
         }
         if (command.op === "capture" && response.ok && response.result?.artifact) {
           const artifact = response.result.artifact;

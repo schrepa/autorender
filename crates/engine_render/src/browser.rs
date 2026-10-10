@@ -191,6 +191,9 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     adapter: crate::AdapterInfo,
+    // A graphics debugger's capture runs.
+    #[cfg(not(target_arch = "wasm32"))]
+    debugger_capture: bool,
     // The canvas, its surface and the depth buffer at its size.
     display: Display,
     depth: DepthTarget,
@@ -367,7 +370,7 @@ impl Renderer {
         #[cfg(not(feature = "profiling"))]
         let required_features = features;
         #[cfg(feature = "profiling")]
-        let required_features = features | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY);
+        let required_features = features | (adapter.features() & crate::profiling::FEATURES);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("engine/device"),
@@ -462,10 +465,7 @@ impl Renderer {
         // Popping takes effect now; validation resolves once they compiled.
         let validation = Box::pin(scope.pop());
 
-        let profiler = GpuProfiler::new(
-            required_features.contains(wgpu::Features::TIMESTAMP_QUERY),
-            f64::from(queue.get_timestamp_period()),
-        );
+        let profiler = GpuProfiler::new(required_features, f64::from(queue.get_timestamp_period()));
         let mesh_arena = MeshArena::new(
             &device,
             [
@@ -479,6 +479,8 @@ impl Renderer {
             device,
             queue,
             adapter: adapter_info,
+            #[cfg(not(target_arch = "wasm32"))]
+            debugger_capture: false,
             display,
             depth,
             terrain_ids: None,
@@ -562,6 +564,42 @@ impl Renderer {
     /// A zero dimension suspends rendering without configuring an invalid surface.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.display.resize(width, height);
+    }
+
+    /// Starts capturing the GPU work submitted from now in the graphics
+    /// debugger the program runs under: RenderDoc (Vulkan, D3D12) or Xcode
+    /// (Metal, with `MTL_CAPTURE_ENABLED=1`); nothing without one. Whether
+    /// a capture started: none while another runs.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn start_debugger_capture(&mut self) -> bool {
+        if self.debugger_capture {
+            return false;
+        }
+        self.debugger_capture = true;
+        // SAFETY: no other capture is active (the flag pairs every start
+        // with one stop); the debugger's own rules are its documentation's.
+        #[allow(unsafe_code)]
+        unsafe {
+            self.device.start_graphics_debugger_capture();
+        }
+        true
+    }
+
+    /// Stops the capture [`Self::start_debugger_capture`] started, once the
+    /// GPU finished its work.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn stop_debugger_capture(&mut self) -> Result<(), RenderError> {
+        if !self.debugger_capture {
+            return Ok(());
+        }
+        self.wait_for_gpu()?;
+        self.debugger_capture = false;
+        // SAFETY: the capture started above is the one active.
+        #[allow(unsafe_code)]
+        unsafe {
+            self.device.stop_graphics_debugger_capture();
+        }
+        Ok(())
     }
 
     /// Waits until the GPU finished every frame submitted.

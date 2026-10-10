@@ -29,6 +29,8 @@ game = "stress"
 default = []
 # Native development sessions over standard input and output (`--dev`).
 dev = ["engine/dev", "engine_native/dev"]
+# Native profiling captures, which development sessions take as `profile`.
+profiling = ["engine/profiling", "engine_native/profiling"]
 # Schemas of the configuration and snapshot, for `cargo xtask schema`.
 schema = ["dep:schemars", "engine/schema"]
 

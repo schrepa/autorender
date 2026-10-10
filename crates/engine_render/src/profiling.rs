@@ -5,6 +5,10 @@
 //! phases, the near cascades, occlusion culling's pyramid and test) are the
 //! same span asked for again within the frame. Readback is bounded and
 //! never waits on the GPU: WebGPU completes maps through its event loop.
+//! Where the device times work inside passes and counts pipeline
+//! statistics (native GPU interfaces), captured frames also time each draw
+//! of the opaque passes and count its vertex shader invocations, the
+//! primitives it rasterized and its fragment shader invocations.
 //! Builds without the `profiling` feature compile a stand-in that records
 //! nothing, so passes ask for spans without conditional compilation.
 
@@ -61,6 +65,17 @@ impl<'a> Span<'a> {
     }
 }
 
+/// A draw a captured frame times: its index among the frame's.
+#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+pub(crate) struct Draw(u32);
+
+/// What profiling builds ask devices for: timestamps, and inside passes
+/// with pipeline statistics where the device has them.
+#[cfg(feature = "profiling")]
+pub(crate) const FEATURES: wgpu::Features = wgpu::Features::TIMESTAMP_QUERY
+    .union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
+    .union(wgpu::Features::PIPELINE_STATISTICS_QUERY);
+
 #[cfg(feature = "profiling")]
 pub(crate) use capture::GpuProfiler;
 
@@ -70,9 +85,21 @@ pub(crate) struct GpuProfiler;
 
 #[cfg(not(feature = "profiling"))]
 impl GpuProfiler {
-    pub(crate) fn new(_supported: bool, _period_ns: f64) -> Self {
+    pub(crate) fn new(_features: wgpu::Features, _period_ns: f64) -> Self {
         Self
     }
+
+    #[inline(always)]
+    pub(crate) fn begin_draw(
+        &self,
+        _pass: &mut wgpu::RenderPass<'_>,
+        _label: impl FnOnce() -> String,
+    ) -> Option<Draw> {
+        None
+    }
+
+    #[inline(always)]
+    pub(crate) fn end_draw(&self, _pass: &mut wgpu::RenderPass<'_>, _draw: Option<Draw>) {}
 
     #[inline(always)]
     pub(crate) fn begin_frame(&mut self, _device: &wgpu::Device) {}
@@ -108,7 +135,7 @@ mod capture {
 
     use serde_json::{Value, json};
 
-    use super::Span;
+    use super::{Draw, Span};
 
     const SLOTS: usize = 3;
     const SAMPLE_LIMIT: usize = 4_096;
@@ -117,6 +144,20 @@ mod capture {
     const SPANS: usize = 128;
     const QUERIES: u32 = 2 * SPANS as u32;
     const QUERY_BYTES: u64 = QUERIES as u64 * 8;
+    /// Draws one frame times at most: two timestamps each fill a query
+    /// set's 4096 queries.
+    const DRAWS: usize = 2_048;
+    /// What each draw counts, in the order queries resolve them: vertex
+    /// shader invocations, primitives out of clipping, fragment shader
+    /// invocations.
+    const STATISTICS: wgpu::PipelineStatisticsTypes =
+        wgpu::PipelineStatisticsTypes::VERTEX_SHADER_INVOCATIONS
+            .union(wgpu::PipelineStatisticsTypes::CLIPPER_PRIMITIVES_OUT)
+            .union(wgpu::PipelineStatisticsTypes::FRAGMENT_SHADER_INVOCATIONS);
+    // Where draws' timestamps and statistics resolve, after the spans'.
+    const DRAW_STAMPS_AT: u64 = QUERY_BYTES;
+    const DRAW_STATISTICS_AT: u64 = DRAW_STAMPS_AT + 2 * DRAWS as u64 * 8;
+    const SLOT_BYTES: u64 = DRAW_STATISTICS_AT + DRAWS as u64 * 24;
     /// The span every captured frame records: its opaque passes.
     const OPAQUE: &str = "opaque_meshes";
 
@@ -144,10 +185,29 @@ mod capture {
         // each with the group whose first begin to last end the report
         // also times.
         spans: RefCell<Vec<(&'static str, Option<&'static str>)>>,
+        // Draws' timestamps and statistics, where the device has them, and
+        // the draws this frame timed, by label.
+        draw_stamps: Option<wgpu::QuerySet>,
+        draw_statistics: Option<wgpu::QuerySet>,
+        draws: RefCell<Vec<String>>,
     }
 
     impl Slot {
-        fn new(device: &wgpu::Device) -> Self {
+        fn new(device: &wgpu::Device, draws: Support) -> Self {
+            let draw_stamps = draws.timestamps.then(|| {
+                device.create_query_set(&wgpu::QuerySetDescriptor {
+                    label: Some("engine/profile-draw-timestamps"),
+                    ty: wgpu::QueryType::Timestamp,
+                    count: 2 * DRAWS as u32,
+                })
+            });
+            let draw_statistics = draws.statistics.then(|| {
+                device.create_query_set(&wgpu::QuerySetDescriptor {
+                    label: Some("engine/profile-draw-statistics"),
+                    ty: wgpu::QueryType::PipelineStatistics(STATISTICS),
+                    count: DRAWS as u32,
+                })
+            });
             Self {
                 queries: device.create_query_set(&wgpu::QuerySetDescriptor {
                     label: Some("engine/profile-timestamps"),
@@ -156,27 +216,51 @@ mod capture {
                 }),
                 resolve: device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("engine/profile-resolve"),
-                    size: QUERY_BYTES,
+                    size: SLOT_BYTES,
                     usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 }),
                 readback: device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("engine/profile-readback"),
-                    size: QUERY_BYTES,
+                    size: SLOT_BYTES,
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 }),
                 mapped: Rc::new(Cell::new(MapState::Pending)),
                 origin: None,
                 spans: RefCell::new(Vec::with_capacity(SPANS)),
+                draw_stamps,
+                draw_statistics,
+                draws: RefCell::new(Vec::new()),
             }
         }
     }
+
+    /// What a device measures of each draw.
+    #[derive(Clone, Copy)]
+    struct Support {
+        timestamps: bool,
+        statistics: bool,
+    }
+
+    /// A draw's measurements in a captured frame.
+    struct DrawSample {
+        label: String,
+        duration_ms: Option<f64>,
+        // Vertex shader invocations, primitives out of clipping, fragment
+        // shader invocations.
+        statistics: Option<[u64; 3]>,
+    }
+
+    /// A read-back frame's span timestamps, draw timestamps and draw
+    /// statistics.
+    type Readback = (Vec<(u64, u64)>, Vec<(u64, u64)>, Vec<[u64; 3]>);
 
     struct Sample {
         origin: Origin,
         // Each recorded span's duration, then the aggregates: in report order.
         spans: Vec<(&'static str, f64)>,
+        draws: Vec<DrawSample>,
     }
 
     /// Retains one capture and a small reusable ring. A new capture clears
@@ -184,6 +268,7 @@ mod capture {
     /// capture ID.
     pub(crate) struct GpuProfiler {
         supported: bool,
+        draw_support: Support,
         period_ns: f64,
         slots: Vec<Slot>,
         // The slot this frame records into.
@@ -193,8 +278,9 @@ mod capture {
         attempted: u64,
         submitted: u64,
         dropped: u64,
-        // Spans frames asked for beyond `SPANS`.
+        // Spans frames asked for beyond `SPANS`, and draws beyond `DRAWS`.
         spans_dropped: Cell<u64>,
+        draws_dropped: Cell<u64>,
         errors: u64,
         sample_limit_reached: bool,
         samples: Vec<Sample>,
@@ -203,9 +289,15 @@ mod capture {
     }
 
     impl GpuProfiler {
-        pub(crate) fn new(supported: bool, period_ns: f64) -> Self {
+        pub(crate) fn new(features: wgpu::Features, period_ns: f64) -> Self {
+            let supported = features.contains(wgpu::Features::TIMESTAMP_QUERY);
             Self {
                 supported,
+                draw_support: Support {
+                    timestamps: supported
+                        && features.contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
+                    statistics: features.contains(wgpu::Features::PIPELINE_STATISTICS_QUERY),
+                },
                 period_ns,
                 slots: Vec::new(),
                 current: None,
@@ -215,6 +307,7 @@ mod capture {
                 submitted: 0,
                 dropped: 0,
                 spans_dropped: Cell::new(0),
+                draws_dropped: Cell::new(0),
                 errors: 0,
                 sample_limit_reached: false,
                 samples: Vec::new(),
@@ -229,13 +322,15 @@ mod capture {
             self.submitted = 0;
             self.dropped = 0;
             self.spans_dropped.set(0);
+            self.draws_dropped.set(0);
             self.errors = 0;
             self.sample_limit_reached = false;
             self.samples.clear();
             // Allocate at the explicit capture boundary, never grow in the
             // frame loop.
             if self.supported && self.slots.is_empty() {
-                self.slots = (0..SLOTS).map(|_| Slot::new(device)).collect();
+                let draws = self.draw_support;
+                self.slots = (0..SLOTS).map(|_| Slot::new(device, draws)).collect();
                 self.samples.reserve_exact(SAMPLE_LIMIT);
             }
         }
@@ -273,6 +368,7 @@ mod capture {
             });
             slot.mapped.set(MapState::Pending);
             slot.spans.get_mut().clear();
+            slot.draws.get_mut().clear();
             self.submitted += 1;
             self.current = Some(index);
         }
@@ -316,6 +412,47 @@ mod capture {
             })
         }
 
+        /// Begins timing the draw `label` names in `pass`, where this frame
+        /// is captured and the device measures work inside passes.
+        pub(crate) fn begin_draw(
+            &self,
+            pass: &mut wgpu::RenderPass<'_>,
+            label: impl FnOnce() -> String,
+        ) -> Option<Draw> {
+            let slot = &self.slots[self.current?];
+            if slot.draw_stamps.is_none() && slot.draw_statistics.is_none() {
+                return None;
+            }
+            let mut draws = slot.draws.borrow_mut();
+            if draws.len() >= DRAWS {
+                self.draws_dropped.set(self.draws_dropped.get() + 1);
+                return None;
+            }
+            let index = draws.len() as u32;
+            draws.push(label());
+            if let Some(stamps) = &slot.draw_stamps {
+                pass.write_timestamp(stamps, 2 * index);
+            }
+            if let Some(statistics) = &slot.draw_statistics {
+                pass.begin_pipeline_statistics_query(statistics, index);
+            }
+            Some(Draw(index))
+        }
+
+        /// Ends timing `draw`.
+        pub(crate) fn end_draw(&self, pass: &mut wgpu::RenderPass<'_>, draw: Option<Draw>) {
+            let (Some(Draw(index)), Some(current)) = (draw, self.current) else {
+                return;
+            };
+            let slot = &self.slots[current];
+            if slot.draw_statistics.is_some() {
+                pass.end_pipeline_statistics_query();
+            }
+            if let Some(stamps) = &slot.draw_stamps {
+                pass.write_timestamp(stamps, 2 * index + 1);
+            }
+        }
+
         /// Resolves this frame's queries into its read-back buffer.
         pub(crate) fn end_frame(&mut self, encoder: &mut wgpu::CommandEncoder) {
             let Some(index) = self.current else {
@@ -325,13 +462,23 @@ mod capture {
             let queries = 2 * slot.spans.borrow().len() as u32;
             if queries != 0 {
                 encoder.resolve_query_set(&slot.queries, 0..queries, &slot.resolve, 0);
-                encoder.copy_buffer_to_buffer(
-                    &slot.resolve,
-                    0,
-                    &slot.readback,
-                    0,
-                    u64::from(queries) * 8,
-                );
+            }
+            let draws = slot.draws.borrow().len() as u32;
+            if draws != 0 {
+                if let Some(stamps) = &slot.draw_stamps {
+                    encoder.resolve_query_set(stamps, 0..2 * draws, &slot.resolve, DRAW_STAMPS_AT);
+                }
+                if let Some(statistics) = &slot.draw_statistics {
+                    encoder.resolve_query_set(
+                        statistics,
+                        0..draws,
+                        &slot.resolve,
+                        DRAW_STATISTICS_AT,
+                    );
+                }
+            }
+            if queries != 0 || draws != 0 {
+                encoder.copy_buffer_to_buffer(&slot.resolve, 0, &slot.readback, 0, SLOT_BYTES);
             }
         }
 
@@ -377,6 +524,8 @@ mod capture {
                     continue;
                 }
                 let recorded = slot.spans.get_mut().clone();
+                let labels = std::mem::take(slot.draws.get_mut());
+                let (timed, counted) = (slot.draw_stamps.is_some(), slot.draw_statistics.is_some());
                 let names: Vec<&'static str> = recorded.iter().map(|&(name, _)| name).collect();
                 // Each group in the order its first span was recorded.
                 let mut groups: Vec<&'static str> = Vec::new();
@@ -385,20 +534,31 @@ mod capture {
                         groups.push(group);
                     }
                 }
-                let stamps: Option<Vec<(u64, u64)>> =
-                    slot.readback.get_mapped_range(..).ok().map(|bytes| {
-                        let stamp = |query: usize| {
-                            bytes
-                                .get(query * 8..query * 8 + 8)
-                                .and_then(|word| word.try_into().ok())
-                                .map_or(0, u64::from_le_bytes)
-                        };
-                        (0..names.len())
-                            .map(|span| (stamp(2 * span), stamp(2 * span + 1)))
-                            .collect()
-                    });
+                let read: Option<Readback> = slot.readback.get_mapped_range(..).ok().map(|bytes| {
+                    let word = |at: usize| {
+                        bytes
+                            .get(at..at + 8)
+                            .and_then(|word| word.try_into().ok())
+                            .map_or(0, u64::from_le_bytes)
+                    };
+                    let stamp = |query: usize| word(query * 8);
+                    let spans = (0..names.len())
+                        .map(|span| (stamp(2 * span), stamp(2 * span + 1)))
+                        .collect();
+                    let draw_stamp = |query: usize| word(DRAW_STAMPS_AT as usize + query * 8);
+                    let draws = (0..labels.len())
+                        .map(|draw| (draw_stamp(2 * draw), draw_stamp(2 * draw + 1)))
+                        .collect();
+                    let statistic = |draw: usize, counter: usize| {
+                        word(DRAW_STATISTICS_AT as usize + draw * 24 + counter * 8)
+                    };
+                    let statistics = (0..labels.len())
+                        .map(|draw| [0, 1, 2].map(|counter| statistic(draw, counter)))
+                        .collect();
+                    (spans, draws, statistics)
+                });
                 slot.readback.unmap();
-                let Some(stamps) = stamps else {
+                let Some((stamps, draw_stamps, draw_statistics)) = read else {
                     self.errors = self.errors.saturating_add(1);
                     continue;
                 };
@@ -507,9 +667,22 @@ mod capture {
                         .filter(|value| value.is_finite())
                         .map(|interval| ("frame_gpu_interval", interval)),
                 );
+                let draws = labels
+                    .into_iter()
+                    .zip(draw_stamps.into_iter().zip(draw_statistics))
+                    .map(|(label, (stamps, statistics))| DrawSample {
+                        label,
+                        duration_ms: timed.then(|| duration(stamps)).flatten(),
+                        statistics: counted.then_some(statistics),
+                    })
+                    .collect();
                 // begin_frame() accounts for completed and pending samples
                 // together.
-                self.samples.push(Sample { origin, spans });
+                self.samples.push(Sample {
+                    origin,
+                    spans,
+                    draws,
+                });
             }
         }
 
@@ -541,10 +714,17 @@ mod capture {
                 "pending": pending,
                 "dropped": self.dropped,
                 "spans_dropped": self.spans_dropped.get(),
+                "draws": {
+                    "timestamps": self.draw_support.timestamps,
+                    "statistics": self.draw_support.statistics,
+                    "limit": DRAWS,
+                    "dropped": self.draws_dropped.get(),
+                    "scope": "each draw of the opaque passes in captured frames, where the device times work inside passes (timestamps) and counts pipeline statistics: vertex shader invocations, primitives out of clipping and fragment shader invocations; browsers have neither",
+                },
                 "errors": self.errors,
                 "sample_limit_reached": self.sample_limit_reached,
                 "complete": self.capture.is_some() && !active && self.supported && pending == 0 && self.dropped == 0 && self.spans_dropped.get() == 0 && self.errors == 0,
-                "readback_buffer_bytes": self.slots.len() as u64 * QUERY_BYTES * 2,
+                "readback_buffer_bytes": self.slots.len() as u64 * SLOT_BYTES * 2,
                 "cpu_sample_capacity_bytes": self.samples.capacity() * size_of::<Sample>(),
             })
         }
@@ -563,6 +743,23 @@ mod capture {
                                 "submission": sample.origin.submission.to_string(),
                                 "name": name,
                                 "duration_ms": duration_ms,
+                            })
+                        })
+                    })
+                    .collect(),
+            );
+            report["draw_samples"] = Value::Array(
+                self.samples
+                    .iter()
+                    .flat_map(|sample| {
+                        sample.draws.iter().map(|draw| {
+                            json!({
+                                "frame": sample.origin.frame.to_string(),
+                                "label": draw.label,
+                                "duration_ms": draw.duration_ms,
+                                "vertex_invocations": draw.statistics.map(|counts| counts[0]),
+                                "primitives": draw.statistics.map(|counts| counts[1]),
+                                "fragment_invocations": draw.statistics.map(|counts| counts[2]),
                             })
                         })
                     })

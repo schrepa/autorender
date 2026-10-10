@@ -28,6 +28,20 @@ pub struct MaterialHandle(Id);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TextureHandle(Id);
 
+impl MeshHandle {
+    /// Its slot in its library, which reports name it by.
+    pub fn slot(self) -> usize {
+        self.0.slot
+    }
+}
+
+impl MaterialHandle {
+    /// Its slot in its library, which reports name it by.
+    pub fn slot(self) -> usize {
+        self.0.slot
+    }
+}
+
 /// Handles name assets; libraries check them as they resolve.
 impl engine_settings::Setting for MeshHandle {}
 impl engine_settings::Setting for MaterialHandle {}

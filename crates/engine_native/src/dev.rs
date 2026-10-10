@@ -3,8 +3,11 @@
 //! the page runs them (`web/src/engine/dev.ts`). The engine answers each
 //! command, or hands back a control the host carries out: pause and resume,
 //! benchmarks, captures (PNG files), the game's own controls and scene
-//! reloads. Sessions draw offscreen and start paused, as the page's
-//! development sessions do; a first line says the session is ready.
+//! reloads. Profiling builds also take the agent's `profile`: a bounded CPU
+//! and GPU capture whose report is written as a file, with each opaque
+//! draw's GPU time and pipeline statistics where the device has them.
+//! Sessions draw offscreen and start paused, as the page's development
+//! sessions do; a first line says the session is ready.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -124,6 +127,7 @@ impl<G: Game> DevSession<G> {
             "build": option_env!("ENGINE_COMMIT"),
             "size": [size.0, size.1],
             "adapter": adapter(self.game.host()),
+            "profiling": cfg!(feature = "profiling"),
             "controls": self.controls.iter().map(|(name, control)| (name.clone(), json!(control.description))).collect::<Map<_, _>>(),
             "parameters": self.parameters,
         }));
@@ -208,6 +212,11 @@ impl<G: Game> DevSession<G> {
     /// defaults.
     fn dispatch(&mut self, command: &Map<String, Value>) -> Value {
         let op = command["op"].as_str().unwrap_or_default().to_owned();
+        // The agent's own capture, which the engine's protocol leaves to
+        // hosts.
+        if op == "profile" {
+            return self.profile(command);
+        }
         let mut reply = self.invoke(command);
         let control = (reply["ok"] == true)
             .then(|| reply["result"]["control"].as_object().cloned())
@@ -414,6 +423,106 @@ impl<G: Game> DevSession<G> {
             reply["observation"] = rendered["observation"].clone();
         }
         reply
+    }
+
+    /// Runs frames back to back for `duration_ms` (100 to 5000, 5000 by
+    /// default), so the GPU's clocks stay up as under load, while a capture
+    /// of at most `max_events` CPU events and every frame's GPU spans runs,
+    /// then pauses and writes the report as a file.
+    #[cfg(feature = "profiling")]
+    fn profile(&mut self, command: &Map<String, Value>) -> Value {
+        if command
+            .keys()
+            .any(|key| !["op", "duration_ms", "max_events", "cpu_samples"].contains(&key.as_str()))
+        {
+            return self.error(
+                "invalid_request",
+                "$",
+                "profile accepts duration_ms, max_events, and cpu_samples only",
+            );
+        }
+        let bounded =
+            |name: &str, (minimum, maximum): (u64, u64), default: u64| match command.get(name) {
+                None => Some(default),
+                Some(value) => value
+                    .as_u64()
+                    .filter(|value| (minimum..=maximum).contains(value)),
+            };
+        let max = engine::profiling::MAX_EVENTS as u64;
+        let (Some(duration), Some(max_events)) = (
+            bounded("duration_ms", (100, 5000), 5000),
+            bounded("max_events", (256, max), max),
+        ) else {
+            return self.error(
+                "invalid_request",
+                "$",
+                &format!("duration_ms must be 100..5000 and max_events 256..{max}"),
+            );
+        };
+        if !self.paused {
+            return self.error(
+                "pause_required",
+                "$",
+                "pause before starting a controlled profiling capture",
+            );
+        }
+        let before = self.invoke_op("status");
+        if let Err(message) = self.game.host_mut().profiling_start(max_events as usize) {
+            return self.error("profiling_unavailable", "$", message);
+        }
+        let started = Instant::now();
+        let mut failed = None;
+        while started.elapsed() < Duration::from_millis(duration) {
+            let timestamp = self.now();
+            if let Err(error) = self.game.frame(timestamp) {
+                failed = Some(error.to_string());
+                break;
+            }
+        }
+        let host = self.game.host_mut();
+        let mut report = match host.profiling_stop() {
+            Ok(report) => report,
+            Err(message) => return self.error("profiling_unavailable", "$", message),
+        };
+        // GPU read-backs of the last frames finish once the GPU did.
+        let _ = host.wait_for_gpu();
+        host.profiling_poll();
+        report["gpu"] = host.profiling_report();
+        let after = self.invoke_op("status");
+        report["host"] = json!({
+            "program": "engine_native",
+            "adapter": adapter(self.game.host()),
+            "size": [self.game.size().0, self.game.size().1],
+            "duration_ms": duration,
+            "observation_start": before["observation"],
+            "observation_end": after["observation"],
+            "frame_failed": failed,
+            "scope": "CPU events are the engine's spans; no browser trace or CPU sampling natively",
+        });
+        let complete = report["gpu"]["complete"] == true && failed.is_none();
+        self.captures += 1;
+        let path = self
+            .artifacts
+            .join(format!("profile-{}.json", self.captures));
+        let written = std::fs::create_dir_all(&self.artifacts)
+            .and_then(|()| std::fs::write(&path, report.to_string()));
+        if let Err(error) = written {
+            return self.error("capture_failed", "$", &error.to_string());
+        }
+        json!({"ok": true, "observation": after["observation"], "result": {
+            "temporary": true, "paused": true, "complete": complete,
+            "artifacts": {"trace": path.display().to_string(), "cpu_profile": null},
+            "note": "Trace contains raw bounded measurements and capability gaps: gpu.draws says whether opaque draws are timed and counted.",
+        }})
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    fn profile(&mut self, _: &Map<String, Value>) -> Value {
+        self.error(
+            "profiling_unavailable",
+            "$",
+            "native profiling captures need a build with the profiling feature",
+        )
     }
 
     /// Samples `control.samples` frames of `control.mode` after

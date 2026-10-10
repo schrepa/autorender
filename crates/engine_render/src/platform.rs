@@ -48,12 +48,15 @@ pub enum RenderTarget {
     /// A page's canvas, sized by the page.
     #[cfg(target_arch = "wasm32")]
     Canvas(web_sys::HtmlCanvasElement),
-    /// A native window, `size` physical pixels, on the `gpu` preferred.
+    /// A native window, `size` physical pixels, on the `gpu` preferred;
+    /// frames wait for the display's refresh (`vsync`), or show as they
+    /// finish, as browsers' measured without it do.
     #[cfg(not(target_arch = "wasm32"))]
     Window {
         window: std::sync::Arc<dyn NativeWindow>,
         size: (u32, u32),
         gpu: GpuPreference,
+        vsync: bool,
     },
     /// An offscreen texture of `size` physical pixels, which frames draw
     /// into without presenting, on the `gpu` preferred: for tools that run
@@ -169,6 +172,15 @@ impl RenderTarget {
                 .map(Some),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Offscreen { .. } => Ok(None),
+        }
+    }
+
+    /// How its frames present.
+    pub(crate) fn present_mode(&self) -> wgpu::PresentMode {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Window { vsync: false, .. } => wgpu::PresentMode::AutoNoVsync,
+            _ => wgpu::PresentMode::Fifo,
         }
     }
 

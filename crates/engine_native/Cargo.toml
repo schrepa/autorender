@@ -26,5 +26,13 @@ pollster.workspace = true
 [[example]]
 name = "app_native"
 
-[lints]
-workspace = true
+# The workspace forbids unsafe code; loading PIX's capturer and calling
+# PIX's and RenderDoc's capture functions needs it, so only `src/pix.rs` and
+# `src/renderdoc.rs` allow it (as `engine_profile` does for its allocator).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+return_self_not_must_use = "deny"

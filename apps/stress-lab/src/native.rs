@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use engine::{Engine, Error, ErrorCode, Feature};
-use engine_native::{CacheOptions, GpuPreference, JobOptions, Offscreen, Window, files};
+use engine_native::{CacheOptions, GpuPreference, JobOptions, Offscreen, Pix, Window, files};
 
 use crate::{DENSE_FILES, HIGHLANDS_FILES, ROCK_FILES, StressConfig, StressFile, StressLab};
 use crate::{StressScene, preset, presets, set_view};
@@ -32,6 +32,8 @@ The page's parameters:
 Native options:
   --view NAME          camera view
   --size WxH           window or offscreen size in physical pixels
+  --vsync on|off       whether window frames wait for the display's refresh
+                       (default on); off measures as browsers' frame rates do
   --gpu discrete|integrated
                        the GPU asked for where there are two (default discrete)
   --workers N|off      job worker threads (default half the logical
@@ -43,6 +45,11 @@ Native options:
   --offscreen FRAMES   draw FRAMES frames at 60 Hz offscreen and print their
                        statistics as JSON, without a window
   --capture PATH       with --offscreen: the last frame as a PNG file
+  --gpu-capture PATH   with --offscreen: the last frame's GPU work, frame-exact:
+                       a PIX capture (.wpix) where PIX is installed and the
+                       GPU interface is D3D12; else a RenderDoc capture
+                       (PATH_capture.rdc) under `renderdoccmd capture -w`;
+                       else Xcode's, with MTL_CAPTURE_ENABLED=1
   --dev                serve the development protocol over standard input
                        and output, drawing offscreen and starting paused
                        (builds with --features dev)
@@ -103,9 +110,11 @@ struct Options {
     size: Option<(u32, u32)>,
     gpu: GpuPreference,
     jobs: JobOptions,
+    vsync: bool,
     assets: PathBuf,
     offscreen: Option<u32>,
     capture: Option<PathBuf>,
+    gpu_capture: Option<PathBuf>,
     dev: bool,
     dev_artifacts: Option<PathBuf>,
 }
@@ -142,10 +151,12 @@ impl Options {
             size: None,
             gpu: GpuPreference::HighPerformance,
             jobs: JobOptions::default(),
+            vsync: true,
             // The page's public folder, beside this crate.
             assets: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public"),
             offscreen: None,
             capture: None,
+            gpu_capture: None,
             dev: false,
             dev_artifacts: None,
         };
@@ -226,6 +237,7 @@ impl Options {
                         },
                     };
                 }
+                "--vsync" => options.vsync = switch(value()?)?,
                 "--assets" => options.assets = value()?.into(),
                 "--offscreen" => {
                     let frames = value()?;
@@ -240,6 +252,7 @@ impl Options {
                     );
                 }
                 "--capture" => options.capture = Some(value()?.into()),
+                "--gpu-capture" => options.gpu_capture = Some(value()?.into()),
                 "--dev" => {
                     if inline.is_some() {
                         return Err("--dev takes no value".into());
@@ -250,8 +263,10 @@ impl Options {
                 _ => return Err(format!("unknown option {name}")),
             }
         }
-        if options.capture.is_some() && options.offscreen.is_none() {
-            return Err("--capture needs --offscreen".into());
+        if (options.capture.is_some() || options.gpu_capture.is_some())
+            && options.offscreen.is_none()
+        {
+            return Err("--capture and --gpu-capture need --offscreen".into());
         }
         Ok(options)
     }
@@ -267,6 +282,7 @@ impl Options {
                     size: self.size,
                     gpu: self.gpu,
                     jobs: self.jobs,
+                    vsync: self.vsync,
                     ..Window::new("Stress Lab")
                 },
                 build,
@@ -469,14 +485,23 @@ impl Options {
         build: impl FnOnce() -> engine::Result<(Engine, StressLab)>,
     ) -> engine::Result<()> {
         let size = self.size.unwrap_or((1280, 720));
+        // PIX's capturer must be in the program before its D3D12 device.
+        let pix = self.gpu_capture.as_ref().and_then(|_| Pix::load());
         let started = Instant::now();
         let mut game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
         game.prepare(0.0)?;
         let prepared_ms = started.elapsed().as_secs_f64() * 1000.0;
         let mut cpu_ms = Vec::with_capacity(frames as usize);
         let drawing = Instant::now();
+        let mut captured = None;
         for frame in 0..frames {
-            game.frame(f64::from(frame) * 1000.0 / 60.0)?;
+            let timestamp = f64::from(frame) * 1000.0 / 60.0;
+            match &self.gpu_capture {
+                Some(path) if frame + 1 == frames => {
+                    captured = Some(game.capture_frame(timestamp, pix.as_ref(), path)?);
+                }
+                _ => game.frame(timestamp)?,
+            }
             let stats = game.host().frame_stats();
             cpu_ms.push(stats.simulation_ms + stats.extraction_ms + stats.render_ms);
         }
@@ -495,6 +520,12 @@ impl Options {
             "frame_ms": frame_ms,
             "cpu_ms": {"median": at(0.5), "p95": at(0.95)},
             "capture": self.capture.as_ref().map(|path| path.display().to_string()),
+            "gpu_capture": self.gpu_capture.as_ref().map(|path| serde_json::json!({
+                "path": path.display().to_string(),
+                "by": captured,
+                "adapter": game.host().adapter().name,
+                "backend": game.host().adapter().backend,
+            })),
             "stats": stats,
         });
         println!("{report:#}");

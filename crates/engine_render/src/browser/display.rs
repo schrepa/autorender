@@ -51,7 +51,7 @@ impl Display {
                 color_space: wgpu::SurfaceColorSpace::Auto,
             },
         };
-        configuration.present_mode = wgpu::PresentMode::Fifo;
+        configuration.present_mode = target.present_mode();
         // Shaders encode their output for a UNORM target, as canvases are.
         configuration.format = configuration.format.remove_srgb_suffix();
         configuration.desired_maximum_frame_latency = 2;

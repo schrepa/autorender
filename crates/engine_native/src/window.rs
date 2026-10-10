@@ -28,6 +28,9 @@ pub struct Window {
     pub actions: Vec<(String, u32)>,
     pub gpu: GpuPreference,
     pub jobs: JobOptions,
+    /// Frames wait for the display's refresh (the default), or show as they
+    /// finish, for measurements.
+    pub vsync: bool,
 }
 
 impl Window {
@@ -39,6 +42,7 @@ impl Window {
             actions: vec![("Space".into(), 0)],
             gpu: GpuPreference::default(),
             jobs: JobOptions::default(),
+            vsync: true,
         }
     }
 }
@@ -116,6 +120,7 @@ impl<'a, G: Game> App<'a, G> {
             window: window.clone(),
             size,
             gpu: self.options.gpu,
+            vsync: self.options.vsync,
         };
         let mut host = pollster::block_on(GameHost::launch(target, build))?;
         let mut jobs = self.options.jobs.pool();

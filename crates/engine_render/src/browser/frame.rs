@@ -284,7 +284,13 @@ impl Renderer {
             if let Some(span) = self.profiler.span(stage) {
                 span.mark(&mut encoder, false);
             }
+            // GPU debuggers (PIX, RenderDoc, Xcode) name each pass's work;
+            // ordinary page builds make no calls for them.
+            #[cfg(any(not(target_arch = "wasm32"), feature = "profiling"))]
+            encoder.push_debug_group(node.pass().name());
             self.encode_pass(node, &state, &mut encoder, &view, &mut report);
+            #[cfg(any(not(target_arch = "wasm32"), feature = "profiling"))]
+            encoder.pop_debug_group();
             if let Some(span) = self.profiler.span(stage) {
                 span.mark(&mut encoder, true);
             }
@@ -2284,15 +2290,23 @@ impl Renderer {
                         .gpu_presentation
                         .draw_source(batch, index, phase, level);
                     binds.bindings.ids(pass, 1, ids);
+                    let timed = self
+                        .profiler
+                        .begin_draw(pass, || draw_label(batch, phase, Some(level)));
                     pass.draw_indexed_indirect(args, offset);
+                    self.profiler.end_draw(pass, timed);
                     draws += 1;
                 }
             } else {
+                let timed = self
+                    .profiler
+                    .begin_draw(pass, || draw_label(batch, phase, None));
                 pass.draw_indexed(
                     draw.index_range(),
                     draw.base_vertex,
                     batch.instances.clone(),
                 );
+                self.profiler.end_draw(pass, timed);
                 draws += 1;
             }
         }
@@ -2887,5 +2901,20 @@ fn store_operation(ops: Ops) -> wgpu::StoreOp {
         wgpu::StoreOp::Store
     } else {
         wgpu::StoreOp::Discard
+    }
+}
+
+/// What profiling reports name a draw of `batch` by: its mesh, material,
+/// opaque phase and level of detail (`None` for exact frames' draws of
+/// every instance).
+#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+fn draw_label(batch: &DrawBatch, phase: usize, level: Option<usize>) -> String {
+    let material = batch
+        .material
+        .map_or_else(|| "none".to_owned(), |material| material.slot().to_string());
+    let mesh = batch.mesh.slot();
+    match level {
+        Some(level) => format!("mesh {mesh} material {material} phase {phase} level {level}"),
+        None => format!("mesh {mesh} material {material} phase {phase}"),
     }
 }

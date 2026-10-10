@@ -30,5 +30,13 @@ web-sys.workspace = true
 workspace = true
 features = ["dx12", "vulkan", "metal"]
 
-[lints]
-workspace = true
+# The workspace forbids unsafe code; starting and stopping a graphics
+# debugger's capture needs it, so only those two calls allow it (as
+# `engine_profile` does for its allocator).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+return_self_not_must_use = "deny"

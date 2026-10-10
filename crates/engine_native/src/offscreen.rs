@@ -8,7 +8,7 @@ use engine::{Engine, Game, GameHost, GpuPreference, InputState, RenderTarget};
 
 use crate::files::Image;
 use crate::jobs::{JobOptions, JobPool};
-use crate::{Preparation, host_error};
+use crate::{Pix, Preparation, RenderDoc, host_error};
 
 /// A game drawn offscreen.
 pub struct Offscreen<G: Game> {
@@ -76,6 +76,43 @@ impl<G: Game> Offscreen<G> {
             .frame(timestamp, width, height, InputState::default(), 0, 0, 0)?;
         self.exchange_jobs();
         self.host.wait_for_gpu()
+    }
+
+    /// One frame at `timestamp`, captured frame-exact into `path`: by PIX
+    /// where `pix` is loaded and the game draws on D3D12; else by RenderDoc
+    /// where the program runs under it (into a file named after `path`,
+    /// `_capture.rdc`); else by the graphics debugger wgpu reaches (Xcode with
+    /// `MTL_CAPTURE_ENABLED=1`), which writes its own files. Which captured
+    /// it: `pix`, `renderdoc` or `debugger` (where one is attached).
+    pub fn capture_frame(
+        &mut self,
+        timestamp: f64,
+        pix: Option<&Pix>,
+        path: &Path,
+    ) -> engine::Result<&'static str> {
+        let pix = pix.filter(|_| self.host.adapter().backend == "Dx12");
+        // Work submitted before belongs to earlier frames.
+        self.host.wait_for_gpu()?;
+        if let Some(pix) = pix {
+            pix.begin(path).map_err(|error| host_error("PIX", error))?;
+            let frame = self.frame(timestamp);
+            pix.end().map_err(|error| host_error("PIX", error))?;
+            return frame.map(|()| "pix");
+        }
+        if let Some(renderdoc) = RenderDoc::attached() {
+            renderdoc
+                .begin(path)
+                .map_err(|error| host_error("RenderDoc", error))?;
+            let frame = self.frame(timestamp);
+            renderdoc
+                .end()
+                .map_err(|error| host_error("RenderDoc", error))?;
+            return frame.map(|()| "renderdoc");
+        }
+        self.host.start_debugger_capture();
+        let frame = self.frame(timestamp);
+        self.host.stop_debugger_capture()?;
+        frame.map(|()| "debugger")
     }
 
     /// The last frame's pixels, once the GPU finished it.
