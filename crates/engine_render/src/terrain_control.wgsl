@@ -455,13 +455,13 @@ fn sample_inputs(column: u32, row: u32) -> Inputs {
 
 fn input_ramp(code: u32, inputs: Inputs, low: f32, high: f32) -> f32 {
     switch code {
-        case 1u: { return ramp(inputs.height, low, high); }
-        case 2u: { return ramp(inputs.gradient, low, high); }
-        case 3u: { return ramp(inputs.curvature, low, high); }
-        case 4u: { return ramp(inputs.flow, low, high); }
-        case 5u: { return ramp(inputs.wetness, low, high); }
-        case 6u: { return ramp(inputs.lake, low, high); }
-        case 7u: { return ramp(inputs.river, low, high); }
+        case OP_HEIGHT: { return ramp(inputs.height, low, high); }
+        case OP_GRADIENT: { return ramp(inputs.gradient, low, high); }
+        case OP_CURVATURE: { return ramp(inputs.curvature, low, high); }
+        case OP_FLOW: { return ramp(inputs.flow, low, high); }
+        case OP_WETNESS: { return ramp(inputs.wetness, low, high); }
+        case OP_LAKE: { return ramp(inputs.lake, low, high); }
+        case OP_RIVER: { return ramp(inputs.river, low, high); }
         default: {
             // A road's ramp at four points across the sample's footprint,
             // across the road.
@@ -486,23 +486,23 @@ fn evaluate(start: u32, inputs: Inputs) -> f32 {
             break;
         }
         switch code {
-            case 0u: {
+            case OP_CONSTANT: {
                 stack[top] = real(pc + 1u);
                 top += 1u;
                 pc += 2u;
             }
-            case 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u: {
+            case OP_HEIGHT, OP_GRADIENT, OP_CURVATURE, OP_FLOW, OP_WETNESS, OP_LAKE, OP_RIVER, OP_PATH: {
                 stack[top] = input_ramp(code, inputs, real(pc + 1u), real(pc + 2u));
                 top += 1u;
                 pc += 3u;
             }
-            case 9u: {
+            case OP_NOISE: {
                 stack[top] = noise_mask(inputs.x, inputs.z, inputs.spacing, real(pc + 1u),
                     data[pc + 2u], data[pc + 3u]);
                 top += 1u;
                 pc += 4u;
             }
-            case 10u, 11u, 12u, 13u: {
+            case OP_MULTIPLY, OP_ADD, OP_MIN, OP_MAX: {
                 // Lists fold from their first value, which folding it into
                 // the CPU's identity gives back; an empty list gives the
                 // identity, the largest finite values standing in for
@@ -536,11 +536,11 @@ fn evaluate(start: u32, inputs: Inputs) -> f32 {
                 top = first + 1u;
                 pc += 2u;
             }
-            case 14u: {
+            case OP_INVERT: {
                 stack[top - 1u] = 1.0 - stack[top - 1u];
                 pc += 1u;
             }
-            case 15u: {
+            case OP_REMAP: {
                 stack[top - 1u] = ramp(stack[top - 1u], real(pc + 1u), real(pc + 2u));
                 pc += 3u;
             }

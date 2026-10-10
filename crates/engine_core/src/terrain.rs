@@ -56,11 +56,11 @@ use engine_terrain::jobs::{
 };
 use engine_terrain::{
     Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats,
-    Fall, FileHeader, FormatError, Generator, HydrologyStage, HydrologyStats, Layer, Layers,
-    LodRanges, Mask, NavOptions, NavPath, NoiseMask, Obstacle, PATCH_QUADS, PATCHES_PER_TILE,
-    Patch, PathStage, Placing, Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS,
-    TILE_STRIDE, TerrainBake, Tile, TileBand, TileKey, TileSample, WantedTile, WantedView,
-    decode_tile, merge_placed,
+    Fall, FileHeader, Generator, HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask,
+    NavOptions, NavPath, NoiseMask, Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Patch, PathStage,
+    Placing, Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS, TILE_STRIDE,
+    TerrainBake, Tile, TileBand, TileKey, TileSample, WantedTile, WantedView, decode_tile,
+    merge_placed,
 };
 
 use crate::{
@@ -585,49 +585,8 @@ impl Terrain {
         }
     }
 
-    /// A terrain read from the `ETR1` file at `url` whose prefix parsed into
-    /// `header`.
-    pub fn from_file(origin: Vec3, header: FileHeader, url: impl Into<Arc<str>>) -> Self {
-        Self {
-            origin,
-            pyramid: *header.pyramid(),
-            source: TerrainSource::File {
-                header: Arc::new(header),
-                url: url.into(),
-                data: None,
-            },
-            surface: TerrainSurface::default(),
-            collision: true,
-            edits: Arc::from(Vec::new()),
-            surroundings: None,
-        }
-    }
-
-    /// A terrain read from a whole `ETR1` file in memory.
-    pub fn from_file_bytes(origin: Vec3, bytes: Arc<[u8]>) -> Result<Self, FormatError> {
-        let header = FileHeader::parse(&bytes)?;
-        Ok(Self {
-            origin,
-            pyramid: *header.pyramid(),
-            source: TerrainSource::File {
-                header: Arc::new(header),
-                url: Arc::from(""),
-                data: Some(bytes),
-            },
-            surface: TerrainSurface::default(),
-            collision: true,
-            edits: Arc::from(Vec::new()),
-            surroundings: None,
-        })
-    }
-
     pub fn with_surface(mut self, surface: TerrainSurface) -> Self {
         self.surface = surface;
-        self
-    }
-
-    pub fn with_collision(mut self, collision: bool) -> Self {
-        self.collision = collision;
         self
     }
 
@@ -2641,13 +2600,6 @@ impl Terrains {
             let origin = state.terrain.origin;
             state.deform(Vec2::new(x - origin.x, z - origin.z))
         })
-    }
-
-    /// The surface normal under `(x, z)`, as [`Self::height_at`].
-    pub fn normal_at(&self, x: f32, z: f32) -> Option<Vec3> {
-        self.sample(x, z)
-            .filter(|sample| !sample.hole)
-            .map(|sample| sample.normal)
     }
 
     /// Whether the cell under `(x, z)` is a hole; `None` where no tile is

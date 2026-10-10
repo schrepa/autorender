@@ -622,6 +622,99 @@ fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
     }
 }
 
+/// The words of `source` outside its comments, counted.
+fn word_counts(source: &str) -> std::collections::HashMap<&str, usize> {
+    let mut counts = std::collections::HashMap::new();
+    for line in source.lines() {
+        let code = line.split("//").next().unwrap_or_default();
+        for word in code.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+            if !word.is_empty() {
+                *counts.entry(word).or_default() += 1;
+            }
+        }
+    }
+    counts
+}
+
+/// Shader items nothing uses: functions, variables, structs and overrides
+/// no entry point of any module holding them reaches (naga's compaction
+/// drops them), and constants no module holding them names again.
+fn check_unused(modules: &[Checked]) -> Result<(), String> {
+    use std::collections::{BTreeMap, BTreeSet};
+    fn reachable(module: &naga::Module) -> Vec<String> {
+        let mut items = Vec::new();
+        items.extend(module.functions.iter().filter_map(|(_, function)| {
+            function
+                .name
+                .as_ref()
+                .map(|name| format!("function `{name}`"))
+        }));
+        items.extend(module.global_variables.iter().filter_map(|(_, global)| {
+            global
+                .name
+                .as_ref()
+                .map(|name| format!("variable `{name}`"))
+        }));
+        items.extend(
+            module.overrides.iter().filter_map(|(_, value)| {
+                value.name.as_ref().map(|name| format!("override `{name}`"))
+            }),
+        );
+        items.extend(module.types.iter().filter_map(|(_, ty)| match ty.inner {
+            naga::TypeInner::Struct { .. } => {
+                ty.name.as_ref().map(|name| format!("struct `{name}`"))
+            }
+            _ => None,
+        }));
+        items
+    }
+    let mut held: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
+    let mut used = BTreeSet::new();
+    for checked in modules {
+        for item in reachable(&checked.module) {
+            held.entry(item).or_default().insert(checked.name);
+        }
+        let mut compacted = checked.module.clone();
+        naga::compact::compact(&mut compacted, naga::compact::KeepUnused::No);
+        used.extend(reachable(&compacted));
+        let source = engine_render::shaders::MODULES
+            .iter()
+            .find_map(|&(name, source)| (name == checked.name).then_some(source))
+            .unwrap_or_default();
+        let words = word_counts(source);
+        for name in checked
+            .module
+            .constants
+            .iter()
+            .filter_map(|(_, constant)| constant.name.as_ref())
+        {
+            let item = format!("constant `{name}`");
+            held.entry(item.clone()).or_default().insert(checked.name);
+            if words.get(name.as_str()).copied().unwrap_or_default() > 1 {
+                used.insert(item);
+            }
+        }
+    }
+    let unused: Vec<String> = held
+        .iter()
+        .filter(|(item, _)| !used.contains(*item))
+        .map(|(item, modules)| {
+            format!(
+                "{item} of {} is used nowhere; remove it",
+                modules.iter().copied().collect::<Vec<_>>().join(", ")
+            )
+        })
+        .collect();
+    if unused.is_empty() {
+        Ok(())
+    } else {
+        Err(unused.join(
+            "
+",
+        ))
+    }
+}
+
 /// Upload structs (`Pod` derives) outside `gpu_layouts`, which no check
 /// would see.
 fn check_upload_structs(root: &Path) -> Result<(), String> {
@@ -704,11 +797,13 @@ pub fn check(root: &Path) -> Result<(), String> {
     let mirrors = check_layouts(&modules);
     let entry_points = check_bindings(&modules);
     let shared = check_constants(root, &modules);
+    let unused = check_unused(&modules);
     let structs = check_upload_structs(root);
     let errors: Vec<String> = [
         mirrors.as_ref().err(),
         entry_points.as_ref().err(),
         shared.as_ref().err(),
+        unused.as_ref().err(),
         structs.as_ref().err(),
     ]
     .into_iter()

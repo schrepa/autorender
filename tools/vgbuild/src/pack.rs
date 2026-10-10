@@ -7,7 +7,7 @@ pub use engine_assets::PAGE_WORDS;
 use engine_assets::{
     CLUSTER_WORDS, DEFAULT_FALLBACK_TRIANGLES, FLAG_CLOSED, FLAG_UVS, GROUP_WORDS, HEADER_WORDS,
     NODE_WORDS, VERTEX_WORDS, VIRTUAL_MESH_MAGIC, VIRTUAL_MESH_VERSION, VIRTUAL_NONE,
-    octahedral_encode,
+    octahedral_encode, virtual_mesh_header as header,
 };
 
 use crate::dag::{Dag, NodeKind, Source, is_closed};
@@ -171,30 +171,30 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
         .sum();
 
     let mut words = vec![0u32; HEADER_WORDS];
-    words[0] = u32::from_le_bytes(VIRTUAL_MESH_MAGIC);
-    words[1] = VIRTUAL_MESH_VERSION;
-    words[2] = if source.uvs.is_some() { FLAG_UVS } else { 0 }
+    words[header::MAGIC] = u32::from_le_bytes(VIRTUAL_MESH_MAGIC);
+    words[header::VERSION] = VIRTUAL_MESH_VERSION;
+    words[header::FLAGS] = if source.uvs.is_some() { FLAG_UVS } else { 0 }
         | if is_closed(source) { FLAG_CLOSED } else { 0 };
-    words[3] = dag.levels;
-    words[4] = dag.nodes.len() as u32;
-    words[5] = dag.groups.len() as u32;
-    words[6] = dag.clusters.len() as u32;
-    words[7] = pages.len() as u32;
-    words[8] = triangles as u32;
-    words[9] = (source.indices.len() / 3) as u32;
-    words[10] = depth;
+    words[header::LEVELS] = dag.levels;
+    words[header::NODES] = dag.nodes.len() as u32;
+    words[header::GROUPS] = dag.groups.len() as u32;
+    words[header::CLUSTERS] = dag.clusters.len() as u32;
+    words[header::PAGES] = pages.len() as u32;
+    words[header::TRIANGLES] = triangles as u32;
+    words[header::SOURCE_TRIANGLES] = (source.indices.len() / 3) as u32;
+    words[header::DEPTH] = depth;
     for axis in 0..3 {
-        words[12 + axis] = positions[axis].0.to_bits();
-        words[15 + axis] = positions[axis].1.to_bits();
-        words[22 + axis] = low[axis].to_bits();
-        words[25 + axis] = high[axis].to_bits();
+        words[header::POSITION_MIN + axis] = positions[axis].0.to_bits();
+        words[header::POSITION_STEP + axis] = positions[axis].1.to_bits();
+        words[header::BOUNDS_MIN + axis] = low[axis].to_bits();
+        words[header::BOUNDS_MAX + axis] = high[axis].to_bits();
     }
     for axis in 0..2 {
-        words[18 + axis] = uvs[axis].0.to_bits();
-        words[20 + axis] = uvs[axis].1.to_bits();
+        words[header::UV_MIN + axis] = uvs[axis].0.to_bits();
+        words[header::UV_STEP + axis] = uvs[axis].1.to_bits();
     }
-    words[28] = pinned_pages;
-    words[29] = pin.to_bits();
+    words[header::PINNED_PAGES] = pinned_pages;
+    words[header::PIN_ERROR] = pin.to_bits();
     let sphere = |center: [f32; 3], radius: f32, error: f32| {
         [
             center[0].to_bits(),

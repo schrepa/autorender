@@ -28,6 +28,7 @@ pub use material::{
 };
 pub use mesh::{Aabb, Mesh, MeshVertex};
 pub use texture::{MAX_TEXTURE_DIMENSION, Texture, TextureFormat};
+pub use virtual_mesh::header as virtual_mesh_header;
 pub use virtual_mesh::{
     CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, ClusterInfo, DEFAULT_FALLBACK_TRIANGLES,
     ErrorSphere, FLAG_CLOSED, FLAG_UVS, GROUP_WORDS, HEADER_WORDS, NODE_WORDS,

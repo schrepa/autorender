@@ -871,13 +871,6 @@ impl BiomeRules {
         rules
     }
 
-    /// Whether any placement layer or authored object
-    /// stands on tiles of `level`.
-    pub fn places_on(&self, level: u8) -> bool {
-        self.places(level, crate::Placing::All)
-    }
-
-    /// Whether `placing`'s objects stand on tiles of `level`.
     /// The rows of candidate squares each placement layer walks on tile
     /// `key` at `spacing` placing `placing`'s objects, none
     /// where it places nothing: where placing splits into bands.
@@ -894,6 +887,7 @@ impl BiomeRules {
             .collect()
     }
 
+    /// Whether `placing`'s objects stand on tiles of `level`.
     pub fn places(&self, level: u8, placing: crate::Placing) -> bool {
         let near = self.placements.iter().any(|layer| layer.level == level)
             || self.placed.iter().any(|object| object.level == level);

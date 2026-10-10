@@ -4,7 +4,7 @@ import { percentiles } from "./statistics.ts";
 
 /** A benchmark control as the engine validated it, with its defaults. */
 export type BenchmarkOptions = { mode: "step" | "render" | "present"; warmup: number; samples: number };
-export type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
+type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
 export type Reply = {
   version?: number; ok: boolean; observation?: Observation;
   result?: Record<string, unknown>;

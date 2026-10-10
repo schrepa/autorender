@@ -20,7 +20,7 @@ const TREES = ["crates", "examples", ".cargo", "vendor/glam"];
 const FILES = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 const IGNORED = new Set(["target", "pkg", "pkg-dev", "dist", ".git", "node_modules", ".tools"]);
 
-export class SourceWatchError extends Error {
+class SourceWatchError extends Error {
   constructor(code, message, path = "$") {
     super(message);
     this.code = code;

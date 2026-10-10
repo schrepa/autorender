@@ -18,7 +18,6 @@ engine_collision.workspace = true
 engine_scene.workspace = true
 engine_dev = { workspace = true, optional = true }
 engine_settings.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

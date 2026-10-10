@@ -27,7 +27,7 @@ interface KTX2File {
   close(): void;
   delete(): void;
 }
-export interface BasisModule {
+interface BasisModule {
   initializeBasis(): void;
   KTX2File: new (bytes: Uint8Array) => KTX2File;
   transcoder_texture_format: Record<string, BasisEnum>;

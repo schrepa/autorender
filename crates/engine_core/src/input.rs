@@ -2,15 +2,13 @@
 use bevy_ecs::prelude::Resource;
 
 /// An index in the engine's fixed 32-action bitset. Bind physical keys in the host.
-/// Projects can allocate their own IDs; these four names are conventional defaults.
+/// Projects allocate their own IDs with [`ActionId::new`]; `JUMP` is the
+/// conventional first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ActionId(u8);
 
 impl ActionId {
     pub const JUMP: Self = Self(0);
-    pub const PRIMARY: Self = Self(1);
-    pub const INTERACT: Self = Self(2);
-    pub const SECONDARY: Self = Self(3);
 
     pub const fn new(index: u8) -> Option<Self> {
         if index < 32 { Some(Self(index)) } else { None }

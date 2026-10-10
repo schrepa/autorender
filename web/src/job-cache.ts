@@ -19,7 +19,7 @@ interface Entry {
   used: number;
 }
 
-export interface JobCacheStats {
+interface JobCacheStats {
   hits: number;
   misses: number;
   bytes: number;

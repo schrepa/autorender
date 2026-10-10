@@ -484,6 +484,7 @@ fn select_clusters(@builtin(global_invocation_id) id: vec3<u32>) {
     let bin = bins[item.z];
     // The camera's counts, or the shadow views'.
     let counts = select(SHADOW_CLUSTERS, SELECTED_CLUSTERS, view == 0u);
+    let triangles = select(SHADOW_TRIANGLES, SELECTED_TRIANGLES, view == 0u);
     for (var cluster = group.y; cluster < group.y + group.z; cluster++) {
         let sphere = clusters[cluster * 3u];
         let record = clusters[cluster * 3u + 1u];
@@ -533,7 +534,7 @@ fn select_clusters(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         visible[bin.base + index] = vec2<u32>(item.x, cluster);
         atomicAdd(&counters[counts], 1u);
-        atomicAdd(&counters[counts + 1u], clusters[cluster * 3u + 2u].z >> 16u);
+        atomicAdd(&counters[triangles], clusters[cluster * 3u + 2u].z >> 16u);
     }
 }
 

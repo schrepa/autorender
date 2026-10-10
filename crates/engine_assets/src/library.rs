@@ -294,10 +294,6 @@ impl AssetLibrary {
         }
     }
 
-    pub fn clip_count(&self) -> usize {
-        self.clips.count
-    }
-
     pub fn mesh(&self, handle: MeshHandle) -> Option<&Arc<Mesh>> {
         self.meshes.get(self.id, handle.0)
     }

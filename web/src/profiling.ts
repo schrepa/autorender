@@ -10,7 +10,7 @@ type Frame = { index: number; raf_timestamp_ms: number; start_ms: number; rust_e
 type BrowserEntry = { entryType: string; name: string; startTime: number; duration: number; [key: string]: unknown };
 type Memory = { timestamp_ms: number; wasm_linear_bytes: number | null; js_heap: { used_bytes: number; total_bytes: number; limit_bytes: number } | null };
 type TraceEvent = { name: string; ph: string; pid: number; tid: number; ts?: number; dur?: number; cat?: string; s?: string; args: JsonObject };
-export type ProfileOptions = { duration_ms?: number; max_events?: number };
+type ProfileOptions = { duration_ms?: number; max_events?: number };
 export type DetailedProfileReport = {
   version: 1; kind: "stress_detailed_profile"; complete: boolean; reason: string; started_at: string;
   metadata: JsonObject; capabilities: JsonObject; timing: JsonObject; bounds: JsonObject;

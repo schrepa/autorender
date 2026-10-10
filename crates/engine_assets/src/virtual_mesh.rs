@@ -52,8 +52,8 @@ pub const VERTEX_WORDS: usize = 4;
 /// never simplified further.
 pub const NONE: u32 = u32::MAX;
 
-/// Header word offsets.
-mod header {
+/// Header word offsets, which builders write and [`VirtualMesh`] reads.
+pub mod header {
     pub const MAGIC: usize = 0;
     pub const VERSION: usize = 1;
     pub const FLAGS: usize = 2;
@@ -604,16 +604,6 @@ impl VirtualMesh {
     /// Triangles of every cluster at every level.
     pub fn triangle_count(&self) -> u32 {
         self.words[header::TRIANGLES]
-    }
-
-    /// Triangles of the original geometry.
-    pub fn source_triangle_count(&self) -> u32 {
-        self.words[header::SOURCE_TRIANGLES]
-    }
-
-    /// Whether stored vertices carry texture coordinates.
-    pub fn has_uvs(&self) -> bool {
-        self.words[header::FLAGS] & FLAG_UVS != 0
     }
 
     /// Whether the mesh is closed ([`FLAG_CLOSED`]).

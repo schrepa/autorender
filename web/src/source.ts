@@ -38,7 +38,7 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
 }
 
 /** The generated bindings a scene's file loader needs. */
-export interface SceneFileBindings {
+interface SceneFileBindings {
   scene_file_list(source: string): string;
   virtual_prefix_bytes(header: Uint8Array): number | undefined;
   terrain_prefix_bytes(header: Uint8Array): number | undefined;

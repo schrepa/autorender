@@ -4,12 +4,12 @@
  */
 import { type Distribution, percentiles } from "./statistics.ts";
 
-export type StressJson = null | boolean | number | string | StressJson[] | { [key: string]: StressJson };
-export type StressRecordingMetadata = Record<string, unknown>;
-export type StressRecordingOptions = {
+type StressJson = null | boolean | number | string | StressJson[] | { [key: string]: StressJson };
+type StressRecordingMetadata = Record<string, unknown>;
+type StressRecordingOptions = {
   warmup?: number; duration_ms?: number; timeout_ms?: number; max_samples?: number;
 };
-export type StressFrameInput = {
+type StressFrameInput = {
   timestamp: number;
   simulation_ms: number; extraction_ms: number; render_ms: number;
   dropped_seconds: number;
