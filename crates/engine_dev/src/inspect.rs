@@ -1161,6 +1161,7 @@ impl DevTools {
             types.push(json!({"name": "protocol", "kind": "protocol"}));
             types.push(json!({"name": "BrowserControl", "kind": "protocol"}));
             types.push(json!({"name": "FrameStats", "kind": "observation"}));
+            types.push(json!({"name": "ErrorCodes", "kind": "catalog", "description": "every error code replies answer with and what it means"}));
             return Ok(json!({"types": types}));
         };
         match name {
@@ -1177,6 +1178,14 @@ impl DevTools {
                     json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": format!("version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need CollisionPlugin but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source.")}),
                 )
             }
+            "ErrorCodes" => Ok(json!({
+                "name": name,
+                "kind": "catalog",
+                "codes": ErrorCode::ALL
+                    .iter()
+                    .map(|&(code, text, _)| (text.to_owned(), json!(code.description())))
+                    .collect::<serde_json::Map<_, _>>(),
+            })),
             "FrameStats" => {
                 let schema: Value = serde_json::from_str(crate::FRAME_STATS_SCHEMA)
                     .expect("generated schema is JSON");

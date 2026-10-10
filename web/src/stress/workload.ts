@@ -10,6 +10,7 @@ import { jobPool } from "../engine/jobs";
 import {
   STRESS_CATALOG, STRESS_CONFIG_LIMITS, type StressConfig, type StressSampleField, type StressScene, type StressSnapshot,
 } from "../generated/stress";
+import { STRESS_PARAMETERS } from "./parameters";
 import "./stress.css";
 
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -308,25 +309,14 @@ function poll(runtime: StressGame) {
   if (profiler?.active) el("profile-status").textContent = `Capturing CPU, collision, allocator and browser events · ${((Number(profiler.status().elapsed_ms) || 0) / 1000).toFixed(1)} / 5 seconds · camera locked`;
 }
 
+// The page's parameters, which STRESS_PARAMETERS describes.
 const params = new URLSearchParams(location.search);
-// ?visibility=on shades virtual geometry through the visibility buffer
-// instead of as it draws, for A/B.
 const visibility = params.get("visibility") === "on" ? "on" : "off";
-// ?lod=off draws every instance as its mesh instead of at its level of
-// detail, for A/B.
 const lod = params.get("lod") === "off" ? "off" : "on";
-// ?impostors=off draws no impostors, only mesh levels.
 const impostors = params.get("impostors") === "off" ? "off" : "on";
-// ?look=golden|dusk|night|day|sky picks a lighting preset over the scene's own;
-// sky is the physically based sky at a time of day.
-const initialLook = options("look").includes(params.get("look") ?? "") ? params.get("look")! : "scene";
-// ?effects=none, or comma-separated no-shadows, no-occlusion, no-bloom,
-// no-lights, no-shafts, no-reflections, no-particles, no-refraction and
-// no-probes, turns effects off.
-const effectsOff = options("effects").filter(value => value.startsWith("no-"));
-const requestedEffects = params.get("effects") ?? "all";
-const initialEffects = requestedEffects === "none" || requestedEffects.split(",").every(token => effectsOff.includes(token))
-  ? requestedEffects : "all";
+// The engine refuses unknown looks and effects: the page fails with why.
+const initialLook = params.get("look") ?? "scene";
+const initialEffects = params.get("effects") ?? "all";
 if (params.has("config")) {
   try {
     const source = params.get("config")!;
@@ -346,7 +336,6 @@ if (params.has("config")) {
     activeTitle = "SHARED WORKLOAD";
   } catch (error) { notice(`Invalid workload link; using visual preset. ${String(error)}`, true); activeConfig = { ...baseline }; }
 }
-// ?preset=NAME starts from that preset instead of the maximum visual load.
 const requestedPreset = params.get("preset");
 if (!params.has("config") && requestedPreset && requestedPreset in presets) {
   activeConfig = { ...presets[requestedPreset].config };
@@ -357,6 +346,34 @@ if (!params.has("config") && requestedPreset && requestedPreset in presets) {
 fill(activeConfig);
 
 startGame({
+  parameters: STRESS_PARAMETERS,
+  // What agents change through the game control; each refreshes the image.
+  controls: {
+    workload: {
+      description: "Runs preset {preset: NAME} or configuration {config: {...}} (fields over the current one) in place of the workload",
+      async run(runtime, args) {
+        const preset = typeof args.preset === "string" ? presets[args.preset] : undefined;
+        if (args.preset !== undefined && !preset) throw new Error(`no preset ${String(args.preset)}; presets are ${Object.keys(presets).join(", ")}`);
+        const config: StressConfig = preset ? { ...preset.config } : { ...activeConfig, ...(args.config as Partial<StressConfig> | undefined) };
+        runtime.configure(JSON.stringify(config), await sceneFiles(config));
+        activeConfig = config; activeTitle = preset?.title ?? "AGENT WORKLOAD";
+        fill(config); el("active-preset").textContent = activeTitle;
+        return { config, title: activeTitle };
+      },
+    },
+    look: {
+      description: `Lighting preset {name}: ${STRESS_CATALOG.looks.map(look => look.value).join(", ")}`,
+      run(runtime, args) { runtime.set_look(String(args.name)); choice("look").value = String(args.name); return { look: args.name }; },
+    },
+    effects: {
+      description: `Rendering effects {name}: all, none or comma-separated ${STRESS_CATALOG.effects.filter(effect => effect.value.startsWith("no-")).map(effect => effect.value).join(", ")}`,
+      run(runtime, args) { runtime.set_effects(String(args.name)); return { effects: args.name }; },
+    },
+    view: {
+      description: `Camera view {name}: ${STRESS_CATALOG.views.map(view => view.value).join(", ")}`,
+      run(runtime, args) { runtime.set_view(String(args.name)); choice("view").value = String(args.name); return { view: args.name }; },
+    },
+  },
   async create(canvas) {
     // Job workers start while the game's module loads.
     jobPool();

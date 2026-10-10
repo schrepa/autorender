@@ -62,6 +62,15 @@ try {
   const look = await command("inspect", { component: "Environment" });
   assert.deepEqual(look.result.value.level_of_detail, { enabled: true, pixel_error: 1, impostors: true, fade_seconds: 0.5 });
 
+  // The Stress Lab's own controls run through the game control, refusing
+  // what they do not know; the page lists them for the bridge's describe.
+  const controls = await page.evaluate(() => window.__engineDev.controls);
+  assert.deepEqual(Object.keys(controls).sort(), ["effects", "look", "view", "workload"]);
+  const viewed = await command("game", { name: "view", args: { name: "overview" } });
+  assert.deepEqual(viewed.result.result, { view: "overview" });
+  const unknownPreset = await command("game", { name: "workload", args: { preset: "nowhere" } }, false);
+  assert.equal(unknownPreset.error.code, "game_rule");
+
   // From the overview, GPU-presented frames draw distant props at coarser
   // levels and the smallest as impostors, baked the first frame their draw
   // groups draw; both stay within a pixel of the exact CPU reference, so

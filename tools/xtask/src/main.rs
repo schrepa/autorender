@@ -1,4 +1,5 @@
 mod authoring;
+mod coverage;
 mod development;
 mod gpu;
 mod importing;
@@ -66,6 +67,9 @@ fn execute() -> Result<(), String> {
             Err("development build failed; see JSON diagnostics".into())
         };
     }
+    if matches!(task.as_str(), "help" | "--help" | "-h") {
+        return help(&options);
+    }
     if let Some(argument) = options.first() {
         return Err(format!(
             "unexpected argument {argument:?}; run `cargo xtask help` for usage"
@@ -80,35 +84,6 @@ fn execute() -> Result<(), String> {
         "gpu" => gpu::check(&root),
         "wasm-bindgen-version" => {
             println!("{}", process::wasm_bindgen_version(&root)?);
-            Ok(())
-        }
-        "help" | "--help" | "-h" => {
-            let games = process::game_names();
-            println!(
-                "Usage: cargo xtask <command>\n\n\
-                 Commands:\n\
-                   build  Build all release Wasm clients and bundle the web host\n\
-                   profile [--attribution]  Build isolated instrumented games in web/dist-profile\n\
-                          --attribution: hot helpers out of line for sampling profilers, in web/dist-attribution\n\
-                   dev [--port N]  Build and serve on loopback (default port 5173)\n\
-                   agent watch [--web-port N] [--port N] [--game {games}]\n\
-                          Watch Rust, build, and replace identified browser sessions\n\
-                   agent  Browser session commands and development build status\n\
-                   scene  Validate or save revision-checked scene sources as JSON\n\
-                   asset import --file PATH --id ID (--output PATH | --into PATH --expected-revision N) [--replace] [--as-prefab]\n\
-                          [--virtual-triangles N | --no-virtual-geometry]\n\
-                          Import a static textured GLB with structured results; dense opaque primitives\n\
-                          (512 triangles and up by default) become virtual meshes\n\
-                   assets Validate authored scene sources without changing them\n\
-                   schema Write the generated protocol summary, client list, stats and game surface types, and each app's own\n\
-                   new app NAME  Start a game in apps/NAME with its page web/NAME.html, from the engine's app template\n\
-                   smoke --list | --all | NAME...  List or run the browser smoke checks against a running dev server\n\
-                   gpu    Check the renderer's shaders against its Rust GPU layouts and bindings\n\
-                   wasm-bindgen-version  Print the wasm-bindgen version Cargo.lock pins\n\
-                   lint   Check source/schema, shaders against Rust (gpu), formatting, native/Wasm Clippy, TypeScript\n\
-                   docs   Generate native workspace and browser API documentation\n\
-                   help   Show this message"
-            );
             Ok(())
         }
         _ => Err(format!(
@@ -126,5 +101,58 @@ fn dev_port(arguments: &[String]) -> Result<u16, String> {
             .filter(|port| *port != 0)
             .ok_or_else(|| "dev --port requires an integer from 1 to 65535".to_owned()),
         _ => Err("usage: cargo xtask dev [--port N]".to_owned()),
+    }
+}
+
+/// Every command: its usage and what it does, as `help` prints them and
+/// `help --json` lists them.
+fn commands() -> Vec<(String, &'static str)> {
+    let games = process::game_names();
+    vec![
+        ("build".into(), "Build all release Wasm clients and bundle the web host"),
+        ("profile [--attribution]".into(), "Build isolated instrumented games in web/dist-profile; --attribution keeps hot helpers out of line for sampling profilers, in web/dist-attribution"),
+        ("dev [--port N]".into(), "Build and serve on loopback (default port 5173)"),
+        (format!("agent watch [--web-port N] [--port N] [--game {games}]"), "Watch Rust, build, and replace identified browser sessions"),
+        ("agent help".into(), "The agent client's verbs and options and the engine's queries and controls, as JSON"),
+        ("agent VERB [--session S] [--json JSON | --file PATH]".into(), "Run a development query or control in a browser session"),
+        ("scene validate --file PATH | save --file TARGET --candidate PATH --expected-revision N | schema".into(), "Validate or save revision-checked scene sources, or print the scene schema, as JSON"),
+        ("asset import --file PATH --id ID (--output PATH | --into PATH --expected-revision N) [--replace] [--as-prefab] [--virtual-triangles N | --no-virtual-geometry]".into(), "Import a static textured GLB with structured results; dense opaque primitives (512 triangles and up by default) become virtual meshes"),
+        ("assets".into(), "Validate authored scene sources without changing them"),
+        ("schema".into(), "Write the generated protocol summary, client list, stats and game surface types, and each app's own"),
+        ("new app NAME".into(), "Start a game in apps/NAME with its page web/NAME.html, from the engine's app template"),
+        ("smoke --list | --all | NAME...".into(), "List or run the browser smoke checks against a running dev server"),
+        ("gpu".into(), "Check the renderer's shaders against its Rust GPU layouts and bindings"),
+        ("wasm-bindgen-version".into(), "Print the wasm-bindgen version Cargo.lock pins"),
+        ("lint".into(), "Check sources, generated files, shaders against Rust, formatting, native and Wasm Clippy and the web host"),
+        ("docs".into(), "Generate native workspace and browser API documentation"),
+        ("help [--json]".into(), "Show this message, or the commands as JSON"),
+    ]
+}
+
+fn help(options: &[String]) -> Result<(), String> {
+    match options {
+        [] => {
+            println!(
+                "Usage: cargo xtask <command>
+
+Commands:"
+            );
+            for (usage, summary) in commands() {
+                println!(
+                    "  {usage}
+      {summary}"
+                );
+            }
+            Ok(())
+        }
+        [json] if json == "--json" => {
+            let commands: Vec<_> = commands()
+                .into_iter()
+                .map(|(usage, summary)| serde_json::json!({"usage": usage, "summary": summary}))
+                .collect();
+            println!("{}", serde_json::json!({ "commands": commands }));
+            Ok(())
+        }
+        _ => Err("usage: cargo xtask help [--json]".into()),
     }
 }

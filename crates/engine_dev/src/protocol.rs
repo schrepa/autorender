@@ -71,6 +71,8 @@ fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
 pub const PROTOCOL_VERSION: u32 = 1;
 /// Bytes of one request's JSON.
 pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
+/// Bytes of one reply's JSON.
+pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
 /// Where a query runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -520,6 +522,21 @@ pub enum BrowserControl {
         #[serde(default)]
         destination: Option<[f32; 2]>,
     },
+    /// Set an authored entity's animation player and render while paused:
+    /// its clip (an animation ID of the scene), time in seconds, speed and
+    /// looping; omitted values stay. Returns them before and after.
+    Animation {
+        version: u32,
+        entity: String,
+        #[serde(default)]
+        clip: Option<String>,
+        #[serde(default)]
+        time: Option<f32>,
+        #[serde(default)]
+        speed: Option<f32>,
+        #[serde(default)]
+        looping: Option<bool>,
+    },
     /// Remove streamed items for good, or restore them, by
     /// ID (`scene/root` for scenes), and render while
     /// paused: `clear` restores every item first. Loaded cells despawn and
@@ -621,6 +638,20 @@ pub enum BrowserControl {
         #[serde(default)]
         gpu: bool,
     },
+    /// Runs the game's own control `name` with `args`, as the page
+    /// registers it (a Stress Lab workload, look or view), then renders.
+    /// The bridge's describe lists the game's controls.
+    Game {
+        version: u32,
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(regex(pattern = r"^[a-z][a-z0-9_]{0,63}$"))
+        )]
+        name: String,
+        /// The control's arguments, a JSON object.
+        #[serde(default)]
+        args: serde_json::Map<String, serde_json::Value>,
+    },
     /// Fetch saved source and require both expected runtime and source revisions.
     Reload {
         version: u32,
@@ -652,12 +683,14 @@ impl BrowserControl {
             | Self::Deform { .. }
             | Self::WorldChanges { .. }
             | Self::NavGo { .. }
+            | Self::Animation { .. }
             | Self::Camera { .. }
             | Self::Benchmark { .. }
             | Self::Step { .. }
             | Self::Input { .. }
             | Self::Render { .. }
             | Self::Capture { .. }
+            | Self::Game { .. }
             | Self::Reload { .. } => true,
             Self::Pause { .. } | Self::Resume { .. } => false,
         }
@@ -674,6 +707,7 @@ impl BrowserControl {
             | Self::Deform { version, .. }
             | Self::WorldChanges { version, .. }
             | Self::NavGo { version, .. }
+            | Self::Animation { version, .. }
             | Self::Camera { version, .. }
             | Self::Benchmark { version, .. }
             | Self::Step { version, .. }
@@ -682,6 +716,7 @@ impl BrowserControl {
             | Self::Pause { version }
             | Self::Resume { version }
             | Self::Capture { version, .. }
+            | Self::Game { version, .. }
             | Self::Reload { version, .. } => *version,
             Self::Environment(control) => control.version,
         }
@@ -699,6 +734,10 @@ macro_rules! control_sections {
         #[serde(deny_unknown_fields)]
         pub struct EnvironmentControl {
             pub version: u32,
+            /// Whether a named section's omitted fields keep their current
+            /// values instead of taking their defaults.
+            #[serde(default)]
+            pub merge: bool,
             #[serde(default)]
             pub atmosphere: Option<SceneAtmosphere>,
             $(

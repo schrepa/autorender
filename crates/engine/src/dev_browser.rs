@@ -58,6 +58,7 @@ impl DevBrowser {
                 | BrowserControl::Pause { .. }
                 | BrowserControl::Resume { .. }
                 | BrowserControl::Capture { .. }
+                | BrowserControl::Game { .. }
                 | BrowserControl::Reload { .. }
         )
     }
@@ -93,8 +94,8 @@ impl DevBrowser {
         app.engine.complete_pending_tick();
         let op = request.get("op").and_then(Value::as_str);
         if !op.is_some_and(|op| engine_dev::CONTROL_OPS.contains(&op)) {
-            let assets = op == Some("assets");
-            return self.tools_request(app, scene, source, assets);
+            let (assets, status) = (op == Some("assets"), op == Some("status"));
+            return self.tools_request(app, scene, source, assets, status);
         }
         let op = op.unwrap_or_default().to_owned();
         match self.control(app, scene, source, &op, (width, height), paused) {
@@ -111,8 +112,17 @@ impl DevBrowser {
         scene: Option<&SceneInstance>,
         source: &str,
         assets: bool,
+        status: bool,
     ) -> String {
         let response = self.tools.execute(&mut app.engine, scene, source);
+        if status {
+            let mut envelope: Value =
+                serde_json::from_str(&response).expect("development response is JSON");
+            if envelope["ok"] == true {
+                envelope["result"]["build"] = build_identity();
+            }
+            return envelope.to_string();
+        }
         if !assets {
             return response;
         }
@@ -151,6 +161,18 @@ impl DevBrowser {
         (width, height): (u32, u32),
         paused: bool,
     ) -> Result<Value, DevError> {
+        if op == "environment" {
+            // Its sections parse as a scene environment's, whose errors
+            // keep their whole path (a tagged request's lose it).
+            let mut request: Value =
+                serde_json::from_str(source).expect("the command parsed as JSON");
+            if let Some(fields) = request.as_object_mut() {
+                for key in ["op", "version", "merge"] {
+                    fields.remove(key);
+                }
+            }
+            engine_scene::parse_json::<engine_scene::SceneEnvironment>(&request.to_string())?;
+        }
         let control: BrowserControl = engine_scene::parse_json(source)?;
         control.validate()?;
         if control.needs_pause() && !paused {
@@ -202,11 +224,49 @@ impl DevBrowser {
             BrowserControl::Environment(control) => {
                 // The sections of a scene environment, validated alike; the
                 // named ones replace their resources, the others stay.
-                let environment = control.sections();
+                let current = |app: &BrowserApp| {
+                    serde_json::to_value(engine_scene::SceneEnvironment::current(
+                        app.engine.app.world(),
+                    ))
+                    .expect("environments serialize")
+                };
+                let before = current(app);
+                let environment = if control.merge {
+                    // Each named section over its current values.
+                    let mut request: Value =
+                        serde_json::from_str(source).expect("the control parsed as JSON");
+                    let mut merged = serde_json::Map::new();
+                    for (key, value) in request.as_object_mut().into_iter().flatten() {
+                        if ["op", "version", "merge"].contains(&key.as_str()) {
+                            continue;
+                        }
+                        let mut section = before[key.as_str()].clone();
+                        overlay(&mut section, value.take());
+                        merged.insert(key.clone(), section);
+                    }
+                    engine_scene::parse_json::<engine_scene::SceneEnvironment>(
+                        &Value::Object(merged).to_string(),
+                    )?
+                } else {
+                    control.sections()
+                };
                 environment.validate("$")?;
                 environment.apply_sections(app.engine.app.world_mut());
                 rendered(app.dev_render(width, height), "environment changed")?;
-                Ok(json!({"temporary":true,"environment_changed":environment.sections()}))
+                let after = current(app);
+                let named = environment.sections();
+                let pick = |all: &Value| {
+                    named
+                        .iter()
+                        .map(|&key| (key.to_owned(), all[key].clone()))
+                        .collect::<serde_json::Map<_, _>>()
+                };
+                Ok(json!({
+                    "temporary": true,
+                    "environment_changed": named,
+                    "before": pick(&before),
+                    "after": pick(&after),
+                }))
             }
             BrowserControl::TerrainEdit {
                 terrain,
@@ -259,6 +319,28 @@ impl DevBrowser {
             } => {
                 let result = engine_dev::nav_go(&mut app.engine, scene, &entity, destination)?;
                 rendered(app.dev_render(width, height), "agent sent")?;
+                Ok(result)
+            }
+            BrowserControl::Animation {
+                entity,
+                clip,
+                time,
+                speed,
+                looping,
+                ..
+            } => {
+                let result = engine_dev::animate(
+                    &mut app.engine,
+                    scene,
+                    &entity,
+                    engine_dev::Animate {
+                        clip,
+                        time,
+                        speed,
+                        looping,
+                    },
+                )?;
+                rendered(app.dev_render(width, height), "animation changed")?;
                 Ok(result)
             }
             BrowserControl::WorldChanges {
@@ -428,6 +510,7 @@ impl DevBrowser {
             | BrowserControl::Pause { .. }
             | BrowserControl::Resume { .. }
             | BrowserControl::Capture { .. }
+            | BrowserControl::Game { .. }
             | BrowserControl::Reload { .. }) => Ok(json!({ "control": control })),
         }
     }
@@ -495,6 +578,36 @@ impl DevBrowser {
         )?;
         rendered(app.dev_render(width, height), "terrain edited")?;
         Ok(result)
+    }
+}
+
+/// What this build is: the engine's version, the commit xtask built it from
+/// (`-dirty` with uncommitted changes) and its features.
+fn build_identity() -> Value {
+    let features: Vec<&str> = [
+        cfg!(feature = "dev").then_some("dev"),
+        cfg!(feature = "profiling").then_some("profiling"),
+        cfg!(feature = "attribution").then_some("attribution"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "commit": option_env!("ENGINE_COMMIT"),
+        "features": features,
+    })
+}
+
+/// `patch`'s fields over `base`'s, objects merged field by field.
+fn overlay(base: &mut Value, patch: Value) {
+    match (base, patch) {
+        (Value::Object(base), Value::Object(patch)) => {
+            for (key, value) in patch {
+                overlay(base.entry(key).or_insert(Value::Null), value);
+            }
+        }
+        (base, patch) => *base = patch,
     }
 }
 

@@ -205,10 +205,33 @@ pub fn verify_wasm_bindgen(root: &Path) -> Result<(), String> {
     check_wasm_bindgen(root).map_err(|(_, message)| message)
 }
 
+/// The commit builds are made from, `-dirty` with uncommitted changes to
+/// tracked files: development replies report it (`ENGINE_COMMIT`).
+pub fn engine_commit() -> (&'static str, String) {
+    static COMMIT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let commit = COMMIT.get_or_init(|| {
+        let git = |arguments: &[&str]| {
+            Command::new("git")
+                .args(arguments)
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+        };
+        let Some(head) = git(&["rev-parse", "--short=12", "HEAD"]) else {
+            return "unknown".to_owned();
+        };
+        let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
+        let clean = git(&["diff", "--quiet", "HEAD"]).is_some();
+        if clean { head } else { format!("{head}-dirty") }
+    });
+    ("ENGINE_COMMIT", commit.clone())
+}
+
 pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String> {
     println!("Running {program} {}", arguments.join(" "));
     let status = Command::new(program)
         .args(arguments)
+        .envs([engine_commit()])
         .current_dir(root)
         .status()
         .map_err(|error| {

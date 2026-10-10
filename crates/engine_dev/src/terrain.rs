@@ -64,7 +64,7 @@ pub fn nav_go(
         .filter(|&entity| world.get::<engine_core::NavAgent>(entity).is_some())
         .ok_or_else(|| {
             DevError::new(
-                ErrorCode::UnknownTerrain,
+                ErrorCode::UnknownEntity,
                 "$.entity",
                 format!("no navigation agent {id} in the scene"),
             )

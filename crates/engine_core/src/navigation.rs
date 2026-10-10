@@ -122,12 +122,19 @@ pub struct NavWalk {
 /// those searching, walking, arrived and unable to reach their
 /// destination; and the samples of search work the tick did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NavStats {
+    /// Navigation agents.
     pub agents: u32,
+    /// Agents whose walk is being searched.
     pub searching: u32,
+    /// Agents walking a found path.
     pub walking: u32,
+    /// Agents at their destination.
     pub arrived: u32,
+    /// Agents whose destination no walk reaches.
     pub unreachable: u32,
+    /// Samples of search work the tick did.
     pub work: u64,
 }
 

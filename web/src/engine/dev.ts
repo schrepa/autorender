@@ -1,5 +1,6 @@
 /** On-demand adapter, dynamically imported only by the Vite development host. */
 import { readStats, type Runtime } from "./host";
+import { adapterInfo } from "./adapter";
 import { BenchmarkError, type BenchmarkOptions, type Reply, sampleBenchmark } from "./benchmark.ts";
 // The protocol's version, request limit and ops, generated from the engine
 // (`cargo xtask schema`).
@@ -16,11 +17,24 @@ interface Host {
   size(): [number, number];
   poll(): void;
   source?: { url: string; load(signal: AbortSignal): Promise<string>; files?(source: string, signal: AbortSignal): Promise<unknown> };
+  /** The game's own controls, which the `game` control runs by name. */
+  controls?: Record<string, PageControl>;
+  /** The page parameters the host and game read, with what each does. */
+  parameters?: Record<string, string>;
+}
+
+/** A control a game's page registers: what it does, and how. */
+export interface PageControl {
+  description: string;
+  run(args: Record<string, unknown>): unknown;
 }
 
 declare global {
   interface Window {
-    __engineDev?: { version: number; instance: string; build: string | null; request(command: Command): Promise<Reply> };
+    __engineDev?: {
+      version: number; instance: string; build: string | null; controls: Record<string, string>; parameters: Record<string, string>;
+      request(command: Command): Promise<Reply>;
+    };
   }
 }
 
@@ -28,6 +42,15 @@ declare global {
 export function connectDevelopment(host: Host): () => void {
   let disposed = false;
   let busy = false;
+  // The module's panic, once it panicked: its instance is unusable after.
+  let panic: string | undefined;
+  let lastPanic: string | undefined;
+  const consoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    const text = args.map(String).join(" ");
+    if (text.includes("panicked at")) lastPanic = text.slice(0, 4000);
+    consoleError.apply(console, args);
+  };
   const runtime = host.game;
   if (!runtime.dev_command) throw new Error("Development Wasm is missing; run cargo xtask dev.");
 
@@ -78,6 +101,20 @@ export function connectDevelopment(host: Host): () => void {
       if (reply.ok) await presented(host.signal);
       return reply;
     },
+    async game(control) {
+      const name = control.name as string;
+      const page = host.controls?.[name];
+      if (!page) {
+        return error("unsupported_command", "$.name", `this game has no control ${name}; it has ${Object.keys(host.controls ?? {}).join(", ") || "none"}`);
+      }
+      let result: unknown;
+      try { result = await page.run(control.args as Record<string, unknown>); }
+      catch (cause) { return error("game_rule", "$.args", String(cause)); }
+      if (disposed) return error("session_closed", "$", "runtime was disposed during the control");
+      const rendered = invoke({ op: "render" });
+      if (!rendered.ok) return rendered;
+      return { ...rendered, result: { game: name, result } };
+    },
     async reload(control) {
       if (!host.source || !runtime.dev_reload) return error("unsupported_command", "$.op", "this game has no authored scene reload adapter");
       const source = await host.source.load(host.signal);
@@ -97,8 +134,12 @@ export function connectDevelopment(host: Host): () => void {
     version: protocol.version,
     instance: crypto.randomUUID(),
     build: new URLSearchParams(globalThis.location?.search ?? "").get("engine_build"),
+    /** The game's controls by name, with what each does. */
+    controls: Object.fromEntries(Object.entries(host.controls ?? {}).map(([name, control]) => [name, control.description])),
+    parameters: host.parameters ?? {},
     async request(command: Command): Promise<Reply> {
       if (disposed || host.signal.aborted) return error("session_closed", "$", "the browser runtime was disposed");
+      if (panic) return { ok: false, error: { code: "runtime_panicked", path: "$", message: panic } };
       if (busy || host.isBusy?.()) return error("command_busy", "$", "one development command is already running");
       if (!command || typeof command !== "object" || Array.isArray(command) || typeof command.op !== "string") {
         return error("invalid_request", "$.command", "expected an object with an op string");
@@ -123,10 +164,16 @@ export function connectDevelopment(host: Host): () => void {
           if (!reply.ok) return finish(reply);
         }
         if (disposed || host.signal.aborted) return error("session_closed", "$", "runtime was disposed during command");
+        // Status names the GPU the session renders on.
+        if (command.op === "status" && reply.ok) reply.result = { ...reply.result, adapter: await adapterInfo() };
         return finish(reply);
       } catch (cause) {
         if (disposed || host.signal.aborted) return error("session_closed", "$", "runtime was disposed during command");
         if (cause instanceof BenchmarkError) return error(cause.code, "$", cause.message);
+        if (cause instanceof WebAssembly.RuntimeError) {
+          panic = lastPanic ?? String(cause);
+          return { ok: false, error: { code: "runtime_panicked", path: "$", message: panic } };
+        }
         return error("browser_command_failed", "$", String(cause));
       } finally {
         busy = false;
@@ -138,6 +185,7 @@ export function connectDevelopment(host: Host): () => void {
   host.signal.addEventListener("abort", dispose, { once: true });
   function dispose() {
     disposed = true;
+    console.error = consoleError;
     if (window.__engineDev === api) delete window.__engineDev;
   }
   return dispose;

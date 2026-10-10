@@ -2,6 +2,7 @@ import type { Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
 import { BrowserInput } from "./input";
 import { type JobPool, jobPool } from "./jobs";
+import { HOST_PARAMETERS } from "./parameters";
 import "./style.css";
 
 export type { FrameStats, Runtime };
@@ -148,6 +149,11 @@ export interface GameOptions<T extends Runtime> {
   /** The keys (`KeyboardEvent.code`) of the game's actions, by action
    * index (Rust's `ActionId`): `{ Space: 0 }` unless given. */
   actions?: Record<string, number>;
+  /** The game's own development controls, which agents run with the
+   * `game` control by name; each refreshes the image after. */
+  controls?: Record<string, { description: string; run(game: T, args: Record<string, unknown>): unknown }>;
+  /** The page parameters the game reads, with what each does. */
+  parameters?: Record<string, string>;
   poll?(game: T): void;
   reload?(game: T, signal: AbortSignal): Promise<void>;
   source?: { url: string; load(signal: AbortSignal): Promise<string>; files?(source: string, signal: AbortSignal): Promise<unknown> };
@@ -454,6 +460,10 @@ async function start() {
       isBusy: () => developmentBusy,
       size: () => [pixelWidth, pixelHeight], poll: () => options.poll?.(created),
       source: options.source,
+      controls: Object.fromEntries(Object.entries(options.controls ?? {}).map(([name, control]) => [name, {
+        description: control.description, run: (args: Record<string, unknown>) => control.run(created, args),
+      }])),
+      parameters: { ...HOST_PARAMETERS, ...options.parameters },
     });
     pause.textContent = "Resume";
     pause.setAttribute("aria-pressed", "true");

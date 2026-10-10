@@ -37,6 +37,8 @@ export interface FrameStats {
   extraction_ms: number;
   /** Fixed simulation ticks this frame ran. */
   fixed_steps: number;
+  /** The frame these stats describe, as `FrameTime::frame` counts it. */
+  frame: number;
   /** Ground cover. */
   ground_cover: GroundCoverStats;
   /**
@@ -68,6 +70,8 @@ export interface FrameStats {
    * absent.
    */
   missing_assets: number;
+  /** Navigation agents at the last fixed tick, read when the stats are. */
+  navigation: NavStats;
   /** Occlusion culling. */
   occlusion_culling: CullingStats;
   /** The occupancy map. */
@@ -124,6 +128,11 @@ export interface FrameStats {
   terrain: TerrainRenderStats;
   /** Texel bytes uploaded for textures first seen this frame. */
   texture_upload_bytes: number;
+  /**
+   * The last fixed tick that frame completed, as `FixedTime::tick`
+   * counts it.
+   */
+  tick: number;
   /** Transparent draws, also counted in `draw_calls`. */
   transparent_draws: number;
   /**
@@ -314,6 +323,26 @@ export interface LightStats {
    * `None` before the first read-back or without lights.
    */
   visible: number | null;
+}
+
+/**
+ * What navigation did at the last fixed tick: agents, and
+ * those searching, walking, arrived and unable to reach their
+ * destination; and the samples of search work the tick did.
+ */
+export interface NavStats {
+  /** Navigation agents. */
+  agents: number;
+  /** Agents at their destination. */
+  arrived: number;
+  /** Agents whose walk is being searched. */
+  searching: number;
+  /** Agents whose destination no walk reaches. */
+  unreachable: number;
+  /** Agents walking a found path. */
+  walking: number;
+  /** Samples of search work the tick did. */
+  work: number;
 }
 
 /** The occupancy map around the camera. */

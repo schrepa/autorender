@@ -1,6 +1,7 @@
 import { stressBindings } from "./bindings";
 import { startGame } from "../engine/host";
 import { loadSceneFiles, loadSceneSource } from "../engine/source";
+import { STRESS_PARAMETERS } from "./parameters";
 import "./stress.css";
 
 // An authored scene in place of a workload, reloaded by revision through the
@@ -13,6 +14,7 @@ const loadScene = (signal: AbortSignal) => loadSceneSource(sourceUrl, signal);
 const loadFiles = async (source: string, signal: AbortSignal) => loadSceneFiles(sourceUrl, source, await stressBindings(), signal);
 
 startGame({
+  parameters: STRESS_PARAMETERS,
   source: { url: sourceUrl, load: loadScene, files: loadFiles },
   async create(canvas, signal) {
     const { default: init, StressGame } = await stressBindings();

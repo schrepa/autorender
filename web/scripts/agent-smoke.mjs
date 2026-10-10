@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { strictStats } from "./harness.mjs";
 
 const executeFile = promisify(execFile);
@@ -109,6 +109,10 @@ try {
   const png = await readFile(join(workspace, capture.result.artifact.path));
   assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
   assert.ok(png.length > 1000);
+  // Captures name their bytes, hash, frame and tick.
+  assert.equal(capture.result.artifact.bytes, png.length);
+  assert.equal(capture.result.artifact.sha256, createHash("sha256").update(png).digest("hex"));
+  assert.equal(capture.result.artifact.tick, after.observation.tick);
   const effects = rendering => [rendering.shadows.active, rendering.ambient_occlusion.active, rendering.bloom.active];
   assert.deepEqual(effects(capture.result.rendering), [true, true, true]);
   // Every reply's stats hold exactly the fields FrameStats' schema describes.
@@ -124,6 +128,13 @@ try {
 
   // The look: discovered, inspected in scene-section shape, changed temporarily.
   const listing = await cli("describe");
+  // The bridge adds the page's parameters and controls, and status names the build.
+  const parameters = listing.result.types.find(type => type.name === "PageParameters")?.parameters ?? {};
+  assert.ok(parameters.source && parameters.engine_dev && parameters.taa, `page parameters: ${Object.keys(parameters)}`);
+  assert.ok(listing.result.types.some(type => type.name === "GameControls"));
+  const statusReply = (await cli("status")).result;
+  assert.ok(statusReply.build.features.includes("dev") && typeof statusReply.build.version === "string", JSON.stringify(statusReply.build));
+  assert.ok("adapter" in statusReply);
   for (const name of ["Atmosphere", "Shadows", "AmbientOcclusion", "Bloom", "Environment"]) {
     assert.ok(listing.result.types.some(type => type.name === name), name);
   }
@@ -151,6 +162,11 @@ try {
   assert.deepEqual(nightLook.result.value.shadows, look.result.value.shadows);
   const nightCapture = await cli("capture");
   assert.notDeepEqual(await readFile(join(workspace, nightCapture.result.artifact.path)), png);
+  // Captures compare: the same one to itself, the night to the day.
+  const same = (await cli("compare", { a: capture.result.artifact.path, b: capture.result.artifact.path })).result.compare;
+  assert.equal(same.different, 0);
+  const changed = (await cli("compare", { a: capture.result.artifact.path, b: nightCapture.result.artifact.path, tolerance: 8 })).result.compare;
+  assert.ok(changed.different > 1000 && changed.different <= changed.total, `the night differs: ${JSON.stringify(changed)}`);
 
   const rejectedReload = await cli("reload", { expected_revision: "0", revision: String(source.revision + 1) }, false);
   assert.equal(rejectedReload.observation.scene.revision, String(source.revision));

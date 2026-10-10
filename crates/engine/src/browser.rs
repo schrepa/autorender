@@ -836,6 +836,13 @@ impl BrowserApp {
         }
         // Tiles that arrived stream in with this frame's extraction.
         self.terrain_fetches.exchange(&mut self.engine);
+        let (frame_number, tick) = {
+            let world = self.engine.app.world();
+            (
+                world.resource::<engine_core::FrameTime>().frame,
+                world.resource::<engine_core::FixedTime>().tick,
+            )
+        };
         let before_extraction = self.performance.now();
         let culling_enabled = self.engine.frustum_culling();
         let aspect = width.max(1) as f32 / height.max(1) as f32;
@@ -889,6 +896,8 @@ impl BrowserApp {
             )
         };
         self.stats = FrameStats {
+            frame: frame_number,
+            tick,
             simulation_ms,
             extraction_ms: after_extraction - before_extraction,
             render_ms: self.performance.now() - after_extraction,
@@ -904,6 +913,7 @@ impl BrowserApp {
             pipelines_compiling: false,
             loading: false,
             jobs: engine_core::JobStats::default(),
+            navigation: engine_core::NavStats::default(),
             render: rendered,
         };
         Ok(())
@@ -918,6 +928,13 @@ impl BrowserApp {
                 .world()
                 .get_resource::<engine_core::Terrains>()
                 .is_some_and(engine_core::Terrains::loading),
+            navigation: self
+                .engine
+                .app
+                .world()
+                .get_resource::<engine_core::NavAgents>()
+                .map(engine_core::NavAgents::stats)
+                .unwrap_or_default(),
             jobs: self
                 .engine
                 .app

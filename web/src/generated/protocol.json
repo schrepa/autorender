@@ -9,6 +9,7 @@
     "terrain_redo",
     "deform",
     "nav_go",
+    "animation",
     "world_changes",
     "camera",
     "benchmark",
@@ -18,6 +19,7 @@
     "pause",
     "resume",
     "capture",
+    "game",
     "reload"
   ],
   "errors": {
@@ -141,6 +143,7 @@
     "route_not_found": "No route answers to that path.",
     "runtime_busy": "The browser runtime is busy.",
     "runtime_not_paused": "The runtime is not paused.",
+    "runtime_panicked": "The game's module panicked; the message holds the panic. The page must reload.",
     "runtime_replaced": "The browser runtime changed; start a new session.",
     "runtime_unavailable": "The browser runtime is not available.",
     "scan_limit": "A lookup would scan past its bound.",

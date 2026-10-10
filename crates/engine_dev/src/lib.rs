@@ -4,6 +4,7 @@
 //! explicitly registered read-only projections; no reflection or serialization
 //! runs during ordinary frames. The browser host owns sessions and controls.
 
+mod animation;
 mod collision;
 mod controls;
 mod error;
@@ -15,6 +16,7 @@ mod views;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod authoring;
 
+pub use animation::{Animate, animate};
 pub use controls::{validated_camera, validated_presentation_alpha};
 pub use engine_settings::ErrorCode;
 pub use error::DevError;
@@ -23,8 +25,8 @@ pub use protocol::bounds;
 pub use protocol::bounds::{MAX_DESCRIPTION_BYTES, MAX_PAGE_SIZE};
 pub use protocol::{
     BenchmarkMode, BrowserControl, CollisionFilterRequest, CollisionSensorFilter,
-    CollisionShapeRequest, DevRequest, Handler, MAX_REQUEST_BYTES, PROTOCOL_VERSION,
-    TerrainViewRequest,
+    CollisionShapeRequest, DevRequest, Handler, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+    PROTOCOL_VERSION, TerrainViewRequest,
 };
 
 /// The ops of queries and controls, as requests name them, from the
@@ -45,7 +47,6 @@ pub const FRAME_STATS_SCHEMA: &str =
     include_str!(concat!(env!("OUT_DIR"), "/frame_stats.schema.json"));
 pub use terrain::{Press, TerrainEditing, change_world, edit_terrain, nav_go, press_track};
 
-pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 pub const MAX_INSPECTOR_BYTES: usize = 16 * 1024;
 /// Inspectors a game may register beside the engine's own.
 pub const MAX_INSPECTORS: usize = 64;

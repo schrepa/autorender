@@ -15,6 +15,11 @@ use serde::{Serialize, Serializer};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FrameStats {
+    /// The frame these stats describe, as `FrameTime::frame` counts it.
+    pub frame: u64,
+    /// The last fixed tick that frame completed, as `FixedTime::tick`
+    /// counts it.
+    pub tick: u64,
     /// Milliseconds the frame spent in fixed and variable simulation.
     pub simulation_ms: f64,
     /// Milliseconds the frame spent extracting the render snapshot.
@@ -50,6 +55,8 @@ pub struct FrameStats {
     pub loading: bool,
     /// The host's workers and their jobs, read when the stats are.
     pub jobs: crate::JobStats,
+    /// Navigation agents at the last fixed tick, read when the stats are.
+    pub navigation: crate::NavStats,
     /// The renderer's report of the frame.
     #[serde(flatten)]
     pub render: RenderStats,

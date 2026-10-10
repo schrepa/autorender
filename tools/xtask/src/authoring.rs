@@ -76,6 +76,10 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
             "web/src/generated/runtime.ts".to_owned(),
             engine::runtime_typescript(),
         ),
+        (
+            "web/src/generated/coverage.json".to_owned(),
+            crate::coverage::coverage(root)?,
+        ),
     ];
     for client in crate::process::clients()
         .iter()

@@ -47,6 +47,20 @@ impl BrowserControl {
                 }
                 None => {}
             },
+            Self::Game { name, .. } => {
+                let valid = name.len() <= 64
+                    && name.starts_with(|first: char| first.is_ascii_lowercase())
+                    && name.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                    });
+                if !valid {
+                    return Err(DevError::new(
+                        ErrorCode::InvalidName,
+                        "$.name",
+                        "game control names are 1 to 64 lowercase letters, digits and underscores",
+                    ));
+                }
+            }
             Self::Reload {
                 expected_revision,
                 revision,

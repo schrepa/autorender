@@ -28,6 +28,8 @@ pub mod tooling;
 // The ECS and math the engine is built on, and its deterministic
 // trigonometry (`math::sin`, not `f32::sin`).
 pub use engine_core::{bevy_ecs, glam, math};
+// Every environment section, for code listing them (`environment_sections!(callback)`).
+pub use engine_core::environment_sections;
 
 // What games use: the engine and its schedules, time, input, transforms,
 // objects, assets, the look's settings and the stores gameplay reads.

@@ -10,6 +10,10 @@ $packages = $clients | ForEach-Object { '-p'; $_.package }
 $development = 'engine/dev'
 Push-Location $root
 try {
+    # The commit development replies report, as xtask's builds set it.
+    git diff --quiet HEAD
+    $dirty = if ($LASTEXITCODE) { '-dirty' } else { '' }
+    $env:ENGINE_COMMIT = (git rev-parse --short=12 HEAD) + $dirty
     foreach ($variant in @(@{ out = 'web/pkg'; features = @() }, @{ out = 'web/pkg-dev'; features = @('--features', $development) })) {
         $arguments = @('build') + $packages + @('--target', 'wasm32-unknown-unknown', '--release', '--locked') + $variant.features
         cargo @arguments

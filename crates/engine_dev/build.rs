@@ -64,6 +64,17 @@ fn main() {
         "BrowserControl": schemars::schema_for!(protocol::BrowserControl),
         "FrameStats": frame_stats(),
     });
+    // Each type's description fits one reply, its envelope and constraints
+    // beside it.
+    for (name, schema) in schemas.as_object().expect("schemas are an object") {
+        let bytes = schema.to_string().len();
+        if bytes + 8 * 1024 > protocol::MAX_RESPONSE_BYTES {
+            panic!(
+                "describe {name} would take {bytes} bytes of a {}-byte reply: split the type or page its schema",
+                protocol::MAX_RESPONSE_BYTES
+            );
+        }
+    }
     // Inspectors describe themselves by their types' doc comments.
     for (name, schema) in schemas.as_object().expect("schemas are an object") {
         if ["protocol", "BrowserControl", "FrameStats"].contains(&name.as_str()) {

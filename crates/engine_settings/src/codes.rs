@@ -262,6 +262,9 @@ error_codes! {
     CommandBusy => "command_busy",
     /// The command failed in the browser; diagnostics hold the cause.
     BrowserCommandFailed => "browser_command_failed",
+    /// The game's module panicked; the message holds the panic. The page
+    /// must reload.
+    RuntimePanicked => "runtime_panicked",
     /// A capture needs the host paused.
     CaptureRequiresPause => "capture_requires_pause",
     /// The capture could not be taken.

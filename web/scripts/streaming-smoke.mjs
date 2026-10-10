@@ -112,6 +112,14 @@ try {
   const player = (await command("inspect", { entity: "spinner", component: "AnimationPlayer" })).result.entity.components.AnimationPlayer;
   assert.equal(player.clip, "spin");
   assert.deepEqual(player.targets, ["spinner-blade"]);
+  // The animation control sets a streamed player and answers before and after.
+  const animated = (await command("animation", { entity: "spinner", time: 0.25, speed: 0 })).result;
+  assert.equal(animated.before.clip, "spin");
+  assert.deepEqual([animated.after.time, animated.after.speed], [0.25, 0]);
+  const held = (await command("inspect", { entity: "spinner", component: "AnimationPlayer" })).result.entity.components.AnimationPlayer;
+  assert.deepEqual([held.time, held.speed], [0.25, 0]);
+  const unknownClip = await command("animation", { entity: "spinner", clip: "missing" }, false);
+  assert.equal(unknownClip.error.code, "unknown_reference");
   checks.push({ check: "items" });
 
   // Moving east: the middle crate loads, the near cells unload past

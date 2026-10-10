@@ -1,6 +1,6 @@
 /** Own one identified development runtime, independent of its HTTP transport. */
-import { randomUUID } from "node:crypto";
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -8,6 +8,50 @@ import { AgentError, loopbackUrl } from "./agent-protocol.mjs";
 import { launchOptions } from "./browser-launch.mjs";
 
 const workspace = fileURLToPath(new URL("../../", import.meta.url));
+
+/** How many pixels of two captures under artifacts/agent differ by more
+ * than `tolerance` (0 to 255) in a color channel: `{a, b, tolerance}`. */
+async function compareCaptures(command, requestBrowser, page) {
+  if (Object.keys(command).some(key => !["op", "a", "b", "tolerance"].includes(key))) {
+    throw new AgentError("unknown_field", "compare takes a, b and tolerance.", "$");
+  }
+  const tolerance = command.tolerance ?? 0;
+  if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 255) throw new AgentError("out_of_range", "tolerance is 0 to 255.", "tolerance");
+  const root = resolve(workspace, "artifacts", "agent");
+  const images = [];
+  for (const name of ["a", "b"]) {
+    const path = typeof command[name] === "string" ? resolve(workspace, command[name]) : "";
+    if (!path.startsWith(root + sep) || !path.endsWith(".png")) throw new AgentError("invalid_path", `${name} must name a capture under artifacts/agent.`, name);
+    const bytes = await readFile(path).catch(() => { throw new AgentError("invalid_path", `${command[name]} cannot be read.`, name); });
+    images.push(bytes.toString("base64"));
+  }
+  const response = await requestBrowser({ op: "status" });
+  if (!response.ok) return response;
+  const result = await page.evaluate(async ({ images, tolerance }) => {
+    const pixels = await Promise.all(images.map(async png => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${png}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width; canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      return context.getImageData(0, 0, image.width, image.height);
+    }));
+    if (pixels[0].width !== pixels[1].width || pixels[0].height !== pixels[1].height) {
+      return { same_size: false, sizes: pixels.map(({ width, height }) => [width, height]) };
+    }
+    let different = 0, largest = 0;
+    for (let offset = 0; offset < pixels[0].data.length; offset += 4) {
+      let pixel = 0;
+      for (let channel = 0; channel < 3; channel++) pixel = Math.max(pixel, Math.abs(pixels[0].data[offset + channel] - pixels[1].data[offset + channel]));
+      if (pixel > tolerance) different++;
+      largest = Math.max(largest, pixel);
+    }
+    return { same_size: true, width: pixels[0].width, height: pixels[0].height, different, total: pixels[0].width * pixels[0].height, largest_difference: largest };
+  }, { images, tolerance });
+  return { ...response, result: { compare: result, a: command.a, b: command.b, tolerance } };
+}
 
 /** A replacement is ready only after its identity, build, pause, and render checks pass. */
 // Sessions' captures stay under artifacts/agent/SESSION; past the most
@@ -157,6 +201,9 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
           const { captureProfile } = await import("./agent-profile.mjs");
           return captureProfile({ page, requestBrowser, command, artifacts, workspace });
         }
+        if (command.op === "compare") {
+          return compareCaptures(command, requestBrowser, page);
+        }
         if (command.op === "diagnostics") {
           const response = await requestBrowser({ op: "status" });
           if (response.ok) response.result = { observation: response.observation ?? response.result?.observation, entries: [...diagnostics] };
@@ -165,6 +212,9 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
         const response = await requestBrowser(command);
         if (command.op === "describe" && command.name === undefined && response.ok && Array.isArray(response.result?.types)) {
           response.result.types.push({ name: "ProfileCapture", kind: "tooling", description: "Optional detailed profiling in the isolated profiling build" });
+          const { controls, parameters } = await page.evaluate(() => ({ controls: window.__engineDev?.controls ?? {}, parameters: window.__engineDev?.parameters ?? {} }));
+          response.result.types.push({ name: "GameControls", kind: "tooling", description: "The game's own controls, which the game control runs by name with args", controls });
+          response.result.types.push({ name: "PageParameters", kind: "tooling", description: "The page URL's parameters the host and game read", parameters });
         }
         if (command.op === "capture" && response.ok) {
           if (response.result?.paused !== true) throw new AgentError("capture_requires_pause", "The browser must confirm it is paused before capture.");
@@ -172,7 +222,12 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
             await mkdir(artifacts, { recursive: true });
             const artifact = resolve(artifacts, `capture-${++captureNumber}.png`);
             await page.locator("canvas").first().screenshot({ path: artifact, timeout: 10_000, animations: "disabled" });
-            response.result.artifact = { path: relative(workspace, artifact).split(sep).join("/"), mime_type: "image/png" };
+            const bytes = await readFile(artifact);
+            const observation = response.observation ?? response.result.observation;
+            response.result.artifact = {
+              path: relative(workspace, artifact).split(sep).join("/"), mime_type: "image/png", bytes: bytes.length,
+              sha256: createHash("sha256").update(bytes).digest("hex"), frame: observation?.frame, tick: observation?.tick,
+            };
           } catch (error) {
             return { ok: false, observation: response.observation ?? response.result.observation, error: { code: "capture_failed", path: "$", message: error.message } };
           }

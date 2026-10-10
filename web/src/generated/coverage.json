@@ -1,0 +1,810 @@
+{
+  "inspectors": [
+    {
+      "inspector": "AnimationPlayer",
+      "kind": "component",
+      "smokes": [
+        "streaming"
+      ]
+    },
+    {
+      "inspector": "Atmosphere",
+      "kind": "resource",
+      "smokes": [
+        "agent"
+      ]
+    },
+    {
+      "inspector": "Camera",
+      "kind": "resource",
+      "smokes": [
+        "surfaces"
+      ]
+    },
+    {
+      "inspector": "Collider",
+      "kind": "component",
+      "smokes": [
+        "collision"
+      ]
+    },
+    {
+      "inspector": "CollisionWorld",
+      "kind": "resource",
+      "smokes": [
+        "collision"
+      ]
+    },
+    {
+      "inspector": "Decal",
+      "kind": "component",
+      "smokes": [
+        "surfaces"
+      ]
+    },
+    {
+      "inspector": "Deformer",
+      "kind": "component",
+      "smokes": []
+    },
+    {
+      "inspector": "Environment",
+      "kind": "resource",
+      "smokes": [
+        "agent",
+        "lod",
+        "terrain",
+        "virtual-geometry"
+      ]
+    },
+    {
+      "inspector": "Floating",
+      "kind": "component",
+      "smokes": []
+    },
+    {
+      "inspector": "GlobalTransform",
+      "kind": "component",
+      "smokes": [
+        "hierarchy",
+        "interpolation"
+      ]
+    },
+    {
+      "inspector": "Grounded",
+      "kind": "component",
+      "smokes": [
+        "streaming"
+      ]
+    },
+    {
+      "inspector": "Hierarchy",
+      "kind": "component",
+      "smokes": [
+        "hierarchy",
+        "streaming"
+      ]
+    },
+    {
+      "inspector": "InterpolateTransform",
+      "kind": "component",
+      "smokes": [
+        "interpolation"
+      ]
+    },
+    {
+      "inspector": "Jobs",
+      "kind": "resource",
+      "smokes": [
+        "jobs"
+      ]
+    },
+    {
+      "inspector": "LocalLight",
+      "kind": "component",
+      "smokes": [
+        "agent"
+      ]
+    },
+    {
+      "inspector": "Mesh3d",
+      "kind": "component",
+      "smokes": [
+        "agent",
+        "hierarchy",
+        "texture"
+      ]
+    },
+    {
+      "inspector": "NavAgent",
+      "kind": "component",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "inspector": "NavAgents",
+      "kind": "resource",
+      "smokes": [
+        "jobs",
+        "terrain"
+      ]
+    },
+    {
+      "inspector": "ParticleEmitter",
+      "kind": "component",
+      "smokes": [
+        "agent"
+      ]
+    },
+    {
+      "inspector": "PresentationState",
+      "kind": "resource",
+      "smokes": [
+        "gpu-presentation",
+        "interpolation"
+      ]
+    },
+    {
+      "inspector": "PresentedTransform",
+      "kind": "component",
+      "smokes": [
+        "collision",
+        "interpolation"
+      ]
+    },
+    {
+      "inspector": "ReflectionProbe",
+      "kind": "component",
+      "smokes": [
+        "surfaces"
+      ]
+    },
+    {
+      "inspector": "Skin",
+      "kind": "component",
+      "smokes": []
+    },
+    {
+      "inspector": "SplineMesh",
+      "kind": "component",
+      "smokes": [
+        "spline"
+      ]
+    },
+    {
+      "inspector": "StreamedId",
+      "kind": "component",
+      "smokes": [
+        "streaming"
+      ]
+    },
+    {
+      "inspector": "Terrain",
+      "kind": "component",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "inspector": "TerrainPrefetch",
+      "kind": "component",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "inspector": "Terrains",
+      "kind": "resource",
+      "smokes": [
+        "jobs",
+        "terrain"
+      ]
+    },
+    {
+      "inspector": "Tint",
+      "kind": "component",
+      "smokes": [
+        "surfaces"
+      ]
+    },
+    {
+      "inspector": "Tracks",
+      "kind": "resource",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "inspector": "Transform",
+      "kind": "component",
+      "smokes": [
+        "agent",
+        "collision",
+        "hierarchy",
+        "interpolation",
+        "streaming",
+        "terrain",
+        "texture"
+      ]
+    },
+    {
+      "inspector": "WorldCells",
+      "kind": "resource",
+      "smokes": [
+        "streaming"
+      ]
+    },
+    {
+      "inspector": "WorldChanges",
+      "kind": "resource",
+      "smokes": [
+        "streaming"
+      ]
+    }
+  ],
+  "ops": [
+    {
+      "op": "status",
+      "smokes": [
+        "agent",
+        "agent-lifecycle",
+        "collision",
+        "culling",
+        "gpu-presentation",
+        "hierarchy",
+        "interpolation",
+        "taa",
+        "terrain"
+      ]
+    },
+    {
+      "op": "inspect",
+      "smokes": [
+        "agent",
+        "collision",
+        "gpu-presentation",
+        "hierarchy",
+        "interpolation",
+        "jobs",
+        "lod",
+        "spline",
+        "streaming",
+        "surfaces",
+        "taa",
+        "terrain",
+        "texture",
+        "virtual-geometry"
+      ]
+    },
+    {
+      "op": "assets",
+      "smokes": [
+        "agent",
+        "culling",
+        "hierarchy",
+        "interpolation",
+        "texture"
+      ]
+    },
+    {
+      "op": "describe",
+      "smokes": [
+        "agent",
+        "collision",
+        "hierarchy",
+        "interpolation",
+        "lod",
+        "spline",
+        "surfaces",
+        "terrain",
+        "virtual-geometry"
+      ]
+    },
+    {
+      "op": "raycast",
+      "smokes": [
+        "collision",
+        "streaming",
+        "terrain"
+      ]
+    },
+    {
+      "op": "overlap",
+      "smokes": [
+        "collision"
+      ]
+    },
+    {
+      "op": "shape_cast",
+      "smokes": [
+        "collision"
+      ]
+    },
+    {
+      "op": "terrain_height",
+      "smokes": [
+        "jobs",
+        "streaming",
+        "terrain"
+      ]
+    },
+    {
+      "op": "nav_path",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "op": "water_query",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "op": "deformation_query",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "op": "terrain_sweep",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "op": "terrain_route",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "op": "collision_events",
+      "smokes": [
+        "collision"
+      ]
+    },
+    {
+      "op": "present",
+      "smokes": [
+        "collision",
+        "gpu-presentation",
+        "interpolation",
+        "lod",
+        "terrain",
+        "virtual-geometry"
+      ]
+    },
+    {
+      "op": "culling",
+      "smokes": [
+        "culling",
+        "interpolation"
+      ]
+    },
+    {
+      "op": "environment",
+      "smokes": [
+        "agent",
+        "culling",
+        "gpu-presentation",
+        "lod",
+        "streaming",
+        "surfaces",
+        "taa",
+        "terrain",
+        "virtual-geometry"
+      ]
+    },
+    {
+      "op": "terrain",
+      "smokes": [
+        "streaming",
+        "terrain"
+      ]
+    },
+    {
+      "op": "terrain_edit",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "op": "terrain_undo",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "op": "terrain_redo",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "op": "deform",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "op": "nav_go",
+      "smokes": [
+        "terrain"
+      ]
+    },
+    {
+      "op": "animation",
+      "smokes": [
+        "streaming"
+      ]
+    },
+    {
+      "op": "world_changes",
+      "smokes": [
+        "streaming"
+      ]
+    },
+    {
+      "op": "camera",
+      "smokes": [
+        "culling",
+        "gpu-presentation",
+        "interpolation",
+        "jobs",
+        "streaming",
+        "surfaces",
+        "terrain",
+        "virtual-geometry"
+      ]
+    },
+    {
+      "op": "benchmark",
+      "smokes": [
+        "surfaces"
+      ]
+    },
+    {
+      "op": "step",
+      "smokes": [
+        "agent",
+        "collision",
+        "gpu-presentation",
+        "hierarchy",
+        "interpolation",
+        "streaming",
+        "taa",
+        "terrain",
+        "texture"
+      ]
+    },
+    {
+      "op": "input",
+      "smokes": [
+        "agent",
+        "collision",
+        "hierarchy",
+        "interpolation",
+        "texture"
+      ]
+    },
+    {
+      "op": "render",
+      "smokes": [
+        "collision",
+        "culling",
+        "gpu-presentation",
+        "hierarchy",
+        "interpolation",
+        "jobs",
+        "spline",
+        "streaming",
+        "surfaces",
+        "taa",
+        "terrain",
+        "texture"
+      ]
+    },
+    {
+      "op": "pause",
+      "smokes": [
+        "agent",
+        "collision",
+        "gpu-presentation",
+        "interpolation",
+        "jobs",
+        "taa",
+        "terrain"
+      ]
+    },
+    {
+      "op": "resume",
+      "smokes": [
+        "agent",
+        "collision",
+        "gpu-presentation",
+        "interpolation",
+        "taa",
+        "terrain"
+      ]
+    },
+    {
+      "op": "capture",
+      "smokes": [
+        "agent",
+        "collision",
+        "culling",
+        "gpu-presentation",
+        "hierarchy",
+        "interpolation",
+        "lod",
+        "spline",
+        "surfaces",
+        "taa",
+        "terrain",
+        "texture",
+        "virtual-geometry"
+      ]
+    },
+    {
+      "op": "game",
+      "smokes": [
+        "lod",
+        "surfaces"
+      ]
+    },
+    {
+      "op": "reload",
+      "smokes": [
+        "agent",
+        "collision",
+        "hierarchy",
+        "interpolation",
+        "spline",
+        "streaming",
+        "terrain",
+        "texture"
+      ]
+    }
+  ],
+  "sections": [
+    {
+      "inspector": "Shadows",
+      "section": "shadows",
+      "smokes": [
+        "agent",
+        "culling",
+        "terrain",
+        "virtual-geometry"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "AmbientOcclusion",
+      "section": "ambient_occlusion",
+      "smokes": [
+        "agent"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Bloom",
+      "section": "bloom",
+      "smokes": [
+        "agent"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "LocalLightSettings",
+      "section": "local_lights",
+      "smokes": [
+        "agent"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "SunShafts",
+      "section": "sun_shafts",
+      "smokes": [
+        "agent"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Reflections",
+      "section": "reflections",
+      "smokes": [
+        "agent",
+        "lod"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "ParticleSettings",
+      "section": "particles",
+      "smokes": [
+        "agent"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Refraction",
+      "section": "refraction",
+      "smokes": [
+        "surfaces"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "DecalSettings",
+      "section": "decals",
+      "smokes": [
+        "surfaces"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "ReflectionProbeSettings",
+      "section": "reflection_probes",
+      "smokes": [
+        "lod",
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "VirtualGeometry",
+      "section": "virtual_geometry",
+      "smokes": [
+        "virtual-geometry"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "LevelOfDetail",
+      "section": "level_of_detail",
+      "smokes": [
+        "lod",
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "TerrainSettings",
+      "section": "terrain",
+      "smokes": [
+        "agent",
+        "jobs",
+        "streaming",
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "GroundCover",
+      "section": "ground_cover",
+      "smokes": [
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Wind",
+      "section": "wind",
+      "smokes": [
+        "jobs",
+        "terrain"
+      ],
+      "stats": false
+    },
+    {
+      "inspector": "Occupancy",
+      "section": "occupancy",
+      "smokes": [
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "ContactShadows",
+      "section": "contact_shadows",
+      "smokes": [
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Water",
+      "section": "water",
+      "smokes": [
+        "jobs",
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Ocean",
+      "section": "ocean",
+      "smokes": [
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Deformation",
+      "section": "deformation",
+      "smokes": [
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Clouds",
+      "section": "clouds",
+      "smokes": [
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "WorldStreaming",
+      "section": "world_streaming",
+      "smokes": [
+        "streaming"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Sky",
+      "section": "sky",
+      "smokes": [
+        "jobs",
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "TimeOfDay",
+      "section": "time_of_day",
+      "smokes": [
+        "terrain"
+      ],
+      "stats": false
+    },
+    {
+      "inspector": "Navigation",
+      "section": "navigation",
+      "smokes": [
+        "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "OcclusionCulling",
+      "section": "occlusion_culling",
+      "smokes": [
+        "gpu-presentation",
+        "lod"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "SubpixelCulling",
+      "section": "subpixel_culling",
+      "smokes": [
+        "gpu-presentation"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "TemporalAntialiasing",
+      "section": "temporal_antialiasing",
+      "smokes": [
+        "taa"
+      ],
+      "stats": true
+    }
+  ]
+}

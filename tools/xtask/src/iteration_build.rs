@@ -74,6 +74,7 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
     let compiled = capture(
         Command::new("cargo")
             .current_dir(&root)
+            .envs([crate::process::engine_commit()])
             .arg("build")
             .args(client_packages())
             .args([
