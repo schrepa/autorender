@@ -719,6 +719,6 @@ impl AppHost {
 }
 
 /// The renderer's failure as hosts receive it.
-fn render_failure(error: RenderError) -> Error {
+pub(crate) fn render_failure(error: RenderError) -> Error {
     Error::new(ErrorCode::RenderFailed, "$", error.0)
 }

@@ -23,6 +23,7 @@ const options = (id: string) => [...choice(id).options].map(option => option.val
 function offer(id: string, choices: readonly { value: string | number; label?: string }[]) {
   choice(id).replaceChildren(...choices.map(({ value, label }) => new Option(label ?? String(value), String(value))));
 }
+offer("preset", STRESS_CATALOG.presets);
 offer("scene-select", STRESS_CATALOG.scenes);
 offer("look", STRESS_CATALOG.looks);
 offer("effects", STRESS_CATALOG.effects);
@@ -38,29 +39,12 @@ const scenes: StressScene[] = STRESS_CATALOG.scenes.map(scene => scene.value);
 const format = (value: number) => value.toLocaleString("en-US");
 const ms = (value: number) => `${value.toFixed(2)} ms`;
 const bytes = (value: number) => `${(value / 1048576).toFixed(2)} MiB`;
-const baseline: StressConfig = { seed: 1337, renderables: 90000, moving_percent: 0, hierarchy: false, interpolation: false,
-  colliders: 0, sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 32, textured: true, culling: true, scene: "field",
-  compressed_textures: false };
-const presets: Record<string, { title: string; note: string; config: StressConfig }> = {
-  visual: { title: "MAXIMUM VISUAL LOAD", note: "Rendering, extraction, batching and texture sampling at maximum object count.", config: baseline },
-  city: { title: "WILD CITY", note: "52 building, vehicle and machine shapes: skyscrapers, traffic, trains, drones, cranes and Ferris wheels. Moving objects are the traffic.",
-    config: { ...baseline, scene: "city", moving_percent: 10, hierarchy: true, interpolation: true, mesh_variety: 64 } },
-  metro: { title: "METRO", note: "The city with every engine feature: glTF maps over procedural textures (BC7 where supported), refracting glass, masked foliage, tints and rotating ads, skinned people, keyframed props, thousands of lights and particles.",
-    config: { ...baseline, scene: "metro", moving_percent: 10, hierarchy: true, interpolation: true, mesh_variety: 64, compressed_textures: true } },
-  dense: { title: "DENSE GEOMETRY", note: "Boulders and fluted columns of 330,000 to 590,000 triangles each on terrain tiles, drawn as virtual geometry: the GPU picks the clusters each view needs. Build the files with `cargo run -p engine_vgbuild --release --bin dense_assets`.",
-    config: { ...baseline, scene: "dense", renderables: 2000, moving_percent: 5, hierarchy: false, interpolation: true, mesh_variety: 8 } },
-  highlands: { title: "HIGHLANDS", note: "An 8 km terrain the engine generates as the camera moves: eroded mountains from noise, then hand-placed stamps level a plateau for a hamlet of towers, flatten a valley floor and cut a cave mouth. Coarse levels keep the whole world visible; finer tiles stream around the camera.",
-    config: { ...baseline, scene: "highlands", renderables: 4000, moving_percent: 10, hierarchy: true, interpolation: true, mesh_variety: 32 } },
-  mixed: { title: "MIXED WORKLOAD", note: "A moving hierarchy, interpolation, filtered queries and sensors share the frame budget.",
-    config: { ...baseline, renderables: 10000, moving_percent: 25, hierarchy: true, interpolation: true, colliders: 1000, sensor_percent: 10, queries_per_tick: 32, mesh_variety: 8 } },
-  motion: { title: "TRANSFORM PRESSURE", note: "50,000 moving objects with parents and interpolation. Toggle each feature to isolate its cost.",
-    config: { ...baseline, renderables: 50000, moving_percent: 100, hierarchy: true, interpolation: true, mesh_variety: 1, textured: false } },
-  queries: { title: "SPATIAL QUERY PRESSURE", note: "10,000 colliders with moving bounds and 256 ray, overlap and sweep queries per fixed tick.",
-    config: { ...baseline, renderables: 10000, moving_percent: 10, colliders: 10000, queries_per_tick: 256, mesh_variety: 8, textured: false } },
-  sensors: { title: "DENSE SENSOR PRESSURE", note: "Clusters deliberately exceed pair budgets. Incomplete detection is visible and retained in recordings.",
-    config: { ...baseline, renderables: 10000, moving_percent: 25, colliders: 2500, sensor_percent: 100, dense_colliders: true, mesh_variety: 8 } },
-};
-let activeConfig = { ...baseline }, activeTitle = presets.visual.title;
+// The presets the Stress Lab declares, the first the default; native hosts
+// offer the same.
+const presets: Record<string, { title: string; note: string; config: StressConfig }> = Object.fromEntries(
+  STRESS_CATALOG.presets.map(({ value, title, note, config }) => [value, { title, note, config: { ...config } }]));
+const baseline: StressConfig = { ...STRESS_CATALOG.presets[0].config };
+let activeConfig = { ...baseline }, activeTitle: string = STRESS_CATALOG.presets[0].title;
 let game: StressGame | undefined, controls: HostControls<StressGame> | undefined;
 let latest: StressSnapshot | undefined, report: RecordingReport | undefined;
 let previousTimestamp: number | undefined, recordStarted = 0;
@@ -344,6 +328,8 @@ if (!params.has("config") && requestedPreset && requestedPreset in presets) {
   el("preset-note").textContent = presets[requestedPreset].note;
 }
 fill(activeConfig);
+el("active-preset").textContent = activeTitle;
+el("preset-note").textContent = presets[choice("preset").value].note;
 
 startGame({
   parameters: STRESS_PARAMETERS,

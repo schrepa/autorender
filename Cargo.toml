@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_profile", "crates/engine_terrain", "crates/engine_worker", "apps/*", "tools/xtask", "tools/assetc", "tools/vgbuild"]
+members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_profile", "crates/engine_terrain", "crates/engine_worker", "crates/engine_native", "apps/*", "tools/xtask", "tools/assetc", "tools/vgbuild"]
 resolver = "3"
 # The vendored glam copy is patched in below, not a workspace member.
 exclude = ["vendor"]
@@ -23,6 +23,8 @@ engine_render = { path = "crates/engine_render" }
 engine_assets = { path = "crates/engine_assets" }
 engine_scene = { path = "crates/engine_scene" }
 engine_dev = { path = "crates/engine_dev" }
+engine_native = { path = "crates/engine_native" }
+engine_worker = { path = "crates/engine_worker" }
 engine_assetc = { path = "tools/assetc" }
 engine_vgbuild = { path = "tools/vgbuild" }
 base64 = "=0.22.1"
@@ -47,6 +49,10 @@ js-sys = "=0.3.104"
 wasm-bindgen-futures = "=0.4.77"
 web-sys = { version = "=0.3.104", features = ["HtmlCanvasElement", "Window", "Performance", "console", "Headers", "Request", "RequestInit", "Response"] }
 console_error_panic_hook = "0.1.7"
+# Native hosts: windows, blocking on GPU startup, JPEG images.
+winit = "=0.30.13"
+pollster = "=0.4.0"
+zune-jpeg = "=0.5.15"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -38,7 +38,7 @@ fn page() -> String {
         serde_json::to_string_pretty(&limits).expect("limits serialize")
     ));
     page.push_str(
-        "\n/** The scenes, looks, effects, views and mesh batches the page offers, and the\n * per-frame sample's field names in order. */\n",
+        "\n/** The presets, scenes, looks, effects, views and mesh batches the page offers,\n * and the per-frame sample's field names in order. */\n",
     );
     page.push_str(&format!(
         "export const STRESS_CATALOG = {} as const;\n",

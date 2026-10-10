@@ -57,6 +57,6 @@ mod virtual_geometry;
 mod visibility;
 mod water;
 pub use browser::{Renderer, StartingRenderer};
+pub use platform::{AdapterInfo, RenderError, RenderTarget, read_range};
 #[cfg(not(target_arch = "wasm32"))]
-pub use platform::NativeWindow;
-pub use platform::{RenderError, RenderTarget, read_range};
+pub use platform::{GpuPreference, NativeWindow};

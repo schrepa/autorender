@@ -1,12 +1,15 @@
 //! What the renderer presents to, a canvas or a window: its surface,
 //! configured at the target's size within the device's limits, suspended at
-//! size zero and reconfigured at the render boundary after a resize.
+//! size zero and reconfigured at the render boundary after a resize. An
+//! offscreen target has a texture of that size in place of a surface.
 
 use super::*;
 
 pub(super) struct Display {
     instance: wgpu::Instance,
-    surface: wgpu::Surface<'static>,
+    // None for an offscreen target, which draws into `offscreen`.
+    surface: Option<wgpu::Surface<'static>>,
+    offscreen: Option<wgpu::Texture>,
     target: RenderTarget,
     configuration: wgpu::SurfaceConfiguration,
     pub(super) max_dimension: u32,
@@ -21,7 +24,7 @@ impl Display {
     /// `max_dimension` (suspended when it has no area), not yet configured.
     pub(super) fn new(
         instance: wgpu::Instance,
-        surface: wgpu::Surface<'static>,
+        surface: Option<wgpu::Surface<'static>>,
         target: RenderTarget,
         adapter: &wgpu::Adapter,
         (max_dimension, max_layers): (u32, u32),
@@ -29,11 +32,25 @@ impl Display {
         let (width, height) = target.size();
         let extent = clamped_extent(width, height, max_dimension);
         let (width, height) = extent.unwrap_or((1, 1));
-        let mut configuration = surface
-            .get_default_config(adapter, width, height)
-            .ok_or_else(|| {
-                RenderError("This adapter cannot present to the supplied canvas.".into())
-            })?;
+        let mut configuration = match &surface {
+            Some(surface) => surface
+                .get_default_config(adapter, width, height)
+                .ok_or_else(|| {
+                    RenderError("This adapter cannot present to the supplied canvas.".into())
+                })?,
+            // Read back as it is stored: RGBA.
+            None => wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                width,
+                height,
+                present_mode: wgpu::PresentMode::Fifo,
+                desired_maximum_frame_latency: 2,
+                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+                view_formats: Vec::new(),
+                color_space: wgpu::SurfaceColorSpace::Auto,
+            },
+        };
         configuration.present_mode = wgpu::PresentMode::Fifo;
         // Shaders encode their output for a UNORM target, as canvases are.
         configuration.format = configuration.format.remove_srgb_suffix();
@@ -41,6 +58,7 @@ impl Display {
         Ok(Self {
             instance,
             surface,
+            offscreen: None,
             target,
             configuration,
             max_dimension,
@@ -50,12 +68,30 @@ impl Display {
         })
     }
 
-    /// Sizes the target and configures the surface, unless suspended.
+    /// Sizes the target and configures the surface (or makes the offscreen
+    /// texture), unless suspended.
     pub(super) fn configure(&mut self, device: &wgpu::Device) {
         if !self.suspended {
             self.target
                 .set_size((self.configuration.width, self.configuration.height));
-            self.surface.configure(device, &self.configuration);
+            self.configure_surface(device);
+        }
+    }
+
+    fn configure_surface(&mut self, device: &wgpu::Device) {
+        match &self.surface {
+            Some(surface) => surface.configure(device, &self.configuration),
+            None => {
+                self.offscreen = Some(crate::targets::texture_2d(
+                    device,
+                    "engine/offscreen",
+                    self.size(),
+                    1,
+                    1,
+                    self.configuration.format,
+                    self.configuration.usage,
+                ));
+            }
         }
     }
 
@@ -89,21 +125,24 @@ impl Display {
         // device loss, so resize never touches a known-lost GPU device.
     }
 
-    /// The canvas texture to draw, reconfiguring the surface (and replacing
+    /// The texture to draw, reconfiguring the surface (and replacing
     /// `depth`) first when resized; `None` skips the frame (a lost, outdated
     /// or busy surface).
     pub(super) fn acquire(
         &mut self,
         device: &wgpu::Device,
         depth: &mut DepthTarget,
-    ) -> Result<Option<wgpu::SurfaceTexture>, RenderError> {
+    ) -> Result<Option<DisplayFrame>, RenderError> {
         let _profile = engine_profile::span("render", "surface_acquisition");
         if self.reconfigure_next_frame {
-            self.surface.configure(device, &self.configuration);
+            self.configure_surface(device);
             depth.resize(device, self.size());
             self.reconfigure_next_frame = false;
         }
-        let frame = match self.surface.get_current_texture() {
+        let Some(surface) = &self.surface else {
+            return Ok(self.offscreen.clone().map(DisplayFrame::Offscreen));
+        };
+        let frame = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 self.reconfigure_next_frame = true;
@@ -130,7 +169,37 @@ impl Display {
                 ));
             }
         };
-        Ok(Some(frame))
+        Ok(Some(DisplayFrame::Surface(frame)))
+    }
+
+    /// The offscreen texture frames draw into, for read-backs; none for a
+    /// canvas or window.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn offscreen(&self) -> Option<&wgpu::Texture> {
+        self.offscreen.as_ref()
+    }
+}
+
+/// A frame's texture: a surface's, presented after submission, or the
+/// offscreen texture, which keeps it.
+pub(super) enum DisplayFrame {
+    Surface(wgpu::SurfaceTexture),
+    Offscreen(wgpu::Texture),
+}
+
+impl DisplayFrame {
+    pub(super) fn texture(&self) -> &wgpu::Texture {
+        match self {
+            Self::Surface(frame) => &frame.texture,
+            Self::Offscreen(texture) => texture,
+        }
+    }
+
+    /// Shows the frame: a surface's presents, the offscreen texture keeps it.
+    pub(super) fn present(self, queue: &wgpu::Queue) {
+        if let Self::Surface(frame) = self {
+            queue.present(frame);
+        }
     }
 }
 

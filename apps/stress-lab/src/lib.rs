@@ -11,7 +11,10 @@ mod game;
 mod highlands;
 mod metrics;
 mod metro;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native;
 mod observation;
+mod presets;
 mod rocks;
 mod scene;
 mod shapes;
@@ -25,6 +28,7 @@ pub use game::StressLab;
 pub use highlands::{FILES as HIGHLANDS_FILES, ROCK_FILES};
 pub use metrics::{FrameMetrics, StressMetrics};
 pub use observation::{StressSample, StressSnapshot, stress_observation, stress_sample};
+pub use presets::{Preset, preset, presets};
 pub use scene::{
     StressFile, create_workload, create_workload_with, look, set_view, stress_reflections,
     stress_shafts,

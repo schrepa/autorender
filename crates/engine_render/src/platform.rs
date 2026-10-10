@@ -1,8 +1,8 @@
 //! What differs between the platforms the renderer runs on, the browser's
-//! WebGPU and native GPU interfaces: where frames present, how GPU
-//! instances start, how map callbacks run, how mapped buffers are written,
-//! how the renderer yields while pipelines compile, and how files are read
-//! by range.
+//! WebGPU and native GPU interfaces: where frames present (a canvas, a
+//! window or an offscreen texture), how GPU instances start, how map
+//! callbacks run, how mapped buffers are written, how the renderer yields
+//! while pipelines compile, and how files are read by range.
 
 use std::fmt;
 
@@ -48,12 +48,75 @@ pub enum RenderTarget {
     /// A page's canvas, sized by the page.
     #[cfg(target_arch = "wasm32")]
     Canvas(web_sys::HtmlCanvasElement),
-    /// A native window, `size` physical pixels.
+    /// A native window, `size` physical pixels, on the `gpu` preferred.
     #[cfg(not(target_arch = "wasm32"))]
     Window {
         window: std::sync::Arc<dyn NativeWindow>,
         size: (u32, u32),
+        gpu: GpuPreference,
     },
+    /// An offscreen texture of `size` physical pixels, which frames draw
+    /// into without presenting, on the `gpu` preferred: for tools that run
+    /// without a window.
+    #[cfg(not(target_arch = "wasm32"))]
+    Offscreen {
+        size: (u32, u32),
+        gpu: GpuPreference,
+    },
+}
+
+/// `descriptor` for the GPU interface native renderers draw through: those
+/// wgpu's `WGPU_BACKEND` names (`vulkan`, `dx12`, `metal`), else the one
+/// browsers use on the platform. That is D3D12 on Windows where DXC
+/// (`dxcompiler.dll`, which browsers ship) is beside the program or on the
+/// path, as the engine's shaders need it, else Vulkan; Metal on Apple's;
+/// Vulkan elsewhere.
+#[cfg(not(target_arch = "wasm32"))]
+fn native(mut descriptor: wgpu::InstanceDescriptor) -> wgpu::InstanceDescriptor {
+    let dxc = dxc();
+    let browsers = if cfg!(windows) && dxc.is_some() {
+        wgpu::Backends::DX12
+    } else if cfg!(target_vendor = "apple") {
+        wgpu::Backends::METAL
+    } else {
+        wgpu::Backends::VULKAN
+    };
+    descriptor.backends = browsers.with_env();
+    if let Some(path) = dxc {
+        descriptor.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::DynamicDxc {
+            dxc_path: path.to_string_lossy().into_owned(),
+        };
+    }
+    descriptor
+}
+
+/// DXC's library beside the program or on the path, on Windows.
+#[cfg(not(target_arch = "wasm32"))]
+fn dxc() -> Option<std::path::PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|program| program.parent().map(std::path::Path::to_path_buf));
+    let path = std::env::var_os("PATH");
+    beside
+        .into_iter()
+        .chain(path.iter().flat_map(std::env::split_paths))
+        .map(|folder| folder.join("dxcompiler.dll"))
+        .find(|file| file.is_file())
+}
+
+/// The GPU a native renderer asks for where a machine has an integrated and
+/// a discrete one.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GpuPreference {
+    /// The discrete GPU, as browsers are asked for.
+    #[default]
+    HighPerformance,
+    /// The integrated GPU.
+    LowPower,
 }
 
 impl RenderTarget {
@@ -66,27 +129,46 @@ impl RenderTarget {
                 ..wgpu::InstanceDescriptor::new_without_display_handle()
             }),
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Window { window, .. } => wgpu::Instance::new(wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::PRIMARY,
-                ..wgpu::InstanceDescriptor::new_with_display_handle(Box::new(window.clone()))
-            }),
+            Self::Window { window, .. } => wgpu::Instance::new(native(
+                wgpu::InstanceDescriptor::new_with_display_handle(Box::new(window.clone())),
+            )),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Offscreen { .. } => wgpu::Instance::new(native(
+                wgpu::InstanceDescriptor::new_without_display_handle(),
+            )),
         }
     }
 
-    /// A surface of `instance` presenting to it.
+    /// The GPU to ask its instance for.
+    pub(crate) fn power_preference(&self) -> wgpu::PowerPreference {
+        match self {
+            #[cfg(target_arch = "wasm32")]
+            Self::Canvas(_) => wgpu::PowerPreference::HighPerformance,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Window { gpu, .. } | Self::Offscreen { gpu, .. } => match gpu {
+                GpuPreference::HighPerformance => wgpu::PowerPreference::HighPerformance,
+                GpuPreference::LowPower => wgpu::PowerPreference::LowPower,
+            },
+        }
+    }
+
+    /// A surface of `instance` presenting to it; none for an offscreen
+    /// texture.
     pub(crate) fn surface(
         &self,
         instance: &wgpu::Instance,
-    ) -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError> {
+    ) -> Result<Option<wgpu::Surface<'static>>, wgpu::CreateSurfaceError> {
         match self {
             #[cfg(target_arch = "wasm32")]
-            Self::Canvas(canvas) => {
-                instance.create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
-            }
+            Self::Canvas(canvas) => instance
+                .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+                .map(Some),
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Window { window, .. } => {
-                instance.create_surface(wgpu::SurfaceTarget::Window(Box::new(window.clone())))
-            }
+            Self::Window { window, .. } => instance
+                .create_surface(wgpu::SurfaceTarget::Window(Box::new(window.clone())))
+                .map(Some),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Offscreen { .. } => Ok(None),
         }
     }
 
@@ -96,7 +178,7 @@ impl RenderTarget {
             #[cfg(target_arch = "wasm32")]
             Self::Canvas(canvas) => (canvas.width(), canvas.height()),
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Window { size, .. } => *size,
+            Self::Window { size, .. } | Self::Offscreen { size, .. } => *size,
         }
     }
 
@@ -110,7 +192,37 @@ impl RenderTarget {
                 canvas.set_height(height);
             }
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Window { size, .. } => *size = (width, height),
+            Self::Window { size, .. } | Self::Offscreen { size, .. } => *size = (width, height),
+        }
+    }
+}
+
+/// The GPU a renderer draws on, as its interface names it: browsers name
+/// little of it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AdapterInfo {
+    pub name: String,
+    /// PCI vendor and device IDs, where known.
+    pub vendor: u32,
+    pub device: u32,
+    /// Integrated, discrete, virtual or software.
+    pub device_type: String,
+    pub driver: String,
+    pub driver_info: String,
+    /// DX12, Vulkan, Metal, or the browser's WebGPU.
+    pub backend: String,
+}
+
+impl AdapterInfo {
+    pub(crate) fn of(info: &wgpu::AdapterInfo) -> Self {
+        Self {
+            name: info.name.clone(),
+            vendor: info.vendor,
+            device: info.device,
+            device_type: format!("{:?}", info.device_type),
+            driver: info.driver.clone(),
+            driver_info: info.driver_info.clone(),
+            backend: format!("{:?}", info.backend),
         }
     }
 }

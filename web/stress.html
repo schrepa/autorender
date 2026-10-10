@@ -15,7 +15,7 @@
       </header>
       <section class="intro">
         <div><p class="eyebrow">WORKLOAD EXPLORER / REPRODUCIBLE LOAD</p><h1>Find the ceiling.</h1><p class="description">Start with 90,000 textured objects. Isolate a cost. Record the result.</p></div>
-        <div class="run-identity"><span id="active-preset">MAXIMUM VISUAL LOAD</span><small id="active-summary">Preparing the field…</small></div>
+        <div class="run-identity"><span id="active-preset"></span><small id="active-summary">Preparing the field…</small></div>
       </section>
       <div class="lab-layout">
         <section class="viewport" aria-label="Interactive engine stress scene">
@@ -27,18 +27,8 @@
         </section>
         <aside class="lab-controls" aria-label="Stress workload controls">
           <div class="panel-heading"><span>WORKLOAD</span><div><button id="quick-profile" type="button" hidden disabled>Profile 5s</button> <button id="quick-record" type="button" disabled>Record</button> <button id="pause" type="button" aria-pressed="false">Pause</button></div></div>
-          <label class="control-wide">Preset<select id="preset" disabled>
-            <option value="visual">Maximum visual · 90k objects</option>
-            <option value="city">Wild city · 90k objects</option>
-            <option value="metro">Metro · every feature · 90k objects</option>
-            <option value="dense">Dense geometry · virtual meshes · 2k objects</option>
-            <option value="highlands">Highlands · 8 km streamed terrain · 4k objects</option>
-            <option value="mixed">Mixed · 10k objects + collision</option>
-            <option value="motion">Transforms · 50k moving objects</option>
-            <option value="queries">Queries · 10k colliders</option>
-            <option value="sensors">Dense sensors · budget pressure</option>
-          </select></label>
-          <p id="preset-note" class="panel-note">Rendering, extraction, batching and texture sampling at maximum object count.</p>
+          <label class="control-wide">Preset<select id="preset" disabled></select></label>
+          <p id="preset-note" class="panel-note"></p>
           <fieldset id="workload-fields" disabled>
             <div class="controls-grid">
               <label>Objects<select id="objects"><option>1000</option><option>10000</option><option>25000</option><option>50000</option><option selected>90000</option><option>120000</option><option>150000</option><option>200000</option><option>250000</option><option>500000</option><option>1000000</option></select></label>

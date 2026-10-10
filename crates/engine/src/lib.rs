@@ -152,11 +152,11 @@ mod app_host;
 #[cfg(feature = "dev")]
 mod dev_host;
 mod game_host;
-/// A native window hosts present to.
-#[cfg(not(target_arch = "wasm32"))]
-pub use engine_render::NativeWindow;
 /// Where hosts present, and what renderers fail with.
-pub use engine_render::{RenderError, RenderTarget};
+pub use engine_render::{AdapterInfo, RenderError, RenderTarget};
+/// A native window hosts present to, and the GPU they ask for.
+#[cfg(not(target_arch = "wasm32"))]
+pub use engine_render::{GpuPreference, NativeWindow};
 pub use game_host::GameHost;
 
 /// The page's side of a hosted game, owned by the main thread.

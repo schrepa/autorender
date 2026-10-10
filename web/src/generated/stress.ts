@@ -197,9 +197,209 @@ export const STRESS_CONFIG_LIMITS = {
   }
 } as const;
 
-/** The scenes, looks, effects, views and mesh batches the page offers, and the
- * per-frame sample's field names in order. */
+/** The presets, scenes, looks, effects, views and mesh batches the page offers,
+ * and the per-frame sample's field names in order. */
 export const STRESS_CATALOG = {
+  "presets": [
+    {
+      "value": "visual",
+      "label": "Maximum visual · 90k objects",
+      "title": "MAXIMUM VISUAL LOAD",
+      "note": "Rendering, extraction, batching and texture sampling at maximum object count.",
+      "config": {
+        "seed": 1337,
+        "renderables": 90000,
+        "moving_percent": 0,
+        "hierarchy": false,
+        "interpolation": false,
+        "colliders": 0,
+        "sensor_percent": 0,
+        "dense_colliders": false,
+        "queries_per_tick": 0,
+        "mesh_variety": 32,
+        "textured": true,
+        "culling": true,
+        "scene": "field",
+        "compressed_textures": false
+      }
+    },
+    {
+      "value": "city",
+      "label": "Wild city · 90k objects",
+      "title": "WILD CITY",
+      "note": "52 building, vehicle and machine shapes: skyscrapers, traffic, trains, drones, cranes and Ferris wheels. Moving objects are the traffic.",
+      "config": {
+        "seed": 1337,
+        "renderables": 90000,
+        "moving_percent": 10,
+        "hierarchy": true,
+        "interpolation": true,
+        "colliders": 0,
+        "sensor_percent": 0,
+        "dense_colliders": false,
+        "queries_per_tick": 0,
+        "mesh_variety": 64,
+        "textured": true,
+        "culling": true,
+        "scene": "city",
+        "compressed_textures": false
+      }
+    },
+    {
+      "value": "metro",
+      "label": "Metro · every feature · 90k objects",
+      "title": "METRO",
+      "note": "The city with every engine feature: glTF maps over procedural textures (BC7 where supported), refracting glass, masked foliage, tints and rotating ads, skinned people, keyframed props, thousands of lights and particles.",
+      "config": {
+        "seed": 1337,
+        "renderables": 90000,
+        "moving_percent": 10,
+        "hierarchy": true,
+        "interpolation": true,
+        "colliders": 0,
+        "sensor_percent": 0,
+        "dense_colliders": false,
+        "queries_per_tick": 0,
+        "mesh_variety": 64,
+        "textured": true,
+        "culling": true,
+        "scene": "metro",
+        "compressed_textures": true
+      }
+    },
+    {
+      "value": "dense",
+      "label": "Dense geometry · virtual meshes · 2k objects",
+      "title": "DENSE GEOMETRY",
+      "note": "Boulders and fluted columns of 330,000 to 590,000 triangles each on terrain tiles, drawn as virtual geometry: the GPU picks the clusters each view needs. Build the files with `cargo run -p engine_vgbuild --release --bin dense_assets`.",
+      "config": {
+        "seed": 1337,
+        "renderables": 2000,
+        "moving_percent": 5,
+        "hierarchy": false,
+        "interpolation": true,
+        "colliders": 0,
+        "sensor_percent": 0,
+        "dense_colliders": false,
+        "queries_per_tick": 0,
+        "mesh_variety": 8,
+        "textured": true,
+        "culling": true,
+        "scene": "dense",
+        "compressed_textures": false
+      }
+    },
+    {
+      "value": "highlands",
+      "label": "Highlands · 8 km streamed terrain · 4k objects",
+      "title": "HIGHLANDS",
+      "note": "An 8 km terrain the engine generates as the camera moves: eroded mountains from noise, then hand-placed stamps level a plateau for a hamlet of towers, flatten a valley floor and cut a cave mouth. Coarse levels keep the whole world visible; finer tiles stream around the camera.",
+      "config": {
+        "seed": 1337,
+        "renderables": 4000,
+        "moving_percent": 10,
+        "hierarchy": true,
+        "interpolation": true,
+        "colliders": 0,
+        "sensor_percent": 0,
+        "dense_colliders": false,
+        "queries_per_tick": 0,
+        "mesh_variety": 32,
+        "textured": true,
+        "culling": true,
+        "scene": "highlands",
+        "compressed_textures": false
+      }
+    },
+    {
+      "value": "mixed",
+      "label": "Mixed · 10k objects + collision",
+      "title": "MIXED WORKLOAD",
+      "note": "A moving hierarchy, interpolation, filtered queries and sensors share the frame budget.",
+      "config": {
+        "seed": 1337,
+        "renderables": 10000,
+        "moving_percent": 25,
+        "hierarchy": true,
+        "interpolation": true,
+        "colliders": 1000,
+        "sensor_percent": 10,
+        "dense_colliders": false,
+        "queries_per_tick": 32,
+        "mesh_variety": 8,
+        "textured": true,
+        "culling": true,
+        "scene": "field",
+        "compressed_textures": false
+      }
+    },
+    {
+      "value": "motion",
+      "label": "Transforms · 50k moving objects",
+      "title": "TRANSFORM PRESSURE",
+      "note": "50,000 moving objects with parents and interpolation. Toggle each feature to isolate its cost.",
+      "config": {
+        "seed": 1337,
+        "renderables": 50000,
+        "moving_percent": 100,
+        "hierarchy": true,
+        "interpolation": true,
+        "colliders": 0,
+        "sensor_percent": 0,
+        "dense_colliders": false,
+        "queries_per_tick": 0,
+        "mesh_variety": 1,
+        "textured": false,
+        "culling": true,
+        "scene": "field",
+        "compressed_textures": false
+      }
+    },
+    {
+      "value": "queries",
+      "label": "Queries · 10k colliders",
+      "title": "SPATIAL QUERY PRESSURE",
+      "note": "10,000 colliders with moving bounds and 256 ray, overlap and sweep queries per fixed tick.",
+      "config": {
+        "seed": 1337,
+        "renderables": 10000,
+        "moving_percent": 10,
+        "hierarchy": false,
+        "interpolation": false,
+        "colliders": 10000,
+        "sensor_percent": 0,
+        "dense_colliders": false,
+        "queries_per_tick": 256,
+        "mesh_variety": 8,
+        "textured": false,
+        "culling": true,
+        "scene": "field",
+        "compressed_textures": false
+      }
+    },
+    {
+      "value": "sensors",
+      "label": "Dense sensors · budget pressure",
+      "title": "DENSE SENSOR PRESSURE",
+      "note": "Clusters deliberately exceed pair budgets. Incomplete detection is visible and retained in recordings.",
+      "config": {
+        "seed": 1337,
+        "renderables": 10000,
+        "moving_percent": 25,
+        "hierarchy": false,
+        "interpolation": false,
+        "colliders": 2500,
+        "sensor_percent": 100,
+        "dense_colliders": true,
+        "queries_per_tick": 0,
+        "mesh_variety": 8,
+        "textured": true,
+        "culling": true,
+        "scene": "field",
+        "compressed_textures": false
+      }
+    }
+  ],
   "scenes": [
     {
       "value": "field",

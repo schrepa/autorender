@@ -63,7 +63,7 @@ mod virtual_draws;
 mod visibility_draws;
 
 use camera::CameraBindings;
-use display::{DepthTarget, Display};
+use display::{DepthTarget, Display, DisplayFrame};
 use impostor_draws::ImpostorDraws;
 pub(crate) use instances::FramePoses;
 use instances::Instances;
@@ -190,6 +190,7 @@ struct StructureKeys {
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    adapter: crate::AdapterInfo,
     // The canvas, its surface and the depth buffer at its size.
     display: Display,
     depth: DepthTarget,
@@ -323,13 +324,14 @@ impl Renderer {
             .map_err(|error| render_error("Could not create the GPU surface", error))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
+                power_preference: target.power_preference(),
+                compatible_surface: surface.as_ref(),
                 force_fallback_adapter: false,
                 ..Default::default()
             })
             .await
             .map_err(|error| render_error("No WebGPU adapter is available. Use a WebGPU-capable browser on HTTPS or localhost", error))?;
+        let adapter_info = crate::AdapterInfo::of(&adapter.get_info());
         let adapter_limits = adapter.limits();
         // Buffers as large as the adapter allows: content, not constants,
         // sizes them.
@@ -476,6 +478,7 @@ impl Renderer {
         let renderer = Self {
             device,
             queue,
+            adapter: adapter_info,
             display,
             depth,
             terrain_ids: None,
@@ -545,6 +548,11 @@ impl Renderer {
         )
     }
 
+    /// The GPU the renderer draws on.
+    pub fn adapter(&self) -> &crate::AdapterInfo {
+        &self.adapter
+    }
+
     /// Terrain tiles the device's texture array holds.
     pub fn terrain_tile_capacity(&self) -> u32 {
         self.display.max_layers
@@ -554,6 +562,80 @@ impl Renderer {
     /// A zero dimension suspends rendering without configuring an invalid surface.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.display.resize(width, height);
+    }
+
+    /// Waits until the GPU finished every frame submitted.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn wait_for_gpu(&self) -> Result<(), RenderError> {
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map(drop)
+            .map_err(|error| render_error("The GPU failed", error))
+    }
+
+    /// The last frame drawn offscreen, as `(width, height, RGBA8 rows from
+    /// the top)`, once the GPU finished it; `None` without an offscreen
+    /// target. Native renderers wait for the GPU here.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn read_offscreen(&self) -> Result<Option<(u32, u32, Vec<u8>)>, RenderError> {
+        let Some(texture) = self.display.offscreen() else {
+            return Ok(None);
+        };
+        let (width, height) = (texture.width(), texture.height());
+        // Rows of a texture copy align to 256 bytes.
+        let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("engine/offscreen-readback"),
+            size: u64::from(row) * u64::from(height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("engine/offscreen-readback"),
+            });
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(height),
+                },
+            },
+            texture.size(),
+        );
+        self.queue.submit([encoder.finish()]);
+        let mapped = std::sync::Arc::new(std::sync::OnceLock::new());
+        let result = std::sync::Arc::clone(&mapped);
+        buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |outcome| {
+                let _ = result.set(outcome);
+            });
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|error| render_error("Could not read the offscreen frame", error))?;
+        match mapped.get() {
+            Some(Ok(())) => {}
+            Some(Err(error)) => {
+                return Err(render_error("Could not read the offscreen frame", error));
+            }
+            None => return Err(RenderError("The offscreen frame never mapped.".into())),
+        }
+        let view = buffer
+            .slice(..)
+            .get_mapped_range()
+            .map_err(|error| render_error("Could not read the offscreen frame", error))?;
+        let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        for rows in view.chunks_exact(row as usize) {
+            pixels.extend_from_slice(&rows[..(width * 4) as usize]);
+        }
+        drop(view);
+        buffer.unmap();
+        Ok(Some((width, height, pixels)))
     }
 
     /// Renders a borrowed core frame using its retained structural and pose
@@ -702,6 +784,9 @@ impl Renderer {
     /// Whether pipelines created by earlier frames may still be compiling:
     /// the GPU has not yet completed the last frame that created some.
     pub fn pipelines_compiling(&self) -> bool {
+        // Native interfaces report finished work, compiles among it, when
+        // polled.
+        crate::platform::poll(&self.device);
         self.pipeline_counts.compiling()
     }
 

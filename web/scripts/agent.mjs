@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { AgentError, VERSION, MAX_BYTES, createBridge, failure } from "./agent-protocol.mjs";
 import { launchBrowserSession } from "./agent-browser.mjs";
+import { launchNativeSession, nativeProgram } from "./agent-native.mjs";
 
 // The engine's queries and controls, generated from it (`cargo xtask
 // schema`), and the bridge's own verbs.
@@ -17,7 +18,7 @@ const verbs = new Set([...queries, ...protocol.controls, ...bridgeControls]);
 // lists and option checks hold them to.
 const commands = {
   watch: { options: ["web-port", "port", "game", "browser"], summary: "Watch Rust, build, and replace identified browser sessions (cargo xtask agent watch)" },
-  serve: { options: ["url", "port", "browser"], summary: "Open one browser session on a running dev server and bridge requests to it" },
+  serve: { options: ["url", "port", "browser", "native", "args"], summary: "Open one browser session on a running dev server, or with --native PACKAGE|PROGRAM [--args \"name=value ...\"] one native session drawing offscreen, and bridge requests to it" },
   sessions: { options: ["port"], summary: "List the bridge's sessions; a request names one with --session" },
   development: { options: ["port"], summary: "The watch's build state and diagnostics" },
   request: { options: ["port", "session", "file", "json", "id"], summary: "Send a whole request, or a command, from --file or --json" },
@@ -84,9 +85,15 @@ async function serve(values) {
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   try {
-    owned = await launchBrowserSession({
-      url: values.url ?? "http://127.0.0.1:5173/stress.html", browserPath: values.browser,
-    });
+    if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", "A native session takes no --url or --browser.");
+    if (values.args && !values.native) throw new AgentError("invalid_arguments", "--args passes options to a --native program.");
+    owned = values.native
+      // Options as name=value pairs, which values starting with -- cannot
+      // pass here: --args "preset=metro gpu=integrated".
+      ? await launchNativeSession({ program: nativeProgram(values.native), args: values.args?.split(" ").filter(Boolean).map(option => `--${option}`) ?? [] })
+      : await launchBrowserSession({
+        url: values.url ?? "http://127.0.0.1:5173/stress.html", browserPath: values.browser,
+      });
     if (closing) { await owned.close(); return; }
     bridge = createBridge({
       session: owned.session, url: owned.url,

@@ -1,13 +1,13 @@
-//! What the page offers, from the lists the workloads use: scenes, looks,
-//! effects, views and mesh batches, each with its name in menus, and the
-//! names of the per-frame sample. `cargo xtask schema` writes it into the
+//! What the page offers, from the lists the workloads use: presets, scenes,
+//! looks, effects, views and mesh batches, each with its name in menus, and
+//! the names of the per-frame sample. `cargo xtask schema` writes it into the
 //! page's generated module.
 
 use serde::Serialize;
 
 use crate::config::MESH_VARIETIES;
 use crate::scene::{EFFECTS, LOOKS, SCENE_LOOK, VIEWS};
-use crate::{StressSample, StressScene};
+use crate::{Preset, StressSample, StressScene, presets};
 
 /// A menu choice: the value the workload takes, and its name in menus.
 #[derive(Clone, Debug, Serialize)]
@@ -26,6 +26,7 @@ fn choice(value: impl Into<String>, label: impl Into<String>) -> Choice {
 /// Everything the page offers.
 #[derive(Clone, Debug, Serialize)]
 pub struct Catalog {
+    pub presets: Vec<Preset>,
     pub scenes: Vec<Choice>,
     pub looks: Vec<Choice>,
     pub effects: Vec<Choice>,
@@ -37,6 +38,7 @@ pub struct Catalog {
 /// The page's catalog.
 pub fn catalog() -> Catalog {
     Catalog {
+        presets: presets(),
         scenes: StressScene::ALL
             .iter()
             .map(|scene| choice(scene.name(), scene.label()))

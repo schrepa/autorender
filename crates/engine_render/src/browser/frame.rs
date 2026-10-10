@@ -203,7 +203,7 @@ impl Renderer {
         drop(profile_writes);
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let view = surface
-            .texture
+            .texture()
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self
             .device
@@ -2779,7 +2779,7 @@ impl Renderer {
     fn submit_frame(
         &mut self,
         state: &mut FrameState<'_>,
-        frame: wgpu::SurfaceTexture,
+        frame: DisplayFrame,
         encoder: wgpu::CommandEncoder,
     ) {
         let FrameKind { gpu_mode, .. } = state.kind;
@@ -2848,7 +2848,7 @@ impl Renderer {
             pass.submitted(frame);
         }
         self.profiler.submitted();
-        self.queue.present(frame);
+        frame.present(&self.queue);
         // Native interfaces run finished work's callbacks, read-backs and
         // staging maps among them, when polled.
         crate::platform::poll(&self.device);

@@ -167,6 +167,30 @@ impl<G: Game> GameHost<G> {
         self.app.set_subpixel_culling(enabled);
     }
 
+    /// The GPU the game draws on.
+    pub fn adapter(&self) -> &crate::AdapterInfo {
+        self.app.renderer.adapter()
+    }
+
+    /// Waits until the GPU finished every frame submitted.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn wait_for_gpu(&self) -> crate::Result<()> {
+        self.app
+            .renderer
+            .wait_for_gpu()
+            .map_err(crate::app_host::render_failure)
+    }
+
+    /// The last frame an offscreen target drew, as `(width, height, RGBA8
+    /// rows from the top)`, once the GPU finished it; `None` for a window.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn read_offscreen(&self) -> crate::Result<Option<(u32, u32, Vec<u8>)>> {
+        self.app
+            .renderer
+            .read_offscreen()
+            .map_err(crate::app_host::render_failure)
+    }
+
     /// The last frame's statistics.
     pub fn frame_stats(&self) -> engine_core::FrameStats {
         self.app.stats()

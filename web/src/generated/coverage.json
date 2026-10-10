@@ -280,6 +280,7 @@
         "gpu-presentation",
         "hierarchy",
         "interpolation",
+        "native",
         "plugins",
         "taa",
         "terrain"
@@ -324,6 +325,7 @@
         "hierarchy",
         "interpolation",
         "lod",
+        "native",
         "spline",
         "surfaces",
         "terrain",
@@ -498,6 +500,7 @@
     {
       "op": "benchmark",
       "smokes": [
+        "native",
         "surfaces"
       ]
     },
@@ -510,6 +513,7 @@
         "hierarchy",
         "interpolation",
         "meshes",
+        "native",
         "streaming",
         "taa",
         "terrain",
@@ -536,6 +540,7 @@
         "interpolation",
         "jobs",
         "meshes",
+        "native",
         "plugins",
         "spline",
         "streaming",
@@ -554,6 +559,7 @@
         "interpolation",
         "jobs",
         "meshes",
+        "native",
         "plugins",
         "taa",
         "terrain"
@@ -567,6 +573,7 @@
         "gpu-presentation",
         "interpolation",
         "meshes",
+        "native",
         "taa",
         "terrain"
       ]
@@ -582,6 +589,7 @@
         "interpolation",
         "lod",
         "meshes",
+        "native",
         "spline",
         "surfaces",
         "taa",
@@ -594,6 +602,7 @@
       "op": "game",
       "smokes": [
         "lod",
+        "native",
         "surfaces"
       ]
     },
@@ -721,6 +730,7 @@
       "smokes": [
         "agent",
         "jobs",
+        "native",
         "plugins",
         "streaming",
         "terrain"

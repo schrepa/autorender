@@ -1,6 +1,7 @@
 //! `cargo xtask new app NAME`: a new game from the engine's app template
-//! (`crates/engine/examples/app_template.rs`, which lint compiles), its page
-//! and its entry, registered by its manifest.
+//! (`crates/engine/examples/app_template.rs`) and native entry
+//! (`crates/engine_native/examples/app_native.rs`), which lint compiles, its
+//! page and its page entry, registered by its manifest.
 
 use std::{fs, path::Path};
 
@@ -59,9 +60,10 @@ pub fn new(root: &Path, options: &[String]) -> Result<(), String> {
         .collect::<Vec<_>>()
         .join("\n");
     let source = format!(
-        "//! {pascal}: a game the engine runs on its page, `web/{page}`.\n{}\n",
+        "//! {pascal}: a game the engine runs on its page, `web/{page}`, and natively.\n{}\n",
         body.replace("Template", &pascal)
     );
+    let native = native_entry(root, name, &wasm, &pascal)?;
     let manifest = format!(
         r#"[package]
 name = "{name}"
@@ -73,6 +75,12 @@ publish.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# The game in a native window; named apart from the library, whose files
+# on Windows would otherwise share its name.
+[[bin]]
+name = "{name}-native"
+path = "src/main.rs"
+
 # A browser game: xtask builds it and serves {page}, which tools select as
 # `{name}`.
 [package.metadata.engine]
@@ -81,6 +89,10 @@ game = "{name}"
 
 [dependencies]
 engine.workspace = true
+
+# The native window.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+engine_native.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
@@ -123,6 +135,7 @@ startGame({{
     let files = [
         (crate_dir.join("Cargo.toml"), manifest),
         (crate_dir.join("src/lib.rs"), source),
+        (crate_dir.join("src/main.rs"), native),
         (root.join("web").join(&page), html),
         (root.join("web/src").join(name).join("main.ts"), entry),
     ];
@@ -140,6 +153,33 @@ startGame({{
     // the web host.
     run(root, "cargo", &["check", "-p", name])?;
     run(root, "cargo", &["xtask", "schema"])?;
-    println!("Run `cargo xtask dev` and open http://127.0.0.1:5173/{page}.");
+    println!(
+        "Run `cargo xtask dev` and open http://127.0.0.1:5173/{page}, or `cargo run -p {name}` \
+         for its window."
+    );
     Ok(())
+}
+
+/// The app's `src/main.rs`: the engine's native entry, whose game is the
+/// app's library `wasm` where the example's is the template.
+fn native_entry(root: &Path, name: &str, wasm: &str, pascal: &str) -> Result<String, String> {
+    let template = fs::read_to_string(root.join("crates/engine_native/examples/app_native.rs"))
+        .map_err(|error| format!("cannot read the native entry: {error}"))?;
+    let game = "#[path = \"../../engine/examples/app_template.rs\"]\nmod app;";
+    if !template.contains(game) {
+        return Err(format!(
+            "the native entry no longer reaches the template as `{game}`"
+        ));
+    }
+    // The example's own header describes the example.
+    let body = template
+        .lines()
+        .skip_while(|line| line.starts_with("//!"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(format!(
+        "//! {pascal} natively, in a window on DX12, Vulkan or Metal: `cargo run -p {name}`.\n{}\n",
+        body.replace(game, &format!("use {wasm} as app;"))
+            .replace("Template", pascal)
+    ))
 }

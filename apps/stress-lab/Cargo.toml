@@ -8,6 +8,12 @@ publish.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# The Stress Lab natively; named apart from the library, whose files on
+# Windows would otherwise share its name.
+[[bin]]
+name = "stress-lab-native"
+path = "src/main.rs"
+
 # Prints the generated files for `cargo xtask schema`.
 [[bin]]
 name = "schema"
@@ -21,6 +27,8 @@ game = "stress"
 
 [features]
 default = []
+# Native development sessions over standard input and output (`--dev`).
+dev = ["engine/dev", "engine_native/dev"]
 # Schemas of the configuration and snapshot, for `cargo xtask schema`.
 schema = ["dep:schemars", "engine/schema"]
 
@@ -29,6 +37,10 @@ engine.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = { workspace = true, optional = true }
+
+# The Stress Lab in a native window or offscreen (`src/main.rs`).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+engine_native.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
