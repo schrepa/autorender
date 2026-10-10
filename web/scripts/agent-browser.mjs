@@ -1,6 +1,6 @@
 /** Own one identified development runtime, independent of its HTTP transport. */
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -10,6 +10,20 @@ import { launchOptions } from "./browser-launch.mjs";
 const workspace = fileURLToPath(new URL("../../", import.meta.url));
 
 /** A replacement is ready only after its identity, build, pause, and render checks pass. */
+// Sessions' captures stay under artifacts/agent/SESSION; past the most
+// recent SESSIONS_KEPT, the oldest go.
+const SESSIONS_KEPT = 10;
+
+async function pruneSessions(root) {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const sessions = await Promise.all(entries.filter(entry => entry.isDirectory()).map(async entry => {
+    const path = resolve(root, entry.name);
+    return { path, modified: (await stat(path).catch(() => ({ mtimeMs: 0 }))).mtimeMs };
+  }));
+  sessions.sort((a, b) => b.modified - a.modified);
+  await Promise.all(sessions.slice(SESSIONS_KEPT).map(({ path }) => rm(path, { recursive: true, force: true })));
+}
+
 export async function launchBrowserSession({ url: value, browserPath, session = randomUUID(), expectedBuild, signal }) {
   const url = loopbackUrl(String(value));
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "Session identity must be a bounded identifier.", "session");
@@ -126,6 +140,7 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     }
     if (invalidated || closing) throw new AgentError("session_unavailable", "The browser closed during initialization.");
     const artifacts = resolve(workspace, "artifacts", "agent", session);
+    await pruneSessions(resolve(workspace, "artifacts", "agent"));
     return {
       session, url: url.href, instance, build, close, setInvalidated,
       async execute(command) {

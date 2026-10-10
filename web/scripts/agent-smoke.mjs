@@ -1,7 +1,7 @@
 /** End-to-end agent workflow using an isolated, disposable authored scene. */
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
-import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rm, unlink } from "node:fs/promises";
 import { createServer } from "node:net";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
@@ -20,7 +20,9 @@ const source = JSON.parse(sourceBytes.toString("utf8"));
 assert.ok(Number.isSafeInteger(source.revision), "The smoke fixture revision must fit a JavaScript integer.");
 const playerId = source.entities.find(entity => entity.tags?.includes("player"))?.id;
 assert.ok(playerId, "The authored sample needs a player.");
-const output = join(workspace, "artifacts/agent", `smoke-${randomUUID()}`);
+// Each run replaces the last one's output.
+const output = join(workspace, "artifacts/agent-smoke");
+await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
 await writeFile(sourcePath, sourceBytes, { flag: "wx" });
 

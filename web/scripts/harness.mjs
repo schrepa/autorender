@@ -6,9 +6,8 @@
  * place of a workload.
  */
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -44,9 +43,11 @@ export function gardenScene() {
   return JSON.parse(readFileSync(new URL("fixtures/garden.scene.json", import.meta.url), "utf8"));
 }
 
-/** A fresh directory under `artifacts/` for `name`'s captures. */
+/** `artifacts/NAME/`, emptied, for `name`'s captures: each run replaces
+ * the last one's. */
 export async function artifacts(name) {
-  const output = fileURLToPath(new URL(`../../artifacts/${name}-${randomUUID()}/`, import.meta.url));
+  const output = fileURLToPath(new URL(`../../artifacts/${name}/`, import.meta.url));
+  await rm(output, { recursive: true, force: true });
   await mkdir(output, { recursive: true });
   return output;
 }
