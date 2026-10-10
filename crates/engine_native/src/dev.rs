@@ -4,8 +4,11 @@
 //! command, or hands back a control the host carries out: pause and resume,
 //! benchmarks, captures (PNG files), the game's own controls and scene
 //! reloads. Profiling builds also take the agent's `profile`: a deep
-//! profile of the frames run meanwhile (see `deep.rs`), CPU samples of
-//! every thread included unless `cpu_samples` is false, written as files.
+//! profile of the frames run meanwhile (`engine_profiler`'s), CPU samples
+//! of every thread included unless `cpu_samples` is false, each pass's
+//! hardware counters where the session counts them (`--counters`), and with
+//! `vendor: "pix"` the last frame's per-draw counters replayed through PIX
+//! where the session loaded it (`--vendor pix`), written as files.
 //! Sessions draw offscreen and start paused, as the page's development
 //! sessions do; a first line says the session is ready.
 
@@ -19,8 +22,10 @@ use engine::{Game, GameHost};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::Offscreen;
 use crate::files;
+#[cfg(feature = "profiling")]
+use crate::{Frames, PixRecord, ProfileRecord, Record};
+use crate::{Offscreen, Pix};
 
 // The interval of frames while the session runs.
 const FRAME: Duration = Duration::from_micros(16_667);
@@ -44,6 +49,9 @@ pub struct DevSession<G: Game> {
     source: Option<PathBuf>,
     // Where captures go.
     artifacts: PathBuf,
+    // PIX's capturer, loaded before the game's device, for profiles asking
+    // for its counters.
+    pix: Option<Pix>,
     captures: u32,
     paused: bool,
     started: Instant,
@@ -72,6 +80,7 @@ impl<G: Game> DevSession<G> {
             parameters: BTreeMap::new(),
             source: None,
             artifacts,
+            pix: None,
             captures: 0,
             paused: true,
             started: Instant::now(),
@@ -98,13 +107,23 @@ impl<G: Game> DevSession<G> {
         self
     }
 
-    /// The session with the options the program read, with what each does.
+    /// The session with more of the options the program read, with what
+    /// each does.
     #[must_use]
     pub fn parameters(mut self, parameters: &[(&str, &str)]) -> Self {
-        self.parameters = parameters
-            .iter()
-            .map(|&(name, what)| (name.to_owned(), what.to_owned()))
-            .collect();
+        self.parameters.extend(
+            parameters
+                .iter()
+                .map(|&(name, what)| (name.to_owned(), what.to_owned())),
+        );
+        self
+    }
+
+    /// The session with PIX's capturer, loaded before the game's device,
+    /// for profiles asking for its counters.
+    #[must_use]
+    pub fn pix(mut self, pix: Option<Pix>) -> Self {
+        self.pix = pix;
         self
     }
 
@@ -128,6 +147,8 @@ impl<G: Game> DevSession<G> {
             "size": [size.0, size.1],
             "adapter": adapter(self.game.host()),
             "profiling": cfg!(feature = "profiling"),
+            "counters": counting(),
+            "pix": self.pix.is_some(),
             "controls": self.controls.iter().map(|(name, control)| (name.clone(), json!(control.description))).collect::<Map<_, _>>(),
             "parameters": self.parameters,
         }));
@@ -427,18 +448,18 @@ impl<G: Game> DevSession<G> {
 
     /// Runs frames back to back for `duration_ms` (100 to 5000, 5000 by
     /// default), so the GPU's clocks stay up as under load, while a capture
-    /// of at most `max_events` CPU events and every frame's GPU spans runs,
-    /// then pauses and writes the report as a file.
+    /// of at most `max_events` CPU events and every frame's GPU spans runs
+    /// (and the counters where the session counts them), then pauses and
+    /// writes the report as files; with `vendor: "pix"`, the last frame is
+    /// also captured through PIX and replayed for each draw's counters.
     #[cfg(feature = "profiling")]
     fn profile(&mut self, command: &Map<String, Value>) -> Value {
-        if command
-            .keys()
-            .any(|key| !["op", "duration_ms", "max_events", "cpu_samples"].contains(&key.as_str()))
-        {
+        let options = ["op", "duration_ms", "max_events", "cpu_samples", "vendor"];
+        if command.keys().any(|key| !options.contains(&key.as_str())) {
             return self.error(
                 "invalid_request",
                 "$",
-                "profile accepts duration_ms, max_events, and cpu_samples only",
+                "profile accepts duration_ms, max_events, cpu_samples and vendor only",
             );
         }
         let bounded =
@@ -459,6 +480,18 @@ impl<G: Game> DevSession<G> {
                 &format!("duration_ms must be 100..5000 and max_events 256..{max}"),
             );
         };
+        let pix = match command.get("vendor") {
+            None => false,
+            Some(vendor) if vendor == "pix" => true,
+            Some(_) => return self.error("invalid_request", "$.vendor", "vendor is pix"),
+        };
+        if pix && self.pix.is_none() {
+            return self.error(
+                "pix_unavailable",
+                "$.vendor",
+                "PIX's counters need the session started with --vendor pix, where PIX is installed",
+            );
+        }
         if !self.paused {
             return self.error(
                 "pause_required",
@@ -467,49 +500,61 @@ impl<G: Game> DevSession<G> {
             );
         }
         let before = self.invoke_op("status");
-        let cpu_samples = command.get("cpu_samples") != Some(&json!(false));
-        let capture = match self.game.start_profile(max_events as usize, cpu_samples) {
-            Ok(capture) => capture,
-            Err(error) => return self.error("profiling_unavailable", "$", &error.message),
-        };
-        let started = Instant::now();
-        let mut failed = None;
-        while started.elapsed() < Duration::from_millis(duration) {
-            let timestamp = self.now();
-            if let Err(error) = self.game.frame(timestamp) {
-                failed = Some(error.to_string());
-                break;
-            }
-        }
-        let after = self.invoke_op("status");
-        let context = json!({
-            "program": "engine_native",
-            "adapter": adapter(self.game.host()),
-            "size": [self.game.size().0, self.game.size().1],
-            "duration_ms": duration,
-            "observation_start": before["observation"],
-            "observation_end": after["observation"],
-            "frame_failed": failed,
-        });
         self.captures += 1;
         let stem = format!("profile-{}", self.captures);
-        let files = match self
-            .game
-            .finish_profile(capture, &self.artifacts, &stem, context)
-        {
-            Ok(files) => files,
+        let record = Record {
+            gpu_capture: None,
+            profile: Some(ProfileRecord {
+                folder: self.artifacts.clone(),
+                stem: stem.clone(),
+                max_events: Some(max_events as usize),
+                cpu_samples: command.get("cpu_samples") != Some(&json!(false)),
+                context: json!({
+                    "program": "engine_native",
+                    "adapter": adapter(self.game.host()),
+                    "size": [self.game.size().0, self.game.size().1],
+                    "duration_ms": duration,
+                    "observation_start": before["observation"],
+                }),
+            }),
+            pix_counters: pix.then(|| PixRecord {
+                folder: self.artifacts.join(format!("{stem}-pix")),
+                counters: Vec::new(),
+            }),
+        };
+        let started = self.started;
+        let at = |_| started.elapsed().as_secs_f64() * 1000.0;
+        let recorded = match self.game.record(
+            Frames::For(Duration::from_millis(duration)),
+            at,
+            &record,
+            self.pix.as_ref(),
+        ) {
+            Ok(recorded) => recorded,
             Err(error) => return self.error("capture_failed", "$", &error.message),
         };
-        let path = |path: &std::path::Path| path.display().to_string();
+        let after = self.invoke_op("status");
+        let files = recorded.profile.unwrap_or_default();
+        let pix_file = |name: &str| {
+            record
+                .pix_counters
+                .as_ref()
+                .map(|dive| dive.folder.join(name).display().to_string())
+        };
         json!({"ok": true, "observation": after["observation"], "result": {
-            "temporary": true, "paused": true, "complete": files.complete && failed.is_none(),
+            "temporary": true, "paused": true,
+            "complete": files["complete"] == true && recorded.failed.is_none(),
+            "frame_failed": recorded.failed.map(|error| error.to_string()),
             "artifacts": {
-                "trace": path(&files.report),
-                "firefox": path(&files.firefox),
-                "summary": path(&files.summary),
+                "trace": files["report"],
+                "firefox": files["firefox"],
+                "summary": files["summary"],
                 "cpu_profile": null,
+                "pix_capture": pix_file("frame.wpix"),
+                "pix_events": pix_file("pix-events.csv"),
+                "pix_summary": pix_file("pix.summary.json"),
             },
-            "note": "The summary lists the hottest functions, lines and instructions per thread, GPU pass and draw costs, what was captured and the deeper layers recommended to set up; the firefox file opens at profiler.firefox.com or ui.perfetto.dev.",
+            "note": "The summary lists the hottest functions, lines and instructions per thread, GPU pass and draw costs, each pass's hardware counters where the session counts them, what was captured and the deeper layers recommended to set up; the firefox file opens at profiler.firefox.com or ui.perfetto.dev; pix_summary holds each render-graph node's and draw's counters PIX replayed.",
         }})
     }
 
@@ -745,4 +790,12 @@ fn read_lines() -> Receiver<String> {
         })
         .expect("threads start");
     lines
+}
+
+/// Whether the session counts each pass's hardware counters.
+fn counting() -> bool {
+    #[cfg(feature = "profiling")]
+    return engine_profiler::counters::enabled();
+    #[cfg(not(feature = "profiling"))]
+    false
 }

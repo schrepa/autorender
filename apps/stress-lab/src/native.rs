@@ -1,17 +1,15 @@
 //! The Stress Lab natively: a workload or an authored scene in a window, or
 //! drawn offscreen for a number of frames, with the page's parameters as
-//! options (`--preset metro`, `--source PATH`...) and the files the page
-//! fetches read from disk.
+//! options (`--preset metro`, `--source PATH`...) beside the native host's
+//! (`engine_native::HostOptions`), and the files the page fetches read from
+//! disk.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Instant;
 
 use engine::{Engine, Error, ErrorCode, Feature};
-use engine_native::{
-    CacheOptions, GpuPreference, JobOptions, Measure, Offscreen, Pix, Window, files,
-};
+use engine_native::{Arguments, HostOptions, files};
 
 use crate::{DENSE_FILES, HIGHLANDS_FILES, ROCK_FILES, StressConfig, StressFile, StressLab};
 use crate::{StressScene, preset, presets, set_view};
@@ -30,69 +28,11 @@ The page's parameters:
   --visibility on|off  shade virtual geometry through the visibility buffer
   --lod on|off         off: draw every instance as its mesh
   --impostors on|off   off: draw no impostors
-
-Native options:
   --view NAME          camera view
-  --size WxH           window or offscreen size in physical pixels
-  --vsync on|off       whether window frames wait for the display's refresh
-                       (default on); off measures as browsers' frame rates do
-  --frames N           measure N window frames after --settle-ms, then close
-                       and print their rate and CPU times as JSON
-  --settle-ms MS       with --frames: play before measuring (default 20000)
-  --gpu discrete|integrated
-                       the GPU asked for where there are two (default discrete)
-  --workers N|off      job worker threads (default half the logical
-                       processors, at most 8); off runs jobs in the engine
-  --jobcache off|verify|MiB
-                       keep job outputs beside the program (default 1024
-                       MiB); verify runs every job anyway and compares
-  --assets DIR         the folder holding stress/ (default web/public)
-  --offscreen FRAMES   draw FRAMES frames at 60 Hz offscreen and print their
-                       statistics as JSON, without a window
-  --capture PATH       with --offscreen: the last frame as a PNG file
-  --profile DIR        with --offscreen: a deep profile of the frames, on any
-                       machine without setup: CPU samples of every thread
-                       (functions, lines, instructions), the engine's spans,
-                       each frame's GPU passes and draws, and the deeper
-                       layers recommended here; files in DIR (builds with
-                       --features profiling)
-  --counters on|LIST   with --profile, or --dev's profiles: each pass's GPU
-                       hardware counters, where the driver offers Vulkan's
-                       performance queries (Intel's; Mesa's on Linux), which
-                       need no privileges: the first set one run counts, or
-                       the comma-separated counters LIST names; the game then
-                       draws on Vulkan, and counting perturbs its timings
-  --vendor pix|nsight  a deep dive through the GPU vendor's or platform's
-                       tool, set up once, into --vendor-dir: pix (with
-                       --offscreen, on D3D12) captures the last frame and
-                       replays each draw's hardware counters, summed per
-                       render-graph node; nsight (in a window, on NVIDIA's
-                       GPUs) runs the program again under Nsight's GPU Trace,
-                       --settle-ms after it starts, for 5 frames, with its
-                       shader profiler (builds with --features profiling)
-  --vendor-dir DIR     with --vendor: where its files go
-  --vendor-counters LIST
-                       with --vendor pix: the comma-separated counters (PIX's
-                       names) to replay in place of the summary's own
-  --gpu-capture PATH   with --offscreen: the last frame's GPU work, frame-exact:
-                       a PIX capture (.wpix) where PIX is installed and the
-                       GPU interface is D3D12; else a RenderDoc capture
-                       (PATH_capture.rdc) under `renderdoccmd capture -w`;
-                       else Xcode's, with MTL_CAPTURE_ENABLED=1
-  --dev                serve the development protocol over standard input
-                       and output, drawing offscreen and starting paused
-                       (builds with --features dev)
-  --dev-artifacts DIR  with --dev: where captures go (default the system's
-                       temporary folder)
-  --help               this text
-
-WGPU_BACKEND=dx12|vulkan|metal chooses the GPU interface; by default the one
-browsers use on the platform: on Windows D3D12 where DXC (dxcompiler.dll,
-which Chrome and Firefox ship) is beside the program or on the path, else
-Vulkan.";
+  --assets DIR         the folder holding stress/ (default web/public)";
 
 /// The options development sessions name as their parameters, with what
-/// each does: the page's parameters and the native ones.
+/// each does: the page's (the host names its own).
 #[cfg(feature = "dev")]
 const PARAMETERS: &[(&str, &str)] = &[
     ("preset", "start from that workload preset"),
@@ -117,14 +57,11 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("lod", "off: draw every instance as its mesh"),
     ("impostors", "off: draw no impostors"),
     ("view", "camera view"),
-    ("size", "WIDTHxHEIGHT of the offscreen texture"),
-    ("gpu", "discrete or integrated"),
-    ("workers", "job worker threads, or off"),
-    ("jobcache", "off, verify, or the kept outputs' MiB"),
     ("assets", "the folder holding stress/"),
 ];
 
-/// What the command line asks for.
+/// What the command line asks for: the page's parameters, and the host's
+/// options.
 struct Options {
     preset: String,
     config: Option<String>,
@@ -136,36 +73,21 @@ struct Options {
     lod: bool,
     impostors: bool,
     view: Option<String>,
-    size: Option<(u32, u32)>,
-    gpu: GpuPreference,
-    jobs: JobOptions,
-    vsync: bool,
-    measure: Option<u32>,
-    settle_ms: u64,
     assets: PathBuf,
-    offscreen: Option<u32>,
-    capture: Option<PathBuf>,
-    gpu_capture: Option<PathBuf>,
-    profile: Option<PathBuf>,
-    counters: Option<String>,
-    vendor: Option<String>,
-    vendor_dir: Option<PathBuf>,
-    vendor_counters: Vec<String>,
-    dev: bool,
-    dev_artifacts: Option<PathBuf>,
+    host: HostOptions,
 }
 
 /// Runs the Stress Lab as `arguments` ask: the program's `main`.
 pub fn main(arguments: impl Iterator<Item = String>) -> ExitCode {
     let arguments: Vec<String> = arguments.collect();
     if arguments.iter().any(|argument| argument == "--help") {
-        println!("{USAGE}");
+        println!("{USAGE}\n\n{}", engine_native::USAGE);
         return ExitCode::SUCCESS;
     }
     match Options::parse(arguments) {
         Ok(options) => engine_native::exit(options.run()),
         Err(message) => {
-            eprintln!("{message}\n\n{USAGE}");
+            eprintln!("{message}\n\n{USAGE}\n\n{}", engine_native::USAGE);
             ExitCode::from(2)
         }
     }
@@ -184,228 +106,40 @@ impl Options {
             lod: true,
             impostors: true,
             view: None,
-            size: None,
-            gpu: GpuPreference::HighPerformance,
-            jobs: JobOptions::default(),
-            vsync: true,
-            measure: None,
-            settle_ms: 20_000,
             // The page's public folder, beside this crate.
             assets: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public"),
-            offscreen: None,
-            capture: None,
-            gpu_capture: None,
-            profile: None,
-            counters: None,
-            vendor: None,
-            vendor_dir: None,
-            vendor_counters: Vec::new(),
-            dev: false,
-            dev_artifacts: None,
+            host: HostOptions::default(),
         };
-        let mut arguments = arguments.into_iter();
+        let mut arguments = Arguments::new(arguments);
         while let Some(argument) = arguments.next() {
-            let (name, inline) = match argument.split_once('=') {
-                Some((name, value)) => (name.to_owned(), Some(value.to_owned())),
-                None => (argument, None),
-            };
-            let mut value = || {
-                inline
-                    .clone()
-                    .or_else(|| arguments.next())
-                    .ok_or_else(|| format!("{name} takes a value"))
-            };
-            let switch = |value: String| match value.as_str() {
-                "on" => Ok(true),
-                "off" => Ok(false),
-                _ => Err(format!("{name} is on or off, not {value}")),
-            };
-            match name.as_str() {
-                "--preset" => options.preset = value()?,
-                "--config" => options.config = Some(value()?),
-                "--source" => options.source = Some(value()?.into()),
-                "--without" => options.without = value()?,
-                "--look" => options.look = value()?,
-                "--effects" => options.effects = value()?,
-                "--visibility" => options.visibility = switch(value()?)?,
-                "--lod" => options.lod = switch(value()?)?,
-                "--impostors" => options.impostors = switch(value()?)?,
-                "--view" => options.view = Some(value()?),
-                "--size" => {
-                    let size = value()?;
-                    let parsed = size
-                        .split_once('x')
-                        .and_then(|(width, height)| {
-                            Some((width.parse().ok()?, height.parse().ok()?))
-                        })
-                        .filter(|&(width, height): &(u32, u32)| width > 0 && height > 0);
-                    options.size =
-                        Some(parsed.ok_or_else(|| format!("--size is WIDTHxHEIGHT, not {size}"))?);
-                }
-                "--gpu" => {
-                    options.gpu = match value()?.as_str() {
-                        "discrete" => GpuPreference::HighPerformance,
-                        "integrated" => GpuPreference::LowPower,
-                        other => {
-                            return Err(format!("--gpu is discrete or integrated, not {other}"));
-                        }
-                    }
-                }
-                "--workers" => {
-                    let workers = value()?;
-                    options.jobs.workers = match workers.as_str() {
-                        "off" => 0,
-                        count => count
-                            .parse()
-                            .ok()
-                            .filter(|&count: &usize| count <= 32)
-                            .ok_or_else(|| format!("--workers is off or 0 to 32, not {workers}"))?,
-                    };
-                }
-                "--jobcache" => {
-                    let cache = value()?;
-                    options.jobs.cache = match cache.as_str() {
-                        "off" => CacheOptions::Off,
-                        "verify" => CacheOptions::Verify,
-                        mebibytes => CacheOptions::Keep {
-                            budget: mebibytes
-                                .parse::<u64>()
-                                .ok()
-                                .filter(|&mebibytes| mebibytes < 10_000_000)
-                                .ok_or_else(|| {
-                                    format!("--jobcache is off, verify or MiB, not {cache}")
-                                })?
-                                * 1024
-                                * 1024,
-                        },
-                    };
-                }
-                "--vsync" => options.vsync = switch(value()?)?,
-                "--frames" => {
-                    let frames = value()?;
-                    options.measure = Some(
-                        frames
-                            .parse()
-                            .ok()
-                            .filter(|&frames: &u32| frames > 0)
-                            .ok_or_else(|| format!("--frames takes a frame count, not {frames}"))?,
-                    );
-                }
-                "--settle-ms" => {
-                    let settle = value()?;
-                    options.settle_ms = settle
-                        .parse()
-                        .map_err(|_| format!("--settle-ms takes milliseconds, not {settle}"))?;
-                }
-                "--assets" => options.assets = value()?.into(),
-                "--offscreen" => {
-                    let frames = value()?;
-                    options.offscreen = Some(
-                        frames
-                            .parse()
-                            .ok()
-                            .filter(|&frames: &u32| frames > 0)
-                            .ok_or_else(|| {
-                                format!("--offscreen takes a frame count, not {frames}")
-                            })?,
-                    );
-                }
-                "--capture" => options.capture = Some(value()?.into()),
-                "--gpu-capture" => options.gpu_capture = Some(value()?.into()),
-                "--profile" => options.profile = Some(value()?.into()),
-                "--counters" => options.counters = Some(value()?),
-                "--vendor" => {
-                    let tool = value()?;
-                    if tool != "pix" && tool != "nsight" {
-                        return Err(format!("--vendor is pix or nsight, not {tool}"));
-                    }
-                    options.vendor = Some(tool);
-                }
-                "--vendor-dir" => options.vendor_dir = Some(value()?.into()),
-                "--vendor-counters" => {
-                    options.vendor_counters = value()?.split(',').map(str::to_owned).collect();
-                }
-                "--dev" => {
-                    if inline.is_some() {
-                        return Err("--dev takes no value".into());
-                    }
-                    options.dev = true;
-                }
-                "--dev-artifacts" => options.dev_artifacts = Some(value()?.into()),
-                _ => return Err(format!("unknown option {name}")),
+            if options.host.take(&argument, &mut arguments)? {
+                continue;
+            }
+            match argument.name.as_str() {
+                "--preset" => options.preset = arguments.value(&argument)?,
+                "--config" => options.config = Some(arguments.value(&argument)?),
+                "--source" => options.source = Some(arguments.value(&argument)?.into()),
+                "--without" => options.without = arguments.value(&argument)?,
+                "--look" => options.look = arguments.value(&argument)?,
+                "--effects" => options.effects = arguments.value(&argument)?,
+                "--visibility" => options.visibility = arguments.switch(&argument)?,
+                "--lod" => options.lod = arguments.switch(&argument)?,
+                "--impostors" => options.impostors = arguments.switch(&argument)?,
+                "--view" => options.view = Some(arguments.value(&argument)?),
+                "--assets" => options.assets = arguments.value(&argument)?.into(),
+                _ => return Err(argument.unknown()),
             }
         }
-        if (options.capture.is_some() || options.gpu_capture.is_some() || options.profile.is_some())
-            && options.offscreen.is_none()
-        {
-            return Err("--capture, --gpu-capture and --profile need --offscreen".into());
-        }
-        if (options.profile.is_some() || options.counters.is_some()) && !cfg!(feature = "profiling")
-        {
-            return Err("--profile and --counters need a build with --features profiling".into());
-        }
-        if options.counters.is_some() && options.profile.is_none() && !options.dev {
-            return Err("--counters counts profiles: --profile or --dev".into());
-        }
-        match options.vendor.as_deref() {
-            Some(_) if !cfg!(feature = "profiling") => {
-                return Err("--vendor needs a build with --features profiling".into());
-            }
-            Some(_) if options.vendor_dir.is_none() => {
-                return Err("--vendor needs --vendor-dir".into());
-            }
-            Some("pix") if options.offscreen.is_none() => {
-                return Err("--vendor pix captures an --offscreen frame".into());
-            }
-            Some("nsight") if options.offscreen.is_some() || options.dev => {
-                return Err("--vendor nsight traces a window's frames".into());
-            }
-            _ => {}
-        }
+        options.host.check()?;
         Ok(options)
     }
 
     fn run(&self) -> engine::Result<()> {
-        #[cfg(feature = "profiling")]
-        if let Some(counters) = &self.counters {
-            use engine_native::counters::Selection;
-            let selection = match counters.as_str() {
-                "on" => Selection::First,
-                names => Selection::Named(names.split(',').map(str::to_owned).collect()),
-            };
-            engine_native::counters::enable(selection)?;
-        }
-        #[cfg(feature = "profiling")]
-        if let (Some("nsight"), Some(folder)) = (self.vendor.as_deref(), &self.vendor_dir) {
-            return self.run_nsight(folder);
-        }
         let build = || self.build();
-        if self.dev {
+        if self.host.dev {
             return self.run_dev(build);
         }
-        match self.offscreen {
-            None => {
-                let report = engine_native::run(
-                    Window {
-                        size: self.size,
-                        gpu: self.gpu,
-                        jobs: self.jobs,
-                        vsync: self.vsync,
-                        measure: self.measure.map(|frames| Measure {
-                            settle: std::time::Duration::from_millis(self.settle_ms),
-                            frames,
-                        }),
-                        ..Window::new("Stress Lab")
-                    },
-                    build,
-                )?;
-                if let Some(report) = report {
-                    print_window_report(&report);
-                }
-                Ok(())
-            }
-            Some(frames) => self.run_offscreen(frames, build),
-        }
+        self.host.run("Stress Lab", build)
     }
 
     /// The engine and Stress Lab the options make, with the page's choices
@@ -445,44 +179,16 @@ impl Options {
         Ok((engine, lab))
     }
 
-    /// Runs the program again in a window under Nsight's GPU Trace, with
-    /// these options but the deep dive's, into `folder`.
-    #[cfg(feature = "profiling")]
-    fn run_nsight(&self, folder: &Path) -> engine::Result<()> {
-        let mut arguments = Vec::new();
-        let mut given = std::env::args().skip(1);
-        while let Some(argument) = given.next() {
-            let name = argument.split('=').next().unwrap_or_default();
-            if ["--vendor", "--vendor-dir", "--vendor-counters"].contains(&name) {
-                if !argument.contains('=') {
-                    given.next();
-                }
-                continue;
-            }
-            arguments.push(argument);
-        }
-        if self.measure.is_none() {
-            arguments.extend(["--frames".to_owned(), "120".to_owned()]);
-        }
-        let trace = engine_native::vendor::nsight_trace(&arguments, self.settle_ms, 5, folder)?;
-        println!("{trace:#}");
-        Ok(())
-    }
-
     /// Serves the development protocol over standard input and output.
     #[cfg(feature = "dev")]
     fn run_dev(
         &self,
         build: impl FnOnce() -> engine::Result<(Engine, StressLab)>,
     ) -> engine::Result<()> {
-        let size = self.size.unwrap_or((1280, 720));
-        let game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
-        let artifacts = self
-            .dev_artifacts
-            .clone()
-            .unwrap_or_else(|| std::env::temp_dir().join("engine-captures"));
         let assets = self.assets.clone();
-        let mut session = engine_native::dev::DevSession::new(game, artifacts)
+        let mut session = self
+            .host
+            .dev_session(build)?
             .parameters(PARAMETERS)
             .control(
                 "workload",
@@ -617,124 +323,6 @@ impl Options {
         config_fields.extend(fields);
         Ok(StressConfig::from_json(&config.to_string())?)
     }
-
-    /// Draws `frames` frames offscreen at 60 Hz after preparing, then prints
-    /// their CPU times and the last frame's statistics.
-    fn run_offscreen(
-        &self,
-        frames: u32,
-        build: impl FnOnce() -> engine::Result<(Engine, StressLab)>,
-    ) -> engine::Result<()> {
-        let size = self.size.unwrap_or((1280, 720));
-        // PIX deep dives capture the last frame into their folder.
-        let pix_folder = self
-            .vendor_dir
-            .as_ref()
-            .filter(|_| self.vendor.as_deref() == Some("pix"));
-        if let Some(folder) = pix_folder {
-            std::fs::create_dir_all(folder).map_err(|error| {
-                Error::from(format!("cannot create {}: {error}", folder.display()))
-            })?;
-        }
-        let gpu_capture = self
-            .gpu_capture
-            .clone()
-            .or_else(|| pix_folder.map(|folder| folder.join("frame.wpix")));
-        // PIX's capturer must be in the program before its D3D12 device.
-        let pix = gpu_capture.as_ref().and_then(|_| Pix::load());
-        let started = Instant::now();
-        let mut game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
-        game.prepare(0.0)?;
-        let prepared_ms = started.elapsed().as_secs_f64() * 1000.0;
-        #[cfg(feature = "profiling")]
-        let profiling = match &self.profile {
-            Some(_) => Some(game.start_profile(engine::profiling::MAX_EVENTS, true)?),
-            None => None,
-        };
-        let mut cpu_ms = Vec::with_capacity(frames as usize);
-        let drawing = Instant::now();
-        let mut captured = None;
-        for frame in 0..frames {
-            let timestamp = f64::from(frame) * 1000.0 / 60.0;
-            match &gpu_capture {
-                Some(path) if frame + 1 == frames => {
-                    captured = Some(game.capture_frame(timestamp, pix.as_ref(), path)?);
-                }
-                _ => game.frame(timestamp)?,
-            }
-            let stats = game.host().frame_stats();
-            cpu_ms.push(stats.simulation_ms + stats.extraction_ms + stats.render_ms);
-        }
-        let frame_ms = drawing.elapsed().as_secs_f64() * 1000.0 / f64::from(frames);
-        #[cfg(feature = "profiling")]
-        let profile = match (profiling, &self.profile) {
-            (Some(capture), Some(folder)) => {
-                let context = serde_json::json!({
-                    "program": "stress-lab-native",
-                    "arguments": std::env::args().skip(1).collect::<Vec<_>>(),
-                    "frames": frames,
-                    "size": [size.0, size.1],
-                });
-                let files = game.finish_profile(capture, folder, "profile", context)?;
-                Some(serde_json::json!({
-                    "summary": files.summary.display().to_string(),
-                    "firefox": files.firefox.display().to_string(),
-                    "report": files.report.display().to_string(),
-                    "complete": files.complete,
-                }))
-            }
-            _ => None,
-        };
-        #[cfg(not(feature = "profiling"))]
-        let profile: Option<serde_json::Value> = None;
-        #[cfg(feature = "profiling")]
-        let vendor = match (pix_folder, &gpu_capture) {
-            (Some(folder), Some(path)) => {
-                if captured != Some("pix") {
-                    return Err(engine::Error::from(format!(
-                        "--vendor pix captures D3D12 frames where PIX is installed; this one drew on {} ({})",
-                        game.host().adapter().backend,
-                        captured.unwrap_or("no capture"),
-                    )));
-                }
-                let summary =
-                    engine_native::vendor::pix_counters(path, folder, &self.vendor_counters)?;
-                Some(serde_json::json!({
-                    "summary": folder.join("pix.summary.json").display().to_string(),
-                    "passes": summary["passes"].as_array().map(|passes| passes.iter().take(8).collect::<Vec<_>>()),
-                }))
-            }
-            _ => None,
-        };
-        #[cfg(not(feature = "profiling"))]
-        let vendor: Option<serde_json::Value> = None;
-        if let Some(path) = &self.capture {
-            game.save_png(path)?;
-        }
-        cpu_ms.sort_by(f64::total_cmp);
-        let at = |share: f64| cpu_ms[((cpu_ms.len() - 1) as f64 * share).round() as usize];
-        let stats: serde_json::Value =
-            serde_json::from_str(&game.host().stats()).expect("frame statistics are JSON");
-        let report = serde_json::json!({
-            "size": [size.0, size.1],
-            "frames": frames,
-            "prepare_ms": prepared_ms,
-            "frame_ms": frame_ms,
-            "cpu_ms": {"median": at(0.5), "p95": at(0.95)},
-            "capture": self.capture.as_ref().map(|path| path.display().to_string()),
-            "profile": profile,
-            "vendor": vendor,
-            "gpu_capture": gpu_capture.as_ref().map(|path| serde_json::json!({
-                "path": path.display().to_string(),
-                "by": captured,
-                "adapter": game.host().adapter().name,
-                "backend": game.host().adapter().backend,
-            })),
-            "stats": stats,
-        });
-        println!("{report:#}");
-        Ok(())
-    }
 }
 
 /// The files workload `scene` reads from the folder `assets`, as the page
@@ -821,23 +409,4 @@ fn stress_files(assets: &Path, scene: StressScene) -> engine::Result<HashMap<Str
         _ => {}
     }
     Ok(found)
-}
-
-/// A measured window's frames as JSON: their rate, interval and CPU times.
-fn print_window_report(report: &engine_native::WindowReport) {
-    let mut cpu_ms = report.cpu_ms.clone();
-    cpu_ms.sort_by(f64::total_cmp);
-    let at = |share: f64| cpu_ms[((cpu_ms.len() - 1) as f64 * share).round() as usize];
-    let stats: serde_json::Value =
-        serde_json::from_str(&report.stats).expect("frame statistics are JSON");
-    let report = serde_json::json!({
-        "size": [report.size.0, report.size.1],
-        "frames": report.frames,
-        "fps": f64::from(report.frames) * 1000.0 / report.elapsed_ms,
-        "frame_ms": report.elapsed_ms / f64::from(report.frames),
-        "cpu_ms": {"median": at(0.5), "p95": at(0.95)},
-        "adapter": {"name": report.adapter.name, "backend": report.adapter.backend},
-        "stats": stats,
-    });
-    println!("{report:#}");
 }

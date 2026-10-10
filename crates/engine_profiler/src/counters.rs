@@ -80,6 +80,12 @@ pub fn enable(selection: Selection) -> Result<(), String> {
     }
 }
 
+/// Whether counters are enabled: profiles count passes where the GPU's
+/// driver can.
+pub fn enabled() -> bool {
+    SELECTION.get().is_some()
+}
+
 /// Starts counting the passes drawn from now on, where counters are
 /// enabled.
 pub(crate) fn begin() {

@@ -110,6 +110,10 @@ const highlands = verify => JSON.parse(execFileSync(program, [
 ], { cwd: workspace, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], timeout: 300_000 }));
 const kept = highlands(false);
 assert.ok(kept.stats.jobs.completed > 0 && kept.stats.jobs.workers === 4, JSON.stringify(kept.stats.jobs));
+// The main thread's stack, a megabyte on Windows: startup frames that grow
+// show here before they overflow it (null where the system cannot tell).
+assert.ok(kept.main_stack_peak_bytes === null || kept.main_stack_peak_bytes < 640 * 1024,
+  `the main thread's stack peaked at ${kept.main_stack_peak_bytes} bytes`);
 assert.equal(kept.stats.terrain.unplaced_tiles, 0);
 const verified = highlands(true);
 assert.ok(verified.stats.jobs.cache_hits > 0, `the verifying run is handed kept outputs: ${JSON.stringify(verified.stats.jobs)}`);

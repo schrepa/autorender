@@ -1,36 +1,11 @@
 //! Native hosts of engine games, on DX12, Vulkan or Metal: a window the game
 //! runs in as the page runs it, or an offscreen display tools draw into
 //! without one, and the files games read from disk as the page fetches
-//! them.
+//! them. Every native game takes the host's command line ([`HostOptions`]):
+//! windows measured, offscreen frames, captures, profiles, hardware
+//! counters, vendor deep dives and development sessions, which
+//! `engine_profiler` measures and captures for.
 
-#[cfg(feature = "profiling")]
-mod capabilities;
-#[cfg(all(feature = "profiling", not(target_vendor = "apple")))]
-pub mod counters;
-/// Hardware counters per pass count through Vulkan, which Apple's GPUs
-/// draw through Metal in place of: Xcode's Metal tools count there.
-#[cfg(all(feature = "profiling", target_vendor = "apple"))]
-pub mod counters {
-    /// Which counters to count.
-    #[derive(Clone, Debug)]
-    pub enum Selection {
-        First,
-        Named(Vec<String>),
-    }
-
-    pub fn enable(_: Selection) -> Result<(), String> {
-        Err("hardware counters count through Vulkan; on Apple's GPUs, Xcode's Metal              tools (Instruments' Metal System Trace) count"
-            .into())
-    }
-
-    pub(crate) fn begin() {}
-
-    pub(crate) fn end() -> Option<serde_json::Value> {
-        None
-    }
-}
-#[cfg(feature = "profiling")]
-mod deep;
 #[cfg(feature = "dev")]
 pub mod dev;
 pub mod files;
@@ -38,33 +13,47 @@ mod input;
 mod job_cache;
 mod jobs;
 mod offscreen;
-mod pix;
-mod renderdoc;
-#[cfg(feature = "profiling")]
-pub mod sampler;
-#[cfg(feature = "profiling")]
-pub mod vendor;
+mod options;
 mod window;
 
 use std::process::ExitCode;
 
-#[cfg(feature = "profiling")]
-pub use deep::{DeepCapture, ProfileFiles};
 pub use engine::GpuPreference;
+/// Profiles and GPU captures, which the options run.
+pub use engine_profiler as profiler;
+pub use engine_profiler::{Pix, RenderDoc};
 pub use job_cache::JobCache;
 pub use jobs::{CacheOptions, JobOptions, JobPool};
-pub use offscreen::Offscreen;
-pub use pix::Pix;
-pub use renderdoc::RenderDoc;
+pub use offscreen::{Frames, Offscreen, PixRecord, ProfileRecord, Record, Recorded};
+pub use options::{Argument, Arguments, HostOptions, PARAMETERS, USAGE, Vendor};
 pub use window::{Measure, Window, WindowReport, run};
 
-/// [`run`] as a program's `main`: the game's failure printed, as the
-/// process's exit code.
+/// A native game's `main`: the host's options from `arguments` (`--help`
+/// lists them), the game `build` makes run as they ask, `title` naming its
+/// window, and its failure printed, as the process's exit code. Games with
+/// options of their own parse them around the host's
+/// ([`HostOptions::take`]) and run [`HostOptions::run`].
 pub fn main<G: engine::Game, E: Into<engine::Error>>(
-    window: Window,
+    title: &str,
+    arguments: impl Iterator<Item = String>,
     build: impl FnOnce() -> Result<(engine::Engine, G), E>,
 ) -> ExitCode {
-    exit(run(window, build).map(drop))
+    let arguments: Vec<String> = arguments.collect();
+    if arguments.iter().any(|argument| argument == "--help") {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    match HostOptions::parse(arguments) {
+        Ok(options) => exit(options.run(title, build)),
+        Err(message) => {
+            eprintln!(
+                "{message}
+
+{USAGE}"
+            );
+            ExitCode::from(2)
+        }
+    }
 }
 
 /// `outcome` as a program's exit code, its failure printed.

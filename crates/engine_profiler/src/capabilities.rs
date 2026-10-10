@@ -146,7 +146,7 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
             "system-wide CPU sampling with kernel stacks",
             "samply (or Windows Performance Recorder)",
             installed("samply", &[]).or_else(|| installed("wpr", &[])),
-            "install samply (cargo install samply) and run `samply record stress-lab-native ...`; Windows asks for admin once per recording (ETW)",
+            "install samply (cargo install samply) and run `samply record PROGRAM ...` (any native game's program); Windows asks for admin once per recording (ETW)",
             "kernel and driver stacks, other processes, context switches",
         )),
         "linux" => layers.push(layer(
@@ -234,7 +234,7 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
                 "renderdoccmd",
                 &[r"C:\Program Files\RenderDoc\renderdoccmd.exe"],
             ),
-            "install RenderDoc; run `renderdoccmd capture -w stress-lab-native --offscreen 30 --gpu-capture frame` (Vulkan: WGPU_BACKEND=vulkan)",
+            "install RenderDoc; run `renderdoccmd capture -w PROGRAM --offscreen 30 --gpu-capture frame` (Vulkan: WGPU_BACKEND=vulkan)",
             "every command, resource and shader of one frame, with pass names",
         ));
     }

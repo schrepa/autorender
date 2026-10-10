@@ -898,20 +898,13 @@ dependencies = [
 name = "engine_native"
 version = "0.1.0"
 dependencies = [
- "ash",
- "backtrace",
  "engine",
+ "engine_profiler",
  "engine_worker",
- "fxprof-processed-profile",
- "iced-x86",
- "libc",
- "mach2",
  "png",
  "pollster",
  "serde_json",
  "sha2",
- "wgpu",
- "windows-sys 0.61.2",
  "winit",
  "zune-jpeg",
 ]
@@ -921,6 +914,22 @@ name = "engine_profile"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "engine_profiler"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "backtrace",
+ "engine",
+ "fxprof-processed-profile",
+ "iced-x86",
+ "libc",
+ "mach2",
+ "serde_json",
+ "wgpu",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -60,6 +60,33 @@ pub fn lint(root: &Path) -> Result<(), String> {
             "warnings",
         ],
     )?;
+    // The native host with its development tools, and with its profiler,
+    // as agents build native games (the app template's entry included).
+    for features in [
+        "engine_native/dev,stress-lab/dev",
+        "engine_native/dev,engine_native/profiling,stress-lab/dev,stress-lab/profiling",
+    ] {
+        run(
+            root,
+            "cargo",
+            &[
+                "clippy",
+                "-p",
+                "engine_native",
+                "-p",
+                "engine_profiler",
+                "-p",
+                "stress-lab",
+                "--all-targets",
+                "--features",
+                features,
+                "--locked",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        )?;
+    }
     // The clients for the browser, without and with their development tools.
     for development in [false, true] {
         let mut arguments: Vec<&str> = vec!["clippy"];

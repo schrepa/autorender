@@ -1,0 +1,56 @@
+[package]
+name = "engine_profiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Profiles and GPU captures of native engine games: graphics debuggers' frame captures, and deep profiles, hardware counters and vendor deep dives"
+
+[features]
+default = []
+# Deep profiles (in-process CPU samples, symbols and disassembly, merged
+# with the engine's spans and GPU timings into Firefox Profiler files),
+# hardware counters through Vulkan, and vendor deep dives.
+profiling = [
+    "engine/profiling",
+    "dep:serde_json",
+    "dep:backtrace",
+    "dep:iced-x86",
+    "dep:fxprof-processed-profile",
+    "dep:windows-sys",
+    "dep:libc",
+    "dep:mach2",
+    "dep:ash",
+    "dep:wgpu",
+]
+
+[dependencies]
+engine.workspace = true
+serde_json = { workspace = true, optional = true }
+backtrace = { workspace = true, optional = true }
+iced-x86 = { workspace = true, optional = true }
+fxprof-processed-profile = { workspace = true, optional = true }
+ash = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true, features = ["vulkan"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true, optional = true }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+mach2 = { workspace = true, optional = true }
+
+# The workspace forbids unsafe code; loading PIX's capturer, calling PIX's
+# and RenderDoc's capture functions, sampling threads and counting through
+# Vulkan need it, so this crate denies it and allows it item by item (as
+# `engine_profile` does for its allocator). Every unsafe call the native
+# tools make is here.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+return_self_not_must_use = "deny"

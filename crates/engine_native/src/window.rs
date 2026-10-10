@@ -113,7 +113,8 @@ struct App<'a, G: Game> {
 /// The game running in its window.
 struct Running<G: Game> {
     window: Arc<winit::window::Window>,
-    host: GameHost<G>,
+    // Tens of kilobytes: boxed, as moves would copy it through the stack.
+    host: Box<GameHost<G>>,
     // Physical pixels.
     size: (u32, u32),
     started: Instant,
@@ -152,7 +153,11 @@ impl<'a, G: Game> App<'a, G> {
             gpu: self.options.gpu,
             vsync: self.options.vsync,
         };
-        let mut host = pollster::block_on(GameHost::launch(target, build))?;
+        // The startup future holds the renderer's whole start (some 80 KB for
+        // the Stress Lab): on the heap, not the calling thread's stack.
+        let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
+            target, build,
+        )))?);
         let mut jobs = self.options.jobs.pool();
         if let Some(pool) = &mut jobs {
             pool.attach(&mut host);

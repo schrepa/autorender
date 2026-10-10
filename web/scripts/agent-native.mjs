@@ -189,8 +189,8 @@ export async function launchNativeSession({ program, args = [], session = random
           if (Object.keys(command).some(key => !["op", "name"].includes(key))) throw new AgentError("invalid_request", "describe accepts only name.");
           const response = await request({ op: "status" });
           if (!response.ok) return response;
-          const { profileDescriptor } = await import("./agent-profile.mjs");
-          response.result = { ...profileDescriptor, status: { available: identity.profiling === true, native: true } };
+          const { nativeProfileDescriptor } = await import("./agent-profile.mjs");
+          response.result = { ...nativeProfileDescriptor, status: { available: identity.profiling === true, native: true, counters: identity.counters === true, pix: identity.pix === true } };
           return response;
         }
         if (command.op === "compare") return compareCaptures(command, request);

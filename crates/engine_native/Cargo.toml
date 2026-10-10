@@ -7,24 +7,17 @@ publish.workspace = true
 
 [features]
 default = []
-# The engine's development tools and profiling, as games build them.
+# The engine's development tools, as games build them: development
+# sessions over standard input and output (`--dev`).
 dev = ["engine/dev"]
-# Deep profiles: in-process CPU samples, symbols and disassembly, merged
-# with the engine's spans and GPU timings into Firefox Profiler files.
-profiling = [
-    "engine/profiling",
-    "dep:backtrace",
-    "dep:iced-x86",
-    "dep:fxprof-processed-profile",
-    "dep:windows-sys",
-    "dep:libc",
-    "dep:mach2",
-    "dep:ash",
-    "dep:wgpu",
-]
+# Deep profiles, hardware counters and vendor deep dives
+# (`engine_profiler`'s), which `--profile`, `--counters` and `--vendor` run
+# and development sessions take as `profile`.
+profiling = ["engine/profiling", "engine_profiler/profiling"]
 
 [dependencies]
 engine.workspace = true
+engine_profiler.workspace = true
 engine_worker.workspace = true
 png.workspace = true
 sha2.workspace = true
@@ -32,35 +25,12 @@ serde_json.workspace = true
 zune-jpeg.workspace = true
 winit.workspace = true
 pollster.workspace = true
-backtrace = { workspace = true, optional = true }
-iced-x86 = { workspace = true, optional = true }
-fxprof-processed-profile = { workspace = true, optional = true }
-ash = { workspace = true, optional = true }
-wgpu = { workspace = true, optional = true, features = ["vulkan"] }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, optional = true }
-
-[target.'cfg(unix)'.dependencies]
-libc = { workspace = true, optional = true }
-
-[target.'cfg(target_vendor = "apple")'.dependencies]
-mach2 = { workspace = true, optional = true }
 
 # A new game's native entry, as `cargo xtask new app` writes it; lint
 # compiles it with the app template.
 [[example]]
 name = "app_native"
 
-# The workspace forbids unsafe code; loading PIX's capturer, calling PIX's
-# and RenderDoc's capture functions, sampling threads and counting through
-# Vulkan need it, so only `src/pix.rs`, `src/renderdoc.rs`, `src/sampler/`
-# and `src/counters.rs` allow it (as `engine_profile` does for its
-# allocator).
-[lints.rust]
-unsafe_code = "deny"
-
-[lints.clippy]
-dbg_macro = "deny"
-todo = "deny"
-return_self_not_must_use = "deny"
+# No unsafe code: the native tools' unsafe calls are `engine_profiler`'s.
+[lints]
+workspace = true

@@ -26,6 +26,21 @@ export const profileDescriptor = {
   constraints: "Requires paused profiling build. Runs ordinary frames for the capture, clears input, then pauses. Does not save source. Optional CDP sampling adds overhead. Inspect capture completeness, capabilities and dropped counts before comparing.",
 };
 
+/** Native sessions' profiles: the same capture, each pass's hardware
+ * counters where the session counts them (launched with counters=on), and
+ * with vendor "pix" the last frame's per-draw counters replayed through PIX
+ * where the session loaded it (launched with vendor=pix, on D3D12). */
+export const nativeProfileDescriptor = {
+  ...profileDescriptor,
+  schema: {
+    ...profileDescriptor.schema,
+    properties: {
+      ...profileDescriptor.schema.properties,
+      vendor: { enum: ["pix"], description: "Also capture the last frame through PIX and replay each draw's hardware counters (artifacts pix_capture, pix_events, pix_summary)." },
+    },
+  },
+};
+
 export async function captureProfile({ page, requestBrowser, command, artifacts, workspace }) {
   if (Object.keys(command).some(key => !["op", "duration_ms", "max_events", "cpu_samples"].includes(key))) {
     throw new AgentError("invalid_request", "profile accepts duration_ms, max_events, and cpu_samples only.");

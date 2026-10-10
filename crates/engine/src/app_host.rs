@@ -112,7 +112,9 @@ pub(crate) struct AppHost {
     // Replaced only through `replace_engine`, which wires each engine to
     // this host.
     pub(crate) engine: Engine,
-    pub(crate) renderer: Renderer,
+    // Tens of kilobytes: boxed, as moves of hosts would copy it through the
+    // stack (native hosts' main threads have a megabyte).
+    pub(crate) renderer: Box<Renderer>,
     last_timestamp_ms: Option<f64>,
     stats: FrameStats,
     size: (u32, u32),
@@ -153,6 +155,14 @@ enum FrameKind {
     Preview { alpha: f32, gpu: bool },
 }
 
+/// The engine `build` makes, in a frame of its own: games' builds hold
+/// large temporaries, which inlined into the launch's poll would hold the
+/// stack while the renderer starts.
+#[inline(never)]
+fn built(build: impl FnOnce() -> Result<Engine>) -> Result<Engine> {
+    build()
+}
+
 impl AppHost {
     /// Starts the renderer presenting to `target` and, while the GPU
     /// compiles its startup pipelines, the engine `build` makes.
@@ -161,12 +171,12 @@ impl AppHost {
         build: impl FnOnce() -> Result<Engine>,
     ) -> Result<Self> {
         let starting = Renderer::start(target).await.map_err(render_failure)?;
-        let engine = build()?;
-        let renderer = starting.finish().await.map_err(render_failure)?;
+        let engine = built(build)?;
+        let renderer = Box::new(starting.finish().await.map_err(render_failure)?);
         Ok(Self::with(engine, renderer))
     }
 
-    fn with(mut engine: Engine, renderer: Renderer) -> Self {
+    fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
         wire(&mut engine, &renderer, 0);
         Self {
             engine,

@@ -87,10 +87,18 @@ path = "src/main.rs"
 page = "{page}"
 game = "{name}"
 
+[features]
+default = []
+# Native development sessions over standard input and output (`--dev`).
+dev = ["engine/dev", "engine_native/dev"]
+# Native profiles, hardware counters and vendor deep dives (`--profile`,
+# `--counters`, `--vendor`), which development sessions take as `profile`.
+profiling = ["engine/profiling", "engine_native/profiling"]
+
 [dependencies]
 engine.workspace = true
 
-# The native window.
+# The native host: a window, offscreen frames, captures and profiles.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_native.workspace = true
 
@@ -178,7 +186,7 @@ fn native_entry(root: &Path, name: &str, wasm: &str, pascal: &str) -> Result<Str
         .collect::<Vec<_>>()
         .join("\n");
     Ok(format!(
-        "//! {pascal} natively, in a window on DX12, Vulkan or Metal: `cargo run -p {name}`.\n{}\n",
+        "//! {pascal} natively, in a window on DX12, Vulkan or Metal: `cargo run -p {name}`;\n//! `-- --help` lists the host's options.\n{}\n",
         body.replace(game, &format!("use {wasm} as app;"))
             .replace("Template", pascal)
     ))

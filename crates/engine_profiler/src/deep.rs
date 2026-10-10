@@ -50,7 +50,7 @@ pub struct ProfileFiles {
 impl DeepCapture {
     /// Starts the engine's capture of at most `max_events` CPU events and
     /// every frame's GPU spans, and samples of `threads`.
-    pub(crate) fn start<G: Game>(
+    pub fn start<G: Game>(
         host: &mut GameHost<G>,
         threads: Vec<SampledThread>,
         max_events: usize,
@@ -66,7 +66,7 @@ impl DeepCapture {
     /// Stops capturing and writes the files into `folder` as `stem` with
     /// their extensions; `context` (what ran, on what) goes into the
     /// summary.
-    pub(crate) fn finish<G: Game>(
+    pub fn finish<G: Game>(
         self,
         host: &mut GameHost<G>,
         folder: &Path,

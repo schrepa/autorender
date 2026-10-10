@@ -100,7 +100,7 @@ struct Slot {
     orders: Sender<Order>,
     // The worker, as a sampler samples it.
     #[cfg(feature = "profiling")]
-    sampled: Option<crate::sampler::SampledThread>,
+    sampled: Option<engine_profiler::sampler::SampledThread>,
     thread: Option<JoinHandle<()>>,
     // Jobs in flight, each with its priority (lower first).
     jobs: HashMap<u64, u32>,
@@ -134,9 +134,9 @@ impl JobPool {
                     .name(format!("engine-jobs-{index}"))
                     .spawn(move || {
                         #[cfg(feature = "profiling")]
-                        let _ = register.send(crate::sampler::SampledThread::current(format!(
-                            "Job worker {index}"
-                        )));
+                        let _ = register.send(engine_profiler::sampler::SampledThread::current(
+                            format!("Job worker {index}"),
+                        ));
                         work(index, &inbox, &report);
                     })
                     .expect("threads start");
@@ -162,7 +162,7 @@ impl JobPool {
 
     /// The workers, as a sampler samples them.
     #[cfg(feature = "profiling")]
-    pub fn sampled_threads(&self) -> Vec<crate::sampler::SampledThread> {
+    pub fn sampled_threads(&self) -> Vec<engine_profiler::sampler::SampledThread> {
         self.slots
             .iter()
             .filter_map(|slot| slot.sampled.clone())
