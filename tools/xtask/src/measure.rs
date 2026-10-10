@@ -1,6 +1,6 @@
 //! `cargo xtask measure`: one measure task of the engine factory, run on the
-//! native host and written as the factory's report (format version 2). The
-//! command runs from the commit the task's tools come from (`tools_sha`):
+//! native host and written as the factory's measure report. The command
+//! runs from the commit the task's tools come from (`tools_sha`):
 //! its scenes, settings, catalog and this code. Only the engine under test
 //! comes from each arm's commit: both are built the same way into their own
 //! folders, then measured in rounds of one base and one candidate run whose
@@ -24,7 +24,6 @@ use sha2::{Digest, Sha256};
 
 use crate::bench::{self, Assets, hex};
 
-const FORMAT_VERSION: u64 = 2;
 /// Clean pairs a task asks for unless it says.
 const MIN_PAIRS: u64 = 8;
 /// Unsettled runs of one arm in a row after which it never settles.
@@ -1172,7 +1171,6 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
     };
     let profile_end = read_json(&options.profile)?;
     let mut report = json!({
-        "format_version": FORMAT_VERSION,
         "kind": "measure",
         "task": task_id,
         "tools_sha": tools_sha,

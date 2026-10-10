@@ -357,7 +357,6 @@ pub fn check_task(root: &Path, arguments: &[String]) -> Result<(), String> {
     let checks = spec["checks"].as_array().cloned().unwrap_or_default();
     let (checks, incomplete) = run(root, &checks, &folder, deadline)?;
     let report = json!({
-        "format_version": 2,
         "kind": "check",
         "task": id,
         "tools_sha": tools_sha,
