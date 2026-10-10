@@ -1,0 +1,23 @@
+{
+  "note": "A moving hierarchy, interpolation, filtered queries and sensors sharing the frame.",
+  "options": {
+    "preset": "mixed",
+    "config": {
+      "seed": 1337,
+      "renderables": 10000,
+      "moving_percent": 25,
+      "hierarchy": true,
+      "interpolation": true,
+      "colliders": 1000,
+      "sensor_percent": 10,
+      "dense_colliders": false,
+      "queries_per_tick": 32,
+      "mesh_variety": 8,
+      "textured": true,
+      "culling": true,
+      "scene": "field",
+      "compressed_textures": false
+    },
+    "view": "overview"
+  }
+}

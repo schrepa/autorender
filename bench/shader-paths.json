@@ -1,0 +1,4 @@
+[
+  "crates/engine_render/src/**/*.wgsl",
+  "crates/engine_render/src/shaders.rs"
+]

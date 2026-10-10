@@ -2,7 +2,9 @@
 //! drawn offscreen for a number of frames, with the page's parameters as
 //! options (`--preset metro`, `--source PATH`...) beside the native host's
 //! (`engine_native::HostOptions`), and the files the page fetches read from
-//! disk.
+//! disk. Measurements run a bench scene (`--scene bench/scenes/NAME.json`)
+//! with a settings bundle (`--settings bench/settings/NAME.json`): option
+//! files, which hold these options by name.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -29,36 +31,38 @@ The page's parameters:
   --lod on|off         off: draw every instance as its mesh
   --impostors on|off   off: draw no impostors
   --view NAME          camera view
-  --assets DIR         the folder holding stress/ (default web/public)";
+  --assets DIR         the folder holding stress/ (default web/public)
+  --rocks on|off       off: the highlands' rocks wear the terrain rock's maps,
+                       not the scanned ones stress/rocks may hold (default on)
+  --scene FILE         a bench scene: the options in FILE (its preset,
+                       configuration and view), as --settings reads them";
 
 /// The options development sessions name as their parameters, with what
-/// each does: the page's (the host names its own).
+/// each does: the page's and the switches' (the host names its own).
 #[cfg(feature = "dev")]
-const PARAMETERS: &[(&str, &str)] = &[
-    ("preset", "start from that workload preset"),
-    ("config", "workload fields over the preset's (JSON)"),
-    (
-        "source",
-        "run that authored scene file in place of a workload",
-    ),
-    (
-        "without",
-        "with source: comma-separated features the engine leaves out",
-    ),
-    ("look", "lighting preset over the scene's own"),
-    (
-        "effects",
-        "all, none, or comma-separated no-<effect> exclusions",
-    ),
-    (
-        "visibility",
-        "on: shade virtual geometry through the visibility buffer",
-    ),
-    ("lod", "off: draw every instance as its mesh"),
-    ("impostors", "off: draw no impostors"),
-    ("view", "camera view"),
-    ("assets", "the folder holding stress/"),
-];
+fn parameters() -> Vec<(&'static str, &'static str)> {
+    let mut parameters = vec![
+        ("preset", "start from that workload preset"),
+        ("config", "workload fields over the preset's (JSON)"),
+        (
+            "source",
+            "run that authored scene file in place of a workload",
+        ),
+        (
+            "without",
+            "with source: comma-separated features the engine leaves out",
+        ),
+        ("view", "camera view"),
+        ("assets", "the folder holding stress/"),
+        ("rocks", "off: no scanned rock maps"),
+    ];
+    parameters.extend(
+        crate::switches()
+            .into_iter()
+            .map(|switch| (switch.name, switch.what)),
+    );
+    parameters
+}
 
 /// What the command line asks for: the page's parameters, and the host's
 /// options.
@@ -74,6 +78,7 @@ struct Options {
     impostors: bool,
     view: Option<String>,
     assets: PathBuf,
+    rocks: bool,
     host: HostOptions,
 }
 
@@ -108,6 +113,7 @@ impl Options {
             view: None,
             // The page's public folder, beside this crate.
             assets: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public"),
+            rocks: true,
             host: HostOptions::default(),
         };
         let mut arguments = Arguments::new(arguments);
@@ -127,6 +133,8 @@ impl Options {
                 "--impostors" => options.impostors = arguments.switch(&argument)?,
                 "--view" => options.view = Some(arguments.value(&argument)?),
                 "--assets" => options.assets = arguments.value(&argument)?.into(),
+                "--rocks" => options.rocks = arguments.switch(&argument)?,
+                "--scene" => arguments.include(&argument)?,
                 _ => return Err(argument.unknown()),
             }
         }
@@ -166,7 +174,7 @@ impl Options {
             return Ok(StressLab::authored(&source, &files, &without)?);
         }
         let config = self.config()?;
-        let files = stress_files(&self.assets, config.scene)?;
+        let files = stress_files(&self.assets, config.scene, self.rocks)?;
         let (mut engine, mut lab) = StressLab::workload(config, files)?;
         lab.set_visibility_buffer(&mut engine, self.visibility);
         lab.set_level_of_detail(&mut engine, self.lod);
@@ -185,11 +193,11 @@ impl Options {
         &self,
         build: impl FnOnce() -> engine::Result<(Engine, StressLab)>,
     ) -> engine::Result<()> {
-        let assets = self.assets.clone();
+        let (assets, rocks) = (self.assets.clone(), self.rocks);
         let mut session = self
             .host
             .dev_session(build)?
-            .parameters(PARAMETERS)
+            .parameters(&parameters())
             .control(
                 "workload",
                 "Runs preset {preset: NAME} or configuration {config: {...}} (fields over the current one) in place of the workload",
@@ -224,8 +232,8 @@ impl Options {
                             (config, "AGENT WORKLOAD")
                         }
                     };
-                    let files =
-                        stress_files(&assets, config.scene).map_err(|error| error.to_string())?;
+                    let files = stress_files(&assets, config.scene, rocks)
+                        .map_err(|error| error.to_string())?;
                     let engine = host.game_mut().configure(config.clone(), files)?;
                     host.replace_engine(engine);
                     let (engine, lab) = host.parts_mut();
@@ -328,8 +336,13 @@ impl Options {
 /// The files workload `scene` reads from the folder `assets`, as the page
 /// fetches them: the dense scene's virtual mesh prefixes, streamed from
 /// their files, and the highlands' terrain material maps, without which
-/// its ground shows plain colors, and its optional scanned rock maps.
-fn stress_files(assets: &Path, scene: StressScene) -> engine::Result<HashMap<String, StressFile>> {
+/// its ground shows plain colors, and with `rocks` its optional scanned
+/// rock maps.
+fn stress_files(
+    assets: &Path,
+    scene: StressScene,
+    rocks: bool,
+) -> engine::Result<HashMap<String, StressFile>> {
     let mut found = HashMap::new();
     match scene {
         StressScene::Dense => {
@@ -400,7 +413,7 @@ fn stress_files(assets: &Path, scene: StressScene) -> engine::Result<HashMap<Str
             }
             // Scanned rock maps, kept locally and optional: without them
             // rocks wear the terrain rock's maps.
-            for name in ROCK_FILES {
+            for name in ROCK_FILES.iter().filter(|_| rocks) {
                 if let Ok(Some(decoded)) = image(&assets.join("stress/rocks").join(name)) {
                     add(format!("rocks/{name}"), decoded);
                 }

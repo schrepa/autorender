@@ -197,6 +197,22 @@ impl<G: Game> GameHost<G> {
             .map_err(crate::app_host::render_failure)
     }
 
+    /// A mark after the GPU work submitted so far, for hosts that keep
+    /// frames in flight: [`Self::wait_for_mark`] waits for it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn gpu_mark(&self) -> crate::GpuMark {
+        self.app.renderer.gpu_mark()
+    }
+
+    /// Waits until the GPU finished the work submitted before `mark`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn wait_for_mark(&self, mark: crate::GpuMark) -> crate::Result<()> {
+        self.app
+            .renderer
+            .wait_for_mark(mark)
+            .map_err(crate::app_host::render_failure)
+    }
+
     /// The last frame an offscreen target drew, as `(width, height, RGBA8
     /// rows from the top)`, once the GPU finished it; `None` for a window.
     #[cfg(not(target_arch = "wasm32"))]

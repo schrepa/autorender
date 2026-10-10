@@ -152,12 +152,15 @@ mod app_host;
 #[cfg(feature = "dev")]
 mod dev_host;
 mod game_host;
+/// The renderer's shader modules by name, with their sources, as it
+/// composes them: what tools compile and hash.
+pub use engine_render::shaders::MODULES as SHADER_MODULES;
 /// Where hosts present, and what renderers fail with.
 pub use engine_render::{AdapterInfo, RenderError, RenderTarget};
 /// A native window hosts present to, the GPU they ask for, and how tools
 /// that must see the GPU interface's calls start its instances.
 #[cfg(not(target_arch = "wasm32"))]
-pub use engine_render::{GpuPreference, NativeWindow, start_native_instances_with};
+pub use engine_render::{GpuMark, GpuPreference, NativeWindow, start_native_instances_with};
 pub use game_host::GameHost;
 
 /// The page's side of a hosted game, owned by the main thread.

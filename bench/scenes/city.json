@@ -1,0 +1,23 @@
+{
+  "note": "The wild city: 52 building, vehicle and machine shapes over 90k objects, a tenth of them moving traffic.",
+  "options": {
+    "preset": "city",
+    "config": {
+      "seed": 1337,
+      "renderables": 90000,
+      "moving_percent": 10,
+      "hierarchy": true,
+      "interpolation": true,
+      "colliders": 0,
+      "sensor_percent": 0,
+      "dense_colliders": false,
+      "queries_per_tick": 0,
+      "mesh_variety": 64,
+      "textured": true,
+      "culling": true,
+      "scene": "city",
+      "compressed_textures": false
+    },
+    "view": "overview"
+  }
+}

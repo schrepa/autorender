@@ -2,8 +2,8 @@
 //! runs in as the page runs it, or an offscreen display tools draw into
 //! without one, and the files games read from disk as the page fetches
 //! them. Every native game takes the host's command line ([`HostOptions`]):
-//! windows measured, offscreen frames, captures, profiles, hardware
-//! counters, vendor deep dives and development sessions, which
+//! windows measured, offscreen frames, measured runs, captures, profiles,
+//! hardware counters, vendor deep dives and development sessions, which
 //! `engine_profiler` measures and captures for.
 
 #[cfg(feature = "dev")]
@@ -12,6 +12,7 @@ pub mod files;
 mod input;
 mod job_cache;
 mod jobs;
+mod measure;
 mod offscreen;
 mod options;
 mod window;
@@ -24,6 +25,7 @@ pub use engine_profiler as profiler;
 pub use engine_profiler::{Pix, RenderDoc};
 pub use job_cache::JobCache;
 pub use jobs::{CacheOptions, JobOptions, JobPool};
+pub use measure::{Method, Settle};
 pub use offscreen::{Frames, Offscreen, PixRecord, ProfileRecord, Record, Recorded};
 pub use options::{Argument, Arguments, HostOptions, PARAMETERS, USAGE, Vendor};
 pub use window::{Measure, Window, WindowReport, run};

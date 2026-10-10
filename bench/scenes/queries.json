@@ -1,0 +1,23 @@
+{
+  "note": "10k colliders with moving bounds and 256 ray, overlap and sweep queries per fixed tick.",
+  "options": {
+    "preset": "queries",
+    "config": {
+      "seed": 1337,
+      "renderables": 10000,
+      "moving_percent": 10,
+      "hierarchy": false,
+      "interpolation": false,
+      "colliders": 10000,
+      "sensor_percent": 0,
+      "dense_colliders": false,
+      "queries_per_tick": 256,
+      "mesh_variety": 8,
+      "textured": false,
+      "culling": true,
+      "scene": "field",
+      "compressed_textures": false
+    },
+    "view": "overview"
+  }
+}

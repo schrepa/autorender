@@ -21,7 +21,7 @@ mod shapes;
 mod trees;
 
 pub use authored::{AuthoredScene, PlayerWalk};
-pub use catalog::{Catalog, Choice, catalog};
+pub use catalog::{Catalog, Choice, Switch, catalog, switches};
 pub use config::{MESH_VARIETIES, StressConfig, StressScene};
 pub use dense::FILES as DENSE_FILES;
 pub use game::StressLab;

@@ -1,0 +1,23 @@
+{
+  "note": "The 8 km generated terrain streamed around the camera, with its generated material maps and no scanned rocks.",
+  "options": {
+    "preset": "highlands",
+    "config": {
+      "seed": 1337,
+      "renderables": 4000,
+      "moving_percent": 10,
+      "hierarchy": true,
+      "interpolation": true,
+      "colliders": 0,
+      "sensor_percent": 0,
+      "dense_colliders": false,
+      "queries_per_tick": 0,
+      "mesh_variety": 32,
+      "textured": true,
+      "culling": true,
+      "scene": "highlands",
+      "compressed_textures": false
+    },
+    "view": "overview"
+  }
+}

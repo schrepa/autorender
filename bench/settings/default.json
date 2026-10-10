@@ -1,0 +1,13 @@
+{
+  "note": "The settings every workload is measured with: the size, the switches at their defaults, no scanned rocks (kept locally for their license, so not every machine has them), and no job cache, so every run starts afresh. Option files hold options by name, as --help lists them.",
+  "options": {
+    "size": "1400x900",
+    "look": "scene",
+    "effects": "all",
+    "visibility": "off",
+    "lod": "on",
+    "impostors": "on",
+    "rocks": "off",
+    "jobcache": "off"
+  }
+}

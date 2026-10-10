@@ -288,6 +288,12 @@ pub struct Renderer {
     profiler: GpuProfiler,
 }
 
+/// A point in the GPU work a native renderer submitted
+/// ([`Renderer::gpu_mark`]), for hosts that keep frames in flight.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug)]
+pub struct GpuMark(wgpu::SubmissionIndex);
+
 /// A renderer whose startup pipelines the browser may still be compiling
 /// and validating: build the world meanwhile, then [`Self::finish`].
 pub struct StartingRenderer {
@@ -607,6 +613,26 @@ impl Renderer {
     pub fn wait_for_gpu(&self) -> Result<(), RenderError> {
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
+            .map(drop)
+            .map_err(|error| render_error("The GPU failed", error))
+    }
+
+    /// A mark after the GPU work submitted so far, which
+    /// [`Self::wait_for_mark`] waits for: an empty submission, which the
+    /// queue finishes after every earlier one.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn gpu_mark(&self) -> GpuMark {
+        GpuMark(self.queue.submit([]))
+    }
+
+    /// Waits until the GPU finished the work submitted before `mark`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn wait_for_mark(&self, mark: GpuMark) -> Result<(), RenderError> {
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(mark.0),
+                timeout: None,
+            })
             .map(drop)
             .map_err(|error| render_error("The GPU failed", error))
     }

@@ -2,11 +2,13 @@
 //! what [`HostOptions::run`] does with it: the game in a window (measured
 //! for a number of frames where asked), or offscreen for a number of frames
 //! with what tools keep of them (a PNG of the last, its frame-exact GPU
-//! capture, a deep profile, PIX's per-draw counters), or as a development
-//! session, or again under Nsight's GPU Trace. Games parse their own options
+//! capture, a deep profile, PIX's per-draw counters), or measured as a
+//! method file says, or as a development session, or again under Nsight's
+//! GPU Trace. Games parse their own options
 //! around the host's ([`HostOptions::take`]); `main` parses the host's
 //! alone.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -14,8 +16,8 @@ use engine::{Engine, Game, GpuPreference};
 use serde_json::json;
 
 use crate::{
-    CacheOptions, Frames, JobOptions, Measure, Offscreen, Pix, PixRecord, ProfileRecord, Record,
-    Window, WindowReport,
+    CacheOptions, Frames, JobOptions, Measure, Method, Offscreen, Pix, PixRecord, ProfileRecord,
+    Record, Window, WindowReport,
 };
 
 /// The host's options, as `--help` lists them.
@@ -65,6 +67,17 @@ Native options:
   --vendor-counters LIST
                        with --vendor pix: the comma-separated counters (PIX's
                        names) to replay in place of the summary's own
+  --measure FILE       a measured run offscreen, as the method in FILE says
+                       (`cargo xtask measure` writes it): settled by its rule,
+                       then timed one frame at a time and with frames in
+                       flight, with marks to time them by and a JSON report on
+                       standard output; profiling builds add each GPU pass's
+                       and CPU span's time
+  --shader-hash        print the SHA-256 of the renderer's composed shader
+                       modules (each one's name and source) as JSON and exit
+  --settings FILE      the options in FILE, a JSON object whose `options` holds
+                       them by name ({\"options\": {\"size\": \"1400x900\"}}), the
+                       game's too; options after it override its own
   --dev                serve the development protocol over standard input
                        and output, drawing offscreen and starting paused
   --dev-artifacts DIR  with --dev: where captures and profiles go (default
@@ -94,14 +107,74 @@ impl Argument {
 
 /// A command line's options, in order.
 pub struct Arguments {
-    rest: std::vec::IntoIter<String>,
+    rest: VecDeque<String>,
+    // Option files read so far: a file that names itself stops here.
+    included: usize,
 }
+
+/// Option files one command line may read, those they name included.
+const MAX_OPTION_FILES: usize = 16;
 
 impl Arguments {
     pub fn new(arguments: impl IntoIterator<Item = String>) -> Self {
         Self {
-            rest: arguments.into_iter().collect::<Vec<_>>().into_iter(),
+            rest: arguments.into_iter().collect(),
+            included: 0,
         }
+    }
+
+    /// Reads the option file `argument` names in place of it: a JSON object
+    /// whose `options` holds options by name (without `--`), their values
+    /// strings, numbers, `true` and `false` for `on` and `off`, or JSON the
+    /// option takes as text; a `note` beside it says what the file is for.
+    /// Its options come before the rest of the command line, so options
+    /// after it override its own.
+    pub fn include(&mut self, argument: &Argument) -> Result<(), String> {
+        let path = self.value(argument)?;
+        self.included += 1;
+        if self.included > MAX_OPTION_FILES {
+            return Err(format!(
+                "{} {path}: more than {MAX_OPTION_FILES} option files",
+                argument.name
+            ));
+        }
+        let failed = |what: String| format!("{} {path}: {what}", argument.name);
+        let text = std::fs::read_to_string(&path).map_err(|error| failed(error.to_string()))?;
+        let file: serde_json::Value =
+            serde_json::from_str(&text).map_err(|error| failed(error.to_string()))?;
+        let fields = file
+            .as_object()
+            .ok_or_else(|| failed("an option file is a JSON object".into()))?;
+        if let Some(field) = fields
+            .keys()
+            .find(|field| !["note", "options"].contains(&field.as_str()))
+        {
+            return Err(failed(format!(
+                "{field} is not a field; option files hold `options` and a `note`"
+            )));
+        }
+        let options = fields
+            .get("options")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| failed("`options` is an object of options by name".into()))?;
+        let mut expanded = Vec::with_capacity(options.len() * 2);
+        for (name, value) in options {
+            let value = match value {
+                serde_json::Value::String(text) => text.clone(),
+                serde_json::Value::Bool(true) => "on".into(),
+                serde_json::Value::Bool(false) => "off".into(),
+                serde_json::Value::Number(number) => number.to_string(),
+                serde_json::Value::Null => {
+                    return Err(failed(format!("option {name} has no value")));
+                }
+                json => json.to_string(),
+            };
+            expanded.extend([format!("--{name}"), value]);
+        }
+        for argument in expanded.into_iter().rev() {
+            self.rest.push_front(argument);
+        }
+        Ok(())
     }
 
     /// `argument`'s value: after its `=`, else the next argument.
@@ -109,7 +182,7 @@ impl Arguments {
         argument
             .inline
             .clone()
-            .or_else(|| self.rest.next())
+            .or_else(|| self.rest.pop_front())
             .ok_or_else(|| format!("{} takes a value", argument.name))
     }
 
@@ -145,7 +218,7 @@ impl Iterator for Arguments {
     type Item = Argument;
 
     fn next(&mut self) -> Option<Argument> {
-        let argument = self.rest.next()?;
+        let argument = self.rest.pop_front()?;
         Some(match argument.split_once('=') {
             Some((name, value)) => Argument {
                 name: name.to_owned(),
@@ -187,6 +260,9 @@ pub struct HostOptions {
     pub vendor_counters: Vec<String>,
     pub dev: bool,
     pub dev_artifacts: Option<PathBuf>,
+    /// A measured run's method.
+    pub measure: Option<Method>,
+    pub shader_hash: bool,
 }
 
 impl Default for HostOptions {
@@ -208,6 +284,8 @@ impl Default for HostOptions {
             vendor_counters: Vec::new(),
             dev: false,
             dev_artifacts: None,
+            measure: None,
+            shader_hash: false,
         }
     }
 }
@@ -326,6 +404,17 @@ impl HostOptions {
                 self.dev = true;
             }
             "--dev-artifacts" => self.dev_artifacts = Some(arguments.value(argument)?.into()),
+            "--measure" => {
+                let path = arguments.value(argument)?;
+                let text = std::fs::read_to_string(&path)
+                    .map_err(|error| format!("--measure {path}: {error}"))?;
+                self.measure = Some(Method::parse(&text)?);
+            }
+            "--settings" => arguments.include(argument)?,
+            "--shader-hash" => {
+                arguments.flag(argument)?;
+                self.shader_hash = true;
+            }
             _ => return Ok(false),
         }
         Ok(true)
@@ -346,6 +435,17 @@ impl HostOptions {
         }
         if self.dev && !cfg!(feature = "dev") {
             return Err("--dev needs a build with the dev feature".into());
+        }
+        let others = self.frames.is_some()
+            || self.offscreen.is_some()
+            || self.dev
+            || self.vendor.is_some()
+            || self.counters.is_some();
+        if self.measure.is_some() && others {
+            return Err(
+                "--measure runs alone: without --frames, --offscreen, --dev, --counters and --vendor"
+                    .into(),
+            );
         }
         if self.counters.is_some() && self.profile.is_none() && !self.dev {
             return Err("--counters counts profiles: --profile or --dev".into());
@@ -370,6 +470,10 @@ impl HostOptions {
         title: &str,
         build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> engine::Result<()> {
+        if self.shader_hash {
+            println!("{}", json!({ "shader_hash": shader_hash() }));
+            return Ok(());
+        }
         self.start_tools()?;
         #[cfg(feature = "profiling")]
         if let (Some(Vendor::Nsight), Some(folder)) = (self.vendor, &self.vendor_dir) {
@@ -378,6 +482,10 @@ impl HostOptions {
         if self.dev {
             #[cfg(feature = "dev")]
             return self.session(build)?.run();
+        }
+        if let Some(method) = &self.measure {
+            let size = self.size.unwrap_or((1280, 720));
+            return crate::measure::run(method, size, self.gpu, self.jobs, build);
         }
         match self.offscreen {
             Some(frames) => self.run_offscreen(frames, build),
@@ -550,6 +658,23 @@ impl HostOptions {
         println!("{trace:#}");
         Ok(())
     }
+}
+
+/// The SHA-256 of the renderer's shader modules: each one's name and
+/// source, in order.
+fn shader_hash() -> String {
+    use sha2::Digest;
+    let mut hash = sha2::Sha256::new();
+    for (name, source) in engine::SHADER_MODULES {
+        for part in [name, source] {
+            hash.update(part.as_bytes());
+            hash.update([0]);
+        }
+    }
+    hash.finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// The program's name, as reports name what ran.

@@ -1,0 +1,23 @@
+{
+  "note": "Sensor clusters that exceed their pair budgets on purpose.",
+  "options": {
+    "preset": "sensors",
+    "config": {
+      "seed": 1337,
+      "renderables": 10000,
+      "moving_percent": 25,
+      "hierarchy": false,
+      "interpolation": false,
+      "colliders": 2500,
+      "sensor_percent": 100,
+      "dense_colliders": true,
+      "queries_per_tick": 0,
+      "mesh_variety": 8,
+      "textured": true,
+      "culling": true,
+      "scene": "field",
+      "compressed_textures": false
+    },
+    "view": "overview"
+  }
+}

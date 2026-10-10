@@ -300,11 +300,19 @@ impl<G: Game> Offscreen<G> {
     /// One frame at `timestamp` milliseconds, without input, once the GPU
     /// drew it: offscreen frames present nowhere that would pace them.
     pub fn frame(&mut self, timestamp: f64) -> engine::Result<()> {
+        self.frame_in_flight(timestamp)?;
+        self.host.wait_for_gpu()
+    }
+
+    /// One frame at `timestamp` milliseconds, without input, submitted to
+    /// the GPU without waiting for it to draw: hosts that keep frames in
+    /// flight wait for their marks ([`GameHost::gpu_mark`]).
+    pub fn frame_in_flight(&mut self, timestamp: f64) -> engine::Result<()> {
         let (width, height) = self.size;
         self.host
             .frame(timestamp, width, height, InputState::default(), 0, 0, 0)?;
         self.exchange_jobs();
-        self.host.wait_for_gpu()
+        Ok(())
     }
 
     /// One frame at `timestamp`, captured frame-exact into `path`: by PIX

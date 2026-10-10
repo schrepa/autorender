@@ -1,0 +1,23 @@
+{
+  "note": "The maximum visual load: 90k static textured towers; rendering, extraction, batching and texture sampling at the most objects.",
+  "options": {
+    "preset": "visual",
+    "config": {
+      "seed": 1337,
+      "renderables": 90000,
+      "moving_percent": 0,
+      "hierarchy": false,
+      "interpolation": false,
+      "colliders": 0,
+      "sensor_percent": 0,
+      "dense_colliders": false,
+      "queries_per_tick": 0,
+      "mesh_variety": 32,
+      "textured": true,
+      "culling": true,
+      "scene": "field",
+      "compressed_textures": false
+    },
+    "view": "overview"
+  }
+}
