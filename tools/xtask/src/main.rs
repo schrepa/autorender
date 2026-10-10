@@ -1,5 +1,6 @@
 mod authoring;
 mod bench;
+mod checks;
 mod coverage;
 mod development;
 mod features;
@@ -59,6 +60,9 @@ fn execute() -> Result<(), String> {
     }
     if task == "measure" {
         return measure::measure(&root, &options);
+    }
+    if task == "checks" {
+        return checks::check_task(&root, &options);
     }
     if task == "new" {
         return scaffold::new(&root, &options);
@@ -139,7 +143,8 @@ fn commands() -> Vec<(String, &'static str)> {
         ("gpu --report DIR [--no-rga]".into(), "Report every shader entry point's cost offline, on any machine: naga's counts and SPIR-V, and with Radeon GPU Analyzer (downloaded once, Windows and Linux) its AMD machine code, registers and memory on RDNA 2, 3 and 4"),
         ("bench check".into(), "Check bench/ against the code: the metric catalog names what measurements report, the scene and settings files known options, the shader paths every shader"),
         ("bench assets".into(), "Build the files workloads read that git does not hold into target/bench-assets/<inputs hash>/ (reused while the generators are unchanged) and write them into web/public/stress for the page; prints the folder and its generated_hash"),
-        ("measure --task TASK.json --profile PROFILE.json --out REPORT.json [--extend REPORT.json] [--formats FORMATS.json]".into(), "Run an engine-factory measure task on the native host from this checkout (the task's tools commit): build both arms, measure each workload in alternating rounds until its clean pairs, profile each arm and report the shaders where the task wants them, and write the factory's report (format 2), checked against FORMATS (the factory's /api/formats) when given"),
+        ("measure --task TASK.json --profile PROFILE.json --out REPORT.json [--extend REPORT.json] [--formats FORMATS.json]".into(), "Run an engine-factory measure task on the native host from this checkout (the task's tools commit): build both arms, measure each workload in alternating rounds until its clean pairs, profile each arm and report the shaders where the task wants them, run the task's checks, and write the factory's report (format 2), checked against FORMATS (the factory's /api/formats) when given"),
+        ("checks --task TASK.json --profile PROFILE.json --out REPORT.json".into(), "Run an engine-factory check task from this checkout: each check's script against a development server of its commit, every attempt kept (a failing check runs again, up to 3 attempts), as the factory's check report (format 2)"),
         ("wasm-bindgen-version".into(), "Print the wasm-bindgen version Cargo.lock pins"),
         ("lint".into(), "Check sources, generated files, bench/, shaders against Rust, formatting, native and Wasm Clippy and the web host"),
         ("docs".into(), "Generate native workspace and browser API documentation"),

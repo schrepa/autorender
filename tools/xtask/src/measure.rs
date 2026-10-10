@@ -79,13 +79,13 @@ fn options(arguments: &[String]) -> Result<Options, String> {
     })
 }
 
-fn read_json(path: &Path) -> Result<Value, String> {
+pub fn read_json(path: &Path) -> Result<Value, String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
-fn git(root: &Path, arguments: &[&str]) -> Result<String, String> {
+pub fn git(root: &Path, arguments: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .args(arguments)
         .current_dir(root)
@@ -102,7 +102,7 @@ fn git(root: &Path, arguments: &[&str]) -> Result<String, String> {
 }
 
 /// A program's output, trimmed, run in `folder`.
-fn output(folder: &Path, program: &str, arguments: &[&str]) -> Result<String, String> {
+pub fn output(folder: &Path, program: &str, arguments: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
         .args(arguments)
         .current_dir(folder)
@@ -118,14 +118,14 @@ fn output(folder: &Path, program: &str, arguments: &[&str]) -> Result<String, St
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-fn file_hash(path: &Path) -> Result<String, String> {
+pub fn file_hash(path: &Path) -> Result<String, String> {
     let bytes =
         fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     Ok(hex(&Sha256::digest(&bytes)))
 }
 
 /// The time `time` in UTC, as ISO 8601 with milliseconds.
-fn iso(time: SystemTime) -> String {
+pub fn iso(time: SystemTime) -> String {
     let since = time.duration_since(UNIX_EPOCH).unwrap_or_default();
     let (days, seconds) = (since.as_secs() / 86_400, since.as_secs() % 86_400);
     // Days to a civil date (Howard Hinnant's algorithm).
@@ -154,7 +154,7 @@ fn iso(time: SystemTime) -> String {
 
 /// The time an ISO 8601 date and time (`2026-10-11T02:00:00Z`, with a
 /// fraction or an offset) names.
-fn parse_iso(text: &str) -> Option<SystemTime> {
+pub fn parse_iso(text: &str) -> Option<SystemTime> {
     let number = |range: std::ops::Range<usize>| text.get(range)?.parse::<i64>().ok();
     let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
     let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
@@ -217,6 +217,51 @@ fn ensure_commit(root: &Path, sha: &str, pull: Option<u64>) -> Result<(), String
     git(root, &["cat-file", "-e", &commit]).map(drop)
 }
 
+/// DXC's library (Windows): `DXC_PATH`, else `dxcompiler.dll` on the path,
+/// else the one Firefox or the newest Chrome ships.
+fn dxc() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("DXC_PATH").map(PathBuf::from) {
+        return path.is_file().then_some(path);
+    }
+    let on_path = std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .map(|folder| folder.join("dxcompiler.dll"));
+    let programs = std::env::var_os("ProgramFiles").map(PathBuf::from);
+    let firefox = programs
+        .iter()
+        .map(|programs| programs.join("Mozilla Firefox").join("dxcompiler.dll"));
+    let mut chrome: Vec<PathBuf> = programs
+        .iter()
+        .flat_map(|programs| {
+            fs::read_dir(programs.join("Google/Chrome/Application"))
+                .into_iter()
+                .flatten()
+        })
+        .flatten()
+        .map(|entry| entry.path().join("dxcompiler.dll"))
+        .collect();
+    chrome.sort();
+    on_path
+        .chain(firefox)
+        .chain(chrome.into_iter().rev())
+        .find(|file| file.is_file())
+}
+
+/// The source at `sha`, checked out under `target/measure/source/`.
+pub fn checkout(root: &Path, sha: &str, pull: Option<u64>) -> Result<PathBuf, String> {
+    ensure_commit(root, sha, pull)?;
+    let source = root.join("target").join("measure").join("source").join(sha);
+    if !source.join("Cargo.toml").is_file() {
+        let path = source.display().to_string();
+        git(
+            root,
+            &["worktree", "add", "--detach", "--force", &path, sha],
+        )?;
+    }
+    Ok(source)
+}
+
 /// The arm `role` at `sha`: its source checked out under
 /// `target/measure/source/`, built into `target/measure/builds/`, where a
 /// build of the same commit is reused (its program unchanged).
@@ -227,17 +272,8 @@ fn prepare_arm(
     pull: Option<u64>,
     backend: &str,
 ) -> Result<Arm, String> {
-    ensure_commit(root, sha, pull)?;
-    let measure = root.join("target").join("measure");
-    let source = measure.join("source").join(sha);
-    if !source.join("Cargo.toml").is_file() {
-        let path = source.display().to_string();
-        git(
-            root,
-            &["worktree", "add", "--detach", "--force", &path, sha],
-        )?;
-    }
-    let folder = measure.join("builds").join(sha);
+    let source = checkout(root, sha, pull)?;
+    let folder = root.join("target").join("measure").join("builds").join(sha);
     let program = folder.join(program_name());
     let identity = folder.join("build.json");
     let kept = read_json(&identity).ok().filter(|build| {
@@ -250,6 +286,24 @@ fn prepare_arm(
         }
         None => build_arm(root, &source, &folder, sha, backend)?,
     };
+    let mut build = build;
+    // D3D12 compiles the engine's shaders with DXC, beside the program.
+    if cfg!(windows) {
+        match dxc() {
+            Some(library) => {
+                let beside = folder.join("dxcompiler.dll");
+                if file_hash(&beside).ok() != file_hash(&library).ok() {
+                    fs::copy(&library, &beside)
+                        .map_err(|error| format!("cannot copy {}: {error}", library.display()))?;
+                }
+                build["toolchain"]["dxc"] = file_hash(&library)?.into();
+            }
+            None if backend == "dx12" => {
+                return Err("D3D12 runs need DXC's dxcompiler.dll, which Firefox and Chrome ship: set DXC_PATH to it, or put it on the path".into());
+            }
+            None => {}
+        }
+    }
     let printed = output(root, &program.display().to_string(), &["--shader-hash"])?;
     let shader_hash = serde_json::from_str::<Value>(&printed)
         .ok()
@@ -723,9 +777,25 @@ fn measure_run(
     });
     let unavailable = report["unavailable"]
         .as_array()
-        .cloned()
-        .unwrap_or_default();
+        .into_iter()
+        .flatten()
+        .map(|entry| {
+            json!({
+                "metric": entry["metric"],
+                "reason": reason(entry["reason"].as_str().unwrap_or_default()),
+            })
+        })
+        .collect();
     Ok((record, unavailable))
+}
+
+/// `text` within the 300 characters the factory's reasons hold.
+fn reason(text: &str) -> String {
+    const MOST: usize = 300;
+    if text.chars().count() <= MOST {
+        return text.to_owned();
+    }
+    text.chars().take(MOST - 3).collect::<String>() + "..."
 }
 
 /// The environment runs take: the graphics interface the setup names.
@@ -758,7 +828,7 @@ fn profile_run(
     if let Some(symbols) = arm.program.parent() {
         environment.push(("_NT_ALTERNATE_SYMBOL_PATH", symbols.display().to_string()));
     }
-    let unavailable = |reason: String| json!({"arm": arm.role, "unavailable": reason});
+    let unavailable = |why: String| json!({"arm": arm.role, "unavailable": reason(&why)});
     let run = match run_host(root, &arm.program, &arguments, &environment) {
         Ok(run) => run,
         Err(error) => return unavailable(error),
@@ -827,7 +897,7 @@ fn shader_report(root: &Path, arm: &Arm, folder: &Path) -> Value {
         }
         outcome => json!({
             "files": [],
-            "unavailable": [{"part": "report", "reason": format!("cargo xtask gpu --report at {} failed: {outcome:?}", arm.sha)}],
+            "unavailable": [{"part": "report", "reason": reason(&format!("cargo xtask gpu --report at {} failed: {outcome:?}", arm.sha))}],
         }),
     }
 }
@@ -1025,7 +1095,7 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
             if let Some(error) = failed {
                 // A round is one run of each arm: a lone run stays out.
                 eprintln!("{error}");
-                unavailable.push(json!({"metric": "*", "reason": error}));
+                unavailable.push(json!({"metric": "*", "reason": reason(&error)}));
                 break;
             }
             longest_round = longest_round.max(started.elapsed());
@@ -1084,12 +1154,18 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
             .as_ref()
             .and_then(|previous| previous.get("static").cloned())
     };
-    if spec["checks"]
-        .as_array()
-        .is_some_and(|checks| !checks.is_empty())
-    {
-        eprintln!("The task's checks are not run by this command yet: the report lists none.");
-    }
+    // The checks last: they build and serve the page, which measuring
+    // must not share the machine with. An extension keeps those it has.
+    let checks = match previous.as_ref().map(|previous| previous["checks"].clone()) {
+        Some(Value::Array(checks)) if !checks.is_empty() => checks,
+        _ => {
+            let wanted = spec["checks"].as_array().cloned().unwrap_or_default();
+            let (checks, cut) =
+                crate::checks::run(root, &wanted, &runs_folder.join("checks"), deadline)?;
+            incomplete |= cut;
+            checks
+        }
+    };
     let profile_end = read_json(&options.profile)?;
     let mut report = json!({
         "format_version": FORMAT_VERSION,
@@ -1104,7 +1180,7 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
         "builds": {"base": base.build, "candidate": candidate.build},
         "shader_hash": {"base": base.shader_hash, "candidate": candidate.shader_hash},
         "workloads": workloads,
-        "checks": [],
+        "checks": checks,
         "incomplete": incomplete,
     });
     if let Some(static_part) = static_part {
@@ -1156,34 +1232,48 @@ fn measured_size(folder: &Path) -> Option<[u32; 2]> {
 /// The report with each local file it names as its SHA-256, as the
 /// factory's command line sends it after uploading them.
 fn with_file_hashes(report: &Value) -> Value {
-    let mut report = report.clone();
-    let hashed = |value: &mut Value| {
+    fn hashed(value: Option<&mut Value>) {
+        let Some(value) = value else {
+            return;
+        };
         if let Some(hash) = value
             .as_str()
             .and_then(|path| file_hash(Path::new(path)).ok())
         {
             *value = hash.into();
         }
-    };
-    for workload in report["workloads"].as_array_mut().into_iter().flatten() {
-        for run in workload["runs"].as_array_mut().into_iter().flatten() {
-            hashed(&mut run["capture"]);
+    }
+    // Every list of files at `path` in `value`, where there is one.
+    fn files<'a>(value: &'a mut Value, path: &[&str]) -> Vec<&'a mut Value> {
+        let mut at = Some(value);
+        for key in path {
+            at = at.and_then(|value| value.get_mut(*key));
+        }
+        at.and_then(Value::as_array_mut)
+            .map(|files| files.iter_mut().collect())
+            .unwrap_or_default()
+    }
+    let mut report = report.clone();
+    for workload in files(&mut report, &["workloads"]) {
+        for run in files(workload, &["runs"]) {
+            hashed(run.get_mut("capture"));
         }
         for key in ["profiles", "vendor"] {
-            for entry in workload[key].as_array_mut().into_iter().flatten() {
-                for file in entry["files"].as_array_mut().into_iter().flatten() {
-                    hashed(&mut file["hash"]);
+            for entry in files(workload, &[key]) {
+                for file in files(entry, &["files"]) {
+                    hashed(file.get_mut("hash"));
                 }
             }
         }
     }
+    for check in files(&mut report, &["checks"]) {
+        for attempt in files(check, &["attempts"]) {
+            hashed(attempt.get_mut("log"));
+        }
+    }
     for arm in ["base", "candidate"] {
-        for file in report["static"]["shader_report"][arm]["files"]
-            .as_array_mut()
-            .into_iter()
-            .flatten()
-        {
-            hashed(&mut file["hash"]);
+        for file in files(&mut report, &["static", "shader_report", arm, "files"]) {
+            hashed(file.get_mut("hash"));
         }
     }
     report
