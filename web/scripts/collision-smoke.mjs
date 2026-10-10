@@ -1,9 +1,9 @@
 /** Real Chrome collision contracts; fixtures are routed responses, never source edits. */
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
-import { artifacts, commander, devUrl, developmentReady, launch, openPaused, routedScene } from "./harness.mjs";
+import { artifacts, commander, devUrl, sceneUrl, developmentReady, launch, openPaused, routedScene } from "./harness.mjs";
 
-const url = devUrl("playground.html", process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
+const url = sceneUrl(process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
 const output = await artifacts("collision-smoke");
 const cube = half_extents => ({ kind: "cuboid", half_extents });
 const collider = (shape, memberships = 1, filter = 2, sensor = false) => ({ shape, memberships, filter, sensor });
@@ -108,7 +108,7 @@ try {
   await command("input", { right: 1 });
   await command("step", { ticks: 30 });
   near((await inspect("player", "Transform")).translation[0], 0.05);
-  const progress = (await command("inspect", { component: "GameProgress" })).result;
+  const progress = (await command("inspect", { component: "PlayerWalk" })).result;
   assert.ok(JSON.stringify(progress).includes('"collision_errors":0'));
   checks.push("swept_thin_wall", "no_game_query_errors");
 
@@ -129,8 +129,9 @@ try {
   await command("raycast", ray);
   await command("pause");
   checks.push("queries_allowed_while_running");
-  const orbit = new URL(url); orbit.pathname = "/";
-  await page.goto(orbit.href);
+  // A workload with neither colliders nor queries leaves collision out.
+  const workload = devUrl("stress.html", { config: { renderables: 100, colliders: 0, queries_per_tick: 0, mesh_variety: 1 } });
+  await page.goto(workload.href);
   await developmentReady(page);
   const missing = await command("raycast", ray, false);
   assert.match(missing.error.code, /missing_plugin/);

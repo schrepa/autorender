@@ -1,4 +1,5 @@
 //! Deterministic stress workloads built exclusively through the public engine SDK.
+mod authored;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 mod caves;
@@ -13,6 +14,7 @@ mod scene;
 mod shapes;
 mod trees;
 
+pub use authored::{AuthoredScene, PlayerWalk};
 pub use config::{StressConfig, StressScene};
 pub use dense::FILES as DENSE_FILES;
 pub use highlands::{FILES as HIGHLANDS_FILES, ROCK_FILES};

@@ -30,7 +30,7 @@ export async function startIteration(values) {
   const webPort = port(values["web-port"], 5174);
   const bridgePort = port(values.port, 7331);
   if (webPort === bridgePort) throw new AgentError("arguments", "Web and bridge ports must differ.");
-  const game = values.game ?? "playground";
+  const game = values.game ?? "stress";
   if (!(game in gamePages)) throw new AgentError("arguments", `Game must be one of ${Object.keys(gamePages).join(", ")}.`);
   const executable = process.env.ENGINE_XTASK_BIN ?? resolve(workspace, "target/debug", process.platform === "win32" ? "xtask.exe" : "xtask");
   await access(executable).catch(() => { throw new AgentError("build_worker_unavailable", "Start with cargo xtask agent watch to compile the native build worker.", executable); });

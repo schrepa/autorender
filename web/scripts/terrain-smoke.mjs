@@ -1,5 +1,5 @@
 /**
- * Terrain checks: a version 9 playground fixture with a
+ * Terrain checks: a version 9 fixture with a
  * generated terrain streams, draws, casts shadows, collides and answers
  * height queries; the terrain control and environment section change what
  * draws; its horizon map casts long shadows and aerial
@@ -17,9 +17,9 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { artifacts, commander, devUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
+import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
 
-const url = devUrl("playground.html");
+const url = sceneUrl();
 const output = await artifacts("terrain-smoke");
 const scenes = fileURLToPath(new URL("../public/scenes/", import.meta.url));
 const folder = fileURLToPath(new URL("../public/scenes/terrain-smoke/", import.meta.url));

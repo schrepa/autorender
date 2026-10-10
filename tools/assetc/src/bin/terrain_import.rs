@@ -17,7 +17,7 @@
 //! ```
 //!
 //! It writes `DIR/NAME/height.r16`, the report `DIR/NAME/import.json` and a
-//! version 9 scene `DIR/NAME.scene.json` (playground-ready, with a player
+//! version 9 scene `DIR/NAME.scene.json` (for `stress.html?source=`, with a player
 //! box at its middle): a terrain `--size` meters across
 //! (a multiple of 256, 16384 by default) whose first layer is the import,
 //! with `--detail` meters of noise (8 by default, 0 for none) and the
@@ -1094,7 +1094,7 @@ fn scene(
         "materials": materials,
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "entities": [{
-            // The playground's player: a box on the ground at the middle.
+            // The player: a box on the ground at the middle, which walks.
             "id": "player",
             "mesh": "box",
             "material": "plain",

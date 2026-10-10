@@ -1,0 +1,41 @@
+import { stressBindings } from "./bindings";
+import { boot } from "./host";
+import { loadSceneFiles, loadSceneSource } from "./source";
+import "./stress.css";
+
+// An authored scene in place of a workload, reloaded by revision through the
+// development tools; ?taa=on antialiases ordinary frames temporally.
+const params = new URLSearchParams(location.search);
+const sourceUrl = params.get("source") ?? "";
+if (!/^\/scenes\/[A-Za-z0-9_-]+\.scene\.json$/.test(sourceUrl)) throw new Error("The scene source must be a /scenes/<name>.scene.json path.");
+const taa = params.get("taa");
+document.body.dataset.mode = "scene";
+const loadScene = (signal: AbortSignal) => loadSceneSource(sourceUrl, signal);
+const loadFiles = async (source: string, signal: AbortSignal) => loadSceneFiles(sourceUrl, source, await stressBindings(), signal);
+
+boot({
+  source: { url: sourceUrl, load: loadScene, files: loadFiles },
+  async create(canvas, _count, signal) {
+    const { default: init, StressGame } = await stressBindings();
+    await init();
+    const source = await loadScene(signal);
+    const files = await loadFiles(source, signal);
+    signal.throwIfAborted();
+    return StressGame.create_scene(canvas, source, files);
+  },
+  ready(game) {
+    if (taa) game.set_temporal_antialiasing(taa === "on");
+  },
+  async reload(game, signal) {
+    const source = await loadScene(signal);
+    const files = await loadFiles(source, signal);
+    signal.throwIfAborted();
+    game.reload_scene(source, files);
+  },
+  poll(game) {
+    const progress = JSON.parse(game.scene_progress());
+    document.getElementById("scene")!.dataset.progress = JSON.stringify(progress);
+    document.getElementById("active-preset")!.textContent = progress.scene_id.toUpperCase();
+    document.getElementById("active-summary")!.textContent = `${sourceUrl} · revision ${progress.revision}`;
+  },
+});

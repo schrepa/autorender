@@ -1,13 +1,13 @@
-//! The browser smoke checks: every `web/scripts/*-smoke.mjs` and
-//! `web/scripts/smoke.mjs`, found by name, each opening with a `/**` comment
+//! The browser smoke checks: every `web/scripts/*-smoke.mjs`, found by
+//! name, each opening with a `/**` comment
 //! that says what it checks. They drive a running development server
 //! (`DEMO_URL`, Vite's default otherwise; see `web/scripts/harness.mjs`).
 
 use std::{fs, path::Path, process::Command};
 
-/// Every smoke check: its name (`terrain` for `terrain-smoke.mjs`, `smoke`
-/// for `smoke.mjs`) and the first line of what it checks. A check without its
-/// opening comment is an error.
+/// Every smoke check: its name (`terrain` for `terrain-smoke.mjs`) and the
+/// first line of what it checks. A check without its opening comment is an
+/// error.
 fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
     let directory = root.join("web/scripts");
     let entries = fs::read_dir(&directory)
@@ -20,11 +20,7 @@ fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
         let Some(file) = file.to_str() else {
             continue;
         };
-        let name = if file == "smoke.mjs" {
-            "smoke"
-        } else if let Some(name) = file.strip_suffix("-smoke.mjs") {
-            name
-        } else {
+        let Some(name) = file.strip_suffix("-smoke.mjs") else {
             continue;
         };
         let source = fs::read_to_string(directory.join(file))
@@ -73,11 +69,7 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), String> {
         }
     }
     for name in names {
-        let script = if name == "smoke" {
-            "scripts/smoke.mjs".to_owned()
-        } else {
-            format!("scripts/{name}-smoke.mjs")
-        };
+        let script = format!("scripts/{name}-smoke.mjs");
         println!("smoke {name}");
         let status = Command::new("node")
             .arg(&script)

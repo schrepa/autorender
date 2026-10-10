@@ -1,5 +1,4 @@
 mod authoring;
-mod benchmarking;
 mod development;
 mod gpu;
 mod importing;
@@ -38,9 +37,6 @@ fn execute() -> Result<(), String> {
     }
     if task == "asset" {
         return importing::asset(&options);
-    }
-    if task == "benchmark" {
-        return benchmarking::benchmark(&root, &options);
     }
     if task == "profile" {
         return match options.as_slice() {
@@ -101,8 +97,6 @@ fn execute() -> Result<(), String> {
                           Import a static textured GLB with structured results; dense opaque primitives\n\
                           (512 triangles and up by default) become virtual meshes\n\
                    assets Validate authored scene sources without changing them\n\
-                   benchmark [--url URL] [--samples N] [--warmup N] [--repeats N] [--mode step|render|present] [--setup-ticks N]\n\
-                          Measure fixed browser workloads with culling off/on; --output PATH, --baseline PATH, --max-regression-percent N\n\
                    schema Write the generated development protocol summary, client list and stats types\n\
                    smoke --list | --all | NAME...  List or run the browser smoke checks against a running dev server\n\
                    gpu    Check the renderer's shaders against its Rust GPU layouts and bindings\n\

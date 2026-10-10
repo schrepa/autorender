@@ -1,10 +1,9 @@
 /** Texture lifecycle integration against a development host; fixtures stay in routed responses. */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { artifacts, base, commander, devUrl, differentPixels, launch, openPaused, residency, routedScene } from "./harness.mjs";
+import { artifacts, commander, gardenScene, sceneUrl, differentPixels, launch, openPaused, residency, routedScene } from "./harness.mjs";
 
-const url = devUrl("playground.html");
-const sourceUrl = new URL("scenes/playground.scene.json", base);
+const url = sceneUrl();
 const output = await artifacts("texture-smoke");
 const { browser, page, errors } = await launch({ width: 1440, height: 1000 });
 const command = commander(page);
@@ -34,9 +33,7 @@ async function capture(name) {
 const changedPixels = (first, second) => differentPixels(page, [first.png, second.png], { alpha: true });
 
 try {
-  const sourceResponse = await page.request.get(sourceUrl.href);
-  assert.equal(sourceResponse.ok(), true, `Scene fetch failed: ${sourceResponse.status()}`);
-  const source = await sourceResponse.json();
+  const source = gardenScene();
   assert.ok(Number.isSafeInteger(source.revision) && source.revision <= Number.MAX_SAFE_INTEGER - 10);
   assert.ok(source.textures?.length > 0, "Crystal Garden must include imported textured scenery.");
   const player = source.entities.find(entity => entity.tags?.includes("player"))?.id;

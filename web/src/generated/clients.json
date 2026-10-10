@@ -1,17 +1,5 @@
 [
   {
-    "game": "orbit",
-    "package": "orbit-demo",
-    "page": "index.html",
-    "wasm": "orbit_demo"
-  },
-  {
-    "game": "playground",
-    "package": "playground",
-    "page": "playground.html",
-    "wasm": "playground"
-  },
-  {
     "game": "stress",
     "package": "stress-lab",
     "page": "stress.html",

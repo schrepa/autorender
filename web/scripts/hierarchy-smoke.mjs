@@ -2,11 +2,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
-  artifacts, base, commander, devUrl, launch, near as nearly, openPaused, residency, routedScene,
+  artifacts, commander, gardenScene, sceneUrl, launch, near as nearly, openPaused, residency, routedScene,
 } from "./harness.mjs";
 
-const url = devUrl("playground.html");
-const sourceUrl = new URL("scenes/playground.scene.json", base);
+const url = sceneUrl();
 const output = await artifacts("hierarchy-smoke");
 const { browser, page, errors } = await launch({ width: 1440, height: 1000 });
 const command = commander(page);
@@ -46,9 +45,7 @@ async function capture(name) {
 }
 
 try {
-  const response = await page.request.get(sourceUrl.href);
-  assert.equal(response.ok(), true, `Scene fetch failed: ${response.status()}`);
-  const source = await response.json();
+  const source = gardenScene();
   assert.equal(source.version, 4, "This smoke requires the current hierarchy/collider sample.");
   assert.ok(Number.isSafeInteger(source.revision) && source.revision < Number.MAX_SAFE_INTEGER - 20);
   const fixture = structuredClone(source);
@@ -137,7 +134,7 @@ try {
   near(accessoryDelta, playerDelta, "Accessory must inherit the exact player displacement");
   assert.deepEqual(await inspect("player-accessory", "Transform"), accessoryLocal);
   const playerState = await command("inspect", { entity: player, component: "Transform" });
-  const progress = (await command("inspect", { component: "GameProgress" })).result.value;
+  const progress = (await command("inspect", { component: "PlayerWalk" })).result.value;
   const invalid = [];
   for (const kind of ["cycle", "missing_parent", "qualified_id_collision"]) {
     const broken = structuredClone(fixture);
@@ -154,7 +151,7 @@ try {
     invalid.push({ kind, code: failed.error.code, path: failed.error.path });
     assert.deepEqual((await command("inspect", { entity: player, component: "Transform" })).result.entity, playerState.result.entity);
     assert.deepEqual(await inspect("player-accessory", "GlobalTransform"), accessoryAfter);
-    assert.deepEqual((await command("inspect", { component: "GameProgress" })).result.value, progress);
+    assert.deepEqual((await command("inspect", { component: "PlayerWalk" })).result.value, progress);
     assert.deepEqual(residency(await command("assets")), initialResidency);
   }
 

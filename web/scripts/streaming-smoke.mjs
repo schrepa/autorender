@@ -1,5 +1,5 @@
 /**
- * World streaming checks: a version 9 playground fixture's
+ * World streaming checks: a version 9 fixture's
  * streamed entities bin into grids by their reach and spawn only while
  * their cells are within range of the camera, with hysteresis, a per-frame
  * spawn budget, prefetch along the camera's motion, and freezing and
@@ -11,9 +11,9 @@
  * refused.
  */
 import assert from "node:assert/strict";
-import { artifacts, commander, devUrl, launch, openPaused, routedScene } from "./harness.mjs";
+import { artifacts, commander, sceneUrl, launch, openPaused, routedScene } from "./harness.mjs";
 
-const url = devUrl("playground.html");
+const url = sceneUrl();
 const output = await artifacts("streaming-smoke");
 const cube = { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] } };
 const fixture = {

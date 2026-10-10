@@ -1,8 +1,8 @@
 /** Culling and GPU residency checks; authored fixtures exist only in routed responses. */
 import assert from "node:assert/strict";
-import { artifacts, commander, devUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
+import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
 
-const url = devUrl("playground.html");
+const url = sceneUrl();
 const output = await artifacts("culling-smoke");
 const camera = { position: [0, 0.6, 8], target: [0, 0.6, 0], vertical_fov_radians: Math.PI / 3, near: 1, far: 50 };
 // Shadows start off, so residency first follows visibility alone: shadow maps

@@ -1,13 +1,13 @@
 /**
- * Spline meshes: a version 9 playground fixture bends a box
+ * Spline meshes: a version 9 fixture bends a box
  * along a curve; the inspector reports what it built and its chunks draw;
  * moving a point rebuilds them, an invalid curve is refused with the scene
  * kept, and removing the field removes the chunks.
  */
 import assert from "node:assert/strict";
-import { artifacts, commander, devUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
+import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
 
-const url = devUrl("playground.html");
+const url = sceneUrl();
 const output = await artifacts("spline-smoke");
 const curve = [[-12, 0.5, 4], [-4, 0.5, -2], [4, 0.5, 3], [12, 0.5, -3]];
 /** Meters along the straight lines between `points`, which the curve through them exceeds a little. */

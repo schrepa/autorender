@@ -30,26 +30,14 @@ pub struct Client {
 
 /// The browser clients: the one list of them, which `cargo xtask schema`
 /// writes for the web host and scripts.
-pub const CLIENTS: [Client; 4] = [
-    Client {
-        package: "orbit-demo",
-        wasm: "orbit_demo",
-        game: Some("orbit"),
-        page: Some("index.html"),
-    },
-    Client {
-        package: "playground",
-        wasm: "playground",
-        game: Some("playground"),
-        page: Some("playground.html"),
-    },
+pub const CLIENTS: [Client; 2] = [
     Client {
         package: "stress-lab",
         wasm: "stress_lab",
         game: Some("stress"),
         page: Some("stress.html"),
     },
-    // The job worker pages run beside the games.
+    // The job workers run beside the game.
     Client {
         package: "engine_worker",
         wasm: "engine_worker",

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_profile", "crates/engine_terrain", "crates/engine_worker", "examples/orbit-demo", "examples/playground", "examples/stress-lab", "tools/xtask", "tools/assetc", "tools/vgbuild"]
+members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_profile", "crates/engine_terrain", "crates/engine_worker", "examples/stress-lab", "tools/xtask", "tools/assetc", "tools/vgbuild"]
 resolver = "3"
 # The vendored glam copy is patched in below, not a workspace member.
 exclude = ["vendor"]

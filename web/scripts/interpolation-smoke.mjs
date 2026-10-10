@@ -1,9 +1,9 @@
 /** Real Chrome interpolation contracts. The disposable scene exists only in routed responses. */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { artifacts, commander, devUrl, differentPixels, launch, near, openPaused, protocol, routedScene } from "./harness.mjs";
+import { artifacts, commander, sceneUrl, differentPixels, launch, near, openPaused, protocol, routedScene } from "./harness.mjs";
 
-const url = devUrl("playground.html", process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
+const url = sceneUrl(process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
 const output = await artifacts("interpolation-smoke");
 const camera = { position: [1.3, 0.8, 2.4], target: [0, 0.3, 0], vertical_fov_radians: Math.PI / 3, near: 0.1, far: 30 };
 const fixture = {
@@ -22,7 +22,7 @@ const checks = [];
 const bindingUrls = new Set();
 const scene = routedScene(page, fixture);
 page.on("response", response => {
-  if (response.request().resourceType() === "script" && new URL(response.url()).pathname.endsWith("/playground.js")) bindingUrls.add(response.url());
+  if (response.request().resourceType() === "script" && new URL(response.url()).pathname.endsWith("/stress_lab.js")) bindingUrls.add(response.url());
 });
 let suiteTimer;
 
@@ -40,7 +40,7 @@ async function authority() {
   return {
     player: await inspect("player", "Transform"), child: await inspect("accessory", "Transform"),
     playerGlobal: await inspect("player", "GlobalTransform"), childGlobal: await inspect("accessory", "GlobalTransform"),
-    progress: (await command("inspect", { component: "GameProgress" })).result.value,
+    progress: (await command("inspect", { component: "PlayerWalk" })).result.value,
     tick: observation.tick, frame: observation.frame,
   };
 }
@@ -101,7 +101,7 @@ try {
   assert.equal((await openPaused(page, url, { timeout: 30_000 })).observation.tick, "0");
   assert.equal(bindingUrls.size, 1, "The ordinary-frame check must use the exact loaded game bindings.");
   const ordinaryFrames = await page.evaluate(async ({ moduleUrl, fixture, protocolVersion }) => {
-    const { PlaygroundGame, SceneFileSet } = await import(moduleUrl);
+    const { StressGame, SceneFileSet } = await import(moduleUrl);
     const canvas = document.createElement("canvas");
     canvas.width = 320; canvas.height = 240;
     canvas.style.cssText = "position:fixed;left:-10000px;top:0;width:320px;height:240px";
@@ -109,7 +109,7 @@ try {
     let game;
     try {
       // The fixture references no files.
-      game = await PlaygroundGame.create(canvas, JSON.stringify(fixture), new SceneFileSet());
+      game = await StressGame.create_scene(canvas, JSON.stringify(fixture), new SceneFileSet());
       // Development commands between these frames would complete a pipelined
       // tick early; this check covers interpolation alone.
       game.set_tick_pipelining(false);
@@ -123,7 +123,7 @@ try {
       const state = () => ({ observation: request({ op: "status" }).observation,
         player: inspect("player", "GlobalTransform"), child: inspect("accessory", "GlobalTransform"),
         presentedPlayer: inspect("player", "PresentedTransform"), presentedChild: inspect("accessory", "PresentedTransform") });
-      const frame = timestamp => game.frame(timestamp, 320, 240, 1, 0, 0, 0, 0, 0, 0, 0);
+      const frame = timestamp => game.frame(timestamp, 320, 240, 1, 0, 0, 0, 0);
       frame(0);
       const before = state();
       frame(1000 / 60 + 0.00001);

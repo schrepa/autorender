@@ -40,18 +40,6 @@ export function engineWorkerModule(): string | undefined {
   return generationModule("engine_worker");
 }
 
-export async function playgroundBindings(): Promise<typeof import("../pkg/playground")> {
-  requireWasmSimd();
-  const module = generationModule("playground");
-  return module ? import(/* @vite-ignore */ module) : import("../pkg/playground");
-}
-
-export async function orbitBindings(): Promise<typeof import("../pkg/orbit_demo")> {
-  requireWasmSimd();
-  const module = generationModule("orbit_demo");
-  return module ? import(/* @vite-ignore */ module) : import("../pkg/orbit_demo");
-}
-
 export async function stressBindings(): Promise<typeof import("../pkg/stress_lab")> {
   requireWasmSimd();
   const module = generationModule("stress_lab");

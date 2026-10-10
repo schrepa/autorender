@@ -1,12 +1,12 @@
-use engine::browser::BrowserApp;
+use engine::browser::{BrowserApp, SceneFileSet};
 use engine::prelude::*;
 use wasm_bindgen::prelude::*;
 
 use std::collections::HashMap;
 
 use crate::{
-    FrameMetrics, StressConfig, StressFile, StressScene, create_workload_with, look, set_view,
-    stress_observation, stress_reflections, stress_shafts,
+    AuthoredScene, FrameMetrics, StressConfig, StressFile, StressScene, create_workload_with, look,
+    set_view, stress_observation, stress_reflections, stress_shafts,
 };
 
 /// Files workloads read, by name: the dense scene's virtual meshes,
@@ -89,6 +89,8 @@ pub struct StressGame {
     occlusion_culling: Option<bool>,
     subpixel_culling: Option<bool>,
     temporal_antialiasing: Option<bool>,
+    // An authored scene in place of a workload, when the page loads one.
+    authored: Option<AuthoredScene>,
     #[cfg(feature = "dev")]
     development: engine::dev_browser::DevBrowser,
 }
@@ -119,9 +121,63 @@ impl StressGame {
             occlusion_culling: None,
             subpixel_culling: None,
             temporal_antialiasing: None,
+            authored: None,
             #[cfg(feature = "dev")]
             development: development_tools(),
         })
+    }
+
+    /// The authored scene `source` in place of a workload, with the image
+    /// and buffer `files` it references.
+    pub async fn create_scene(
+        canvas: web_sys::HtmlCanvasElement,
+        source: &str,
+        files: SceneFileSet,
+    ) -> Result<Self, JsValue> {
+        console_error_panic_hook::set_once();
+        let starting = BrowserApp::start(canvas).await?;
+        let (engine, authored) = AuthoredScene::new(source, files.files()).map_err(scene_error)?;
+        Ok(Self {
+            app: starting.finish(engine).await?,
+            generation: 1,
+            files: HashMap::new(),
+            look: "scene".into(),
+            effects: "all".into(),
+            level_of_detail: true,
+            impostors: true,
+            visibility_buffer: false,
+            occlusion_culling: None,
+            subpixel_culling: None,
+            temporal_antialiasing: None,
+            authored: Some(authored),
+            #[cfg(feature = "dev")]
+            development: development_tools(),
+        })
+    }
+
+    /// Replaces the authored scene with `source`; a scene that fails keeps
+    /// the current one.
+    pub fn reload_scene(&mut self, source: &str, files: SceneFileSet) -> Result<(), JsValue> {
+        let Some(authored) = self.authored.as_mut() else {
+            return Err(js_error("no authored scene is loaded".into()));
+        };
+        authored
+            .reload(&mut self.app.engine, source, files.files())
+            .map_err(scene_error)?;
+        self.apply_world_settings();
+        self.suspend();
+        Ok(())
+    }
+
+    /// The authored scene's ID, revision, frame, player position and asset
+    /// counts, as a JSON object (`null` for workloads).
+    pub fn scene_progress(&self) -> String {
+        self.authored
+            .as_ref()
+            .map_or(serde_json::Value::Null, |authored| {
+                authored.progress(&self.app.engine)
+            })
+            .to_string()
     }
 
     /// Build first, then replace the complete Engine at a browser frame boundary.
@@ -140,6 +196,8 @@ impl StressGame {
         )
         .map_err(js_error)?;
         self.app.engine = engine;
+        // A workload replaces an authored scene's world with its own.
+        self.authored = None;
         self.generation = self.generation.saturating_add(1);
         self.set_look(&self.look.clone())?;
         self.set_effects(&self.effects.clone())?;
@@ -262,8 +320,8 @@ impl StressGame {
         Ok(())
     }
 
-    /// One frame at `timestamp`; like Orbit, the Stress Lab reads no action
-    /// buttons, so it takes the host's input axes only.
+    /// One frame at `timestamp`: the Stress Lab reads no action buttons, so
+    /// it takes the host's input axes only.
     #[allow(clippy::too_many_arguments)]
     pub fn frame(
         &mut self,
@@ -356,12 +414,15 @@ impl StressGame {
     }
     pub fn set_culling(&mut self, enabled: bool) {
         self.app.engine.set_frustum_culling(enabled);
-        self.app
+        if let Some(mut config) = self
+            .app
             .engine
             .app
             .world_mut()
-            .resource_mut::<StressConfig>()
-            .culling = enabled;
+            .get_resource_mut::<StressConfig>()
+        {
+            config.culling = enabled;
+        }
     }
     /// GPU (default) or exact CPU presentation of ordinary frames.
     pub fn set_gpu_presentation(&mut self, enabled: bool) {
@@ -418,8 +479,15 @@ impl StressGame {
         self.visibility_buffer = enabled;
         self.apply_world_settings();
     }
+    /// The workload's overview, or the authored scene's player back where
+    /// it started.
     pub fn reset_camera(&mut self) {
-        set_view(&mut self.app.engine, "overview").expect("known view");
+        match &self.authored {
+            Some(authored) => authored.reset_player(&mut self.app.engine),
+            None => set_view(&mut self.app.engine, "overview").expect("known view"),
+        }
+        #[cfg(feature = "dev")]
+        self.development.clear_input();
     }
     pub fn suspend(&mut self) {
         self.app.suspend();
@@ -451,21 +519,29 @@ impl StressGame {
                 .resource_mut::<FrameMetrics>()
                 .begin_frame();
         }
-        let reply = self
-            .development
-            .command(&mut self.app, None, request, width, height, paused);
+        let reply = self.development.command(
+            &mut self.app,
+            self.authored.as_ref().and_then(AuthoredScene::instance),
+            request,
+            width,
+            height,
+            paused,
+        );
         if submitted {
             if serde_json::from_str::<serde_json::Value>(&reply)
                 .ok()
                 .is_some_and(|value| value["ok"] == true)
             {
                 let enabled = self.app.engine.frustum_culling();
-                self.app
+                if let Some(mut config) = self
+                    .app
                     .engine
                     .app
                     .world_mut()
-                    .resource_mut::<StressConfig>()
-                    .culling = enabled;
+                    .get_resource_mut::<StressConfig>()
+                {
+                    config.culling = enabled;
+                }
             } else {
                 *self
                     .app
@@ -477,10 +553,79 @@ impl StressGame {
         }
         reply
     }
+
+    /// Reloads the authored scene's saved source when the active revision
+    /// is `expected_revision` and the saved one `revision`.
+    pub fn dev_reload(
+        &mut self,
+        source: &str,
+        expected_revision: &str,
+        revision: &str,
+        files: Option<SceneFileSet>,
+    ) -> String {
+        let files = files.unwrap_or_default();
+        let result = (|| {
+            let Some(authored) = self.authored.as_mut() else {
+                return Err(engine::scene::SceneError {
+                    code: "unsupported_command",
+                    path: "$.op".into(),
+                    message: "workloads have no authored scene to reload".into(),
+                });
+            };
+            let (Ok(expected), Ok(target)) =
+                (expected_revision.parse::<u64>(), revision.parse::<u64>())
+            else {
+                return Err(engine::scene::SceneError {
+                    code: "invalid_revision",
+                    path: "$.revision".into(),
+                    message: "revisions must be unsigned decimal strings".into(),
+                });
+            };
+            if authored.revision() != expected {
+                return Err(engine::scene::SceneError {
+                    code: "revision_conflict",
+                    path: "$.expected_revision".into(),
+                    message: format!("active revision is {}", authored.revision()),
+                });
+            }
+            let document = SceneDocument::from_json(source)?;
+            if document.id != authored.scene_id() || document.revision != target {
+                return Err(engine::scene::SceneError {
+                    code: "revision_conflict",
+                    path: "$.revision".into(),
+                    message: "saved scene ID and revision must match the requested scene".into(),
+                });
+            }
+            authored.reload(&mut self.app.engine, source, files.files())
+        })();
+        let instance = self.authored.as_ref().and_then(AuthoredScene::instance);
+        match result {
+            Ok(()) => {
+                self.app.suspend();
+                self.development.clear_input();
+                self.development.result(
+                    &mut self.app,
+                    instance,
+                    serde_json::json!({"reloaded":true,"saved_by_reload":false}),
+                )
+            }
+            Err(error) => self.development.error(
+                &mut self.app,
+                instance,
+                error.code,
+                &error.path,
+                &error.message,
+            ),
+        }
+    }
 }
 
 fn js_error(message: String) -> JsValue {
     JsValue::from_str(&message)
+}
+
+fn scene_error(error: engine::scene::SceneError) -> JsValue {
+    JsValue::from_str(&error.to_string())
 }
 
 #[cfg(feature = "profiling")]
@@ -567,6 +712,21 @@ fn development_tools() -> engine::dev_browser::DevBrowser {
             "total_errors":metrics.total_errors.to_string(),"last_error":metrics.last_error,
         }),
     ).expect("stress metrics registration is valid");
+    development
+        .tools
+        .register_resource::<crate::PlayerWalk>(
+            InspectorDescriptor::new(
+                "PlayerWalk",
+                "The authored scene's player's failed movement queries",
+                serde_json::json!({
+                    "type":"object", "additionalProperties":false,
+                    "properties":{"collision_errors":{"type":"integer","minimum":0}},
+                    "required":["collision_errors"]
+                }),
+            ),
+            |walk| serde_json::json!({"collision_errors":walk.collision_errors}),
+        )
+        .expect("player walk registration is valid");
     development
 }
 

@@ -79,8 +79,6 @@ export default defineConfig(({ command, mode }) => ({
     outDir: instrumented.has(mode) ? `dist-${instrumented.get(mode)}` : "dist",
     rollupOptions: {
       input: instrumented.has(mode) ? { stress: resolve(import.meta.dirname, "stress.html") } : {
-        index: resolve(import.meta.dirname, "index.html"),
-        playground: resolve(import.meta.dirname, "playground.html"),
         stress: resolve(import.meta.dirname, "stress.html"),
       },
     },

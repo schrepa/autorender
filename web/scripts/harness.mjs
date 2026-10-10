@@ -2,7 +2,8 @@
  * What the browser smoke checks share: Chrome with WebGPU and a page that
  * records its errors, development commands under one retry rule and
  * deadline, pixel comparisons with explicit tolerances, the development
- * server's pages and the playground scene they replace.
+ * server's pages, and the authored fixture scenes the Stress Lab loads in
+ * place of a workload.
  */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -26,6 +27,21 @@ export function devUrl(page, query = {}) {
     url.searchParams.set(key, typeof value === "string" ? value : JSON.stringify(value));
   }
   return url;
+}
+
+/** The scene URL fixtures are served at, which no file on disk holds. */
+export const fixtureScene = "/scenes/smoke-fixture.scene.json";
+
+/** The Stress Lab with development tools, loading the fixture scene in
+ * place of a workload, and `query`. */
+export function sceneUrl(query = {}) {
+  return devUrl("stress.html", { source: fixtureScene, ...query });
+}
+
+/** The garden fixture: a version 4 scene with a player, solids,
+ * pickups, a textured prefab and parents, as a fresh object. */
+export function gardenScene() {
+  return JSON.parse(readFileSync(new URL("fixtures/garden.scene.json", import.meta.url), "utf8"));
 }
 
 /** A fresh directory under `artifacts/` for `name`'s captures. */
@@ -149,7 +165,7 @@ export function residency(reply) {
   };
 }
 
-/** A disposable scene the playground loads in place of its authored one:
+/** A disposable scene the Stress Lab loads from `fixtureScene`:
  * `route()` serves it, `reload(command, next)` replaces it with `next` as
  * the following revision through the reload control, and `serve(document)`
  * serves `document` as it is, e.g. for a reload that must be refused. */
@@ -157,7 +173,7 @@ export function routedScene(page, document) {
   let served = structuredClone(document);
   let revision = document.revision;
   return {
-    route: () => page.route("**/scenes/playground.scene.json*", route => route.fulfill({ json: served })),
+    route: () => page.route(`**${fixtureScene}*`, route => route.fulfill({ json: served })),
     get revision() { return revision; },
     serve(next) { served = structuredClone(next); },
     async reload(command, next) {

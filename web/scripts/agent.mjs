@@ -72,7 +72,7 @@ async function serve(values) {
   process.once("SIGTERM", onSignal);
   try {
     owned = await launchBrowserSession({
-      url: values.url ?? "http://127.0.0.1:5173/playground.html", browserPath: values.browser,
+      url: values.url ?? "http://127.0.0.1:5173/stress.html", browserPath: values.browser,
     });
     if (closing) { await owned.close(); return; }
     bridge = createBridge({

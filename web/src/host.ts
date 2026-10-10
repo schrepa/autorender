@@ -10,7 +10,7 @@ export function readStats(runtime: { stats(): string }): FrameStats {
   return JSON.parse(runtime.stats()) as FrameStats;
 }
 export interface Runtime extends JobRuntime {
-  /** Games without action buttons (Orbit, the Stress Lab) declare only the axes; JavaScript drops the rest. */
+  /** Games without action buttons (the Stress Lab) declare only the axes; JavaScript drops the rest. */
   frame(timestamp: number, width: number, height: number, forward: number, right: number, up: number, yaw: number, pitch: number, held: number, pressed: number, released: number): void;
   stats(): string;
   /** Loading work in place of a frame while the GPU compiles pipelines. */
