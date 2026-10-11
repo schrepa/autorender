@@ -53,7 +53,9 @@ impl Profile {
         }
         let mut pixels: Vec<u8> = source
             .pixels()
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|rgba| rgba[3])
             .collect();
         let mut levels = Vec::with_capacity(width.max(height).ilog2() as usize + 1);
