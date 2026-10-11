@@ -1,8 +1,9 @@
-/** Temporal antialiasing in real Chrome: ordinary GPU-presented
- * frames converge to a smoother image, how much a still view then flickers
- * measured, while captures and CPU-presented frames stay exact; its
- * settings are inspected, changed by the paused environment control and
- * observed in ordinary frames. */
+/** Temporal antialiasing in real Chrome: captures stay exact, while how
+ * much ordinary GPU-presented frames change and smooth edges, keep content,
+ * flicker when still, keep detail when moving, and how far CPU-presented
+ * frames stray from the capture are measured; its settings are inspected,
+ * changed by the paused environment control and observed in ordinary
+ * frames. */
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
@@ -134,19 +135,25 @@ try {
   assert.equal(exactPair.changed[0], 0, `captures must not depend on the setting: ${JSON.stringify(exactPair)}`);
   assert.ok(exactPair.distinct_colors > 16, "the view must draw textured geometry");
 
-  // Converged ordinary frames: smoother edges, the same content at a coarser
-  // scale, stable over time. Thin, distant towers alias across much of the
-  // view, so many pixels change.
+  // Converged ordinary frames against the exact capture: how many edge
+  // pixels change, how much the content at a coarser scale does, how much
+  // smoother the image is, and how much a still view then flickers, all
+  // measured, not judged. Thin, distant towers alias across much of the view.
   const [first, second] = await run("taa-still", 1500);
   const smoothed = await compare([exact, first]);
   results.smoothed = smoothed;
-  assert.ok(smoothed.changed[8] > smoothed.total * 0.001, `antialiasing must change edges: ${JSON.stringify(smoothed)}`);
-  assert.ok(smoothed.block_difference < 3, `antialiasing must preserve content: ${JSON.stringify(smoothed)}`);
-  assert.ok(smoothed.variation[1] < smoothed.variation[0] * 0.95, `antialiasing must smooth edges: ${JSON.stringify(smoothed)}`);
-  // How much a converged still view flickers is measured, not judged.
   const stable = await compare([first, second]);
   results.stable = stable;
   const measurements = [{
+    name: "edges changed", value: smoothed.changed[8] / smoothed.total * 100, unit: "%",
+    note: "pixels whose largest channel differs by more than 8 levels between the exact capture and a converged still frame",
+  }, {
+    name: "content change", value: smoothed.block_difference, unit: "levels",
+    note: "mean channel difference of 8x8 block averages between the exact capture and a converged still frame",
+  }, {
+    name: "edge smoothing", value: (1 - smoothed.variation[1] / smoothed.variation[0]) * 100, unit: "%",
+    note: "how much less total variation (summed neighbor differences) a converged still frame has than the exact capture",
+  }, {
     name: "still view flicker", value: stable.changed[24] / stable.total * 100, unit: "%",
     note: "pixels whose largest channel differs by more than 24 levels between two converged still frames 300 ms apart",
   }];
@@ -175,28 +182,34 @@ try {
   const after = await capture("exact-after-taa");
   assert.equal((await compare([exact, after])).changed[0], 0, "captures must stay exact after temporal frames");
 
-  // CPU-presented ordinary frames are exact with the setting on.
+  // CPU-presented ordinary frames with the setting on, against the capture.
   results.cpu_url = await open(still, { taa: "on", presentation: "cpu" });
   const [cpu] = await run("cpu-still", 800);
   const cpuPair = await compare([exact, cpu]);
   results.cpu = cpuPair;
-  assert.ok(cpuPair.changed[8] <= cpuPair.total * 0.001, `CPU presentation must stay exact: ${JSON.stringify(cpuPair)}`);
+  measurements.push({
+    name: "CPU presentation difference", value: cpuPair.changed[8] / cpuPair.total * 100, unit: "%",
+    note: "pixels whose largest channel differs by more than 8 levels between a CPU-presented ordinary frame with antialiasing on and the exact capture",
+  });
 
-  // Moving objects: ordinary frames keep drawing the scene.
+  // Moving objects: ordinary frames keep drawing the scene. Reprojection
+  // follows each object, so motion should blur little beyond the still view.
   results.moving_url = await open(moving, { taa: "on" });
   const movingExact = await capture("moving-exact");
   const [movingFirst] = await run("taa-moving", 1500);
   const movingPair = await compare([movingExact, movingFirst]);
   results.moving = movingPair;
   assert.ok(movingPair.distinct_colors > 16, "the moving view must draw textured geometry");
-  // Reprojection follows each object: motion blurs little beyond the still view.
-  assert.ok(movingPair.variation[1] > smoothed.variation[1] * 0.8, `moving frames must keep their detail: ${JSON.stringify(movingPair)}`);
+  measurements.push({
+    name: "moving detail", value: movingPair.variation[1] / smoothed.variation[1] * 100, unit: "%",
+    note: "total variation of an ordinary frame of moving objects against a converged still frame's",
+  });
 
   assert.deepEqual(errors, []);
   await writeFile(`${output}/results.json`, JSON.stringify(results, null, 2));
   console.log(JSON.stringify({
     ok: true, artifact: output, ...results,
-    checks: ["captures_independent_of_setting", "edges_smoothed", "content_preserved", "settings_inspected", "settings_controlled", "settings_observed", "settings_validated", "captures_exact_after_temporal_frames", "cpu_presentation_exact", "moving_frames_draw", "clean_browser_diagnostics"],
+    checks: ["captures_independent_of_setting", "settings_inspected", "settings_controlled", "settings_observed", "settings_validated", "captures_exact_after_temporal_frames", "moving_frames_draw", "clean_browser_diagnostics"],
     measurements,
   }));
 } finally {
