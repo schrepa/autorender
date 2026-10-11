@@ -779,6 +779,7 @@
       "inspector": "Water",
       "section": "water",
       "smokes": [
+        "bake-scheduling",
         "jobs",
         "terrain"
       ],
