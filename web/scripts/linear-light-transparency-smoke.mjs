@@ -111,13 +111,22 @@ async function limits(expected) {
   assert.fail(`range readback must complete: ${JSON.stringify(rendering?.radiance)}`);
 }
 async function sample(name, reference, tolerance = 4) {
-  await command("capture");
+  await captureReady();
   const actual = await center(name);
   closeRGB(actual, reference.rgb, name, tolerance);
   const rendering = await limits(reference.mask);
   assert.ok(rendering.render_passes.includes("grade"), "every main frame grades");
   checks.push({ name, actual, expected: reference.rgb, mask: rendering.radiance });
   return { actual, rendering };
+}
+async function captureReady() {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const rendering = (await command("capture")).result.rendering;
+    if (!rendering.loading && !rendering.pipelines_compiling && rendering.missing_assets === 0
+        && rendering.render_passes.length > 0) return;
+    await delay(25);
+  }
+  assert.fail("the analytic fixture must submit a complete frame before sampling");
 }
 async function look(exposure, settings = neutral, extra = {}) {
   await command("environment", { atmosphere: { ...atmosphere, exposure, ...settings, ...extra } });
@@ -164,7 +173,7 @@ try {
   // newly added observation or pass name.
   const discriminating = [{ color: C, alpha: 0.25, distance: 4 }];
   await scene.reload(command, fixture(discriminating));
-  await command("capture");
+  await captureReady();
   closeRGB(await center("grade-order-first"), compose(B, discriminating, 1).rgb, "grade follows composition");
   await scene.reload(command, fixture());
   await sample("opaque", compose(B, [], 1), 2);
@@ -283,7 +292,7 @@ try {
     let ready;
     for (let frame = 0; frame < 12; frame++) ready = (await command("render")).result.rendering;
     assert.equal(ready.reflection_probes.ready, 1, "a fresh local probe must finish");
-    await command("capture");
+    await captureReady();
     const actual = await center(`probe-${exposure}`);
     assert.ok(actual[0] > 20 && actual[0] < 240, `unclipped mirror sample: ${actual}`);
     closeRGB(actual, [actual[0], actual[0], actual[0]], "grey probe", 1);
