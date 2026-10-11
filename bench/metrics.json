@@ -883,6 +883,39 @@
       "direction": null
     },
     {
+      "name": "refraction.prefilter_bytes",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "bytes",
+      "direction": null
+    },
+    {
+      "name": "refraction.prefilter_levels",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "refraction.prefilter_texels",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "render_candidates",
       "kind": "work",
       "rule": "equal",

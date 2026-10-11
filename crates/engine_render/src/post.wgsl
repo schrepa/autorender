@@ -609,6 +609,22 @@ fn fs_bloom_down(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
     return halved(source, position.xy);
 }
 
+// Glass reads these lower Scene mips before transparency. Normalized
+// destination centers also cover odd dimensions without unwritten edges.
+@fragment
+fn fs_refraction_prefilter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let size = vec2<f32>(textureDimensions(source));
+    let destination = max(floor(size * 0.5), vec2<f32>(1.0));
+    let uv = position.xy / destination;
+    let d = 1.0 / size;
+    let color = 4.0 * textureSampleLevel(source, linear, uv, 0.0).rgb
+        + textureSampleLevel(source, linear, uv + vec2<f32>(-d.x, -d.y), 0.0).rgb
+        + textureSampleLevel(source, linear, uv + d, 0.0).rgb
+        + textureSampleLevel(source, linear, uv + vec2<f32>(d.x, -d.y), 0.0).rgb
+        + textureSampleLevel(source, linear, uv + vec2<f32>(-d.x, d.y), 0.0).rgb;
+    return vec4<f32>(color / 8.0, 1.0);
+}
+
 // Frames that both reflect and bloom halve the scene for rough reflections
 // and the bloom's glowing light in the same passes.
 struct Levels {

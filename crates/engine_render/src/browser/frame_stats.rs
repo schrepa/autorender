@@ -222,9 +222,10 @@ impl Renderer {
                     + particle_frame.as_ref().map_or(0, |frame| frame.dropped))
                 .min(u64::from(u32::MAX)) as u32,
             },
-            refraction: Applied {
-                active: refraction && post_frame.is_some(),
-            },
+            refraction: self
+                .post
+                .as_ref()
+                .map_or_default(|post| post.refraction_stats(refraction && post_frame.is_some())),
             decals: Drawn {
                 drawn: decal_frame.as_ref().map_or(0, |frame| frame.drawn),
                 invalid: snapshot.invalid_decals.min(u32::MAX as usize) as u32,

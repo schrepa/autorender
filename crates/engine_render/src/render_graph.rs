@@ -41,6 +41,8 @@ resources! {
     Depth: Frame,
     /// The screen effects' scene color, glow and surface targets.
     Scene: Frame,
+    /// Lower Scene mip subresources, rebuilt before glass reads them.
+    RefractionLevels: Frame,
     Glow: Frame,
     Surface: Frame,
     /// Temporal antialiasing's motion target and history.
@@ -201,6 +203,8 @@ pub(crate) enum Pass {
     OcclusionTest,
     /// Decals over the opaque surfaces.
     Decals,
+    /// Scene's lower color mips before transparent surfaces read them.
+    RefractionPrefilter,
     /// Transparent surfaces and particles accumulated, then composited.
     Transparent,
     TransparentComposite,
@@ -254,6 +258,7 @@ passes! {
     Pass::Water => "water",
     Pass::CloudMarch => "cloud_march",
     Pass::CloudComposite => "cloud_composite",
+    Pass::RefractionPrefilter => "refraction_prefilter",
     Pass::Transparent => "transparent",
     Pass::TransparentComposite => "transparent_composite",
     Pass::Effects => "effects",
@@ -626,6 +631,7 @@ pub(crate) struct FrameShape {
     /// the opaque scene.
     pub(crate) transparency: bool,
     pub(crate) refraction: bool,
+    pub(crate) refraction_prefilter: bool,
     pub(crate) effects: Effects,
     /// Reflection probes capture faces after the frame.
     pub(crate) probes: bool,
@@ -784,6 +790,12 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(Depth)
             .color(scene, Access::Load);
     }
+    if shape.refraction_prefilter {
+        graph
+            .add(Pass::RefractionPrefilter)
+            .read(Scene)
+            .write(RefractionLevels);
+    }
     if shape.transparency {
         graph
             .add(Pass::Transparent)
@@ -792,6 +804,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read_if(shape.lights, Lights)
             .read_if(shape.shadows, ShadowMaps)
             .read_if(shape.refraction, Scene)
+            .read_if(shape.refraction_prefilter, RefractionLevels)
             .read(Probes)
             .color(Accumulated, Access::Clear(Clear::Color(TRANSPARENT)))
             .color(Revealed, Access::Clear(Clear::Color(WHITE)))

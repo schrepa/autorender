@@ -129,8 +129,9 @@ pub mod stats {
     pub use engine_core::{
         Applied, CellStats, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn,
         ErosionStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats, NavStats,
-        OccupancyStats, OceanStats, PathStats, ProbeStats, RenderPasses, RenderStats, ShadowStats,
-        SkyStats, TerrainRenderStats, TerrainStats, VirtualGeometryStats, WaterStats,
+        OccupancyStats, OceanStats, PathStats, ProbeStats, RefractionStats, RenderPasses,
+        RenderStats, ShadowStats, SkyStats, TerrainRenderStats, TerrainStats, VirtualGeometryStats,
+        WaterStats,
     };
 }
 

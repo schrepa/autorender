@@ -927,14 +927,25 @@ fn transparent_point(input: Fragment, front: bool) -> SurfacePoint {
     return point;
 }
 
-// Directions of the blur taps of rough glass, alternating full and half
-// radius.
-const GLASS_TAPS = array<vec2<f32>, 8>(
-    vec2<f32>(1.0, 0.0), vec2<f32>(0.3535534, 0.3535534),
-    vec2<f32>(0.0, 1.0), vec2<f32>(-0.3535534, 0.3535534),
-    vec2<f32>(-1.0, 0.0), vec2<f32>(-0.3535534, -0.3535534),
-    vec2<f32>(0.0, -1.0), vec2<f32>(0.3535534, -0.3535534),
-);
+// Blend adjacent added variances, including mip zero at the sharp cutoff.
+// The reduction's nominal variance is (5/12) * (4^level - 1), not a claim
+// that its phase-dependent discrete kernel is a Gaussian.
+fn refraction_level(radius: f32) -> f32 {
+    let last = textureNumLevels(refraction_source) - 1u;
+    if radius <= 0.5 || last == 0u {
+        return 0.0;
+    }
+    let wanted_variance = (5.0 / 18.0) * (radius * radius - 0.25);
+    var variance = 0.0;
+    for (var level = 0u; level < last; level++) {
+        let next = 4.0 * variance + 1.25;
+        if wanted_variance <= next {
+            return f32(level) + clamp((wanted_variance - variance) / (next - variance), 0.0, 1.0);
+        }
+        variance = next;
+    }
+    return f32(last);
+}
 
 // Weighted blending of a transparent surface. Glass
 // with refraction covers what is behind it with the opaque scene seen
@@ -965,15 +976,8 @@ fn transparent_targets(shaded: Shaded, point: SurfacePoint, input: Fragment)
     if clip.w > 1.0e-6 {
         uv = vec2<f32>(clip.x, -clip.y) / clip.w * 0.5 + 0.5;
     }
-    var behind = textureSampleLevel(refraction_source, refraction_sampler, uv, 0.0).rgb;
-    let radius = point.roughness * lighting.refraction.y / size;
-    if radius.x * size.x >= 0.5 {
-        var sum = behind;
-        for (var tap = 0u; tap < 8u; tap++) {
-            sum += textureSampleLevel(refraction_source, refraction_sampler,
-                uv + GLASS_TAPS[tap] * radius, 0.0).rgb;
-        }
-        behind = sum / 9.0;
-    }
+    let radius = clamp(point.roughness, 0.0, 1.0) * lighting.refraction.y;
+    let behind = textureSampleLevel(refraction_source, refraction_sampler,
+        uv, refraction_level(radius)).rgb;
     return weighted(shaded.color + behind * point.albedo * through, shaded.opacity, distance);
 }

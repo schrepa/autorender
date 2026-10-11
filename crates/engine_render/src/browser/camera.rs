@@ -86,6 +86,7 @@ impl CameraBindings {
             label: Some("engine/refraction-sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         let group = camera_group(
@@ -184,6 +185,10 @@ impl CameraBindings {
     /// The group glass refracting the opaque color binds, once prepared.
     pub(super) fn refraction_group(&self) -> Option<&wgpu::BindGroup> {
         self.refraction_group.get()
+    }
+
+    pub(super) fn release_refraction(&mut self) {
+        self.refraction_group.clear();
     }
 
     /// Each reflection probe face's group: the main group

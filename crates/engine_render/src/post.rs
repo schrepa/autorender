@@ -13,7 +13,7 @@
 //! apply them in their resolve, other frames in a composite
 //! that writes the canvas.
 
-use engine_core::{RenderSnapshot, glam::Mat4};
+use engine_core::{RefractionStats, RenderSnapshot, glam::Mat4};
 
 use crate::bindings::{POST, SHAFTS};
 use crate::cached::Cached;
@@ -67,6 +67,16 @@ pub(crate) struct PostFrame {
     pub shafts: bool,
     // Contact shadows, traced with the occlusion.
     pub contact: bool,
+    /// Lower scene mips rebuilt before transparent surfaces read them.
+    pub refraction_levels: u32,
+}
+
+/// Views of Scene's lower mips; the base attachment remains a one-mip view.
+struct RefractionTargets {
+    scene: wgpu::TextureView,
+    levels: Vec<wgpu::TextureView>,
+    groups: Vec<wgpu::BindGroup>,
+    texels: u64,
 }
 
 struct Targets {
@@ -76,6 +86,7 @@ struct Targets {
     // destroyed with the targets.
     textures: [wgpu::Texture; 10],
     scene: wgpu::TextureView,
+    refraction: Option<RefractionTargets>,
     glow: wgpu::TextureView,
     surface: wgpu::TextureView,
     // Every blurred scene level, which reflections read, and group `i`
@@ -138,6 +149,8 @@ pub(crate) struct PostPass {
     bloom_up: wgpu::RenderPipeline,
     // The scene levels bloom leaves, halved as bloom halves its own.
     scene_down: wgpu::RenderPipeline,
+    // Created only while rough refraction needs lower Scene mips.
+    refraction_prefilter: Option<wgpu::RenderPipeline>,
     bloom_format: wgpu::TextureFormat,
     // Both chains' levels at once, into two targets.
     levels_first: wgpu::RenderPipeline,
@@ -309,6 +322,7 @@ impl PostPass {
                 SCENE_LEVEL_FORMAT,
                 None,
             ),
+            refraction_prefilter: None,
             bloom_format,
             levels_first: levels_pipeline("engine/post-levels-first", "fs_levels_first"),
             levels_down: levels_pipeline("engine/post-levels-down", "fs_levels_down"),
@@ -340,6 +354,7 @@ impl PostPass {
     /// frame recreates them.
     pub(crate) fn release_targets(&mut self) {
         self.targets = None;
+        self.refraction_prefilter = None;
         self.occlusion_group.clear();
         self.effects_filter_group.clear();
         self.reflections_group.clear();
@@ -356,7 +371,14 @@ impl PostPass {
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.targets.as_ref().map_or(0, |targets| {
             let pixels = u64::from(targets.size.0) * u64::from(targets.size.1);
-            pixels * 10 + pixels / 4 * 24 + pixels / 16 * 4 + pixels / 4 * 8 * 4 / 3 * 2
+            pixels * 10
+                + pixels / 4 * 24
+                + pixels / 16 * 4
+                + pixels / 4 * 8 * 4 / 3 * 2
+                + targets
+                    .refraction
+                    .as_ref()
+                    .map_or(0, |levels| levels.texels * 4)
         }) + self.nearest.capacity_bytes()
     }
 
@@ -374,15 +396,33 @@ impl PostPass {
         depth: &wgpu::TextureView,
         depth_generation: u64,
         temporal: bool,
+        refraction: bool,
     ) -> PostFrame {
-        if self
-            .targets
-            .as_ref()
-            .is_none_or(|targets| targets.size != size)
-        {
+        let refraction_levels = if refraction {
+            refraction_levels(size, snapshot.environment.refraction.sanitized().blur)
+        } else {
+            0
+        };
+        if self.targets.as_ref().is_none_or(|targets| {
+            targets.size != size
+                || targets
+                    .refraction
+                    .as_ref()
+                    .map_or(0, |levels| levels.levels.len() as u32)
+                    != refraction_levels
+        }) {
             self.targets = None;
-            self.targets = Some(self.create_targets(device, size));
+            self.occlusion_group.clear();
+            self.effects_filter_group.clear();
+            self.reflections_group.clear();
+            self.filter_group.clear();
+            self.targets = Some(self.create_targets(device, size, refraction_levels));
             self.generation += 1;
+        }
+        if refraction_levels == 0 {
+            self.refraction_prefilter = None;
+        } else if self.refraction_prefilter.is_none() {
+            self.refraction_prefilter = Some(self.create_refraction_pipeline(device));
         }
         let occlusion = snapshot.environment.ambient_occlusion.sanitized();
         let bloom = snapshot.environment.bloom.sanitized();
@@ -403,6 +443,7 @@ impl PostPass {
             shafts: shafts.enabled() && snapshot.environment.shadows.enabled,
             // Contact shadows trace toward a sun above the horizon.
             contact: contact.traces() && toward_sun.y > 0.0,
+            refraction_levels,
         };
         let targets_key = (depth_generation, self.generation);
         if (frame.occlusion || frame.contact) && self.occlusion_group.stale(&targets_key) {
@@ -563,6 +604,68 @@ impl PostPass {
     pub(crate) fn targets(&self) -> (&wgpu::TextureView, &wgpu::TextureView, &wgpu::TextureView) {
         let targets = self.targets.as_ref().expect("sized in begin");
         (&targets.scene, &targets.glow, &targets.surface)
+    }
+
+    /// Only glass receives the view spanning the current Scene's mip chain.
+    pub(crate) fn refraction_source(&self) -> &wgpu::TextureView {
+        let targets = self.targets.as_ref().expect("sized in begin");
+        targets
+            .refraction
+            .as_ref()
+            .map_or(&targets.scene, |levels| &levels.scene)
+    }
+
+    pub(crate) fn refraction_stats(&self, active: bool) -> RefractionStats {
+        let levels = self
+            .targets
+            .as_ref()
+            .and_then(|targets| targets.refraction.as_ref());
+        let (prefilter_levels, prefilter_texels) = if active {
+            levels.map_or((0, 0), |levels| (levels.levels.len() as u32, levels.texels))
+        } else {
+            (0, 0)
+        };
+        RefractionStats {
+            active,
+            prefilter_levels,
+            prefilter_texels,
+            prefilter_bytes: prefilter_texels * 4,
+        }
+    }
+
+    /// Rebuilds every lower mip after Scene's opaque writers and before glass.
+    pub(crate) fn encode_refraction_prefilter(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        profiler: &GpuProfiler,
+    ) {
+        let Some(levels) = self
+            .targets
+            .as_ref()
+            .and_then(|targets| targets.refraction.as_ref())
+        else {
+            return;
+        };
+        let pipeline = self
+            .refraction_prefilter
+            .as_ref()
+            .expect("prepared with the levels");
+        let span = profiler.span("refraction_prefilter");
+        for (level, (view, group)) in levels.levels.iter().zip(&levels.groups).enumerate() {
+            let first = level == 0;
+            let last = level + 1 == levels.levels.len();
+            let mut pass = fullscreen_pass(
+                encoder,
+                "engine/refraction-prefilter",
+                view,
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                span.filter(|_| first || last)
+                    .map(|span| span.render_part(first, last)),
+            );
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, group, &[]);
+            pass.draw(0..3, 0..1);
+        }
     }
 
     /// Views the temporal resolve reads: scene, occlusion with shafts, bloom
@@ -814,7 +917,37 @@ impl PostPass {
         pass.draw(0..3, 0..1);
     }
 
-    fn create_targets(&self, device: &wgpu::Device, (width, height): (u32, u32)) -> Targets {
+    fn create_refraction_pipeline(&self, device: &wgpu::Device) -> wgpu::RenderPipeline {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("engine/refraction-prefilter.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(POST_SHADER.into()),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("engine/refraction-prefilter-layout"),
+            bind_group_layouts: &[Some(&self.layout)],
+            immediate_size: 0,
+        });
+        fullscreen(
+            device,
+            &Fullscreen {
+                label: "engine/refraction-prefilter",
+                layout: &layout,
+                module: &module,
+                vertex: "vs_fullscreen",
+                fragment: "fs_refraction_prefilter",
+                constants: &[],
+                targets: &[Some(SCENE_FORMAT.into())],
+                depth: None,
+            },
+        )
+    }
+
+    fn create_targets(
+        &self,
+        device: &wgpu::Device,
+        (width, height): (u32, u32),
+        refraction_levels: u32,
+    ) -> Targets {
         let half = ((width / 2).max(1), (height / 2).max(1));
         let quarter = (width.div_ceil(4).max(1), height.div_ceil(4).max(1));
         let texture = |label, (width, height): (u32, u32), format, levels| {
@@ -831,7 +964,12 @@ impl PostPass {
         let levels = BLOOM_LEVELS.min(crate::gpu_data::mip_levels(half.0, half.1));
         let scene_levels = SCENE_LEVELS.min(crate::gpu_data::mip_levels(half.0, half.1));
         let textures = [
-            texture("engine/post-scene", (width, height), SCENE_FORMAT, 1),
+            texture(
+                "engine/post-scene",
+                (width, height),
+                SCENE_FORMAT,
+                refraction_levels + 1,
+            ),
             texture("engine/post-glow", (width, height), GLOW_FORMAT, 1),
             texture("engine/post-occlusion", half, OCCLUSION_FORMAT, 1),
             texture("engine/post-bloom", half, self.bloom_format, levels),
@@ -858,9 +996,14 @@ impl PostPass {
             raw_occlusion,
             surface,
             scene_levels_view,
-        ] = textures
-            .each_ref()
-            .map(|texture| texture.create_view(&Default::default()));
+        ] = std::array::from_fn(|index| {
+            textures[index].create_view(&wgpu::TextureViewDescriptor {
+                mip_level_count: (index == 0).then_some(1),
+                ..Default::default()
+            })
+        });
+        // Every attachment and ordinary effect reads only mip zero. Binding
+        // the all-level view while attaching that mip would be feedback.
         let bloom: Vec<wgpu::TextureView> = (0..levels)
             .map(|level| {
                 textures[3].create_view(&wgpu::TextureViewDescriptor {
@@ -875,6 +1018,37 @@ impl PostPass {
         let group = |resources: &[(&str, wgpu::BindingResource<'_>)]| {
             self.group(device, "engine/post-group", resources)
         };
+        let refraction = (refraction_levels > 0).then(|| {
+            let levels: Vec<_> = (1..=refraction_levels)
+                .map(|level| {
+                    textures[0].create_view(&wgpu::TextureViewDescriptor {
+                        base_mip_level: level,
+                        mip_level_count: Some(1),
+                        ..Default::default()
+                    })
+                })
+                .collect();
+            let groups = (0..levels.len())
+                .map(|level| {
+                    let source = if level == 0 {
+                        &scene
+                    } else {
+                        &levels[level - 1]
+                    };
+                    group(&[texture_entry("source", source), sampler.clone()])
+                })
+                .collect();
+            RefractionTargets {
+                scene: textures[0].create_view(&Default::default()),
+                levels,
+                groups,
+                texels: (1..=refraction_levels)
+                    .map(|level| {
+                        u64::from((width >> level).max(1)) * u64::from((height >> level).max(1))
+                    })
+                    .sum(),
+            }
+        });
         let bloom_first = group(&[
             uniform.clone(),
             texture_entry("scene", &scene),
@@ -935,6 +1109,7 @@ impl PostPass {
             size: (width, height),
             textures,
             scene,
+            refraction,
             glow,
             surface,
             scene_levels: scene_levels_view,
@@ -954,6 +1129,22 @@ impl PostPass {
             composite,
         }
     }
+}
+
+/// The smallest available level covering the setting's bounded added variance.
+fn refraction_levels(size: (u32, u32), blur: f32) -> u32 {
+    if blur <= 0.5 {
+        return 0;
+    }
+    let target = (5.0 / 18.0) * (blur * blur - 0.25);
+    let available = crate::gpu_data::mip_levels(size.0, size.1).saturating_sub(1);
+    let mut level = 0;
+    let mut variance = 0.0;
+    while level < available && variance < target {
+        variance = 4.0 * variance + 1.25;
+        level += 1;
+    }
+    level
 }
 
 /// An attachment of `view` that a full-screen pass writes whole: loaded,

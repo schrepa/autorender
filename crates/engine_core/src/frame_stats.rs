@@ -135,7 +135,7 @@ pub struct RenderStats {
     /// Particles.
     pub particles: Drawn,
     /// Glass refraction.
-    pub refraction: Applied,
+    pub refraction: RefractionStats,
     /// Decals.
     pub decals: Drawn,
     /// Reflection probes.
@@ -212,6 +212,20 @@ impl schemars::JsonSchema for RenderPasses {
 pub struct Applied {
     /// Whether this frame applied it.
     pub active: bool,
+}
+
+/// Glass refraction and this frame's shared background filtering.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct RefractionStats {
+    /// Whether this frame applied refraction.
+    pub active: bool,
+    /// Lower scene mips built before transparent surfaces drew.
+    pub prefilter_levels: u32,
+    /// Texels written across those lower mips.
+    pub prefilter_texels: u64,
+    /// Logical texture bytes retained for those lower mips, excluding mip zero.
+    pub prefilter_bytes: u64,
 }
 
 /// What a feature drew, and what a budget or the GPU's bindings left out.

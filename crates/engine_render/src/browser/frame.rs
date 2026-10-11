@@ -1340,6 +1340,7 @@ impl Renderer {
                 &self.depth.view,
                 self.depth.generation,
                 temporal_frame.is_some(),
+                refraction,
             ))
         } else {
             // Frames without effects release their targets.
@@ -1624,6 +1625,7 @@ impl Renderer {
             clouds: false,
             transparency: features.transparency && self.transparent.is_some(),
             refraction: features.refraction && post.is_some(),
+            refraction_prefilter: post.is_some_and(|frame| frame.refraction_levels > 0),
             effects: post.map_or(Effects::default(), |frame| Effects {
                 occlusion: frame.occlusion,
                 bloom: frame.bloom,
@@ -1652,10 +1654,9 @@ impl Renderer {
             );
         }
         if refraction && let Some(post) = self.post.as_ref() {
-            let (scene, ..) = post.targets();
             self.camera.prepare_refraction(
                 &self.device,
-                (scene, post.generation()),
+                (post.refraction_source(), post.generation()),
                 &camera::GroupSources {
                     shadows: &self.shadows,
                     environment: &self.environment,
@@ -1664,6 +1665,8 @@ impl Renderer {
                     occupancy: &self.occupancy,
                 },
             );
+        } else {
+            self.camera.release_refraction();
         }
     }
 
@@ -1763,6 +1766,11 @@ impl Renderer {
                 &self.profiler,
             ),
             Pass::CloudComposite => self.encode_cloud_composite(state, encoder, view, node),
+            Pass::RefractionPrefilter => {
+                if let Some(post) = self.post.as_ref() {
+                    post.encode_refraction_prefilter(encoder, &self.profiler);
+                }
+            }
             Pass::Transparent => {
                 report.draws += self.encode_transparent(state, encoder, view, node);
             }

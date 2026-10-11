@@ -105,8 +105,9 @@ pub use features::{
 };
 pub use frame_stats::{
     Applied, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn, FrameStats,
-    GroundCoverStats, LightStats, OccupancyStats, OceanStats, ProbeStats, RenderPasses,
-    RenderStats, ShadowStats, SkyStats, TerrainRenderStats, VirtualGeometryStats, WaterStats,
+    GroundCoverStats, LightStats, OccupancyStats, OceanStats, ProbeStats, RefractionStats,
+    RenderPasses, RenderStats, ShadowStats, SkyStats, TerrainRenderStats, VirtualGeometryStats,
+    WaterStats,
 };
 pub use glam;
 pub use gpu_culling::{OcclusionCulling, SubpixelCulling};
