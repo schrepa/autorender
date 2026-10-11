@@ -183,10 +183,10 @@ fn decal_point(input: DecalOutput) -> SurfacePoint {
     return point;
 }
 
-// Graded color and alpha as the target stores them.
+// Scaled radiance or a dimensionless multiply-decal factor, and alpha.
 fn decal_output(color: vec3<f32>, alpha: f32) -> vec4<f32> {
     if DECAL_CANVAS {
-        return vec4<f32>(encoded(color), alpha);
+        return vec4<f32>(color, alpha);
     }
     return vec4<f32>(color, alpha);
 }

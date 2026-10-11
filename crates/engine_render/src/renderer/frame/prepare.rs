@@ -1161,7 +1161,10 @@ impl Renderer {
         let (device, queue) = (&self.device, &self.queue);
         let inputs = (
             (self.display.size(), &self.depth.view),
-            (&self.camera.layout, (self.display.format(), DEPTH_FORMAT)),
+            (
+                &self.camera.layout,
+                (crate::radiance::RADIANCE_FORMAT, DEPTH_FORMAT),
+            ),
         );
         let transparency = self.features.transparency.prepare(|transparency| {
             transparency.prepare(
@@ -1172,6 +1175,7 @@ impl Renderer {
                 inputs.0,
                 inputs.1,
                 (meshes, post_frame.is_some()),
+                self.radiance.limits(),
             )
         });
         if transparency.is_some()
@@ -1201,7 +1205,7 @@ impl Renderer {
             .get()
             .filter(|_| lit)
             .map(LightPass::fragment_layout);
-        let (device, format) = (&self.device, self.display.format());
+        let (device, format) = (&self.device, crate::radiance::RADIANCE_FORMAT);
         self.features.decals.prepare(
             (device, DecalPass::wanted(snapshot)),
             || DecalPass::new(device, format),
@@ -1422,10 +1426,10 @@ impl Renderer {
                 &Bound::fixed(self.instances.grounds().as_entire_binding()),
             );
         }
-        if refraction && let Some(post) = self.features.post.get() {
+        if refraction && self.features.post.get().is_some() {
             self.camera.prepare_refraction(
                 &self.device,
-                post.scene(),
+                self.radiance.bound(),
                 &camera::GroupSources {
                     shadows: &self.shadows,
                     environment: self.features.environment.get(),

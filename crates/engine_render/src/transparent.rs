@@ -82,19 +82,14 @@ struct TransparentPass {
     layout: crate::pipelines::GroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
     module: wgpu::ShaderModule,
-    // Composites into the canvas and into the scene target (leaving glow).
+    // Composites into radiance, with or without an untouched glow target.
     composite: [Option<wgpu::RenderPipeline>; 2],
-    surface_format: wgpu::TextureFormat,
     depth_format: wgpu::TextureFormat,
     targets: ScreenTarget<Targets>,
 }
 
 impl TransparentPass {
-    fn new(
-        device: &wgpu::Device,
-        surface_format: wgpu::TextureFormat,
-        depth_format: wgpu::TextureFormat,
-    ) -> Self {
+    fn new(device: &wgpu::Device, depth_format: wgpu::TextureFormat) -> Self {
         let layout = crate::pipelines::layout(device, &TRANSPARENT_COMPOSITE);
         let pipeline_layout = crate::pipelines::pipeline_layout(
             device,
@@ -110,14 +105,13 @@ impl TransparentPass {
             pipeline_layout,
             module,
             composite: [None, None],
-            surface_format,
             depth_format,
             targets: ScreenTarget::default(),
         }
     }
 
     /// Sizes the accumulation targets to `size`.
-    fn begin(&mut self, device: &wgpu::Device, size: FrameSize) {
+    fn begin(&mut self, device: &wgpu::Device, size: FrameSize, limits: &wgpu::Buffer) {
         if !self.targets.resizes(size) {
             return;
         }
@@ -147,6 +141,7 @@ impl TransparentPass {
             &[
                 ("accumulated", crate::pipelines::view(&accumulated)),
                 ("revealed", crate::pipelines::view(&revealed)),
+                ("radiance_limits", limits.as_entire_binding()),
             ],
         );
         self.targets.set(
@@ -179,8 +174,7 @@ impl TransparentPass {
         [&targets.accumulated, &targets.revealed]
     }
 
-    /// Creates the composite into the canvas or, with `post`, the scene
-    /// target beside the glow target.
+    /// Creates the radiance composite, with `post` leaving glow untouched.
     fn ensure_composite(&mut self, device: &wgpu::Device, post: bool) {
         let index = usize::from(post);
         if self.composite[index].is_some() {
@@ -199,13 +193,8 @@ impl TransparentPass {
                 operation: wgpu::BlendOperation::Add,
             },
         };
-        let format = if post {
-            crate::post::SCENE_FORMAT
-        } else {
-            self.surface_format
-        };
         let mut targets = vec![Some(wgpu::ColorTargetState {
-            format,
+            format: crate::radiance::RADIANCE_FORMAT,
             blend: Some(over),
             write_mask: wgpu::ColorWrites::ALL,
         })];
@@ -216,7 +205,6 @@ impl TransparentPass {
                 write_mask: wgpu::ColorWrites::empty(),
             }));
         }
-        let constants = [("TARGET_IS_SRGB", if format.is_srgb() { 1.0 } else { 0.0 })];
         self.composite[index] = Some(crate::pipelines::fullscreen(
             device,
             &crate::pipelines::Fullscreen {
@@ -225,7 +213,7 @@ impl TransparentPass {
                 module: &self.module,
                 vertex: transparent::vs_fullscreen,
                 fragment: transparent::fs_composite,
-                constants: &constants,
+                constants: &[],
                 targets: &targets,
                 depth: Some(wgpu::DepthStencilState {
                     format: self.depth_format,
@@ -285,6 +273,7 @@ impl Transparency {
             (wgpu::TextureFormat, wgpu::TextureFormat),
         ),
         (meshes, post): (bool, bool),
+        limits: &wgpu::Buffer,
     ) -> Option<TransparencyFrame> {
         // Particles sample the depth buffer for their soft edges.
         let particles =
@@ -314,8 +303,8 @@ impl Transparency {
         }
         let surfaces = self
             .surfaces
-            .get_or_insert_with(|| TransparentPass::new(device, surface_format, depth_format));
-        surfaces.begin(device, size);
+            .get_or_insert_with(|| TransparentPass::new(device, depth_format));
+        surfaces.begin(device, size, limits);
         surfaces.ensure_composite(device, post);
         Some(TransparencyFrame { meshes, particles })
     }
@@ -348,7 +337,7 @@ impl RenderFeature for Transparency {
             .read_if(shape.gpu, Resource::Visible)
             .read_if(shape.lights, Resource::Lights)
             .read_if(shape.shadows, Resource::ShadowMaps)
-            .read_if(shape.refraction, Resource::Scene)
+            .read_if(shape.refraction, Resource::Radiance)
             .read(Resource::Probes)
             .color(
                 Resource::Accumulated,
@@ -362,7 +351,7 @@ impl RenderFeature for Transparency {
             .read(Resource::Accumulated)
             .read(Resource::Revealed)
             .color(scene, Access::Load);
-        let composite = if scene == Resource::Scene {
+        let composite = if shape.targets != crate::render_graph::Targets::Canvas {
             composite.color(Resource::Glow, Access::Load)
         } else {
             composite

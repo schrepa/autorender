@@ -1781,12 +1781,12 @@ fn terrain_temporal_output(input: TerrainTemporalOutput) -> TerrainOutput {
 
 @fragment
 fn fs_terrain(input: TerrainOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_terrain(input).color), 1.0);
+    return vec4<f32>(shade_terrain(input).color, 1.0);
 }
 
 @fragment
 fn fs_terrain_lit(input: TerrainOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_terrain_lit(input).color), 1.0);
+    return vec4<f32>(shade_terrain_lit(input).color, 1.0);
 }
 
 @fragment

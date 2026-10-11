@@ -363,7 +363,7 @@ mod gpu {
         let format = if canvas {
             surface_format
         } else {
-            crate::post::SCENE_FORMAT
+            crate::radiance::RADIANCE_FORMAT
         };
         crate::pipelines::geometry(
             device,

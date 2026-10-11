@@ -5,6 +5,7 @@
 #![expect(clippy::expect_used, reason = "passes read what their frames created")]
 
 use super::*;
+use crate::profiling::Span;
 use crate::render_features::{AttachmentViews, Encode, MeshDraws};
 
 impl Renderer {
@@ -60,6 +61,17 @@ impl Renderer {
                 self.encode_visibility_resolve(state, encoder, view, node, phase.index());
             }
             Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
+            Pass::Grade => {
+                let mut pass = self.render_pass(
+                    encoder,
+                    node,
+                    view,
+                    "engine/grade",
+                    self.profiler.span("grade").map(Span::render),
+                );
+                self.radiance
+                    .draw(&mut pass, state.shape.targets != Targets::Canvas);
+            }
             Pass::Feature(pass) => {
                 report.draws += self.encode_feature(pass, state, encoder, view, node);
             }
@@ -83,6 +95,7 @@ impl Renderer {
         };
         match resource {
             Resource::Canvas => canvas,
+            Resource::Radiance => self.radiance.view(),
             Resource::Depth => &self.depth.view,
             Resource::Scene => post().0,
             Resource::Glow => post().1,
@@ -327,12 +340,8 @@ impl Renderer {
 
     /// The format of the scene's color for frames drawing into `targets`,
     /// and whether that is the canvas.
-    pub(super) fn cloud_target(&self, targets: Targets) -> (wgpu::TextureFormat, bool) {
-        if targets == Targets::Canvas {
-            (self.display.format(), true)
-        } else {
-            (crate::post::SCENE_FORMAT, false)
-        }
+    pub(super) fn cloud_target(&self, _targets: Targets) -> (wgpu::TextureFormat, bool) {
+        (crate::radiance::RADIANCE_FORMAT, false)
     }
 
     /// Reflection probe captures after the frame's own

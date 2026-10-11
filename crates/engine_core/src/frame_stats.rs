@@ -189,6 +189,25 @@ pub struct RenderStats {
     pub subpixel_culling: CullingStats,
     /// Temporal antialiasing.
     pub temporal_antialiasing: Applied,
+    /// The finite-range guard at transparency resolve and the final grade.
+    pub radiance: RadianceStats,
+}
+
+/// Completed main-view finite-range diagnostics. Radiance RGB stores exposed
+/// light divided by 64 in half floats (largest finite value 65504); finite
+/// boundary components below 0 or at least 60000 clamp to [0, 60000]. A zero
+/// mask does not certify recovery or detection after an earlier overflow.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct RadianceStats {
+    /// Renderer frame ordinal that produced this completed readback, starting
+    /// at 1. Independent of simulation ticks and reset with the renderer.
+    /// Initially null; pending readbacks retain the last completed pair.
+    pub source_frame: Option<u64>,
+    /// Bit 0: finite transparency sum or resolved RGB reached the guard;
+    /// bit 1: finite Grade input reached it. Null before the first completed
+    /// readback; zero belongs only to the accompanying completed source frame.
+    pub limit_mask: Option<u32>,
 }
 
 /// A set of names, such as the render passes a frame ran, serialized as

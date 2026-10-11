@@ -80,7 +80,7 @@ fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(grade(clouded_sky(sky_ray(input.ndc)))), 1.0);
+    return vec4<f32>(scaled_radiance(clouded_sky(sky_ray(input.ndc))), 1.0);
 }
 
 // Reflection probe captures: the sky's haze without the sun's
@@ -139,8 +139,8 @@ fn view_clouds_at(position: vec2<f32>) -> vec4<f32> {
     return mix(vec4<f32>(0.0, 0.0, 0.0, 1.0), cloud, shown);
 }
 
-// The view's clouds as a layer over the scene: their own light, graded,
-// times the share they cover, with the share passing as alpha; none under
+// The view's clouds as a layer over the scene: their own scaled light,
+// already weighted by coverage, with the share passing as alpha; none under
 // the sea.
 fn view_cloud_layer(position: vec2<f32>) -> vec4<f32> {
     let cloud = view_clouds_at(position);
@@ -148,10 +148,10 @@ fn view_cloud_layer(position: vec2<f32>) -> vec4<f32> {
     if covering <= 1.0e-4 || lighting.underwater.w > 0.0 {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
-    return vec4<f32>(grade(cloud.rgb / covering) * covering, cloud.a);
+    return vec4<f32>(scaled_radiance(cloud.rgb), cloud.a);
 }
 
-// The view's clouds over the canvas, encoded as it is; pixels they leave
+// The view's clouds over the basic radiance target; pixels they leave
 // clear keep the target as it was, unblended.
 @fragment
 fn fs_view_clouds(input: SkyOutput) -> @location(0) vec4<f32> {
@@ -160,7 +160,7 @@ fn fs_view_clouds(input: SkyOutput) -> @location(0) vec4<f32> {
     if covering <= 1.0e-4 {
         discard;
     }
-    return vec4<f32>(encoded(layer.rgb / covering) * covering, layer.a);
+    return layer;
 }
 
 // The view's clouds over the screen effects' scene target.
@@ -178,7 +178,7 @@ fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
 fn fs_sky_post(input: SkyOutput) -> SceneTargets {
     let light = clouded_sky(sky_ray(input.ndc));
     var targets: SceneTargets;
-    targets.color = vec4<f32>(grade(light), 0.0);
+    targets.color = vec4<f32>(scaled_radiance(light), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);
     targets.surface = SKY_SURFACE;
     return targets;
@@ -190,7 +190,7 @@ fn fs_sky_temporal(input: SkyOutput) -> TemporalTargets {
     let ray = sky_ray(input.ndc);
     let light = clouded_sky(ray);
     var targets: TemporalTargets;
-    targets.color = vec4<f32>(grade(light), 0.0);
+    targets.color = vec4<f32>(scaled_radiance(light), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);
     targets.surface = SKY_SURFACE;
     let previous = camera.previous_view_projection * vec4<f32>(ray, 0.0);

@@ -134,6 +134,7 @@ impl Renderer {
             resident_textures: residency.textures,
             resident_texture_bytes: residency.texture_bytes,
             pipelines: self.pipeline_counts.created(),
+            radiance: self.radiance.stats(),
             ..RenderStats::default()
         }
     }

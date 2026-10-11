@@ -50,6 +50,7 @@ mod occupancy;
 mod platform;
 mod post;
 mod profiling;
+mod radiance;
 mod renderer;
 mod scatter;
 mod screen_effects;

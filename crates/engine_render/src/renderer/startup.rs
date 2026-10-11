@@ -188,6 +188,7 @@ impl Renderer {
             ImpostorAtlas::new(&device, AtlasShape::PLACED),
         );
         let gpu_presentation = GpuPresentationPass::new(&device);
+        let radiance = crate::radiance::RadiancePass::new(&device, display.format());
         // Popping takes effect now; validation resolves once they compiled.
         let validation = Box::pin(scope.pop());
 
@@ -257,6 +258,7 @@ impl Renderer {
                 environment: Eager::new(environment),
                 probes: Eager::new(probes),
             },
+            radiance,
             graph: Default::default(),
             gpu_frame: false,
             health,

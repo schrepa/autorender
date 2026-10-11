@@ -54,7 +54,7 @@ struct SurfacePoint {
     sun_shade: f32,
 }
 
-// Shaded light of a surface: graded color (and its linear light before the
+// Shaded light of a surface: scaled radiance (and its raw linear light before the
 // grade, which reflection probes capture), the ambient share of its light
 // (for ambient occlusion), its glow weight, its reflectivity, shading normal
 // and roughness for screen-space reflections, and its coverage.
@@ -727,7 +727,7 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     shaded.normal = normal;
     shaded.roughness = point.roughness;
     shaded.linear = fogged;
-    shaded.color = grade(fogged);
+    shaded.color = scaled_radiance(fogged);
     shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered);
     shaded.glow = glow_weight(fogged);
     // Reflectivity for screen-space reflections: the environment BRDF's
@@ -953,7 +953,7 @@ fn transparent_targets(shaded: Shaded, point: SurfacePoint, input: Fragment)
     let through = share * (1.0 - reflectance);
     if lighting.refraction.x <= 0.0 {
         let coverage = max(shaded.opacity * (1.0 - through), 1.0e-3);
-        return weighted(min(shaded.color / coverage, vec3<f32>(1.0)), coverage, distance);
+        return weighted(shaded.color / coverage, coverage, distance);
     }
     let bent = refract(-point.view, point.normal, 1.0 / material_maps.volume.y);
     let exit = point.world + bent * (material_maps.volume.z * lighting.refraction.x);

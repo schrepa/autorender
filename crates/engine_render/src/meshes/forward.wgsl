@@ -5,13 +5,13 @@
 
 @fragment
 fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade(fragment(input), front).color), 1.0);
+    return vec4<f32>(shade(fragment(input), front).color, 1.0);
 }
 
 @fragment
 fn fs_main_lit(input: VertexOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_lit(fragment(input), front).color), 1.0);
+    return vec4<f32>(shade_lit(fragment(input), front).color, 1.0);
 }
 
 // The scene target is sRGB: it stores linear color with output encoding.
@@ -71,13 +71,13 @@ fn fs_probe_lit(input: VertexOutput, @builtin(front_facing) front: bool)
 @fragment
 fn fs_main_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade(extended_fragment(input), front).color), 1.0);
+    return vec4<f32>(shade(extended_fragment(input), front).color, 1.0);
 }
 
 @fragment
 fn fs_main_lit_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_lit(extended_fragment(input), front).color), 1.0);
+    return vec4<f32>(shade_lit(extended_fragment(input), front).color, 1.0);
 }
 
 @fragment

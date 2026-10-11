@@ -10,8 +10,8 @@
 pub(crate) use crate::gpu_layouts::constants::PYRAMID_EXTENT_BYTES;
 use crate::gpu_layouts::impostors::{ImpostorBakeUniform, ImpostorRecord};
 use crate::gpu_layouts::scene::{
-    CameraUniform, ColorData, GroundData, LightingUniform, MaterialUniform, PoseData, PostUniform,
-    ResolveUniform, ShadowCullUniform, ShadowUniform,
+    CameraUniform, ColorData, GradeUniform, GroundData, LightingUniform, MaterialUniform, PoseData,
+    PostUniform, ResolveUniform, ShadowCullUniform, ShadowUniform,
 };
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::gpu_layouts::{
@@ -1184,6 +1184,18 @@ tables! {
         bindings: &[
             texture(0, "accumulated", Unfilterable, D2, F),
             texture(1, "revealed", Unfilterable, D2, F),
+            write(2, "radiance_limits", F),
+        ],
+    };
+
+    /// The grade from composed radiance to the scene or canvas.
+    const GRADE: Table = Table {
+        label: "engine/grade-layout",
+        serves: [GRADE_SHADER @ 0],
+        bindings: &[
+            texture(0, "radiance", Unfilterable, D2, F),
+            uniform_of(1, "grade", size_of::<GradeUniform>(), F),
+            write(2, "radiance_limits", F),
         ],
     };
 

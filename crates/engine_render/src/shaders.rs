@@ -138,9 +138,17 @@ shaders! {
     ];
     /// The composite of weighted blended transparency.
     TRANSPARENT_SHADER = [
+        "fullscreen.wgsl",
+        "radiance_guard.wgsl",
+        "transparent.wgsl",
+    ];
+    /// The single grade after scene composition.
+    GRADE_SHADER = [
         "color.wgsl",
         "fullscreen.wgsl",
-        "transparent.wgsl",
+        "grading.wgsl",
+        "radiance_guard.wgsl",
+        "grade.wgsl",
     ];
     /// Sun shafts after the scene declarations and effects.
     SHAFTS_SHADER = [
@@ -340,6 +348,10 @@ entry_points! {
     particles = PARTICLE_SHADER {
         vertex: [vs_particle],
         fragment: [fs_particle, fs_particle_add, fs_particle_add_post],
+    }
+    grade = GRADE_SHADER {
+        vertex: [vs_fullscreen],
+        fragment: [fs_grade],
     }
     transparent = TRANSPARENT_SHADER {
         vertex: [vs_fullscreen],

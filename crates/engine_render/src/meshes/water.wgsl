@@ -395,7 +395,7 @@ fn water_temporal_output(input: WaterTemporalOutput) -> WaterOutput {
 @fragment
 fn fs_water(input: WaterOutput) -> @location(0) vec4<f32> {
     let shade = shade_water(input);
-    return vec4<f32>(encoded(shade.shaded.color) * shade.coverage, shade.coverage);
+    return vec4<f32>(shade.shaded.color * shade.coverage, shade.coverage);
 }
 
 @fragment

@@ -89,6 +89,7 @@ pub(crate) fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
     2.0 / engine_core::math::max(row, 1.0e-12)
 }
 
+pub(crate) use crate::gpu_layouts::scene::GradeUniform;
 pub(crate) use crate::gpu_layouts::scene::LightingUniform;
 
 /// Weight of the grade's S-curve for `contrast`: the shader mixes a
@@ -110,6 +111,22 @@ fn unit_luminance(tint: glam::Vec3) -> [f32; 4] {
     }
 }
 
+impl GradeUniform {
+    pub(crate) fn new(atmosphere: &Atmosphere) -> Self {
+        let atmosphere = atmosphere.sanitized();
+        Self {
+            parameters: [
+                contrast_weight(atmosphere.contrast),
+                atmosphere.saturation,
+                atmosphere.vibrance,
+                0.0,
+            ],
+            shadows: unit_luminance(atmosphere.shadow_tint),
+            highlights: unit_luminance(atmosphere.highlight_tint),
+        }
+    }
+}
+
 impl LightingUniform {
     pub(crate) fn new(
         atmosphere: &Atmosphere,
@@ -119,6 +136,7 @@ impl LightingUniform {
         sky: &engine_core::Sky,
     ) -> Self {
         let atmosphere = atmosphere.sanitized();
+        let grade = GradeUniform::new(&atmosphere);
         let reflections = reflections.sanitized();
         let refraction = refraction.sanitized();
         let sky = sky.sanitized();
@@ -167,7 +185,7 @@ impl LightingUniform {
             sun_color: atmosphere.sun_color.extend(atmosphere.specular).to_array(),
             zenith: atmosphere.zenith.extend(atmosphere.ambient).to_array(),
             horizon: atmosphere.horizon.extend(atmosphere.exposure).to_array(),
-            ground: atmosphere.ground.extend(atmosphere.saturation).to_array(),
+            ground: atmosphere.ground.extend(grade.parameters[1]).to_array(),
             fog,
             effects: [
                 atmosphere.emission,
@@ -175,14 +193,9 @@ impl LightingUniform {
                 reflections.max_roughness,
                 if reflections.enabled() { 1.0 } else { 0.0 },
             ],
-            grade: [
-                contrast_weight(atmosphere.contrast),
-                atmosphere.vibrance,
-                physical,
-                0.0,
-            ],
-            shadow_tint: unit_luminance(atmosphere.shadow_tint),
-            highlight_tint: unit_luminance(atmosphere.highlight_tint),
+            grade: [grade.parameters[0], grade.parameters[2], physical, 0.0],
+            shadow_tint: grade.shadows,
+            highlight_tint: grade.highlights,
             refraction: [refraction.strength, refraction.blur, 0.0, 0.0],
             aerial,
             aerial_color: atmosphere.aerial_color.extend(0.0).to_array(),
@@ -360,7 +373,7 @@ pub(crate) fn octahedral(normal: [f32; 3]) -> [i16; 2] {
 
 pub(crate) use crate::shaders::{
     CLOUDS_SHADER, COVER_GROW_SHADER, DEFORMATION_SHADER, DEPTH_PYRAMID_SHADER, ENVIRONMENT_SHADER,
-    LIGHT_SHADER, MIPMAP_SHADER, OCCUPANCY_SHADER, PARTICLE_SHADER, POST_SHADER,
+    GRADE_SHADER, LIGHT_SHADER, MIPMAP_SHADER, OCCUPANCY_SHADER, PARTICLE_SHADER, POST_SHADER,
     PRESENTATION_SHADER, SCATTER_CULL_SHADER, SCATTER_SNAP_SHADER, SHADER, SHADOW_SHADER,
     SHAFTS_SHADER, SKY_SHADER, TEMPORAL_SHADER, TERRAIN_CONTROL_SHADER, TERRAIN_HORIZON_SHADER,
     TERRAIN_NORMALS_SHADER, TERRAIN_SHADOW_SHADER, TERRAIN_SKY_SHADER, TRANSPARENT_SHADER,

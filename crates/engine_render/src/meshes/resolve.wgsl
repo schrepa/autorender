@@ -187,12 +187,12 @@ fn shade_resolved_lit(resolved: Resolved) -> Shaded {
 
 @fragment
 fn fs_resolve(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_resolved(resolve_pixel(position)).color), 1.0);
+    return vec4<f32>(shade_resolved(resolve_pixel(position)).color, 1.0);
 }
 
 @fragment
 fn fs_resolve_lit(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_resolved_lit(resolve_pixel(position)).color), 1.0);
+    return vec4<f32>(shade_resolved_lit(resolve_pixel(position)).color, 1.0);
 }
 
 @fragment

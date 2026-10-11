@@ -180,7 +180,7 @@ fn fs_particle(input: ParticleOutput) -> TransparentTargets {
         + lighting.sun_color.rgb * 0.5);
     let view = normalize(input.world - eye);
     let fogged = atmospheric(light, eye, input.world, view).rgb;
-    return weighted(grade(fogged), alpha, length(input.world - eye));
+    return weighted(scaled_radiance(fogged), alpha, length(input.world - eye));
 }
 
 // Additive particles: their light through the fog, graded.
@@ -195,7 +195,7 @@ fn fs_particle_add(input: ParticleOutput) -> @location(0) vec4<f32> {
     if outside(input) {
         discard;
     }
-    return vec4<f32>(encoded(grade(added(input))), 0.0);
+    return vec4<f32>(scaled_radiance(added(input)), 0.0);
 }
 
 struct AddedTargets {
@@ -211,7 +211,7 @@ fn fs_particle_add_post(input: ParticleOutput) -> AddedTargets {
     }
     let light = added(input);
     var targets: AddedTargets;
-    targets.color = vec4<f32>(grade(light), 0.0);
+    targets.color = vec4<f32>(scaled_radiance(light), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);
     return targets;
 }

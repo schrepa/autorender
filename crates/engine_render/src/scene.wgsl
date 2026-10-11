@@ -226,10 +226,13 @@ fn stable_normalize(value: vec3<f32>) -> vec3<f32> {
     return normalize(value / scale);
 }
 
-// Graded linear color as the canvas stores it: WebGPU canvases are UNORM,
-// so shaders drawing into them encode sRGB themselves.
-fn encoded(color: vec3<f32>) -> vec3<f32> {
-    return encode_srgb(color);
+// Main-view composition stores exposed light scaled by an exact power of
+// two. Probe outputs keep Shaded.linear and never consume this value.
+fn scaled_radiance(color: vec3<f32>) -> vec3<f32> {
+    if lighting.horizon.w == 0.0 {
+        return vec3<f32>(0.0);
+    }
+    return (color * 0x1p-6f) * lighting.horizon.w;
 }
 
 // The sky's light in `direction` without the sun's disc: horizon to zenith
@@ -427,34 +430,6 @@ fn atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32 {
     let depth = height_depth(eye, point, lighting.aerial.x, lighting.aerial.y,
         lighting.aerial.z);
     return fogged + (1.0 - fogged) * (1.0 - exp(-depth));
-}
-
-// Narkowicz's fit of the ACES filmic curve.
-fn filmic(x: vec3<f32>) -> vec3<f32> {
-    return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
-}
-
-// The grade of every shaded color: exposure; the
-// filmic curve, half per channel and half on the brightest channel, which
-// keeps the hue and saturation of bright colors; contrast as an S-curve in a
-// perceptual (square root) space that keeps black and white, so dark shade
-// deepens without crushing; split toning of shadows and highlights; then
-// saturation, and vibrance that lifts muted colors more than vivid ones.
-fn grade(color: vec3<f32>) -> vec3<f32> {
-    let exposed = max(color, vec3<f32>(0.0)) * lighting.horizon.w;
-    let peak = max(exposed.r, max(exposed.g, exposed.b));
-    let kept = exposed * (filmic(vec3<f32>(peak)).r / max(peak, 1.0e-6));
-    let curved = mix(filmic(exposed), kept, 0.5);
-    let root = sqrt(curved);
-    let perceptual = root + lighting.grade.x * (root * root * (3.0 - 2.0 * root) - root);
-    var mapped = perceptual * perceptual;
-    let tone = smoothstep(0.2, 0.8, sqrt(luminance(mapped)));
-    mapped *= mix(lighting.shadow_tint.rgb, lighting.highlight_tint.rgb, tone);
-    let top = max(mapped.r, max(mapped.g, mapped.b));
-    let bottom = min(mapped.r, min(mapped.g, mapped.b));
-    let muted = 1.0 - (top - bottom) / max(top, 1.0e-6);
-    let amount = lighting.ground.w + lighting.grade.y * muted;
-    return saturate(mix(vec3<f32>(luminance(mapped)), mapped, amount));
 }
 
 // Glow weight of light `color`: its exposed brightness above the bloom
@@ -890,7 +865,7 @@ struct TransparentTargets {
     @location(1) revealed: f32,
 }
 
-// A transparent contribution of graded `color` covering `opacity` of what
+// A transparent contribution of scaled radiance `color` covering `opacity` of what
 // is behind it, `distance` from the eye: nearer surfaces weigh more.
 fn weighted(color: vec3<f32>, opacity: f32, distance: f32) -> TransparentTargets {
     let near = distance / 5.0;

@@ -592,7 +592,7 @@ struct ImpostorTemporalTargets {
 }
 
 fn impostor_color(shaded: ImpostorShaded) -> ImpostorColor {
-    return ImpostorColor(vec4<f32>(encoded(shaded.shaded.color), 1.0), shaded.depth);
+    return ImpostorColor(vec4<f32>(shaded.shaded.color, 1.0), shaded.depth);
 }
 
 fn impostor_scene_targets(shaded: ImpostorShaded) -> ImpostorSceneTargets {

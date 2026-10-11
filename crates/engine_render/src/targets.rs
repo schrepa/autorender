@@ -4,19 +4,19 @@
 //! frame's size, which screen-sized targets are made at.
 
 use crate::cached::Versioned;
-use crate::post::{GLOW_FORMAT, SCENE_FORMAT, SURFACE_FORMAT};
+use crate::post::{GLOW_FORMAT, SURFACE_FORMAT};
+use crate::radiance::RADIANCE_FORMAT;
 pub(crate) use crate::render_graph::Targets;
 use crate::temporal::MOTION_FORMAT;
 
 impl Targets {
-    /// The color target formats in pipeline order: the canvas's `canvas`
-    /// format; the screen effects' scene, glow and surface targets;
-    /// temporal frames' motion target after the scene.
-    pub(crate) fn formats(self, canvas: wgpu::TextureFormat) -> Vec<wgpu::TextureFormat> {
+    /// Main-pass formats: radiance, then the optional motion, glow and
+    /// surface targets. The later Grade pass chooses the canvas format.
+    pub(crate) fn formats(self, _canvas: wgpu::TextureFormat) -> Vec<wgpu::TextureFormat> {
         match self {
-            Self::Canvas => vec![canvas],
-            Self::Post => vec![SCENE_FORMAT, GLOW_FORMAT, SURFACE_FORMAT],
-            Self::Temporal => vec![SCENE_FORMAT, MOTION_FORMAT, GLOW_FORMAT, SURFACE_FORMAT],
+            Self::Canvas => vec![RADIANCE_FORMAT],
+            Self::Post => vec![RADIANCE_FORMAT, GLOW_FORMAT, SURFACE_FORMAT],
+            Self::Temporal => vec![RADIANCE_FORMAT, MOTION_FORMAT, GLOW_FORMAT, SURFACE_FORMAT],
         }
     }
 

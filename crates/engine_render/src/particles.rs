@@ -335,7 +335,7 @@ mod gpu {
                     &self.module,
                     particles::fs_particle_add_post,
                     &[
-                        target(crate::post::SCENE_FORMAT, add),
+                        target(crate::radiance::RADIANCE_FORMAT, add),
                         target(crate::post::GLOW_FORMAT, brightest),
                     ],
                     self.depth_format,

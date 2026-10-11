@@ -128,7 +128,7 @@ fn shade_ocean_below(input: OceanOutput) -> WaterShade {
     let lit = mix(light, underwater_light(ray), underwater_cover(length(input.relative)));
     var shaded: Shaded;
     shaded.linear = lit;
-    shaded.color = grade(lit);
+    shaded.color = scaled_radiance(lit);
     shaded.ambient = 0.0;
     shaded.glow = glow_weight(lit);
     shaded.reflect = 0.0;
@@ -277,7 +277,7 @@ fn ocean_temporal_output(input: OceanTemporalOutput) -> OceanOutput {
 @fragment
 fn fs_ocean(input: OceanOutput) -> @location(0) vec4<f32> {
     let shade = shade_ocean(input);
-    return vec4<f32>(encoded(shade.shaded.color) * shade.coverage, shade.coverage);
+    return vec4<f32>(shade.shaded.color * shade.coverage, shade.coverage);
 }
 
 @fragment

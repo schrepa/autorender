@@ -6,10 +6,7 @@
 
 @group(0) @binding(0) var accumulated: texture_2d<f32>;
 @group(0) @binding(1) var revealed: texture_2d<f32>;
-
-// Frames with screen effects composite into the sRGB scene target, which
-// encodes as it stores; others into the UNORM canvas, encoded here.
-override TARGET_IS_SRGB: bool = false;
+@group(0) @binding(2) var<storage, read_write> radiance_limits: atomic<u32>;
 
 @fragment
 fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
@@ -18,10 +15,7 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     if reveal >= 1.0 {
         discard;
     }
-    let sum = textureLoad(accumulated, pixel, 0);
-    var color = min(sum.rgb / max(sum.a, 1.0e-5), vec3<f32>(1.0));
-    if !TARGET_IS_SRGB {
-        color = encode_srgb(color);
-    }
+    let sum = guard_radiance(textureLoad(accumulated, pixel, 0), 1u);
+    let color = guard_radiance(vec4<f32>(sum.rgb / max(sum.a, 1.0e-5), 0.0), 1u).rgb;
     return vec4<f32>(color, 1.0 - reveal);
 }

@@ -50,6 +50,8 @@ resources! {
     Canvas: Output,
     /// The depth buffer (reversed).
     Depth: Frame,
+    /// Ungraded exposed light, scaled by 1/64, composed before grading.
+    Radiance: Frame,
     /// The screen effects' scene color, glow and surface targets.
     Scene: Frame,
     Glow: Frame,
@@ -259,6 +261,8 @@ pub(crate) enum Pass {
     },
     /// The depth pyramid and occlusion test between the opaque phases.
     OcclusionTest,
+    /// The single display grade after all spatial scene composition.
+    Grade,
     /// A feature's pass, which the feature declares and encodes.
     Feature(FeaturePass),
     /// Reflection probe faces captured after the frame.
@@ -330,6 +334,7 @@ passes! {
     cloud_composite: Feature(FeaturePass::CloudComposite),
     transparent: Feature(FeaturePass::Transparent),
     transparent_composite: Feature(FeaturePass::TransparentComposite),
+    grade: Grade,
     effects: Feature(FeaturePass::Effects),
     composite: Feature(FeaturePass::Composite),
     temporal_resolve: Feature(FeaturePass::TemporalResolve),
@@ -704,22 +709,18 @@ pub(crate) struct FrameShape {
 }
 
 impl FrameShape {
-    /// The main passes' color: the canvas, or the effects' scene target.
+    /// The main passes compose exposed linear light before the grade.
     pub(crate) fn scene(&self) -> Resource {
-        if self.targets == Targets::Canvas {
-            Resource::Canvas
-        } else {
-            Resource::Scene
-        }
+        Resource::Radiance
     }
 
     /// The main passes' color targets, in pipeline target order.
     pub(crate) fn main_targets(&self) -> &'static [Resource] {
         match self.targets {
-            Targets::Canvas => &[Resource::Canvas],
-            Targets::Post => &[Resource::Scene, Resource::Glow, Resource::Surface],
+            Targets::Canvas => &[Resource::Radiance],
+            Targets::Post => &[Resource::Radiance, Resource::Glow, Resource::Surface],
             Targets::Temporal => &[
-                Resource::Scene,
+                Resource::Radiance,
                 Resource::Motion,
                 Resource::Glow,
                 Resource::Surface,
@@ -789,14 +790,14 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     }
     // The main passes' color targets, in pipeline target order.
     let targets: &[(Resource, Clear)] = match shape.targets {
-        Targets::Canvas => &[(Canvas, Clear::Color(shape.canvas_clear))],
+        Targets::Canvas => &[(Radiance, Clear::Color(BLACK))],
         Targets::Post => &[
-            (Scene, Clear::Color(SCENE_CLEAR)),
+            (Radiance, Clear::Color(BLACK)),
             (Glow, Clear::Color(TRANSPARENT)),
             (Surface, Clear::Color(TRANSPARENT)),
         ],
         Targets::Temporal => &[
-            (Scene, Clear::Color(SCENE_CLEAR)),
+            (Radiance, Clear::Color(BLACK)),
             (Motion, Clear::Color(TRANSPARENT)),
             (Glow, Clear::Color(TRANSPARENT)),
             (Surface, Clear::Color(TRANSPARENT)),
@@ -862,6 +863,14 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             resolve.depth(Depth, Access::ReadOnly);
         }
     }
+    graph.add(Pass::Grade).read(Radiance).color(
+        if shape.targets == Targets::Canvas {
+            Canvas
+        } else {
+            Scene
+        },
+        Access::Clear(Clear::Color(BLACK)),
+    );
     if shape.probes {
         graph
             .add(Pass::ProbeCaptures)

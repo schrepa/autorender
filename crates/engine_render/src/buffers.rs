@@ -229,6 +229,15 @@ impl<T: Copy + 'static> ReadbackRing<T> {
         }
     }
 
+    /// Bytes actually allocated for readback slots.
+    pub(crate) fn capacity_bytes(&self) -> u64 {
+        self.slots
+            .borrow()
+            .iter()
+            .map(|slot| slot.buffer.size())
+            .sum()
+    }
+
     /// Drops the buffers; maps in flight still complete.
     pub(crate) fn clear(&mut self) {
         self.slots.get_mut().clear();

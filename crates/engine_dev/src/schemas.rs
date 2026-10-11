@@ -329,6 +329,8 @@ fn frame_stats(problems: &mut Vec<String>) -> Value {
     for (field, property) in render["properties"].as_object().into_iter().flatten() {
         if property.get("$ref").is_some()
             && !engine_core::Environment::KEYS.contains(&field.as_str())
+            // Radiance is a shared numerical boundary, not an optional feature.
+            && field != "radiance"
         {
             problems.push(format!(
                 "RenderStats.{field} groups a feature's stats under a key that is no environment \

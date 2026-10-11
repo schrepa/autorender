@@ -297,6 +297,17 @@ gpu_structs! {
         pub sun_direction: [f32; 4],
     }
 
+    /// The grade after radiance composition, as `grade.wgsl` reads it.
+    #[derive(Clone, Copy, Pod, Zeroable)]
+    pub(crate) struct GradeUniform as ["Grade"] {
+        /// Contrast weight, saturation, vibrance, unused.
+        pub parameters: [f32; 4],
+        /// Shadow tint normalized to unit luminance.
+        pub shadows: [f32; 4],
+        /// Highlight tint normalized to unit luminance.
+        pub highlights: [f32; 4],
+    }
+
     /// Temporal antialiasing's resolve, as `temporal.wgsl` reads it.
     #[derive(Clone, Copy, Pod, Zeroable)]
     pub(crate) struct ResolveUniform as ["Resolve"] {
