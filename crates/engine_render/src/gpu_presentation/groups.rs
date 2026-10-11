@@ -277,7 +277,8 @@ impl DrawGroups {
         self.envelope_staging.clear();
         let mut envelope_ranges = BTreeMap::new();
         let limits = device.limits();
-        let envelope_limit = (u64::from(limits.max_storage_buffer_binding_size)
+        let envelope_limit = (limits
+            .max_storage_buffer_binding_size
             .min(limits.max_buffer_size)
             / size_of::<SkinEnvelope>() as u64) as usize;
         for (index, batch) in plan.batches.iter().enumerate() {

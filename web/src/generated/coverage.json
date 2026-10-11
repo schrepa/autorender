@@ -405,6 +405,7 @@
         "gpu-presentation",
         "interpolation",
         "lod",
+        "skin-bounds",
         "terrain",
         "virtual-geometry"
       ]
@@ -424,6 +425,7 @@
         "gpu-presentation",
         "lod",
         "plugins",
+        "skin-bounds",
         "streaming",
         "surfaces",
         "taa",
@@ -474,6 +476,7 @@
       "smokes": [
         "meshes",
         "plugins",
+        "skin-bounds",
         "streaming"
       ]
     },
@@ -491,6 +494,7 @@
         "gpu-presentation",
         "interpolation",
         "jobs",
+        "skin-bounds",
         "streaming",
         "surfaces",
         "terrain",
@@ -514,6 +518,7 @@
         "interpolation",
         "meshes",
         "native",
+        "skin-bounds",
         "streaming",
         "taa",
         "terrain",
@@ -590,6 +595,7 @@
         "lod",
         "meshes",
         "native",
+        "skin-bounds",
         "spline",
         "surfaces",
         "taa",
@@ -628,6 +634,7 @@
       "smokes": [
         "agent",
         "culling",
+        "skin-bounds",
         "terrain",
         "virtual-geometry"
       ],
@@ -846,7 +853,8 @@
       "section": "occlusion_culling",
       "smokes": [
         "gpu-presentation",
-        "lod"
+        "lod",
+        "skin-bounds"
       ],
       "stats": true
     },
@@ -854,7 +862,8 @@
       "inspector": "SubpixelCulling",
       "section": "subpixel_culling",
       "smokes": [
-        "gpu-presentation"
+        "gpu-presentation",
+        "skin-bounds"
       ],
       "stats": true
     },
