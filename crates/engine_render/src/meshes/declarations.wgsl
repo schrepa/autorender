@@ -286,7 +286,7 @@ struct TemporalOutput {
     @location(3) previous: vec3<f32>,
 }
 
-// Frames with screen effects: graded linear color with the
+// Frames with screen effects: scaled radiance with the
 // ambient share of its light in alpha, the pixel's glow weight and
 // reflectivity, and the surface reflections follow: its
 // shading normal, octahedral in [0, 1], and roughness.

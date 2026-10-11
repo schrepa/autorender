@@ -1,5 +1,5 @@
 // Surface shading every mesh pass shares: material texels, normals, the
-// sun, environment and local lights, fog and grading, and the targets
+// sun, environment and local lights, fog and radiance, and the targets
 // each kind of pass writes.
 
 // Wave normals of liquid surfaces: three directional waves
@@ -657,7 +657,7 @@ fn interior_light(world: vec3<f32>) -> vec2<f32> {
     return light;
 }
 
-// Lit, fogged and graded color of `point` with `local` light added.
+// Lit, fogged and scaled radiance of `point` with `local` light added.
 fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let normal = point.normal;
     let view = point.view;

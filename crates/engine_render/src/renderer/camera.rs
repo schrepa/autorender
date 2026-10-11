@@ -40,7 +40,7 @@ pub(super) struct CameraBindings {
     group: GroupCache<CAMERA_BINDINGS>,
     // Refraction through glass: the white texel bound where
     // no opaque color is, its sampler, and the group of transparent passes
-    // over the opaque color.
+    // over the composed radiance.
     refraction_fallback: wgpu::TextureView,
     refraction_sampler: wgpu::Sampler,
     refraction_group: GroupCache<CAMERA_BINDINGS>,
@@ -150,7 +150,7 @@ impl CameraBindings {
     }
 
     /// The group of transparent passes when glass refracts:
-    /// the main group over `scene`, the opaque color.
+    /// the main group over `scene`, the composed radiance.
     pub(super) fn prepare_refraction(
         &mut self,
         device: &wgpu::Device,

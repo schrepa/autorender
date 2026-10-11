@@ -183,7 +183,7 @@ fn fs_particle(input: ParticleOutput) -> TransparentTargets {
     return weighted(scaled_radiance(fogged), alpha, length(input.world - eye));
 }
 
-// Additive particles: their light through the fog, graded.
+// Additive particles: their raw light through the fog.
 fn added(input: ParticleOutput) -> vec3<f32> {
     let eye = camera.position.xyz;
     let light = input.color.rgb * (input.color.a * coverage(input));
