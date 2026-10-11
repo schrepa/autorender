@@ -840,8 +840,7 @@ fn skin_bounds_pass(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // The level bucket a candidate's flags put it in: its level
-// of detail on frames with levels, otherwise 0; one-hot when the frame's
-// mask gathers it.
+// of detail on frames with levels, otherwise 0.
 fn bucket(flags: u32) -> u32 {
     return select(0u, (flags >> LOD_SHIFT) & 3u, frame.lod_error > 0.0);
 }

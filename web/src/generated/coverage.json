@@ -288,6 +288,7 @@
         "interpolation",
         "native",
         "plugins",
+        "presentation-compaction",
         "taa",
         "terrain-water-sky"
       ]
@@ -435,6 +436,7 @@
         "host-parity",
         "interpolation",
         "lod",
+        "presentation-compaction",
         "terrain",
         "terrain-surface",
         "virtual-geometry"
@@ -456,6 +458,7 @@
         "gpu-presentation",
         "host-parity",
         "lod",
+        "presentation-compaction",
         "streaming",
         "surfaces",
         "taa",
@@ -525,6 +528,7 @@
         "host-parity",
         "interpolation",
         "jobs",
+        "presentation-compaction",
         "streaming",
         "surfaces",
         "terrain",
@@ -553,6 +557,7 @@
         "interpolation",
         "meshes",
         "native",
+        "presentation-compaction",
         "streaming",
         "taa",
         "terrain",
@@ -616,6 +621,7 @@
         "meshes",
         "native",
         "plugins",
+        "presentation-compaction",
         "taa",
         "terrain-water-sky"
       ]
@@ -632,6 +638,7 @@
         "jobs",
         "meshes",
         "native",
+        "presentation-compaction",
         "taa",
         "terrain-water-sky"
       ]
@@ -649,6 +656,7 @@
         "lod",
         "meshes",
         "native",
+        "presentation-compaction",
         "spline",
         "surfaces",
         "taa",
@@ -664,6 +672,7 @@
         "jobs",
         "lod",
         "native",
+        "presentation-compaction",
         "surfaces"
       ]
     },
@@ -777,6 +786,7 @@
       "section": "reflection_probes",
       "smokes": [
         "lod",
+        "presentation-compaction",
         "terrain-water-sky"
       ],
       "stats": true
@@ -794,6 +804,7 @@
       "section": "level_of_detail",
       "smokes": [
         "lod",
+        "presentation-compaction",
         "terrain"
       ],
       "stats": true
@@ -835,6 +846,7 @@
       "inspector": "Occupancy",
       "section": "occupancy",
       "smokes": [
+        "presentation-compaction",
         "terrain-surface"
       ],
       "stats": true
@@ -923,7 +935,8 @@
       "section": "occlusion_culling",
       "smokes": [
         "gpu-presentation",
-        "lod"
+        "lod",
+        "presentation-compaction"
       ],
       "stats": true
     },
@@ -931,7 +944,8 @@
       "inspector": "SubpixelCulling",
       "section": "subpixel_culling",
       "smokes": [
-        "gpu-presentation"
+        "gpu-presentation",
+        "presentation-compaction"
       ],
       "stats": true
     },
@@ -940,6 +954,7 @@
       "section": "temporal_antialiasing",
       "smokes": [
         "native",
+        "presentation-compaction",
         "taa"
       ],
       "stats": true
