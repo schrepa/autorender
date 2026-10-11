@@ -8,6 +8,9 @@ use std::sync::Arc;
 
 use glam::{Vec2, Vec3};
 
+mod floats;
+mod zfp;
+
 /// Why bytes could not be read back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CodecError(pub &'static str);
@@ -110,6 +113,27 @@ pub fn encode<T: Codec>(value: &T) -> Vec<u8> {
 pub trait Codec: Sized {
     fn write(&self, out: &mut Writer);
     fn read(input: &mut Reader<'_>) -> Result<Self, CodecError>;
+
+    /// A dynamic sequence, including its count. Scalar and fixed-array
+    /// fields keep their own encoding.
+    fn write_sequence(values: &[Self], out: &mut Writer) {
+        (values.len() as u64).write(out);
+        for value in values {
+            value.write(out);
+        }
+    }
+
+    fn read_sequence(input: &mut Reader<'_>) -> Result<Vec<Self>, CodecError> {
+        let count = input.count()?;
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(count)
+            .map_err(|_| CodecError("sequence allocation failed"))?;
+        for _ in 0..count {
+            values.push(Self::read(input)?);
+        }
+        Ok(values)
+    }
 }
 
 macro_rules! number {
@@ -126,7 +150,25 @@ macro_rules! number {
     )*};
 }
 
-number!(u8, u16, u32, u64, i64, f32);
+number!(u8, u16, u32, u64, i64);
+
+impl Codec for f32 {
+    fn write(&self, out: &mut Writer) {
+        out.raw(&self.to_le_bytes());
+    }
+
+    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+        Ok(Self::from_le_bytes(input.take()?))
+    }
+
+    fn write_sequence(values: &[Self], out: &mut Writer) {
+        floats::write(values, out);
+    }
+
+    fn read_sequence(input: &mut Reader<'_>) -> Result<Vec<Self>, CodecError> {
+        floats::read(input)
+    }
+}
 
 impl Codec for usize {
     fn write(&self, out: &mut Writer) {
@@ -168,28 +210,17 @@ impl Codec for String {
 
 impl<T: Codec> Codec for Vec<T> {
     fn write(&self, out: &mut Writer) {
-        (self.len() as u64).write(out);
-        for value in self {
-            value.write(out);
-        }
+        T::write_sequence(self, out);
     }
 
     fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
-        let count = input.count()?;
-        let mut values = Vec::with_capacity(count);
-        for _ in 0..count {
-            values.push(T::read(input)?);
-        }
-        Ok(values)
+        T::read_sequence(input)
     }
 }
 
 impl<T: Codec> Codec for Box<[T]> {
     fn write(&self, out: &mut Writer) {
-        (self.len() as u64).write(out);
-        for value in self.iter() {
-            value.write(out);
-        }
+        T::write_sequence(self, out);
     }
 
     fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
@@ -199,10 +230,7 @@ impl<T: Codec> Codec for Box<[T]> {
 
 impl<T: Codec> Codec for Arc<[T]> {
     fn write(&self, out: &mut Writer) {
-        (self.len() as u64).write(out);
-        for value in self.iter() {
-            value.write(out);
-        }
+        T::write_sequence(self, out);
     }
 
     fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {

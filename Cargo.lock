@@ -986,6 +986,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_terrain_codec"
+version = "0.1.0"
+dependencies = [
+ "engine_terrain",
+ "glam 0.30.9",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "engine_vgbuild"
 version = "0.1.0"
 dependencies = [
