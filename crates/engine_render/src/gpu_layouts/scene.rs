@@ -300,8 +300,8 @@ gpu_structs! {
     pub(crate) struct ResolveUniform as ["Resolve"] {
         /// Size of one target pixel in texture coordinates.
         pub texel: [f32; 2],
-        /// Weight of this frame's color against the reprojected history.
-        pub current_weight: f32,
+        /// Minimum weight of this frame's color against the history.
+        pub minimum_current_weight: f32,
         /// Zero when the history must not be read (reset).
         pub history_valid: u32,
     }

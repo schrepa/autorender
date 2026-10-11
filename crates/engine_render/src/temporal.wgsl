@@ -7,13 +7,15 @@
 // viewport, and every pixel after a reset, show this frame's color alone.
 // Ambient occlusion darkens this frame's color before blending, so the
 // history averages its noise; bloom reaches the canvas only.
+// History alpha stores the square root of luminance uncertainty; it is
+// linear UNORM even though RGB is sRGB. Canvas alpha stays opaque.
 // Writes the canvas and the next history together.
 
 struct Resolve {
     // Size of one target pixel in texture coordinates.
     texel: vec2<f32>,
-    // Weight of this frame's color against the reprojected history.
-    current_weight: f32,
+    // Keep new samples contributing after uncertainty has fallen.
+    minimum_current_weight: f32,
     // Zero after a reset: the history must not be read.
     history_valid: u32,
 }
@@ -38,6 +40,9 @@ struct Resolve {
 // Below this motion (a 64th of a pixel) the history is read at the pixel
 // itself: static pixels skip resampling.
 const STILL_PIXELS: f32 = 0x1p-6f;
+// Nonzero uncertainty must survive the 8-bit history alpha channel.
+const MIN_UNCERTAINTY: f32 = 1.0 / (255.0 * 255.0);
+const MIN_SAMPLE_UNCERTAINTY: f32 = 0x1p-12f;
 
 struct Outputs {
     @location(0) canvas: vec4<f32>,
@@ -61,7 +66,7 @@ fn rgb(color: vec3<f32>) -> vec3<f32> {
 // corners (under 3% of the weight) dropped. Plain bilinear fetches would
 // accumulate a blur of over a pixel (standard deviation) on moving content at
 // the default weight.
-fn sample_history(uv: vec2<f32>) -> vec3<f32> {
+fn sample_history(uv: vec2<f32>) -> vec4<f32> {
     let size = 1.0 / resolve.texel;
     let position = uv * size;
     let center = floor(position - 0.5) + 0.5;
@@ -77,12 +82,26 @@ fn sample_history(uv: vec2<f32>) -> vec3<f32> {
     let weights = vec4<f32>(w12.x * w0.y, w0.x * w12.y, w3.x * w12.y, w12.x * w3.y);
     let middle_weight = w12.x * w12.y;
     let sum = middle_weight + weights.x + weights.y + weights.z + weights.w;
-    let color = textureSampleLevel(history, history_sampler, middle, 0.0).rgb * middle_weight
-        + textureSampleLevel(history, history_sampler, vec2<f32>(middle.x, before.y), 0.0).rgb * weights.x
-        + textureSampleLevel(history, history_sampler, vec2<f32>(before.x, middle.y), 0.0).rgb * weights.y
-        + textureSampleLevel(history, history_sampler, vec2<f32>(after.x, middle.y), 0.0).rgb * weights.z
-        + textureSampleLevel(history, history_sampler, vec2<f32>(middle.x, after.y), 0.0).rgb * weights.w;
-    return color / sum;
+    let middle_sample = textureSampleLevel(history, history_sampler, middle, 0.0);
+    let up = textureSampleLevel(history, history_sampler, vec2<f32>(middle.x, before.y), 0.0);
+    let left = textureSampleLevel(history, history_sampler, vec2<f32>(before.x, middle.y), 0.0);
+    let right = textureSampleLevel(history, history_sampler, vec2<f32>(after.x, middle.y), 0.0);
+    let down = textureSampleLevel(history, history_sampler, vec2<f32>(middle.x, after.y), 0.0);
+    let color = middle_sample.rgb * middle_weight + up.rgb * weights.x
+        + left.rgb * weights.y + right.rgb * weights.z + down.rgb * weights.w;
+    // Signed reconstruction still sharpens RGB. Absolute weights keep the
+    // resampled uncertainty nonnegative; this is a correlated-sample proxy.
+    let positive = abs(weights);
+    let middle_positive = abs(middle_weight);
+    let alphas = vec4<f32>(up.a, left.a, right.a, down.a);
+    let uncertainty = (middle_sample.a * middle_sample.a * middle_positive
+        + dot(alphas * alphas, positive))
+        / (middle_positive + positive.x + positive.y + positive.z + positive.w);
+    return vec4<f32>(color / sum, uncertainty);
+}
+
+fn finite_sample(value: vec4<f32>) -> bool {
+    return all((bitcast<vec4<u32>>(value) & vec4<u32>(0x7f800000u)) != vec4<u32>(0x7f800000u));
 }
 
 @fragment
@@ -95,30 +114,54 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     let shade = occlusion_factor(texel.a, effects.x, post)
         * contact_factor(texel.a, effects.z, post);
     let current = texel.rgb * shade;
+    let last = vec2<i32>(textureDimensions(scene)) - 1;
+    let center = ycocg(current);
+    let left = ycocg(textureLoad(scene, max(pixel - vec2<i32>(1, 0), vec2<i32>(0)), 0).rgb * shade);
+    let right = ycocg(textureLoad(scene, min(pixel + vec2<i32>(1, 0), last), 0).rgb * shade);
+    let up = ycocg(textureLoad(scene, max(pixel - vec2<i32>(0, 1), vec2<i32>(0)), 0).rgb * shade);
+    let down = ycocg(textureLoad(scene, min(pixel + vec2<i32>(0, 1), last), 0).rgb * shade);
+    let mean = (center.x + left.x + right.x + up.x + down.x) / 5.0;
+    let deviation = vec4<f32>(left.x, right.x, up.x, down.x) - vec4<f32>(mean);
+    let center_deviation = center.x - mean;
+    let sample_uncertainty = clamp((center_deviation * center_deviation + dot(deviation, deviation)) / 5.0,
+        MIN_SAMPLE_UNCERTAINTY, 1.0);
     var color = current;
+    var next_uncertainty = sample_uncertainty;
     let offset = textureLoad(motion, pixel, 0).xy;
     let uv = position.xy * resolve.texel + offset;
-    // NaN motion fails these comparisons too.
-    if resolve.history_valid != 0u && all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0)) {
-        let last = vec2<i32>(textureDimensions(scene)) - 1;
-        let center = ycocg(current);
-        let left = ycocg(textureLoad(scene, max(pixel - vec2<i32>(1, 0), vec2<i32>(0)), 0).rgb * shade);
-        let right = ycocg(textureLoad(scene, min(pixel + vec2<i32>(1, 0), last), 0).rgb * shade);
-        let up = ycocg(textureLoad(scene, max(pixel - vec2<i32>(0, 1), vec2<i32>(0)), 0).rgb * shade);
-        let down = ycocg(textureLoad(scene, min(pixel + vec2<i32>(0, 1), last), 0).rgb * shade);
+    // Reject nonfinite motion explicitly before any history fetch.
+    if resolve.history_valid != 0u && finite_sample(vec4<f32>(offset, 0.0, 0.0))
+        && all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0)) {
         let low = min(center, min(min(left, right), min(up, down)));
         let high = max(center, max(max(left, right), max(up, down)));
-        var past: vec3<f32>;
+        var past: vec4<f32>;
         if all(abs(offset) < resolve.texel * STILL_PIXELS) {
-            past = textureLoad(history, pixel, 0).rgb;
+            let stored = textureLoad(history, pixel, 0);
+            past = vec4<f32>(stored.rgb, stored.a * stored.a);
         } else {
             past = sample_history(uv);
         }
-        color = mix(rgb(clamp(ycocg(past), low, high)), current, resolve.current_weight);
+        if finite_sample(past) && past.a > 0.0 && past.a <= 1.0 {
+            let uncertainty = clamp(past.a, MIN_UNCERTAINTY, 1.0);
+            // Measure the innovation before clipping stale color to the box.
+            let residual = center.x - ycocg(past.rgb).x;
+            let process = max(residual * residual - uncertainty - sample_uncertainty, 0.0);
+            let predicted = clamp(uncertainty + process, MIN_UNCERTAINTY, 1.0);
+            let gain = clamp(predicted / (predicted + sample_uncertainty), resolve.minimum_current_weight, 1.0);
+            let remaining = 1.0 - gain;
+            let posterior = clamp(remaining * remaining * predicted + gain * gain * sample_uncertainty,
+                MIN_UNCERTAINTY, 1.0);
+            let blended = mix(rgb(clamp(ycocg(past.rgb), low, high)), current, gain);
+            if finite_sample(vec4<f32>(residual, process, predicted, gain))
+                && finite_sample(vec4<f32>(blended, posterior)) {
+                color = blended;
+                next_uncertainty = posterior;
+            }
+        }
     }
     color = max(color, vec3<f32>(0.0));
     var output: Outputs;
-    output.history = vec4<f32>(color, 1.0);
+    output.history = vec4<f32>(color, sqrt(next_uncertainty));
     let mirrored = reflected(color, reflections, history_sampler, screen, post);
     let lit = shafted(mirrored, effects.y, post);
     let shown = glowing(lit, bloom, history_sampler, screen, post);

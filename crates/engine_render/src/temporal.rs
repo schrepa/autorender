@@ -18,9 +18,8 @@ use crate::post::PostPass;
 
 pub(crate) const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-/// Weight of each frame's color against the history: an exponential average
-/// over about ten frames, beyond the eight-sample jitter cycle.
-const CURRENT_WEIGHT: f32 = 0.1;
+/// Keep new samples contributing even after uncertainty has fallen.
+const MINIMUM_CURRENT_WEIGHT: f32 = 0.05;
 
 struct Targets {
     size: (u32, u32),
@@ -199,14 +198,17 @@ impl TemporalPass {
             structure: frame.structure_revision(),
             pose_generation,
         };
-        let last = self
-            .history
-            .filter(|last| last.size == size && last.identity == history.identity);
+        let last = self.history.filter(|last| {
+            last.size == size
+                && last.identity == history.identity
+                && last.structure == history.structure
+                && last.pose_generation == pose_generation
+        });
         let jitter = jitter_clip(jitter_offset(self.frame), size.0, size.1);
         let previous = last.map_or(view_projection, |last| last.view_projection);
         let uniform = ResolveUniform {
             texel: [1.0 / size.0 as f32, 1.0 / size.1 as f32],
-            current_weight: CURRENT_WEIGHT,
+            minimum_current_weight: MINIMUM_CURRENT_WEIGHT,
             history_valid: u32::from(last.is_some()),
         };
         if self
