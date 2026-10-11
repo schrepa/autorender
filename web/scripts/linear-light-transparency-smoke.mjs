@@ -284,21 +284,31 @@ try {
     document.meshes.push({ id: "room", source: { kind: "cube" } });
     document.materials.push({ id: "room", color: [0, 0, 0, 1], emissive: [0.2, 0.2, 0.2], double_sided: true });
     document.entities.push({ id: "room", mesh: "room", material: "room", transform: { scale: [40, 40, 40] } },
-      { id: "probe", reflection_probe: { extent: [12, 12, 12] }, transform: { translation: [0, 0, 2] } });
+      { id: exposure === 0.25 ? "probe-low" : "probe-unit", reflection_probe: { extent: [12, 12, 12] },
+        transform: { translation: [0, 0, 2] } });
     document.environment.atmosphere.exposure = exposure;
     document.environment.atmosphere.specular = 1;
     document.environment.reflection_probes = { enabled: true, resolution: 32, faces_per_frame: 6 };
-    await scene.reload(command, document);
-    let ready;
-    for (let frame = 0; frame < 12; frame++) ready = (await command("render")).result.rendering;
+    // Scene reload instantiates a new runtime probe. An exposure control
+    // alone need not invalidate raw captures, so require all six new faces.
+    let ready = (await scene.reload(command, document)).result.rendering;
+    let faces = ready.reflection_probes.faces, probeFrames = 0;
+    // Probe captures follow GPU presentation after its stillness gate;
+    // CPU exact renders alone never run that pass.
+    while (probeFrames < 96 && (ready.reflection_probes.ready !== 1 || faces < 6)) {
+      ready = (await command("capture", { alpha: 0, gpu: true })).result.rendering;
+      faces += ready.reflection_probes.faces;
+      probeFrames++;
+    }
     assert.equal(ready.reflection_probes.ready, 1, "a fresh local probe must finish");
+    assert.ok(faces >= 6, `each exposure captures a fresh cube: ${faces} faces`);
     await captureReady();
     const actual = await center(`probe-${exposure}`);
     assert.ok(actual[0] > 20 && actual[0] < 240, `unclipped mirror sample: ${actual}`);
     closeRGB(actual, [actual[0], actual[0], actual[0]], "grey probe", 1);
     recovered.push(inverseGrey(actual[0]) / exposure);
     await limits(0);
-    checks.push({ name: `probe-${exposure}`, actual, recoveredRaw: recovered.at(-1) });
+    checks.push({ name: `probe-${exposure}`, actual, recoveredRaw: recovered.at(-1), faces, probeFrames });
   }
   assert.ok(Math.abs(recovered[0] / recovered[1] - 1) <= 0.05, `probe raw light is exposure independent: ${recovered}`);
 
