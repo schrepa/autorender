@@ -129,8 +129,8 @@ struct Level {
 @group(0) @binding(8) var<storage, read_write> poses: array<Rows>;
 // [0, candidates): candidate flags (VISIBLE; MOVING marks a moving visible
 // slot on temporal frames; VALID a pose this pass wrote, which shadow caster
-// selection reads); then one workgroup sum per group, replaced by its
-// exclusive prefix; then the total visible count.
+// selection reads); then four sums per workgroup, replaced by exclusive
+// prefixes, four level totals and their sum, then adaptive local containers.
 @group(0) @binding(9) var<storage, read_write> scan: array<u32>;
 @group(0) @binding(10) var<storage, read_write> batch_bases: array<u32>;
 @group(0) @binding(11) var<storage, read_write> visible_ids: array<u32>;
@@ -250,6 +250,8 @@ const COMMON_DETERMINANT_MARGIN: f32 = 0x1p-9f;
 var<workgroup> shared_values: array<u32, GROUP>;
 // Per-level counts of the compaction passes.
 var<workgroup> shared_counts: array<vec4<u32>, GROUP>;
+// Two membership words for each compaction bucket.
+var<workgroup> shared_masks: array<atomic<u32>, 8>;
 
 fn rows_matrix(rows: Rows) -> mat4x4<f32> {
     return transpose(mat4x4<f32>(rows.r0, rows.r1, rows.r2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
@@ -844,15 +846,6 @@ fn bucket(flags: u32) -> u32 {
     return select(0u, (flags >> LOD_SHIFT) & 3u, frame.lod_error > 0.0);
 }
 
-fn gathered(flags: u32) -> vec4<u32> {
-    if (flags & frame.mask) == 0u {
-        return vec4<u32>(0u);
-    }
-    var hot = vec4<u32>(0u);
-    hot[bucket(flags)] = 1u;
-    return hot;
-}
-
 // Per-level sums after the candidates' flags: one vec4 per group of GROUP,
 // then the totals, then the total over levels.
 fn load_sums(index: u32) -> vec4<u32> {
@@ -868,6 +861,53 @@ fn store_sums(index: u32, value: vec4<u32>) {
     scan[at + 3u] = value.w;
 }
 
+// A cardinality and two payload words per bucket. Up to eight members are
+// ascending byte offsets; larger sets keep their two membership masks.
+fn container_at(group: u32, level: u32) -> u32 {
+    return frame.candidates + 4u * frame.groups + 5u + 12u * group + 3u * level;
+}
+
+fn load_container(group: u32, level: u32) -> vec3<u32> {
+    let at = container_at(group, level);
+    return vec3<u32>(scan[at], scan[at + 1u], scan[at + 2u]);
+}
+
+fn packed_offset(record: vec3<u32>, index: u32) -> u32 {
+    return (record[1u + index / 4u] >> ((index & 3u) * 8u)) & 0xffu;
+}
+
+fn low_mask(bits: u32) -> u32 {
+    if bits == 0u {
+        return 0u;
+    }
+    if bits == 32u {
+        return 0xffffffffu;
+    }
+    return (1u << bits) - 1u;
+}
+
+fn dense_rank(masks: vec2<u32>, end: u32) -> u32 {
+    var rank = countOneBits(masks.x & low_mask(min(end, 32u)));
+    if end > 32u {
+        rank += countOneBits(masks.y & low_mask(end - 32u));
+    }
+    return rank;
+}
+
+fn local_rank(record: vec3<u32>, end: u32) -> u32 {
+    if record.x > 8u {
+        return dense_rank(record.yz, end);
+    }
+    var rank = 0u;
+    for (var index = 0u; index < record.x; index++) {
+        if packed_offset(record, index) >= end {
+            break;
+        }
+        rank++;
+    }
+    return rank;
+}
+
 // Visible count of every group of GROUP candidates in draw-group order, per
 // level of detail.
 @compute @workgroup_size(GROUP)
@@ -878,27 +918,54 @@ fn sum_groups(
 ) {
     // Gathered candidates per level, and sub-pixel ones (counted once,
     // before phase two).
-    var counts = vec4<u32>(0u);
+    if lane < 8u {
+        atomicStore(&shared_masks[lane], 0u);
+    }
+    workgroupBarrier();
     var subpixel = 0u;
     if id.x < frame.candidates {
         let flags = scan[id.x];
-        counts = gathered(flags);
+        if (flags & frame.mask) != 0u {
+            atomicOr(&shared_masks[2u * bucket(flags) + lane / 32u], 1u << (lane & 31u));
+        }
         if (flags & SUBPIXEL) != 0u && (frame.mask & (PHASE2 | PROBE)) == 0u {
             subpixel = 1u;
         }
     }
-    shared_counts[lane] = counts;
     shared_values[lane] = subpixel;
     workgroupBarrier();
+    if lane < 4u {
+        let masks = vec2<u32>(atomicLoad(&shared_masks[2u * lane]),
+            atomicLoad(&shared_masks[2u * lane + 1u]));
+        let count = countOneBits(masks.x) + countOneBits(masks.y);
+        var payload = masks;
+        if count <= 8u {
+            payload = vec2<u32>(0u);
+            var remaining = masks.x;
+            var base = 0u;
+            for (var index = 0u; index < count; index++) {
+                if remaining == 0u {
+                    remaining = masks.y;
+                    base = 32u;
+                }
+                let offset = base + firstTrailingBit(remaining);
+                payload[index / 4u] |= offset << ((index & 3u) * 8u);
+                remaining &= remaining - 1u;
+            }
+        }
+        scan[frame.candidates + 4u * group.x + lane] = count;
+        let at = container_at(group.x, lane);
+        scan[at] = count;
+        scan[at + 1u] = payload.x;
+        scan[at + 2u] = payload.y;
+    }
     for (var stride = GROUP / 2u; stride > 0u; stride = stride >> 1u) {
         if lane < stride {
-            shared_counts[lane] += shared_counts[lane + stride];
             shared_values[lane] += shared_values[lane + stride];
         }
         workgroupBarrier();
     }
     if lane == 0u {
-        store_sums(group.x, shared_counts[0]);
         if shared_values[0] != 0u {
             atomicAdd(&occlusion_counts[1], shared_values[0]);
         }
@@ -973,8 +1040,8 @@ fn visible_before(position: u32) -> vec4<u32> {
     }
     let group = position / GROUP;
     var value = load_sums(group);
-    for (var index = group * GROUP; index < position; index++) {
-        value += gathered(scan[index]);
+    for (var level = 0u; level < 4u; level++) {
+        value[level] += local_rank(load_container(group, level), position % GROUP);
     }
     return value;
 }
@@ -1034,36 +1101,35 @@ fn batch_args(@builtin(global_invocation_id) id: vec3<u32>) {
 // level's plane.
 @compute @workgroup_size(GROUP)
 fn scatter(
-    @builtin(global_invocation_id) id: vec3<u32>,
     @builtin(local_invocation_index) lane: u32,
     @builtin(workgroup_id) group: vec3<u32>,
 ) {
-    var stored = 0u;
-    if id.x < frame.candidates {
-        stored = scan[id.x];
-    }
-    let hot = gathered(stored);
-    shared_counts[lane] = hot;
-    workgroupBarrier();
-    for (var offset = 1u; offset < GROUP; offset = offset << 1u) {
-        var addend = vec4<u32>(0u);
-        if lane >= offset {
-            addend = shared_counts[lane - offset];
+    let prefix = load_sums(group.x);
+    for (var level = 0u; level < 4u; level++) {
+        let record = load_container(group.x, level);
+        var offset = lane;
+        var rank = lane;
+        if record.x <= 8u {
+            if lane >= record.x {
+                continue;
+            }
+            offset = packed_offset(record, lane);
+        } else {
+            if (record[1u + lane / 32u] & (1u << (lane & 31u))) == 0u {
+                continue;
+            }
+            rank = dense_rank(record.yz, lane);
         }
-        workgroupBarrier();
-        shared_counts[lane] += addend;
-        workgroupBarrier();
-    }
-    if any(hot != vec4<u32>(0u)) {
-        let level = bucket(stored);
-        let global = (load_sums(group.x) + shared_counts[lane] - hot)[level];
+        let index = group.x * GROUP + offset;
+        let stored = scan[index];
+        let global = prefix[level] + rank;
         if level == IMPOSTOR {
             // Impostors of every group compact into one list.
-            let candidate = candidates[id.x];
+            let candidate = candidates[index];
             impostor_ids[global] = vec2<u32>(
                 candidate.slot | select(0u, MOVED_SLOT, (stored & MOVING) != 0u), candidate.batch);
         } else if level != 0u || global < frame.budget {
-            let candidate = candidates[id.x];
+            let candidate = candidates[index];
             let batch = candidate.batch;
             visible_ids[level * frame.plane + batches[batch].start
                 + (global - batch_bases[4u * batch + level])] =

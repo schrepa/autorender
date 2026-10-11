@@ -156,6 +156,18 @@ impl DrawGroups {
             self.capacity = grow(candidates);
             let capacity = self.capacity as u64;
             let groups = capacity.div_ceil(u64::from(SCAN_GROUP));
+            // Flags, four block prefixes, five totals and twelve container
+            // words per block. Candidate storage (16 bytes per candidate)
+            // already bounds this smaller allocation and its u32 addresses.
+            let scan_words = groups
+                .checked_mul(16)
+                .and_then(|words| capacity.checked_add(words))
+                .and_then(|words| words.checked_add(5))
+                .and_then(|words| u32::try_from(words).ok())
+                .expect("admitted candidates have u32 compaction addresses");
+            let scan_bytes = u64::from(scan_words)
+                .checked_mul(4)
+                .expect("u32 compaction words fit in u64 bytes");
             self.candidates = storage(
                 device,
                 "engine/presentation-candidates",
@@ -168,11 +180,11 @@ impl DrawGroups {
                 capacity * size_of::<CandidateData>() as u64,
                 wgpu::BufferUsages::empty(),
             );
-            // Flags, four sums per group (one per level of detail), four totals and their sum.
+            // Totals retain their offsets; adaptive containers follow them.
             self.scan = storage(
                 device,
                 "engine/presentation-scan",
-                (capacity + 4 * (groups + 1) + 1) * 4,
+                scan_bytes,
                 wgpu::BufferUsages::COPY_SRC,
             );
             // A plane of visible IDs per level of detail.
