@@ -16,7 +16,9 @@ engine_assetc.workspace = true
 engine_profiler = { workspace = true, features = ["load"] }
 # The game surface's types and the TypeScript generator.
 engine.workspace = true
-serde_json.workspace = true
+# Numbers read back exactly: an extended report copies its earlier runs
+# as they were measured.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 
 [lints]
 workspace = true
