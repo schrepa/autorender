@@ -101,5 +101,7 @@ incremental = true
 opt-level = 2
 
 # glam 0.30.9 with f32 sine/cosine routed to engine_math: vendor/glam/VENDORED.md.
+# wgpu-hal 30.0.1 keeping DXC's output on disk: vendor/wgpu-hal/VENDORED.md.
 [patch.crates-io]
 glam = { path = "vendor/glam" }
+wgpu-hal = { path = "vendor/wgpu-hal" }
