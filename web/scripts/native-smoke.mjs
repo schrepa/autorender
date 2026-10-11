@@ -5,6 +5,7 @@
  * harness measures in it), and its job workers' outputs match those its
  * job cache kept. Builds `stress-lab` with `--release --features
  * dev,profiling` (the cargo on PATH); needs no development server. */
+import "./exit-codes.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";

@@ -9,8 +9,10 @@
  * (pixels changed between frames, an error against a reference) goes in
  * the `measurements` of the JSON object it prints last, each
  * `{ name, value, unit, note? }`, which `cargo xtask checks` keeps with the
- * attempt; it never fails on a fixed limit of those.
+ * attempt; it never fails on a fixed limit of those. A failed assertion
+ * exits 3, anything else that stops a check 1 (`exit-codes.mjs`).
  */
+import "./exit-codes.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";

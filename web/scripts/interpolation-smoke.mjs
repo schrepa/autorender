@@ -116,7 +116,7 @@ try {
       // No frame loop runs: the game is paused for every command.
       const request = command => {
         const reply = JSON.parse(game.dev_command(JSON.stringify({ version: protocolVersion, ...command }), 320, 240, true));
-        if (!reply.ok) throw new Error(JSON.stringify(reply));
+        if (!reply.ok) throw Object.assign(new Error("a command failed"), { reply });
         return reply;
       };
       const inspect = (entity, component) => request({ op: "inspect", entity, component }).result.entity.components[component];
@@ -134,8 +134,13 @@ try {
       frame(5000);
       const resumed = state();
       return { before, afterTick, halfTick, resumed };
+    } catch (error) {
+      // A failed command is the check's failure, asserted outside.
+      if (error.reply) return { failed: error.reply };
+      throw error;
     } finally { game?.free(); canvas.remove(); }
   }, { moduleUrl: [...bindingUrls][0], fixture, protocolVersion: protocol.version });
+  assert.equal(ordinaryFrames.failed, undefined, `a command failed: ${JSON.stringify(ordinaryFrames.failed)}`);
   assert.equal(ordinaryFrames.before.observation.tick, "0");
   assert.equal(ordinaryFrames.afterTick.observation.tick, "1");
   assert.equal(ordinaryFrames.halfTick.observation.tick, "1");
@@ -193,11 +198,11 @@ try {
   await presentedMatches("accessory", after.childGlobal.matrix, "focus loss resets inherited history");
   const movedAgain = await moveOne();
   await command("present", { alpha: 0.5 });
-  await page.evaluate(async () => {
-    const resumed = await window.__engineDev.request({ op: "resume" });
-    const paused = await window.__engineDev.request({ op: "pause" });
-    if (!resumed.ok || !paused.ok) throw new Error("resume/pause failed");
-  });
+  const [resumed, paused] = await page.evaluate(async () => [
+    await window.__engineDev.request({ op: "resume" }),
+    await window.__engineDev.request({ op: "pause" }),
+  ]);
+  assert.ok(resumed.ok && paused.ok, `resume/pause failed: ${JSON.stringify([resumed, paused])}`);
   await command("present", { alpha: 0 });
   await presentedMatches("player", movedAgain.after.playerGlobal.matrix, "pause transition resets history");
   await page.locator("#reset").click();
