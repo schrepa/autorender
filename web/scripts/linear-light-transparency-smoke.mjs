@@ -96,8 +96,12 @@ function observe(diagnostic) {
   } else assert.equal(lastDiagnostic, null, "completed evidence never becomes an invented null/zero pair");
 }
 async function limits(expected) {
+  // Start from the latest completed pair after this case has submitted,
+  // rather than a pair retained from the previous scene or exposure.
+  let rendering = (await command("render")).result.rendering;
+  assert.ok(Object.hasOwn(rendering, "radiance"), "range observations are present");
+  observe(rendering.radiance);
   const start = lastDiagnostic?.source_frame ?? 0;
-  let rendering;
   for (let i = 0; i < 30; i++) {
     rendering = (await command("render")).result.rendering;
     assert.ok(Object.hasOwn(rendering, "radiance"), "range observations are present");
