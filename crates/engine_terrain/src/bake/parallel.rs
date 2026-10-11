@@ -152,6 +152,104 @@ fn finite(values: &[f32]) -> Result<(), String> {
     }
 }
 
+fn image(value: &crate::layers::HeightImage, width: usize, height: usize) -> bool {
+    if value.width as usize != width
+        || value.height as usize != height
+        || width.checked_mul(height) != Some(value.samples.len())
+    {
+        return false;
+    }
+    let (mut width, mut height) = (width, height);
+    for level in &value.levels {
+        if width <= 2 && height <= 2 {
+            return false;
+        }
+        width = (width - 1).div_ceil(2) + 1;
+        height = (height - 1).div_ceil(2) + 1;
+        if level.width as usize != width
+            || level.height as usize != height
+            || width.checked_mul(height) != Some(level.samples.len())
+            || level
+                .samples
+                .iter()
+                .any(|sample| !sample.is_finite() || !(0.0..=65_535.0).contains(sample))
+        {
+            return false;
+        }
+    }
+    width <= 2 && height <= 2
+}
+
+impl Sampling {
+    fn hydrology(&self, value: &crate::Hydrology) -> bool {
+        let count = self.width.checked_mul(self.height);
+        let spacing = self.pyramid.spacing(self.level);
+        let BakeKind::Hydrology(layer) = &self.kind else {
+            return false;
+        };
+        value.spacing == spacing
+            && value.max_depth == layer.max_depth
+            && [&value.carve, &value.flow, &value.wetness, &value.lakes]
+                .iter()
+                .all(|value| image(value, self.width, self.height))
+            && value.water.width == self.width
+            && value.water.height == self.height
+            && value.water.spacing == spacing
+            && count == Some(value.water.surface.len())
+            && count == Some(value.water.depth.len())
+            && count == Some(value.water.flow.len())
+            && value.water.surface.iter().all(|value| value.is_finite())
+            && value
+                .water
+                .depth
+                .iter()
+                .all(|value| value.is_finite() && *value >= 0.0)
+            && value
+                .water
+                .flow
+                .iter()
+                .flatten()
+                .all(|value| value.is_finite())
+            && count == Some(value.stats.samples)
+            && value.stats.channel_samples <= value.stats.samples
+            && value.stats.lake_samples <= value.stats.samples
+            && value.stats.max_area.is_finite()
+            && value.stats.max_area >= 0.0
+            && value.stats.falls == value.falls.len()
+            && value.falls.iter().all(|fall| {
+                fall.top
+                    .iter()
+                    .chain(&fall.bottom)
+                    .chain(fall.path.iter().flatten())
+                    .all(|value| value.is_finite())
+                    && fall.width.is_finite()
+                    && fall.width >= 0.0
+                    && fall.area.is_finite()
+                    && fall.area >= 0.0
+            })
+    }
+
+    fn baked(&self, value: &Baked) -> bool {
+        match (&self.kind, value) {
+            (BakeKind::Hydrology(_), Baked::Hydrology(value)) => self.hydrology(value),
+            (BakeKind::Erosion(layer), Baked::Erosion(value)) => {
+                value.spacing == self.pyramid.spacing(self.level)
+                    && image(&value.change, self.width, self.height)
+                    && value.range.iter().all(|value| value.is_finite())
+                    && value.range[0] <= value.range[1]
+                    && self.width.checked_mul(self.height) == Some(value.stats.samples)
+                    && value.stats.rounds == layer.rounds
+                    && value.stats.deepest.is_finite()
+                    && value.stats.highest.is_finite()
+            }
+            (BakeKind::Path(layer), Baked::Path(value)) => {
+                value.valid_bake(layer, self.step, self.profile.len())
+            }
+            _ => false,
+        }
+    }
+}
+
 fn zeros(count: usize) -> Result<Vec<f32>, String> {
     count
         .checked_mul(size_of::<f32>())
@@ -193,6 +291,10 @@ impl Sampling {
         if let Some(job) = &value.rivers {
             if !matches!(value.kind, BakeKind::Hydrology(_))
                 || job.hydrology.is_none()
+                || !job
+                    .hydrology
+                    .as_ref()
+                    .is_some_and(|hydrology| value.hydrology(hydrology))
                 || job.ground.len() != job.lines.len()
                 || job.ground.iter().any(|line| !line.is_empty())
             {
@@ -600,13 +702,7 @@ impl BakeCoordinator {
             Expected::Kernel | Expected::Final => {
                 let baked: Baked = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
-                let matches = matches!(
-                    (&sampling.kind, &baked),
-                    (BakeKind::Hydrology(_), Baked::Hydrology(_))
-                        | (BakeKind::Erosion(_), Baked::Erosion(_))
-                        | (BakeKind::Path(_), Baked::Path(_))
-                );
-                if tag != FINAL || !matches {
+                if tag != FINAL || !sampling.baked(&baked) {
                     return Err("wrong bake kernel result".into());
                 }
                 let layers = self

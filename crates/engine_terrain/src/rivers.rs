@@ -913,6 +913,35 @@ impl crate::codec::Codec for Rivers {
     }
 
     fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
-        Ok(Self::new(Vec::read(input)?))
+        let rivers: Vec<River> = Vec::read(input)?;
+        // Validate before rebuilding the spatial grid, whose construction
+        // indexes the parallel arrays and converts coordinate bounds.
+        if rivers.iter().any(|river| {
+            let count = river.points.len();
+            [
+                river.surface.len(),
+                river.half.len(),
+                river.depth.len(),
+                river.speed.len(),
+            ]
+            .iter()
+            .any(|&len| len != count)
+                || river.falls.len() > count
+                || river
+                    .points
+                    .iter()
+                    .flatten()
+                    .chain(&river.surface)
+                    .any(|value| !value.is_finite())
+                || river
+                    .half
+                    .iter()
+                    .chain(&river.depth)
+                    .chain(&river.speed)
+                    .any(|value| !value.is_finite() || *value < 0.0)
+        }) {
+            return Err(crate::codec::CodecError("invalid baked river metadata"));
+        }
+        Ok(Self::new(rivers))
     }
 }

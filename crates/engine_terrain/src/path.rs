@@ -246,6 +246,71 @@ pub struct PathProfile {
 }
 
 impl PathProfile {
+    /// The private parallel-bake transport must not install malformed
+    /// profile dimensions, cell indices or non-finite output metadata.
+    pub(crate) fn valid_bake(&self, layer: &PathLayer, step: f32, samples: usize) -> bool {
+        self.line.len() == layer.points.len()
+            && self
+                .line
+                .iter()
+                .zip(&layer.points)
+                .all(|(a, b)| a.to_array() == *b)
+            && self.along.len() == self.line.len()
+            && self.along.first() == Some(&0.0)
+            && self.along.windows(2).all(|pair| pair[0] <= pair[1])
+            && self.along.iter().all(|value| value.is_finite())
+            && self.step == step
+            && self.heights.len() == samples
+            && self.ground.len() == samples
+            && self
+                .heights
+                .iter()
+                .chain(&self.ground)
+                .all(|value| value.is_finite())
+            && self
+                .spans
+                .iter()
+                .chain(&self.tunnels)
+                .all(|span| span.iter().all(|value| value.is_finite()) && span[0] <= span[1])
+            && self.tunnel_box.is_none_or(|(low, high)| {
+                low.is_finite() && high.is_finite() && low.cmple(high).all()
+            })
+            && self.half == layer.width * 0.5
+            && self.shoulder == layer.shoulder
+            && self.radius.is_finite()
+            && self.radius >= 0.0
+            && self.cell.is_finite()
+            && self.cell > 0.0
+            && self.min.is_finite()
+            && self.columns > 0
+            && self.rows > 0
+            && self
+                .columns
+                .checked_mul(self.rows)
+                .and_then(|count| count.checked_add(1))
+                == Some(self.starts.len())
+            && self.starts.first() == Some(&0)
+            && self.starts.last().map(|&end| end as usize) == Some(self.segments.len())
+            && self.starts.windows(2).all(|pair| pair[0] <= pair[1])
+            && self
+                .segments
+                .iter()
+                .all(|&segment| (segment as usize) < self.line.len().saturating_sub(1))
+            && self.stats.samples == samples
+            && self.along.last() == Some(&self.stats.length)
+            && self.stats.bridges == self.spans.len()
+            && self.stats.tunnels == self.tunnels.len()
+            && [
+                self.stats.steepest,
+                self.stats.deepest_cut,
+                self.stats.highest_fill,
+                self.stats.bridged,
+                self.stats.tunneled,
+            ]
+            .iter()
+            .all(|value| value.is_finite() && *value >= 0.0)
+    }
+
     /// The profile of `layer` from the ground `raw` read at its profile
     /// points, `step` meters apart, and the surface of any water standing
     /// there.

@@ -263,6 +263,8 @@ try {
         pool.exchange();
         const stats = first.snapshots.filter(Boolean).at(-1);
         if (stats && mode !== "replace") check(stats.active_roots === 0 && stats.children_in_flight === 0 && stats.private_share_bytes === 0 && stats.coordinator_bytes === 0, "idle graph gauges are zero");
+        check(pool.bakes.size === 0 && pool.starting.size === 0 && pool.routes.size === 0 && pool.shares.size === 0,
+          `${mode}: no live graph, transport or private share remains`);
         pools.push({ mode, completed: first.completed.map(value => value.id), failed: first.failed, stats });
       } finally {
         pool.detach();
@@ -271,6 +273,40 @@ try {
     }
     const rejects = [];
     const thrown = action => { try { action(); return false; } catch { return true; } };
+    for (const mode of ["erosion-spacing", "erosion-dimensions", "hydrology-spacing", "path-point", "path-range", "river-range"]) {
+      const graph = new workerModule.BakeCoordinator(input, epoch++), worker = new workerModule.JobWorker();
+      let refused = false;
+      try {
+        for (let stage = 0; stage < 1000 && !refused; stage++) {
+          for (const action of graph.ready(2)) {
+            if (action.share !== undefined) worker.share(action.share, action.bytes);
+            else if (action.unshare !== undefined) worker.unshare(action.unshare);
+            else {
+              const output = whole(worker, "terrain_bake_child", action.input, action.id);
+              const final = output[4] === 4;
+              const target = mode.startsWith("erosion") ? final && output[5] === 1
+                : mode === "hydrology-spacing" ? final && output[5] === 0
+                : mode === "path-point" ? final && output[5] === 2
+                : mode === "path-range" ? action.input[4] === 1 : action.input[4] === 2;
+              if (!target) { graph.complete(action.id, output); continue; }
+              const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
+              if (mode === "erosion-dimensions") view.setUint32(10, 1, true);
+              else if (mode.endsWith("spacing")) view.setFloat32(6, NaN, true);
+              else if (mode === "path-point") view.setFloat32(14, Infinity, true);
+              else view.setBigUint64(5, view.getBigUint64(5, true) + 1n, true);
+              check(thrown(() => graph.complete(action.id, output)), `${mode}: malformed terminal metadata or overlapping range is refused`);
+              check(graph.take_result() === undefined, `${mode}: no malformed baked layer is exposed`);
+              graph.cancel();
+              for (const release of graph.ready(0)) if (release.unshare !== undefined) worker.unshare(release.unshare);
+              refused = true;
+              break;
+            }
+          }
+        }
+        check(refused, `${mode}: the fixture reaches the intended stage`);
+        rejects.push(mode);
+      } finally { graph.free(); worker.free(); }
+    }
     {
       const graph = new workerModule.BakeCoordinator(input, epoch++), worker = new workerModule.JobWorker(), shares = new Set();
       let boundary = false;
