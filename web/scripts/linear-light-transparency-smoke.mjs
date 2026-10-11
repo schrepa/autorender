@@ -136,8 +136,16 @@ async function look(exposure, settings = neutral, extra = {}) {
   await command("environment", { atmosphere: { ...atmosphere, exposure, ...settings, ...extra } });
 }
 async function ordinary(name, reference) {
-  const before = await page.locator("canvas").evaluate(canvas => Number(canvas.dataset.frames));
+  const previous = await page.locator("canvas").evaluate(canvas => canvas.dataset.frames ?? null);
   await command("resume");
+  // The host publishes this counter only on ordinary frames, four times a
+  // second. It can be absent initially or lag the previous pause. Start
+  // from a fresh publication after resuming this exposure, then count.
+  await page.waitForFunction(old => {
+    const frames = document.querySelector("canvas").dataset.frames;
+    return frames !== undefined && frames !== old && Number.isSafeInteger(Number(frames));
+  }, previous, { timeout: 60_000 });
+  const before = await page.locator("canvas").evaluate(canvas => Number(canvas.dataset.frames));
   await page.waitForFunction(first => Number(document.querySelector("canvas").dataset.frames) >= first + 40, before,
     { timeout: 60_000 });
   const actual = await center(name);
