@@ -179,6 +179,8 @@ pub struct RenderStats {
     pub deformation: DeformationStats,
     /// Clouds.
     pub clouds: CloudStats,
+    /// Optional terrain basin medium.
+    pub basin_fog: BasinFogStats,
     /// World streaming.
     pub world_streaming: crate::CellStats,
     /// The physically based sky.
@@ -508,6 +510,18 @@ pub struct CloudStats {
     /// Blocks of the view whose clouds this frame marched: none without
     /// clouds or with their march in the view off.
     pub view_blocks: u32,
+}
+
+/// Optional view fog's retained GPU storage and current uploads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BasinFogStats {
+    /// Bytes of optional GPU storage, including its shared cloud prefix.
+    pub gpu_bytes: u64,
+    /// Bytes of fog header and hierarchy uploaded this frame.
+    pub upload_bytes: u64,
+    /// Nonempty hierarchy nodes traversed by enabled view shaders.
+    pub nodes: u64,
 }
 
 /// The physically based sky.

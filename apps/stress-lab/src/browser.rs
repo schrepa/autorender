@@ -195,6 +195,12 @@ impl StressGame {
         lab.set_impostors(engine, enabled);
     }
 
+    /// Optional terrain basin fog, with fixed demonstration content in Highlands.
+    pub fn set_basin_fog(&mut self, enabled: bool) {
+        let (engine, lab) = self.host_mut().parts_mut();
+        lab.set_basin_fog(engine, enabled);
+    }
+
     /// Whether virtual geometry shades through the visibility buffer or as
     /// it draws (the default), in this and later workloads.
     pub fn set_visibility_buffer(&mut self, enabled: bool) {

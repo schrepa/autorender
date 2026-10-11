@@ -83,6 +83,12 @@ pub fn switches() -> Vec<Switch> {
     let on_off = || vec!["on".to_owned(), "off".to_owned()];
     vec![
         Switch {
+            name: "basin-fog",
+            values: on_off(),
+            default: "off",
+            what: "optional finite-volume terrain fog; Highlands adds fixed basin content when on",
+        },
+        Switch {
             name: "look",
             values: values(&catalog.looks),
             default: SCENE_LOOK.0,

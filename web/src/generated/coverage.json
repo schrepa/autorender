@@ -271,6 +271,11 @@
       "smokes": [
         "streaming"
       ]
+    },
+    {
+      "inspector": "basin_fog",
+      "kind": "resource",
+      "smokes": []
     }
   ],
   "ops": [
@@ -390,6 +395,10 @@
         "terrain-files",
         "terrain-water-sky"
       ]
+    },
+    {
+      "op": "basin_fog_sample",
+      "smokes": []
     },
     {
       "op": "nav_path",
@@ -880,6 +889,12 @@
       "smokes": [
         "terrain-water-sky"
       ],
+      "stats": true
+    },
+    {
+      "inspector": "BasinFog",
+      "section": "basin_fog",
+      "smokes": [],
       "stats": true
     },
     {

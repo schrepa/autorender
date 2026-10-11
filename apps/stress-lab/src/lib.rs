@@ -1,5 +1,7 @@
 //! Deterministic stress workloads built exclusively through the public engine SDK.
 mod authored;
+mod basin_demo;
+pub use basin_demo::BasinDemoView;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 mod catalog;

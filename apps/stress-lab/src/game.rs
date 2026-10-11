@@ -28,6 +28,8 @@ pub struct StressLab {
     level_of_detail: bool,
     impostors: bool,
     visibility_buffer: bool,
+    basin_fog: Option<bool>,
+    basin_demo: Option<crate::basin_demo::BasinDemo>,
     // An authored scene in place of a workload, when the page loads one.
     authored: Option<AuthoredScene>,
 }
@@ -61,6 +63,8 @@ impl StressLab {
             level_of_detail: true,
             impostors: true,
             visibility_buffer: false,
+            basin_fog: None,
+            basin_demo: None,
             authored,
         }
     }
@@ -85,10 +89,15 @@ impl StressLab {
     /// [`Self::configure`] built, which replaced an authored scene too.
     pub fn configured(&mut self, engine: &mut Engine) -> engine::Result<()> {
         self.authored = None;
+        self.basin_demo = None;
         self.generation = self.generation.saturating_add(1);
         self.set_look(engine, &self.look.clone())?;
         self.set_effects(engine, &self.effects.clone())?;
         self.apply_world_settings(engine);
+        if let Some(enabled) = self.basin_fog {
+            self.basin_fog = None;
+            self.set_basin_fog(engine, enabled);
+        }
         Ok(())
     }
 
@@ -212,6 +221,32 @@ impl StressLab {
         self.apply_world_settings(engine);
     }
 
+    /// Enables optional basin fog; only the actual Highlands workload adds
+    /// the fixed basin demonstration. Repeating the same choice is idempotent.
+    pub fn set_basin_fog(&mut self, engine: &mut Engine, enabled: bool) {
+        if self.basin_fog == Some(enabled) {
+            return;
+        }
+        self.basin_fog = Some(enabled);
+        if enabled {
+            if self.authored.is_none()
+                && engine
+                    .app
+                    .world()
+                    .get_resource::<StressConfig>()
+                    .is_some_and(|c| c.scene == StressScene::Highlands)
+            {
+                self.basin_demo = Some(crate::basin_demo::BasinDemo::new(engine));
+            }
+            engine.app.world_mut().insert_resource(BasinFog::default());
+        } else {
+            if let Some(demo) = self.basin_demo.take() {
+                demo.restore(engine);
+            }
+            engine.app.world_mut().insert_resource(BasinFog::off());
+        }
+    }
+
     /// The authored scene's ID, revision, frame, player position and asset
     /// counts, as a JSON object (`null` for workloads).
     pub fn scene_progress(&self, engine: &Engine) -> serde_json::Value {
@@ -238,6 +273,9 @@ impl StressLab {
 
 impl Game for StressLab {
     fn before_frame(&mut self, engine: &mut Engine) {
+        if let Some(demo) = &mut self.basin_demo {
+            demo.prepare(engine);
+        }
         engine
             .app
             .world_mut()
@@ -279,6 +317,9 @@ impl Game for StressLab {
     fn inspectors(inspectors: &mut Inspectors) {
         // The types' schemas, as `cargo xtask schema` generates them.
         let schemas = include_str!("generated/inspectors.json");
+        inspectors.resource::<crate::BasinDemoView>(schemas, "BasinDemo", |view| {
+            serde_json::to_value(view).expect("finite demo values")
+        });
         inspectors
             .resource::<StressConfig>(schemas, "StressConfig", |config| {
                 serde_json::to_value(config).expect("configurations serialize")

@@ -68,6 +68,7 @@ results! {
     step: crate::results::StepResult,
     environment: crate::results::EnvironmentResult,
     terrain_height: crate::features::terrain::TerrainHeightResult,
+    basin_fog_sample: crate::features::terrain::BasinFogSampleResult,
     terrain_sweep: crate::features::terrain::TerrainSweepResult,
     terrain_route: crate::features::terrain::TerrainRouteResult,
     terrain_edit: crate::features::terrain::TerrainEdited,

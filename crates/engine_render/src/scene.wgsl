@@ -394,7 +394,7 @@ fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3
         let covered = underwater_cover(length(point - eye));
         return vec4<f32>(mix(light, underwater_light(direction), covered), covered);
     }
-    let fogged = fog(eye, point);
+    let fogged = basin_cover(eye, point);
     // Without fog, mixing in none of its haze leaves the light.
     var color = light;
     if fogged != 0.0 {
@@ -420,7 +420,7 @@ fn atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32 {
     if lighting.underwater.w > 0.0 {
         return underwater_cover(length(point - eye));
     }
-    let fogged = fog(eye, point);
+    let fogged = basin_cover(eye, point);
     if lighting.aerial.y <= 0.0 {
         return fogged;
     }
@@ -758,7 +758,7 @@ fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
 // cells of the sunlight passing the cloud layer up from its base, two cells
 // along x a word in half floats.
 const CLOUD_SHADOW_CELLS: u32 = 128u;
-@group(0) @binding(19) var<storage, read> cloud_shadows: array<u32, CLOUD_SHADOW_CELLS * CLOUD_SHADOW_CELLS / 2u>;
+@group(0) @binding(19) var<storage, read> cloud_shadows: array<u32>;
 
 fn cloud_shadow_cell(x: u32, z: u32) -> f32 {
     let index = z * CLOUD_SHADOW_CELLS + x;
@@ -901,4 +901,99 @@ fn weighted(color: vec3<f32>, opacity: f32, distance: f32) -> TransparentTargets
     targets.accumulated = vec4<f32>(color * opacity, opacity) * weight;
     targets.revealed = opacity;
     return targets;
+}
+
+
+// Optional view-only medium. The default module specializes this to false,
+// including all buffer accesses below. No ninth storage binding is required.
+const BASIN_FOG: bool = false;
+const BASIN_PREFIX: u32 = CLOUD_SHADOW_CELLS * CLOUD_SHADOW_CELLS / 2u;
+
+fn basin_float(word: u32) -> f32 { return bitcast<f32>(cloud_shadows[word]); }
+
+// Signed plane distance divided by direction, clamped before division can
+// overflow. Half differences also keep subtraction finite at large positions.
+fn basin_plane(bound: f32, eye: f32, direction: f32, reach: f32) -> f32 {
+    let half_delta = bound * 0.5 - eye * 0.5;
+    if abs(half_delta) >= (reach * 0.5) * abs(direction) {
+        return select(-reach, reach, (half_delta >= 0.0) == (direction >= 0.0));
+    }
+    return (half_delta / direction) * 2.0;
+}
+
+fn basin_interval(eye: vec3<f32>, ray: vec3<f32>, reach: f32,
+        low: vec3<f32>, high: vec3<f32>) -> vec2<f32> {
+    var interval = vec2<f32>(0.0, reach);
+    for (var axis = 0u; axis < 3u; axis += 1u) {
+        if ray[axis] == 0.0 {
+            // Half-open cells avoid duplicate depth on an axial cell edge.
+            if eye[axis] < low[axis] || eye[axis] >= high[axis] { return vec2<f32>(0.0); }
+        } else {
+            let a = basin_plane(low[axis],eye[axis],ray[axis],reach);
+            let b = basin_plane(high[axis],eye[axis],ray[axis],reach);
+            interval = vec2<f32>(max(interval.x,min(a,b)),min(interval.y,max(a,b)));
+        }
+    }
+    return interval;
+}
+
+// Density averaged over a segment already clipped to floor/top. Splitting
+// at top-fade makes each segment constant or linear, integrated by a trapezoid.
+fn basin_average(a: f32, b: f32, top: f32, fade: f32) -> f32 {
+    if fade == 0.0 { return 1.0; }
+    return 0.5 * (saturate((top-a)/fade) + saturate((top-b)/fade));
+}
+fn basin_segment(length: f32, average: f32, sigma: f32) -> f32 {
+    let weighted = length * average;
+    if sigma == 0.0 || weighted == 0.0 { return 0.0; }
+    if sigma > 2.351e-37 && weighted >= 80.0 / sigma { return 80.0; }
+    return weighted * sigma;
+}
+
+fn basin_ray_passing(eye: vec3<f32>, ray: vec3<f32>, reach: f32) -> f32 {
+    if !BASIN_FOG || camera.options.x != 0.0 || reach <= 0.0 { return 1.0; }
+    let size = arrayLength(&cloud_shadows);
+    if size < BASIN_PREFIX + 4u { return 1.0; }
+    let end = cloud_shadows[BASIN_PREFIX];
+    let sigma = basin_float(BASIN_PREFIX+2u);
+    let fade = basin_float(BASIN_PREFIX+3u);
+    if sigma == 0.0 || end > size { return 1.0; }
+    var word = BASIN_PREFIX+4u;
+    var depth = 0.0;
+    loop {
+        if word >= end || end-word < 12u { break; }
+        let escape = cloud_shadows[word+3u];
+        if escape <= word || escape > end { break; }
+        let low = vec3<f32>(basin_float(word),basin_float(word+1u),basin_float(word+2u));
+        let high = vec3<f32>(basin_float(word+4u),basin_float(word+5u),basin_float(word+6u));
+        let interval = basin_interval(eye,ray,reach,low,high);
+        if interval.y <= interval.x { word = escape; continue; }
+        if cloud_shadows[word+7u] == 0u { word += 12u; continue; }
+        let top = high.y;
+        var split = interval.x;
+        if ray.y != 0.0 && fade > 0.0 {
+            split = clamp(basin_plane(top-fade,eye.y,ray.y,reach),interval.x,interval.y);
+        }
+        let y0 = clamp(eye.y+ray.y*interval.x,low.y,high.y);
+        let ys = clamp(eye.y+ray.y*split,low.y,high.y);
+        let y1 = clamp(eye.y+ray.y*interval.y,low.y,high.y);
+        let first = basin_segment(split-interval.x,basin_average(y0,ys,top,fade),sigma);
+        let last = basin_segment(interval.y-split,basin_average(ys,y1,top,fade),sigma);
+        depth = min(depth+first+last,80.0);
+        if depth >= 80.0 { break; }
+        word = escape;
+    }
+    return exp(-depth);
+}
+fn basin_passing(eye: vec3<f32>, point: vec3<f32>) -> f32 {
+    if !BASIN_FOG { return 1.0; }
+    let delta = point-eye;
+    let distance = length(delta);
+    if distance == 0.0 { return 1.0; }
+    return basin_ray_passing(eye,delta/distance,distance);
+}
+fn basin_cover(eye: vec3<f32>, point: vec3<f32>) -> f32 {
+    let old = fog(eye,point);
+    if !BASIN_FOG { return old; }
+    return 1.0-(1.0-old)*basin_passing(eye,point);
 }

@@ -7,6 +7,8 @@
 export interface FrameStats {
   /** Ambient occlusion. */
   ambient_occlusion: Applied;
+  /** Optional terrain basin medium. */
+  basin_fog: BasinFogStats;
   /** Bloom. */
   bloom: Applied;
   /** Clouds. */
@@ -195,6 +197,16 @@ export interface FrameStats {
 export interface Applied {
   /** Whether this frame applied it. */
   active: boolean;
+}
+
+/** Optional view fog's retained GPU storage and current uploads. */
+export interface BasinFogStats {
+  /** Bytes of optional GPU storage, including its shared cloud prefix. */
+  gpu_bytes: number;
+  /** Nonempty hierarchy nodes traversed by enabled view shaders. */
+  nodes: number;
+  /** Bytes of fog header and hierarchy uploaded this frame. */
+  upload_bytes: number;
 }
 
 /** World streaming's state after the last extraction. */

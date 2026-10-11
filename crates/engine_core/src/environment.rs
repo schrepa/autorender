@@ -69,6 +69,7 @@ macro_rules! environment_sections {
             virtual_geometry: VirtualGeometry { opt_in: false, feature: Core },
             level_of_detail: LevelOfDetail { opt_in: false, feature: Core },
             terrain: TerrainSettings { opt_in: false, feature: Terrain },
+            basin_fog: BasinFog { opt_in: true, feature: Terrain },
             ground_cover: GroundCover { opt_in: false, feature: Terrain },
             wind: Wind { opt_in: false, feature: Terrain },
             occupancy: Occupancy { opt_in: false, feature: Terrain },

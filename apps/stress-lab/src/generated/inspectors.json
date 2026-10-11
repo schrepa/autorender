@@ -1,4 +1,81 @@
 {
+  "BasinDemo": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "The fixed demonstration's preparation and authored geometry.",
+    "properties": {
+      "centers": {
+        "items": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+      },
+      "eye": {
+        "items": {
+          "format": "float",
+          "type": "number"
+        },
+        "maxItems": 3,
+        "minItems": 3,
+        "type": "array"
+      },
+      "final_edits": {
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "heights": {
+        "items": {
+          "format": "float",
+          "type": "number"
+        },
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+      },
+      "original_edits": {
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "ready": {
+        "type": "boolean"
+      },
+      "target": {
+        "items": {
+          "format": "float",
+          "type": "number"
+        },
+        "maxItems": 3,
+        "minItems": 3,
+        "type": "array"
+      },
+      "terrain": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "ready",
+      "eye",
+      "target",
+      "centers",
+      "heights",
+      "terrain",
+      "original_edits",
+      "final_edits"
+    ],
+    "title": "BasinDemoView",
+    "type": "object"
+  },
   "PlayerWalk": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "The authored scene's player's movement queries that failed, which stop\nit rather than move it through geometry.",

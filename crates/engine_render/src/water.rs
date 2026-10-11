@@ -173,6 +173,12 @@ pub(crate) struct WaterPass {
 }
 
 impl WaterPass {
+    pub(crate) fn invalidate_scene(&mut self) {
+        self.pipelines.clear();
+        self.river_pipelines.clear();
+        self.ocean_pipelines.clear();
+    }
+
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         Self {
             layout: crate::pipelines::layout(device, &WATER),

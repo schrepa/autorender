@@ -149,6 +149,9 @@ impl TerrainClock {
 /// jobs run on the host's `workers`.
 fn wire(engine: &mut Engine, renderer: &Renderer, workers: u32, clock: TerrainClock) {
     let world = engine.app.world_mut();
+    world.insert_resource(engine_core::BasinFogDeviceLimit(
+        renderer.basin_fog_capacity(),
+    ));
     if let Some(mut terrains) = world.get_resource_mut::<engine_core::Terrains>() {
         terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
         terrains.set_clock(clock.reading());
@@ -792,7 +795,13 @@ impl AppHost {
                 .app
                 .world()
                 .get_resource::<engine_core::Terrains>()
-                .is_some_and(engine_core::Terrains::loading),
+                .is_some_and(engine_core::Terrains::loading)
+                || self
+                    .engine
+                    .app
+                    .world()
+                    .get_resource::<engine_core::BasinFogs>()
+                    .is_some_and(engine_core::BasinFogs::loading),
             navigation: self
                 .engine
                 .app

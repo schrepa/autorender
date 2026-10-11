@@ -17,6 +17,7 @@ mod gpu_calls;
 mod gpu_data;
 pub mod pipeline_layouts;
 
+mod basin_fog;
 mod batches;
 mod clouds;
 mod decals;

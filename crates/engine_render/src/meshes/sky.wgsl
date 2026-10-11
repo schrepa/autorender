@@ -66,10 +66,12 @@ fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
     } else {
         light = sky(ray);
     }
-    if sky_domes.view.x > 0.5 {
-        return light;
+    if sky_domes.view.x <= 0.5 { light = behind_clouds(light, sky_cloud(ray), ray); }
+    if BASIN_FOG {
+        let passing = basin_ray_passing(camera.position.xyz,ray,3.4028234e38);
+        light = mix(haze(ray),light,passing);
     }
-    return behind_clouds(light, sky_cloud(ray), ray);
+    return light;
 }
 
 // The view ray through unjittered `ndc`.
@@ -148,7 +150,18 @@ fn view_cloud_layer(position: vec2<f32>) -> vec4<f32> {
     if covering <= 1.0e-4 || lighting.underwater.w > 0.0 {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
-    return vec4<f32>(grade(cloud.rgb / covering) * covering, cloud.a);
+    var radiance = cloud.rgb;
+    if BASIN_FOG {
+        let pixels = vec2<f32>(textureDimensions(view_cloud_depth));
+        let uv = position / pixels;
+        let blocks = vec2<f32>(textureDimensions(view_cloud_front));
+        let block = vec2<i32>(min(floor(uv*blocks),blocks-1.0));
+        let front = textureLoad(view_cloud_front,block,0).r;
+        let ray = sky_ray(vec2<f32>(uv.x*2.0-1.0,1.0-uv.y*2.0));
+        let passing = basin_ray_passing(camera.position.xyz,ray,front);
+        radiance = passing*radiance + covering*(1.0-passing)*haze(ray);
+    }
+    return vec4<f32>(grade(radiance / covering) * covering, cloud.a);
 }
 
 // The view's clouds over the canvas, encoded as it is; pixels they leave

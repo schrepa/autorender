@@ -76,6 +76,7 @@ fn options() -> String {
 fn inspectors() -> String {
     let schemas = serde_json::json!({
         "StressConfig": schemars::schema_for!(stress_lab::StressConfig),
+        "BasinDemo": schemars::schema_for!(stress_lab::BasinDemoView),
         "StressMetrics": schemars::schema_for!(stress_lab::StressMetrics),
         "PlayerWalk": schemars::schema_for!(stress_lab::PlayerWalk),
     });

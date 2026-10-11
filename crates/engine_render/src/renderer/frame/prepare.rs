@@ -29,6 +29,30 @@ struct PresentationPrep {
 }
 
 impl Renderer {
+    /// Uploads immutable fog solutions and switches all scene consumers together.
+    pub(super) fn prepare_basin_fog(&mut self, snapshot: &RenderSnapshot) -> Result<(), RenderError> {
+        let generation = self.camera.basin_fog.generation;
+        if self.camera.basin_fog.prepare(&self.device, &self.queue, snapshot, &self.camera.cloud_shadows)? {
+            let enabled = self.camera.basin_fog.enabled;
+            self.mesh_shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("engine/scene-basin-variant"),
+                source: wgpu::ShaderSource::Wgsl(crate::shaders::basin_variant(SHADER, enabled)),
+            });
+            self.mesh_pipelines.invalidate_scene();
+            self.virtual_draws.pipelines.clear();
+            self.visibility.resolve_pipelines.clear();
+            self.terrain.pipelines.invalidate_scene();
+            self.features.ground_cover.get_mut().invalidate_scene();
+            self.features.water.get_mut().invalidate_scene();
+            self.impostors.pipelines.invalidate_scene();
+            self.features.clouds.get_mut().invalidate_scene();
+            self.features.transparency.get_mut().set_basin_fog(&self.device, enabled);
+            if let Some(decals) = self.features.decals.get_mut() { decals.invalidate_scene(); }
+        }
+        if generation != self.camera.basin_fog.generation { self.refresh_camera_group(); }
+        Ok(())
+    }
+
     /// Plans the frame's batches and shadow casters, retires assets it no
     /// longer uses and decides its kind; also returns GPU presentation's
     /// inputs.

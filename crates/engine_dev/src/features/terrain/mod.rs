@@ -3,6 +3,8 @@
 //! of edits; and the queries of heights, sweeps and routes.
 
 mod controls;
+mod basin_fog;
+pub use basin_fog::{BasinFogSampleQuery, BasinFogSampleResult};
 mod queries;
 mod results;
 
@@ -34,6 +36,7 @@ pub use results::{
 
 /// Registers terrain's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
+    tools.register_resource::<engine_core::BasinFogs>(InspectorDescriptor::generated(schemas, "basin_fog"), |fog| json!(fog.view())).expect("built-in descriptor is bounded");
     tools
         .register_component::<engine_core::TerrainPrefetch>(
             InspectorDescriptor::generated(schemas, "TerrainPrefetch")
@@ -104,6 +107,7 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
 /// Adds the schemas of terrain's inspectors.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
+    schemas.insert("basin_fog".into(), super::schema::<engine_core::BasinFogView>());
     schemas.insert(
         "TerrainPrefetch".into(),
         super::schema::<engine_core::TerrainPrefetch>(),

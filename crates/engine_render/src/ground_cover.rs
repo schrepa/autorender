@@ -80,6 +80,10 @@ pub(crate) struct GroundCoverPass {
 }
 
 impl GroundCoverPass {
+    pub(crate) fn invalidate_scene(&mut self) {
+        self.pipelines.clear();
+    }
+
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         Self {
             grow_layout: crate::pipelines::layout(device, &COVER_GROW),

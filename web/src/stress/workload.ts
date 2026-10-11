@@ -125,7 +125,7 @@ function runMetadata(data: StressSnapshot, canvas: [number, number]) {
     culling: data.config.culling, resolution_scale: number("resolution"), canvas,
     presentation: game?.gpu_presentation() === false ? "cpu" : "gpu", pipeline: game?.tick_pipelining() === false ? "off" : "on",
     taa: game?.temporal_antialiasing() ? "on" : "off", occlusion: game?.occlusion_culling() ? "on" : "off",
-    subpixel: game?.subpixel_culling() ? "on" : "off", visibility, lod, impostors,
+    subpixel: game?.subpixel_culling() ? "on" : "off", visibility, lod, impostors, "basin-fog": basinFog ?? "off",
     look: choice("look").value, effects: choice("effects").value,
     build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
     start_frame: data.frame, start_tick: data.tick, workload: activeTitle, wasm: wasmIdentity, scroll: [scrollX, scrollY] };
@@ -291,6 +291,8 @@ function poll(runtime: StressGame) {
 
 // The page's parameters, which STRESS_PARAMETERS describes.
 const params = new URLSearchParams(location.search);
+const basinFog = params.get("basin-fog");
+if (basinFog !== null && basinFog !== "on" && basinFog !== "off") throw new Error("basin-fog must be on or off");
 const visibility = params.get("visibility") === "on" ? "on" : "off";
 const lod = params.get("lod") === "off" ? "off" : "on";
 const impostors = params.get("impostors") === "off" ? "off" : "on";
@@ -376,6 +378,7 @@ startGame({
     runtime.set_visibility_buffer(visibility === "on");
     runtime.set_level_of_detail(lod === "on");
     runtime.set_impostors(impostors === "on");
+    if (basinFog !== null) runtime.set_basin_fog(basinFog === "on");
     runtime.set_look(initialLook);
     choice("look").value = initialLook;
     runtime.set_effects(initialEffects);

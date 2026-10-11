@@ -4,6 +4,18 @@
 //! validates each module with naga against the GPU layouts and binding
 //! tables, and holds [`ENTRIES`] to the modules' entry points.
 
+/// Specializes optional fog at module creation. The off source remains borrowed.
+pub(crate) fn basin_variant(source: &'static str, enabled: bool) -> std::borrow::Cow<'static, str> {
+    if enabled {
+        std::borrow::Cow::Owned(source.replace(
+            "const BASIN_FOG: bool = false;",
+            "const BASIN_FOG: bool = true;",
+        ))
+    } else {
+        std::borrow::Cow::Borrowed(source)
+    }
+}
+
 /// Builds each module's source from its files, and [`MODULES`] and
 /// [`FILES`] from the same table.
 macro_rules! shaders {

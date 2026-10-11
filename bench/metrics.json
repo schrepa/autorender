@@ -102,6 +102,39 @@
       "direction": "lower"
     },
     {
+      "name": "basin_fog.gpu_bytes",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "optional fog GPU allocation including its shared cloud-shadow prefix",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "bytes",
+      "direction": null
+    },
+    {
+      "name": "basin_fog.upload_bytes",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "fog header and hierarchy bytes uploaded in the last sampled frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "bytes",
+      "direction": null
+    },
+    {
+      "name": "basin_fog.nodes",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "nonempty nodes in the current complete fog hierarchy",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "ambient_occlusion.active",
       "kind": "work",
       "rule": "equal",

@@ -116,6 +116,10 @@ mod gpu {
     }
 
     impl DecalPass {
+        pub(crate) fn invalidate_scene(&mut self) {
+            self.pipelines.clear();
+        }
+
         pub(crate) fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
             // Group 2 beside the mesh poses' bindings: the joint palette
             // holds retained frames' decal poses.

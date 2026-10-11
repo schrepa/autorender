@@ -10,6 +10,7 @@
 
 mod antialiasing;
 mod atmosphere;
+mod basin_fog;
 mod clock;
 mod clouds;
 mod commands;
@@ -48,6 +49,7 @@ mod virtual_geometry;
 
 pub use antialiasing::*;
 pub use atmosphere::*;
+pub use basin_fog::*;
 pub use bevy_app::{App, Plugin, PluginGroup, PluginGroupBuilder};
 pub use bevy_ecs;
 pub use clock::*;

@@ -168,6 +168,10 @@ pub(crate) struct CloudPass {
 }
 
 impl CloudPass {
+    pub(crate) fn invalidate_scene(&mut self) {
+        self.composite_pipelines.clear();
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -1095,7 +1099,7 @@ fn shadow_uniform(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer {
         device,
         "engine/cloud-shadows",
         CLOUD_SHADOW_BYTES as u64,
-        wgpu::BufferUsages::empty(),
+        wgpu::BufferUsages::COPY_SRC,
     );
     // Half-float ones, two a word.
     let ones = vec![0x3c00_3c00_u32; CLOUD_SHADOW_BYTES / 4];

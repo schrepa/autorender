@@ -46,6 +46,11 @@ impl SkyTargets {
 }
 
 impl MeshPipelines {
+    pub(super) fn invalidate_scene(&mut self) {
+        self.variants.clear();
+        self.sky = Default::default();
+    }
+
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let empty_layout = crate::pipelines::layout(device, &EMPTY);
         let empty_group =

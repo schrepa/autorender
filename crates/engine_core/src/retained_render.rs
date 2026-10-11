@@ -248,6 +248,7 @@ impl<'a> RenderFrame<'a> {
             decals,
             reflection_probes,
             terrain,
+            basin_fog,
             deformation,
             cells,
             instances,
@@ -295,6 +296,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.decals.clone_from(decals);
         snapshot.reflection_probes.clone_from(reflection_probes);
         snapshot.terrain.clone_from(terrain);
+        snapshot.basin_fog.clone_from(basin_fog);
         snapshot.deformation.clone_from(deformation);
         snapshot.cells = *cells;
         snapshot.instances.clear();
@@ -1103,6 +1105,10 @@ impl RetainedRender {
     /// Lists the frame's terrains.
     pub(crate) fn extract_terrain(&mut self, world: &World, aspect: f32) {
         crate::extract_terrains(world, aspect, &mut self.snapshot);
+        self.snapshot.basin_fog.clear();
+        if let Some(fog) = world.get_resource::<crate::BasinFogs>() {
+            fog.render(&mut self.snapshot.basin_fog);
+        }
     }
 
     /// Creates the source stamp window used by GPU-presented frames.

@@ -35,6 +35,7 @@ pub(super) struct CameraBindings {
     lighting_buffer: wgpu::Buffer,
     /// Clouds' shadows, copied in by the clouds' pass.
     pub(super) cloud_shadows: wgpu::Buffer,
+    pub(super) basin_fog: crate::basin_fog::BasinPass,
     // The scene's atmosphere, written when it changes.
     lighting: Option<LightingUniform>,
     group: GroupCache<CAMERA_BINDINGS>,
@@ -90,6 +91,7 @@ impl CameraBindings {
             buffer,
             lighting_buffer,
             cloud_shadows,
+            basin_fog: Default::default(),
             lighting: None,
             group: GroupCache::default(),
             refraction_fallback,
@@ -124,12 +126,12 @@ impl CameraBindings {
             Bound::fixed(crate::pipelines::view(&self.refraction_fallback)),
             Bound::fixed(crate::pipelines::sampler(&self.refraction_sampler)),
         );
-        let uniforms = (&self.buffer, &self.lighting_buffer, &self.cloud_shadows);
+        let uniforms = (&self.buffer, &self.lighting_buffer, Bound::counted(self.basin_fog.generation, self.basin_fog.buffer.as_ref().unwrap_or(&self.cloud_shadows).as_entire_binding()));
         self.group.bind(
             device,
             "engine/camera-bind-group",
             (&CAMERA, &self.layout),
-            camera_entries(uniforms, refraction, sources),
+            camera_entries(uniforms.clone(), refraction, sources),
         );
         self.terrain_group.bind(
             device,
@@ -166,7 +168,7 @@ impl CameraBindings {
             "engine/camera-bind-group",
             (&CAMERA, &self.layout),
             camera_entries(
-                (&self.buffer, &self.lighting_buffer, &self.cloud_shadows),
+                (&self.buffer, &self.lighting_buffer, Bound::counted(self.basin_fog.generation, self.basin_fog.buffer.as_ref().unwrap_or(&self.cloud_shadows).as_entire_binding())),
                 refraction,
                 sources,
             ),
@@ -198,7 +200,7 @@ impl CameraBindings {
                     (
                         sources.probes.camera(face),
                         &self.lighting_buffer,
-                        &self.cloud_shadows,
+                        Bound::counted(self.basin_fog.generation, self.basin_fog.buffer.as_ref().unwrap_or(&self.cloud_shadows).as_entire_binding()),
                     ),
                     refraction,
                     sources,
@@ -218,7 +220,7 @@ impl CameraBindings {
 /// [`camera_entries`] without what glass refracts, for terrain's resolves
 /// (`bindings::CAMERA_TERRAIN`).
 fn terrain_entries<'a>(
-    (camera, lighting, cloud_shadows): (&'a wgpu::Buffer, &'a wgpu::Buffer, &'a wgpu::Buffer),
+    (camera, lighting, cloud_shadows): (&'a wgpu::Buffer, &'a wgpu::Buffer, Bound<'a>),
     sources: &GroupSources<'a>,
 ) -> [(&'static str, Bound<'a>); TERRAIN_BINDINGS] {
     let [shadow, near, kept, moving, sampler, texel_sampler, levels] = sources.shadows.entries();
@@ -245,7 +247,7 @@ fn terrain_entries<'a>(
         levels,
         (
             "cloud_shadows",
-            Bound::fixed(cloud_shadows.as_entire_binding()),
+            cloud_shadows,
         ),
     ]
 }
@@ -255,7 +257,7 @@ fn terrain_entries<'a>(
 /// sampler, what surfaces reflect: the environment maps with their
 /// sampler and the reflection probes' grid, and terrain's horizon maps.
 fn camera_entries<'a>(
-    (camera, lighting, cloud_shadows): (&'a wgpu::Buffer, &'a wgpu::Buffer, &'a wgpu::Buffer),
+    (camera, lighting, cloud_shadows): (&'a wgpu::Buffer, &'a wgpu::Buffer, Bound<'a>),
     (refraction, refraction_sampler): (Bound<'a>, Bound<'a>),
     sources: &GroupSources<'a>,
 ) -> [(&'static str, Bound<'a>); CAMERA_BINDINGS] {
@@ -285,7 +287,7 @@ fn camera_entries<'a>(
         levels,
         (
             "cloud_shadows",
-            Bound::fixed(cloud_shadows.as_entire_binding()),
+            cloud_shadows,
         ),
     ]
 }

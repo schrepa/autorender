@@ -124,7 +124,8 @@ impl Renderer {
             upload_bytes: camera_upload_bytes
                 + instance_upload_bytes
                 + mesh_upload_bytes
-                + texture_upload_bytes,
+                + texture_upload_bytes
+                + self.camera.basin_fog.upload_bytes,
             // GPU-culled frames report the latest read-back visible count
             // within the budget the GPU applied.
             instances: match gpu_visible {
@@ -299,6 +300,11 @@ impl Renderer {
                 features.frames.clouds.as_ref().map(Ready::frame),
                 snapshot,
             ),
+            basin_fog: engine_core::BasinFogStats {
+                gpu_bytes: self.camera.basin_fog.bytes,
+                upload_bytes: self.camera.basin_fog.upload_bytes,
+                nodes: self.camera.basin_fog.nodes,
+            },
             world_streaming: snapshot.cells,
             sky: crate::sky::SkyPass::stats(Some(self.features.sky.get()), None, snapshot),
             occlusion_culling: CullingStats {
@@ -438,6 +444,10 @@ impl Renderer {
         engine_profile::counter(
             "memory.gpu_impostor_bytes",
             self.impostors.capacity_bytes() as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_basin_fog_bytes",
+            self.camera.basin_fog.bytes as f64,
         );
         engine_profile::counter(
             "memory.gpu_terrain_bytes",

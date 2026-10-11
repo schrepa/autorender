@@ -30,6 +30,7 @@ The page's parameters:
   --visibility on|off  shade virtual geometry through the visibility buffer
   --lod on|off         off: draw every instance as its mesh
   --impostors on|off   off: draw no impostors
+  --basin-fog on|off   optional terrain basin fog (default off)
   --view NAME          camera view
   --assets DIR         the folder holding stress/ (default web/public)
   --rocks on|off       off: the highlands' rocks wear the terrain rock's maps,
@@ -76,6 +77,7 @@ struct Options {
     visibility: bool,
     lod: bool,
     impostors: bool,
+    basin_fog: Option<bool>,
     view: Option<String>,
     assets: PathBuf,
     rocks: bool,
@@ -110,6 +112,7 @@ impl Options {
             visibility: false,
             lod: true,
             impostors: true,
+            basin_fog: None,
             view: None,
             // The page's public folder, beside this crate.
             assets: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public"),
@@ -131,6 +134,7 @@ impl Options {
                 "--visibility" => options.visibility = arguments.switch(&argument)?,
                 "--lod" => options.lod = arguments.switch(&argument)?,
                 "--impostors" => options.impostors = arguments.switch(&argument)?,
+                "--basin-fog" => options.basin_fog = Some(arguments.switch(&argument)?),
                 "--view" => options.view = Some(arguments.value(&argument)?),
                 "--assets" => options.assets = arguments.value(&argument)?.into(),
                 "--rocks" => options.rocks = arguments.switch(&argument)?,
@@ -176,7 +180,11 @@ impl Options {
                     })
                 })
                 .collect::<engine::Result<Vec<_>>>()?;
-            return StressLab::authored(&source, &files, &without);
+            let (mut engine, mut lab) = StressLab::authored(&source, &files, &without)?;
+            if let Some(enabled) = self.basin_fog {
+                lab.set_basin_fog(&mut engine, enabled);
+            }
+            return Ok((engine, lab));
         }
         let config = self.config()?;
         let files = stress_files(&self.assets, config.scene, self.rocks)?;
@@ -184,6 +192,9 @@ impl Options {
         lab.set_visibility_buffer(&mut engine, self.visibility);
         lab.set_level_of_detail(&mut engine, self.lod);
         lab.set_impostors(&mut engine, self.impostors);
+        if let Some(enabled) = self.basin_fog {
+            lab.set_basin_fog(&mut engine, enabled);
+        }
         lab.set_look(&mut engine, &self.look)?;
         lab.set_effects(&mut engine, &self.effects)?;
         if let Some(view) = &self.view {

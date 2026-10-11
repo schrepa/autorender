@@ -235,6 +235,7 @@
     "overlap",
     "shape_cast",
     "terrain_height",
+    "basin_fog_sample",
     "nav_path",
     "water_query",
     "deformation_query",

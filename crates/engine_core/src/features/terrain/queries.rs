@@ -98,6 +98,25 @@ impl Terrains {
     /// The layers `entity`'s tiles generate from: its own, with their
     /// hydrology baked once it is and its edits over them;
     /// `None` for terrains read from files.
+    /// Stable completed generation layers for optional whole-terrain jobs,
+    /// even when no camera requests a tile of this terrain this frame.
+    pub(crate) fn completed_layers(&mut self, entity: Entity) -> Option<Arc<Layers>> {
+        let state = self
+            .entries
+            .iter_mut()
+            .find(|s| s.entity == entity && s.around.is_none())?;
+        let base = match &state.terrain.source {
+            TerrainSource::Generated(authored) => {
+                state.baked.clone().unwrap_or_else(|| authored.clone())
+            }
+            TerrainSource::File { .. } => return None,
+        };
+        if base.unbaked().is_some() {
+            return None;
+        }
+        Some(state.generation(base))
+    }
+
     pub fn layers(&self, entity: Entity) -> Option<Arc<Layers>> {
         let state = self
             .entries

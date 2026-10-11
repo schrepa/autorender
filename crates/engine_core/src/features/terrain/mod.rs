@@ -125,6 +125,7 @@ impl bevy_app::Plugin for TerrainPlugin {
     fn build(&self, app: &mut bevy_app::App) {
         crate::install(app, crate::Feature::Terrain);
         app.init_resource::<Terrains>()
+            .init_resource::<crate::BasinFogs>()
             .insert_resource(crate::Ground {
                 sample: ground_sample,
                 revision: |world| {
@@ -135,7 +136,7 @@ impl bevy_app::Plugin for TerrainPlugin {
             })
             .add_systems(
                 crate::ViewSync,
-                stream_terrains.in_set(crate::ViewSyncSystems::Stream),
+                (stream_terrains, crate::basin_fog::sync).chain().in_set(crate::ViewSyncSystems::Stream),
             )
             .add_systems(
                 crate::WorldSync,

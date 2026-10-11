@@ -230,6 +230,10 @@ mod gpu {
     }
 
     impl ImpostorPipelines {
+        pub(crate) fn invalidate_scene(&mut self) {
+            self.draw_pipelines.clear();
+        }
+
         /// `material_layout` binds a material's maps (group 1 of bakes).
         pub(crate) fn new(
             device: &wgpu::Device,

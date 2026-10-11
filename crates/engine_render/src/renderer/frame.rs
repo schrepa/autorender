@@ -259,6 +259,7 @@ impl Renderer {
         let snapshot = frame.snapshot();
         let _profile = engine_profile::span("render", "render_snapshot");
         self.check_health()?;
+        self.prepare_basin_fog(snapshot)?;
         let (kind, gpu) = self.plan_frame(frame, display)?;
         if self.display.suspended {
             return Ok(self.residency_stats());

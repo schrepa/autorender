@@ -23,6 +23,7 @@
 )]
 
 mod bake;
+mod basin_fog;
 pub mod codec;
 mod erosion;
 mod format;
@@ -40,6 +41,7 @@ mod select;
 mod surface;
 mod tile;
 
+pub use basin_fog::{BasinGrid, BasinJob};
 pub use bake::{Bake, BakeKind, Baked, ErosionBake, HydrologyBake, PathBake, Stage, TerrainBake};
 pub use erosion::{Erosion, ErosionLayer, ErosionStats};
 pub use format::{

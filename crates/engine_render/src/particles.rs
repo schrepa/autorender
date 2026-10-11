@@ -162,6 +162,7 @@ mod gpu {
             surface_format: wgpu::TextureFormat,
             depth_format: wgpu::TextureFormat,
             transparent_targets: &[Option<wgpu::ColorTargetState>],
+            basin_fog: bool,
         ) -> Self {
             let layout = crate::pipelines::layout(device, &PARTICLES);
             let pipeline_layout = crate::pipelines::pipeline_layout(
@@ -171,7 +172,10 @@ mod gpu {
             );
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("engine/particles.wgsl"),
-                source: wgpu::ShaderSource::Wgsl(PARTICLE_SHADER.into()),
+                source: wgpu::ShaderSource::Wgsl(crate::shaders::basin_variant(
+                    PARTICLE_SHADER,
+                    basin_fog,
+                )),
             });
             let alpha = pipeline(
                 device,
@@ -215,6 +219,31 @@ mod gpu {
                 counts: (0, 0, 0),
                 group: GroupCache::default(),
             }
+        }
+
+        pub(crate) fn set_basin_fog(
+            &mut self,
+            device: &wgpu::Device,
+            enabled: bool,
+            targets: &[Option<wgpu::ColorTargetState>],
+        ) {
+            self.module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("engine/particles-basin-variant"),
+                source: wgpu::ShaderSource::Wgsl(crate::shaders::basin_variant(
+                    PARTICLE_SHADER,
+                    enabled,
+                )),
+            });
+            self.alpha = pipeline(
+                device,
+                &self.pipeline_layout,
+                &self.module,
+                "fs_particle",
+                targets,
+                self.depth_format,
+                &[],
+            );
+            self.additive = [None, None];
         }
 
         pub(crate) fn capacity_bytes(&self) -> u64 {
