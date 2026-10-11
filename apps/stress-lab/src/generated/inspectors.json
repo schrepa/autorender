@@ -3,6 +3,11 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "The fixed demonstration's preparation and authored geometry.",
     "properties": {
+      "appended_layers": {
+        "description": "Only the four enabled-only basin edits, in their append order.",
+        "items": true,
+        "type": "array"
+      },
       "centers": {
         "items": {
           "items": {
@@ -31,10 +36,13 @@
         "minimum": 0,
         "type": "integer"
       },
+      "final_hash": {
+        "type": "string"
+      },
       "final_layers": {
-        "description": "The same records with the four enabled-only basin edits appended.",
-        "items": true,
-        "type": "array"
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
       },
       "heights": {
         "items": {
@@ -50,10 +58,17 @@
         "minimum": 0,
         "type": "integer"
       },
+      "original_hash": {
+        "type": "string"
+      },
       "original_layers": {
-        "description": "Authored layer records, followed by the original edits.",
-        "items": true,
-        "type": "array"
+        "description": "Layer counts and SHA-256 of their serde JSON records stay bounded\neven when the original Highlands stack exceeds the inspector limit.",
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "original_prefix_hash": {
+        "type": "string"
       },
       "ready": {
         "type": "boolean"
@@ -83,7 +98,11 @@
       "original_edits",
       "final_edits",
       "original_layers",
-      "final_layers"
+      "final_layers",
+      "original_hash",
+      "original_prefix_hash",
+      "final_hash",
+      "appended_layers"
     ],
     "title": "BasinDemoView",
     "type": "object"

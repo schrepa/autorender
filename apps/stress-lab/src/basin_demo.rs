@@ -4,6 +4,7 @@
 use engine::prelude::*;
 use engine::terrain::*;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 /// The fixed demonstration's preparation and authored geometry.
@@ -18,12 +19,16 @@ pub struct BasinDemoView {
     pub terrain: u64,
     pub original_edits: usize,
     pub final_edits: usize,
-    /// Authored layer records, followed by the original edits.
+    /// Layer counts and SHA-256 of their serde JSON records stay bounded
+    /// even when the original Highlands stack exceeds the inspector limit.
+    pub original_layers: usize,
+    pub final_layers: usize,
+    pub original_hash: String,
+    pub original_prefix_hash: String,
+    pub final_hash: String,
+    /// Only the four enabled-only basin edits, in their append order.
     #[cfg_attr(feature = "schema", schemars(with = "Vec<serde_json::Value>"))]
-    pub original_layers: Vec<engine::scene::SceneTerrainLayer>,
-    /// The same records with the four enabled-only basin edits appended.
-    #[cfg_attr(feature = "schema", schemars(with = "Vec<serde_json::Value>"))]
-    pub final_layers: Vec<engine::scene::SceneTerrainLayer>,
+    pub appended_layers: Vec<engine::scene::SceneTerrainLayer>,
 }
 
 pub(crate) struct BasinDemo {
@@ -60,8 +65,12 @@ impl BasinDemo {
             terrain: 0,
             original_edits: 0,
             final_edits: 0,
-            original_layers: Vec::new(),
-            final_layers: Vec::new(),
+            original_layers: 0,
+            final_layers: 0,
+            original_hash: String::new(),
+            original_prefix_hash: String::new(),
+            final_hash: String::new(),
+            appended_layers: Vec::new(),
         };
         world.insert_resource(view.clone());
         Self { original, view }
@@ -162,7 +171,7 @@ impl BasinDemo {
             let layers =
                 engine::scene::SceneTerrain::from_runtime(&terrain, None, |_| None, |_| None)
                     .layers;
-            self.view.original_layers = layers
+            let original_layers: Vec<_> = layers
                 .iter()
                 .cloned()
                 .chain(
@@ -171,7 +180,7 @@ impl BasinDemo {
                         .map(|edit| engine::scene::SceneTerrainLayer::Stamp(edit.stamp)),
                 )
                 .collect();
-            self.view.final_layers = layers
+            let final_layers: Vec<_> = layers
                 .into_iter()
                 .chain(
                     edits
@@ -179,10 +188,21 @@ impl BasinDemo {
                         .map(|edit| engine::scene::SceneTerrainLayer::Stamp(edit.stamp)),
                 )
                 .collect();
+            self.view.original_layers = original_layers.len();
+            self.view.final_layers = final_layers.len();
+            self.view.original_hash = layer_hash(&original_layers);
+            self.view.original_prefix_hash = layer_hash(&final_layers[..original_layers.len()]);
+            self.view.final_hash = layer_hash(&final_layers);
+            self.view.appended_layers = final_layers[original_layers.len()..].to_vec();
             world.get_mut::<Terrain>(*entity).expect("present").edits = edits.into();
             self.view.ready = true;
             world.insert_resource(self.view.clone());
             return;
         }
     }
+}
+
+fn layer_hash(layers: &[engine::scene::SceneTerrainLayer]) -> String {
+    let records = serde_json::to_vec(layers).expect("typed terrain layers serialize as JSON");
+    format!("{:x}", Sha256::digest(records))
 }

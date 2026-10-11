@@ -168,10 +168,10 @@ try{
   await openPaused(page,highlandsUrl("on"),{timeout:180000});
   ({state}=await settle(command));const demo=(await command("inspect",{component:"BasinDemo"})).result.value;
   assert.equal(demo.ready,true);assert.equal(demo.final_edits-demo.original_edits,4);assert.equal(state.dropped_terrains,0);
-  assert.equal(demo.final_layers.length-demo.original_layers.length,4);
-  assert.deepEqual(demo.final_layers.slice(0,demo.original_layers.length),demo.original_layers);
-  const layerIdentity=layers=>createHash("sha256").update(JSON.stringify(layers)).digest("hex");
-  const layerHashes={original:layerIdentity(demo.original_layers),enabled:layerIdentity(demo.final_layers)};
+  assert.equal(demo.final_layers-demo.original_layers,4);assert.equal(demo.appended_layers.length,4);
+  assert.match(demo.original_hash,/^[a-f0-9]{64}$/);assert.match(demo.final_hash,/^[a-f0-9]{64}$/);
+  assert.equal(demo.original_prefix_hash,demo.original_hash);
+  const layerHashes={original:demo.original_hash,enabled:demo.final_hash};
   assert.ok(state.terrains.some(t=>t.wet_cells>0));const seen=(await command("inspect",{component:"Camera"})).result.value;
   for(let i=0;i<3;i++){near(seen.position[i],demo.eye[i],0.001);near(seen.target[i],demo.target[i],0.001);}
   near(seen.vertical_fov_radians,55*Math.PI/180,0.00001);near(seen.near,0.5,0.00001);near(seen.far,20000,0.001);
@@ -196,7 +196,8 @@ try{
   await command("game",{name:"workload",args:{config:highlands.options.config}});
   ({state}=await settle(command));const replacement=(await command("inspect",{component:"BasinDemo"})).result.value;
   assert.equal(replacement.ready,true);assert.equal(state.pending_uploads,0);assert.equal(state.dropped_terrains,0);
-  assert.equal(layerIdentity(replacement.original_layers),layerHashes.original);assert.equal(layerIdentity(replacement.final_layers),layerHashes.enabled);
+  assert.equal(replacement.original_hash,layerHashes.original);assert.equal(replacement.original_prefix_hash,layerHashes.original);assert.equal(replacement.final_hash,layerHashes.enabled);
+  assert.deepEqual(replacement.appended_layers,demo.appended_layers);
   assert.deepEqual(state.terrains.map(t=>({origin:t.origin,dem_hash:t.dem_hash,wet_cells:t.wet_cells,pools:t.pools})),solved);
   results.push({case:"new world current fog upload",demo:replacement,state});
   await capture(page,command,output,"highlands-replaced-world");
