@@ -7,6 +7,15 @@ import { artifacts,commander,launch,sceneUrl,openPaused,routedScene,devUrl,diffe
 import { document,heightBytes,inspect,settle,capture,record,near } from "./basin-fog-fixture.mjs";
 const output=await artifacts("basin-fog-render-smoke");
 const {browser,page,errors}=await launch({width:1400,height:900,timeout:120000});
+// The page's normal dashboard gives the canvas only part of the browser
+// viewport. This authored reference uses the accepted 1400 by 900 ray grid.
+await page.addInitScript(()=>{
+  const style=document.createElement("style");
+  style.textContent=`body{overflow:hidden!important}.stress .viewport,body[data-mode="scene"] .viewport{position:fixed!important;inset:0!important;width:1400px!important;height:900px!important;min-height:0!important;max-height:none!important;border:0!important;border-radius:0!important;margin:0!important;z-index:100!important}.viewport>canvas{width:1400px!important;height:900px!important;display:block!important}.viewport>:not(canvas){visibility:hidden!important}`;
+  const observer=new MutationObserver(install);
+  function install(){if(document.head){document.head.append(style);observer.disconnect();}}
+  observer.observe(document,{childList:true,subtree:true});install();
+});
 const command=commander(page,{deadline:120000});const results=[];
 const H=[0.08,0.18,0.32],L=[0.6,0.12,0.03];
 const camera={position:[128,0.125,200],target:[128,0.125,64],fov_degrees:35,near:0.1,far:1000};
@@ -16,6 +25,7 @@ const highlandsUrl=mode=>devUrl("stress.html",{...highlands.options,look:"scene"
 const resetCamera=()=>command("camera",{position:camera.position,target:camera.target,vertical_fov_radians:camera.fov_degrees*Math.PI/180,near:camera.near,far:camera.far});
 
 async function highlandsRays(demo,state,seen){
+  await exactCanvas();
   const terrain=state.terrains.find(t=>String(t.terrain)===String(demo.terrain));
   assert.ok(terrain&&terrain.state==="ready");
   const dot=(a,b)=>a.reduce((sum,v,i)=>sum+v*b[i],0),unit=v=>{const length=Math.hypot(...v);return v.map(x=>x/length);};
@@ -56,10 +66,17 @@ async function highlandsRays(demo,state,seen){
   return answer;
 }
 
+async function exactCanvas(){
+  const dimensions=await page.locator("canvas").evaluate(canvas=>({width:canvas.width,height:canvas.height,rect:{width:canvas.getBoundingClientRect().width,height:canvas.getBoundingClientRect().height}}));
+  assert.deepEqual(dimensions,{width:1400,height:900,rect:{width:1400,height:900}});
+  return dimensions;
+}
+
 // Independent binary64 reference: an authored rectangular medium, geometric
 // ray/slab clipping, and the antiderivative of its vertical ramp. No production
 // maps, pool IDs, tree nodes or shader text are read by this model.
 async function reference(name,png,{sigma,fade,copies=1,eye=camera.position,target=camera.target,fov=35}){
+  await exactCanvas();
   const actualCamera=(await command("inspect",{component:"Camera"})).result.value;
   for(let i=0;i<3;i++){near(actualCamera.position[i],eye[i],0.0001);near(actualCamera.target[i],target[i],0.0001);}
   near(actualCamera.vertical_fov_radians,fov*Math.PI/180,0.00001);
