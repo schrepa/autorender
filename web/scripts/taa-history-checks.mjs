@@ -227,19 +227,24 @@ export async function checkHistory(name, resources = {}) {
     await openPaused(page, highlandsUrl, { timeout: 120_000 });
     await command("render");
     const initialStatus = await command("status");
+    const initialCamera = (await command("inspect", { component: "Camera" })).result.value;
+    const temporalSettings = (await command("inspect", { component: "TemporalAntialiasing" })).result.value;
     const sequence = [];
-    // Ordinary stationary-camera foliage frames, followed by a changing view.
+    // Default overview and close foliage views, both with ordinary wind motion.
     for (let index = 0; index < 4; index++) {
       await ordinary(page, `highlands-still-${index}`);
       sequence.push(`highlands-still-${index}.png`);
     }
-    const viewed = await command("game", { name: "view", args: { name: "overview" } });
+    const viewed = await command("game", { name: "view", args: { name: "close" } });
+    const closeCamera = (await command("inspect", { component: "Camera" })).result.value;
+    assert.notDeepEqual(initialCamera, closeCamera, "Highlands close view changes the camera");
     for (let index = 0; index < 4; index++) {
-      await ordinary(page, `highlands-overview-${index}`);
-      sequence.push(`highlands-overview-${index}.png`);
+      await ordinary(page, `highlands-close-${index}`);
+      sequence.push(`highlands-close-${index}.png`);
     }
     results.highlands = { url: highlandsUrl.href, size: await dimensions(page), initial: initialStatus,
-      overview: viewed, sequence, rocks: "No scanned maps; empty optional responses use the host's terrain-map fallback.",
+      cameras: { initial: initialCamera, close: closeCamera }, temporal_settings: temporalSettings,
+      close: viewed, sequence, rocks: "No scanned maps; empty optional responses use the host's terrain-map fallback.",
       interpretation: "Ordinary-frame visual review material; no automatic quality or timing claim." };
     assert.deepEqual(await dimensions(page), [1400, 900], "Highlands uses the default output size");
     assert.deepEqual(errors, [], "clean browser and GPU diagnostics");
