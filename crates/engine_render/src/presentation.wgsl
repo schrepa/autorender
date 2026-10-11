@@ -898,15 +898,29 @@ fn skin_palette(@builtin(global_invocation_id) id: vec3<u32>) {
 // intermediates, including row-blend error later multiplied by a position.
 fn transform_skin_envelope(rows: Rows, local_low: vec3<f32>, local_high: vec3<f32>) -> SkinEnvelope {
     let unbounded = SkinEnvelope(vec4<f32>(-F32_MAX), vec4<f32>(F32_MAX));
-    if !(all(abs(rows.r0) <= vec4<f32>(F32_MAX))
-            && all(abs(rows.r1) <= vec4<f32>(F32_MAX))
-            && all(abs(rows.r2) <= vec4<f32>(F32_MAX))) {
+    let row_bits = max(max(bitcast<vec4<u32>>(rows.r0) & vec4<u32>(0x7fffffffu),
+        bitcast<vec4<u32>>(rows.r1) & vec4<u32>(0x7fffffffu)),
+        bitcast<vec4<u32>>(rows.r2) & vec4<u32>(0x7fffffffu));
+    let row_exponent = max(max(row_bits.x, row_bits.y), max(row_bits.z, row_bits.w)) >> 23u;
+    if row_exponent == 255u {
         return unbounded;
     }
     // Empty joints contribute no points, including when they lie between
     // used joints in a sparse palette.
     if any(local_low > local_high) {
         return SkinEnvelope(vec4<f32>(F32_MAX), vec4<f32>(-F32_MAX));
+    }
+    // Do not discover overflow after doing it: WGSL may replace an
+    // overflowing runtime result with an indeterminate value. With biased
+    // exponents summing to at most 374, each absolute row/point product is
+    // below 2^122, leaving room for both dot products, their sum, padding
+    // and the shadow consumer's rotation into light space.
+    // Bounding positions separately also keeps the subnormal-error sum finite.
+    let point_bits = max(bitcast<vec3<u32>>(local_low) & vec3<u32>(0x7fffffffu),
+        bitcast<vec3<u32>>(local_high) & vec3<u32>(0x7fffffffu));
+    let point_exponent = max(0x3f800000u, max(point_bits.x, max(point_bits.y, point_bits.z))) >> 23u;
+    if point_exponent > 251u || row_exponent + point_exponent > 374u {
+        return unbounded;
     }
     let center = local_low * 0.5 + local_high * 0.5;
     let half = local_high * 0.5 - local_low * 0.5;
@@ -968,6 +982,11 @@ fn skin_bounds_pass(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     skin_bounds[2u * id.x] = vec4<f32>(low, 0.0);
     skin_bounds[2u * id.x + 1u] = vec4<f32>(high, 0.0);
+    // The full-space sentinel keeps the slot without projecting values
+    // that could overflow the view/subpixel tests.
+    if all(low == vec3<f32>(-F32_MAX)) && all(high == vec3<f32>(F32_MAX)) {
+        return;
+    }
     var flags = scan[record.position];
     let identity = mat4x4<f32>(
         vec4<f32>(1.0, 0.0, 0.0, 0.0),

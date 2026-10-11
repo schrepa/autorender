@@ -140,6 +140,17 @@ async function arithmetic() {
       : [...point, 0, ...point, 0]);
     cases.push({ point, packed, matrices, envelopes });
   }
+  // Finite inputs must select the fallback before overflowing arithmetic;
+  // also keep a large cancellation case on the finite side of the guard.
+  for (const [rowPower, pointPower, unbounded] of [[60, 60, false], [100, 30, true],
+    [120, 0, false], [121, 0, true], [0, 125, true]]) {
+    const row = 2 ** rowPower, position = 2 ** pointPower;
+    const point = [position, -position, position], packed = [65535, 0, 0, 0];
+    const matrices = Array.from({ length: 4 }, () => [row, row, row, 0, row, -row, row, 0, 0, row, row, 0]);
+    const envelopes = matrices.map((_, joint) => joint ? [maximum, maximum, maximum, 0, -maximum, -maximum, -maximum, 0]
+      : [...point, 0, ...point, 0]);
+    cases.push({ point, packed, matrices, envelopes, unbounded });
+  }
   for (const invalid of [NaN, Infinity, -Infinity]) {
     const matrices = Array.from({ length: 4 }, () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]);
     matrices[0][0] = invalid;
@@ -186,8 +197,11 @@ async function arithmetic() {
       const low = result.values[index * 8 + axis], high = result.values[index * 8 + 4 + axis];
       assert.ok(Number.isFinite(low) && Number.isFinite(high) && low <= high, "finite conservative bound " + index);
       if (value.unbounded) {
-        assert.equal(low, -maximum, "nonfinite palette keeps the slot");
-        assert.equal(high, maximum, "nonfinite palette keeps every shadow map");
+        assert.equal(low, -maximum, "unprovable bounds keep the slot");
+        assert.equal(high, maximum, "unprovable bounds keep every shadow map");
+      } else if (value.unbounded === false) {
+        assert.notEqual(low, -maximum, "finite guard boundary keeps a useful lower bound");
+        assert.notEqual(high, maximum, "finite guard boundary keeps a useful upper bound");
       }
       if (Number.isFinite(position[axis])) assert.ok(position[axis] >= low && position[axis] <= high,
         "fully skinned vertex " + index + " axis " + axis + ": " + position[axis] + " outside [" + low + ", " + high + "]");

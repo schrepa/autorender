@@ -243,6 +243,15 @@ fn select_skinned(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let world_low = skin_bounds[2u * id.x].xyz;
     let world_high = skin_bounds[2u * id.x + 1u].xyz;
+    // Full-space bounds select every moving map directly. Transforming
+    // their sentinel corners would overflow before a finite check could run.
+    if all(world_low == vec3<f32>(-F32_MAX)) && all(world_high == vec3<f32>(F32_MAX)) {
+        for (var cascade = 0u; cascade < cull.cascades; cascade++) {
+            append(cascade, group, record.slot);
+        }
+        append(MOVING_MAP, group, record.slot);
+        return;
+    }
     let world_center = (world_low + world_high) * 0.5;
     let world_half = (world_high - world_low) * 0.5;
     let light_center = vec3<f32>(dot(cull.light[0].xyz, world_center),
