@@ -85,7 +85,7 @@ function ranges(n, everyEnd = false) {
 
 function fixture(options, capacity, batchCapacity) {
   const { n, name, mask = flags.VISIBLE, lod = true, budget = n, occupancy, firstInstance = true, everyEnd = false,
-    repeated = false, triangles = false, allVisible = false, phase = 0 } = options;
+    repeated = false, triangles = false, allVisible = false, alternating = false, phase = 0 } = options;
   const batches = ranges(n, everyEnd).map((range, index) => ({
     ...range, indexCount: triangles ? 0xffffffff : index % 5 === 0 ? 0 : 36 + index * 3,
     firstIndex: index * 71, baseVertex: index - 17, virtual: !triangles && index % 7 === 2,
@@ -101,7 +101,8 @@ function fixture(options, capacity, batchCapacity) {
   }
   const membership = Array.from({ length: n }, (_, index) => {
     const local = index % 64;
-    const eligible = occupancy != null ? local < occupancy : allVisible || (index + phase) % 5 !== 0;
+    const eligible = occupancy != null ? local < occupancy : alternating ? (index + phase) % 2 === 0
+      : allVisible || (index + phase) % 5 !== 0;
     const bucket = occupancy != null || !lod ? Math.floor(index / 64) % 4 : (index * 7 + phase) % 4;
     let value = flags.VALID | (bucket << 8);
     if (index % 3 !== 0) value |= flags.MOVING;
@@ -179,6 +180,7 @@ function fixtures() {
   for (const n of [0, 1, 31, 32, 33, 63, 64, 65, 127, 128, 129]) options.push({ name: `boundary-${n}`, n });
   for (const occupancy of [0, 1, 7, 8, 9, 31, 32, 33, 63, 64]) options.push({ name: `occupancy-${occupancy}`, n: 256, occupancy });
   options.push({ name: "every-batch-end", n: 129, everyEnd: true }, { name: "permitted-repeated-slots", n: 129, repeated: true });
+  for (const phase of [0, 1]) options.push({ name: `alternating-${phase}`, n: 129, alternating: true, phase });
   for (const mask of [flags.VISIBLE, flags.PHASE1, flags.PHASE2, flags.PROBE]) {
     for (const lod of mask === flags.PROBE ? [false] : [false, true]) options.push({ name: `mask-${mask}-lod-${lod}`, n: 129, mask, lod, phase: mask });
   }
@@ -290,7 +292,8 @@ async function kernelChecks(page, source, entries, cases) {
       }
       const error = await device.popErrorScope();
       if (error || errors.length) return { failure: error?.message ?? errors.join("\n"), completed: results };
-      return { adapter: { vendor: adapter.info.vendor, architecture: adapter.info.architecture, description: adapter.info.description }, cases: results };
+      return { adapter: { vendor: adapter.info.vendor, architecture: adapter.info.architecture, device: adapter.info.device,
+        description: adapter.info.description }, cases: results };
     } finally {
       if (pool) for (const buffer of Object.values(pool.buffers)) buffer.destroy();
       device.destroy();
@@ -466,7 +469,8 @@ async function main() {
     const lifecycle = await lifecycleChecks(page, output);
     const probes = await probeChecks(page, output);
     assert.deepEqual(errors, []);
-    const result = { ok: true, source_sha: createHash("sha256").update(source).digest("hex"),
+    const result = { ok: true, browser: browser.version(), api: "WebGPU", backend: "not exposed by WebGPU",
+      source_sha: createHash("sha256").update(source).digest("hex"),
       commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(), kernels, lifecycle, probes, artifact: output };
     await writeFile(`${output}/result.json`, JSON.stringify(result, null, 2));
     console.log(JSON.stringify(result));
