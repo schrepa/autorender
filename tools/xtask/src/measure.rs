@@ -1,16 +1,19 @@
 //! `cargo xtask measure`: one measure task of the engine factory, run on the
 //! native host and written as the factory's measure report. The command
-//! runs from the commit the task's tools come from (`tools_sha`):
-//! its scenes, settings, catalog and this code. Only the engine under test
-//! comes from each arm's commit: both are built the same way into their own
-//! folders, then measured in rounds of one base and one candidate run whose
-//! order alternates (base, candidate, candidate, base...), each run a fresh
-//! process measured as the workload says (`engine_native`'s measured runs),
-//! timed by the host and by this command's own clock from the host's marks,
-//! until the task's clean pairs (both runs settled), the deadline, or a run
-//! that never settles. A deep profile of each arm and the offline shader
-//! report follow where the task wants them. `--extend` adds rounds to an
-//! earlier report of the same task with the same builds.
+//! runs from the commit the task's tools come from (`tools_sha`): its
+//! catalog and this code. Each workload compares two arms, each a commit
+//! (both may be the same one), its switches, and the scene, settings and
+//! generated files from that commit's own tree, so a change's scene edits
+//! and switches reach its own build only. Every commit is built the same way
+//! into its own folder, then the arms run in rounds of one base and one
+//! candidate run whose order alternates (base, candidate, candidate,
+//! base...), each run a fresh process measured as the workload says
+//! (`engine_native`'s measured runs), timed by the host and by this
+//! command's own clock from the host's marks, until the task's clean pairs
+//! (both runs settled), the deadline, or a run that never settles. A deep
+//! profile of each arm and the offline shader report follow where the task
+//! wants them. `--extend` adds rounds to an earlier report of the same task
+//! with the same builds.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -22,7 +25,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::bench::{self, Assets, hex};
+use crate::bench::{self, hex};
 
 /// Clean pairs a task asks for unless it says.
 const MIN_PAIRS: u64 = 8;
@@ -184,13 +187,19 @@ pub fn parse_iso(text: &str) -> Option<SystemTime> {
     Some(UNIX_EPOCH + Duration::from_secs(u64::try_from(seconds).ok()?))
 }
 
-/// One arm built: its commit, program and build identity.
-struct Arm {
-    role: &'static str,
+/// One commit built and ready to measure: its checkout, its program and
+/// build identity, its composed shaders' hash, and the generated files its
+/// own tree makes.
+struct Build {
     sha: String,
+    source: PathBuf,
     program: PathBuf,
     build: Value,
     shader_hash: String,
+    /// The folder holding the generated files (`--assets`), and their
+    /// SHA-256.
+    assets: String,
+    generated_hash: String,
 }
 
 fn program_name() -> String {
@@ -198,8 +207,7 @@ fn program_name() -> String {
 }
 
 /// Makes `sha` available, fetching it from `origin` where it is missing
-/// (a pull request's merge commit through its ref, when the task names
-/// one).
+/// (through its pull request's ref, when the task names one).
 fn ensure_commit(root: &Path, sha: &str, pull: Option<u64>) -> Result<(), String> {
     let commit = format!("{sha}^{{commit}}");
     if git(root, &["cat-file", "-e", &commit]).is_ok() {
@@ -207,7 +215,7 @@ fn ensure_commit(root: &Path, sha: &str, pull: Option<u64>) -> Result<(), String
     }
     eprintln!("Fetching {sha}.");
     if let Some(pull) = pull {
-        let reference = format!("pull/{pull}/merge");
+        let reference = format!("pull/{pull}/head");
         let _ = git(root, &["fetch", "--no-tags", "origin", &reference]);
     }
     if git(root, &["cat-file", "-e", &commit]).is_err() {
@@ -267,16 +275,16 @@ pub fn checkout(root: &Path, sha: &str, pull: Option<u64>) -> Result<PathBuf, St
     Ok(source)
 }
 
-/// The arm `role` at `sha`: its source checked out under
-/// `target/measure/source/`, built into `target/measure/builds/`, where a
-/// build of the same commit is reused (its program unchanged).
-fn prepare_arm(
+/// The commit `sha`: its source checked out under `target/measure/source/`,
+/// built into `target/measure/builds/`, where a build of the same commit is
+/// reused (its program unchanged), and its generated files made by its own
+/// tree's `cargo xtask bench assets`.
+fn prepare_build(
     root: &Path,
-    role: &'static str,
     sha: &str,
     pull: Option<u64>,
     backend: &str,
-) -> Result<Arm, String> {
+) -> Result<Build, String> {
     let source = checkout(root, sha, pull)?;
     let folder = root.join("target").join("measure").join("builds").join(sha);
     let program = folder.join(program_name());
@@ -284,14 +292,13 @@ fn prepare_arm(
     let kept = read_json(&identity).ok().filter(|build| {
         program.is_file() && file_hash(&program).ok().as_deref() == build["artifact_hash"].as_str()
     });
-    let build = match kept {
+    let mut build = match kept {
         Some(build) => {
-            eprintln!("Reusing the {role} build of {sha}.");
+            eprintln!("Reusing the build of {sha}.");
             build
         }
         None => build_arm(root, &source, &folder, sha, backend)?,
     };
-    let mut build = build;
     // D3D12 compiles the engine's shaders with DXC, beside the program.
     if cfg!(windows) {
         match dxc() {
@@ -313,14 +320,52 @@ fn prepare_arm(
     let shader_hash = serde_json::from_str::<Value>(&printed)
         .ok()
         .and_then(|value| value["shader_hash"].as_str().map(str::to_owned))
-        .ok_or_else(|| format!("the {role} program printed no shader hash: {printed}"))?;
-    Ok(Arm {
-        role,
+        .ok_or_else(|| format!("the program of {sha} printed no shader hash: {printed}"))?;
+    let (assets, generated_hash) = generated(root, &source, sha)?;
+    Ok(Build {
         sha: sha.to_owned(),
+        source,
         program,
         build,
         shader_hash,
+        assets,
+        generated_hash,
     })
+}
+
+/// The generated files of the commit checked out in `source`, as its own
+/// `cargo xtask bench assets` makes them: their folder and SHA-256.
+fn generated(root: &Path, source: &Path, sha: &str) -> Result<(String, String), String> {
+    eprintln!("Generating the files workloads read at {sha}.");
+    let target = root.join("target").join("measure").join("target");
+    let made = Command::new("cargo")
+        .args(["xtask", "bench", "assets"])
+        .env("CARGO_TARGET_DIR", &target)
+        .current_dir(source)
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|error| format!("cannot run cargo: {error}"))?;
+    let printed = String::from_utf8_lossy(&made.stdout);
+    let summary = printed
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|_| made.status.success());
+    match summary {
+        Some(summary) => match (
+            summary["folder"].as_str(),
+            summary["generated_hash"].as_str(),
+        ) {
+            (Some(folder), Some(hash)) => Ok((folder.to_owned(), hash.to_owned())),
+            _ => Err(format!(
+                "`cargo xtask bench assets` at {sha} printed no folder and generated_hash"
+            )),
+        },
+        None => Err(format!(
+            "`cargo xtask bench assets` at {sha} failed ({}): measured commits need it",
+            made.status
+        )),
+    }
 }
 
 /// Builds the program from `source` into `folder`, with its symbols, and
@@ -566,27 +611,54 @@ fn catalogued(catalog: &[Value], name: &str, work: bool) -> bool {
         .is_some_and(|entry| (entry["kind"] == "work") == work)
 }
 
+/// One side of a workload's comparison: `base` or `candidate`, its
+/// commit's build, and the host's arguments: the workload's, its switches',
+/// its commit's generated files'.
+struct Side<'a> {
+    role: &'static str,
+    build: &'a Build,
+    arguments: Vec<String>,
+}
+
 /// One workload's measurement as the task gives it, with how to run it.
-struct Workload {
+struct Workload<'a> {
     name: String,
     feature: String,
-    options: Map<String, Value>,
-    /// The host's arguments: the workload's, the options', the assets'.
-    arguments: Vec<String>,
+    /// The task's arms, which the report repeats.
+    arms: Value,
+    sides: [Side<'a>; 2],
     method: Value,
-    scene_file_hash: String,
-    settings_hash: String,
     frames: u64,
     warmup_frames: u64,
 }
 
-fn workload(
+impl Workload<'_> {
+    fn side(&self, role: &str) -> &Side<'_> {
+        self.sides
+            .iter()
+            .find(|side| side.role == role)
+            .expect("both roles have a side")
+    }
+}
+
+/// The commits a task's workloads build: their arms'.
+fn arm_commits(spec: &Value) -> Result<Vec<&str>, String> {
+    let mut commits = Vec::new();
+    for entry in spec["workloads"].as_array().into_iter().flatten() {
+        for role in ["base", "candidate"] {
+            let at = format!("workload {}'s {role} arm's sha", entry["name"]);
+            commits.push(commit_id(entry["arms"][role]["sha"].as_str(), &at)?);
+        }
+    }
+    Ok(commits)
+}
+
+fn workload<'a>(
     root: &Path,
-    tools_sha: &str,
     entry: &Value,
-    assets: &Assets,
+    builds: &'a BTreeMap<String, Build>,
     gpu: &str,
-) -> Result<Workload, String> {
+) -> Result<Workload<'a>, String> {
     let name = entry["name"].as_str().ok_or("a task workload has a name")?;
     let definition = &entry["workload"];
     if !definition.is_object() {
@@ -594,54 +666,73 @@ fn workload(
             "workload {name}: the task carries no definition (`workload`: scene, settings, runtimes, settle, sample, capture)"
         ));
     }
-    let hash = |folder: &str, key: &str| -> Result<String, String> {
-        let file = definition[key]
-            .as_str()
-            .ok_or_else(|| format!("workload {name}: `{key}` names its file in bench/{folder}"))?;
-        let object = format!("{tools_sha}:bench/{folder}/{file}.json");
-        let hash = git(root, &["rev-parse", &object])?;
-        let wanted = entry[format!(
-            "{key}{}",
-            if key == "scene" {
-                "_file_hash"
-            } else {
-                "_hash"
-            }
-        )]
-        .as_str();
-        if wanted.is_some_and(|wanted| wanted != hash) {
-            return Err(format!(
-                "workload {name}: bench/{folder}/{file}.json at {tools_sha} is {hash}, the task says {}",
-                wanted.unwrap_or_default()
-            ));
-        }
-        Ok(hash)
-    };
-    let scene_file_hash = hash("scenes", "scene")?;
-    let settings_hash = hash("settings", "settings")?;
-    let mut arguments: Vec<String> = definition["runtimes"]["native"]["args"]
+    let runtime: Vec<String> = definition["runtimes"]["native"]["args"]
         .as_array()
         .ok_or_else(|| format!("workload {name}: runtimes.native.args lists the host's arguments"))?
         .iter()
         .map(|argument| argument.as_str().map(str::to_owned))
         .collect::<Option<_>>()
         .ok_or_else(|| format!("workload {name}: runtimes.native.args are strings"))?;
-    let options = match &entry["options"] {
-        Value::Object(options) => options.clone(),
-        Value::Null => Map::new(),
-        _ => return Err(format!("workload {name}: options is an object of switches")),
-    };
-    for (option, value) in &options {
-        let value = match value {
-            Value::String(text) => text.clone(),
-            Value::Bool(true) => "on".into(),
-            Value::Bool(false) => "off".into(),
-            other => other.to_string(),
+    let mut arms = entry["arms"].clone();
+    let side = |role: &'static str, arm: &mut Value| -> Result<Side<'a>, String> {
+        let sha = commit_id(arm["sha"].as_str(), "an arm's sha")?.to_owned();
+        let build = &builds[&sha];
+        // The scene and settings the arm loads from its own commit's tree.
+        for (folder, key, field) in [
+            ("scenes", "scene", "scene_file_hash"),
+            ("settings", "settings", "settings_hash"),
+        ] {
+            let file = definition[key].as_str().ok_or_else(|| {
+                format!("workload {name}: `{key}` names its file in bench/{folder}")
+            })?;
+            let object = format!("{sha}:bench/{folder}/{file}.json");
+            let hash = git(root, &["rev-parse", &object]).map_err(|_| {
+                format!("workload {name}: bench/{folder}/{file}.json is not at {sha}")
+            })?;
+            match arm[field].as_str() {
+                Some(wanted) if wanted != hash => {
+                    return Err(format!(
+                        "workload {name}: the {role} arm's bench/{folder}/{file}.json at {sha} is {hash}, the task says {wanted}"
+                    ));
+                }
+                Some(_) => {}
+                None => arm[field] = hash.into(),
+            }
+        }
+        let options = match &arm["options"] {
+            Value::Object(options) => options.clone(),
+            Value::Null => Map::new(),
+            _ => {
+                return Err(format!(
+                    "workload {name}: the {role} arm's options are switches by name"
+                ));
+            }
         };
-        arguments.extend([format!("--{option}"), value]);
-    }
-    let folder = assets.folder.display().to_string();
-    arguments.extend(["--assets".into(), folder, "--gpu".into(), gpu.into()]);
+        arm["options"] = Value::Object(options.clone());
+        let mut arguments = runtime.clone();
+        for (option, value) in &options {
+            let value = match value {
+                Value::String(text) => text.clone(),
+                Value::Bool(true) => "on".into(),
+                Value::Bool(false) => "off".into(),
+                other => other.to_string(),
+            };
+            arguments.extend([format!("--{option}"), value]);
+        }
+        arguments.extend([
+            "--assets".into(),
+            build.assets.clone(),
+            "--gpu".into(),
+            gpu.into(),
+        ]);
+        Ok(Side {
+            role,
+            build,
+            arguments,
+        })
+    };
+    let base = side("base", &mut arms["base"])?;
+    let candidate = side("candidate", &mut arms["candidate"])?;
     let sample = &definition["sample"];
     let count = |key: &str| {
         sample[key]
@@ -651,16 +742,14 @@ fn workload(
     Ok(Workload {
         name: name.to_owned(),
         feature: entry["feature"].as_str().unwrap_or("none").to_owned(),
-        options,
-        arguments,
+        arms,
+        sides: [base, candidate],
         method: json!({
             "settle": definition["settle"],
             "sample": sample,
             "capture": definition["capture"],
             "frames_in_flight": FRAMES_IN_FLIGHT,
         }),
-        scene_file_hash,
-        settings_hash,
         frames: count("frames")?,
         warmup_frames: count("warmup_frames")?,
     })
@@ -670,13 +759,12 @@ fn workload(
 struct Machine {
     backend: String,
     timer_resolution_us: f64,
-    generated_hash: String,
 }
 
-/// One measured run of `arm`, its files in `folder` as `stem`.
+/// One measured run of `side`, from its commit's checkout, its files in
+/// `folder` as `stem`.
 fn measure_run(
-    root: &Path,
-    arm: &Arm,
+    side: &Side,
     workload: &Workload,
     machine: &Machine,
     catalog: &[Value],
@@ -690,19 +778,24 @@ fn measure_run(
     }
     let method_path = folder.join(format!("{stem}.method.json"));
     fs::write(&method_path, method.to_string()).map_err(|error| error.to_string())?;
-    let mut arguments = workload.arguments.clone();
+    let mut arguments = side.arguments.clone();
     arguments.extend(["--measure".into(), method_path.display().to_string()]);
     let (power, power_plan) = power();
     let started_at = iso(SystemTime::now());
     let environment = backend_environment(&machine.backend);
-    let run = run_host(root, &arm.program, &arguments, &environment)?;
+    let run = run_host(
+        &side.build.source,
+        &side.build.program,
+        &arguments,
+        &environment,
+    )?;
     let log = folder.join(format!("{stem}.log"));
     fs::write(&log, format!("{}\n{}", run.stdout, run.stderr))
         .map_err(|error| error.to_string())?;
     if !run.success || !run.report.is_object() {
         return Err(format!(
             "the {} run failed ({}): {}",
-            arm.role,
+            side.role,
             log.display(),
             run.stderr
                 .lines()
@@ -721,7 +814,7 @@ fn measure_run(
             }
             _ => Err(format!(
                 "the {} run printed no {start} and {end} marks",
-                arm.role
+                side.role
             )),
         }
     };
@@ -771,11 +864,11 @@ fn measure_run(
         },
     });
     let record = json!({
-        "arm": arm.role,
+        "arm": side.role,
         "started_at": started_at,
         "metrics": metrics,
         "frames": frames,
-        "generated_hash": machine.generated_hash,
+        "generated_hash": side.build.generated_hash,
         "work": work,
         "conditions": conditions,
         "capture": capture.display().to_string(),
@@ -812,16 +905,10 @@ fn backend_environment(backend: &str) -> Vec<(&'static str, String)> {
     }
 }
 
-/// A deep profile of `arm` on `workload` into `folder`.
-fn profile_run(
-    root: &Path,
-    arm: &Arm,
-    workload: &Workload,
-    machine: &Machine,
-    folder: &Path,
-) -> Value {
-    let into = folder.join(format!("profile-{}", arm.role));
-    let mut arguments = workload.arguments.clone();
+/// A deep profile of `side` on its workload into `folder`.
+fn profile_run(side: &Side, machine: &Machine, folder: &Path) -> Value {
+    let into = folder.join(format!("profile-{}", side.role));
+    let mut arguments = side.arguments.clone();
     arguments.extend([
         "--offscreen".into(),
         PROFILE_FRAMES.to_string(),
@@ -830,11 +917,16 @@ fn profile_run(
     ]);
     let mut environment = backend_environment(&machine.backend);
     // The program's symbols are beside it, not where it was built.
-    if let Some(symbols) = arm.program.parent() {
+    if let Some(symbols) = side.build.program.parent() {
         environment.push(("_NT_ALTERNATE_SYMBOL_PATH", symbols.display().to_string()));
     }
-    let unavailable = |why: String| json!({"arm": arm.role, "unavailable": reason(&why)});
-    let run = match run_host(root, &arm.program, &arguments, &environment) {
+    let unavailable = |why: String| json!({"arm": side.role, "unavailable": reason(&why)});
+    let run = match run_host(
+        &side.build.source,
+        &side.build.program,
+        &arguments,
+        &environment,
+    ) {
         Ok(run) => run,
         Err(error) => return unavailable(error),
     };
@@ -868,23 +960,19 @@ fn profile_run(
     if files.is_empty() {
         return unavailable("the profile run wrote no files".into());
     }
-    json!({"arm": arm.role, "files": files, "complete": profile["complete"] == true})
+    json!({"arm": side.role, "files": files, "complete": profile["complete"] == true})
 }
 
-/// The offline shader report of `arm`, from its own commit's tools.
-fn shader_report(root: &Path, arm: &Arm, folder: &Path) -> Value {
-    let source = root
-        .join("target")
-        .join("measure")
-        .join("source")
-        .join(&arm.sha);
-    let into = folder.join(format!("shaders-{}", arm.role));
+/// The offline shader report of the `role` commit's `build`, from its own
+/// tree's tools.
+fn shader_report(root: &Path, role: &str, build: &Build, folder: &Path) -> Value {
+    let into = folder.join(format!("shaders-{role}"));
     let target = root.join("target").join("measure").join("target");
     let into_text = into.display().to_string();
     let status = Command::new("cargo")
         .args(["xtask", "gpu", "--report", &into_text])
         .env("CARGO_TARGET_DIR", &target)
-        .current_dir(&source)
+        .current_dir(&build.source)
         .status();
     let report = into.join("report.json");
     match status {
@@ -902,7 +990,7 @@ fn shader_report(root: &Path, arm: &Arm, folder: &Path) -> Value {
         }
         outcome => json!({
             "files": [],
-            "unavailable": [{"part": "report", "reason": reason(&format!("cargo xtask gpu --report at {} failed: {outcome:?}", arm.sha))}],
+            "unavailable": [{"part": "report", "reason": reason(&format!("cargo xtask gpu --report at {} failed: {outcome:?}", build.sha))}],
         }),
     }
 }
@@ -991,15 +1079,21 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
     let pairs = spec["pairs"].as_u64().unwrap_or(MIN_PAIRS);
     let want_profiles = spec["want"]["profiles"] == true;
     let catalog = bench::catalog(root)?;
-    let assets = bench::assets(root)?;
-    let base = prepare_arm(root, "base", base_sha, pull, backend)?;
-    let candidate = prepare_arm(root, "candidate", candidate_sha, pull, backend)?;
+    // Every commit the task measures, built once: the report's two, and its
+    // workloads' arms (both may be the same commit, switched off against on).
+    let mut builds: BTreeMap<String, Build> = BTreeMap::new();
+    let mut commits = vec![base_sha, candidate_sha];
+    commits.extend(arm_commits(spec)?);
+    for sha in commits {
+        if !builds.contains_key(sha) {
+            builds.insert(sha.to_owned(), prepare_build(root, sha, pull, backend)?);
+        }
+    }
     if let Some(previous) = &previous {
-        for arm in [&base, &candidate] {
-            if previous["builds"][arm.role]["artifact_hash"] != arm.build["artifact_hash"] {
+        for (role, sha) in [("base", base_sha), ("candidate", candidate_sha)] {
+            if previous["builds"][role]["artifact_hash"] != builds[sha].build["artifact_hash"] {
                 return Err(format!(
-                    "the {} build differs from the report's: an extension measures the same binaries",
-                    arm.role
+                    "the {role} build differs from the report's: an extension measures the same binaries"
                 ));
             }
         }
@@ -1007,7 +1101,6 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
     let machine = Machine {
         backend: backend.to_owned(),
         timer_resolution_us: timer_resolution_us(),
-        generated_hash: assets.generated_hash.clone(),
     };
     let runs_folder = root
         .join("target")
@@ -1017,7 +1110,7 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
     let mut incomplete = false;
     let mut workloads = Vec::new();
     for entry in spec["workloads"].as_array().into_iter().flatten() {
-        let workload = workload(root, &tools_sha, entry, &assets, gpu)?;
+        let workload = workload(root, entry, &builds, gpu)?;
         let folder = runs_folder.join(format!("{}-{}", workload.name, workload.feature));
         fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
         let earlier = previous.as_ref().and_then(|previous| {
@@ -1026,6 +1119,12 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
                     && earlier["feature"] == workload.feature.as_str()
             })
         });
+        if earlier.is_some_and(|earlier| earlier["arms"] != workload.arms) {
+            return Err(format!(
+                "workload {} ({}): the report it extends measured other arms",
+                workload.name, workload.feature
+            ));
+        }
         let mut runs: Vec<Value> = earlier
             .and_then(|earlier| earlier["runs"].as_array().cloned())
             .unwrap_or_default();
@@ -1064,23 +1163,23 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
             }
             let round = runs.len() / 2;
             let order = if round.is_multiple_of(2) {
-                [&base, &candidate]
+                ["base", "candidate"]
             } else {
-                [&candidate, &base]
+                ["candidate", "base"]
             };
             let started = Instant::now();
             let mut failed = None;
             let mut measured = Vec::new();
-            for arm in order {
-                let stem = format!("{:03}-{}", runs.len() + measured.len(), arm.role);
+            for role in order {
+                let stem = format!("{:03}-{role}", runs.len() + measured.len());
                 eprintln!(
-                    "{} ({}): round {}, {} run.",
+                    "{} ({}): round {}, {role} run.",
                     workload.name,
                     workload.feature,
-                    round + 1,
-                    arm.role
+                    round + 1
                 );
-                match measure_run(root, arm, &workload, &machine, &catalog, &folder, &stem) {
+                let side = workload.side(role);
+                match measure_run(side, &workload, &machine, &catalog, &folder, &stem) {
                     Ok((record, missing)) => {
                         for entry in missing {
                             if !unavailable.contains(&entry) {
@@ -1116,19 +1215,17 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
             .and_then(|earlier| earlier["profiles"].as_array().cloned())
             .unwrap_or_default();
         if want_profiles && workload.feature != "off" {
-            for arm in [&base, &candidate] {
-                if !profiles.iter().any(|profile| profile["arm"] == arm.role) {
-                    eprintln!("{}: profiling the {} arm.", workload.name, arm.role);
-                    profiles.push(profile_run(root, arm, &workload, &machine, &folder));
+            for side in &workload.sides {
+                if !profiles.iter().any(|profile| profile["arm"] == side.role) {
+                    eprintln!("{}: profiling the {} arm.", workload.name, side.role);
+                    profiles.push(profile_run(side, &machine, &folder));
                 }
             }
         }
         workloads.push(json!({
             "name": workload.name,
             "feature": workload.feature,
-            "options": workload.options,
-            "scene_file_hash": workload.scene_file_hash,
-            "settings_hash": workload.settings_hash,
+            "arms": workload.arms,
             "method": {
                 "runtime": "native",
                 "tool": TOOL,
@@ -1144,13 +1241,14 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
             "unavailable": unavailable,
         }));
     }
+    let (base, candidate) = (&builds[base_sha], &builds[candidate_sha]);
     let shaders_changed = base.shader_hash != candidate.shader_hash;
     let static_part = if spec["want"]["shader_report"] == true || shaders_changed {
         let folder = runs_folder.join("static");
         let _ = fs::create_dir_all(&folder);
         Some(json!({"shader_report": {
-            "base": shader_report(root, &base, &folder),
-            "candidate": shader_report(root, &candidate, &folder),
+            "base": shader_report(root, "base", base, &folder),
+            "candidate": shader_report(root, "candidate", candidate, &folder),
         }}))
     } else {
         previous

@@ -1,9 +1,11 @@
-//! The engine's measuring setup in `bench/`, which the factory reads at the
-//! commit a task's tools come from: each workload's scene file, the settings
-//! bundles, the catalog of what measurements report (`metrics.json`), the
-//! switches workloads take (`options.json`, generated) and the paths that
-//! count as shaders. Lint holds them to the code (`check`); `bench assets`
-//! builds the files workloads read that git does not hold.
+//! The engine's measuring setup in `bench/`: each workload's scene file and
+//! the settings bundles, which every measured commit loads from its own
+//! tree, as it does the switches workloads take (`options.json`, generated);
+//! the catalog of what measurements report (`metrics.json`) and the paths
+//! that count as shaders, which the factory reads at the commit a task's
+//! tools come from. Lint holds them to the code (`check`); `bench assets`
+//! builds the files workloads read that git does not hold, as the commit it
+//! runs in makes them.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
