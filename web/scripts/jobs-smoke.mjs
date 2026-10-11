@@ -16,6 +16,9 @@ import { artifacts, commander, devUrl, developmentReady, launch } from "./harnes
 
 const output = await artifacts("jobs-smoke");
 const { browser, page, errors } = await launch({ width: 960, height: 540, timeout: 600_000 });
+// Highlands uses its generated terrain maps. Optional locally installed
+// scanned rock maps are absent in this isolated browser fixture.
+await page.route("**/stress/rocks/**", route => route.fulfill({ status: 204, body: "" }));
 // What an exact frame draws of the terrain, which time leaves alone.
 const drawn = ({ terrain, water }) => ({
   tiles: terrain.tiles, patches: terrain.patches, triangles: terrain.triangles, shadow_patches: terrain.shadow_patches,

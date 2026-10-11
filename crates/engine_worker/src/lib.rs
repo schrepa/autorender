@@ -76,8 +76,7 @@ mod browser {
 
     fn integer(value: f64) -> Result<u64, JsValue> {
         if value.is_finite()
-            && value >= 0.0
-            && value <= 9_007_199_254_740_991.0
+            && (0.0..=9_007_199_254_740_991.0).contains(&value)
             && value.fract() == 0.0
         {
             Ok(value as u64)

@@ -8,6 +8,7 @@ import { artifacts, launch, openPaused, sceneUrl, routedScene } from "./harness.
 
 const output = await artifacts("bake-scheduling-smoke");
 const { browser, page, errors } = await launch({ width: 320, height: 240, timeout: 600_000 });
+page.on("console", entry => { if (entry.text().startsWith("bake-scheduling:")) console.log(entry.text()); });
 const bindingUrls = new Set();
 page.on("response", response => {
   if (response.request().resourceType() === "script" && new URL(response.url()).pathname.endsWith("/stress_lab.js")) bindingUrls.add(response.url());
@@ -139,6 +140,7 @@ try {
         variants.push({ workers, order, hash: await hash(candidate.bytes), children: candidate.children, diagnostics: candidate.stats });
       }
       results.push({ name, inputBytes: input.length, bytes: serial.length, hash: expected, variants });
+      console.log(`bake-scheduling: ${name}, ${serial.length} bytes, all worker/order variants match`);
     }
     check(results.find(value => value.name === "rough").hash !== results.find(value => value.name === "changed-lower-layer").hash,
       "changing a lower layer changes the final expected bytes");
