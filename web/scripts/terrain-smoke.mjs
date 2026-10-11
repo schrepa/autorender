@@ -519,6 +519,13 @@ try {
   // when it comes back; with nothing missing, workers generate the tiles
   // within the idle reach into memory.
   const inspectTerrains = async () => (await command("inspect", { component: "Terrains" })).result.value;
+  // Memory starts empty and nothing is made ahead of the view until the
+  // camera is back, so the tiles under the view after the move are made
+  // then, however far this machine's workers got before (the motion checks'
+  // camera passed the corner).
+  await command("environment", { terrain: { samples_per_frame: 50_000_000, cache_bytes: 1, idle_reach: 0 } });
+  await command("render");
+  await command("environment", { terrain: { samples_per_frame: 50_000_000, idle_reach: 0 } });
   const home = await inspectTerrains();
   await command("camera", { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] });
   await settle();
