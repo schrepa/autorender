@@ -145,7 +145,7 @@ pub fn game_names() -> String {
 }
 
 /// The wasm-bindgen version Cargo.lock pins, which the CLI must match.
-pub fn wasm_bindgen_version(root: &Path) -> Result<String, String> {
+fn wasm_bindgen_version(root: &Path) -> Result<String, String> {
     let lock = std::fs::read_to_string(root.join("Cargo.lock"))
         .map_err(|error| format!("cannot read Cargo.lock: {error}"))?;
     lock.split("[[package]]")
