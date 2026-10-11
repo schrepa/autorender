@@ -92,6 +92,16 @@ export interface FrameStats {
    * compiled.
    */
   pipelines_created: number;
+  /**
+   * GPU-culled frames only: how many GPU-presented frames late the counts
+   * read back with the visible count (`instances`, `triangles`,
+   * `occlusion_culling`, `subpixel_culling` and `level_of_detail`'s
+   * instances) are, 1 when they arrived as soon as they could, more while
+   * the GPU falls behind; `None` before the first read-back. A check that
+   * changed what they count presents until this is below the frames it
+   * presented since.
+   */
+  read_back_age: number | null;
   /** Reflection probes. */
   reflection_probes: ProbeStats;
   /** Screen-space reflections. */

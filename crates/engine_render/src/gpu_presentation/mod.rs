@@ -309,6 +309,12 @@ impl GpuPresentationPass {
         self.totals.last().map(|totals| totals.levels)
     }
 
+    /// GPU-presented frames submitted since the one [`Self::visible`] and
+    /// the other totals come from.
+    pub(crate) fn read_back_age(&self) -> Option<u64> {
+        self.totals.age()
+    }
+
     /// Watches `slot`: later frames' totals carry its level of detail state.
     pub(crate) fn watch(&self, slot: u32) {
         self.watched.set(Some(slot));

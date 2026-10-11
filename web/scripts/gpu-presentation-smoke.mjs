@@ -40,13 +40,18 @@ function partition(rendering, label) {
 }
 
 // A GPU-presented frame reports the visible count read back from an earlier
-// frame; repeating the identical preview returns that frame's own count.
+// frame; repeating the identical preview returns that frame's own count once
+// it arrived, one frame late, which a GPU falling behind delays.
 async function gpuCapture(name, alpha) {
-  await command("present", { alpha, gpu: true });
-  await delay(100);
-  const { reply, png } = await capture(name, { alpha, gpu: true });
-  assert.equal(reply.observation.presentation.gpu_pending, true, "GPU previews leave CPU presented poses pending.");
-  return { rendering: partition(reply.result.rendering, `${name} gpu`), png };
+  for (let attempt = 1; ; attempt++) {
+    await command("present", { alpha, gpu: true });
+    await delay(100);
+    const { reply, png } = await capture(name, { alpha, gpu: true });
+    if (reply.result.rendering.read_back_age > 1 && attempt < 50) continue;
+    assert.equal(reply.result.rendering.read_back_age, 1, `${name}: the preview's own count arrives`);
+    assert.equal(reply.observation.presentation.gpu_pending, true, "GPU previews leave CPU presented poses pending.");
+    return { rendering: partition(reply.result.rendering, `${name} gpu`), png };
+  }
 }
 
 async function compare(label, alpha) {

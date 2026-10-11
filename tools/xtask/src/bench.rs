@@ -31,10 +31,12 @@ pub const MEASURED: &[&str] = &[
     "mem:peak_requested_bytes",
 ];
 
-/// Frame statistics that are not work: which frame, and its timings.
+/// Frame statistics that are not work: which frame, how late its read-back
+/// counts are, and its timings.
 pub const NOT_WORK: &[&str] = &[
     "frame",
     "tick",
+    "read_back_age",
     "simulation_ms",
     "extraction_ms",
     "render_ms",

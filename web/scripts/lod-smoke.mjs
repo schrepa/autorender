@@ -14,18 +14,21 @@ const { browser, page, errors } = await launch({ timeout: 180_000 });
 
 const command = commander(page);
 
-// Counts of instances per level are read back a few frames late, and the
-// first GPU frames compile pipelines and bake impostors: present frames of
-// the same view until the counts hold for several frames running.
+// Counts of instances per level are read back a few frames late, later
+// while the GPU falls behind, and the first GPU frames compile pipelines
+// and bake impostors: present frames of the same view until counts read
+// back from frames presented here (fewer frames late than were presented)
+// hold for several frames running.
 async function present(gpu) {
   let rendering, previous, stable = 0;
-  for (let frame = 0; frame < 8 || stable < 5; frame++) {
-    assert.ok(frame < 600, `read-back counts settle: ${JSON.stringify(rendering)}`);
+  for (let frame = 1; frame <= 8 || stable < 5; frame++) {
+    assert.ok(frame <= 600, `read-back counts settle: ${JSON.stringify(rendering)}`);
     rendering = (await command("present", { alpha: 0, gpu })).result.rendering;
     const counts = JSON.stringify([rendering.occlusion_culling.instances, rendering.level_of_detail.lod0_instances,
       rendering.level_of_detail.lod1_instances, rendering.level_of_detail.lod2_instances, rendering.level_of_detail.impostor_instances]);
-    stable = counts === previous && (!gpu || rendering.occlusion_culling.instances != null) ? stable + 1 : 0;
-    previous = counts;
+    const current = !gpu || (rendering.occlusion_culling.instances != null && rendering.read_back_age < frame);
+    stable = current && counts === previous ? stable + 1 : 0;
+    previous = current ? counts : undefined;
     await delay(20);
   }
   return rendering;

@@ -149,6 +149,13 @@ impl Renderer {
                     .sum();
                 Some(triangles.min(u64::from(u32::MAX)) as u32)
             },
+            read_back_age: if gpu_mode {
+                self.gpu_presentation
+                    .read_back_age()
+                    .map(|age| age.min(u64::from(u32::MAX)) as u32)
+            } else {
+                None
+            },
             resident_meshes: residency.meshes,
             mesh_upload_bytes,
             resident_mesh_bytes: residency.mesh_bytes,

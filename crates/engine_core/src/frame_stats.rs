@@ -92,6 +92,14 @@ pub struct RenderStats {
     /// back with the visible count on GPU-culled ones. Virtual geometry
     /// counts its own in `virtual_geometry.triangles`.
     pub triangles: Option<u32>,
+    /// GPU-culled frames only: how many GPU-presented frames late the counts
+    /// read back with the visible count (`instances`, `triangles`,
+    /// `occlusion_culling`, `subpixel_culling` and `level_of_detail`'s
+    /// instances) are, 1 when they arrived as soon as they could, more while
+    /// the GPU falls behind; `None` before the first read-back. A check that
+    /// changed what they count presents until this is below the frames it
+    /// presented since.
+    pub read_back_age: Option<u32>,
     /// Number of distinct meshes retained on the GPU.
     pub resident_meshes: u32,
     /// Vertex/index bytes initialized for meshes first seen this frame.
