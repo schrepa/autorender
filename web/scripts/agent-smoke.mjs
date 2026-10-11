@@ -14,7 +14,9 @@ const executeFile = promisify(execFile);
 const workspace = fileURLToPath(new URL("../../", import.meta.url));
 const script = join(workspace, "web/scripts/agent.mjs");
 const fixtureName = `agent-smoke-${randomUUID()}.scene.json`;
-const sourcePath = join(workspace, "web/public/scenes", fixtureName);
+// Local scenes are not tracked, so a fresh checkout has no folder for them.
+const scenes = join(workspace, "web/public/scenes");
+const sourcePath = join(scenes, fixtureName);
 const sourceBytes = await readFile(join(workspace, "web/scripts/fixtures/garden.scene.json"));
 const source = JSON.parse(sourceBytes.toString("utf8"));
 assert.ok(Number.isSafeInteger(source.revision), "The smoke fixture revision must fit a JavaScript integer.");
@@ -24,6 +26,7 @@ assert.ok(playerId, "The authored sample needs a player.");
 const output = join(workspace, "artifacts/agent-smoke");
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
+await mkdir(scenes, { recursive: true });
 await writeFile(sourcePath, sourceBytes, { flag: "wx" });
 
 const reservation = createServer();
