@@ -103,6 +103,8 @@ export interface FrameStats {
    * compiled.
    */
   pipelines_created: number;
+  /** The finite-range guard at transparency resolve and the final grade. */
+  radiance: RadianceStats;
   /**
    * GPU-culled frames only: how many GPU-presented frames late the counts
    * read back with the visible count (`instances`, `triangles`,
@@ -412,6 +414,27 @@ export interface ProbeStats {
   faces: number;
   /** Probes surfaces could reflect this frame. */
   ready: number;
+}
+
+/**
+ * Completed main-view finite-range diagnostics. Radiance RGB stores exposed
+ * light divided by 64 in half floats (largest finite value 65504); finite
+ * boundary components below 0 or at least 60000 clamp to [0, 60000]. A zero
+ * mask does not certify recovery or detection after an earlier overflow.
+ */
+export interface RadianceStats {
+  /**
+   * Bit 0: finite transparency sum or resolved RGB reached the guard;
+   * bit 1: finite Grade input reached it. Null before the first completed
+   * readback; zero belongs only to the accompanying completed source frame.
+   */
+  limit_mask: number | null;
+  /**
+   * Renderer frame ordinal that produced this completed readback, starting
+   * at 1. Independent of simulation ticks and reset with the renderer.
+   * Initially null; pending readbacks retain the last completed pair.
+   */
+  source_frame: number | null;
 }
 
 /** The sun's shadow maps. */

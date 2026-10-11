@@ -286,6 +286,7 @@
         "hierarchy",
         "host-parity",
         "interpolation",
+        "linear-light-transparency",
         "native",
         "plugins",
         "taa",
@@ -455,6 +456,7 @@
         "culling",
         "gpu-presentation",
         "host-parity",
+        "linear-light-transparency",
         "lod",
         "streaming",
         "surfaces",
@@ -590,6 +592,7 @@
         "host-parity",
         "interpolation",
         "jobs",
+        "linear-light-transparency",
         "meshes",
         "plugins",
         "spline",
@@ -613,6 +616,7 @@
         "input",
         "interpolation",
         "jobs",
+        "linear-light-transparency",
         "meshes",
         "native",
         "plugins",
@@ -630,6 +634,7 @@
         "input",
         "interpolation",
         "jobs",
+        "linear-light-transparency",
         "meshes",
         "native",
         "taa",
@@ -646,6 +651,7 @@
         "hierarchy",
         "host-parity",
         "interpolation",
+        "linear-light-transparency",
         "lod",
         "meshes",
         "native",
@@ -702,6 +708,7 @@
         "agent",
         "culling",
         "gpu-presentation",
+        "linear-light-transparency",
         "terrain-surface",
         "terrain-water-sky"
       ],
@@ -711,7 +718,8 @@
       "inspector": "AmbientOcclusion",
       "section": "ambient_occlusion",
       "smokes": [
-        "agent"
+        "agent",
+        "linear-light-transparency"
       ],
       "stats": true
     },
@@ -720,7 +728,8 @@
       "section": "bloom",
       "smokes": [
         "agent",
-        "host-parity"
+        "host-parity",
+        "linear-light-transparency"
       ],
       "stats": true
     },
@@ -736,7 +745,8 @@
       "inspector": "SunShafts",
       "section": "sun_shafts",
       "smokes": [
-        "agent"
+        "agent",
+        "linear-light-transparency"
       ],
       "stats": true
     },
@@ -744,7 +754,8 @@
       "inspector": "Reflections",
       "section": "reflections",
       "smokes": [
-        "agent"
+        "agent",
+        "linear-light-transparency"
       ],
       "stats": true
     },
@@ -752,7 +763,8 @@
       "inspector": "ParticleSettings",
       "section": "particles",
       "smokes": [
-        "agent"
+        "agent",
+        "linear-light-transparency"
       ],
       "stats": true
     },
@@ -760,6 +772,7 @@
       "inspector": "Refraction",
       "section": "refraction",
       "smokes": [
+        "linear-light-transparency",
         "surfaces"
       ],
       "stats": true
@@ -776,6 +789,7 @@
       "inspector": "ReflectionProbeSettings",
       "section": "reflection_probes",
       "smokes": [
+        "linear-light-transparency",
         "lod",
         "terrain-water-sky"
       ],
@@ -785,6 +799,7 @@
       "inspector": "VirtualGeometry",
       "section": "virtual_geometry",
       "smokes": [
+        "linear-light-transparency",
         "virtual-geometry"
       ],
       "stats": true
@@ -793,6 +808,7 @@
       "inspector": "LevelOfDetail",
       "section": "level_of_detail",
       "smokes": [
+        "linear-light-transparency",
         "lod",
         "terrain"
       ],
@@ -843,6 +859,7 @@
       "inspector": "ContactShadows",
       "section": "contact_shadows",
       "smokes": [
+        "linear-light-transparency",
         "terrain-surface"
       ],
       "stats": true
@@ -878,6 +895,7 @@
       "inspector": "Clouds",
       "section": "clouds",
       "smokes": [
+        "linear-light-transparency",
         "terrain-water-sky"
       ],
       "stats": true
@@ -896,6 +914,7 @@
       "section": "sky",
       "smokes": [
         "host-parity",
+        "linear-light-transparency",
         "terrain-water-sky"
       ],
       "stats": true
@@ -939,6 +958,7 @@
       "inspector": "TemporalAntialiasing",
       "section": "temporal_antialiasing",
       "smokes": [
+        "linear-light-transparency",
         "native",
         "taa"
       ],

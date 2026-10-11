@@ -916,6 +916,28 @@
       "direction": null
     },
     {
+      "name": "radiance.limit_mask",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the most recent completed radiance guard mask: bit 0 for finite transparency values at the guard, bit 1 for finite Grade inputs at the guard; null before readback, and zero does not certify upstream overflow detection",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "bitmask",
+      "direction": null
+    },
+    {
+      "name": "radiance.source_frame",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the renderer frame ordinal of the accompanying completed radiance limit mask, initially null and retained as a pair while later readbacks are pending",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "frame",
+      "direction": null
+    },
+    {
       "name": "refraction.active",
       "kind": "work",
       "rule": "equal",

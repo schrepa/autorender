@@ -137,12 +137,27 @@ async function ordinary(name, reference) {
   checks.push({ name, actual, expected: reference.rgb, ordinaryFrames: 40, diagnostic: rendering.radiance });
 }
 
+async function resize(width, height) {
+  await page.addStyleTag({ content: `canvas { width: ${width}px !important; height: ${height}px !important; }` });
+  await page.waitForFunction(([w, h]) => {
+    const bounds = document.querySelector("canvas").getBoundingClientRect();
+    return bounds.width === w && bounds.height === h;
+  }, [width, height]);
+  // The first paused render may prepare a resized target/pipeline without
+  // presenting. Require the physical image to catch up before sampling it.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await command("capture");
+    const size = await page.locator("canvas").evaluate(canvas => [canvas.width, canvas.height]);
+    if (size[0] === width && size[1] === height) return;
+    await delay(25);
+  }
+  assert.fail(`physical canvas did not resize to ${width}x${height}`);
+}
+
 try {
   await scene.route();
   await openPaused(page, sceneUrl());
-  await page.addStyleTag({ content: "canvas { width: 641px !important; height: 481px !important; }" });
-  await delay(100);
-  await command("render");
+  await resize(641, 481);
   const size = await page.locator("canvas").evaluate(canvas => [canvas.width, canvas.height]);
   assert.deepEqual(size, [641, 481], "an odd physical canvas centers the analytical ray");
   // Make main fail on the actual color-order defect before asking for any
@@ -297,8 +312,7 @@ try {
   await sample("guard-clears-next-frames", compose(B, [], 1), 2);
 
   const lifecycleBefore = await page.evaluate(() => window.__radianceLifecycle);
-  await page.addStyleTag({ content: "canvas { width: 503px !important; height: 379px !important; }" });
-  await delay(100); await command("render");
+  await resize(503, 379);
   await sample("resized", compose(B, [], 1), 2);
   const lifecycle = await page.evaluate(() => window.__radianceLifecycle);
   assert.equal(lifecycle.live, 1, "only the current main-view radiance texture remains live");

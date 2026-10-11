@@ -535,6 +535,30 @@
       ],
       "type": "object"
     },
+    "RadianceStats": {
+      "description": "Completed main-view finite-range diagnostics. Radiance RGB stores exposed\nlight divided by 64 in half floats (largest finite value 65504); finite\nboundary components below 0 or at least 60000 clamp to [0, 60000]. A zero\nmask does not certify recovery or detection after an earlier overflow.",
+      "properties": {
+        "limit_mask": {
+          "description": "Bit 0: finite transparency sum or resolved RGB reached the guard;\nbit 1: finite Grade input reached it. Null before the first completed\nreadback; zero belongs only to the accompanying completed source frame.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "source_frame": {
+          "description": "Renderer frame ordinal that produced this completed readback, starting\nat 1. Independent of simulation ticks and reset with the renderer.\nInitially null; pending readbacks retain the last completed pair.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "ShadowStats": {
       "description": "The sun's shadow maps.",
       "properties": {
@@ -1073,6 +1097,10 @@
       "minimum": 0,
       "type": "integer"
     },
+    "radiance": {
+      "$ref": "#/$defs/RadianceStats",
+      "description": "The finite-range guard at transparency resolve and the final grade."
+    },
     "read_back_age": {
       "description": "GPU-culled frames only: how many GPU-presented frames late the counts\nread back with the visible count (`instances`, `triangles`,\n`occlusion_culling`, `subpixel_culling` and `level_of_detail`'s\ninstances) are, 1 when they arrived as soon as they could, more while\nthe GPU falls behind; `None` before the first read-back. A check that\nchanged what they count presents until this is below the frames it\npresented since.",
       "format": "uint32",
@@ -1289,7 +1317,8 @@
     "sky",
     "occlusion_culling",
     "subpixel_culling",
-    "temporal_antialiasing"
+    "temporal_antialiasing",
+    "radiance"
   ],
   "title": "FrameStats",
   "type": "object"
