@@ -35,7 +35,6 @@ export function glassFixture({ constant = false, blur = 12, glass = true } = {})
 
 export function geometryFixture(kind) {
   const fixture = glassFixture();
-  fixture.id = `rough-glass-${kind}`;
   const pane = fixture.entities.find(entity => entity.id === "glass");
   const material = fixture.materials.find(material => material.id === "glass");
   if (kind === "tilted-thick") {
@@ -59,7 +58,6 @@ export function geometryFixture(kind) {
 
 export function mixedFixture() {
   const fixture = glassFixture();
-  fixture.id = "rough-glass-mixed";
   fixture.camera = { position: [0, 45, 100], target: [0, 10, 0], fov_degrees: 55, near: 0.1, far: 1500 };
   // A closed depression before hydrology guarantees standing water, rather
   // than relying on a particular noise seed's chance of forming a lake.
@@ -89,7 +87,6 @@ export function mixedFixture() {
 
 export function movingFixture() {
   const fixture = glassFixture();
-  fixture.id = "rough-glass-moving";
   fixture.entities.push({ id: "motion-parent", animation: { clip: "translate" } });
   for (const entity of fixture.entities) if (entity.id.startsWith("stripe-")) entity.parent = "motion-parent";
   fixture.animations = [{ id: "translate", targets: ["motion-parent"], channels: [
