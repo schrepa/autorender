@@ -676,6 +676,7 @@ fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
 /// A river's line from the bake's grid before its water is set: its
 /// points, at each half its width and its depth at the middle, and whether
 /// it begins at a head.
+#[derive(Clone)]
 pub(crate) struct RiverLine {
     pub(crate) points: Vec<Vec2>,
     pub(crate) half: Vec<f32>,

@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use glam::Vec2;
 
+use crate::bake::{BAKE_CHILD_JOB, BAKE_SHARE, ParallelJob, Sampling};
 use crate::codec::{self, CodecError, Reader, Writer, record};
 use crate::{
     BiomeRules, Biomes, Generator, Layers, NavOptions, NavPath, Obstacle, Placed, Placing, Pyramid,
@@ -264,6 +265,7 @@ enum Running {
     Band(Generator),
     Walk(Box<WalkSearch>),
     Bake(Box<(Layers, Pyramid)>),
+    BakeChild(Box<ParallelJob>),
 }
 
 /// What a worker holds of terrains, and runs their jobs over.
@@ -271,6 +273,7 @@ enum Running {
 pub struct TerrainWorker {
     stacks: HashMap<String, Arc<Layers>>,
     recipes: HashMap<String, Recipe>,
+    bake_shares: HashMap<String, Arc<Sampling>>,
     running: HashMap<u64, Running>,
 }
 
@@ -284,6 +287,10 @@ impl TerrainWorker {
     pub fn share(&mut self, key: &str, bytes: &[u8]) -> Result<(), String> {
         let (&tag, rest) = bytes.split_first().ok_or("empty share")?;
         match tag {
+            BAKE_SHARE => {
+                self.bake_shares
+                    .insert(key.to_owned(), Arc::new(Sampling::decode(rest)?));
+            }
             STACK => {
                 let layers: Layers = codec::decode(rest).map_err(|error| error.to_string())?;
                 self.stacks.insert(key.to_owned(), Arc::new(layers));
@@ -324,6 +331,7 @@ impl TerrainWorker {
     pub fn unshare(&mut self, key: &str) {
         self.stacks.remove(key);
         self.recipes.remove(key);
+        self.bake_shares.remove(key);
     }
 
     /// Runs job `kind` on `input` whole; its output.
@@ -343,6 +351,9 @@ impl TerrainWorker {
         let invalid = |error: CodecError| error.to_string();
         let mut reader = Reader::new(input);
         let running = match kind {
+            BAKE_CHILD_JOB => {
+                Running::BakeChild(Box::new(ParallelJob::start(input, &self.bake_shares)?))
+            }
             TILE_JOB => {
                 let recipe: String = reader.get().map_err(invalid)?;
                 let key: TileKey = reader.get().map_err(invalid)?;
@@ -458,6 +469,11 @@ impl TerrainWorker {
         };
         let mut budget = budget.max(1);
         let output = match running {
+            Running::BakeChild(job) => match job.step(&mut budget) {
+                Ok(Some(output)) => Ok(output),
+                Ok(None) => return Ok(None),
+                Err(error) => Err(error),
+            },
             Running::Tile(generator) => match generator.advance(&mut budget) {
                 Some(tile) => Ok(codec::encode(&tile)),
                 None if generator.failed() => Err("the tile's heights are invalid".into()),

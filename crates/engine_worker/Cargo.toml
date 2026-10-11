@@ -17,6 +17,7 @@ engine_terrain.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
+js-sys.workspace = true
 console_error_panic_hook.workspace = true
 
 [lints]

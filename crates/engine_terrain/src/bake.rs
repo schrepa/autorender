@@ -20,6 +20,10 @@ use crate::path::{PathLayer, PathProfile, RIVER_DEPTH};
 use crate::rivers::{BANK_OFFSET, RiverLine, Rivers, across, profile};
 use crate::{Generator, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
 
+mod parallel;
+pub use parallel::{BAKE_CHILD_JOB, BakeAction, BakeCoordinator, BakeDiagnostics};
+pub(crate) use parallel::{BAKE_SHARE, ParallelJob, Sampling};
+
 /// What a layer bakes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BakeKind {
@@ -74,6 +78,7 @@ pub struct TerrainBake {
 /// A hydrology bake's rivers being read: what the bake
 /// found, the rivers' lines, and the finest ground read at their points so
 /// far (at each line's middle and its banks).
+#[derive(Clone)]
 struct RiverJob {
     hydrology: Option<Hydrology>,
     lines: Vec<RiverLine>,

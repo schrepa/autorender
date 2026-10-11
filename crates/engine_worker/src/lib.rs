@@ -8,6 +8,7 @@
 //! of an output ready early go back before the rest.
 
 use engine_terrain::jobs::TerrainWorker;
+pub use engine_terrain::{BAKE_CHILD_JOB, BakeAction, BakeCoordinator, BakeDiagnostics};
 
 /// One worker's shares and the jobs it runs.
 #[derive(Default)]
@@ -72,6 +73,102 @@ impl Worker {
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use wasm_bindgen::prelude::*;
+
+    fn integer(value: f64) -> Result<u64, JsValue> {
+        if value.is_finite()
+            && value >= 0.0
+            && value <= 9_007_199_254_740_991.0
+            && value.fract() == 0.0
+        {
+            Ok(value as u64)
+        } else {
+            Err(JsValue::from_str(
+                "expected an exactly represented nonnegative integer",
+            ))
+        }
+    }
+
+    /// The same coordinator native hosts use, instantiated lazily on the
+    /// page only for an uncached bake with multiple workers.
+    #[wasm_bindgen]
+    pub struct BakeCoordinator {
+        graph: super::BakeCoordinator,
+    }
+
+    #[wasm_bindgen]
+    impl BakeCoordinator {
+        #[wasm_bindgen(constructor)]
+        pub fn new(input: &[u8], epoch: f64) -> Result<Self, JsValue> {
+            Ok(Self {
+                graph: super::BakeCoordinator::start(input, integer(epoch)?)
+                    .map_err(|error| JsValue::from_str(&error))?,
+            })
+        }
+
+        /// Ordered {share, bytes}, {unshare}, or {id, input} actions.
+        pub fn ready(&mut self, limit: f64) -> Result<js_sys::Array, JsValue> {
+            let limit = usize::try_from(integer(limit)?)
+                .map_err(|_| JsValue::from_str("run count is too large"))?;
+            let actions = self
+                .graph
+                .ready(limit)
+                .map_err(|error| JsValue::from_str(&error))?;
+            let values = js_sys::Array::new();
+            for action in actions {
+                let value = js_sys::Object::new();
+                let set = |name: &str, content: &JsValue| {
+                    js_sys::Reflect::set(&value, &JsValue::from_str(name), content)
+                };
+                match action {
+                    super::BakeAction::Share { key, bytes } => {
+                        set("share", &JsValue::from_str(&key))?;
+                        set("bytes", &js_sys::Uint8Array::from(bytes.as_slice()))?;
+                    }
+                    super::BakeAction::Unshare { key } => {
+                        set("unshare", &JsValue::from_str(&key))?;
+                    }
+                    super::BakeAction::Run { id, input } => {
+                        if id > 9_007_199_254_740_991 {
+                            return Err(JsValue::from_str("child ID is not exactly represented"));
+                        }
+                        set("id", &JsValue::from_f64(id as f64))?;
+                        set("input", &js_sys::Uint8Array::from(input.as_slice()))?;
+                    }
+                }
+                values.push(&value);
+            }
+            Ok(values)
+        }
+
+        pub fn complete(&mut self, id: f64, output: &[u8]) -> Result<(), JsValue> {
+            self.graph
+                .complete(integer(id)?, output)
+                .map_err(|error| JsValue::from_str(&error))
+        }
+
+        pub fn take_result(&mut self) -> Option<Vec<u8>> {
+            self.graph.take_result()
+        }
+
+        pub fn cancel(&mut self) {
+            self.graph.cancel();
+        }
+
+        /// In-flight, completed, sent/received bytes, shared bytes, joined
+        /// buffer capacity, peak retained bytes. Host counters add copies.
+        pub fn diagnostics(&self) -> Vec<f64> {
+            let value = self.graph.diagnostics();
+            vec![
+                value.in_flight as f64,
+                value.completed as f64,
+                value.sent_bytes as f64,
+                value.received_bytes as f64,
+                value.share_bytes as f64,
+                value.buffer_bytes as f64,
+                value.peak_bytes as f64,
+            ]
+        }
+    }
 
     /// [`super::Worker`] for a Web Worker's script. Job ids and budgets are
     /// JavaScript numbers.

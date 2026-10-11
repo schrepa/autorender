@@ -36,7 +36,9 @@ mod select;
 mod surface;
 mod tile;
 
-pub use bake::{BakeKind, Baked, TerrainBake};
+pub use bake::{
+    BAKE_CHILD_JOB, BakeAction, BakeCoordinator, BakeDiagnostics, BakeKind, Baked, TerrainBake,
+};
 pub use erosion::{Erosion, ErosionLayer, ErosionStats};
 pub use format::{
     FileHeader, FileTile, FormatError, TERRAIN_FILE_MAGIC, TERRAIN_FILE_VERSION, decode_tile,
