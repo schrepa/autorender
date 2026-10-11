@@ -221,7 +221,12 @@ try {
     assert.ok(delta.maximum_u8 <= 2, `continuous blur at ${boundary}: ${JSON.stringify(delta)}`);
     checks.push({ check: "scale boundary", boundary, delta });
   }
-  for (const radius of [2, 4.2, 8, 12, 64]) { await blur(radius); await capture(`patterned-radius-${radius}`); }
+  for (const radius of [2, 4.2, 8, 12, 64]) {
+    await blur(radius); const blurred = await capture(`patterned-radius-${radius}`);
+    const delta = await compare(patternedSharp, blurred, [0.25, 0.1, 0.5, 0.8]);
+    assert.ok(delta.mean_absolute_u8 > 0, `radius ${radius} changes the actual pane interior`);
+    checks.push({ check: "rendered blur response", radius, delta });
+  }
 
   const activePipelineCount = captures.at(-1).trace.pipelines;
   await blur(12, 0); const disabled = await capture("strength-zero", { active: false });
