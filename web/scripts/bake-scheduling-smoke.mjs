@@ -9,6 +9,7 @@ import { artifacts, launch, openPaused, sceneUrl, routedScene } from "./harness.
 const output = await artifacts("bake-scheduling-smoke");
 const { browser, page, errors } = await launch({ width: 320, height: 240, timeout: 600_000 });
 page.on("console", entry => { if (entry.text().startsWith("bake-scheduling:")) console.log(entry.text()); });
+page.on("pageerror", error => console.error(error));
 const bindingUrls = new Set();
 page.on("response", response => {
   if (response.request().resourceType() === "script" && new URL(response.url()).pathname.endsWith("/stress_lab.js")) bindingUrls.add(response.url());
@@ -18,7 +19,9 @@ const empty = {
   camera: { position: [0, 20, 40], target: [0, 0, 0], fov_degrees: 60, near: 0.1, far: 2000 },
   materials: [{ id: "plain", color: [0.4, 0.5, 0.6, 1] }],
   meshes: [{ id: "box", source: { kind: "cube" } }],
-  entities: [{ id: "player", mesh: "box", material: "plain", tags: ["player"], transform: { translation: [0, 10, 0] } }],
+  entities: [{ id: "player", mesh: "box", material: "plain", tags: ["player"],
+    collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] }, memberships: 2, filter: 1, sensor: false },
+    transform: { translation: [0, 10, 0] } }],
 };
 const scene = routedScene(page, empty);
 const highlands = JSON.parse(await readFile(new URL("../../bench/scenes/highlands.json", import.meta.url), "utf8")).options.config;
@@ -48,7 +51,7 @@ try {
   if (process.env.ENGINE_BUILD) assert.ok(moduleUrl.includes(`/${process.env.ENGINE_BUILD}/`), "the requested build is pinned");
   const results = await page.evaluate(async ({ moduleUrl, fixtures, highlands }) => {
     const gameModule = await import(moduleUrl);
-    const workerUrl = moduleUrl.replace(/stress_lab\.js$/, "engine_worker.js");
+    const workerUrl = new URL("engine_worker.js", moduleUrl).href;
     const workerModule = await import(workerUrl);
     const instance = await workerModule.default();
     const check = (condition, message) => { if (!condition) throw new Error(`ASSERT: ${message}`); };
