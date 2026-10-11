@@ -417,6 +417,18 @@ impl AppHost {
         }
     }
 
+    /// A host's bake graph snapshot, outside per-frame/logical job counts.
+    pub fn report_bake_jobs(&mut self, stats: Option<engine_core::BakeJobStats>) {
+        if let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Jobs>()
+        {
+            jobs.report_bake(stats);
+        }
+    }
+
     /// A part of job `id`'s output its worker handed back before the rest,
     /// such as a tile's shape.
     pub fn part_job(&mut self, id: JobId, part: Vec<u8>) {

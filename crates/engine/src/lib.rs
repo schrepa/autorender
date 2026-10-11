@@ -139,8 +139,9 @@ pub mod stats {
 pub mod host {
     pub use crate::app_host::{JobMessage, now_ms};
     pub use engine_core::{
-        FileHeader, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs, TerrainDebug,
-        TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
+        BakeJobStats, FileHeader, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs,
+        TerrainDebug, TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash, job_class,
+        job_priority,
     };
 }
 

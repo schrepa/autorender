@@ -19,12 +19,13 @@
 
 import workerWasmUrl from "../../pkg/engine_worker_bg.wasm?url";
 import type { Runtime } from "../generated/runtime";
+import type { BakeCoordinator } from "../../pkg/engine_worker";
 import { engineWorkerModule } from "./bindings";
 import { JobCache, jobCacheSettings } from "./job-cache";
 import type { TranscodedImage } from "./ktx2";
 
 /** The game methods a pool serves. */
-export type JobRuntime = Pick<Runtime, "set_job_workers" | "take_jobs" | "complete_job" | "fail_job" | "part_job" | "report_job_cache">;
+export type JobRuntime = Pick<Runtime, "set_job_workers" | "take_jobs" | "complete_job" | "fail_job" | "part_job" | "report_job_cache" | "report_bake_jobs">;
 
 /** A job `take_jobs` lists: its identity where its output may be kept. */
 interface JobRequest { id: number; kind: string; input: Uint8Array; priority: number; identity?: Uint8Array }
@@ -64,6 +65,15 @@ interface Task {
   reject(error: Error): void;
 }
 
+type Route = { logical: number } | { root: number; child: number; bytes: number };
+type BakeAction = { share: string; bytes: Uint8Array } | { unshare: string } | { id: number; input: Uint8Array };
+interface BakeRoot { graph: BakeCoordinator; priority: number }
+interface BakeStats {
+  active_roots: number; children_in_flight: number; peak_busy_workers: number; completed_children: number;
+  sent_bytes: number; received_bytes: number; private_share_bytes: number; coordinator_bytes: number;
+  queued_bytes: number; peak_bytes: number; wasm_heap_bytes: number;
+}
+
 export class JobPool {
   private readonly slots: Slot[] = [];
   private readonly shares = new Map<string, Blob>();
@@ -73,8 +83,8 @@ export class JobPool {
   private nextTask = 1;
   private restarts = 0;
   /** The output cache, once open; the keys of jobs whose
-   * outputs it keeps when done; jobs looking it up and those cancelled
-   * meanwhile; outputs kept that fresh runs verify; and the counters last
+   * outputs it keeps when done; current cache lookups; outputs kept that
+   * fresh runs verify; and the counters last
    * reported. */
   private readonly cache: Promise<JobCache | undefined> = workerWasm().then(openCache);
   /** The job worker module, compiled once for every worker;
@@ -84,10 +94,17 @@ export class JobPool {
     .then(bytes => bytes && WebAssembly.compile(bytes))
     .catch(() => undefined);
   private readonly keys = new Map<number, string>();
-  private readonly looking = new Set<number>();
-  private readonly dropped = new Set<number>();
+  private readonly looking = new Map<number, { epoch: number }>();
   private readonly verifying = new Map<number, Uint8Array>();
   private reported = "";
+  private epoch = 0;
+  private nextTransport = 0;
+  private readonly routes = new Map<number, Route>();
+  private readonly bakes = new Map<number, BakeRoot>();
+  private readonly starting = new Map<number, { epoch: number; bytes: number }>();
+  private coordinator: Promise<typeof import("../../pkg/engine_worker") | undefined> | undefined;
+  private coordinatorMemory: WebAssembly.Memory | undefined;
+  private bakeStats: BakeStats | undefined;
 
   constructor(private readonly count: number) {
     for (let index = 0; index < count; index++) this.slots.push(this.spawn());
@@ -102,7 +119,11 @@ export class JobPool {
    * on, and the pool polls it for them between frames too, so jobs made
    * by development commands in paused sessions run. */
   attach(runtime: JobRuntime) {
+    this.detach();
     this.runtime = runtime;
+    this.bakeStats = undefined;
+    this.reported = "";
+    runtime.report_bake_jobs("null");
     runtime.set_job_workers(this.size);
     clearInterval(this.timer);
     this.timer = window.setInterval(() => this.exchange(), 50);
@@ -113,6 +134,7 @@ export class JobPool {
     clearInterval(this.timer);
     this.timer = 0;
     this.runtime = undefined;
+    this.clearJobs();
   }
 
   /** Hands workers what the attached runtime made since the last exchange. */
@@ -122,18 +144,9 @@ export class JobPool {
     const messages = runtime.take_jobs();
     for (const message of messages) {
       if ("cancel" in message) {
-        if (this.looking.has(message.cancel)) {
-          this.dropped.add(message.cancel);
-          continue;
-        }
-        this.keys.delete(message.cancel);
-        const slot = this.slots.find(slot => slot.jobs.has(message.cancel));
-        if (!slot) continue;
-        slot.jobs.delete(message.cancel);
-        this.post(slot, { type: "cancel", id: message.cancel });
+        this.cancel(message.cancel);
       } else if ("clear" in message) {
-        this.shares.clear();
-        this.broadcast({ type: "clear" });
+        this.clearJobs();
       } else if ("share" in message) {
         const blob = new Blob([message.bytes as Uint8Array<ArrayBuffer>]);
         this.shares.set(message.share, blob);
@@ -147,30 +160,177 @@ export class JobPool {
         this.dispatch(runtime, message);
       }
     }
+    this.pump();
     this.report();
   }
 
   /** Hands `message`'s job to the worker with the fewest in flight. */
   private dispatch(runtime: JobRuntime, message: JobRequest) {
-    const slot = this.least();
-    if (!slot) {
-      runtime.fail_job(message.id, "no workers");
+    if (message.kind === "terrain_bake" && this.size >= 2) {
+      void this.startBake(runtime, message);
       return;
     }
-    slot.jobs.set(message.id, message.priority);
-    this.post(slot, { type: "run", id: message.id, kind: message.kind, input: message.input, priority: message.priority }, [message.input.buffer as ArrayBuffer]);
+    try { this.send(message, { logical: message.id }); }
+    catch (error) { this.failLogical(message.id, String(error)); }
+  }
+
+  private transport(): number {
+    const id = this.nextTransport + 1;
+    if (!Number.isSafeInteger(id)) throw new Error("Worker transport ID is not exactly represented");
+    this.nextTransport = id;
+    return id;
+  }
+
+  private send(message: Omit<JobRequest, "id">, route: Route) {
+    const slot = this.least();
+    if (!slot) throw new Error("no workers");
+    const id = this.transport();
+    slot.jobs.set(id, message.priority);
+    this.routes.set(id, route);
+    this.post(slot, { type: "run", id, kind: message.kind, input: message.input, priority: message.priority }, [message.input.buffer as ArrayBuffer]);
+  }
+
+  /** The already compiled worker module, pinned to this build, instantiated
+   * on the page only when the first uncached parallel bake needs it. */
+  private coordinatorModule() {
+    this.coordinator ??= (async () => {
+      const pinned = engineWorkerModule();
+      const bindings = (pinned ? await import(/* @vite-ignore */ pinned) : await import("../../pkg/engine_worker")) as typeof import("../../pkg/engine_worker");
+      const compiled = await this.module;
+      const instance = await bindings.default(compiled ? { module_or_path: compiled } : undefined);
+      this.coordinatorMemory = instance.memory;
+      return bindings;
+    })().catch(error => {
+      console.warn(`Parallel bake coordinator unavailable: ${String(error)}`);
+      return undefined;
+    });
+    return this.coordinator;
+  }
+
+  private async startBake(runtime: JobRuntime, message: JobRequest) {
+    const pending = { epoch: this.epoch, bytes: message.input.byteLength };
+    this.starting.set(message.id, pending);
+    const current = () => this.runtime === runtime && this.epoch === pending.epoch && this.starting.get(message.id) === pending;
+    try {
+      const bindings = await this.coordinatorModule();
+      if (!current()) return;
+      if (!bindings || this.size < 2) {
+        this.send(message, { logical: message.id });
+        return;
+      }
+      let graph: BakeCoordinator;
+      try { graph = new bindings.BakeCoordinator(message.input, this.transport()); }
+      catch { this.send(message, { logical: message.id }); return; }
+      this.bakes.set(message.id, { graph, priority: message.priority });
+      this.bakeStats ??= { active_roots: 0, children_in_flight: 0, peak_busy_workers: 0, completed_children: 0,
+        sent_bytes: 0, received_bytes: 0, private_share_bytes: 0, coordinator_bytes: 0, queued_bytes: 0,
+        peak_bytes: 0, wasm_heap_bytes: 0 };
+    } catch (error) {
+      if (current()) this.failLogical(message.id, String(error));
+    } finally {
+      if (this.starting.get(message.id) === pending) this.starting.delete(message.id);
+      if (this.runtime === runtime) { this.pump(); this.report(); }
+    }
+  }
+
+  private cancel(id: number) {
+    this.looking.delete(id);
+    this.starting.delete(id);
+    const root = this.bakes.get(id);
+    if (root) {
+      root.graph.cancel();
+      for (const action of root.graph.ready(0) as BakeAction[]) {
+        if ("unshare" in action) {
+          this.shares.delete(action.unshare);
+          this.broadcast({ type: "unshare", key: action.unshare });
+        }
+      }
+      root.graph.free();
+      this.bakes.delete(id);
+    }
+    for (const [transport, route] of this.routes) {
+      if (("logical" in route ? route.logical : route.root) !== id) continue;
+      this.routes.delete(transport);
+      for (const slot of this.slots) {
+        if (slot.jobs.delete(transport)) this.post(slot, { type: "cancel", id: transport });
+      }
+    }
+    this.keys.delete(id);
+    this.verifying.delete(id);
+  }
+
+  private clearJobs() {
+    this.epoch++;
+    this.looking.clear();
+    for (const root of this.bakes.values()) { root.graph.cancel(); root.graph.free(); }
+    this.bakes.clear(); this.starting.clear(); this.routes.clear();
+    this.keys.clear(); this.verifying.clear(); this.shares.clear();
+    for (const slot of this.slots) slot.jobs.clear();
+    this.broadcast({ type: "clear" });
+  }
+
+  private finishLogical(id: number, output: Uint8Array) {
+    const key = this.keys.get(id);
+    this.keys.delete(id);
+    const kept = this.verifying.get(id);
+    this.verifying.delete(id);
+    if (kept) {
+      if (key && !sameBytes(kept, output)) void this.cache.then(cache => cache?.mismatch(key));
+      return;
+    }
+    this.runtime?.complete_job(id, output);
+    if (key) void this.cache.then(cache => cache?.store(key, output));
+  }
+
+  private failLogical(id: number, error: string) {
+    const verifying = this.verifying.has(id);
+    this.cancel(id);
+    if (!verifying) this.runtime?.fail_job(id, error);
+  }
+
+  private pump() {
+    if (!this.runtime) return;
+    const roots = [...this.bakes].sort(([a, left], [b, right]) => left.priority - right.priority || a - b);
+    for (const [id, root] of roots) {
+      try {
+        const occupied = this.slots.reduce((sum, slot) => sum + slot.jobs.size + slot.tasks.size, 0);
+        const actions = root.graph.ready(Math.max(0, this.size * 2 - occupied)) as BakeAction[];
+        for (const action of actions) {
+          if ("share" in action) {
+            const blob = new Blob([action.bytes as Uint8Array<ArrayBuffer>]);
+            this.shares.set(action.share, blob);
+            this.bakeStats!.sent_bytes += action.bytes.byteLength * this.size;
+            this.broadcast({ type: "share", key: action.share, blob });
+          } else if ("unshare" in action) {
+            this.shares.delete(action.unshare);
+            this.broadcast({ type: "unshare", key: action.unshare });
+          } else {
+            this.bakeStats!.sent_bytes += action.input.byteLength;
+            this.send({ kind: "terrain_bake_child", input: action.input, priority: root.priority },
+              { root: id, child: action.id, bytes: action.input.byteLength });
+          }
+        }
+        const output = root.graph.take_result();
+        if (output !== undefined) {
+          root.graph.free(); this.bakes.delete(id);
+          this.finishLogical(id, output);
+        }
+      } catch (error) { this.failLogical(id, String(error)); }
+    }
   }
 
   /** Answers a keepable job from the cache, or hands it to
    * a worker and keeps its output once done; verifying, runs it anyway
    * and compares. */
   private async cached(runtime: JobRuntime, message: JobRequest, identity: Uint8Array) {
-    this.looking.add(message.id);
+    const pending = { epoch: this.epoch };
+    this.looking.set(message.id, pending);
+    const current = () => this.runtime === runtime && this.epoch === pending.epoch && this.looking.get(message.id) === pending;
     try {
       const cache = await this.cache;
       const key = cache && await cache.key(message.kind, identity);
       const kept = cache && key ? await cache.lookup(key) : undefined;
-      if (this.dropped.has(message.id) || this.runtime !== runtime) return;
+      if (!current()) return;
       if (kept) {
         runtime.complete_job(message.id, kept);
         if (!cache?.verify) return;
@@ -179,10 +339,9 @@ export class JobPool {
       if (key) this.keys.set(message.id, key);
       this.dispatch(runtime, message);
     } catch (error) {
-      runtime.fail_job(message.id, String(error));
+      if (current()) this.failLogical(message.id, String(error));
     } finally {
-      this.looking.delete(message.id);
-      this.dropped.delete(message.id);
+      if (this.looking.get(message.id) === pending) this.looking.delete(message.id);
     }
   }
 
@@ -190,6 +349,24 @@ export class JobPool {
   private report() {
     const runtime = this.runtime;
     if (!runtime) return;
+    if (this.bakeStats) {
+      const stats = this.bakeStats;
+      stats.active_roots = this.bakes.size;
+      stats.children_in_flight = [...this.routes.values()].filter(route => "root" in route).length;
+      const busy = this.slots.filter(slot => [...slot.jobs.keys()].some(id => { const route = this.routes.get(id); return route && "root" in route; })).length;
+      stats.peak_busy_workers = Math.max(stats.peak_busy_workers, busy);
+      stats.private_share_bytes = 0; stats.coordinator_bytes = 0;
+      for (const root of this.bakes.values()) {
+        const values = root.graph.diagnostics();
+        stats.private_share_bytes += values[4]! * this.size;
+        stats.coordinator_bytes += values[4]! + values[5]!;
+      }
+      stats.queued_bytes = [...this.routes.values()].reduce((sum, route) => sum + ("root" in route ? route.bytes : 0), 0)
+        + [...this.starting.values()].reduce((sum, root) => sum + root.bytes, 0);
+      stats.peak_bytes = Math.max(stats.peak_bytes, stats.private_share_bytes + stats.coordinator_bytes + stats.queued_bytes);
+      stats.wasm_heap_bytes = this.coordinatorMemory?.buffer.byteLength ?? 0;
+      runtime.report_bake_jobs(JSON.stringify(stats));
+    }
     void this.cache.then(cache => {
       if (!cache) return;
       const { hits, misses, bytes, mismatches } = cache.stats();
@@ -286,30 +463,33 @@ export class JobPool {
       // Jobs cancelled since are no one's.
       case "done": {
         if (!slot.jobs.delete(message.id)) break;
-        const key = this.keys.get(message.id);
-        this.keys.delete(message.id);
-        const kept = this.verifying.get(message.id);
-        this.verifying.delete(message.id);
-        // A kept output the engine already took is compared, not taken.
-        if (kept) {
-          if (key && !sameBytes(kept, message.output)) void this.cache.then(cache => cache?.mismatch(key));
-          break;
+        const route = this.routes.get(message.id);
+        this.routes.delete(message.id);
+        if (!route) break;
+        if ("logical" in route) this.finishLogical(route.logical, message.output);
+        else {
+          try {
+            this.bakes.get(route.root)?.graph.complete(route.child, message.output);
+            if (this.bakeStats) {
+              this.bakeStats.completed_children++;
+              this.bakeStats.received_bytes += message.output.byteLength;
+            }
+          } catch (error) { this.failLogical(route.root, String(error)); }
         }
-        this.runtime?.complete_job(message.id, message.output);
-        if (key) void this.cache.then(cache => cache?.store(key, message.output));
         break;
       }
-      case "part":
-        if (slot.jobs.has(message.id)) this.runtime?.part_job(message.id, message.output);
+      case "part": {
+        const route = this.routes.get(message.id);
+        if (slot.jobs.has(message.id) && route && "logical" in route && !this.verifying.has(route.logical)) this.runtime?.part_job(route.logical, message.output);
         break;
-      case "failed":
-        this.keys.delete(message.id);
-        if (this.verifying.delete(message.id)) {
-          slot.jobs.delete(message.id);
-          break;
+      }
+      case "failed": {
+        if (!slot.jobs.delete(message.id)) break;
+        const route = this.routes.get(message.id);
+        this.routes.delete(message.id);
+        if (route) this.failLogical("logical" in route ? route.logical : route.root, message.error);
+        break;
         }
-        if (slot.jobs.delete(message.id)) this.runtime?.fail_job(message.id, message.error);
-        break;
       case "task":
         slot.tasks.delete(message.task);
         this.tasks.get(message.task)?.resolve(message.result);
@@ -324,6 +504,8 @@ export class JobPool {
         this.lose(slot, message.error);
         break;
     }
+    this.pump();
+    this.report();
   }
 
   /** Retires a broken worker: its jobs fail back to the engine, its tasks
@@ -335,8 +517,9 @@ export class JobPool {
     slot.worker.terminate();
     console.warn(`An engine worker stopped: ${error}`);
     for (const id of slot.jobs.keys()) {
-      this.keys.delete(id);
-      if (!this.verifying.delete(id)) this.runtime?.fail_job(id, error);
+      const route = this.routes.get(id);
+      this.routes.delete(id);
+      if (route) this.failLogical("logical" in route ? route.logical : route.root, error);
     }
     slot.jobs.clear();
     for (const task of slot.tasks) {

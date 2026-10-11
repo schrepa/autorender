@@ -125,8 +125,8 @@ pub use interpolation::{
     reset_interpolation,
 };
 pub use jobs::{
-    GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, JobStats, Jobs, URGENT_JOBS, VIEW_JOBS,
-    content_hash, job_class, job_priority,
+    BakeJobStats, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, JobStats, Jobs,
+    URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
 };
 pub use level_of_detail::LevelOfDetail;
 pub use lights::{

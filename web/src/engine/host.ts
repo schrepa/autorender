@@ -284,7 +284,7 @@ function fail(error: unknown) {
 /** Terrain loading until shortly before the frame due at `due`. */
 function workBetweenFrames(due: number) {
   between = 0;
-  if (disposed || !game || paused || document.hidden || failed || preparing) return;
+  if (disposed || !game || paused || document.hidden || failed || preparing || developmentBusy) return;
   const start = performance.now();
   const spare = due - start - BETWEEN_MARGIN_MS;
   if (spare > 1) game.work_between_frames(spare);
@@ -306,11 +306,23 @@ function scheduleBetweenFrames(timestamp: number) {
 /** Loading work in tasks while preparation waits on compiles. */
 function workWhileCompiling() {
   working = 0;
-  if (disposed || !game || paused || document.hidden || failed || !preparing) return;
+  if (disposed || !game || paused || document.hidden || failed || !preparing || developmentBusy) return;
   if (!readStats(game).pipelines_compiling) return;
   game.work(pixelWidth, pixelHeight);
   jobs?.exchange();
   working = window.setTimeout(workWhileCompiling, 0);
+}
+
+/** One bounded task per noncompiling preparation frame. The compilation
+ * pump owns loading while compiles run, and suspension cancels this timer. */
+function workWhilePreparing() {
+  between = 0;
+  if (disposed || !game || paused || document.hidden || failed || !preparing || developmentBusy || !betweenFrames || working) return;
+  if (readStats(game).pipelines_compiling) return;
+  try {
+    game.work_between_frames(2);
+    jobs?.exchange();
+  } catch (error) { fail(error); }
 }
 
 function prepareFrame(current: T, timestamp: number) {
@@ -327,6 +339,9 @@ function prepareFrame(current: T, timestamp: number) {
   current.frame(timestamp, pixelWidth, pixelHeight, 0, 0, 0, 0, 0, 0, 0, 0);
   jobs?.exchange();
   const after = readStats(current);
+  if (after.loading && !after.pipelines_compiling && !working && !between && betweenFrames && !developmentBusy) {
+    between = window.setTimeout(workWhilePreparing, 0);
+  }
   quietFrames = after.pipelines_created === 0 ? quietFrames + 1 : 0;
   if ((quietFrames < QUIET_FRAMES || after.loading) && !late) return;
   preparing = false;
@@ -451,6 +466,10 @@ async function start() {
     size: () => [pixelWidth, pixelHeight], paused: () => paused,
     busy: () => disposed || failed || developmentBusy,
   });
+  if (preparing && !paused && !document.hidden && !developmentBusy) {
+    created.work(pixelWidth, pixelHeight);
+    jobs?.exchange();
+  }
   if (development) {
     const { connectDevelopment } = await import("./dev");
     if (disposed) return;

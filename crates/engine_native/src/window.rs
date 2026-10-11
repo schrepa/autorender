@@ -153,14 +153,18 @@ impl<'a, G: Game> App<'a, G> {
             gpu: self.options.gpu,
             vsync: self.options.vsync,
         };
+        let mut jobs = self.options.jobs.pool();
         // The startup future holds the renderer's whole start (some 80 KB for
         // the Stress Lab): on the heap, not the calling thread's stack.
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
             target, build,
         )))?);
-        let mut jobs = self.options.jobs.pool();
         if let Some(pool) = &mut jobs {
             pool.attach(&mut host);
+        }
+        host.work(size.0, size.1);
+        if let Some(pool) = &mut jobs {
+            pool.exchange(&mut host);
         }
         Ok(Running {
             window,

@@ -16,8 +16,9 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use engine::host::{JobId, JobMessage, JobRequest, JobShare};
+use engine::host::{BakeJobStats, JobId, JobMessage, JobRequest, JobShare};
 use engine::{Game, GameHost};
+use engine_worker::{BAKE_CHILD_JOB, BakeAction, BakeCoordinator};
 
 use crate::job_cache::{DEFAULT_BUDGET, JobCache};
 
@@ -107,6 +108,17 @@ struct Slot {
     broken: bool,
 }
 
+#[derive(Clone, Copy)]
+enum Route {
+    Logical(JobId),
+    Child { root: u64, child: u64, bytes: usize },
+}
+
+struct BakeRoot {
+    graph: BakeCoordinator,
+    priority: u32,
+}
+
 /// Job workers beside a game, and the cache of their outputs.
 pub struct JobPool {
     slots: Vec<Slot>,
@@ -117,6 +129,10 @@ pub struct JobPool {
     keys: HashMap<u64, String>,
     verifying: HashMap<u64, Vec<u8>>,
     reported: Option<(u64, u64, u64, u64)>,
+    next_transport: u64,
+    routes: HashMap<u64, Route>,
+    bakes: HashMap<u64, BakeRoot>,
+    bake_stats: Option<BakeJobStats>,
 }
 
 impl JobPool {
@@ -157,6 +173,10 @@ impl JobPool {
             keys: HashMap::new(),
             verifying: HashMap::new(),
             reported: None,
+            next_transport: 0,
+            routes: HashMap::new(),
+            bakes: HashMap::new(),
+            bake_stats: None,
         }
     }
 
@@ -176,6 +196,9 @@ impl JobPool {
 
     /// Serves `host`'s jobs from now on.
     pub fn attach<G: Game>(&mut self, host: &mut GameHost<G>) {
+        self.clear();
+        self.bake_stats = None;
+        host.report_bake_jobs(None);
         host.set_job_workers(self.size() as u32);
     }
 
@@ -186,18 +209,9 @@ impl JobPool {
         for message in host.take_jobs() {
             match message {
                 JobMessage::Cancel(id) => {
-                    self.keys.remove(&id.0);
-                    self.verifying.remove(&id.0);
-                    if let Some(slot) = self
-                        .slots
-                        .iter_mut()
-                        .find(|slot| slot.jobs.contains_key(&id.0))
-                    {
-                        slot.jobs.remove(&id.0);
-                        let _ = slot.orders.send(Order::Cancel(id.0));
-                    }
+                    self.cancel(id.0);
                 }
-                JobMessage::Share(JobShare::Clear) => self.broadcast(|| Order::Clear),
+                JobMessage::Share(JobShare::Clear) => self.clear(),
                 JobMessage::Share(JobShare::Set { key, bytes }) => {
                     let bytes: std::sync::Arc<[u8]> = bytes.into();
                     self.broadcast(|| Order::Share(key.clone(), bytes.clone()));
@@ -208,6 +222,7 @@ impl JobPool {
                 JobMessage::Run(request) => self.request(host, request),
             }
         }
+        self.pump(host);
         self.report(host);
     }
 
@@ -232,6 +247,45 @@ impl JobPool {
     /// Hands `request` to the worker with the fewest jobs in flight; among
     /// those, the one whose most urgent job is least urgent.
     fn dispatch<G: Game>(&mut self, host: &mut GameHost<G>, request: JobRequest) {
+        if request.kind == "terrain_bake"
+            && self.size() >= 2
+            && let Some(epoch) = self.next_transport.checked_add(1)
+        {
+            self.next_transport = epoch;
+            if let Ok(graph) = BakeCoordinator::start(&request.input, epoch) {
+                self.bakes.insert(
+                    request.id.0,
+                    BakeRoot {
+                        graph,
+                        priority: request.priority,
+                    },
+                );
+                self.bake_stats.get_or_insert_with(BakeJobStats::default);
+                return;
+            }
+        }
+        if let Err(error) = self.send(
+            request.kind,
+            request.input,
+            request.priority,
+            Route::Logical(request.id),
+        ) {
+            self.fail_logical(host, request.id.0, error);
+        }
+    }
+
+    fn send(
+        &mut self,
+        kind: &'static str,
+        input: Vec<u8>,
+        priority: u32,
+        route: Route,
+    ) -> Result<(), String> {
+        let id = self
+            .next_transport
+            .checked_add(1)
+            .ok_or("worker transport ID overflow")?;
+        self.next_transport = id;
         let slot = self
             .slots
             .iter_mut()
@@ -241,16 +295,156 @@ impl JobPool {
                 (slot.jobs.len(), std::cmp::Reverse(urgent))
             });
         let Some(slot) = slot else {
-            host.fail_job(request.id, "no workers".into());
-            return;
+            return Err("no workers".into());
         };
-        slot.jobs.insert(request.id.0, request.priority);
-        let _ = slot.orders.send(Order::Run {
-            id: request.id.0,
-            kind: request.kind,
-            input: request.input,
-            priority: request.priority,
-        });
+        slot.orders
+            .send(Order::Run {
+                id,
+                kind,
+                input,
+                priority,
+            })
+            .map_err(|error| error.to_string())?;
+        slot.jobs.insert(id, priority);
+        self.routes.insert(id, route);
+        Ok(())
+    }
+
+    fn cancel(&mut self, logical: u64) {
+        if let Some(mut root) = self.bakes.remove(&logical) {
+            root.graph.cancel();
+            if let Ok(actions) = root.graph.ready(0) {
+                for action in actions {
+                    if let BakeAction::Unshare { key } = action {
+                        self.broadcast(|| Order::Unshare(key.clone()));
+                    }
+                }
+            }
+        }
+        let ids: Vec<_> = self
+            .routes
+            .iter()
+            .filter_map(|(&id, route)| {
+                let owner = match route {
+                    Route::Logical(id) => id.0,
+                    Route::Child { root, .. } => *root,
+                };
+                (owner == logical).then_some(id)
+            })
+            .collect();
+        for id in ids {
+            self.routes.remove(&id);
+            for slot in &mut self.slots {
+                if slot.jobs.remove(&id).is_some() {
+                    let _ = slot.orders.send(Order::Cancel(id));
+                }
+            }
+        }
+        self.keys.remove(&logical);
+        self.verifying.remove(&logical);
+    }
+
+    fn clear(&mut self) {
+        self.bakes.clear();
+        self.routes.clear();
+        self.keys.clear();
+        self.verifying.clear();
+        for slot in &mut self.slots {
+            slot.jobs.clear();
+        }
+        self.broadcast(|| Order::Clear);
+    }
+
+    fn finish_logical<G: Game>(&mut self, host: &mut GameHost<G>, id: u64, output: Vec<u8>) {
+        let key = self.keys.remove(&id);
+        if let Some(kept) = self.verifying.remove(&id) {
+            if let (Some(cache), Some(key)) = (&mut self.cache, key)
+                && kept != output
+            {
+                cache.mismatch(&key);
+            }
+            return;
+        }
+        if let (Some(cache), Some(key)) = (&mut self.cache, key) {
+            cache.store(&key, &output);
+        }
+        host.complete_job(JobId(id), output);
+    }
+
+    fn fail_logical<G: Game>(&mut self, host: &mut GameHost<G>, id: u64, error: String) {
+        let verifying = self.verifying.contains_key(&id);
+        self.cancel(id);
+        if !verifying {
+            host.fail_job(JobId(id), error);
+        }
+    }
+
+    /// Ordinary jobs already occupy their slots. Children use only the
+    /// remaining window, bounded over all roots, ordered by priority/id.
+    fn pump<G: Game>(&mut self, host: &mut GameHost<G>) {
+        let mut roots: Vec<_> = self
+            .bakes
+            .iter()
+            .map(|(&id, root)| (root.priority, id))
+            .collect();
+        roots.sort_unstable();
+        for (priority, id) in roots {
+            let occupied: usize = self.slots.iter().map(|slot| slot.jobs.len()).sum();
+            let limit = self.size().saturating_mul(2).saturating_sub(occupied);
+            let actions = self
+                .bakes
+                .get_mut(&id)
+                .expect("listed root")
+                .graph
+                .ready(limit);
+            let actions = match actions {
+                Ok(actions) => actions,
+                Err(error) => {
+                    self.fail_logical(host, id, error);
+                    continue;
+                }
+            };
+            for action in actions {
+                match action {
+                    BakeAction::Share { key, bytes } => {
+                        let copies = self.size() as u64;
+                        if let Some(stats) = &mut self.bake_stats {
+                            stats.sent_bytes += bytes.len() as u64 * copies;
+                        }
+                        let bytes: std::sync::Arc<[u8]> = bytes.into();
+                        self.broadcast(|| Order::Share(key.clone(), bytes.clone()));
+                    }
+                    BakeAction::Unshare { key } => self.broadcast(|| Order::Unshare(key.clone())),
+                    BakeAction::Run { id: child, input } => {
+                        let bytes = input.capacity();
+                        if let Some(stats) = &mut self.bake_stats {
+                            stats.sent_bytes += input.len() as u64;
+                        }
+                        if let Err(error) = self.send(
+                            BAKE_CHILD_JOB,
+                            input,
+                            priority,
+                            Route::Child {
+                                root: id,
+                                child,
+                                bytes,
+                            },
+                        ) {
+                            self.fail_logical(host, id, error);
+                            break;
+                        }
+                    }
+                }
+            }
+            if let Some(output) = self
+                .bakes
+                .get_mut(&id)
+                .and_then(|root| root.graph.take_result())
+            {
+                self.bakes.remove(&id);
+                self.finish_logical(host, id, output);
+            }
+        }
     }
 
     fn broadcast(&mut self, order: impl Fn() -> Order) {
@@ -264,60 +458,52 @@ impl JobPool {
         while let Ok(report) = self.reports.try_recv() {
             match report {
                 Report::Done(id, output) => {
-                    // Jobs cancelled since are no one's.
-                    let Some(slot) = self
-                        .slots
-                        .iter_mut()
-                        .find(|slot| slot.jobs.contains_key(&id))
-                    else {
+                    let Some(route) = self.take_route(id) else {
                         continue;
                     };
-                    slot.jobs.remove(&id);
-                    let key = self.keys.remove(&id);
-                    // A kept output the engine already took is compared,
-                    // not taken.
-                    if let Some(kept) = self.verifying.remove(&id) {
-                        if let (Some(cache), Some(key)) = (&mut self.cache, key)
-                            && kept != output
-                        {
-                            cache.mismatch(&key);
+                    match route {
+                        Route::Logical(id) => self.finish_logical(host, id.0, output),
+                        Route::Child { root, child, .. } => {
+                            if let Some(stats) = &mut self.bake_stats {
+                                stats.completed_children += 1;
+                                stats.received_bytes += output.len() as u64;
+                            }
+                            if let Some(bake) = self.bakes.get_mut(&root)
+                                && let Err(error) = bake.graph.complete(child, &output)
+                            {
+                                self.fail_logical(host, root, error);
+                            }
                         }
-                        continue;
                     }
-                    if let (Some(cache), Some(key)) = (&mut self.cache, key) {
-                        cache.store(&key, &output);
-                    }
-                    host.complete_job(JobId(id), output);
                 }
                 Report::Part(id, part) => {
-                    if self.slots.iter().any(|slot| slot.jobs.contains_key(&id))
-                        && !self.verifying.contains_key(&id)
+                    if let Some(Route::Logical(logical)) = self.routes.get(&id)
+                        && !self.verifying.contains_key(&logical.0)
                     {
-                        host.part_job(JobId(id), part);
+                        host.part_job(*logical, part);
                     }
                 }
                 Report::Failed(id, error) => {
-                    let Some(slot) = self
-                        .slots
-                        .iter_mut()
-                        .find(|slot| slot.jobs.contains_key(&id))
-                    else {
-                        continue;
-                    };
-                    slot.jobs.remove(&id);
-                    self.keys.remove(&id);
-                    if self.verifying.remove(&id).is_none() {
-                        host.fail_job(JobId(id), error);
+                    if let Some(route) = self.take_route(id) {
+                        let logical = match route {
+                            Route::Logical(id) => id.0,
+                            Route::Child { root, .. } => root,
+                        };
+                        self.fail_logical(host, logical, error);
                     }
                 }
                 Report::Broken(index, error) => {
                     eprintln!("A job worker broke and takes no more jobs: {error}");
                     let slot = &mut self.slots[index];
                     slot.broken = true;
-                    for (id, _) in slot.jobs.drain() {
-                        self.keys.remove(&id);
-                        if self.verifying.remove(&id).is_none() {
-                            host.fail_job(JobId(id), "worker unavailable".into());
+                    let ids: Vec<_> = slot.jobs.drain().map(|(id, _)| id).collect();
+                    for id in ids {
+                        if let Some(route) = self.routes.remove(&id) {
+                            let logical = match route {
+                                Route::Logical(id) => id.0,
+                                Route::Child { root, .. } => root,
+                            };
+                            self.fail_logical(host, logical, "worker unavailable".into());
                         }
                     }
                     host.set_job_workers(self.size() as u32);
@@ -326,8 +512,60 @@ impl JobPool {
         }
     }
 
+    fn take_route(&mut self, id: u64) -> Option<Route> {
+        let route = self.routes.remove(&id)?;
+        for slot in &mut self.slots {
+            slot.jobs.remove(&id);
+        }
+        Some(route)
+    }
+
     /// Tells `host` the cache's counters when they change.
     fn report<G: Game>(&mut self, host: &mut GameHost<G>) {
+        let workers = self.size() as u64;
+        if let Some(stats) = &mut self.bake_stats {
+            stats.active_roots = self.bakes.len() as u64;
+            stats.children_in_flight = self
+                .routes
+                .values()
+                .filter(|route| matches!(route, Route::Child { .. }))
+                .count() as u64;
+            let busy = self
+                .slots
+                .iter()
+                .filter(|slot| {
+                    slot.jobs
+                        .keys()
+                        .any(|id| matches!(self.routes.get(id), Some(Route::Child { .. })))
+                })
+                .count() as u64;
+            stats.peak_busy_workers = stats.peak_busy_workers.max(busy);
+            stats.private_share_bytes = self
+                .bakes
+                .values()
+                .map(|root| root.graph.diagnostics().share_bytes as u64 * workers)
+                .sum();
+            stats.coordinator_bytes = self
+                .bakes
+                .values()
+                .map(|root| {
+                    let value = root.graph.diagnostics();
+                    (value.buffer_bytes + value.share_bytes) as u64
+                })
+                .sum();
+            stats.queued_bytes = self
+                .routes
+                .values()
+                .map(|route| match route {
+                    Route::Child { bytes, .. } => *bytes as u64,
+                    _ => 0,
+                })
+                .sum();
+            stats.peak_bytes = stats
+                .peak_bytes
+                .max(stats.private_share_bytes + stats.coordinator_bytes + stats.queued_bytes);
+            host.report_bake_jobs(Some(*stats));
+        }
         let Some(cache) = &self.cache else {
             return;
         };

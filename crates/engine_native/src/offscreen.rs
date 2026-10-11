@@ -99,12 +99,14 @@ impl<G: Game> Offscreen<G> {
         build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> engine::Result<Self> {
         let target = RenderTarget::Offscreen { size, gpu };
+        // Normal warm-up overlaps renderer creation, within the same host
+        // launch boundary used by callers and measurement.
+        let mut jobs = jobs.pool();
         // The startup future holds the renderer's whole start (some 80 KB for
         // the Stress Lab): on the heap, not the calling thread's stack.
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
             target, build,
         )))?);
-        let mut jobs = jobs.pool();
         if let Some(pool) = &mut jobs {
             pool.attach(&mut host);
         }
@@ -291,6 +293,8 @@ impl<G: Game> Offscreen<G> {
     /// window does before play starts.
     pub fn prepare(&mut self, timestamp: f64) -> engine::Result<()> {
         let mut preparation = Preparation::new();
+        self.host.work(self.size.0, self.size.1);
+        self.exchange_jobs();
         while !preparation.frame(&mut self.host, timestamp, self.size)? {
             self.exchange_jobs();
         }

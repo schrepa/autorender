@@ -783,6 +783,7 @@ impl DevTools {
             |jobs| {
                 let stats = jobs.stats();
                 json!(crate::views::JobsView {
+                    bake: jobs.bake_stats(),
                     workers: stats.workers,
                     running: stats.running,
                     submitted: stats.submitted,

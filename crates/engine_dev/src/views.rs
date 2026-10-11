@@ -209,6 +209,10 @@ pub struct NavAgentsView {
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct JobsView {
+    /// Independent terrain bake sampling: cumulative counters since pool
+    /// attach and current graph/share/buffer gauges; absent before use.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bake: Option<engine_core::BakeJobStats>,
     pub workers: u32,
     pub running: u32,
     pub submitted: u64,

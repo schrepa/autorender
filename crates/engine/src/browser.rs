@@ -282,6 +282,13 @@ impl<G: Game> PageHost<G> {
             .report_job_cache(count(hits), count(misses), count(bytes), count(mismatches));
     }
 
+    pub fn report_bake_jobs(&mut self, snapshot: &str) -> Result<(), JsValue> {
+        let stats = serde_json::from_str::<Option<engine_core::BakeJobStats>>(snapshot)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        self.host.report_bake_jobs(stats);
+        Ok(())
+    }
+
     pub fn reload_scene(&mut self, source: &str, files: SceneFileSet) -> Result<(), JsValue> {
         Ok(self.host.reload_scene(source, files.files())?)
     }

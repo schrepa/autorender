@@ -173,14 +173,29 @@ impl Sampling {
         }
         let value: Self = input.get().map_err(invalid)?;
         input.finish().map_err(invalid)?;
-        if value.level >= value.pyramid.levels()
+        match &value.kind {
+            BakeKind::Hydrology(layer) => layer.validate(),
+            BakeKind::Erosion(layer) => layer.validate(),
+            BakeKind::Path(layer) => layer.validate(),
+        }
+        .map_err(|error| error.to_string())?;
+        if value.level
+            != value
+                .kind
+                .level()
+                .unwrap_or(0)
+                .min(value.pyramid.levels() - 1)
             || !value.step.is_finite()
             || value.profile.iter().any(|point| !point.is_finite())
         {
             return Err("invalid bake sampling metadata".into());
         }
         if let Some(job) = &value.rivers {
-            if job.hydrology.is_none() || job.ground.len() != job.lines.len() {
+            if !matches!(value.kind, BakeKind::Hydrology(_))
+                || job.hydrology.is_none()
+                || job.ground.len() != job.lines.len()
+                || job.ground.iter().any(|line| !line.is_empty())
+            {
                 return Err("invalid river sampling metadata".into());
             }
             for line in &job.lines {
@@ -193,12 +208,31 @@ impl Sampling {
                 }
                 finite(&line.half)?;
                 finite(&line.depth)?;
+                if line
+                    .half
+                    .iter()
+                    .chain(&line.depth)
+                    .any(|&value| value < 0.0)
+                {
+                    return Err("negative river sampling width or depth".into());
+                }
             }
         }
-        if !matches!(value.kind, BakeKind::Path(_)) {
+        if let BakeKind::Path(layer) = &value.kind {
+            let (profile, step) = layer.profile_points();
+            if value.width != 0
+                || value.height != 0
+                || value.profile != profile
+                || value.step != step
+            {
+                return Err("invalid path sampling metadata".into());
+            }
+        } else {
             let [x, z] = value.pyramid.tiles(value.level);
             if value.width != x as usize * TILE_QUADS as usize + 1
                 || value.height != z as usize * TILE_QUADS as usize + 1
+                || !value.profile.is_empty()
+                || value.step != 0.0
             {
                 return Err("invalid bake grid dimensions".into());
             }
@@ -601,8 +635,15 @@ impl BakeCoordinator {
     }
 
     pub fn cancel(&mut self) {
+        if self.cancelled {
+            return;
+        }
         self.cancelled = true;
-        self.actions.clear();
+        // A completed child may already have queued the old stage's
+        // release and a new share. Cancellation discards unsent work but
+        // must still release every stage that a host could be holding.
+        self.actions
+            .retain(|action| matches!(action, BakeAction::Unshare { .. }));
         self.release_share();
         self.layers = None;
         self.sampling = None;
@@ -672,7 +713,10 @@ impl ParallelJob {
         match kind {
             GRID => {
                 let key: TileKey = reader.get().map_err(invalid)?;
-                if !job.sampling.pyramid.contains(key) || u32::from(key.level) != job.sampling.level
+                if matches!(job.sampling.kind, BakeKind::Path(_))
+                    || job.sampling.rivers.is_some()
+                    || !job.sampling.pyramid.contains(key)
+                    || u32::from(key.level) != job.sampling.level
                 {
                     return Err("bake tile outside its level".into());
                 }
@@ -682,6 +726,9 @@ impl ParallelJob {
                 ));
             }
             PATH | RIVER => {
+                if (kind == PATH) != matches!(job.sampling.kind, BakeKind::Path(_)) {
+                    return Err("wrong bake sampling stage".into());
+                }
                 job.first = reader.get().map_err(invalid)?;
                 job.end = reader.get().map_err(invalid)?;
                 let count = if kind == PATH {
@@ -696,6 +743,7 @@ impl ParallelJob {
             KERNEL => {
                 let heights: Vec<f32> = reader.get().map_err(invalid)?;
                 if matches!(job.sampling.kind, BakeKind::Path(_))
+                    || job.sampling.rivers.is_some()
                     || Some(heights.len()) != job.sampling.width.checked_mul(job.sampling.height)
                 {
                     return Err("wrong bake kernel grid".into());

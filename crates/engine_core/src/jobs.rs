@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bevy_ecs::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Ids handed out so far, across engines: a page that replaces its engine
 /// never mistakes an earlier engine's output for a job of its own.
@@ -139,6 +139,33 @@ pub enum JobShare {
     Remove { key: String },
 }
 
+/// Host-side bake graphs, separate from logical job/frame statistics.
+/// Counts and traffic are cumulative since attach; roots, in-flight jobs,
+/// shares, coordinator/queued bytes and heap bytes are current gauges.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BakeJobStats {
+    pub active_roots: u64,
+    pub children_in_flight: u64,
+    /// High water of workers with assigned children, not sampled CPU occupancy.
+    pub peak_busy_workers: u64,
+    pub completed_children: u64,
+    pub sent_bytes: u64,
+    pub received_bytes: u64,
+    /// Encoded private input size times live workers. Decoded worker heaps
+    /// can be larger; this is the share/transport accounting size.
+    pub private_share_bytes: u64,
+    /// Join buffer capacity plus encoded private inputs retained per graph.
+    pub coordinator_bytes: u64,
+    /// Input payloads assigned to children or waiting for coordinator startup.
+    pub queued_bytes: u64,
+    /// High water of the three tracked byte gauges, not total process RSS.
+    pub peak_bytes: u64,
+    /// Browser coordinator instance memory, including retained capacity
+    /// after graphs finish. None on native hosts.
+    pub wasm_heap_bytes: Option<u64>,
+}
+
 /// Workers, their jobs and the host's output cache.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -192,6 +219,7 @@ pub struct Jobs {
     // What is shared now, by key: its size.
     shared: HashMap<String, u64>,
     stats: JobStats,
+    bake: Option<BakeJobStats>,
 }
 
 impl Default for Jobs {
@@ -207,11 +235,20 @@ impl Default for Jobs {
             cache: [0; 4],
             shared: HashMap::new(),
             stats: JobStats::default(),
+            bake: None,
         }
     }
 }
 
 impl Jobs {
+    pub fn bake_stats(&self) -> Option<BakeJobStats> {
+        self.bake
+    }
+
+    pub fn report_bake(&mut self, stats: Option<BakeJobStats>) {
+        self.bake = stats;
+    }
+
     /// Workers jobs run on; with none, owners do the work themselves.
     pub fn workers(&self) -> u32 {
         self.workers

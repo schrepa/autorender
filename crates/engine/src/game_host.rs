@@ -127,6 +127,10 @@ impl<G: Game> GameHost<G> {
         self.app.report_job_cache(hits, misses, bytes, mismatches);
     }
 
+    pub fn report_bake_jobs(&mut self, stats: Option<engine_core::BakeJobStats>) {
+        self.app.report_bake_jobs(stats);
+    }
+
     pub fn suspend(&mut self) {
         self.app.suspend();
         #[cfg(feature = "dev")]

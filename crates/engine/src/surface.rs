@@ -33,6 +33,8 @@ macro_rules! __game_surface {
                 fn part_job(id: f64, part: Vec<u8>);
                 /// The page's job output cache counters.
                 fn report_job_cache(hits: f64, misses: f64, bytes: f64, mismatches: f64);
+                /// Host bake graphs, separate from frame statistics (JSON snapshot).
+                fn report_bake_jobs(snapshot: &str) -> Result<(), $crate::__private::JsValue>;
                 /// Drops suspension time and held input before the next frame.
                 fn suspend();
                 /// Puts the camera where the game starts.

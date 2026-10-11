@@ -23,6 +23,8 @@ export interface Runtime {
   part_job(id: number, part: Uint8Array): void;
   /** The page's job output cache counters. */
   report_job_cache(hits: number, misses: number, bytes: number, mismatches: number): void;
+  /** Host bake graphs, separate from frame statistics (JSON snapshot). */
+  report_bake_jobs(snapshot: string): void;
   /** Drops suspension time and held input before the next frame. */
   suspend(): void;
   /** Puts the camera where the game starts. */
