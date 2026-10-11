@@ -95,10 +95,11 @@ export async function artifacts(name) {
 /** Headless Chrome (`BROWSER_PATH`, or the `BROWSER_CHANNEL` channel) with
  * unsafe WebGPU, SwiftShader with `SOFTWARE_GPU=1`, the shaders earlier
  * checks compiled (`launchContext`), and one page of `width` by `height`
- * whose first errors collect in `errors`; `browser.close()` ends it. */
+ * whose first errors collect in `errors`; `browser.close()` ends it and
+ * `browser.version()` names Chrome's version. */
 export async function launch({ width = 1200, height = 900, timeout = 30_000, args = [] } = {}) {
-  const { page, close } = await launchContext({ args, viewport: { width, height }, deviceScaleFactor: 1 });
-  const browser = { close };
+  const { page, version, close } = await launchContext({ args, viewport: { width, height }, deviceScaleFactor: 1 });
+  const browser = { close, version: () => version };
   page.setDefaultTimeout(timeout);
   const errors = [];
   const record = value => { if (errors.length < 20) errors.push(String(value).slice(0, 2000)); };

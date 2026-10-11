@@ -104,8 +104,8 @@ function claimFolder() {
  * `contextOptions` (viewport, scale): in a profile folder that keeps the
  * shaders it compiled for the next launch, else (`SMOKE_SHADER_CACHE=off`,
  * every folder in use, or a launch there failing) in a temporary profile.
- * Resolves to the context, its first page and `close`, which frees the
- * folder too. */
+ * Resolves to the context, its first page, Chrome's version and `close`,
+ * which frees the folder too. */
 export async function launchContext({ executablePath, args = [], ...contextOptions } = {}) {
   const { chromium } = await import("@playwright/test");
   const options = launchOptions({ executablePath, args });
@@ -114,12 +114,15 @@ export async function launchContext({ executablePath, args = [], ...contextOptio
     try {
       const context = await chromium.launchPersistentContext(claimed.folder, { ...options, ...contextOptions });
       const page = context.pages()[0] ?? await context.newPage();
-      return { context, page, close: () => context.close().finally(claimed.release) };
+      // A persistent context has no browser object to ask.
+      const session = await context.newCDPSession(page);
+      const { product } = await session.send("Browser.getVersion").finally(() => session.detach());
+      return { context, page, version: product.split("/").pop(), close: () => context.close().finally(claimed.release) };
     } catch {
       claimed.release();
     }
   }
   const browser = await chromium.launch(options);
   const context = await browser.newContext(contextOptions);
-  return { context, page: await context.newPage(), close: () => browser.close() };
+  return { context, page: await context.newPage(), version: browser.version(), close: () => browser.close() };
 }
