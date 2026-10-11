@@ -30,13 +30,15 @@ pub(crate) const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16F
 const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Weight of each frame's color against the history: an exponential average
 /// over about ten frames, beyond the eight-sample jitter cycle.
-const CURRENT_WEIGHT: f32 = 0.1;
+/// Keep new samples contributing even after uncertainty has fallen.
+const MINIMUM_CURRENT_WEIGHT: f32 = 0.05;
 
 struct Targets {
-    // Motion and both histories, destroyed with the targets.
-    textures: [wgpu::Texture; 3],
+    // Motion, total histories and coarse histories, destroyed together.
+    textures: [wgpu::Texture; 5],
     motion: wgpu::TextureView,
     history: [wgpu::TextureView; 2],
+    coarse_history: [wgpu::TextureView; 2],
 }
 
 impl Drop for Targets {
@@ -91,7 +93,7 @@ pub(crate) struct TemporalPass {
     targets: ScreenTarget<Targets>,
     // Frames writing history `p` read history `1 - p` through group `p`,
     // over the screen effects' targets.
-    resolve_groups: [GroupCache<9>; 2],
+    resolve_groups: [GroupCache<10>; 2],
     // Pose groups for (current, previous) buffer pairs, index 2 * current +
     // previous.
     pose_groups: [GroupCache<6>; 4],
@@ -134,7 +136,11 @@ impl TemporalPass {
                 vertex: temporal::vs_fullscreen,
                 fragment: temporal::fs_resolve,
                 constants: &[],
-                targets: &[Some(surface_format.into()), Some(HISTORY_FORMAT.into())],
+                targets: &[
+                    Some(surface_format.into()),
+                    Some(HISTORY_FORMAT.into()),
+                    Some(HISTORY_FORMAT.into()),
+                ],
                 depth: None,
             },
         );
@@ -168,11 +174,11 @@ impl TemporalPass {
         }
     }
 
-    /// Target bytes: motion and two history textures of 4 bytes per pixel
+    /// Target bytes: motion and four history textures of 4 bytes per pixel
     /// each (the scene target belongs to the screen effects).
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
-            u64::from(size.width) * u64::from(size.height) * 12
+            u64::from(size.width) * u64::from(size.height) * 20
         })
     }
 
@@ -201,14 +207,17 @@ impl TemporalPass {
             structure: frame.structure_revision(),
             pose_generation,
         };
-        let last = self
-            .history
-            .filter(|last| last.size == size && last.identity == history.identity);
+        let last = self.history.filter(|last| {
+            last.size == size
+                && last.identity == history.identity
+                && last.structure == history.structure
+                && last.pose_generation == pose_generation
+        });
         let jitter = jitter_clip(jitter_offset(self.frame), size.width, size.height);
         let previous = last.map_or(view_projection, |last| last.view_projection);
         let uniform = ResolveUniform {
             texel: [1.0 / size.width as f32, 1.0 / size.height as f32],
-            current_weight: CURRENT_WEIGHT,
+            minimum_current_weight: MINIMUM_CURRENT_WEIGHT,
             history_valid: u32::from(last.is_some()),
         };
         if self
@@ -317,9 +326,13 @@ impl TemporalPass {
         &self.pose_layout
     }
 
-    /// The history target `frame` resolves into.
-    pub(crate) fn history_target(&self, frame: &ResolveFrame) -> &wgpu::TextureView {
-        &self.targets.get().expect("sized in begin").history[frame.parity]
+    /// The total and coarse history targets `frame` resolves into.
+    pub(crate) fn history_targets(&self, frame: &ResolveFrame) -> [&wgpu::TextureView; 2] {
+        let targets = self.targets.get().expect("sized in begin");
+        [
+            &targets.history[frame.parity],
+            &targets.coarse_history[frame.parity],
+        ]
     }
 
     /// The motion target of the opaque pass.
@@ -354,6 +367,7 @@ impl TemporalPass {
                     ("scene", scene.clone()),
                     ("motion", target(&targets.motion)),
                     ("history", target(&targets.history[1 - parity])),
+                    ("coarse_history", target(&targets.coarse_history[1 - parity])),
                     (
                         "history_sampler",
                         Bound::fixed(crate::pipelines::sampler(&self.sampler)),
@@ -369,7 +383,7 @@ impl TemporalPass {
     }
 
     /// Draws the resolve of `frame` into `pass`, its node's pass over the
-    /// canvas and the history it writes.
+    /// canvas and both histories it writes.
     fn draw_resolve(&self, mut pass: wgpu::RenderPass<'_>, frame: &ResolveFrame) {
         let group = self.resolve_groups[frame.parity]
             .get()
@@ -400,14 +414,17 @@ impl TemporalPass {
             texture("engine/taa-motion", MOTION_FORMAT),
             texture("engine/taa-history", HISTORY_FORMAT),
             texture("engine/taa-history", HISTORY_FORMAT),
+            texture("engine/taa-coarse-history", HISTORY_FORMAT),
+            texture("engine/taa-coarse-history", HISTORY_FORMAT),
         ];
-        let [motion, first, second] = textures
+        let [motion, first, second, coarse_first, coarse_second] = textures
             .each_ref()
             .map(|texture| texture.create_view(&Default::default()));
         Targets {
             textures,
             motion,
             history: [first, second],
+            coarse_history: [coarse_first, coarse_second],
         }
     }
 }
@@ -426,7 +443,7 @@ impl RenderFeature for TemporalPass {
     const LABELS: &'static [&'static str] = &["engine/taa-", "engine/temporal"];
 
     /// The resolve reads the scene, the motion and the history (and the
-    /// effects that run), and writes the canvas and the next history.
+    /// effects that run), and writes the canvas and both next histories.
     fn declare(_frame: &ResolveFrame, shape: &FrameShape, graph: &mut RenderGraph) {
         if shape.targets != crate::render_graph::Targets::Temporal {
             return;
@@ -436,9 +453,11 @@ impl RenderFeature for TemporalPass {
             .read(Resource::Scene)
             .read(Resource::Motion)
             .read(Resource::History)
+            .read(Resource::CoarseHistory)
             .read_if(shape.effects.any(), Resource::Effects)
             .color(Resource::Canvas, Access::Clear(Clear::Color(BLACK)))
-            .color(Resource::History, Access::Clear(Clear::Color(BLACK)));
+            .color(Resource::History, Access::Clear(Clear::Color(BLACK)))
+            .color(Resource::CoarseHistory, Access::Clear(Clear::Color(BLACK)));
     }
 
     fn encode(

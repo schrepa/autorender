@@ -57,6 +57,7 @@ resources! {
     /// Temporal antialiasing's motion target and history.
     Motion: Frame,
     History: Kept,
+    CoarseHistory: Kept,
     /// The visibility buffer's triangle IDs and per-bin tile lists.
     Ids: Frame,
     Tiles: Frame,

@@ -1174,6 +1174,7 @@ tables! {
             texture(6, "bloom", Float, D2, F),
             uniform_of(7, "post", size_of::<PostUniform>(), F),
             texture(8, "reflections", Float, D2, F),
+            texture(9, "coarse_history", Float, D2, F),
         ],
     };
 

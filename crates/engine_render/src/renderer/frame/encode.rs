@@ -115,6 +115,7 @@ impl Renderer {
                 }
             }
             Resource::History
+            | Resource::CoarseHistory
             | Resource::Tiles
             | Resource::Poses
             | Resource::Visible
@@ -153,7 +154,7 @@ impl Renderer {
         let views = FrameViews {
             renderer: self,
             canvas,
-            history: None,
+            histories: None,
         };
         crate::render_features::render_pass(encoder, node, &views, label, timestamp_writes)
     }
@@ -168,18 +169,18 @@ impl Renderer {
         view: &wgpu::TextureView,
         node: &Node,
     ) -> u32 {
-        // The history temporal antialiasing's resolve writes this frame.
-        let history = state
+        // The histories temporal antialiasing's resolve writes this frame.
+        let histories = state
             .features
             .frames
             .temporal
             .as_ref()
             .zip(self.features.temporal.get())
-            .map(|(ready, temporal)| temporal.history_target(ready.frame()));
+            .map(|(ready, temporal)| temporal.history_targets(ready.frame()));
         let views = FrameViews {
             renderer: self,
             canvas: view,
-            history,
+            histories,
         };
         let meshes = FrameMeshes {
             renderer: self,
@@ -427,18 +428,19 @@ impl MeshDraws for FrameMeshes<'_> {
 }
 
 /// A frame's attachments: the renderer's targets, the canvas's view
-/// `canvas`, and the history temporal antialiasing resolves into, in
+/// `canvas`, and the histories temporal antialiasing resolves into, in
 /// frames resolving it.
 struct FrameViews<'a> {
     renderer: &'a Renderer,
     canvas: &'a wgpu::TextureView,
-    history: Option<&'a wgpu::TextureView>,
+    histories: Option<[&'a wgpu::TextureView; 2]>,
 }
 
 impl AttachmentViews for FrameViews<'_> {
     fn view(&self, resource: Resource) -> &wgpu::TextureView {
-        match (resource, self.history) {
-            (Resource::History, Some(history)) => history,
+        match (resource, self.histories) {
+            (Resource::History, Some([total, _])) => total,
+            (Resource::CoarseHistory, Some([_, coarse])) => coarse,
             _ => self.renderer.attachment_view(resource, self.canvas),
         }
     }
