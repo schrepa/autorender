@@ -13,6 +13,9 @@ import {
 import { STRESS_PARAMETERS } from "./parameters";
 import "./stress.css";
 
+/** The scanned rock maps under public/stress/rocks (vite.config.ts). */
+declare const __STRESS_ROCKS__: readonly string[];
+
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const choice = (id: string) => el<HTMLSelectElement>(id);
 const number = (id: string) => Number(el<HTMLInputElement>(id).value);
@@ -95,8 +98,8 @@ async function highlandsFiles(): Promise<StressFiles | undefined> {
     return undefined;
   }
   // Scanned rock maps, kept locally and optional: without them rocks wear
-  // the terrain rock's maps.
-  const rocks = JSON.parse(filesClass.rock_names()) as string[];
+  // the terrain rock's maps. Only those the server found are requested.
+  const rocks = (JSON.parse(filesClass.rock_names()) as string[]).filter(name => __STRESS_ROCKS__.includes(name));
   await Promise.all(rocks.map(async name => {
     try {
       const response = await fetch(new URL(`${import.meta.env.BASE_URL}stress/rocks/${name}`, location.href));

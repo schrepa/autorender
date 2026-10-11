@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 import { resolve } from "node:path";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync, readdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
 // The browser clients, generated from xtask (`cargo xtask schema`).
 import clients from "./src/generated/clients.json";
@@ -10,8 +10,14 @@ import clients from "./src/generated/clients.json";
 const instrumented = new Map([["profiling", "profile"], ["attribution", "attribution"]]);
 // The games: clients with a page.
 const games = clients.flatMap(({ wasm, game, page }) => game && page ? [{ wasm, game, page }] : []);
+// The scanned rock maps kept locally (never committed), as the server starts
+// or the page builds: the page requests only these, so a checkout without
+// them loads without failed requests.
+const rocksFolder = resolve(import.meta.dirname, "public/stress/rocks");
+const rocks = existsSync(rocksFolder) ? readdirSync(rocksFolder).filter(name => name.endsWith(".ktx2")) : [];
 
 export default defineConfig(({ command, mode }) => ({
+  define: { __STRESS_ROCKS__: JSON.stringify(rocks) },
   // Authored saves become visible only through an explicit revision-checked reload.
   server: { watch: { ignored: ["**/public/scenes/**"] } },
   plugins: [{
