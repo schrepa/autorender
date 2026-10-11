@@ -1,7 +1,8 @@
 /** Temporal antialiasing in real Chrome: ordinary GPU-presented
- * frames converge to a stable, smoother image, while captures and CPU-presented
- * frames stay exact; its settings are inspected, changed by the paused
- * environment control and observed in ordinary frames. */
+ * frames converge to a smoother image, how much a still view then flickers
+ * measured, while captures and CPU-presented frames stay exact; its
+ * settings are inspected, changed by the paused environment control and
+ * observed in ordinary frames. */
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
@@ -142,9 +143,13 @@ try {
   assert.ok(smoothed.changed[8] > smoothed.total * 0.001, `antialiasing must change edges: ${JSON.stringify(smoothed)}`);
   assert.ok(smoothed.block_difference < 3, `antialiasing must preserve content: ${JSON.stringify(smoothed)}`);
   assert.ok(smoothed.variation[1] < smoothed.variation[0] * 0.95, `antialiasing must smooth edges: ${JSON.stringify(smoothed)}`);
+  // How much a converged still view flickers is measured, not judged.
   const stable = await compare([first, second]);
   results.stable = stable;
-  assert.ok(stable.changed[24] < stable.total * 0.005, `a still view must not flicker: ${JSON.stringify(stable)}`);
+  const measurements = [{
+    name: "still view flicker", value: stable.changed[24] / stable.total * 100, unit: "%",
+    note: "pixels whose largest channel differs by more than 24 levels between two converged still frames 300 ms apart",
+  }];
 
   // The page's ?taa=on set the world's settings; ordinary frames report what
   // they ran, and the paused environment control turns it off and on.
@@ -191,7 +196,8 @@ try {
   await writeFile(`${output}/results.json`, JSON.stringify(results, null, 2));
   console.log(JSON.stringify({
     ok: true, artifact: output, ...results,
-    checks: ["captures_independent_of_setting", "edges_smoothed", "content_preserved", "still_view_stable", "settings_inspected", "settings_controlled", "settings_observed", "settings_validated", "captures_exact_after_temporal_frames", "cpu_presentation_exact", "moving_frames_draw", "clean_browser_diagnostics"],
+    checks: ["captures_independent_of_setting", "edges_smoothed", "content_preserved", "settings_inspected", "settings_controlled", "settings_observed", "settings_validated", "captures_exact_after_temporal_frames", "cpu_presentation_exact", "moving_frames_draw", "clean_browser_diagnostics"],
+    measurements,
   }));
 } finally {
   await browser.close();

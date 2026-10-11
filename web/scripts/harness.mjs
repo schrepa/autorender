@@ -4,6 +4,12 @@
  * deadline, pixel comparisons with explicit tolerances, the development
  * server's pages, and the authored fixture scenes the Stress Lab loads in
  * place of a workload.
+ *
+ * A check asserts what must be true. What it measures about the image
+ * (pixels changed between frames, an error against a reference) goes in
+ * the `measurements` of the JSON object it prints last, each
+ * `{ name, value, unit, note? }`, which `cargo xtask checks` keeps with the
+ * attempt; it never fails on a fixed limit of those.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

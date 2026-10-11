@@ -888,7 +888,7 @@ fn measure_run(
 }
 
 /// `text` within the 300 characters the factory's reasons hold.
-fn reason(text: &str) -> String {
+pub(crate) fn reason(text: &str) -> String {
     const MOST: usize = 300;
     if text.chars().count() <= MOST {
         return text.to_owned();

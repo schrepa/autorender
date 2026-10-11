@@ -231,12 +231,12 @@ pub fn run(
                 let started = Instant::now();
                 let attempt_log =
                     folder.join(format!("{name}-{}-{}.log", &sha[..12], attempts.len() + 1));
-                let exit_code = match (&server, &web) {
+                let (exit_code, measurements) = match (&server, &web) {
                     (Ok(server), Some(web)) => attempt(web, name, &server.url, &attempt_log)?,
                     (Err(error), _) => {
                         fs::write(&attempt_log, format!("{error}\n"))
                             .map_err(|error| error.to_string())?;
-                        -1
+                        (-1, Vec::new())
                     }
                     (Ok(_), None) => unreachable!("a served commit has its scripts"),
                 };
@@ -250,6 +250,7 @@ pub fn run(
                     "duration_ms": started.elapsed().as_secs_f64() * 1000.0,
                     "exit_code": exit_code,
                     "log": attempt_log.display().to_string(),
+                    "measurements": measurements,
                 }));
                 // Nothing to run again without a server.
                 if holds(expect, exit_code) || server.is_err() {
@@ -270,13 +271,13 @@ pub fn run(
     Ok((entries, incomplete))
 }
 
-/// One attempt of check `name` from `web` against `url`: its exit code,
-/// its output into `log`.
-fn attempt(web: &Path, name: &str, url: &str, log: &Path) -> Result<i32, String> {
+/// One attempt of check `name` from `web` against `url`: its exit code and
+/// what it measured, its output into `log`.
+fn attempt(web: &Path, name: &str, url: &str, log: &Path) -> Result<(i32, Vec<Value>), String> {
     let script = format!("scripts/{name}.mjs");
     if !web.join(&script).is_file() {
         fs::write(log, format!("{script} does not exist\n")).map_err(|error| error.to_string())?;
-        return Ok(-1);
+        return Ok((-1, Vec::new()));
     }
     let mut child = Command::new("node")
         .arg(&script)
@@ -301,7 +302,44 @@ fn attempt(web: &Path, name: &str, url: &str, log: &Path) -> Result<i32, String>
     let status = child.wait().map_err(|error| error.to_string())?;
     let stderr = stderr.join().unwrap_or_default();
     fs::write(log, format!("{stdout}\n{stderr}")).map_err(|error| error.to_string())?;
-    Ok(status.code().unwrap_or(-1))
+    Ok((status.code().unwrap_or(-1), measurements(&stdout)))
+}
+
+/// What a check measured about the image or the engine: the `measurements`
+/// of the last line it printed, when that line is a JSON object, each
+/// `{name, value, unit, note?}`; entries of another shape are left out.
+/// Numbers for the user to read, never a limit the check passes or fails.
+fn measurements(stdout: &str) -> Vec<Value> {
+    let last = stdout
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty());
+    let Some(Ok(Value::Object(last))) = last.map(serde_json::from_str::<Value>) else {
+        return Vec::new();
+    };
+    let text = |entry: &Value, key: &str| {
+        entry[key]
+            .as_str()
+            .filter(|text| !text.is_empty())
+            .map(crate::measure::reason)
+    };
+    last.get("measurements")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let mut kept = json!({
+                "name": text(entry, "name")?,
+                "value": entry["value"].as_f64()?,
+                "unit": text(entry, "unit")?,
+            });
+            if let Some(note) = text(entry, "note") {
+                kept["note"] = note.into();
+            }
+            Some(kept)
+        })
+        .collect()
 }
 
 /// `cargo xtask checks`: a check task (its pull request merged into main,
@@ -386,6 +424,16 @@ pub fn check_task(root: &Path, arguments: &[String]) -> Result<(), String> {
             check["expect"].as_str().unwrap_or_default(),
             codes.join(", then ")
         );
+        for attempt in check["attempts"].as_array().into_iter().flatten() {
+            for measured in attempt["measurements"].as_array().into_iter().flatten() {
+                println!(
+                    "  {}: {} {}",
+                    measured["name"].as_str().unwrap_or_default(),
+                    measured["value"],
+                    measured["unit"].as_str().unwrap_or_default()
+                );
+            }
+        }
     }
     println!("Wrote {}.", out.display());
     match found.remove("formats") {
