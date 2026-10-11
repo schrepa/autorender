@@ -29,6 +29,7 @@ const blackEnvironment = {
     ambient: 0, fog_density: 0, fog_max: 0, aerial_density: 0, rim: 0, specular: 0, emission: 1,
     exposure: 1, saturation: 1, contrast: 1 },
   shadows: { enabled: false }, level_of_detail: { enabled: false }, temporal_antialiasing: { enabled: false },
+  bloom: { intensity: 0 }, ambient_occlusion: { intensity: 0 }, contact_shadows: { enabled: false },
 };
 function quad(grid = 1, vertexOpacity) {
   const vertices = [], indices = [];
@@ -181,6 +182,8 @@ try {
   }
   for (const mipmap_filter of ["none", "nearest"]) await sameFallback(`mipmap-${mipmap_filter}`, 32, 0.5, { map: { mipmap_filter } });
   await sameFallback("nearest-min", 32, 0.5, { map: { min_filter: "nearest" } });
+  await sameFallback("nearest-mag", 32, 0.5, { map: { mag_filter: "nearest" } });
+  await sameFallback("absent-map", 32, 0.5, { extraMaterial: { texture: null } });
   await sameFallback("world", 32, 0.5, { worldTiling: 1 });
   const tinted = await sample("tint-opacity", 32, 0.1, { tint: [1, 1, 1, 0.2] });
   const vertex = await sample("vertex-opacity", 32, 0.1, { vertexOpacity: 0.2 });
@@ -252,19 +255,22 @@ try {
   // Masked source meshes large enough to receive impostor bakes, both with
   // and without a vertex-color stream, are also terrain-placed casters.
   const placed = {
-    version: 9, id: "alpha-placed-fixture", revision: 1,
+    version: 9, id: "alpha-coverage-fixture", revision: 1,
     camera: { position: [10, 12, 40], target: [10, 3, 0], fov_degrees: 55, near: 0.1, far: 5000 },
     textures: [sourceMask.texture], materials: [material(0.5, 1, { emissive: [0, 0, 0], color: [0.5, 0.8, 0.2, 1] }),
       { id: "receiver", color: [0.7, 0.7, 0.7, 1] }],
     meshes: [{ id: "card", source: quad(8) }, { id: "extended-card", source: quad(8, 1) }, { id: "box", source: { kind: "cube" } }],
-    environment: { shadows: { enabled: true }, level_of_detail: { enabled: true }, terrain: { samples_per_frame: 50_000_000 } },
+    environment: { shadows: { enabled: true }, level_of_detail: { enabled: true }, terrain: { samples_per_frame: 50_000_000 },
+      atmosphere: { fog_density: 0, fog_max: 0, aerial_density: 0 }, bloom: { intensity: 0 } },
     entities: [
       { id: "caster", mesh: "card", material: "cutout", transform: { translation: [10, 5, 0], scale: [4, 4, 4] } },
       { id: "receiver", mesh: "box", material: "receiver", transform: { translation: [10, -1, 0], scale: [70, 1, 70] } },
-      { id: "terrain", terrain: { origin: [-128, -0.25, -128], tiles: [1, 1], spacing: 1, layers: [], surface: {
+      { id: "terrain", terrain: { origin: [-128, -0.25, -128], tiles: [1, 1], spacing: 1,
+        layers: [{ noise: { seed: 3, height: 0, wavelength: 256 } }], surface: {
         materials: [{ id: "soil", color: [0.2, 0.25, 0.15] }], biomes: [{ id: "plain", layers: [{ material: "soil" }] }],
         assets: [{ id: "basic", mesh: "card", material: "cutout" }, { id: "extended", mesh: "extended-card", material: "cutout" }],
-        placed: [{ asset: "basic", position: [128, 128], scale: 4 }, { asset: "extended", position: [148, 128], scale: 4 }],
+        placed: [{ asset: "basic", position: [128, 128], scale: 4, sink: -1 },
+          { asset: "extended", position: [148, 128], scale: 4, sink: -1 }],
       } } },
     ],
   };
@@ -302,22 +308,25 @@ try {
     await command("capture");
     await page.locator("canvas").screenshot({ path: `${output}/${preset}-exact.png` });
     const observations = [];
+    const demo = { preset, url: url.href, observations };
+    results.demos.push(demo);
     for (const view of preset === "highlands" ? ["overview", "close"] : ["overview"]) {
       if (view === "close") await command("game", { name: "view", args: { name: "close" } });
       const camera = (await command("inspect", { component: "Camera" })).result.value;
-      const before = await page.locator("canvas").evaluate(canvas => Number(canvas.dataset.frames));
+      const before = await page.locator("canvas").evaluate(canvas => Number(canvas.dataset.frames ?? 0));
+      assert.ok(Number.isFinite(before), "ordinary-frame baseline is numeric");
       await command("resume");
       await page.waitForFunction(start => Number(document.querySelector("canvas").dataset.frames) >= start + 32, before, { timeout: 120_000 });
       for (let index = 0; index < 4; index++) {
         await page.locator("canvas").screenshot({ path: `${output}/${preset}-${view}-ordinary-${index}.png` });
-        observations.push({ view, camera, frame: await page.locator("canvas").evaluate(canvas => Number(canvas.dataset.frames)) });
+        observations.push({ view, camera, before, frame: await page.locator("canvas").evaluate(canvas => Number(canvas.dataset.frames)) });
         await delay(80);
       }
       await command("pause");
     }
     const status = await command("status");
     if (preset === "highlands") assert.equal(status.result.rendering.temporal_antialiasing.active, true, "ordinary Highlands frames use actual TAA");
-    results.demos.push({ preset, url: url.href, status, assets: await command("assets"), observations,
+    Object.assign(demo, { status, assets: await command("assets"),
       heap_context: await heapSession.send("Runtime.getHeapUsage"),
       optional_maps: "Empty successful optional scanned-rock responses select the existing terrain-map fallback.",
       interpretation: "Captures and costs are local review context, never a factory image/performance verdict." });
