@@ -302,7 +302,7 @@ const liveConfig = {
   seed: 7, renderables: 513, moving_percent: 0, hierarchy: true, interpolation: true, colliders: 0,
   sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 8, textured: true, culling: true,
 };
-const camera = { position: [0, 30, 0], target: [60, 20, 40], vertical_fov_radians: 0.9, near: 0.1, far: 400 };
+const camera = { position: [0, 35, 45], target: [0, 2, 0], vertical_fov_radians: 0.9, near: 0.1, far: 400 };
 
 function work(rendering) {
   return {
@@ -339,6 +339,7 @@ async function liveCapture(page, command, output, label) {
   assert.equal(rendering.render_candidates, rendering.invalid_transforms + rendering.missing_assets
     + rendering.culled_instances + rendering.visible_instances, `${label}: candidate partition`);
   assert.equal(rendering.dropped_instances, 0, `${label}: fixture is below budget`);
+  assert.ok(rendering.instances > 0, `${label}: fixture draws visible geometry`);
   return { png, work: work(rendering) };
 }
 
@@ -358,8 +359,9 @@ async function lifecycleChecks(page, output) {
     if (index) await command("game", { name: "workload", args: { config: { renderables } } });
     await command("environment", { reflection_probes: { enabled: false },
       occlusion_culling: { enabled: index !== 1 }, subpixel_culling: { enabled: index !== 1 } });
-    await command("camera", camera);
-    kept.push({ renderables, culling: index !== 1, capture: await liveCapture(page, command, output, `reuse-${index}`) });
+    const pose = index === 1 ? { ...camera, position: [30, 40, 50], target: [10, 2, 0] } : camera;
+    await command("camera", pose);
+    kept.push({ renderables, pose, culling: index !== 1, capture: await liveCapture(page, command, output, `reuse-${index}`) });
   }
   assert.ok(kept[0].capture.work.candidates <= 1024 && kept[1].capture.work.candidates > 4096,
     "live candidates cross the power-of-two DrawGroups capacity boundary");
@@ -367,7 +369,7 @@ async function lifecycleChecks(page, output) {
     await openPaused(page, devUrl("stress.html", { config: { ...liveConfig, renderables: state.renderables } }));
     await command("environment", { reflection_probes: { enabled: false },
       occlusion_culling: { enabled: state.culling }, subpixel_culling: { enabled: state.culling } });
-    await command("camera", camera);
+    await command("camera", state.pose);
     const fresh = await liveCapture(page, command, output, `fresh-${index}`);
     checks.push(await sameLive(page, state.capture, fresh, `growth-and-reuse-${index}`));
   }
@@ -380,9 +382,10 @@ async function lifecycleChecks(page, output) {
   await command("resume");
   await delay(600);
   const moving = await command("pause");
-  assert.ok(moving.observation.tick > before, "ordinary moving frames advance ticks");
+  assert.ok(BigInt(moving.observation.tick) > BigInt(before), "ordinary moving frames advance ticks");
   assert.equal(moving.observation.presentation.gpu_pending, true);
   assert.equal(moving.result.rendering.temporal_antialiasing.active, true);
+  assert.ok(moving.result.rendering.render_passes.includes("temporal_resolve"));
   assert.ok(moving.result.rendering.instances > 0, "ordinary moving frames retain their draws");
   checks.push({ label: "ordinary-moving-history", work: work(moving.result.rendering) });
   return checks;
