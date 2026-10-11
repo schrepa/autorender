@@ -125,7 +125,10 @@ ${observed.mesh.slice(start, end)}
           for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) for (let c = 0; c < 3; c++) {
             const index = (y * width + x) * 4 + c, sharp = sample(pixels, x + phase, y + phase, c);
             const expected = compose(sample(gaussian, x + phase, y + phase, c), sharp, c);
-            const old = compose((sharp + taps.reduce((sum, tap) => sum + sample(pixels, x + phase + tap[0] * radius, y + phase + tap[1] * radius, c), 0)) / 9, sharp, c);
+            const oldComposed = compose((sharp + taps.reduce((sum, tap) => sum + sample(pixels, x + phase + tap[0] * radius, y + phase + tap[1] * radius, c), 0)) / 9, sharp, c);
+            // Both rendered arms pass through the same sRGB8 output
+            // quantization; the Gaussian reference stays double precision.
+            const old = decode(encode(oldComposed) / 255);
             const candidate = decode(actual[index] / 255), square = (candidate - expected) ** 2, oldSquare = (old - expected) ** 2;
             const linearIndex = (y * width + x) * 3 + c;
             linear[linearIndex] = candidate; oldLinear[linearIndex] = old; expectedLinear[linearIndex] = expected;

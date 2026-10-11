@@ -37,9 +37,13 @@ async function size(w, h) {
   width = w; height = h;
   await page.evaluate(([w, h]) => {
     const canvas = document.querySelector("canvas");
+    canvas.parentElement.style.cssText = `position:fixed;left:0;top:0;width:${w}px;height:${h}px;overflow:visible;border:0;border-radius:0;z-index:1000`;
     canvas.style.cssText = `position:fixed;left:0;top:0;width:${w}px!important;height:${h}px!important;z-index:1000`;
     window.dispatchEvent(new Event("resize"));
   }, [w, h]);
+  // The paused host records CSS bounds immediately, but only a render
+  // command applies those dimensions to the engine's canvas and targets.
+  await command("render");
   await page.waitForFunction(([w, h]) => {
     const canvas = document.querySelector("canvas"); return canvas.width === w && canvas.height === h;
   }, [w, h]);
@@ -114,11 +118,20 @@ async function capture(name, { active = true, check = true } = {}) {
   await page.evaluate(() => window.__roughGlass.reset());
   const rendering = json((await command("capture")).result.rendering);
   const trace = await page.evaluate(() => window.__roughGlass.snapshot());
+  const shaderHashes = await page.evaluate(async () => {
+    const state = window.__roughGlass, hashes = {};
+    if (!state.post || !state.mesh) throw new Error("rough-glass assertion: served shaders do not contain the assigned implementation");
+    for (const key of ["post", "mesh"]) {
+      const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(state[key]));
+      hashes[key] = [...new Uint8Array(hash)].map(value => value.toString(16).padStart(2, "0")).join("");
+    }
+    return hashes;
+  });
   const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png`, style });
   const resolution = await page.locator("canvas").evaluate(canvas => [canvas.width, canvas.height]);
   assert.deepEqual(resolution, [width, height]);
   assert.ok(Number.isInteger(rendering.frame) && Number.isInteger(rendering.tick));
-  const record = { name, head, dirty, adapter: trace.adapter, resolution, frame: rendering.frame, tick: rendering.tick,
+  const record = { name, head, dirty, shader_hashes: shaderHashes, adapter: trace.adapter, resolution, frame: rendering.frame, tick: rendering.tick,
     fixture: structuredClone(fixture), scene_revision: scene.revision, rendering, trace };
   if (check) verifyTrace(record, expectedLevels(width, height, fixture.environment.refraction?.blur ?? 0, active), active);
   captures.push(record);
@@ -218,7 +231,8 @@ try {
     await replace(geometryFixture(kind)); await capture(kind);
   }
   const references = await page.evaluate(glassReferences);
-  const referenceMetadata = { head, dirty, adapter: fresh.record.adapter, frame: captures.at(-1).frame, tick: captures.at(-1).tick,
+  const referenceMetadata = { head, dirty, shader_hashes: captures.at(-1).shader_hashes,
+    adapter: fresh.record.adapter, frame: captures.at(-1).frame, tick: captures.at(-1).tick,
     fixture: "production reduction and lookup in a fixed single-pane composition", source_domain: "decoded Rgba8UnormSrgb graded Scene" };
   for (const image of references.images) for (const arm of ["pyramid", "gaussian", "old_ring"]) {
     await writeFile(`${output}/reference-${image.name}-${arm}.png`, Buffer.from(image[arm], "base64"));
@@ -253,14 +267,28 @@ try {
   const reflectionTexture = mixed.record.trace.textures[reflectionPass.attachments[0].texture];
   assert.equal(reflectionTexture.label, "engine/post-scene-levels");
   checks.push({ check: "mixed pass ordering", labels, rendering: mixed.record.rendering });
+  for (const section of ["water", "decals", "clouds", "particles"]) {
+    const enabled = structuredClone(fixture.environment[section]);
+    fixture.environment[section] = { ...enabled, enabled: false };
+    await command("environment", { [section]: fixture.environment[section] });
+    const off = await capture(`mixed-no-${section}`), delta = await compare(mixed, off);
+    assert.ok(delta.mean_absolute_u8 > 0, `${section} contributes visible pixels in the mixed fixture`);
+    checks.push({ check: "mixed visible contribution", section, delta });
+    fixture.environment[section] = enabled;
+    await command("environment", { [section]: enabled });
+  }
 
   await size(701, 451); await replace(movingFixture());
+  let previousOrdinary;
   for (const radius of [4.2, boundaries[2] - 0.0001, boundaries[2] + 0.0001, 12]) {
     await blur(radius);
     const start = (await command("status")).result.rendering.frame;
     await command("resume");
+    const until = Date.now() + 60_000;
     let status;
-    do { await delay(50); status = await command("status"); } while (status.result.rendering.frame - start < 32);
+    do { await delay(50); status = await command("status"); }
+    while (status.result.rendering.frame - start < 32 && Date.now() < until);
+    assert.ok(status.result.rendering.frame - start >= 32, "ordinary presentation advances at least 32 frames");
     assert.equal(status.result.rendering.temporal_antialiasing.active, true, "ordinary frames use TAA");
     const first = { png: (await page.locator("canvas").screenshot({ path: `${output}/moving-${radius}-a.png`, style })).toString("base64") };
     const firstStats = json((await command("status")).result.rendering);
@@ -270,8 +298,12 @@ try {
     await command("pause");
     const row = { head, dirty, adapter: referenceMetadata.adapter, resolution: [width, height], fixture: structuredClone(fixture),
       radius, started_frame: start, first: firstStats, second: secondStats, delta: await compare(first, second),
+      scale_transition: previousOrdinary ? await compare(previousOrdinary, first) : null,
+      resources: await page.evaluate(() => { const state = window.__roughGlass.snapshot(); return { textures: state.textures, pipelines: state.pipelines }; }),
       note: "Ordinary moving frames, not exact captures. Each screenshot is bracketed by ordinary-frame stats; acquisition can span several frames." };
     assert.ok(firstStats.frame - start >= 32 && secondStats.tick > firstStats.tick);
+    assert.ok(row.delta.mean_absolute_u8 > 0, "ordinary images include actual animated motion");
+    previousOrdinary = second;
     ordinary.push(row);
   }
   await writeFile(`${output}/ordinary-frames.json`, JSON.stringify(ordinary, null, 2));

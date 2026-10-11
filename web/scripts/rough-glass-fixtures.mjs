@@ -67,7 +67,7 @@ export function mixedFixture() {
   } },
   { id: "glass", mesh: "pane", material: "glass", transform: { translation: [-8, 25, 50], rotation_degrees: [-15, 0, 0], scale: [65, 45, 1] } },
   { id: "glass-overlap", mesh: "pane", material: "glass", transform: { translation: [8, 22, 40], rotation_degrees: [-15, 15, 0], scale: [65, 45, 1] } },
-  { id: "decal", decal: { material: "bright", opacity: 0.8 }, transform: { translation: [-45, 12, 25], scale: [20, 4, 20] } },
+  { id: "decal", decal: { material: "bright", opacity: 0.8 }, transform: { translation: [-45, 4, 25], scale: [20, 4, 20] } },
   ...["alpha", "additive"].map((blend, i) => ({ id: `particles-${blend}`, particles: {
     blend, rate: 100, lifetime: 3, speed: 2, radius: 4, size: [1, 2], color: [[1, 0.4, 0.1, 0.8], [0.3, 0.2, 1, 0.2]],
   }, transform: { translation: [i ? 15 : -15, 18, 55] } }))];
