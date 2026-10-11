@@ -175,18 +175,19 @@ export async function checkHistory(name, resources = {}) {
       note: "All pairs retained as image measurements, without a quality threshold. Screenshot acquisition can advance several host frames; exact GPU jitter phases are not observed." };
   }
   async function fresh(label, config = still, size = [800, 600], camera = null) {
-    const referenceContext = await browser.newContext({ viewport: { width: size[0], height: size[1] }, deviceScaleFactor: 1 });
-    await prepare(referenceContext);
-    const reference = await referenceContext.newPage();
-    reference.setDefaultTimeout(120_000);
-    reference.on("pageerror", error => errors.push(String(error)));
-    reference.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+    const { browser: referenceBrowser, page: reference, errors: referenceErrors } = await launch({
+      width: size[0], height: size[1], timeout: 120_000,
+    });
     try {
+      await prepare(reference.context());
       await reference.setViewportSize({ width: size[0], height: size[1] });
       await open(reference, config);
       if (camera) await commander(reference)("camera", camera);
       return await ordinary(reference, `${label}-fresh`);
-    } finally { await referenceContext.close(); }
+    } finally {
+      await referenceBrowser.close();
+      errors.push(...referenceErrors);
+    }
   }
   try {
     results.url = await open(page, still, { taa: "off" });
