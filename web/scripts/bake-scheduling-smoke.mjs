@@ -273,7 +273,7 @@ try {
     }
     const rejects = [];
     const thrown = action => { try { action(); return false; } catch { return true; } };
-    for (const mode of ["erosion-spacing", "erosion-dimensions", "hydrology-spacing", "path-point", "path-range", "river-range"]) {
+    for (const mode of ["erosion-spacing", "erosion-dimensions", "hydrology-spacing", "river-grid", "path-point", "path-range", "river-range"]) {
       const graph = new workerModule.BakeCoordinator(input, epoch++), worker = new workerModule.JobWorker();
       let refused = false;
       try {
@@ -285,7 +285,7 @@ try {
               const output = whole(worker, "terrain_bake_child", action.input, action.id);
               const final = output[4] === 4;
               const target = mode.startsWith("erosion") ? final && output[5] === 1
-                : mode === "hydrology-spacing" ? final && output[5] === 0
+                : ["hydrology-spacing", "river-grid"].includes(mode) ? final && output[5] === 0
                 : mode === "path-point" ? final && output[5] === 2
                 : mode === "path-range" ? action.input[4] === 1 : action.input[4] === 2;
               if (!target) { graph.complete(action.id, output); continue; }
@@ -293,6 +293,23 @@ try {
               if (mode === "erosion-dimensions") view.setUint32(10, 1, true);
               else if (mode.endsWith("spacing")) view.setFloat32(6, NaN, true);
               else if (mode === "path-point") view.setFloat32(14, Infinity, true);
+              else if (mode === "river-grid") {
+                // Skip the version-1 hydrology images and water arrays to
+                // its first river point. A finite extreme must be refused
+                // before the decoder allocates the derived spatial grid.
+                let cursor = 10;
+                const count = () => { const value = Number(view.getBigUint64(cursor, true)); cursor += 8; return value; };
+                const vector = bytes => { const length = count(); cursor += length * bytes; };
+                const image = () => {
+                  cursor += 8; vector(2);
+                  const levels = count();
+                  for (let level = 0; level < levels; level++) { cursor += 8; vector(4); }
+                };
+                image(); cursor += 4; image(); image(); image();
+                cursor += 20; vector(4); vector(4); vector(8);
+                check(count() > 0 && count() >= 2, "rough hydrology has a river segment");
+                view.setFloat32(cursor, 3.4028234663852886e38, true);
+              }
               else view.setBigUint64(5, view.getBigUint64(5, true) + 1n, true);
               check(thrown(() => graph.complete(action.id, output)), `${mode}: malformed terminal metadata or overlapping range is refused`);
               check(graph.take_result() === undefined, `${mode}: no malformed baked layer is exposed`);

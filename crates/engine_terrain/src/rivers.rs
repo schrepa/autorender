@@ -942,6 +942,34 @@ impl crate::codec::Codec for Rivers {
         }) {
             return Err(crate::codec::CodecError("invalid baked river metadata"));
         }
+        if rivers.iter().any(|river| river.points.len() >= 2) {
+            let mut low = Vec2::splat(f32::INFINITY);
+            let mut high = Vec2::splat(f32::NEG_INFINITY);
+            let mut widest = 0.0_f32;
+            for river in &rivers {
+                for (point, &half) in river.points.iter().zip(&river.half) {
+                    low = low.min(Vec2::from(*point));
+                    high = high.max(Vec2::from(*point));
+                    widest = max(widest, half);
+                }
+            }
+            let reach = widest + BANK_REACH + 64.0;
+            let corner = low - Vec2::splat(reach);
+            let extent = ((high + Vec2::splat(reach) - corner) / CELL).ceil();
+            let columns = max(extent.x, 1.0);
+            let rows = max(extent.y, 1.0);
+            let bytes = (columns as usize)
+                .checked_mul(rows as usize)
+                .and_then(|count| count.checked_mul(size_of::<Vec<[u32; 2]>>()));
+            if !corner.is_finite()
+                || !extent.is_finite()
+                || columns >= usize::MAX as f32
+                || rows >= usize::MAX as f32
+                || bytes.is_none_or(|bytes| bytes > isize::MAX as usize)
+            {
+                return Err(crate::codec::CodecError("baked river grid size overflow"));
+            }
+        }
         Ok(Self::new(rivers))
     }
 }
