@@ -33,6 +33,10 @@ export async function settle(command,predicate=v=>v.terrains.length>0&&v.terrain
   for(let frame=0;frame<1200;frame++){
     rendering=(await command("render")).result.rendering;state=await inspect(command);
     if(predicate(state)&&!rendering.loading&&!rendering.pipelines_compiling){return {state,rendering};}
+    // Loading jobs and asynchronous pipelines need wall time. An unpaced
+    // loop queued hundreds of fog frames before the first presentation.
+    // Pace only unfinished preparation; the stock capture deadline is intact.
+    await new Promise(resolve=>setTimeout(resolve,50));
   }
   assert.fail(`fog did not settle: ${JSON.stringify(state)}`);
 }
