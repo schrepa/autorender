@@ -147,6 +147,10 @@ export async function checkHistory(name, resources = {}) {
     assert.equal((await compare(page, [exactOff, exactOn])).changed[0], 0, "fresh exact frames ignore TAA");
     const initial = await ordinary(page, "initial");
     const stillDetail = (await compare(page, [initial, initial])).variation[0];
+    await command("capture");
+    await observe(page, "exact-after-ordinary", "retained");
+    await command("preview", { alpha: 0.5, gpu: false });
+    await observe(page, "cpu-preview-after-ordinary", "retained");
     for (let cycle = 1; cycle <= 2; cycle++) {
       await command("environment", { temporal_antialiasing: { enabled: false } });
       assert.deepEqual((await command("inspect", { component: "TemporalAntialiasing" })).result.value, { enabled: false });
