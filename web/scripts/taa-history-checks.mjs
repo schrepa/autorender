@@ -1,6 +1,8 @@
 /** Shared end-to-end history recovery checks for the uncertainty TAA variants. */
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { artifacts, commander, devUrl, launch, openPaused } from "./harness.mjs";
 
 const still = {
@@ -67,16 +69,26 @@ async function compare(page, images) {
 
 export async function checkHistory(name, resources = {}) {
   const output = await artifacts(name);
+  // Highlands needs the same generated materials as the factory workload.
+  // Use its unchanged generator, including its input-hash cache.
+  const assets = spawnSync("cargo", ["xtask", "bench", "assets"], {
+    cwd: fileURLToPath(new URL("../../", import.meta.url)), encoding: "utf8", windowsHide: true,
+  });
+  await writeFile(`${output}/assets.log`, `${assets.stdout ?? ""}${assets.stderr ?? ""}`);
+  if (assets.error || assets.status !== 0) throw new Error(`Cannot prepare Highlands materials: ${assets.error ?? assets.status}; see ${output}/assets.log`);
   const { browser, page, errors } = await launch({ width: 800, height: 600, timeout: 120_000 });
   const context = page.context();
   // The normal ResizeObserver follows a canvas that fills the browser viewport.
   // Only the smoke page's layout changes; the renderer receives real resize events.
-  await context.addInitScript(() => document.addEventListener("DOMContentLoaded", () => {
-    const style = document.createElement("style");
-    style.textContent = ".stress .viewport{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;min-height:0!important;border:0!important;border-radius:0!important;z-index:1000}";
-    document.head.append(style);
-  }));
-  await resources.install?.(context);
+  async function prepare(context) {
+    await context.addInitScript(() => document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = ".stress .viewport{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;min-height:0!important;border:0!important;border-radius:0!important;z-index:1000}";
+      document.head.append(style);
+    }));
+    await resources.install?.(context);
+  }
+  await prepare(context);
   const results = { frames: [], comparisons: {}, resources: [], highlands: null };
   const command = commander(page, { deadline: 120_000 });
   const frames = target => target.locator("canvas").evaluate(canvas => Number(canvas.dataset.frames ?? 0));
@@ -124,7 +136,9 @@ export async function checkHistory(name, resources = {}) {
     return value;
   }
   async function fresh(label, config = still, size = [800, 600], camera = null) {
-    const reference = await context.newPage();
+    const referenceContext = await browser.newContext({ viewport: { width: size[0], height: size[1] }, deviceScaleFactor: 1 });
+    await prepare(referenceContext);
+    const reference = await referenceContext.newPage();
     reference.setDefaultTimeout(120_000);
     reference.on("pageerror", error => errors.push(String(error)));
     reference.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
@@ -133,7 +147,7 @@ export async function checkHistory(name, resources = {}) {
       await open(reference, config);
       if (camera) await commander(reference)("camera", camera);
       return await ordinary(reference, `${label}-fresh`);
-    } finally { await reference.close(); }
+    } finally { await referenceContext.close(); }
   }
   try {
     results.url = await open(page, still, { taa: "off" });
@@ -149,7 +163,7 @@ export async function checkHistory(name, resources = {}) {
     const stillDetail = (await compare(page, [initial, initial])).variation[0];
     await command("capture");
     await observe(page, "exact-after-ordinary", "retained");
-    await command("preview", { alpha: 0.5, gpu: false });
+    await command("capture", { alpha: 0.5, gpu: false });
     await observe(page, "cpu-preview-after-ordinary", "retained");
     for (let cycle = 1; cycle <= 2; cycle++) {
       await command("environment", { temporal_antialiasing: { enabled: false } });
@@ -205,6 +219,10 @@ export async function checkHistory(name, resources = {}) {
     assert.ok(movingPair.variation[0] > stillDetail * 0.8, "moving frames retain the existing detail lower bound");
 
     await page.setViewportSize({ width: 1400, height: 900 });
+    // The browser host probes optional scanned maps even with rocks=off.
+    // Empty successful responses select its existing terrain-map fallback,
+    // matching the factory's default without depending on local licensed files.
+    await page.route("**/stress/rocks/*", route => route.fulfill({ status: 204, body: "" }));
     const highlandsUrl = devUrl("stress.html", { preset: "highlands", taa: "on", rocks: "off", jobcache: "off" });
     await openPaused(page, highlandsUrl, { timeout: 120_000 });
     await command("render");
@@ -221,7 +239,8 @@ export async function checkHistory(name, resources = {}) {
       sequence.push(`highlands-overview-${index}.png`);
     }
     results.highlands = { url: highlandsUrl.href, size: await dimensions(page), initial: initialStatus,
-      overview: viewed, sequence, interpretation: "Ordinary-frame visual review material; no automatic quality or timing claim." };
+      overview: viewed, sequence, rocks: "No scanned maps; empty optional responses use the host's terrain-map fallback.",
+      interpretation: "Ordinary-frame visual review material; no automatic quality or timing claim." };
     assert.deepEqual(await dimensions(page), [1400, 900], "Highlands uses the default output size");
     assert.deepEqual(errors, [], "clean browser and GPU diagnostics");
     await writeFile(`${output}/results.json`, JSON.stringify({ ok: true, ...results }, null, 2));
