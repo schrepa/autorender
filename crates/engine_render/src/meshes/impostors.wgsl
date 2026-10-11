@@ -148,7 +148,7 @@ struct BakeTargets {
 
 // Discards the gaps of masked materials, as their fragments would.
 fn bake_mask(texels: MaterialTexels, color: vec4<f32>) {
-    if ALPHA_MASK && texels.base.a * color.a * texels.coverage < material_maps.params.z {
+    if ALPHA_MASK && texels.base.a * color.a * alpha_coverage_factor(texels.mask_mip, color.a) < material_maps.params.z {
         discard;
     }
 }

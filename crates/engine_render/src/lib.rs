@@ -11,6 +11,7 @@
 
 pub use engine_core::RenderStats;
 
+mod alpha_coverage;
 pub mod bindings;
 mod cached;
 mod gpu_calls;

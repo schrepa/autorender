@@ -389,6 +389,8 @@ impl MaterialUniform {
         volume: [0.0, 1.5, 0.0, 0.0],
         top: [0.0; 4],
         layer: [0.0; 4],
+        alpha_factors: [[1.0; 4]; crate::alpha_coverage::FACTOR_ROWS],
+        alpha_coverage: [0.0; 4],
     };
 
     pub(crate) fn new(material: &Material) -> Self {

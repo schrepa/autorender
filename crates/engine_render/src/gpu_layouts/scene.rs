@@ -171,6 +171,10 @@ gpu_structs! {
         /// roughness.
         pub top: [f32; 4],
         pub layer: [f32; 4],
+        /// Cutoff-specific alpha factors, packed four mip levels per row.
+        pub alpha_factors: [[f32; 4]; crate::alpha_coverage::FACTOR_ROWS],
+        /// Enabled, first uniform mip (legacy fallback), level count, unused.
+        pub alpha_coverage: [f32; 4],
     }
 
     /// WGSL `Shadow` uniform of `scene.wgsl`:

@@ -35,6 +35,10 @@ struct MaterialMaps {
     // in `emissive.w`.
     top: vec4<f32>,
     layer: vec4<f32>,
+    // One entry per admitted mip (8192 has 14), packed four per row.
+    alpha_factors: array<vec4<f32>, 4>,
+    // Enabled, first uniform mip (legacy fallback), level count, unused.
+    alpha_coverage: vec4<f32>,
 }
 @group(1) @binding(10) var<uniform> material_maps: MaterialMaps;
 

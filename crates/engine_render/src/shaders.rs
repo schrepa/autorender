@@ -27,6 +27,7 @@ shaders! {
         "math.wgsl",
         "wind.wgsl",
         "meshes/declarations.wgsl",
+        "alpha_coverage.wgsl",
         "meshes/vertex.wgsl",
         "meshes/shading.wgsl",
         "meshes/forward.wgsl",
@@ -155,6 +156,7 @@ shaders! {
     SHADOW_SHADER = [
         "wind.wgsl",
         "shadows.wgsl",
+        "alpha_coverage.wgsl",
         "impostor_frames.wgsl",
     ];
     /// Ambient occlusion, bloom and their composite.

@@ -8,6 +8,7 @@
 )]
 
 use engine_core::collections::HashMap;
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
 use engine_core::{
@@ -30,6 +31,9 @@ pub(crate) struct GpuTexture {
     // Base level (asset) bytes, and the generated levels' bytes.
     pub byte_len: u64,
     pub mip_bytes: u64,
+    // Prepared only when an eligible material uses this source texture.
+    // Eviction drops its statistics together with the owning GPU texture.
+    alpha_profile: OnceCell<Option<crate::alpha_coverage::Profile>>,
 }
 
 pub(crate) struct GpuMaterial {
@@ -230,7 +234,29 @@ impl MaterialStore {
                     entry.insert(gpu);
                 }
             }
-            let gpu = self.create_material(device, material, source.version);
+            let mut uniform = MaterialUniform::new(material);
+            if let Some(cutoff) = crate::alpha_coverage::cutoff(material) {
+                let handle = material
+                    .base_color_texture()
+                    .expect("eligible base map")
+                    .texture;
+                let gpu = &self.textures[&(handle, true)];
+                let profile = gpu.alpha_profile.get_or_init(|| {
+                    let source = snapshot
+                        .textures
+                        .iter()
+                        .chain(&snapshot.decal_textures)
+                        .chain(placed_textures(snapshot))
+                        .find(|source| source.handle == handle)
+                        .expect("uploaded source texture");
+                    crate::alpha_coverage::Profile::new(&source.texture)
+                });
+                if let Some(curve) = profile.as_ref().and_then(|profile| profile.curve(cutoff)) {
+                    uniform.alpha_factors = curve.factors;
+                    uniform.alpha_coverage = curve.metadata;
+                }
+            }
+            let gpu = self.create_material(device, material, source.version, &uniform);
             self.materials.insert(source.handle, gpu);
             self.generation += 1;
         }
@@ -242,6 +268,7 @@ impl MaterialStore {
         device: &wgpu::Device,
         material: &Material,
         version: u64,
+        uniform: &MaterialUniform,
     ) -> GpuMaterial {
         let defaults = [
             &self.defaults.white_srgb,
@@ -262,7 +289,7 @@ impl MaterialStore {
             }
         }
         let samplers = sampler_keys.map(|key| &self.samplers[&key]);
-        let uniform = uniform_buffer(device, &MaterialUniform::new(material));
+        let uniform = uniform_buffer(device, uniform);
         GpuMaterial {
             group: bind_group(device, &self.layout, views, samplers, &uniform),
             _uniform: uniform,
@@ -546,6 +573,7 @@ fn create_compressed(
             4
         },
         mip_bytes: 0,
+        alpha_profile: OnceCell::new(),
     }
 }
 
@@ -620,5 +648,6 @@ fn create_texture(
         } else {
             0
         },
+        alpha_profile: OnceCell::new(),
     }
 }

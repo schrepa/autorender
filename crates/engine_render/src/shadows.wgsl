@@ -535,6 +535,11 @@ struct MaterialMaps {
     transforms: array<vec4<f32>, 10>,
     emissive: vec4<f32>,
     params: vec4<f32>,
+    volume: vec4<f32>,
+    top: vec4<f32>,
+    layer: vec4<f32>,
+    alpha_factors: array<vec4<f32>, 4>,
+    alpha_coverage: vec4<f32>,
 }
 @group(2) @binding(10) var<uniform> material_maps: MaterialMaps;
 
@@ -684,7 +689,8 @@ fn fs_masked(input: MaskedOutput) {
     let size = vec2<f32>(textureDimensions(base_color_texture));
     let dx = dpdx(uv) * size;
     let dy = dpdy(uv) * size;
-    let coverage = 1.0 + 0.25 * max(0.5 * log2(max(dot(dx, dx), dot(dy, dy))), 0.0);
+    let mip = max(0.5 * log2(max(dot(dx, dx), dot(dy, dy))), 0.0);
+    let coverage = alpha_coverage_factor(mip, input.uv_alpha.z);
     if texel.a * input.uv_alpha.z * coverage < material_maps.params.z {
         discard;
     }

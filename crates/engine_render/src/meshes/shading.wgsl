@@ -110,8 +110,8 @@ struct MaterialTexels {
     normal: vec3<f32>,
     normal_dx: vec2<f32>,
     normal_dy: vec2<f32>,
-    // What masked tests scale the base color's alpha by.
-    coverage: f32,
+    // Base texture footprint for the later opacity-dependent alpha test.
+    mask_mip: f32,
     // World-mapped normal maps' normal, world space.
     world_normal: vec3<f32>,
     // The metallic-roughness map's alpha, heights where its maps keep them;
@@ -124,7 +124,7 @@ fn untextured() -> MaterialTexels {
     texels.factors = vec2<f32>(1.0);
     texels.occlusion = 1.0;
     texels.normal = vec3<f32>(0.0, 0.0, 1.0);
-    texels.coverage = 1.0;
+    texels.mask_mip = 0.0;
     texels.height = 1.0;
     return texels;
 }
@@ -135,13 +135,13 @@ fn untextured() -> MaterialTexels {
 // base (Golus's mip scale), keeping their coverage.
 const MASK_MIP_SCALE: f32 = 0.25;
 
-// What masked tests scale alpha by where the base color texture's
-// coordinates change by `dx` across and `dy` down a pixel.
-fn mask_coverage(dx: vec2<f32>, dy: vec2<f32>) -> f32 {
+// The original mip estimate, before selecting either the material curve or
+// the legacy factor once the test's combined opacity is known.
+fn mask_mip(dx: vec2<f32>, dy: vec2<f32>) -> f32 {
     let size = vec2<f32>(textureDimensions(base_color_texture));
     let x = dx * size;
     let y = dy * size;
-    return 1.0 + MASK_MIP_SCALE * max(0.5 * log2(max(dot(x, x), dot(y, y))), 0.0);
+    return max(0.5 * log2(max(dot(x, x), dot(y, y))), 0.0);
 }
 
 // The texels of texture coordinates `uv` and `uv1` with implicit
@@ -156,7 +156,7 @@ fn material_texels(uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
     }
     texels.base = textureSample(base_color_texture, base_color_sampler, base_uv);
     if ALPHA_MASK {
-        texels.coverage = mask_coverage(dpdx(base_uv), dpdy(base_uv));
+        texels.mask_mip = mask_mip(dpdx(base_uv), dpdy(base_uv));
     }
     if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
         // glTF: green is roughness and blue metalness, red packed occlusion.
@@ -379,7 +379,7 @@ fn material_texels_grad(uv: vec2<f32>, uv1: vec2<f32>, gradients: UvGradients)
     texels.base = textureSampleGrad(base_color_texture, base_color_sampler, base_uv, base_dx,
         base_dy);
     if ALPHA_MASK {
-        texels.coverage = mask_coverage(base_dx, base_dy);
+        texels.mask_mip = mask_mip(base_dx, base_dy);
     }
     if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
         var metallic_roughness = vec4<f32>(1.0);
@@ -548,7 +548,7 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     let point = textured_point(color, surface_normal, world, world_dx, world_dy, texels, packed,
         front);
     let result = widened(point, dpdx(point.normal), dpdy(point.normal));
-    if ALPHA_MASK && result.opacity * texels.coverage < material_maps.params.z {
+    if ALPHA_MASK && result.opacity * alpha_coverage_factor(texels.mask_mip, color.a) < material_maps.params.z {
         discard;
     }
     return result;
