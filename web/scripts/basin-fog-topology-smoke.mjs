@@ -69,6 +69,7 @@ try{
   near(samples[0].floor,0,0.0001);near(samples[0].top,0.25,0.0001);assert.notEqual(state.terrains[0].source_revision,seaRevision);
   await scene.reload({hydrology:true});({state}=await settle(command));
   const wetTerrain=(await command("terrain_height",{points:[[100.5,100.5]]})).result.samples[0];
+  checks.push({case:"hydrology premise",state,wetTerrain});
   assert.ok(wetTerrain?.standing_water?.depth>0,"the hydrology fixture must actually hold water");
   samples=await sample([[100.5,100.5]]);near(samples[0].floor,wetTerrain.standing_water.surface,0.0001);
   const waterRevision=state.terrains[0].source_revision;

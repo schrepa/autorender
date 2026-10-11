@@ -9,7 +9,9 @@ export function heightBytes(ridge=false){
   return out;
 }
 export function document({ridge=false,budget=0.25,origin=[0,0,0],hole=false,sea=null,copies=1,hydrology=false}={}){
-  const terrain={origin,tiles:[1,1],spacing:1,layers:[{heightmap:{uri:"basin-fog-height.r16",width:257,height:257,min:[0,0],size:[256,256],low:0,high:ridge?6:2,blend:"replace"}}],
+  // Hydrology smooths its DEM and requires a lake at least 2 m deep.
+  // Its 6 m rim retains positive water after that ordinary smoothing.
+  const terrain={origin,tiles:[1,1],spacing:1,layers:[{heightmap:{uri:"basin-fog-height.r16",width:257,height:257,min:[0,0],size:[256,256],low:0,high:ridge||hydrology?6:2,blend:"replace"}}],
     surface:{materials:[{id:"ground",color:[0.4,0.4,0.4]}],biomes:[{id:"ground",layers:[{material:"ground"}]}]}};
   if(hole)terrain.layers.push({stamp:{center:[64.5,64.5],radius:0.5,op:"hole"}});
   if(hydrology)terrain.layers.push({hydrology:{level:0,channel_area:1e10,depth:0,max_depth:0}});
