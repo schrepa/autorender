@@ -12,8 +12,8 @@ export function glassFixture({ constant = false, blur = 12, glass = true } = {})
     ],
     meshes: [{ id: "box", source: { kind: "cube" } }, { id: "pane", source: { kind: "inline",
       vertices: [
-        { position: [-0.5, -0.5, 0], normal: [0, 0, 1] }, { position: [0.5, -0.5, 0], normal: [0, 0, 1] },
-        { position: [0.5, 0.5, 0], normal: [0, 0, 1] }, { position: [-0.5, 0.5, 0], normal: [0, 0, 1] },
+        { position: [-0.5, -0.5, 0], normal: [0, 0, 1], uv: [0, 1] }, { position: [0.5, -0.5, 0], normal: [0, 0, 1], uv: [1, 1] },
+        { position: [0.5, 0.5, 0], normal: [0, 0, 1], uv: [1, 0] }, { position: [-0.5, 0.5, 0], normal: [0, 0, 1], uv: [0, 0] },
       ], indices: [0, 1, 2, 0, 2, 3] } }],
     environment: {
       atmosphere: { preset: "day", sun_color: [0, 0, 0], zenith: [0.1, 0.1, 0.1], horizon: [0.1, 0.1, 0.1],
@@ -47,6 +47,12 @@ export function geometryFixture(kind) {
   } else if (kind === "foreground-edge") {
     fixture.entities.push({ id: "foreground", mesh: "box", material: "bright",
       transform: { translation: [-1.5, 0, 1], scale: [3, 6, 0.3] } });
+  } else if (kind === "behind-eye") {
+    // Deliberately reverse the authored shading normal while retaining the
+    // visible front face. With eta=2/3 the bent ray's z is at least sqrt(5/9),
+    // so thickness 32 puts every exit beyond the eye at z=8.
+    for (const vertex of fixture.meshes.find(mesh => mesh.id === "pane").source.vertices) vertex.normal = [0, 0, -1];
+    material.thickness = 32;
   }
   return fixture;
 }

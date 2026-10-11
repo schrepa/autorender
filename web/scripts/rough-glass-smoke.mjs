@@ -230,6 +230,16 @@ try {
   for (const kind of ["tilted-thick", "screen-edge", "foreground-edge"]) {
     await replace(geometryFixture(kind)); await capture(kind);
   }
+  const behindEyeFixture = geometryFixture("behind-eye");
+  await replace(behindEyeFixture); const behindEye = await capture("behind-eye-fallback");
+  const zeroThickness = structuredClone(behindEyeFixture);
+  zeroThickness.materials.find(material => material.id === "glass").thickness = 0;
+  await replace(zeroThickness); const straightBehind = await capture("behind-eye-straight-reference");
+  const behindEyeDelta = await compare(behindEye, straightBehind);
+  assert.ok(behindEyeDelta.maximum_u8 <= 2, `behind-eye exit uses the same pixel center: ${JSON.stringify(behindEyeDelta)}`);
+  checks.push({ check: "behind-eye fallback", delta: behindEyeDelta,
+    fixture_exit_z_lower_bound: 32 * Math.sqrt(5 / 9), camera_z: 8,
+    note: "Authored reversed shading normals force the unchanged fallback branch; the reference retains those normals with zero thickness." });
   const references = await page.evaluate(glassReferences);
   const referenceMetadata = { head, dirty, shader_hashes: captures.at(-1).shader_hashes,
     adapter: fresh.record.adapter, frame: captures.at(-1).frame, tick: captures.at(-1).tick,
@@ -290,14 +300,18 @@ try {
     while (status.result.rendering.frame - start < 32 && Date.now() < until);
     assert.ok(status.result.rendering.frame - start >= 32, "ordinary presentation advances at least 32 frames");
     assert.equal(status.result.rendering.temporal_antialiasing.active, true, "ordinary frames use TAA");
+    const firstBefore = json(status.result.rendering);
     const first = { png: (await page.locator("canvas").screenshot({ path: `${output}/moving-${radius}-a.png`, style })).toString("base64") };
     const firstStats = json((await command("status")).result.rendering);
     await delay(150);
+    const secondBefore = json((await command("status")).result.rendering);
     const second = { png: (await page.locator("canvas").screenshot({ path: `${output}/moving-${radius}-b.png`, style })).toString("base64") };
     const secondStats = json((await command("status")).result.rendering);
     await command("pause");
     const row = { head, dirty, adapter: referenceMetadata.adapter, resolution: [width, height], fixture: structuredClone(fixture),
       radius, started_frame: start, first: firstStats, second: secondStats, delta: await compare(first, second),
+      acquisition: { first: { file: `moving-${radius}-a.png`, before: firstBefore, after: firstStats },
+        second: { file: `moving-${radius}-b.png`, before: secondBefore, after: secondStats } },
       scale_transition: previousOrdinary ? await compare(previousOrdinary, first) : null,
       resources: await page.evaluate(() => { const state = window.__roughGlass.snapshot(); return { textures: state.textures, pipelines: state.pipelines }; }),
       note: "Ordinary moving frames, not exact captures. Each screenshot is bracketed by ordinary-frame stats; acquisition can span several frames." };
