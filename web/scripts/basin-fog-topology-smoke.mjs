@@ -40,12 +40,12 @@ try{
   checks.push({case:"single partial",state,samples,map:partial});
   console.log("Single-bowl full-map conservation checked.");
   const revision=t.solve_revision,source=t.source_revision,pool=samples[0].pool;
-  await command("environment",{basin_fog:{extinction_per_m:0.05,top_fade_m:0}});
+  await command("environment",{merge:true,basin_fog:{extinction_per_m:0.05,top_fade_m:0}});
   ({state}=await settle(command));assert.equal(state.terrains[0].solve_revision,revision);
   assert.equal((await sample([[100.5,100.5]]))[0].pool,pool);
   await command("camera",{position:[140,140,300],target:[128,0,128],vertical_fov_radians:55*Math.PI/180,near:0.1,far:1000});
   ({state}=await settle(command));assert.equal(state.terrains[0].solve_revision,revision);
-  await command("environment",{basin_fog:{budget_m:2}});
+  await command("environment",{merge:true,basin_fog:{budget_m:2}});
   ({state}=await settle(command));t=state.terrains[0];near(t.retained_m3,64516);near(t.drained_m3,66556);near(t.lid_range[0],1,0.0001);
   assert.equal(t.source_revision,source);assert.notEqual(t.solve_revision,revision);checks.push({case:"refill spill",state});
   for(const [budget,pools,retained,top] of [[0.5,2,32258,null],[1.25,1,80645,1.2578740157480315]]){
@@ -65,7 +65,7 @@ try{
   await scene.reload({sea:0.1});({state}=await settle(command));samples=await sample([[100.5,100.5]]);
   near(samples[0].floor,0.1,0.0001);near(samples[0].top,0.35,0.0001);checks.push({case:"sea effective floor",state,samples});
   const seaRevision=state.terrains[0].source_revision;
-  await command("environment",{ocean:{enabled:false}});({state}=await settle(command));samples=await sample([[100.5,100.5]]);
+  await command("environment",{merge:true,ocean:{enabled:false}});({state}=await settle(command));samples=await sample([[100.5,100.5]]);
   near(samples[0].floor,0,0.0001);near(samples[0].top,0.25,0.0001);assert.notEqual(state.terrains[0].source_revision,seaRevision);
   await scene.reload({hydrology:true});({state}=await settle(command));
   const wetTerrain=(await command("terrain_height",{points:[[100.5,100.5]]})).result.samples[0];
@@ -73,10 +73,10 @@ try{
   samples=await sample([[100.5,100.5]]);near(samples[0].floor,wetTerrain.standing_water.surface,0.0001);
   const waterRevision=state.terrains[0].source_revision;
   checks.push({case:"rendered hydrology effective floor",state,wetTerrain,samples});
-  await command("environment",{water:{enabled:false}});({state}=await settle(command));
+  await command("environment",{merge:true,water:{enabled:false}});({state}=await settle(command));
   samples=await sample([[100.5,100.5]]);near(samples[0].floor,0,0.0001);near(samples[0].top,0.25,0.0001);
   assert.notEqual(state.terrains[0].source_revision,waterRevision);
-  await command("environment",{water:{enabled:true}});({state}=await settle(command));
+  await command("environment",{merge:true,water:{enabled:true}});({state}=await settle(command));
   samples=await sample([[100.5,100.5]]);near(samples[0].floor,wetTerrain.standing_water.surface,0.0001);
   checks.push({case:"Water off/on invalidation",state,samples});
   console.log("Hole, Ocean and hydrology floors checked.");
@@ -84,12 +84,12 @@ try{
   // Supersede an ordinary edit before it can finish, then undo both. The
   // published map must follow the newest layers, never a cancelled solution.
   const beforeEdit=(await inspect(command)).terrains[0].source_revision;
-  await command("environment",{terrain:{samples_per_frame:1,loading_work_ms:0.1}});
+  await command("environment",{merge:true,terrain:{samples_per_frame:1,loading_work_ms:0.1}});
   await command("terrain_edit",{terrain:"ground",id:"fog-first",center:[100,100],radius:12,change:{raise:3}});
   const duringEdit=await inspect(command);
   assert.ok(duringEdit.terrains.every(t=>t.state!=="ready"));assert.equal((await sample([[100.5,100.5]]))[0],null);
   await command("terrain_edit",{terrain:"ground",id:"fog-newest",center:[100,100],radius:12,change:{flatten:5}});
-  await command("environment",{terrain:{samples_per_frame:50000000,loading_work_ms:50}});
+  await command("environment",{merge:true,terrain:{samples_per_frame:50000000,loading_work_ms:50}});
   ({state}=await settle(command));samples=await sample([[100.5,100.5]]);
   near(samples[0].floor,5,0.0001);assert.notEqual(state.terrains[0].source_revision,beforeEdit);
   assert.equal(state.terrains[0].state,"ready");checks.push({case:"superseded geometry",duringEdit,state,samples});
@@ -100,20 +100,20 @@ try{
   samples=await sample([[120.5,70.5]]);near(samples[0].floor,7,0.0001);near(samples[0].top,7.25,0.0001);
   checks.push({case:"translated overlapping independent media",state,samples});
   const admittedBytes=state.terrains[0].requested_bytes;
-  await command("environment",{basin_fog:{max_bytes:admittedBytes}});({state}=await settle(command,v=>v.dropped_terrains===1&&v.terrains.some(t=>t.state==="ready")));
+  await command("environment",{merge:true,basin_fog:{max_bytes:admittedBytes}});({state}=await settle(command,v=>v.dropped_terrains===1&&v.terrains.some(t=>t.state==="ready")));
   assert.equal(state.terrains[0].state,"ready");assert.equal(state.terrains[1].state,"dropped");checks.push({case:"equal-distance entity priority",state});
-  await command("environment",{basin_fog:{max_bytes:0}});
+  await command("environment",{merge:true,basin_fog:{max_bytes:0}});
   ({state,rendering}=await settle(command,v=>v.dropped_terrains===2));assert.equal(state.pending_jobs,0);assert.equal(rendering.basin_fog.nodes,0);
-  await command("environment",{basin_fog:{max_bytes:null}});({state}=await settle(command));assert.equal(state.dropped_terrains,0);
+  await command("environment",{merge:true,basin_fog:{max_bytes:null}});({state}=await settle(command));assert.equal(state.dropped_terrains,0);
   for(let cycle=0;cycle<3;cycle++){
-    await command("environment",{basin_fog:{enabled:false}});({state,rendering}=await settle(command,v=>v.terrains.length===0));
+    await command("environment",{merge:true,basin_fog:{enabled:false}});({state,rendering}=await settle(command,v=>v.terrains.length===0));
     assert.equal(rendering.basin_fog.gpu_bytes,0);assert.equal(rendering.basin_fog.upload_bytes,0);assert.equal(state.requested_bytes,0);
     checks.push({case:`off ${cycle}`,state,rendering:rendering.basin_fog});
-    await command("environment",{basin_fog:{enabled:true}});const on=await settle(command);checks.push({case:`on ${cycle}`,state:on.state,rendering:on.rendering.basin_fog});
+    await command("environment",{merge:true,basin_fog:{enabled:true}});const on=await settle(command);checks.push({case:`on ${cycle}`,state:on.state,rendering:on.rendering.basin_fog});
   }
-  await command("environment",{basin_fog:{budget_m:0}});({state,rendering}=await settle(command,v=>v.terrains.length===0));assert.equal(rendering.basin_fog.gpu_bytes,0);
-  await command("environment",{basin_fog:{budget_m:-1}},false);
-  await command("environment",{basin_fog:{level:999}},false);
+  await command("environment",{merge:true,basin_fog:{budget_m:0}});({state,rendering}=await settle(command,v=>v.terrains.length===0));assert.equal(rendering.basin_fog.gpu_bytes,0);
+  await command("environment",{merge:true,basin_fog:{budget_m:-1}},false);
+  await command("environment",{merge:true,basin_fog:{level:999}},false);
   const invalid=document();invalid.entities[0].terrain.tiles=[4294967295,4294967295];invalid.revision=scene.scene.revision+1;
   scene.scene.serve(invalid);const refused=await command("reload",{expected_revision:String(scene.scene.revision),revision:String(invalid.revision)},false);
   checks.push({case:"overflowing dimensions refused by scene validation",error:refused.error});

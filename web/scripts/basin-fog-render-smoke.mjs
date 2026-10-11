@@ -112,7 +112,7 @@ try{
   let {state}=await settle(command);near(state.terrains[0].lid_range[0],0.25,0.0001);
   const captures={};
   for(const [name,sigma,fade]of[["off-a",0,3],["off-b",0,3],["ramp",0.025,3],["denser",0.05,3],["hard-top",0.025,0]]){
-    await command("environment",{basin_fog:{extinction_per_m:sigma,top_fade_m:fade}});await settle(command);
+    await command("environment",{merge:true,basin_fog:{extinction_per_m:sigma,top_fade_m:fade}});await settle(command);
     captures[name]=await capture(page,command,output,name);await reference(name,captures[name],{sigma,fade});
   }
   results.push({case:"descriptive capture changes",offRepeat:await differentPixels(page,[captures["off-a"],captures["off-b"]]),on:await differentPixels(page,[captures["off-a"],captures.ramp]),density:await differentPixels(page,[captures.ramp,captures.denser])});
@@ -120,7 +120,7 @@ try{
     await command("camera",{position,target,vertical_fov_radians:camera.fov_degrees*Math.PI/180,near:camera.near,far:camera.far});await settle(command);await capture(page,command,output,name);results.push({case:name,position,target});
   }
   const overlap=structuredClone(fixture);overlap.entities.push({...structuredClone(overlap.entities[0]),id:"ground1"});
-  await scene.reload(command,overlap);await resetCamera();await command("environment",{basin_fog:{top_fade_m:3}});({state}=await settle(command));assert.equal(state.terrains.length,2);
+  await scene.reload(command,overlap);await resetCamera();await command("environment",{merge:true,basin_fog:{top_fade_m:3}});({state}=await settle(command));assert.equal(state.terrains.length,2);
   const doubled=await capture(page,command,output,"overlap");await reference("overlap",doubled,{sigma:0.025,fade:3,copies:2});
   // Distinct integration paths retain raw matched captures. These deliberately
   // have no appearance assertions; the optical reference above covers opaque rays.
@@ -131,19 +131,19 @@ try{
     {id:"particles",transform:{translation:[128,1,155]},particles:{rate:20,lifetime:2,speed:0,size:[1,1],radius:8}});
   paths.environment.refraction={strength:1};await scene.reload(command,paths);await resetCamera();await command("step",{ticks:60});const integration=await settle(command);
   assert.ok(integration.rendering.particles.drawn>0);assert.equal(integration.rendering.refraction.active,true);results.push({case:"integration paths",rendering:integration.rendering});
-  for(const sigma of [0,0.025]){await command("environment",{basin_fog:{extinction_per_m:sigma}});await settle(command);await capture(page,command,output,`glass-${sigma}`);}
+  for(const sigma of [0,0.025]){await command("environment",{merge:true,basin_fog:{extinction_per_m:sigma}});await settle(command);await capture(page,command,output,`glass-${sigma}`);}
   for(const view of [false,true]){
-    await command("environment",{clouds:{enabled:true,coverage:0.5,base:80,thickness:100,in_view:view}});
+    await command("environment",{merge:true,clouds:{enabled:true,coverage:0.5,base:80,thickness:100,in_view:view}});
     const pair=[];
-    for(const sigma of [0,0.025]){await command("environment",{basin_fog:{extinction_per_m:sigma}});await settle(command);pair.push(await capture(page,command,output,`${view?"view":"dome"}-clouds-${sigma}`));}
+    for(const sigma of [0,0.025]){await command("environment",{merge:true,basin_fog:{extinction_per_m:sigma}});await settle(command);pair.push(await capture(page,command,output,`${view?"view":"dome"}-clouds-${sigma}`));}
     results.push({case:view?"view clouds":"dome clouds",changed:await differentPixels(page,pair),note:"Representative-front fog and nonlinear cloud grading are approximations."});
   }
   const ocean=structuredClone(fixture);ocean.environment.ocean={enabled:true,level:0.5};await scene.reload(command,ocean);
   await command("camera",{position:[128,0.625,200],target:[128,0.625,64],vertical_fov_radians:35*Math.PI/180,near:0.1,far:1000});await settle(command);
-  for(const sigma of [0,0.025]){await command("environment",{basin_fog:{extinction_per_m:sigma}});await settle(command);await capture(page,command,output,`water-${sigma}`);}
+  for(const sigma of [0,0.025]){await command("environment",{merge:true,basin_fog:{extinction_per_m:sigma}});await settle(command);await capture(page,command,output,`water-${sigma}`);}
   await command("camera",{position:[128,0.25,200],target:[128,0.25,64],vertical_fov_radians:35*Math.PI/180,near:0.1,far:1000});
   const underwater=[];
-  for(const sigma of [0,0.025]){await command("environment",{basin_fog:{extinction_per_m:sigma}});await settle(command);underwater.push(await capture(page,command,output,`underwater-${sigma}`));}
+  for(const sigma of [0,0.025]){await command("environment",{merge:true,basin_fog:{extinction_per_m:sigma}});await settle(command);underwater.push(await capture(page,command,output,`underwater-${sigma}`));}
   results.push({case:"underwater early return",changed:await differentPixels(page,underwater)});
   // The unchanged Highlands overview, at the catalog viewport/seed/settings.
   await openPaused(page,highlandsUrl("on"),{timeout:180000});
@@ -158,8 +158,8 @@ try{
   near(seen.vertical_fov_radians,55*Math.PI/180,0.00001);near(seen.near,0.5,0.00001);near(seen.far,20000,0.001);
   const rays=await highlandsRays(demo,state,seen);
   results.push({case:"Highlands authored content",catalog:highlands.options,demo,layerHashes,camera:seen,state,rays});
-  await capture(page,command,output,"highlands-on");await command("environment",{basin_fog:{extinction_per_m:0}});await settle(command);
-  const zero=await capture(page,command,output,"highlands-same-content-zero");await command("environment",{basin_fog:{extinction_per_m:0.025}});await settle(command);
+  await capture(page,command,output,"highlands-on");await command("environment",{merge:true,basin_fog:{extinction_per_m:0}});await settle(command);
+  const zero=await capture(page,command,output,"highlands-same-content-zero");await command("environment",{merge:true,basin_fog:{extinction_per_m:0.025}});await settle(command);
   const fog=await capture(page,command,output,"highlands-same-content-fog");results.push({case:"Highlands same content",changed:await differentPixels(page,[zero,fog]),state:await inspect(command)});
   for(const t of state.terrains.filter(t=>t.largest)){
     const p=t.largest.deepest,position=[p[0]+t.origin[0],p[1]+t.origin[1]+t.largest.depth_m*.5,p[2]+t.origin[2]];
