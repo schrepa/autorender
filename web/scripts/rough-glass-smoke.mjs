@@ -18,6 +18,7 @@ let fixture = glassFixture({ constant: true, blur: 0 });
 let width = 1400, height = 900;
 const scene = routedScene(page, fixture);
 const checks = [], captures = [], ordinary = [];
+let activeCapture = null;
 const json = value => JSON.parse(JSON.stringify(value));
 const style = ".viewport > :not(canvas) { visibility: hidden !important; }";
 
@@ -58,6 +59,19 @@ async function replace(next) {
 async function blur(value, strength = 1) {
   fixture.environment.refraction = { strength, blur: value };
   await command("environment", { refraction: fixture.environment.refraction });
+}
+
+async function completedGpuWork() {
+  return page.evaluate(async () => {
+    const started = performance.now();
+    let timeout;
+    try {
+      await Promise.race([window.__roughGlass.device.queue.onSubmittedWorkDone(), new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("rough-glass assertion: preparatory GPU work did not complete in 30 seconds")), 30_000);
+      })]);
+      return performance.now() - started;
+    } finally { clearTimeout(timeout); }
+  });
 }
 
 function verifyTrace(record, wanted, active = true) {
@@ -114,7 +128,12 @@ function verifyTrace(record, wanted, active = true) {
 }
 
 async function capture(name, { active = true, check = true } = {}) {
+  activeCapture = name;
   await command("render");
+  // Exact cloud/terrain preparation may submit several frames before this
+  // capture. Drain that known work before the host's unchanged two-frame
+  // browser presentation wait; no engine work or acceptance bound changes.
+  const preparationWait = await completedGpuWork();
   await page.evaluate(() => window.__roughGlass.reset());
   const rendering = json((await command("capture")).result.rendering);
   const trace = await page.evaluate(() => window.__roughGlass.snapshot());
@@ -132,7 +151,7 @@ async function capture(name, { active = true, check = true } = {}) {
   assert.deepEqual(resolution, [width, height]);
   assert.ok(Number.isInteger(rendering.frame) && Number.isInteger(rendering.tick));
   const record = { name, head, dirty, shader_hashes: shaderHashes, adapter: trace.adapter, resolution, frame: rendering.frame, tick: rendering.tick,
-    fixture: structuredClone(fixture), scene_revision: scene.revision, rendering, trace };
+    preparation_gpu_wait_ms: preparationWait, fixture: structuredClone(fixture), scene_revision: scene.revision, rendering, trace };
   if (check) verifyTrace(record, expectedLevels(width, height, fixture.environment.refraction?.blur ?? 0, active), active);
   captures.push(record);
   await writeFile(`${output}/${name}.json`, JSON.stringify(record, null, 2));
@@ -255,9 +274,11 @@ try {
     note: references.note, artifact: "references.json" });
 
   await replace(mixedFixture());
+  activeCapture = "mixed-terrain-preparation";
   let settled;
   for (let i = 0; i < 600; i++) {
     settled = (await command("render")).result.rendering;
+    await completedGpuWork();
     if (settled.terrain.tiles > 0 && settled.terrain.loading_tiles === 0 && settled.terrain.fallback_patches === 0) break;
     await delay(25);
   }
@@ -291,6 +312,7 @@ try {
   await size(701, 451); await replace(movingFixture());
   let previousOrdinary;
   for (const radius of [4.2, boundaries[2] - 0.0001, boundaries[2] + 0.0001, 12]) {
+    activeCapture = `ordinary-radius-${radius}`;
     await blur(radius);
     const start = (await command("status")).result.rendering.frame;
     await command("resume");
@@ -325,7 +347,15 @@ try {
   await writeFile(`${output}/report.json`, JSON.stringify({ ok: true, head, dirty, checks, captures, ordinary }, null, 2));
   console.log(JSON.stringify({ ok: true, head, output, captures: captures.length, checks, ordinary_frames: ordinary.length }));
 } catch (error) {
-  await writeFile(`${output}/failure.json`, JSON.stringify({ head, dirty, error: String(error), stack: error.stack, errors, checks, captures, ordinary }, null, 2));
+  let failureObservation;
+  try {
+    failureObservation = await page.evaluate(async () => ({ hidden: document.hidden, visibility: document.visibilityState,
+      ready: document.readyState, status: await window.__engineDev?.request({ op: "status" }),
+      trace: window.__roughGlass?.snapshot() }));
+  } catch (cause) { failureObservation = { error: String(cause) }; }
+  await writeFile(`${output}/failure.json`, JSON.stringify({ head, dirty, active_capture: activeCapture,
+    fixture: structuredClone(fixture), scene_revision: scene.revision, resolution: [width, height],
+    error: String(error), stack: error.stack, errors, failure_observation: failureObservation, checks, captures, ordinary }, null, 2));
   console.error(error);
   process.exitCode = error instanceof assert.AssertionError || String(error).includes("rough-glass assertion:") ? 3 : 1;
 } finally {
