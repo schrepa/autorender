@@ -1,5 +1,5 @@
 {
-  "note": "10k colliders with moving bounds and 256 ray, overlap and sweep queries per fixed tick.",
+  "note": "10k colliders with moving bounds and 256 ray, overlap and sweep queries per fixed tick. Hot paths: the queries (cpu:shape_cast, cpu:shape_cast_tests) and the collision world's sync and cache rebuild for moving bounds (cpu:sync, cpu:cache_rebuild); the render is light.",
   "options": {
     "preset": "queries",
     "config": {

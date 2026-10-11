@@ -1,5 +1,5 @@
 {
-  "note": "The city with every engine feature: glTF maps, BC7 where supported, glass, foliage, skinned people, lights and particles.",
+  "note": "The city with every engine feature: glTF maps, BC7 where supported, glass, foliage, skinned people, lights and particles. Hot paths: the costliest opaque pass of the provided scenes (gpu:opaque_meshes: 507 draws of 201 meshes and 110 textures, 86k instances, 13.7k of them impostors, 24k left undrawn by occlusion culling), GPU presentation of the moving ones (gpu:presentation_compute, gpu:presentation_cull), reflection probe captures (gpu:probe_captures), the shadow maps (gpu:shadow_maps, gpu:shadow_moving), and the renderer's CPU encoding and submission (cpu:render_snapshot, cpu:submit_and_present). It shades 11.4k local lights, but none reaches the overview's view clusters (local_lights.visible is 0): the lights scene sees them.",
   "options": {
     "preset": "metro",
     "config": {

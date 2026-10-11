@@ -1,5 +1,5 @@
 {
-  "note": "A moving hierarchy, interpolation, filtered queries and sensors sharing the frame.",
+  "note": "A moving hierarchy, interpolation, filtered queries and sensors sharing the frame. Hot paths: a little of each in the fixed tick (cpu:FixedSimulation, cpu:shape_cast, cpu:sync, cpu:FixedPostSimulation) beside a light render of 10k instances; no single path dominates.",
   "options": {
     "preset": "mixed",
     "config": {

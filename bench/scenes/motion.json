@@ -1,5 +1,5 @@
 {
-  "note": "50k moving objects with parents and interpolation.",
+  "note": "50k moving objects with parents and interpolation. Hot paths: transform propagation and change detection (cpu:propagate, cpu:change_tick_scan), gathering and uploading poses (cpu:gather_gpu_inputs, gpu:pre_inputs) and the moving shadow map with all 50k as casters (gpu:shadow_moving), all in one draw of one mesh.",
   "options": {
     "preset": "motion",
     "config": {

@@ -1,5 +1,5 @@
 {
-  "note": "The maximum visual load: 90k static textured towers; rendering, extraction, batching and texture sampling at the most objects.",
+  "note": "The maximum visual load: 90k static textured towers; rendering, extraction, batching and texture sampling at the most objects. Hot paths: the renderer's CPU encoding and submission (cpu:render_snapshot, cpu:submit_and_present, cpu:queue_writes) and the opaque pass (gpu:opaque_meshes: 89k instances, 937k triangles in 42 draws of 32 meshes and textures). Nothing moves, so the simulation, pose uploads and the moving shadow map are idle.",
   "options": {
     "preset": "visual",
     "config": {

@@ -1,5 +1,5 @@
 {
-  "note": "The 8 km generated terrain streamed around the camera, with its generated material maps and no scanned rocks.",
+  "note": "The 8 km generated terrain streamed around the camera, with its generated material maps and no scanned rocks. Hot paths: terrain tile streaming and placement on job workers (cpu:terrain_stream, jobs.completed), 208k placed objects and 93k far ones (terrain.placed_objects, gpu:scatter), 69 resident tiles with virtual texturing (terrain.vt_pages), water (gpu:water), volumetric clouds (gpu:clouds), ground cover, temporal antialiasing (gpu:taa_resolve) and one walking navigation agent. It settles slowly: about 50 s natively.",
   "options": {
     "preset": "highlands",
     "config": {

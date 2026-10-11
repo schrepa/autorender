@@ -1,5 +1,5 @@
 {
-  "note": "The reference field: 90k moving textured towers with parents and interpolation, 1000 colliders, 32 queries per tick, seen from the overview.",
+  "note": "The reference field: 90k moving textured towers with parents and interpolation, 1000 colliders, 32 queries per tick, seen from the overview. Hot paths: transform propagation and change detection for 89k moving objects in fixed ticks (cpu:propagate, cpu:change_tick_scan, cpu:FixedSimulation), gathering their interpolated poses for the GPU (cpu:gather_gpu_inputs, gpu:pre_inputs), the opaque pass of 89k instances in 10 draws (gpu:opaque_meshes) and the moving shadow map with all of them as casters (gpu:shadow_moving).",
   "options": {
     "preset": "visual",
     "config": {

@@ -1,5 +1,5 @@
 {
-  "note": "Virtual-geometry boulders and columns of 330k to 590k triangles each, from the generated stress/dense files.",
+  "note": "Virtual-geometry boulders and columns of 330k to 590k triangles each, from the generated stress/dense files. Hot paths: virtual geometry's cluster selection and drawing (gpu:virtual_selection, gpu:opaque_meshes; 4.2k clusters, 471k triangles, 329k more into the shadow maps) and its page streaming, with only 1k instances in 3 draws.",
   "options": {
     "preset": "dense",
     "config": {

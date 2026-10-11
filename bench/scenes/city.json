@@ -1,5 +1,5 @@
 {
-  "note": "The wild city: 52 building, vehicle and machine shapes over 90k objects, a tenth of them moving traffic.",
+  "note": "The wild city: 52 building, vehicle and machine shapes over 90k objects, a tenth of them moving traffic. Hot paths: CPU extraction of 60k visible instances of 52 meshes (cpu:extraction, cpu:render_snapshot), the opaque pass at 1.2M triangles with levels of detail and 2.9k impostors (gpu:opaque_meshes), and 128k particles in the transparent pass (gpu:transparent). Its 9.6k local lights are binned (gpu:light_bins), but none is within light distance of the overview.",
   "options": {
     "preset": "city",
     "config": {

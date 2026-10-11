@@ -1,5 +1,5 @@
 {
-  "note": "Sensor clusters that exceed their pair budgets on purpose.",
+  "note": "Sensor clusters that exceed their pair budgets on purpose. Hot paths: sensor detection (cpu:sensor_detect, cpu:sensor_overlap_tests, cpu:bvh_traversal), the costliest CPU path of the provided scenes; the render is light.",
   "options": {
     "preset": "sensors",
     "config": {

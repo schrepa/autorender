@@ -1,0 +1,23 @@
+{
+  "note": "Metro from street level across the river toward the core: about 800 of its 11.4k local lights are within the 250 m light distance and reach view clusters (local_lights.visible; 0 from Metro's overview). Hot paths: local light shading in the opaque and transparent passes (gpu:opaque_meshes, gpu:transparent) and light binning (gpu:light_bins), beside Metro's shadow maps, probe captures and particles; 49k of its 90k objects are outside this view.",
+  "options": {
+    "preset": "metro",
+    "config": {
+      "seed": 1337,
+      "renderables": 90000,
+      "moving_percent": 10,
+      "hierarchy": true,
+      "interpolation": true,
+      "colliders": 0,
+      "sensor_percent": 0,
+      "dense_colliders": false,
+      "queries_per_tick": 0,
+      "mesh_variety": 64,
+      "textured": true,
+      "culling": true,
+      "scene": "metro",
+      "compressed_textures": true
+    },
+    "view": "close"
+  }
+}
