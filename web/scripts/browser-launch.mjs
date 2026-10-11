@@ -113,7 +113,18 @@ export async function launchContext({ executablePath, args = [], ...contextOptio
   if (claimed) {
     try {
       const context = await chromium.launchPersistentContext(claimed.folder, { ...options, ...contextOptions });
+      // The profile keeps shaders, not responses: its disk cache fails some
+      // concurrent byte-range reads of one file
+      // (ERR_CACHE_OPERATION_NOT_SUPPORTED), which a temporary profile's
+      // memory cache serves.
+      const uncached = async page => {
+        const session = await context.newCDPSession(page);
+        await session.send("Network.enable");
+        await session.send("Network.setCacheDisabled", { cacheDisabled: true });
+      };
+      context.on("page", page => { uncached(page).catch(() => {}); });
       const page = context.pages()[0] ?? await context.newPage();
+      await uncached(page);
       // A persistent context has no browser object to ask.
       const session = await context.newCDPSession(page);
       const { product } = await session.send("Browser.getVersion").finally(() => session.detach());
