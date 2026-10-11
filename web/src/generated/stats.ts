@@ -97,7 +97,7 @@ export interface FrameStats {
   /** Screen-space reflections. */
   reflections: Applied;
   /** Glass refraction. */
-  refraction: Applied;
+  refraction: RefractionStats;
   /** Every entity carrying a mesh, before transform and asset checks. */
   render_candidates: number;
   /** Milliseconds the frame spent preparing and submitting GPU work. */
@@ -370,6 +370,18 @@ export interface ProbeStats {
   faces: number;
   /** Probes surfaces could reflect this frame. */
   ready: number;
+}
+
+/** Glass refraction and this frame's shared background filtering. */
+export interface RefractionStats {
+  /** Whether this frame applied refraction. */
+  active: boolean;
+  /** Logical texture bytes retained for those lower mips, excluding mip zero. */
+  prefilter_bytes: number;
+  /** Lower scene mips built before transparent surfaces drew. */
+  prefilter_levels: number;
+  /** Texels written across those lower mips. */
+  prefilter_texels: number;
 }
 
 /** The sun's shadow maps. */

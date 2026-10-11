@@ -282,6 +282,7 @@
         "interpolation",
         "native",
         "plugins",
+        "rough-glass",
         "taa",
         "terrain"
       ]
@@ -424,6 +425,7 @@
         "gpu-presentation",
         "lod",
         "plugins",
+        "rough-glass",
         "streaming",
         "surfaces",
         "taa",
@@ -514,6 +516,7 @@
         "interpolation",
         "meshes",
         "native",
+        "rough-glass",
         "streaming",
         "taa",
         "terrain",
@@ -542,6 +545,7 @@
         "meshes",
         "native",
         "plugins",
+        "rough-glass",
         "spline",
         "streaming",
         "surfaces",
@@ -561,6 +565,7 @@
         "meshes",
         "native",
         "plugins",
+        "rough-glass",
         "taa",
         "terrain"
       ]
@@ -574,6 +579,7 @@
         "interpolation",
         "meshes",
         "native",
+        "rough-glass",
         "taa",
         "terrain"
       ]
@@ -590,6 +596,7 @@
         "lod",
         "meshes",
         "native",
+        "rough-glass",
         "spline",
         "surfaces",
         "taa",
@@ -670,7 +677,8 @@
       "section": "reflections",
       "smokes": [
         "agent",
-        "lod"
+        "lod",
+        "rough-glass"
       ],
       "stats": true
     },
@@ -678,7 +686,8 @@
       "inspector": "ParticleSettings",
       "section": "particles",
       "smokes": [
-        "agent"
+        "agent",
+        "rough-glass"
       ],
       "stats": true
     },
@@ -686,6 +695,7 @@
       "inspector": "Refraction",
       "section": "refraction",
       "smokes": [
+        "rough-glass",
         "surfaces"
       ],
       "stats": true
@@ -694,6 +704,7 @@
       "inspector": "DecalSettings",
       "section": "decals",
       "smokes": [
+        "rough-glass",
         "surfaces"
       ],
       "stats": true
@@ -732,6 +743,7 @@
         "jobs",
         "native",
         "plugins",
+        "rough-glass",
         "streaming",
         "terrain"
       ],
@@ -775,6 +787,7 @@
       "section": "water",
       "smokes": [
         "jobs",
+        "rough-glass",
         "terrain"
       ],
       "stats": true
@@ -801,6 +814,7 @@
       "inspector": "Clouds",
       "section": "clouds",
       "smokes": [
+        "rough-glass",
         "terrain"
       ],
       "stats": true
@@ -862,6 +876,7 @@
       "inspector": "TemporalAntialiasing",
       "section": "temporal_antialiasing",
       "smokes": [
+        "rough-glass",
         "taa"
       ],
       "stats": true
