@@ -445,6 +445,7 @@ mod gpu {
                 .get_or_insert_with(|| bake_targets(device, shape));
             // Bakes are rare: uber variants.
             let variant = source.variant.with_extended(source.extended).uber();
+            let shade_variant = variant.impostor_depth();
             let layout = &pipelines.bake_pipeline_layout;
             let pipeline = pipelines
                 .bake_pipelines
@@ -452,8 +453,8 @@ mod gpu {
                 .or_insert_with(|| bake_pipeline(device, shader, layout, variant, false));
             let shade_pipeline = pipelines
                 .shade_pipelines
-                .entry(variant)
-                .or_insert_with(|| bake_pipeline(device, shader, layout, variant, true));
+                .entry(shade_variant)
+                .or_insert_with(|| bake_pipeline(device, shader, layout, shade_variant, true));
             let emissive = source
                 .material
                 .as_ref()

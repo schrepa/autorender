@@ -595,6 +595,16 @@ impl Variant {
         self.0 & Self::ALPHA_MASK != 0
     }
 
+    /// Opaque impostor depths depend only on position. Keep extra streams
+    /// for masked coverage, and leave every other pipeline state intact.
+    pub(crate) fn impostor_depth(self) -> Self {
+        if self.alpha_mask() || self.skinned() || self.transmission() {
+            self
+        } else {
+            self.with_extended(false)
+        }
+    }
+
     /// This variant drawing a mesh with a second vertex stream, or not.
     pub(crate) fn with_extended(self, extended: bool) -> Self {
         Self(if extended {
