@@ -279,6 +279,7 @@
         "culling",
         "gpu-presentation",
         "hierarchy",
+        "impostor-variant",
         "interpolation",
         "native",
         "plugins",
@@ -403,6 +404,7 @@
       "smokes": [
         "collision",
         "gpu-presentation",
+        "impostor-variant",
         "interpolation",
         "lod",
         "terrain",
@@ -422,6 +424,7 @@
         "agent",
         "culling",
         "gpu-presentation",
+        "impostor-variant",
         "lod",
         "plugins",
         "streaming",
@@ -556,6 +559,7 @@
         "agent",
         "collision",
         "gpu-presentation",
+        "impostor-variant",
         "interpolation",
         "jobs",
         "meshes",
@@ -571,6 +575,7 @@
         "agent",
         "collision",
         "gpu-presentation",
+        "impostor-variant",
         "interpolation",
         "meshes",
         "native",
@@ -586,6 +591,7 @@
         "culling",
         "gpu-presentation",
         "hierarchy",
+        "impostor-variant",
         "interpolation",
         "lod",
         "meshes",
@@ -702,6 +708,7 @@
       "inspector": "ReflectionProbeSettings",
       "section": "reflection_probes",
       "smokes": [
+        "impostor-variant",
         "lod",
         "terrain"
       ],
@@ -719,6 +726,7 @@
       "inspector": "LevelOfDetail",
       "section": "level_of_detail",
       "smokes": [
+        "impostor-variant",
         "lod",
         "terrain"
       ],
@@ -862,6 +870,7 @@
       "inspector": "TemporalAntialiasing",
       "section": "temporal_antialiasing",
       "smokes": [
+        "impostor-variant",
         "taa"
       ],
       "stats": true
