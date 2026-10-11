@@ -10,6 +10,10 @@ const {browser,page,errors}=await launch({width:1400,height:900,timeout:120000})
 const command=commander(page,{deadline:120000});const results=[];
 const H=[0.08,0.18,0.32],L=[0.6,0.12,0.03];
 const camera={position:[128,0.125,200],target:[128,0.125,64],fov_degrees:35,near:0.1,far:1000};
+const highlandsBytes=await readFile(new URL("../../bench/scenes/highlands.json",import.meta.url));
+const highlands=JSON.parse(highlandsBytes);
+const highlandsUrl=mode=>devUrl("stress.html",{...highlands.options,look:"scene",effects:"all",visibility:"off",lod:"on",impostors:"on","basin-fog":mode});
+const resetCamera=()=>command("camera",{position:camera.position,target:camera.target,vertical_fov_radians:camera.fov_degrees*Math.PI/180,near:camera.near,far:camera.far});
 
 async function highlandsRays(demo,state,seen){
   const terrain=state.terrains.find(t=>String(t.terrain)===String(demo.terrain));
@@ -56,6 +60,9 @@ async function highlandsRays(demo,state,seen){
 // ray/slab clipping, and the antiderivative of its vertical ramp. No production
 // maps, pool IDs, tree nodes or shader text are read by this model.
 async function reference(name,png,{sigma,fade,copies=1,eye=camera.position,target=camera.target,fov=35}){
+  const actualCamera=(await command("inspect",{component:"Camera"})).result.value;
+  for(let i=0;i<3;i++){near(actualCamera.position[i],eye[i],0.0001);near(actualCamera.target[i],target[i],0.0001);}
+  near(actualCamera.vertical_fov_radians,fov*Math.PI/180,0.00001);
   const answer=await page.evaluate(async({png,H,L,sigma,fade,copies,eye,target,fov})=>{
     const image=new Image();image.src=`data:image/png;base64,${png}`;await image.decode();
     const canvas=document.createElement("canvas");canvas.width=image.width;canvas.height=image.height;
@@ -91,7 +98,7 @@ async function reference(name,png,{sigma,fade,copies=1,eye=camera.position,targe
 }
 
 try{
-  const hashes={};for(const path of ["./basin-fog-render-smoke.mjs","./basin-fog-fixture.mjs"]){hashes[path]=createHash("sha256").update(await readFile(new URL(path,import.meta.url))).digest("hex");}
+  const hashes={highlands:createHash("sha256").update(highlandsBytes).digest("hex")};for(const path of ["./basin-fog-render-smoke.mjs","./basin-fog-fixture.mjs"]){hashes[path]=createHash("sha256").update(await readFile(new URL(path,import.meta.url))).digest("hex");}
   results.push({case:"reference provenance",hashes,model:"binary64 authored 254 m square prism, floor 0, lid 0.25 m; closed-form ramp integral; configured grade/sRGB",viewport:[1400,900]});
   const fixture=document({budget:0.25});fixture.camera=camera;
   fixture.entities[0].terrain.surface.materials[0].color=[0,0,0];
@@ -111,7 +118,7 @@ try{
     await command("camera",{position,target,vertical_fov_radians:camera.fov_degrees*Math.PI/180,near:camera.near,far:camera.far});await settle(command);await capture(page,command,output,name);results.push({case:name,position,target});
   }
   const overlap=structuredClone(fixture);overlap.entities.push({...structuredClone(overlap.entities[0]),id:"ground1"});
-  await scene.reload(command,overlap);await command("environment",{basin_fog:{top_fade_m:3}});({state}=await settle(command));assert.equal(state.terrains.length,2);
+  await scene.reload(command,overlap);await resetCamera();await command("environment",{basin_fog:{top_fade_m:3}});({state}=await settle(command));assert.equal(state.terrains.length,2);
   const doubled=await capture(page,command,output,"overlap");await reference("overlap",doubled,{sigma:0.025,fade:3,copies:2});
   // Distinct integration paths retain raw matched captures. These deliberately
   // have no appearance assertions; the optical reference above covers opaque rays.
@@ -120,7 +127,8 @@ try{
   paths.materials.push({id:"alpha",color:[0.7,0.2,0.1,1],opacity:0.4},{id:"mask",color:[0.2,0.7,0.1,0.8],alpha_mode:"mask",alpha_cutoff:0.5});
   paths.entities.push({id:"alpha",mesh:"box",material:"alpha",transform:{translation:[100,2,140],scale:[18,4,1]}},{id:"mask",mesh:"box",material:"mask",transform:{translation:[155,2,140],scale:[18,4,1]}},
     {id:"particles",transform:{translation:[128,1,155]},particles:{rate:20,lifetime:2,speed:0,size:[1,1],radius:8}});
-  paths.environment.refraction={strength:1};await scene.reload(command,paths);await settle(command);
+  paths.environment.refraction={strength:1};await scene.reload(command,paths);await resetCamera();await command("step",{ticks:60});const integration=await settle(command);
+  assert.ok(integration.rendering.particles.drawn>0);assert.equal(integration.rendering.refraction.active,true);results.push({case:"integration paths",rendering:integration.rendering});
   for(const sigma of [0,0.025]){await command("environment",{basin_fog:{extinction_per_m:sigma}});await settle(command);await capture(page,command,output,`glass-${sigma}`);}
   for(const view of [false,true]){
     await command("environment",{clouds:{enabled:true,coverage:0.5,base:80,thickness:100,in_view:view}});
@@ -128,21 +136,22 @@ try{
     for(const sigma of [0,0.025]){await command("environment",{basin_fog:{extinction_per_m:sigma}});await settle(command);pair.push(await capture(page,command,output,`${view?"view":"dome"}-clouds-${sigma}`));}
     results.push({case:view?"view clouds":"dome clouds",changed:await differentPixels(page,pair),note:"Representative-front fog and nonlinear cloud grading are approximations."});
   }
-  const ocean=structuredClone(fixture);ocean.environment.ocean={enabled:true,level:0.5};await scene.reload(command,ocean);await settle(command);
+  const ocean=structuredClone(fixture);ocean.environment.ocean={enabled:true,level:0.5};await scene.reload(command,ocean);
+  await command("camera",{position:[128,0.625,200],target:[128,0.625,64],vertical_fov_radians:35*Math.PI/180,near:0.1,far:1000});await settle(command);
   for(const sigma of [0,0.025]){await command("environment",{basin_fog:{extinction_per_m:sigma}});await settle(command);await capture(page,command,output,`water-${sigma}`);}
   await command("camera",{position:[128,0.25,200],target:[128,0.25,64],vertical_fov_radians:35*Math.PI/180,near:0.1,far:1000});
   const underwater=[];
   for(const sigma of [0,0.025]){await command("environment",{basin_fog:{extinction_per_m:sigma}});await settle(command);underwater.push(await capture(page,command,output,`underwater-${sigma}`));}
   results.push({case:"underwater early return",changed:await differentPixels(page,underwater)});
   // The unchanged Highlands overview, at the catalog viewport/seed/settings.
-  await openPaused(page,devUrl("stress.html",{preset:"highlands",view:"overview",look:"scene",effects:"all",visibility:"off",lod:"on",impostors:"on","basin-fog":"on"}),{timeout:180000});
+  await openPaused(page,highlandsUrl("on"),{timeout:180000});
   ({state}=await settle(command));const demo=(await command("inspect",{component:"BasinDemo"})).result.value;
   assert.equal(demo.ready,true);assert.equal(demo.final_edits-demo.original_edits,4);assert.equal(state.dropped_terrains,0);
   assert.ok(state.terrains.some(t=>t.wet_cells>0));const seen=(await command("inspect",{component:"Camera"})).result.value;
   for(let i=0;i<3;i++){near(seen.position[i],demo.eye[i],0.001);near(seen.target[i],demo.target[i],0.001);}
   near(seen.vertical_fov_radians,55*Math.PI/180,0.00001);near(seen.near,0.5,0.00001);near(seen.far,20000,0.001);
   const rays=await highlandsRays(demo,state,seen);
-  results.push({case:"Highlands authored content",demo,camera:seen,state,rays});
+  results.push({case:"Highlands authored content",catalog:highlands.options,demo,camera:seen,state,rays});
   await capture(page,command,output,"highlands-on");await command("environment",{basin_fog:{extinction_per_m:0}});await settle(command);
   const zero=await capture(page,command,output,"highlands-same-content-zero");await command("environment",{basin_fog:{extinction_per_m:0.025}});await settle(command);
   const fog=await capture(page,command,output,"highlands-same-content-fog");results.push({case:"Highlands same content",changed:await differentPixels(page,[zero,fog]),state:await inspect(command)});
@@ -158,7 +167,7 @@ try{
   }
   await command("camera",{position:demo.eye,target:demo.target,vertical_fov_radians:55*Math.PI/180,near:0.5,far:20000});await command("resume");await page.waitForTimeout(1500);
   await page.locator("canvas").screenshot({path:`${output}/highlands-ordinary-a.png`});await page.waitForTimeout(417);await page.locator("canvas").screenshot({path:`${output}/highlands-ordinary-b.png`});await command("pause");
-  await openPaused(page,devUrl("stress.html",{preset:"highlands",view:"overview",look:"scene",effects:"all",visibility:"off",lod:"on",impostors:"on","basin-fog":"off"}),{timeout:180000});
+  await openPaused(page,highlandsUrl("off"),{timeout:180000});
   let rendering;for(let i=0;i<1200;i++){rendering=(await command("render")).result.rendering;if(!rendering.loading&&!rendering.pipelines_compiling)break;}
   assert.equal(rendering.basin_fog.gpu_bytes,0);await capture(page,command,output,"highlands-original-off");
   assert.equal(errors.length,0,errors.join("\n"));await record(output,"results",results);

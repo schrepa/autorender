@@ -279,14 +279,13 @@ impl BasinJob {
                 + (h10 - h00) * (width as f32 / spacing * 0.5)
                 + (h01 - h00) * (depth as f32 / spacing * 0.5);
         }
-        if self.water {
-            if let Some((surface, _)) = self
+        if self.water
+            && let Some((surface, _)) = self
                 .layers
                 .hydrology()
                 .and_then(|h| h.water_at(px + spacing * 0.5, pz + spacing * 0.5))
-            {
-                floor = math::max(floor, surface);
-            }
+        {
+            floor = math::max(floor, surface);
         }
         if let Some(sea) = self.sea {
             floor = math::max(floor, sea);

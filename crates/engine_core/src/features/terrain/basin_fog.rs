@@ -108,6 +108,8 @@ pub struct BasinTerrainView {
     pub lid_range: Option<[f32; 2]>,
     pub largest: Option<BasinPoolView>,
     pub requested_bytes: u64,
+    /// Maximum hierarchy bytes, excluding the shared cloud-shadow prefix.
+    pub gpu_requested_bytes: u64,
     pub map_bytes: u64,
     pub workspace_bytes: u64,
     pub input_m3: f64,
@@ -199,6 +201,7 @@ impl BasinFogs {
                 actual_level: entry.level,
                 source_revision: entry.source_revision,
                 requested_bytes: entry.requested,
+                gpu_requested_bytes: gpu_requested(entry.requested),
                 ..Default::default()
             });
             view.origin = entry.origin.to_array();
@@ -306,6 +309,7 @@ fn summarize(entity: Entity, entry: &Entry, grid: &BasinGrid) -> BasinTerrainVie
             .into_values()
             .max_by(|a, b| a.volume_m3.total_cmp(&b.volume_m3).then(b.id.cmp(&a.id))),
         requested_bytes: entry.requested,
+        gpu_requested_bytes: gpu_requested(entry.requested),
         map_bytes: grid.bytes(),
         workspace_bytes: entry.job.bytes(),
         input_m3: grid.input_m3,
@@ -385,11 +389,7 @@ pub(crate) fn sync(world: &mut World) {
     for (entity, terrain) in terrains {
         let level = settings.level.min(terrain.pyramid.levels() - 1);
         let requested = BasinJob::requested_bytes(&terrain.pyramid, level).unwrap_or(u64::MAX);
-        let gpu = requested
-            .checked_div(1024)
-            .and_then(|n| n.checked_mul(96))
-            .and_then(|n| n.checked_add(64))
-            .unwrap_or(u64::MAX);
+        let gpu = gpu_requested(requested);
         if !matches!(terrain.source, crate::TerrainSource::Generated(_)) {
             skip(
                 &mut state,
@@ -469,15 +469,18 @@ pub(crate) fn sync(world: &mut World) {
             entry.summary = None;
             let _profile = engine_profile::span("cpu", "basin_fog_fill");
             if !entry.job.refill(settings.budget_m) {
-                entry.job = BasinJob::new(
+                let Some(job) = BasinJob::new(
                     entry.layers.clone(),
                     entry.pyramid,
                     entry.level,
                     settings.budget_m,
                     entry.water,
                     entry.sea,
-                )
-                .expect("previously admitted dimensions");
+                ) else {
+                    skip(&mut state, entity, &terrain, level, requested, "dropped");
+                    continue;
+                };
+                entry.job = job;
             }
             entry.budget = settings.budget_m;
         }
@@ -498,6 +501,14 @@ pub(crate) fn sync(world: &mut World) {
     world.insert_resource(state);
 }
 
+fn gpu_requested(requested: u64) -> u64 {
+    requested
+        .checked_div(1024)
+        .and_then(|n| n.checked_mul(96))
+        .and_then(|n| n.checked_add(64))
+        .unwrap_or(u64::MAX)
+}
+
 fn skip(
     state: &mut BasinFogs,
     entity: Entity,
@@ -513,6 +524,7 @@ fn skip(
         actual_level: level,
         state: reason.into(),
         requested_bytes: requested,
+        gpu_requested_bytes: gpu_requested(requested),
         ..Default::default()
     });
 }

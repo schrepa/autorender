@@ -15,7 +15,7 @@ export function document({ridge=false,budget=0.25,origin=[0,0,0],hole=false,sea=
   return {version:9,id:"basin-fog-fixture",revision:1,camera:fixtureCamera,
     environment:{basin_fog:{enabled:true,budget_m:budget,extinction_per_m:0.025,top_fade_m:3,level:0},
       terrain:{samples_per_frame:50000000,loading_work_ms:50,surroundings:false},water:{enabled:false},ocean:{enabled:sea!==null,level:sea??0},
-      ground_cover:{enabled:false},wind:{velocity:[0,0],gusts:0},clouds:{enabled:false},shadows:{enabled:false},ambient_occlusion:{intensity:0},bloom:{intensity:0},reflections:{intensity:0},sun_shafts:{intensity:0},contact_shadows:{enabled:false}},
+      ground_cover:{enabled:false},wind:{velocity:[0,0],gusts:0},clouds:{enabled:false},shadows:{enabled:false},ambient_occlusion:{intensity:0},bloom:{intensity:0},reflections:{intensity:0},sun_shafts:{intensity:0},contact_shadows:{enabled:false},temporal_antialiasing:{enabled:false}},
     entities:Array.from({length:copies},(_,i)=>({id:i?`ground${i}`:"ground",terrain:structuredClone(terrain)}))};
 }
 export async function session(page,command,options={}){

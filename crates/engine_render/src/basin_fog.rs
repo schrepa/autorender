@@ -4,11 +4,32 @@
 
 use engine_core::math;
 use engine_core::{BasinFog, RenderBasinFog, RenderSnapshot};
-use std::sync::atomic::Ordering;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 const PREFIX: usize = crate::gpu_layouts::clouds::CLOUD_SHADOW_BYTES / 4;
 const HEADER: usize = 4;
 const NODE: usize = 12;
+
+struct MapKey {
+    entity: u64,
+    revision: u64,
+    origin: [u32; 3],
+    uploaded: Arc<AtomicU64>,
+}
+
+impl PartialEq for MapKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.entity == other.entity
+            && self.revision == other.revision
+            && self.origin == other.origin
+            // A replacement world may reuse every numeric key. Retaining
+            // the acknowledgement also prevents allocator-address reuse.
+            && Arc::ptr_eq(&self.uploaded, &other.uploaded)
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct BasinPass {
@@ -18,7 +39,7 @@ pub(crate) struct BasinPass {
     pub(crate) bytes: u64,
     pub(crate) upload_bytes: u64,
     pub(crate) nodes: u64,
-    key: Vec<(u64, u64, [u32; 3])>,
+    key: Vec<MapKey>,
     settings: Option<BasinFog>,
 }
 
@@ -57,12 +78,11 @@ impl BasinPass {
         let key: Vec<_> = snapshot
             .basin_fog
             .iter()
-            .map(|t| {
-                (
-                    t.entity.to_bits(),
-                    t.revision,
-                    t.origin.to_array().map(f32::to_bits),
-                )
+            .map(|t| MapKey {
+                entity: t.entity.to_bits(),
+                revision: t.revision,
+                origin: t.origin.to_array().map(f32::to_bits),
+                uploaded: t.uploaded.clone(),
             })
             .collect();
         if self.key == key && self.settings == Some(settings) {

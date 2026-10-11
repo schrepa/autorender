@@ -371,6 +371,7 @@
     {
       "op": "raycast",
       "smokes": [
+        "basin-fog-render",
         "collision",
         "host-parity",
         "streaming",
@@ -404,6 +405,7 @@
     {
       "op": "basin_fog_sample",
       "smokes": [
+        "basin-fog-render",
         "basin-fog-topology"
       ]
     },
@@ -495,12 +497,14 @@
     {
       "op": "terrain_edit",
       "smokes": [
+        "basin-fog-topology",
         "terrain"
       ]
     },
     {
       "op": "terrain_undo",
       "smokes": [
+        "basin-fog-topology",
         "terrain"
       ]
     },
@@ -566,6 +570,7 @@
       "op": "step",
       "smokes": [
         "agent",
+        "basin-fog-render",
         "collision",
         "gpu-presentation",
         "hierarchy",
@@ -694,6 +699,7 @@
       "op": "reload",
       "smokes": [
         "agent",
+        "basin-fog-topology",
         "collision",
         "hierarchy",
         "host-parity",
@@ -889,6 +895,7 @@
       "section": "ocean",
       "smokes": [
         "basin-fog-render",
+        "basin-fog-topology",
         "plugins",
         "terrain-water-sky"
       ],
