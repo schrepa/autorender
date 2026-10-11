@@ -10,7 +10,9 @@
 //!   passes and draws, Firefox Profiler files and a summary with what the
 //!   machine could add), each pass's hardware counters where drivers offer
 //!   them ([`counters`]), and deep dives through the GPU vendor's tools
-//!   ([`vendor`]).
+//!   ([`vendor`]);
+//! - with the `load` feature, what other programs load the machine with
+//!   while a measuring tool times a run ([`load`]).
 //!
 //! Every unsafe call the native tools make is here, allowed item by item.
 
@@ -49,6 +51,8 @@ pub mod counters {
 }
 #[cfg(feature = "profiling")]
 mod deep;
+#[cfg(feature = "load")]
+pub mod load;
 mod pix;
 mod renderdoc;
 #[cfg(feature = "profiling")]

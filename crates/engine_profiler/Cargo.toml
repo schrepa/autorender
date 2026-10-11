@@ -23,6 +23,9 @@ profiling = [
     "dep:ash",
     "dep:wgpu",
 ]
+# What other programs load the machine with while a measuring tool times a
+# run: their processor and GPU engine shares, and the GPU's clock.
+load = ["dep:windows-sys"]
 
 [dependencies]
 engine.workspace = true
@@ -34,7 +37,7 @@ ash = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true, features = ["vulkan"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, optional = true }
+windows-sys = { workspace = true, optional = true, features = ["Win32_System_Performance", "Wdk_Graphics_Direct3D"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true, optional = true }

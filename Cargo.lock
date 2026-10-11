@@ -3688,6 +3688,7 @@ dependencies = [
  "engine",
  "engine_assetc",
  "engine_dev",
+ "engine_profiler",
  "engine_render",
  "engine_scene",
  "naga",

@@ -12,6 +12,8 @@ naga = { version = "=30.0.1", features = ["wgsl-in", "spv-out"] }
 # The shader report checks the analyzer it downloads.
 sha2.workspace = true
 engine_assetc.workspace = true
+# What other programs did while a measured run was timed.
+engine_profiler = { workspace = true, features = ["load"] }
 # The game surface's types and the TypeScript generator.
 engine.workspace = true
 serde_json.workspace = true

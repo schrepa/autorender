@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use engine_profiler::load::{Load, Monitor};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
@@ -436,6 +437,9 @@ struct HostRun {
     marks: BTreeMap<String, Instant>,
     /// The measured run's report line, or everything else it printed.
     report: Value,
+    /// What other programs did while the sampled frames ran: from the
+    /// first serialized one to the GPU finishing the last pipelined one.
+    load: Load,
     stdout: String,
     stderr: String,
     success: bool,
@@ -457,6 +461,8 @@ fn run_host(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("cannot start {}: {error}", program.display()))?;
+    let mut load = Monitor::new(child.id());
+    let mut loaded = Load::default();
     let mut errors = child.stderr.take().expect("piped");
     let stderr = std::thread::spawn(move || {
         let mut text = String::new();
@@ -469,6 +475,11 @@ fn run_host(
         let line = line.map_err(|error| error.to_string())?;
         if let Ok(value) = serde_json::from_str::<Value>(&line) {
             if let Some(name) = value["mark"].as_str() {
+                match name {
+                    "serialized-start" => load.start(),
+                    "pipelined-end" => loaded = load.end(),
+                    _ => {}
+                }
                 marks.insert(name.to_owned(), at);
                 continue;
             }
@@ -484,6 +495,7 @@ fn run_host(
     Ok(HostRun {
         marks,
         report,
+        load: loaded,
         stdout,
         stderr: stderr.join().unwrap_or_default(),
         success: status.success(),
@@ -845,15 +857,21 @@ fn measure_run(
         known
     });
     let held = report["settled"]["held"] == true;
+    let known = |value: Option<f64>| value.map_or(json!("unknown"), |value| json!(round(value)));
+    let load = &run.load;
+    let gpu_clock_mhz = match load.gpu_clock_mhz {
+        [None, None] => json!("unknown"),
+        [start, end] => json!({ "start": known(start), "end": known(end) }),
+    };
     let conditions = json!({
         "paced": false,
         "vsync": false,
         "refresh_hz": "unknown",
         "power": power,
         "power_plan": power_plan,
-        "gpu_clock_mhz": "unknown",
-        "foreign_gpu_load_pct": "unknown",
-        "foreign_cpu_load_pct": "unknown",
+        "gpu_clock_mhz": gpu_clock_mhz,
+        "foreign_gpu_load_pct": known(load.foreign_gpu_pct),
+        "foreign_cpu_load_pct": known(load.foreign_cpu_pct),
         "visible": "unknown",
         "timer_resolution_us": machine.timer_resolution_us,
         "gpu_timestamps": report["gpu_timestamps"].as_str().unwrap_or("unknown"),
@@ -885,6 +903,11 @@ fn measure_run(
         })
         .collect();
     Ok((record, unavailable))
+}
+
+/// `value` to a tenth: what other programs load and clocks vary by more.
+fn round(value: f64) -> f64 {
+    (value * 10.0).round() / 10.0
 }
 
 /// `text` within the 300 characters the factory's reasons hold.
