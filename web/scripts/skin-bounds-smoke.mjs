@@ -48,7 +48,7 @@ const fixture = {
     { id: "root", animation: { clip: "bend", speed: 0, loop: false } },
     ...Array.from({ length: 7 }, (_, i) => ({
       id: "bone-" + i, parent: "root",
-      transform: { translation: [i === 4 ? 0.2 : 0, 0, 0], scale: i === 6 ? [-1, 0.7, 1.3] : [1, 1, 1] },
+      transform: { translation: [i === 4 ? 0.2 : 0, 0, 0], scale: i === 6 ? [1.3, 0.7, 1.3] : [1, 1, 1] },
     })),
     { id: "limb", mesh: "ribbon", material: "plain", skin: "rig" },
     { id: "rigid", mesh: "ribbon", material: "plain", transform: { translation: [2, 0, 0] } },
@@ -140,6 +140,12 @@ async function arithmetic() {
       : [...point, 0, ...point, 0]);
     cases.push({ point, packed, matrices, envelopes });
   }
+  for (const invalid of [NaN, Infinity, -Infinity]) {
+    const matrices = Array.from({ length: 4 }, () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]);
+    matrices[0][0] = invalid;
+    const envelopes = matrices.map(() => [-1, -1, -1, 0, 1, 1, 1, 0]);
+    cases.push({ point: [0, 0, 0], packed: [65535, 0, 0, 0], matrices, envelopes, unbounded: true });
+  }
   const flat = cases.flatMap(value => [...value.matrices.flat(), ...value.envelopes.flat()]);
   const result = await page.evaluate(async ({ shader, flat, count }) => {
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
@@ -179,6 +185,10 @@ async function arithmetic() {
     for (let axis = 0; axis < 3; axis++) {
       const low = result.values[index * 8 + axis], high = result.values[index * 8 + 4 + axis];
       assert.ok(Number.isFinite(low) && Number.isFinite(high) && low <= high, "finite conservative bound " + index);
+      if (value.unbounded) {
+        assert.equal(low, -maximum, "nonfinite palette keeps the slot");
+        assert.equal(high, maximum, "nonfinite palette keeps every shadow map");
+      }
       if (Number.isFinite(position[axis])) assert.ok(position[axis] >= low && position[axis] <= high,
         "fully skinned vertex " + index + " axis " + axis + ": " + position[axis] + " outside [" + low + ", " + high + "]");
     }
@@ -190,6 +200,10 @@ async function capture(name, gpu, alpha = 0) {
   if (gpu) {
     await command("present", { alpha, gpu: true });
     await delay(100);
+    // Replies report an earlier frame's asynchronous count. A completed
+    // capture lets that readback finish before the identical measured one.
+    await command("capture", { alpha, gpu: true });
+    await page.locator("canvas").screenshot();
   }
   const reply = await command("capture", { alpha, gpu });
   const png = await page.locator("canvas").screenshot({ path: output + "/" + name + ".png" });
@@ -212,7 +226,7 @@ try {
   await openPaused(page, sceneUrl());
   const arithmeticCases = await arithmetic();
   const cases = [await compare("sparse-rigid-and-offscreen")];
-  assert.ok(cases[0].gpu < cases[0].cpu, "joint-specific bounds reject the separated offscreen actor the whole-mesh union keeps");
+  assert.ok(cases[0].gpu < cases[0].cpu, "joint-specific bounds reject the separated offscreen actor the whole-mesh union keeps: " + JSON.stringify(cases[0]));
   for (const time of [0.37, 1]) {
     await command("animation", { entity: "root", time, speed: 0 });
     await command("step", { ticks: 1 });
@@ -229,17 +243,28 @@ try {
     cases.push(await compare(name));
   }
   const changed = structuredClone(fixture);
-  changed.entities.find(value => value.id === "root").transform = { rotation_degrees: [12, 17, 23], scale: [1.7, 0.6, -1] };
+  changed.entities.find(value => value.id === "root").transform = { rotation_degrees: [12, 17, 23], scale: [1.7, 0.6, 1.2] };
   changed.entities.find(value => value.id === "bone-2").transform.rotation_degrees = [23, 37, 11];
   changed.entities.push({ id: "receiver", mesh: "floor", material: "plain", transform: { translation: [0, -0.5, 0], scale: [20, 0.5, 20] } });
+  changed.entities.find(value => value.id === "separated-left").transform.translation = [112, 10, 0];
+  changed.entities.find(value => value.id === "separated-right").transform.translation = [-88, 10, 0];
   changed.environment.shadows.enabled = true;
+  changed.environment.atmosphere = { sun_direction: [1, 1, 0.7] };
   await scene.reload(command, changed);
   cases.push(await compare("replacement-shear-and-shadows"));
+  assert.ok(cases.at(-1).gpu < cases.at(-1).cpu, "shadow caster is culled from the camera: " + JSON.stringify(cases.at(-1)));
+  const caster = await capture("offscreen-caster-shadow", true);
+  const without = structuredClone(changed);
+  without.entities = without.entities.filter(value => value.id !== "offscreen");
+  await scene.reload(command, without);
+  const absent = await capture("offscreen-caster-removed", true);
+  const shadow = await differentPixels(page, [caster.png, absent.png], { tolerance: 8 });
+  assert.ok(shadow.changed > 0, "the offscreen skinned actor casts a visible shadow");
   changed.entities.find(value => value.id === "offscreen").skin = "rig";
   await scene.reload(command, changed);
   cases.push(await compare("rebound-skin"));
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ ok: true, artifact: output, arithmetic_cases: arithmeticCases, cases,
+  console.log(JSON.stringify({ ok: true, artifact: output, arithmetic_cases: arithmeticCases, offscreen_shadow_pixels: shadow.changed, cases,
     checks: ["gpu_bound_contains_skinned_vertices", "sparse_and_quantized_weights", "rigid_fallback", "tighter_offscreen_cull",
       "interpolated_pose_equivalence", "view_and_shadow_equivalence", "scene_replacement_and_skin_rebinding", "clean_browser_diagnostics"] }));
 } catch (error) {
@@ -249,4 +274,3 @@ try {
 } finally {
   await browser.close();
 }
-

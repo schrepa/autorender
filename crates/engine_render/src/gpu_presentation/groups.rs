@@ -286,16 +286,20 @@ impl DrawGroups {
             // Materials can split one mesh into several draw groups. Upload
             // its envelopes once; exceeding the device's storage limit keeps
             // the conservative whole-mesh bound instead of dropping work.
-            let envelopes = *envelope_ranges.entry(batch.mesh).or_insert_with(|| {
-                if meta.skin_envelopes.len() != meta.joints as usize
-                    || meta.skin_envelopes.len() > envelope_limit - self.envelope_staging.len()
-                {
-                    return [0; 4];
-                }
-                let first = self.envelope_staging.len() as u32;
-                self.envelope_staging.extend_from_slice(meta.skin_envelopes);
-                [first, meta.joints, 0, 0]
-            });
+            let envelopes = if meta.joints == 0 {
+                [0; 4]
+            } else {
+                *envelope_ranges.entry(batch.mesh).or_insert_with(|| {
+                    if meta.skin_envelopes.len() != meta.joints as usize
+                        || meta.skin_envelopes.len() > envelope_limit - self.envelope_staging.len()
+                    {
+                        return [0; 4];
+                    }
+                    let first = self.envelope_staging.len() as u32;
+                    self.envelope_staging.extend_from_slice(meta.skin_envelopes);
+                    [first, meta.joints, 0, 0]
+                })
+            };
             self.batch_staging.push(batch_record(
                 batch,
                 &meta,

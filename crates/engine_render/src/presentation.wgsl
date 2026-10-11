@@ -893,7 +893,7 @@ fn skin_palette(@builtin(global_invocation_id) id: vec3<u32>) {
 // stages normalize four unorm16 weights, blend rows, then transform a point.
 // Their rounding and this box transform are bounded by the sum of absolute
 // products, not by a possibly cancelled final coordinate. 2^-16 leaves over
-// 250 f32 unit roundoffs for fewer than 32 arithmetic steps (including the
+// 250 f32 unit roundoffs for fewer than 64 arithmetic steps (including the
 // normalization). The absolute term covers flushed subnormal inputs and
 // intermediates, including row-blend error later multiplied by a position.
 fn transform_skin_envelope(rows: Rows, local_low: vec3<f32>, local_high: vec3<f32>) -> SkinEnvelope {
