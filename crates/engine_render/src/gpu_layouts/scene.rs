@@ -147,6 +147,14 @@ gpu_structs! {
         pub weights: [u16; 4],
     }
 
+    /// Positions affected by one joint, before its palette transform. An
+    /// empty joint has low greater than high. Fourth components are unused.
+    #[derive(Clone, Copy, Pod, Zeroable)]
+    pub(crate) struct SkinEnvelope as ["SkinEnvelope"] {
+        pub low: [f32; 4],
+        pub high: [f32; 4],
+    }
+
     /// A material's maps as `meshes/declarations.wgsl` reads them:
     /// each map's texture coordinate transform, the emissive color and the map
     /// parameters of one material, and its top layer.
@@ -398,6 +406,9 @@ gpu_structs! {
         /// Levels 1 and 2's geometric errors in mesh units, the level count
         /// (1 to [`LOD_LEVELS`]), and the impostor card's error (0: none).
         pub lod_errors: [f32; 4],
+        /// First joint envelope and count; a zero count uses the whole
+        /// mesh box for each joint. The remaining words are unused.
+        pub skin_envelopes: [u32; 4],
     }
 
     /// A skinned slot of GPU-presented frames: its slot, its

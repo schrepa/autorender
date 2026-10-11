@@ -17,7 +17,7 @@ use crate::entries::{MeshPass, PassKind, Streams};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment};
 use crate::gpu_data::{
     CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, GroundData, LOD_LEVELS, LOD_STATE,
-    LightingUniform, PoseData, SHADER, SkinVertex, Variant, Vertex, clamped_extent,
+    LightingUniform, PoseData, SHADER, SkinEnvelope, SkinVertex, Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;
@@ -86,6 +86,9 @@ struct GpuMesh {
     // joints), and joints and weights.
     extended: bool,
     skinned: bool,
+    // One immutable envelope per joint, shared by every instance and draw
+    // group of this resident mesh.
+    skin_envelopes: Vec<SkinEnvelope>,
     index_count: u32,
     byte_len: u64,
     // Coarser levels of detail, after the mesh's own indices

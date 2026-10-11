@@ -320,7 +320,7 @@ impl ExtraVertex {
     }
 }
 
-pub(crate) use crate::gpu_layouts::scene::SkinVertex;
+pub(crate) use crate::gpu_layouts::scene::{SkinEnvelope, SkinVertex};
 
 impl SkinVertex {
     /// The skin stream of `mesh`, or `None` without joints.
@@ -338,6 +338,28 @@ impl SkinVertex {
                 })
                 .collect(),
         )
+    }
+
+    /// Immutable bounds of the positions each joint actually affects after
+    /// weight quantization. Built once with the mesh's uploaded skin stream.
+    pub(crate) fn envelopes(mesh: &engine_core::Mesh, skin: &[Self]) -> Vec<SkinEnvelope> {
+        let empty = SkinEnvelope {
+            low: [f32::MAX, f32::MAX, f32::MAX, 0.0],
+            high: [-f32::MAX, -f32::MAX, -f32::MAX, 0.0],
+        };
+        let mut envelopes = vec![empty; mesh.joint_count() as usize];
+        for (vertex, skin) in mesh.vertices().iter().zip(skin) {
+            for (&joint, &weight) in skin.joints.iter().zip(&skin.weights) {
+                if weight != 0 {
+                    let envelope = &mut envelopes[usize::from(joint)];
+                    for (axis, &position) in vertex.position.iter().enumerate() {
+                        envelope.low[axis] = engine_core::math::min(envelope.low[axis], position);
+                        envelope.high[axis] = engine_core::math::max(envelope.high[axis], position);
+                    }
+                }
+            }
+        }
+        envelopes
     }
 }
 

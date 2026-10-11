@@ -87,6 +87,7 @@ struct Batch {
     first_plane: u32,
     lod_ranges: vec4<u32>,
     lod_errors: vec4<f32>,
+    skin_envelopes: vec4<u32>,
 }
 
 struct Rows {

@@ -95,13 +95,14 @@ pub(crate) struct GpuPrepared {
 /// What GPU presentation needs of a plan batch: its mesh's index count,
 /// first index and base vertex in the mesh arena, bounds and joint count,
 /// its shadow group, and whether it draws virtual geometry.
-pub(crate) struct BatchMeta {
+pub(crate) struct BatchMeta<'a> {
     pub index_count: u32,
     pub first_index: u32,
     pub base_vertex: i32,
     pub bounds: Aabb,
     pub group: u32,
     pub joints: u32,
+    pub skin_envelopes: &'a [crate::gpu_data::SkinEnvelope],
     pub virtual_geometry: bool,
     /// Coarser levels of detail the camera may draw instead:
     /// each one's first index, index count and geometric error in
@@ -131,7 +132,7 @@ pub(crate) struct PresentationInputs<'a> {
     pub frame: &'a RenderFrame<'a>,
     pub gpu: &'a GpuPresentation<'a>,
     pub plan: &'a BatchPlan,
-    pub batch_meta: &'a dyn Fn(usize, &DrawBatch) -> BatchMeta,
+    pub batch_meta: &'a dyn Fn(usize, &DrawBatch) -> BatchMeta<'a>,
     pub records: RecordsKey,
     pub poses: FramePoses<'a>,
 }
@@ -576,6 +577,7 @@ impl GpuPresentationPass {
                             entry("slot_colors", poses.colors),
                             entry("skinned", &groups.skinned),
                             entry("skin_bounds", &groups.skin_bounds),
+                            entry("skin_envelopes", &groups.skin_envelopes),
                         ],
                     )
                 }),

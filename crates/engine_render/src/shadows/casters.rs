@@ -232,6 +232,7 @@ impl CasterGroups {
                 first_plane: 0,
                 lod_ranges: [0; 4],
                 lod_errors: [0.0, 0.0, 1.0, 0.0],
+                skin_envelopes: [0; 4],
                 group: self.records.len() as u32,
                 bounds_min: bounds.min().extend(skinned).to_array(),
                 bounds_max: bounds

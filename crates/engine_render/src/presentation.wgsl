@@ -100,6 +100,8 @@ struct Batch {
     // group's impostor (0 without one).
     lod_ranges: vec4<u32>,
     lod_errors: vec4<f32>,
+    // First joint envelope and count; a zero count uses whole-mesh bounds.
+    skin_envelopes: vec4<u32>,
 }
 
 struct DrawArgs {
@@ -168,6 +170,11 @@ struct Skinned {
 @group(0) @binding(20) var<storage, read> slot_colors: array<SlotColor>;
 @group(0) @binding(21) var<storage, read> skinned: array<Skinned>;
 @group(0) @binding(22) var<storage, read_write> skin_bounds: array<vec4<f32>>;
+struct SkinEnvelope {
+    low: vec4<f32>,
+    high: vec4<f32>,
+}
+@group(0) @binding(27) var<storage, read> skin_envelopes: array<SkinEnvelope>;
 // Reflection probes: per slot, a fingerprint of the pose it
 // last displayed and the frames in a row it displayed it, up to
 // STILL_FRAMES.
@@ -882,10 +889,50 @@ fn skin_palette(@builtin(global_invocation_id) id: vec3<u32>) {
     palette[id.x] = matrix_rows(model * rows_matrix(inverse_binds[id.x]));
 }
 
-// Meshes with joints: each skinned slot's world bounds, the
-// union of its mesh's bounds moved by each joint of its palette (its
-// vertices are weighted averages of those points), then culled against the
-// view like any slot. A slot without a palette draws rigidly by its pose.
+// One joint's affected positions, transformed conservatively. The vertex
+// stages normalize four unorm16 weights, blend rows, then transform a point.
+// Their rounding and this box transform are bounded by the sum of absolute
+// products, not by a possibly cancelled final coordinate. 2^-16 leaves over
+// 250 f32 unit roundoffs for fewer than 32 arithmetic steps (including the
+// normalization). The absolute term covers flushed subnormal inputs and
+// intermediates, including row-blend error later multiplied by a position.
+fn transform_skin_envelope(rows: Rows, local_low: vec3<f32>, local_high: vec3<f32>) -> SkinEnvelope {
+    let unbounded = SkinEnvelope(vec4<f32>(-F32_MAX), vec4<f32>(F32_MAX));
+    if !(all(abs(rows.r0) <= vec4<f32>(F32_MAX))
+            && all(abs(rows.r1) <= vec4<f32>(F32_MAX))
+            && all(abs(rows.r2) <= vec4<f32>(F32_MAX))) {
+        return unbounded;
+    }
+    // Empty joints contribute no points, including when they lie between
+    // used joints in a sparse palette.
+    if any(local_low > local_high) {
+        return SkinEnvelope(vec4<f32>(F32_MAX), vec4<f32>(-F32_MAX));
+    }
+    let center = local_low * 0.5 + local_high * 0.5;
+    let half = local_high * 0.5 - local_low * 0.5;
+    let world_center = vec3<f32>(dot(rows.r0.xyz, center) + rows.r0.w,
+        dot(rows.r1.xyz, center) + rows.r1.w, dot(rows.r2.xyz, center) + rows.r2.w);
+    let world_half = vec3<f32>(dot(abs(rows.r0.xyz), half), dot(abs(rows.r1.xyz), half),
+        dot(abs(rows.r2.xyz), half));
+    let point_scale = vec4<f32>(max(abs(local_low), abs(local_high)), 1.0);
+    let magnitude = vec3<f32>(dot(abs(rows.r0), point_scale),
+        dot(abs(rows.r1), point_scale), dot(abs(rows.r2), point_scale));
+    let flush_scale = vec3<f32>(dot(abs(rows.r0), vec4<f32>(1.0)),
+        dot(abs(rows.r1), vec4<f32>(1.0)), dot(abs(rows.r2), vec4<f32>(1.0)))
+        + vec3<f32>(dot(point_scale, vec4<f32>(1.0)));
+    let pad = magnitude * 0x1p-16f + flush_scale * 0x1p-120f;
+    let low = world_center - world_half - pad;
+    let high = world_center + world_half + pad;
+    if !(all(low >= vec3<f32>(-F32_MAX)) && all(high <= vec3<f32>(F32_MAX))
+            && all(low <= high)) {
+        return unbounded;
+    }
+    return SkinEnvelope(vec4<f32>(low, 0.0), vec4<f32>(high, 0.0));
+}
+
+// The union of joint-influence envelopes contains every normalized blend
+// of their transformed positions. Whole-mesh boxes remain the fallback
+// where envelope storage exceeded a device limit, and for rigid slots.
 @compute @workgroup_size(64)
 fn skin_bounds_pass(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= frame.skinned {
@@ -893,32 +940,29 @@ fn skin_bounds_pass(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let record = skinned[id.x];
     let batch = batches[record.batch];
-    let center = (batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5;
-    let half = (batch.bounds_max.xyz - batch.bounds_min.xyz) * 0.5;
     var low = vec3<f32>(F32_MAX);
     var high = vec3<f32>(-F32_MAX);
     let offset = slot_colors[record.slot].flags;
     let joints = select(1u, record.joints, offset != 0u);
     for (var joint = 0u; joint < joints; joint++) {
         var rows: Rows;
+        var local_low = batch.bounds_min.xyz;
+        var local_high = batch.bounds_max.xyz;
         if offset == 0u {
             rows = poses[record.slot];
         } else {
             rows = palette[offset - 1u + joint];
+            if batch.skin_envelopes.y != 0u {
+                let envelope = skin_envelopes[batch.skin_envelopes.x + joint];
+                local_low = envelope.low.xyz;
+                local_high = envelope.high.xyz;
+            }
         }
-        let world_center = vec3<f32>(dot(rows.r0.xyz, center) + rows.r0.w,
-            dot(rows.r1.xyz, center) + rows.r1.w, dot(rows.r2.xyz, center) + rows.r2.w);
-        let world_half = vec3<f32>(dot(abs(rows.r0.xyz), half), dot(abs(rows.r1.xyz), half),
-            dot(abs(rows.r2.xyz), half));
-        low = min(low, world_center - world_half);
-        high = max(high, world_center + world_half);
+        let envelope = transform_skin_envelope(rows, local_low, local_high);
+        low = min(low, envelope.low.xyz);
+        high = max(high, envelope.high.xyz);
     }
-    // Widened by the rounding of blends and of these bounds; bounds that
-    // are not finite cover everything: never culled, cast into every map.
-    let pad = max(abs(low), abs(high)) * 0x1p-20f;
-    low -= pad;
-    high += pad;
-    if !(all(low >= vec3<f32>(-F32_MAX)) && all(high <= vec3<f32>(F32_MAX))) {
+    if any(low > high) {
         low = vec3<f32>(-F32_MAX);
         high = vec3<f32>(F32_MAX);
     }

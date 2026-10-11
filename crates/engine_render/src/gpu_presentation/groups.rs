@@ -4,8 +4,12 @@
 //! only when the candidate structure, the node space or what batch records
 //! carry changed.
 
+use std::collections::BTreeMap;
+
 use crate::batches::DrawBatch;
-use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES, LOD_LEVELS, SkinnedData};
+use crate::gpu_data::{
+    BatchData, CandidateData, DRAW_ARGS_BYTES, LOD_LEVELS, SkinEnvelope, SkinnedData,
+};
 use crate::mesh_arena::Ids;
 
 use super::{BatchMeta, PresentationInputs, RecordsKey, SCAN_GROUP, grow, storage};
@@ -44,6 +48,9 @@ pub(super) struct DrawGroups {
     skinned_capacity: usize,
     pub(super) skinned: wgpu::Buffer,
     pub(super) skin_bounds: wgpu::Buffer,
+    pub(super) skin_envelopes: wgpu::Buffer,
+    envelope_capacity: usize,
+    envelope_staging: Vec<SkinEnvelope>,
     skinned_count: u32,
     batch_joints: Vec<u32>,
     count: u32,
@@ -92,6 +99,9 @@ impl DrawGroups {
             skinned_capacity: 0,
             skinned: empty("engine/presentation-skinned", none),
             skin_bounds: empty("engine/presentation-skin-bounds", none),
+            skin_envelopes: empty("engine/presentation-skin-envelopes", none),
+            envelope_capacity: 0,
+            envelope_staging: Vec::new(),
             skinned_count: 0,
             batch_joints: Vec::new(),
             count: 0,
@@ -141,6 +151,7 @@ impl DrawGroups {
             &self.scan,
             &self.batches,
             &self.batch_bases,
+            &self.skin_envelopes,
         ]
         .into_iter()
         .chain(&self.draws)
@@ -263,14 +274,34 @@ impl DrawGroups {
         self.batch_staging.clear();
         self.batch_staging.reserve_exact(plan.batches.len());
         self.batch_joints.clear();
+        self.envelope_staging.clear();
+        let mut envelope_ranges = BTreeMap::new();
+        let limits = device.limits();
+        let envelope_limit = (u64::from(limits.max_storage_buffer_binding_size)
+            .min(limits.max_buffer_size)
+            / size_of::<SkinEnvelope>() as u64) as usize;
         for (index, batch) in plan.batches.iter().enumerate() {
             let meta = batch_meta(index, batch);
             self.batch_joints.push(meta.joints);
+            // Materials can split one mesh into several draw groups. Upload
+            // its envelopes once; exceeding the device's storage limit keeps
+            // the conservative whole-mesh bound instead of dropping work.
+            let envelopes = *envelope_ranges.entry(batch.mesh).or_insert_with(|| {
+                if meta.skin_envelopes.len() != meta.joints as usize
+                    || meta.skin_envelopes.len() > envelope_limit - self.envelope_staging.len()
+                {
+                    return [0; 4];
+                }
+                let first = self.envelope_staging.len() as u32;
+                self.envelope_staging.extend_from_slice(meta.skin_envelopes);
+                [first, meta.joints, 0, 0]
+            });
             self.batch_staging.push(batch_record(
                 batch,
                 &meta,
                 self.first_instance,
                 self.capacity,
+                envelopes,
             ));
             let range = batch.instances.start as usize..batch.instances.end as usize;
             let base = self.candidate_staging.len() as u32;
@@ -343,6 +374,23 @@ impl DrawGroups {
                 bytemuck::cast_slice(&self.skinned_staging),
             );
         }
+        if self.envelope_staging.len() > self.envelope_capacity {
+            self.envelope_capacity = grow(self.envelope_staging.len()).min(envelope_limit);
+            self.skin_envelopes = storage(
+                device,
+                "engine/presentation-skin-envelopes",
+                (self.envelope_capacity * size_of::<SkinEnvelope>()) as u64,
+                wgpu::BufferUsages::empty(),
+            );
+            self.generation += 1;
+        }
+        if !self.envelope_staging.is_empty() {
+            queue.write_buffer(
+                &self.skin_envelopes,
+                0,
+                bytemuck::cast_slice(&self.envelope_staging),
+            );
+        }
         self.skinned_count = self.skinned_staging.len() as u32;
         if !self.candidate_staging.is_empty() {
             queue.write_buffer(
@@ -365,7 +413,8 @@ impl DrawGroups {
         Some(
             (2 * self.candidate_staging.len() * size_of::<CandidateData>()
                 + self.batch_staging.len() * size_of::<BatchData>()
-                + self.skinned_staging.len() * size_of::<SkinnedData>()) as u64,
+                + self.skinned_staging.len() * size_of::<SkinnedData>()
+                + self.envelope_staging.len() * size_of::<SkinEnvelope>()) as u64,
         )
     }
 
@@ -439,9 +488,10 @@ impl DrawGroups {
 /// when `first_instance`.
 fn batch_record(
     batch: &DrawBatch,
-    meta: &BatchMeta,
+    meta: &BatchMeta<'_>,
     first_instance: bool,
     capacity: usize,
+    skin_envelopes: [u32; 4],
 ) -> BatchData {
     let lod = |level: usize| meta.lods.get(level).copied().unwrap_or((0, 0, 0.0));
     let skinned = meta.joints != 0;
@@ -465,6 +515,7 @@ fn batch_record(
             meta.impostor,
         ],
         group: meta.group,
+        skin_envelopes,
         bounds_min: meta
             .bounds
             .min()

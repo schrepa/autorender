@@ -607,6 +607,7 @@ tables! {
             read(20, "slot_colors", C),
             read(21, "skinned", C),
             write(22, "skin_bounds", C),
+            read(27, "skin_envelopes", C),
         ],
     };
 

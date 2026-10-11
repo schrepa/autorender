@@ -473,6 +473,9 @@ impl Renderer {
                 // limits alone leave a mesh buffers of its own.
                 let extras = ExtraVertex::stream(source);
                 let skin = SkinVertex::stream(source);
+                let skin_envelopes = skin
+                    .as_ref()
+                    .map_or_else(Vec::new, |skin| SkinVertex::envelopes(source, skin));
                 let mut streams: Vec<&[u8]> = vec![bytemuck::cast_slice(&self.vertex_staging)];
                 if let Some(extras) = &extras {
                     streams.push(bytemuck::cast_slice(extras));
@@ -530,6 +533,7 @@ impl Renderer {
                     placement,
                     extended: extras.is_some(),
                     skinned: skin.is_some(),
+                    skin_envelopes,
                     index_count: source.indices().len() as u32,
                     byte_len,
                     lods,
@@ -983,6 +987,7 @@ impl Renderer {
                     bounds: mesh.bounds(),
                     group: shadows.batch_group(index),
                     joints: mesh.joint_count(),
+                    skin_envelopes: &gpu_mesh.skin_envelopes,
                     virtual_geometry,
                     lods: gpu_mesh.lods[..levels - 1]
                         .iter()
