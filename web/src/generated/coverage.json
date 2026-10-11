@@ -109,6 +109,7 @@
       "inspector": "Jobs",
       "kind": "resource",
       "smokes": [
+        "bake-scheduling",
         "jobs"
       ]
     },
@@ -140,6 +141,7 @@
       "inspector": "NavAgents",
       "kind": "resource",
       "smokes": [
+        "bake-scheduling",
         "jobs",
         "plugins",
         "terrain"
@@ -200,6 +202,7 @@
       "inspector": "Terrain",
       "kind": "component",
       "smokes": [
+        "bake-scheduling",
         "terrain"
       ]
     },
@@ -221,6 +224,7 @@
       "inspector": "Terrains",
       "kind": "resource",
       "smokes": [
+        "bake-scheduling",
         "jobs",
         "terrain"
       ]
@@ -275,12 +279,12 @@
       "smokes": [
         "agent",
         "agent-lifecycle",
+        "bake-scheduling",
         "collision",
         "culling",
         "gpu-presentation",
         "hierarchy",
         "interpolation",
-        "jobs",
         "native",
         "plugins",
         "taa",
@@ -291,6 +295,7 @@
       "op": "inspect",
       "smokes": [
         "agent",
+        "bake-scheduling",
         "collision",
         "gpu-presentation",
         "hierarchy",
@@ -322,10 +327,10 @@
       "op": "describe",
       "smokes": [
         "agent",
+        "bake-scheduling",
         "collision",
         "hierarchy",
         "interpolation",
-        "jobs",
         "lod",
         "native",
         "spline",
@@ -358,6 +363,7 @@
     {
       "op": "terrain_height",
       "smokes": [
+        "bake-scheduling",
         "jobs",
         "plugins",
         "streaming",
@@ -422,6 +428,7 @@
       "op": "environment",
       "smokes": [
         "agent",
+        "bake-scheduling",
         "culling",
         "gpu-presentation",
         "lod",
@@ -489,6 +496,7 @@
     {
       "op": "camera",
       "smokes": [
+        "bake-scheduling",
         "culling",
         "gpu-presentation",
         "interpolation",
@@ -535,6 +543,7 @@
     {
       "op": "render",
       "smokes": [
+        "bake-scheduling",
         "collision",
         "culling",
         "gpu-presentation",
@@ -556,6 +565,7 @@
       "op": "pause",
       "smokes": [
         "agent",
+        "bake-scheduling",
         "collision",
         "gpu-presentation",
         "interpolation",
@@ -571,10 +581,10 @@
       "op": "resume",
       "smokes": [
         "agent",
+        "bake-scheduling",
         "collision",
         "gpu-presentation",
         "interpolation",
-        "jobs",
         "meshes",
         "native",
         "taa",
@@ -585,12 +595,12 @@
       "op": "capture",
       "smokes": [
         "agent",
+        "bake-scheduling",
         "collision",
         "culling",
         "gpu-presentation",
         "hierarchy",
         "interpolation",
-        "jobs",
         "lod",
         "meshes",
         "native",
