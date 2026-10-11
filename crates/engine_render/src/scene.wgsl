@@ -926,8 +926,10 @@ fn basin_interval(eye: vec3<f32>, ray: vec3<f32>, reach: f32,
     var interval = vec2<f32>(0.0, reach);
     for (var axis = 0u; axis < 3u; axis += 1u) {
         if ray[axis] == 0.0 {
-            // Half-open cells avoid duplicate depth on an axial cell edge.
+            // Half-open horizontal cells avoid duplicate depth at an axial
+            // edge. The vertical medium excludes its floor as well as its lid.
             if eye[axis] < low[axis] || eye[axis] >= high[axis] { return vec2<f32>(0.0); }
+            if axis == 1u && eye.y == low.y { return vec2<f32>(0.0); }
         } else {
             let a = basin_plane(low[axis],eye[axis],ray[axis],reach);
             let b = basin_plane(high[axis],eye[axis],ray[axis],reach);

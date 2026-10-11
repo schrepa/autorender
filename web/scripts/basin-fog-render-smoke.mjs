@@ -84,7 +84,7 @@ async function reference(name,png,{sigma,fade,copies=1,eye=camera.position,targe
       // Sky rays exiting through the high border are outside this analytic
       // interior/box reference; their rendered captures remain preserved.
       if(!wall&&light===H)valid=false;
-      const medium=interval(ray,[1,0,1],[255,0.25,255],distance);let optical=0;
+      const medium=ray[1]===0&&(eye[1]<=0||eye[1]>=0.25)?null:interval(ray,[1,0,1],[255,0.25,255],distance);let optical=0;
       if(medium){const [a,b]=medium,ya=eye[1]+ray[1]*a,yb=eye[1]+ray[1]*b;const integral=fade===0?b-a:Math.abs(ray[1])<1e-12?(b-a)*Math.max(0,Math.min(1,(0.25-ya)/fade)):(primitive(yb)-primitive(ya))/ray[1];optical=Math.min(80,copies*sigma*integral);}
       const passing=Math.exp(-optical),rgb=grade(light.map((w,i)=>passing*w+(1-passing)*H[i])),at=4*(y*canvas.width+x);
       if(valid){let largest=0;for(let c=0;c<3;c++){expected.data[at+c]=rgb[c];const e=Math.abs(rgb[c]-actual.data[at+c]);error.data[at+c]=e;largest=Math.max(largest,e);totalError+=e;}expected.data[at+3]=error.data[at+3]=255;histogram[largest]++;count++;maxError=Math.max(maxError,largest);if(largest)changed++;}
@@ -102,6 +102,8 @@ try{
   results.push({case:"reference provenance",hashes,model:"binary64 authored 254 m square prism, floor 0, lid 0.25 m; closed-form ramp integral; configured grade/sRGB",viewport:[1400,900]});
   results.push({case:"zero-length ray limit",distance:0,opticalDepth:0,passing:1,
     note:"The geometric reference has an empty interval. Validated perspective cameras require positive near distance, so captured surface rays do not exercise the shader's zero-distance return."});
+  results.push({case:"horizontal boundary ray limits",floor:0,lid:0.25,direction:[0,0,-1],
+    floorPassing:1,lidPassing:1,note:"The medium excludes both vertical boundaries. The even-height viewport has no exactly horizontal central pixel, so these are analytic limiting values, not hidden GPU readback."});
   const fixture=document({budget:0.25});fixture.camera=camera;
   fixture.entities[0].terrain.surface.materials[0].color=[0,0,0];
   fixture.materials=[{id:"lamp",color:[0,0,0,1],emissive:L}];fixture.meshes=[{id:"box",source:{kind:"cube"}}];
