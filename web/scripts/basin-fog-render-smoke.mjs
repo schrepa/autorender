@@ -58,9 +58,13 @@ async function highlandsRays(demo,state,seen){
       if(leave>enter)intersections.push({pixel,ray,interval:[enter,leave],cell:points[at],sample});
     }
     assert.ok(intersections.length>0,`fixed Highlands basin ${basin} has no catalog camera pixel ray crossing a wet cell`);
-    // Collision visibility is reported separately: it samples resident terrain
-    // and object colliders, not the renderer's exact depth buffer.
-    for(const ray of intersections.slice(0,4))ray.collision=(await command("raycast",{origin:eye,direction:ray.ray,max_distance:ray.interval[1]})).result;
+    // Collision visibility is supplemental: the stock Highlands preset need
+    // not install CollisionPlugin, and its answer is not rendered depth.
+    for(const ray of intersections.slice(0,4)){
+      const reply=await page.evaluate(request=>window.__engineDev.request(request),{op:"raycast",origin:eye,direction:ray.ray,max_distance:ray.interval[1]});
+      if(reply.ok)ray.collision=reply.result;
+      else{assert.equal(reply.error?.code,"missing_plugin");ray.collision={unavailable:reply.error};}
+    }
     answer.push({basin,geometricIntersections:intersections.length,examples:intersections.slice(0,4)});
   }
   return answer;
