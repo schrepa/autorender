@@ -113,8 +113,16 @@ fn start_server(source: &Path, sha: &str, log: &Path) -> Result<Server, String> 
 }
 
 /// What a development server serves: the commit's page and its Wasm
-/// clients with their development tools.
+/// clients with their development tools, built with the profile and
+/// features its `web/pkg-dev/build.json` names (release and the development
+/// tools for commits from before it was written).
 fn web_build(source: &Path, sha: &str, took: Duration) -> Result<Value, String> {
+    let identity = read_json(&source.join("web/pkg-dev/build.json")).unwrap_or_default();
+    let profile = identity["profile"].as_str().unwrap_or("release");
+    let features = match &identity["features"] {
+        Value::Array(features) => Value::Array(features.clone()),
+        _ => json!(["engine/dev"]),
+    };
     let mut wasm: Vec<PathBuf> = fs::read_dir(source.join("web/pkg-dev"))
         .map_err(|error| format!("cannot read web/pkg-dev: {error}"))?
         .flatten()
@@ -135,9 +143,9 @@ fn web_build(source: &Path, sha: &str, took: Duration) -> Result<Value, String> 
     let wasm_bindgen = output(source, "wasm-bindgen", &["--version"]).unwrap_or_default();
     Ok(json!({
         "sha": sha,
-        "profile": "release",
+        "profile": profile,
         "target": "web-wasm",
-        "features": ["engine/dev"],
+        "features": features,
         "toolchain": {
             "rustc": output(source, "rustc", &["-V"])?,
             "cargo": output(source, "cargo", &["-V"])?,
@@ -150,12 +158,15 @@ fn web_build(source: &Path, sha: &str, took: Duration) -> Result<Value, String> 
     }))
 }
 
-/// A build that did not finish: its commit, and as its artifact the log
-/// that says why.
+/// A build that did not finish: its commit, the profile its development
+/// server builds with (release before the quick profile existed), and as
+/// its artifact the log that says why.
 fn failed_build(source: &Path, sha: &str, log: &Path) -> Result<Value, String> {
+    let quick = fs::read_to_string(source.join("Cargo.toml"))
+        .is_ok_and(|manifest| manifest.contains("[profile.quick]"));
     Ok(json!({
         "sha": sha,
-        "profile": "release",
+        "profile": if quick { crate::pipeline::QUICK } else { "release" },
         "target": "web-wasm",
         "features": ["engine/dev"],
         "toolchain": {

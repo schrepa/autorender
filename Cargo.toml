@@ -86,6 +86,17 @@ opt-level = 1
 inherits = "release"
 debug = 1
 
+# Builds nothing is timed on (the development server and its checks, lint,
+# agent sessions, asset tools): release's optimizations without link-time
+# optimization, in parallel units and incrementally, so an engine edit
+# rebuilds the page in seconds, not minutes. Timed and shipped builds use
+# release and profiling.
+[profile.quick]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+
 [profile.dev.package."*"]
 opt-level = 2
 

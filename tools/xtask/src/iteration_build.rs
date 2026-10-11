@@ -37,7 +37,7 @@ pub fn build(root: &Path, output: &Path) -> Value {
         "ok": false,
         "build": {
             "target": WASM_TARGET,
-            "profile": "release",
+            "profile": crate::pipeline::QUICK,
             "development": true,
             "output": output.to_string_lossy(),
             "packages": [],
@@ -82,7 +82,8 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
                 DEV_FEATURES,
                 "--target",
                 WASM_TARGET,
-                "--release",
+                "--profile",
+                crate::pipeline::QUICK,
                 "--locked",
                 "--message-format=json",
                 "--target-dir",
@@ -97,7 +98,7 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
     // The dedicated target directory keeps ordinary dev/lint builds from
     // replacing a compiled artifact while wasm-bindgen reads it.
     let mut artifacts = Vec::with_capacity(clients().len());
-    let artifact_root = target_dir.join(WASM_TARGET).join("release");
+    let artifact_root = target_dir.join(WASM_TARGET).join(crate::pipeline::QUICK);
     for package in client_crates() {
         let expected = artifact_root.join(format!("{package}.wasm"));
         let artifact = compiled.stdout.artifacts.get(package).ok_or_else(|| {

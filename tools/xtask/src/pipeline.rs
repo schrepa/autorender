@@ -7,16 +7,20 @@ use crate::{
     },
 };
 
+/// The Cargo profile of builds nothing is timed on: the development server,
+/// lint, agent sessions and asset tools (`Cargo.toml`).
+pub(crate) const QUICK: &str = "quick";
+
 pub fn build(root: &Path) -> Result<(), String> {
     authoring::validate_sources(root)?;
-    build_wasm(root, false)?;
+    build_wasm(root, false, "release")?;
     install_web_dependencies(root)?;
     run(root, NPM, &["run", "build", "--prefix", "web"])
 }
 
 pub fn dev(root: &Path, port: u16) -> Result<(), String> {
     authoring::validate_sources(root)?;
-    build_wasm(root, true)?;
+    build_wasm(root, true, QUICK)?;
     install_web_dependencies(root)?;
     println!("Serving the games at http://127.0.0.1:{port}; press Ctrl+C to stop.");
     println!(
@@ -117,9 +121,11 @@ pub fn lint(root: &Path) -> Result<(), String> {
             "warnings",
         ],
     )?;
-    // The host imports generated declarations, including on a clean checkout.
-    build_wasm(root, false)?;
-    build_wasm(root, true)?;
+    // The host imports generated declarations, including on a clean checkout;
+    // their types do not depend on the profile. `cargo xtask build` replaces
+    // these bindings with release ones before it bundles them.
+    build_wasm(root, false, QUICK)?;
+    build_wasm(root, true, QUICK)?;
     install_web_dependencies(root)?;
     run(root, NPM, &["run", "check", "--prefix", "web"])
 }
@@ -156,27 +162,35 @@ pub fn docs(root: &Path) -> Result<(), String> {
     )
 }
 
-pub(crate) fn build_wasm(root: &Path, development: bool) -> Result<(), String> {
+/// The browser clients built with Cargo profile `profile`, their bindings in
+/// `web/pkg-dev` with development tools or `web/pkg` without, beside a
+/// `build.json` naming the profile and features.
+pub(crate) fn build_wasm(
+    root: &Path,
+    development: bool,
+    profile: &'static str,
+) -> Result<(), String> {
     verify_wasm_bindgen(root)?;
     let mut arguments: Vec<&str> = vec!["build"];
     arguments.extend(client_packages());
-    arguments.extend(["--target", WASM_TARGET, "--release", "--locked"]);
+    arguments.extend(["--target", WASM_TARGET, "--profile", profile, "--locked"]);
     if development {
         arguments.extend(["--features", DEV_FEATURES]);
     }
     run(root, "cargo", &arguments)?;
+    let out_dir = if development {
+        "web/pkg-dev"
+    } else {
+        "web/pkg"
+    };
     for name in client_crates() {
-        let artifact = format!("target/{WASM_TARGET}/release/{name}.wasm");
+        let artifact = format!("target/{WASM_TARGET}/{profile}/{name}.wasm");
         let mut arguments = vec![
             artifact.as_str(),
             "--target",
             "web",
             "--out-dir",
-            if development {
-                "web/pkg-dev"
-            } else {
-                "web/pkg"
-            },
+            out_dir,
             "--out-name",
             name,
         ];
@@ -187,7 +201,13 @@ pub(crate) fn build_wasm(root: &Path, development: bool) -> Result<(), String> {
         }
         run(root, "wasm-bindgen", &arguments)?;
     }
-    Ok(())
+    let features: &[&str] = if development { &[DEV_FEATURES] } else { &[] };
+    let identity = serde_json::json!({"profile": profile, "features": features});
+    fs::write(
+        root.join(out_dir).join("build.json"),
+        serde_json::to_string_pretty(&identity).expect("identities serialize") + "\n",
+    )
+    .map_err(|error| format!("cannot write {out_dir}/build.json: {error}"))
 }
 
 pub(crate) fn install_web_dependencies(root: &Path) -> Result<(), String> {

@@ -22,7 +22,7 @@ pub fn build(root: &Path, attribution: bool) -> Result<(), String> {
     authoring::validate_sources(root)?;
     // Produce ordinary bindings independently before Cargo feature unification
     // can enable instrumentation in any shared dependency.
-    pipeline::build_wasm(root, false)?;
+    pipeline::build_wasm(root, false, "release")?;
     // Every game; job workers keep their ordinary bindings.
     let games: Vec<_> = clients()
         .iter()
