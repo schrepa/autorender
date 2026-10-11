@@ -939,9 +939,18 @@ fn basin_interval(eye: vec3<f32>, ray: vec3<f32>, reach: f32,
 
 // Density averaged over a segment already clipped to floor/top. Splitting
 // at top-fade makes each segment constant or linear, integrated by a trapezoid.
+fn basin_density(height: f32, top: f32, fade: f32) -> f32 {
+    if height >= top { return 0.0; }
+    // Compare half differences before division; even an extreme finite fade
+    // or elevation cannot overflow the numerator or produce a ratio above 1.
+    let half_depth = max(top*0.5-height*0.5,0.0);
+    let half_fade = fade*0.5;
+    if half_depth >= half_fade { return 1.0; }
+    return half_depth/half_fade;
+}
 fn basin_average(a: f32, b: f32, top: f32, fade: f32) -> f32 {
     if fade == 0.0 { return 1.0; }
-    return 0.5 * (saturate((top-a)/fade) + saturate((top-b)/fade));
+    return 0.5 * (basin_density(a,top,fade) + basin_density(b,top,fade));
 }
 fn basin_segment(length: f32, average: f32, sigma: f32) -> f32 {
     let weighted = length * average;
@@ -971,7 +980,9 @@ fn basin_ray_passing(eye: vec3<f32>, ray: vec3<f32>, reach: f32) -> f32 {
         if cloud_shadows[word+7u] == 0u { word += 12u; continue; }
         let top = high.y;
         var split = interval.x;
-        if ray.y != 0.0 && fade > 0.0 {
+        // A fade breakpoint below the floor cannot split this interval.
+        // This guard also keeps top-fade within the finite cell bounds.
+        if ray.y != 0.0 && fade > 0.0 && fade*0.5 < top*0.5-low.y*0.5 {
             split = clamp(basin_plane(top-fade,eye.y,ray.y,reach),interval.x,interval.y);
         }
         let y0 = clamp(eye.y+ray.y*interval.x,low.y,high.y);

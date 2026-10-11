@@ -275,7 +275,9 @@
     {
       "inspector": "basin_fog",
       "kind": "resource",
-      "smokes": []
+      "smokes": [
+        "basin-fog-topology"
+      ]
     }
   ],
   "ops": [
@@ -301,6 +303,8 @@
       "op": "inspect",
       "smokes": [
         "agent",
+        "basin-fog-render",
+        "basin-fog-topology",
         "collision",
         "gpu-presentation",
         "hierarchy",
@@ -376,6 +380,7 @@
     {
       "op": "overlap",
       "smokes": [
+        "basin-fog-render",
         "collision"
       ]
     },
@@ -398,7 +403,9 @@
     },
     {
       "op": "basin_fog_sample",
-      "smokes": []
+      "smokes": [
+        "basin-fog-topology"
+      ]
     },
     {
       "op": "nav_path",
@@ -461,6 +468,8 @@
       "op": "environment",
       "smokes": [
         "agent",
+        "basin-fog-render",
+        "basin-fog-topology",
         "culling",
         "gpu-presentation",
         "host-parity",
@@ -529,6 +538,8 @@
     {
       "op": "camera",
       "smokes": [
+        "basin-fog-render",
+        "basin-fog-topology",
         "culling",
         "gpu-presentation",
         "host-parity",
@@ -592,6 +603,7 @@
     {
       "op": "render",
       "smokes": [
+        "basin-fog-render",
         "collision",
         "culling",
         "gpu-presentation",
@@ -616,6 +628,7 @@
       "op": "pause",
       "smokes": [
         "agent",
+        "basin-fog-render",
         "collision",
         "gpu-presentation",
         "host-parity",
@@ -633,6 +646,7 @@
       "op": "resume",
       "smokes": [
         "agent",
+        "basin-fog-render",
         "collision",
         "gpu-presentation",
         "host-parity",
@@ -761,7 +775,8 @@
       "inspector": "ParticleSettings",
       "section": "particles",
       "smokes": [
-        "agent"
+        "agent",
+        "basin-fog-render"
       ],
       "stats": true
     },
@@ -769,6 +784,7 @@
       "inspector": "Refraction",
       "section": "refraction",
       "smokes": [
+        "basin-fog-render",
         "surfaces"
       ],
       "stats": true
@@ -812,6 +828,8 @@
       "section": "terrain",
       "smokes": [
         "agent",
+        "basin-fog-render",
+        "basin-fog-topology",
         "jobs",
         "native",
         "plugins",
@@ -860,6 +878,7 @@
       "inspector": "Water",
       "section": "water",
       "smokes": [
+        "basin-fog-render",
         "jobs",
         "terrain-water-sky"
       ],
@@ -869,6 +888,7 @@
       "inspector": "Ocean",
       "section": "ocean",
       "smokes": [
+        "basin-fog-render",
         "plugins",
         "terrain-water-sky"
       ],
@@ -894,7 +914,10 @@
     {
       "inspector": "BasinFog",
       "section": "basin_fog",
-      "smokes": [],
+      "smokes": [
+        "basin-fog-render",
+        "basin-fog-topology"
+      ],
       "stats": true
     },
     {

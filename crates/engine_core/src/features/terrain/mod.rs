@@ -41,6 +41,9 @@
 //! disabled, terrains neither stream nor draw.
 
 mod bakes;
+mod basin_fog;
+pub use basin_fog::*;
+pub(crate) use basin_fog::sync as sync_basin_fog;
 mod bridges;
 mod components;
 mod dispatch;
@@ -136,7 +139,7 @@ impl bevy_app::Plugin for TerrainPlugin {
             })
             .add_systems(
                 crate::ViewSync,
-                (stream_terrains, crate::basin_fog::sync).chain().in_set(crate::ViewSyncSystems::Stream),
+                (stream_terrains, basin_fog::sync).chain().in_set(crate::ViewSyncSystems::Stream),
             )
             .add_systems(
                 crate::WorldSync,

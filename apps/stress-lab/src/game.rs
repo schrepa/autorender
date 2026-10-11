@@ -243,7 +243,7 @@ impl StressLab {
             if let Some(demo) = self.basin_demo.take() {
                 demo.restore(engine);
             }
-            engine.app.world_mut().insert_resource(BasinFog::off());
+            engine.app.world_mut().remove_resource::<BasinFog>();
         }
     }
 

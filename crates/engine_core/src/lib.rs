@@ -10,7 +10,6 @@
 
 mod antialiasing;
 mod atmosphere;
-mod basin_fog;
 mod clock;
 mod clouds;
 mod commands;
@@ -49,7 +48,6 @@ mod virtual_geometry;
 
 pub use antialiasing::*;
 pub use atmosphere::*;
-pub use basin_fog::*;
 pub use bevy_app::{App, Plugin, PluginGroup, PluginGroupBuilder};
 pub use bevy_ecs;
 pub use clock::*;
@@ -724,6 +722,7 @@ impl Engine {
             .world_mut()
             .run_system_cached(stream_terrains)
             .expect("terrain streaming takes no input");
+        sync_basin_fog(self.app.world_mut());
     }
 
     /// Loads terrain tiles the last frame found missing for `milliseconds`

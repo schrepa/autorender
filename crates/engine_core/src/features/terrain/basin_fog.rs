@@ -76,7 +76,7 @@ struct Entry {
     summary: Option<BasinTerrainView>,
 }
 
-/// One connected wet pool's geometric summary.
+/// One connected wet pool's geometric summary, in terrain-local coordinates.
 #[derive(Clone, Debug, Default, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct BasinPoolView {
@@ -224,7 +224,9 @@ impl BasinFogs {
             dropped_terrains: terrains.iter().filter(|e| e.state == "dropped").count() as u64,
             unsupported_terrains: terrains.iter().filter(|e| e.state == "unsupported").count()
                 as u64,
-            requested_bytes: terrains.iter().map(|e| e.requested_bytes).sum(),
+            requested_bytes: terrains
+                .iter()
+                .fold(0u64, |sum, e| sum.saturating_add(e.requested_bytes)),
             terrains,
         }
     }
@@ -361,10 +363,10 @@ pub(crate) fn sync(world: &mut World) {
     let water = world
         .get_resource::<crate::Water>()
         .is_some_and(|w| w.enabled);
-    let ocean = world
-        .get_resource::<crate::Ocean>()
-        .filter(|o| o.enabled)
-        .map(|o| o.level);
+    // The shared environment projection supplies absent features as off;
+    // terrain fog does not require the ocean plugin to be installed.
+    let ocean = crate::Environment::current(world).sanitized().ocean;
+    let ocean = ocean.enabled.then_some(ocean.level);
     let device = world
         .get_resource::<BasinFogDeviceLimit>()
         .map_or(u64::MAX, |limit| limit.0);
