@@ -12,13 +12,14 @@
  * attempt; it never fails on a fixed limit of those.
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
+import { constants, setPriority } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { chromium } from "@playwright/test";
-import { launchOptions } from "./browser-launch.mjs";
+import { launchContext } from "./browser-launch.mjs";
 
 /** The development server the checks open: `DEMO_URL`, else Vite's default. */
 export const base = `${(process.env.DEMO_URL ?? "http://127.0.0.1:5173").replace(/\/$/, "")}/`;
@@ -49,6 +50,37 @@ export function gardenScene() {
   return JSON.parse(readFileSync(new URL("fixtures/garden.scene.json", import.meta.url), "utf8"));
 }
 
+/** Builds the binaries `cargoArguments` select (`-p PACKAGE`, `--bin NAME`,
+ * `--profile quick`) with the `cargo` on PATH, or `CARGO`, in the background
+ * and below normal priority, so a check's browser work runs meanwhile and
+ * keeps the processors it needs: resolves to each binary's path by name,
+ * wherever the target folder is. Await it before running one. */
+export function cargoBinaries(cargoArguments) {
+  const built = new Promise((resolveBuild, reject) => {
+    const workspace = fileURLToPath(new URL("../../", import.meta.url));
+    const child = spawn(process.env.CARGO ?? "cargo", ["build", "-q", "--locked", "--message-format=json", ...cargoArguments],
+      { cwd: workspace, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    // The compilers it starts inherit the priority.
+    try { setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* Not permitted: normal priority. */ }
+    let stdout = "", stderr = "";
+    child.stdout.on("data", bytes => { stdout += bytes; });
+    child.stderr.on("data", bytes => { stderr = (stderr + bytes).slice(-16_384); });
+    child.on("error", reject);
+    child.on("close", code => {
+      if (code !== 0) { reject(new Error(`cargo build ${cargoArguments.join(" ")} exited ${code}: ${stderr}`)); return; }
+      const binaries = {};
+      for (const line of stdout.split(/\r?\n/)) {
+        const message = line.startsWith("{") ? JSON.parse(line) : null;
+        if (message?.reason === "compiler-artifact" && message.executable) binaries[message.target.name] = message.executable;
+      }
+      resolveBuild(binaries);
+    });
+  });
+  // A failed build fails the check where it is awaited.
+  built.catch(() => {});
+  return built;
+}
+
 /** `artifacts/NAME/`, emptied, for `name`'s captures: each run replaces
  * the last one's. */
 export async function artifacts(name) {
@@ -59,11 +91,12 @@ export async function artifacts(name) {
 }
 
 /** Headless Chrome (`BROWSER_PATH`, or the `BROWSER_CHANNEL` channel) with
- * unsafe WebGPU, SwiftShader with `SOFTWARE_GPU=1`, and one page of `width`
- * by `height` whose first errors collect in `errors`. */
+ * unsafe WebGPU, SwiftShader with `SOFTWARE_GPU=1`, the shaders earlier
+ * checks compiled (`launchContext`), and one page of `width` by `height`
+ * whose first errors collect in `errors`; `browser.close()` ends it. */
 export async function launch({ width = 1200, height = 900, timeout = 30_000, args = [] } = {}) {
-  const browser = await chromium.launch(launchOptions({ args }));
-  const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
+  const { page, close } = await launchContext({ args, viewport: { width, height }, deviceScaleFactor: 1 });
+  const browser = { close };
   page.setDefaultTimeout(timeout);
   const errors = [];
   const record = value => { if (errors.length < 20) errors.push(String(value).slice(0, 2000)); };

@@ -8,9 +8,13 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import { strictStats } from "./harness.mjs";
+import { cargoBinaries, strictStats } from "./harness.mjs";
 
 const executeFile = promisify(execFile);
+// `cargo xtask scene`'s program, built once while the bridge starts: each
+// call then runs it without Cargo, whose rebuild after an engine change
+// would count against the call's timeout.
+const xtask = cargoBinaries(["-p", "xtask"]);
 const workspace = fileURLToPath(new URL("../../", import.meta.url));
 const script = join(workspace, "web/scripts/agent.mjs");
 const fixtureName = `agent-smoke-${randomUUID()}.scene.json`;
@@ -62,7 +66,7 @@ async function cli(verb, fields = {}, expectOk = true) {
 async function sceneCommand(args, expectOk = true) {
   let stdout;
   let code = 0;
-  try { ({ stdout } = await executeFile(process.env.CARGO ?? "cargo", ["xtask", "scene", ...args], { cwd: workspace, windowsHide: true, timeout: 120_000, maxBuffer: 1024 * 1024 })); }
+  try { ({ stdout } = await executeFile((await xtask).xtask, ["scene", ...args], { cwd: workspace, windowsHide: true, timeout: 120_000, maxBuffer: 1024 * 1024 })); }
   catch (error) { stdout = error.stdout; code = error.code; }
   assert.equal(code === 0, expectOk, stdout);
   const response = JSON.parse(stdout.trim().split(/\r?\n/).at(-1));

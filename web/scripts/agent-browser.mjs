@@ -5,7 +5,7 @@ import { resolve, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgentError, loopbackUrl } from "./agent-protocol.mjs";
-import { launchOptions } from "./browser-launch.mjs";
+import { launchContext } from "./browser-launch.mjs";
 
 const workspace = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -71,8 +71,8 @@ async function pruneSessions(root) {
 export async function launchBrowserSession({ url: value, browserPath, session = randomUUID(), expectedBuild, signal }) {
   const url = loopbackUrl(String(value));
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "Session identity must be a bounded identifier.", "session");
-  const { chromium } = await import("@playwright/test");
-  const browser = await chromium.launch(launchOptions({ executablePath: browserPath }));
+  // The shaders earlier sessions compiled stay compiled (launchContext).
+  const browser = await launchContext({ executablePath: browserPath, viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
   let page;
   let instance;
   let build;
@@ -146,8 +146,8 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
   }
 
   try {
-    listen(browser, "disconnected", invalidate);
-    page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+    listen(browser.context, "close", invalidate);
+    page = browser.page;
     listen(page, "pageerror", error => diagnostic("pageerror", String(error)));
     listen(page, "console", message => { if (["error", "warning"].includes(message.type())) diagnostic(message.type(), message.text()); });
     listen(page, "framenavigated", frame => { if (!initialNavigation && frame === page.mainFrame()) invalidate(); });

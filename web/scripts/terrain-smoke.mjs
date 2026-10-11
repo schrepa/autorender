@@ -8,17 +8,18 @@
  * or aerial perspective is refused; the import tool brings
  * the dome in as a heightmap of its own and the scene it writes loads.
  *
- * Bakes its file with `cargo run -p engine_assetc --release --bin
- * terrain_bake` and imports with `terrain_import` (the cargo on PATH) into
- * web/public/scenes/, removing what they wrote afterwards with the
- * fixture's source.
+ * Bakes its file with engine_assetc's `terrain_bake` and imports with
+ * `terrain_import`, built with the quick profile by the cargo on PATH while
+ * the checks before them run, into web/public/scenes/, removing what they
+ * wrote afterwards with the fixture's source.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
+import { artifacts, cargoBinaries, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
 
+const tools = cargoBinaries(["-p", "engine_assetc", "--profile", "quick", "--bin", "terrain_bake", "--bin", "terrain_import"]);
 const url = sceneUrl();
 const output = await artifacts("terrain-smoke");
 const scenes = fileURLToPath(new URL("../public/scenes/", import.meta.url));
@@ -1175,7 +1176,7 @@ try {
   // An ETR1 file of the same layers streams by byte range and matches; the
   // bake reads the heightmap beside the scene, as the page does.
   await writeFile(source, JSON.stringify(fixture));
-  execFileSync("cargo", ["run", "-q", "-p", "engine_assetc", "--release", "--bin", "terrain_bake", "--", source, "ground", `${folder}ground.etr`], { stdio: "inherit" });
+  execFileSync((await tools).terrain_bake, [source, "ground", `${folder}ground.etr`], { stdio: "inherit" });
   const generated = await heights([[10, -7], [-200, 150], [300, -310]]);
   const filed = structuredClone(fixture);
   filed.entities[1].terrain = { origin: terrain.origin, file: "terrain-smoke/ground.etr" };
@@ -1230,7 +1231,7 @@ try {
   // The import tool reads the dome as a RAW heightmap of its
   // own, centered on its middle without detail noise, and the scene it
   // writes loads with the dome's summit, its source and its attribution.
-  execFileSync("cargo", ["run", "-q", "-p", "engine_assetc", "--release", "--bin", "terrain_import", "--",
+  execFileSync((await tools).terrain_import, [
     "--out", scenes, "--id", "terrain-smoke-import", "--size", "1024", "--extent", "128,128", "--range", "0,200",
     "--detail", "0", "--attribution", "smoke fixture", `${folder}dome.r16`], { stdio: "inherit" });
   const report = JSON.parse(await readFile(`${scenes}terrain-smoke-import/import.json`, "utf8"));
