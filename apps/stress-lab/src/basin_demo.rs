@@ -18,6 +18,12 @@ pub struct BasinDemoView {
     pub terrain: u64,
     pub original_edits: usize,
     pub final_edits: usize,
+    /// Authored layer records, followed by the original edits.
+    #[cfg_attr(feature = "schema", schemars(with = "Vec<serde_json::Value>"))]
+    pub original_layers: Vec<engine::scene::SceneTerrainLayer>,
+    /// The same records with the four enabled-only basin edits appended.
+    #[cfg_attr(feature = "schema", schemars(with = "Vec<serde_json::Value>"))]
+    pub final_layers: Vec<engine::scene::SceneTerrainLayer>,
 }
 
 pub(crate) struct BasinDemo {
@@ -54,6 +60,8 @@ impl BasinDemo {
             terrain: 0,
             original_edits: 0,
             final_edits: 0,
+            original_layers: Vec::new(),
+            final_layers: Vec::new(),
         };
         world.insert_resource(view.clone());
         Self { original, view }
@@ -151,6 +159,26 @@ impl BasinDemo {
             self.view.terrain = entity.to_bits();
             self.view.original_edits = original.len();
             self.view.final_edits = edits.len();
+            let layers =
+                engine::scene::SceneTerrain::from_runtime(&terrain, None, |_| None, |_| None)
+                    .layers;
+            self.view.original_layers = layers
+                .iter()
+                .cloned()
+                .chain(
+                    original
+                        .iter()
+                        .map(|edit| engine::scene::SceneTerrainLayer::Stamp(edit.stamp)),
+                )
+                .collect();
+            self.view.final_layers = layers
+                .into_iter()
+                .chain(
+                    edits
+                        .iter()
+                        .map(|edit| engine::scene::SceneTerrainLayer::Stamp(edit.stamp)),
+                )
+                .collect();
             world.get_mut::<Terrain>(*entity).expect("present").edits = edits.into();
             self.view.ready = true;
             world.insert_resource(self.view.clone());

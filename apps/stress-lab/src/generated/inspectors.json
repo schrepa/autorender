@@ -31,6 +31,11 @@
         "minimum": 0,
         "type": "integer"
       },
+      "final_layers": {
+        "description": "The same records with the four enabled-only basin edits appended.",
+        "items": true,
+        "type": "array"
+      },
       "heights": {
         "items": {
           "format": "float",
@@ -44,6 +49,11 @@
         "format": "uint",
         "minimum": 0,
         "type": "integer"
+      },
+      "original_layers": {
+        "description": "Authored layer records, followed by the original edits.",
+        "items": true,
+        "type": "array"
       },
       "ready": {
         "type": "boolean"
@@ -71,7 +81,9 @@
       "heights",
       "terrain",
       "original_edits",
-      "final_edits"
+      "final_edits",
+      "original_layers",
+      "final_layers"
     ],
     "title": "BasinDemoView",
     "type": "object"

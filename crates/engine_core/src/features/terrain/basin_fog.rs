@@ -424,6 +424,9 @@ pub(crate) fn sync(world: &mut World) {
         });
         if !matches {
             state.serial = state.serial.wrapping_add(1);
+            // Superseded work cannot be reused. Release its workspace before
+            // allocating a replacement; snapshots retain only immutable maps.
+            state.entries.remove(&entity);
             let Some(job) = BasinJob::new(
                 layers.clone(),
                 terrain.pyramid,

@@ -14,7 +14,9 @@ const command=commander(page,{deadline:120000});const checks=[];
 const inspect=async command=>(await command("inspect",{component:"basin_fog"})).result.value;
 try{
   const scene=await session(page,command);
+  console.log("Authored scene host ready.");
   let {state,rendering}=await settle(command),t=state.terrains[0];
+  console.log("Initial fog map and upload ready.");
   assert.equal(t.size[0],256);assert.equal(t.size[1],256);assert.equal(t.wet_cells,64516);assert.equal(t.pools,1);
   near(t.input_m3,16384);near(t.retained_m3,16129);near(t.drained_m3,255);near(t.lid_range[0],0.25,0.0001);
   assert.ok(rendering.basin_fog.gpu_bytes>0);assert.equal(state.pending_jobs,0);assert.equal(state.pending_uploads,0);
@@ -36,6 +38,7 @@ try{
   near(samples[0].floor,0,0.0001);near(samples[0].top,0.25,0.0001);assert.equal(samples[1].pool,0);assert.equal(samples[2],null);
   const partial=await map();assert.equal(partial.wet,t.wet_cells);near(partial.volume,t.published_retained_m3);
   checks.push({case:"single partial",state,samples,map:partial});
+  console.log("Single-bowl full-map conservation checked.");
   const revision=t.solve_revision,source=t.source_revision,pool=samples[0].pool;
   await command("environment",{basin_fog:{extinction_per_m:0.05,top_fade_m:0}});
   ({state}=await settle(command));assert.equal(state.terrains[0].solve_revision,revision);
@@ -54,6 +57,7 @@ try{
     else assert.equal(samples[0].pool,samples[2].pool);
     const all=await map();assert.equal(all.wet,t.wet_cells);assert.equal(all.lids.length,pools);near(all.volume,t.published_retained_m3);
     checks.push({case:`two bowls ${budget}`,state,samples,map:all});
+    console.log(`Two-bowl full-map budget ${budget} checked.`);
   }
   await scene.reload({hole:true});({state}=await settle(command));t=state.terrains[0];
   assert.equal(t.wet_cells,0);near(t.retained_m3,0);near(t.input_m3,t.drained_m3);checks.push({case:"hole drains",state});
@@ -63,6 +67,19 @@ try{
   const seaRevision=state.terrains[0].source_revision;
   await command("environment",{ocean:{enabled:false}});({state}=await settle(command));samples=await sample([[100.5,100.5]]);
   near(samples[0].floor,0,0.0001);near(samples[0].top,0.25,0.0001);assert.notEqual(state.terrains[0].source_revision,seaRevision);
+  await scene.reload({hydrology:true});({state}=await settle(command));
+  const wetTerrain=(await command("terrain_height",{points:[[100.5,100.5]]})).result.samples[0];
+  assert.ok(wetTerrain?.standing_water?.depth>0,"the hydrology fixture must actually hold water");
+  samples=await sample([[100.5,100.5]]);near(samples[0].floor,wetTerrain.standing_water.surface,0.0001);
+  const waterRevision=state.terrains[0].source_revision;
+  checks.push({case:"rendered hydrology effective floor",state,wetTerrain,samples});
+  await command("environment",{water:{enabled:false}});({state}=await settle(command));
+  samples=await sample([[100.5,100.5]]);near(samples[0].floor,0,0.0001);near(samples[0].top,0.25,0.0001);
+  assert.notEqual(state.terrains[0].source_revision,waterRevision);
+  await command("environment",{water:{enabled:true}});({state}=await settle(command));
+  samples=await sample([[100.5,100.5]]);near(samples[0].floor,wetTerrain.standing_water.surface,0.0001);
+  checks.push({case:"Water off/on invalidation",state,samples});
+  console.log("Hole, Ocean and hydrology floors checked.");
   await scene.reload({});await settle(command);const repeated=await map();assert.deepEqual(repeated,partial);
   // Supersede an ordinary edit before it can finish, then undo both. The
   // published map must follow the newest layers, never a cancelled solution.
