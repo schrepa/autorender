@@ -26,6 +26,7 @@ use engine_core::{Aabb, GpuPresentation, RenderFrame};
 use crate::batches::{BatchPlan, DrawBatch};
 use crate::buffers::entry;
 use crate::cached::Cached;
+use crate::gpu_calls::Queue;
 use crate::gpu_data::{FLAG_PHASE1, FLAG_PHASE2, FLAG_VISIBLE, PresentationFrame, frustum_uniform};
 use crate::mesh_arena::Ids;
 use crate::profiling::{GpuProfiler, Span};
@@ -383,7 +384,7 @@ impl GpuPresentationPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &Queue,
         staging: Staging<'_>,
         inputs: &PresentationInputs<'_>,
         view: &CullingView,
@@ -446,7 +447,7 @@ impl GpuPresentationPass {
     /// Copies the last current poses into previous slots, submitted at once:
     /// queued writes and staged copies of this gather take effect at the
     /// next submission, after it.
-    fn submit_shift(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, profiler: &GpuProfiler) {
+    fn submit_shift(&mut self, device: &wgpu::Device, queue: &Queue, profiler: &GpuProfiler) {
         let groups = self
             .node_groups
             .get_or_insert_with(self.nodes.generation(), || {
@@ -466,7 +467,7 @@ impl GpuPresentationPass {
             // applied gather made active.
             pass.dispatch_workgroups((self.nodes.capacity() as u32).div_ceil(GROUP), 1, 1);
         }
-        crate::gpu_calls::submit(queue, [encoder.finish()]);
+        queue.submit_now([encoder.finish()]);
     }
 
     /// Builds the groups this frame binds that storage replaced since, or

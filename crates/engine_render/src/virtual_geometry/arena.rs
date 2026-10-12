@@ -15,6 +15,7 @@ use engine_core::collections::HashMap;
 use engine_core::{CLUSTER_WORDS, GROUP_WORDS, MeshHandle, NODE_WORDS, PAGE_WORDS, VirtualMesh};
 
 use super::NONE;
+use crate::gpu_calls::Queue;
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::virtual_streaming::{MeshLinks, PageState, Placement, Residency};
 
@@ -258,7 +259,7 @@ impl VirtualArena {
     pub(super) fn upload(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &Queue,
         budget: Option<u32>,
     ) -> bool {
         if !self.dirty {
@@ -401,7 +402,7 @@ impl VirtualArena {
                     self.table_words * 4,
                     slots * PAGE_WORDS as u64 * 4,
                 );
-                crate::gpu_calls::submit(queue, [encoder.finish()]);
+                queue.submit_now([encoder.finish()]);
             }
         }
         let restored: Vec<(u32, u32)> = kept
@@ -443,7 +444,7 @@ impl VirtualArena {
     }
 
     /// Loads page `page` (loading) from its mesh's words, or fails it.
-    fn load_held(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, page: u32, limit: usize) {
+    fn load_held(&mut self, device: &wgpu::Device, queue: &Queue, page: u32, limit: usize) {
         let (mesh, local, _) = self.residency.page(page);
         let geometry = Arc::clone(&self.resident[mesh as usize].geometry);
         match geometry.page(local as usize) {
@@ -457,7 +458,7 @@ impl VirtualArena {
     fn place(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &Queue,
         page: u32,
         words: &[u32],
         limit: usize,
@@ -493,7 +494,7 @@ impl VirtualArena {
 
     /// Replaces the pool with one of `slots` slots holding the same pages.
     /// The copy is submitted at once, so later writes land after it.
-    fn grow_pool(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, slots: usize) {
+    fn grow_pool(&mut self, device: &wgpu::Device, queue: &Queue, slots: usize) {
         let Some(arena) = self.buffers.as_mut() else {
             return;
         };
@@ -502,7 +503,7 @@ impl VirtualArena {
             label: Some("engine/virtual-pool-growth"),
         });
         encoder.copy_buffer_to_buffer(&arena.pages, 0, &grown, 0, arena.pages.size());
-        crate::gpu_calls::submit(queue, [encoder.finish()]);
+        queue.submit_now([encoder.finish()]);
         arena.pages = grown;
         self.residency.add_slots(slots - self.pool_slots);
         self.pool_slots = slots;
@@ -534,7 +535,7 @@ impl VirtualArena {
     pub(super) fn stream(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &Queue,
         budget: Option<u32>,
         feedback: Option<(Vec<u32>, Vec<u32>, u64)>,
     ) {

@@ -141,7 +141,7 @@ impl TileAtlas {
     pub(super) fn sync<'t>(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &Queue,
         terrains: &'t RenderTerrains,
         max_layers: u32,
     ) -> Option<Synced<'t>> {
@@ -483,7 +483,7 @@ impl TileAtlas {
 
     /// Gives the tiles uploaded this frame without control values theirs,
     /// after their heights, in a submission of its own.
-    fn compute_controls(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    fn compute_controls(&mut self, device: &wgpu::Device, queue: &Queue) {
         if self.arrays.is_none() || self.control_jobs.is_empty() {
             self.control_jobs.clear();
             return;
@@ -554,7 +554,7 @@ impl TileAtlas {
                 );
             }
         }
-        crate::gpu_calls::submit(queue, [encoder.finish()]);
+        queue.submit_now([encoder.finish()]);
         self.controls += self.control_jobs.len() as u32;
         self.control_jobs.clear();
     }
@@ -585,7 +585,7 @@ impl TileAtlas {
 
     /// Computes the normal maps of the tiles uploaded this frame, after
     /// their heights, in a submission of its own.
-    fn compute_normals(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    fn compute_normals(&mut self, device: &wgpu::Device, queue: &Queue) {
         if self.arrays.is_none() {
             self.normal_jobs.clear();
             return;
@@ -652,7 +652,7 @@ impl TileAtlas {
                 );
             }
         }
-        crate::gpu_calls::submit(queue, [encoder.finish()]);
+        queue.submit_now([encoder.finish()]);
         self.normal_jobs.clear();
     }
 
@@ -661,7 +661,7 @@ impl TileAtlas {
     fn ensure_arrays(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &Queue,
         needed: u32,
         max_layers: u32,
     ) {
@@ -732,7 +732,7 @@ impl TileAtlas {
                 extent,
             );
             // Before this frame's tile writes, which the queue runs in order.
-            crate::gpu_calls::submit(queue, [encoder.finish()]);
+            queue.submit_now([encoder.finish()]);
         }
         let array_view = |texture: &wgpu::Texture| {
             texture.create_view(&wgpu::TextureViewDescriptor {

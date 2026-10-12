@@ -41,8 +41,7 @@ impl Renderer {
             let end = span.and_then(|span| mark(span, true));
             *part = [begin, buffer, end];
         }
-        crate::gpu_calls::submit(
-            &self.queue,
+        self.queue.submit(
             before
                 .into_iter()
                 .flatten()

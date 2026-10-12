@@ -15,6 +15,7 @@
 
 use engine_core::{RenderSurfaceMaps, RenderTerrains, Texture, TextureFormat, TextureHandle};
 
+use crate::gpu_calls::Queue;
 use crate::gpu_data::{mip_chain_bytes, mip_levels};
 use crate::mipmaps::MipGenerator;
 
@@ -145,7 +146,7 @@ impl TerrainMaps {
 
     /// Grows the sheets to `sheets`, copying every level of every layer the
     /// base color and normal arrays hold; the pages baked into them stay.
-    fn grow(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, sheets: u32) {
+    fn grow(&mut self, device: &wgpu::Device, queue: &Queue, sheets: u32) {
         let levels = self.arrays[0].mip_level_count();
         let extra = [2 * sheets, sheets];
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -185,7 +186,7 @@ impl TerrainMaps {
             self.material_views[index] = view(&grown, Some(self.materials));
             self.arrays[index] = grown;
         }
-        crate::gpu_calls::submit(queue, [encoder.finish()]);
+        queue.submit_now([encoder.finish()]);
         self.sheets = sheets;
         self.bytes = self.layer_bytes(3 * self.materials + 3 * sheets);
         self.views_generation += 1;
@@ -238,7 +239,7 @@ impl TerrainMaps {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &Queue,
         mips: &MipGenerator,
         terrains: &RenderTerrains,
         pages: u32,
@@ -339,7 +340,7 @@ impl TerrainMaps {
                     mips.record_layer(device, &mut encoder, array, layer);
                 }
             }
-            crate::gpu_calls::submit(queue, [encoder.finish()]);
+            queue.submit_now([encoder.finish()]);
         }
         self.arrays = arrays;
         self.views = views;

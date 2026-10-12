@@ -190,7 +190,7 @@ struct StructureKeys {
 /// Model transforms must be finite, nonsingular, and preserve triangle winding.
 pub struct Renderer {
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    queue: crate::gpu_calls::Queue,
     adapter: crate::AdapterInfo,
     // A graphics debugger's capture runs.
     #[cfg(not(target_arch = "wasm32"))]

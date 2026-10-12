@@ -55,7 +55,7 @@ impl Renderer {
     /// [`Self::wait_for_mark`] waits for: an empty submission, which the
     /// queue finishes after every earlier one.
     pub fn gpu_mark(&self) -> GpuMark {
-        GpuMark(crate::gpu_calls::submit(&self.queue, []))
+        GpuMark(self.queue.submit([]))
     }
 
     /// Waits until the GPU finished the work submitted before `mark`.
@@ -102,7 +102,7 @@ impl Renderer {
             },
             texture.size(),
         );
-        crate::gpu_calls::submit(&self.queue, [encoder.finish()]);
+        self.queue.submit([encoder.finish()]);
         let mapped = std::sync::Arc::new(std::sync::OnceLock::new());
         let result = std::sync::Arc::clone(&mapped);
         buffer

@@ -16,6 +16,7 @@ use engine_core::collections::HashMap;
 use engine_core::{RenderTerrain, RenderTerrains, TerrainSettings, TileKey};
 
 use crate::bindings::TERRAIN_SKY;
+use crate::gpu_calls::Queue;
 use crate::gpu_layouts::constants::MISSING;
 use crate::gpu_layouts::constants::SKY_MAP_GROUP as GROUP;
 use crate::terrain_horizons::{source_level, tile_table};
@@ -276,7 +277,7 @@ impl SkyMaps {
     pub(crate) fn build(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &Queue,
         heights: Option<&wgpu::TextureView>,
     ) {
         let (Some(maps), Some(pipeline), Some(heights)) = (&self.maps, &self.pipeline, heights)
@@ -328,7 +329,7 @@ impl SkyMaps {
             pass.dispatch_workgroups(maps.size.div_ceil(GROUP), band.div_ceil(GROUP), 1);
         }
         drop(pass);
-        crate::gpu_calls::submit(queue, [encoder.finish()]);
+        queue.submit_now([encoder.finish()]);
         for (layer, _) in groups {
             let Some((source, row)) = self.building[layer].take() else {
                 continue;

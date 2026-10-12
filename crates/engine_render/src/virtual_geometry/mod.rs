@@ -29,6 +29,7 @@ use engine_core::{MeshHandle, VirtualMesh};
 use crate::bindings::VIRTUAL_SHADOW;
 use crate::buffers::entry;
 use crate::cached::Cached;
+use crate::gpu_calls::Queue;
 use crate::gpu_data::VIRTUAL_SHADER;
 use crate::renderer::FramePoses;
 use crate::shadows::VIRTUAL_SHADOW_PLANES as PLANES;
@@ -254,12 +255,7 @@ impl VirtualGeometryPass {
     /// Rebuilds the arena when resident meshes changed: every record
     /// rebased to absolute indices, and a new page pool holding the pinned
     /// pages (and, without `budget`, every page the meshes' words hold).
-    pub(crate) fn upload(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        budget: Option<u32>,
-    ) {
+    pub(crate) fn upload(&mut self, device: &wgpu::Device, queue: &Queue, budget: Option<u32>) {
         if self.arena.upload(device, queue, budget) {
             // Groups of the old arena hold its buffers.
             self.groups = Default::default();
@@ -283,7 +279,7 @@ impl VirtualGeometryPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &Queue,
         frame: &SelectionFrame<'_>,
     ) {
         let mut drops = [0; 4];

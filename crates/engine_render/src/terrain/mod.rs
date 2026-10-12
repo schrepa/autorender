@@ -36,6 +36,7 @@ use wgpu::util::DeviceExt;
 
 use crate::bindings::{SHADOW_VIEW, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS};
 use crate::cached::Cached;
+use crate::gpu_calls::Queue;
 use crate::gpu_layouts::constants::NOT_RESIDENT;
 use crate::gpu_layouts::constants::TERRAIN_GRID as GRID;
 use crate::gpu_layouts::constants::TERRAIN_GRID_VERTICES as GRID_VERTICES;
@@ -272,7 +273,7 @@ impl TerrainPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &Queue,
         terrains: &RenderTerrains,
         views: &TerrainViews<'_>,
         (max_layers, mips): (u32, &MipGenerator),

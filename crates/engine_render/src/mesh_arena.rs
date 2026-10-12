@@ -88,6 +88,7 @@ pub(crate) use gpu::*;
 
 mod gpu {
     use super::*;
+    use crate::gpu_calls::Queue;
 
     /// A mesh as passes draw it: the buffers of its vertex streams (colors
     /// and second coordinates, joints) and indices, where its indices start,
@@ -213,7 +214,7 @@ mod gpu {
     /// A buffer of `size` bytes holding `old`'s contents, copied at once.
     fn regrown(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &Queue,
         old: &wgpu::Buffer,
         size: u64,
         usage: wgpu::BufferUsages,
@@ -223,7 +224,7 @@ mod gpu {
             label: Some("engine/mesh-arena-growth"),
         });
         encoder.copy_buffer_to_buffer(old, 0, &grown, 0, old.size().min(size));
-        crate::gpu_calls::submit(queue, [encoder.finish()]);
+        queue.submit_now([encoder.finish()]);
         grown
     }
 
@@ -270,7 +271,7 @@ mod gpu {
         pub(crate) fn insert(
             &mut self,
             device: &wgpu::Device,
-            queue: &wgpu::Queue,
+            queue: &Queue,
             streams: &[&[u8]],
             vertex_count: u32,
             indices: &[u32],

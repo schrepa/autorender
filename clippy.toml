@@ -16,7 +16,7 @@ disallowed-methods = [
     # holds every caller to the rule beside it.
     { path = "wgpu::Device::create_pipeline_layout", reason = "use engine_render's pipelines::pipeline_layout: each layout is a pipeline_layouts! row, which lint holds to the device limits" },
     { path = "wgpu::Device::create_bind_group", reason = "use engine_render's pipelines::group or filled_group: they bind a bindings table's entries by name" },
-    { path = "wgpu::Queue::submit", reason = "use engine_render's gpu_calls::submit, the renderer's one way to submit work" },
+    { path = "wgpu::Queue::submit", reason = "use engine_render's gpu_calls::Queue: submit for frames, submit_now (counted) for work submitted at once" },
     { path = "wgpu::Device::push_error_scope", reason = "use engine_render's gpu_calls::validation_scope: scopes cover creation, never a frame's work" },
 ]
 

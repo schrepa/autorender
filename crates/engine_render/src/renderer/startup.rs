@@ -100,7 +100,7 @@ impl Renderer {
         let required_features = features;
         #[cfg(feature = "profiling")]
         let required_features = features | (adapter.features() & crate::profiling::FEATURES);
-        let (device, queue) = adapter
+        let (device, wgpu_queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("engine/device"),
                 required_features,
@@ -109,6 +109,7 @@ impl Renderer {
             })
             .await
             .map_err(|error| render_error("Could not initialize the WebGPU device", error))?;
+        let queue = crate::gpu_calls::Queue::new(wgpu_queue);
 
         let failure = Arc::new(Mutex::new(None));
         let lost_failure = Arc::clone(&failure);

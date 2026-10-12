@@ -327,21 +327,26 @@ impl Renderer {
                 snapshot,
             ),
         };
-        self.profile_counters(state, &stats, gpu_visible);
+        // Counted every frame, recorded while a capture runs.
+        let immediate = self.queue.take_immediate();
+        self.profile_counters(state, &stats, gpu_visible, immediate);
         stats
     }
 
-    /// The frame's profile counters while a capture runs.
+    /// The frame's profile counters while a capture runs, with the
+    /// submissions made at once since the last frame, `immediate`.
     fn profile_counters(
         &self,
         state: &FrameState<'_>,
         stats: &RenderStats,
         gpu_visible: Option<u32>,
+        immediate: u32,
     ) {
         if !engine_profile::active() {
             return;
         }
         stat_counters(stats);
+        engine_profile::counter("render.immediate_submissions", f64::from(immediate));
         self.upload_counters(state);
         if let Some(prepared) = &state.features.gpu_prepared {
             gpu_counters(prepared, gpu_visible);
