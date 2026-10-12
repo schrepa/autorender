@@ -3,6 +3,13 @@
 //! tile a worker generates is the tile the engine would have generated.
 //! Lengths are checked against the bytes left before anything allocates,
 //! and readers refuse bytes left over.
+// Bytes come back from workers and caches: every narrowing cast is
+// checked.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 
 use std::sync::Arc;
 

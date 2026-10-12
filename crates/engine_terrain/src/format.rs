@@ -15,12 +15,20 @@
 //! upper and upper-left neighbors (LOCO-I's median predictor) and the
 //! residual Rice-coded with a parameter per row; then, with the holes flag,
 //! its hole bits as raw 64-bit words.
+// A file comes from wherever a scene points: every narrowing cast is
+// checked.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 
 use crate::{Pyramid, TILE_SAMPLES, TILE_STRIDE, Tile, TileKey};
 
 pub const TERRAIN_FILE_MAGIC: [u8; 4] = *b"ETR1";
 pub const TERRAIN_FILE_VERSION: u32 = 1;
-const HEADER_BYTES: usize = 64;
+const HEADER_LENGTH: u32 = 64;
+const HEADER_BYTES: usize = HEADER_LENGTH as usize;
 const ENTRY_BYTES: usize = 24;
 const FLAG_HOLES: u32 = 1;
 const HOLE_WORDS: usize = ((TILE_SAMPLES * TILE_SAMPLES) as usize).div_ceil(64);
@@ -213,10 +221,10 @@ impl BitWriter {
         if count == 0 {
             return;
         }
-        self.word |= u64::from(value & (((1u64 << count) - 1) as u32)) << self.bits;
+        self.word |= u64::from(value & (u32::MAX >> (32 - count))) << self.bits;
         self.bits += count;
         while self.bits >= 8 {
-            self.bytes.push(self.word as u8);
+            self.bytes.push(self.word.to_le_bytes()[0]);
             self.word >>= 8;
             self.bits -= 8;
         }
@@ -224,7 +232,7 @@ impl BitWriter {
 
     fn finish(mut self) -> Vec<u8> {
         if self.bits > 0 {
-            self.bytes.push(self.word as u8);
+            self.bytes.push(self.word.to_le_bytes()[0]);
         }
         self.bytes
     }
@@ -247,6 +255,7 @@ impl BitReader<'_> {
     }
 
     fn take(&mut self, count: u32) -> Result<u32, FormatError> {
+        debug_assert!(count <= 32, "a take reads at most 32 bits");
         if count == 0 {
             return Ok(0);
         }
@@ -254,7 +263,8 @@ impl BitReader<'_> {
         if self.bits < count {
             return Err(FormatError::Truncated);
         }
-        let value = (self.word & ((1u64 << count) - 1)) as u32;
+        let [a, b, c, d, ..] = self.word.to_le_bytes();
+        let value = u32::from_le_bytes([a, b, c, d]) & (u32::MAX >> (32 - count));
         self.word >>= count;
         self.bits -= count;
         Ok(value)
@@ -274,16 +284,20 @@ impl BitReader<'_> {
 }
 
 fn zigzag(value: i32) -> u32 {
-    ((value << 1) ^ (value >> 31)) as u32
+    ((value << 1) ^ (value >> 31)).cast_unsigned()
 }
 
 fn unzigzag(value: u32) -> i32 {
-    ((value >> 1) as i32) ^ -((value & 1) as i32)
+    (value >> 1).cast_signed() ^ -(value & 1).cast_signed()
 }
 
 /// Encodes `tile`'s samples quantized to `step` meters, and its holes.
 fn encode_tile(tile: &Tile, step: f32) -> Vec<u8> {
     let stride = TILE_STRIDE as usize;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "heights lie far inside i32"
+    )]
     let quantized: Vec<i32> = tile
         .heights()
         .iter()
@@ -381,6 +395,7 @@ pub fn decode_tile(header: &FileHeader, key: TileKey, bytes: &[u8]) -> Result<Ti
         }
     }
     let step = header.step();
+    #[expect(clippy::cast_possible_truncation, reason = "heights are f32 values")]
     let heights = quantized
         .iter()
         .map(|&value| (f64::from(value) * f64::from(step)) as f32)
@@ -422,9 +437,10 @@ pub fn encode_file(
     put(&mut bytes, 16, pyramid.spacing(0).to_bits());
     put(&mut bytes, 20, pyramid.levels());
     put(&mut bytes, 24, step.to_bits());
-    put(&mut bytes, 28, count as u32);
-    put(&mut bytes, 32, HEADER_BYTES as u32);
-    put(&mut bytes, 36, prefix as u32);
+    put(&mut bytes, 28, pyramid.tile_count());
+    put(&mut bytes, 32, HEADER_LENGTH);
+    let prefix_length = u32::try_from(prefix).map_err(|_| FormatError::Corrupt("directory"))?;
+    put(&mut bytes, 36, prefix_length);
     let mut index = 0;
     for level in (0..pyramid.levels()).rev() {
         for key in pyramid.level_tiles(level) {
@@ -433,7 +449,9 @@ pub fn encode_file(
             let at = HEADER_BYTES + index * ENTRY_BYTES;
             let offset = bytes.len() as u64;
             bytes[at..at + 8].copy_from_slice(&offset.to_le_bytes());
-            put(&mut bytes, at + 8, payload.len() as u32);
+            let length =
+                u32::try_from(payload.len()).map_err(|_| FormatError::Corrupt("tile length"))?;
+            put(&mut bytes, at + 8, length);
             put(
                 &mut bytes,
                 at + 12,
@@ -445,6 +463,7 @@ pub fn encode_file(
             );
             // Bounds of the quantized heights decoders see.
             let [low, high] = tile.bounds();
+            #[expect(clippy::cast_possible_truncation, reason = "bounds are f32 values")]
             let quantize = |height: f32| {
                 ((f64::from(height) / f64::from(step)).round() * f64::from(step)) as f32
             };

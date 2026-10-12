@@ -20,6 +20,13 @@
 //! and the finer group it came from (its own error). A view draws a cluster
 //! when its group's error projects above the view's threshold and its own at
 //! or below it ([`VirtualMesh::cut`] in mesh space).
+// A file comes from wherever a scene points: every narrowing cast is
+// checked.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 
 use glam::Vec3;
 
@@ -451,7 +458,7 @@ impl VirtualMesh {
                 if *owned != NONE {
                     return Err(invalid("clusters belong to one group each"));
                 }
-                *owned = group as u32;
+                *owned = u32::try_from(group).map_err(|_| invalid("too many groups"))?;
             }
         }
         let (pinned, pin_error) = (self.pinned_pages(), self.pin_error());
@@ -550,7 +557,7 @@ impl VirtualMesh {
     /// A cluster's record.
     pub fn cluster(&self, cluster: usize) -> ClusterInfo {
         let words = self.cluster_words(cluster);
-        let [x, y, z, cutoff] = words[4].to_le_bytes().map(|byte| byte as i8);
+        let [x, y, z, cutoff] = words[4].to_le_bytes().map(u8::cast_signed);
         ClusterInfo {
             sphere: ErrorSphere {
                 center: vec3(words),
@@ -691,8 +698,11 @@ impl VirtualMesh {
                 let position: [f32; 3] = std::array::from_fn(|axis| {
                     position_min[axis] + steps[axis] as f32 * position_step[axis]
                 });
+                // The normal's halves: the high half of word 1, the low of word 2.
+                let [_, _, x0, x1] = words[1].to_le_bytes();
+                let [y0, y1, _, _] = words[2].to_le_bytes();
                 let normal =
-                    octahedral_normal(high(words[1]) as u16 as i16, low(words[2]) as u16 as i16);
+                    octahedral_normal(i16::from_le_bytes([x0, x1]), i16::from_le_bytes([y0, y1]));
                 let uv = [
                     uv_min[0] + high(words[2]) as f32 * uv_step[0],
                     uv_min[1] + low(words[3]) as f32 * uv_step[1],
@@ -719,15 +729,14 @@ impl VirtualMesh {
     /// it. Errors are monotonic up the hierarchy, so every cut covers the
     /// surface once.
     pub fn cut(&self, error: f32) -> Vec<u32> {
-        (0..self.cluster_count())
+        (0..self.words[header::CLUSTERS])
             .filter(|&cluster| {
-                let info = self.cluster(cluster);
+                let info = self.cluster(cluster as usize);
                 self.group_sphere(info.group as usize).error > error
                     && info
                         .refined
                         .is_none_or(|refined| self.group_sphere(refined as usize).error <= error)
             })
-            .map(|cluster| cluster as u32)
             .collect()
     }
 
@@ -760,7 +769,7 @@ impl VirtualMesh {
         let mut indices = Vec::new();
         for cluster in self.cut(error) {
             let (cluster_vertices, triangles) = self.cluster_geometry(cluster as usize);
-            let base = vertices.len() as u32;
+            let base = u32::try_from(vertices.len()).map_err(|_| invalid("too many vertices"))?;
             vertices.extend(cluster_vertices);
             indices.extend(triangles.iter().map(|&local| base + u32::from(local)));
         }
@@ -770,6 +779,7 @@ impl VirtualMesh {
 
 /// Octahedral snorm16 coordinates of a unit normal, as renderers encode
 /// them.
+#[expect(clippy::cast_possible_truncation, reason = "clamped to i16's range")]
 pub fn octahedral_encode(normal: [f32; 3]) -> [i16; 2] {
     let [x, y, z] = normal;
     let length = x.abs() + y.abs() + z.abs();

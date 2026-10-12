@@ -3,6 +3,13 @@
 //! images with the platform's own decoder before a scene loads, so the
 //! runtime carries no image decoder and scene sources stay small. KTX2
 //! images the host transcodes to a block-compressed format its GPU samples.
+// Files come from wherever a scene points: every narrowing cast is
+// checked.
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap
+)]
 
 use engine_settings::ErrorCode;
 use std::collections::BTreeMap;
@@ -192,6 +199,16 @@ impl SceneFiles {
     }
 }
 
+/// `length` as the little-endian u32 count a buffer stores.
+///
+/// # Panics
+/// Panics at 2^32 or more, which no buffer holds.
+fn count(length: usize) -> [u8; 4] {
+    u32::try_from(length)
+        .expect("a buffer counts fewer than 2^32 items")
+        .to_le_bytes()
+}
+
 fn missing(uri: &str, path: &str) -> SceneError {
     SceneError::new(
         ErrorCode::MissingFile,
@@ -253,7 +270,8 @@ pub struct MeshStreams<'a> {
 /// each), the weights (four f32 each) and the indices.
 ///
 /// # Panics
-/// Panics when only one of joints and weights is given.
+/// Panics when only one of joints and weights is given, or with 2^32 or
+/// more vertices or indices.
 pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     vertices: &[V],
     indices: &[u32],
@@ -280,8 +298,8 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     } else {
         &MESH_BUFFER_MAGIC
     });
-    bytes.extend_from_slice(&(vertices.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&(indices.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&count(vertices.len()));
+    bytes.extend_from_slice(&count(indices.len()));
     if extras {
         let flags = u32::from(colors.is_some())
             | u32::from(uv1.is_some()) << 1
@@ -455,10 +473,13 @@ pub const ANIMATION_BUFFER_MAGIC: [u8; 4] = *b"EAN1";
 /// rotation, 2 scale), interpolation (u8: 0 step, 1 linear, 2 cubic spline),
 /// two zero bytes, the key count and value count (u32), the key times (f32)
 /// and the values (three f32 each, four for rotations).
+///
+/// # Panics
+/// Panics with 2^32 or more channels, keys or values in a channel.
 pub fn encode_animation_buffer(channels: &[engine_core::AnimationChannel]) -> Vec<u8> {
     use engine_core::{AnimatedProperty, KeyInterpolation, Keyframes};
     let mut bytes = ANIMATION_BUFFER_MAGIC.to_vec();
-    bytes.extend_from_slice(&(channels.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&count(channels.len()));
     for channel in channels {
         bytes.extend_from_slice(&channel.target().to_le_bytes());
         bytes.push(match channel.property() {
@@ -485,8 +506,8 @@ pub fn encode_animation_buffer(channels: &[engine_core::AnimationChannel]) -> Ve
         } else {
             3
         };
-        bytes.extend_from_slice(&(channel.times().len() as u32).to_le_bytes());
-        bytes.extend_from_slice(&((values.len() / width) as u32).to_le_bytes());
+        bytes.extend_from_slice(&count(channel.times().len()));
+        bytes.extend_from_slice(&count(values.len() / width));
         for value in channel.times().iter().chain(&values) {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
