@@ -5,11 +5,11 @@ use super::*;
 
 /// A terrain's recipe as workers hold it: its key, the
 /// stack it shares (the layers its tiles generate from, which surroundings
-/// see from afar) and its revision, which its tiles' jobs carry.
+/// see from afar) and the generation its tiles' jobs make.
 pub(crate) struct SharedRecipe {
     pub(crate) key: String,
     pub(crate) stack: Arc<Layers>,
-    revision: u64,
+    pub(crate) generation: Generation,
     materials: bool,
 }
 
@@ -30,9 +30,9 @@ pub(super) struct OnWorkers<'a, 'b> {
     target: &'a HashSet<TileKey>,
     keep: &'a HashSet<TileKey>,
     frame: u64,
-    /// The recipe's key and revision, and the surface's rules.
+    /// The recipe's key and generation, and the surface's rules.
     recipe: String,
-    revision: u64,
+    generation: Generation,
     rules: Arc<BiomeRules>,
     /// Whether a tile became resident this frame: the rest wait while
     /// the frame's time or uploads are spent.
@@ -54,7 +54,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
         let recipe = state.recipe.as_ref()?;
         Some(Self {
             recipe: recipe.key.clone(),
-            revision: recipe.revision,
+            generation: recipe.generation,
             rules: state.terrain.surface.rules.clone(),
             slots,
             work,
@@ -73,9 +73,9 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
 
     /// Work no longer wanted stops, so its workers take up what is.
     fn stop_unwanted(&mut self, state: &mut TerrainState) {
-        let (revision, keep, slots) = (self.revision, self.keep, &mut *self.slots);
+        let (generation, keep, slots) = (self.generation, self.keep, &mut *self.slots);
         state.dispatched.retain(|key, &mut (id, made, _)| {
-            let wanted = made == revision && keep.contains(key);
+            let wanted = made == generation && keep.contains(key);
             if !wanted {
                 slots.jobs.cancel(id);
             }
@@ -93,7 +93,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
             .far_wanted
             .retain(|key, _| keep.contains(key) && store.contains(key));
         state.banded.retain(|key, banding| {
-            let wanted = banding.made == revision && keep.contains(key);
+            let wanted = banding.made == generation && keep.contains(key);
             if !wanted {
                 for &(id, ref band) in &banding.jobs {
                     if band.is_none() {
@@ -104,7 +104,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
             wanted
         });
         state.placements.retain(|key, placements| {
-            let wanted = placements.made == revision && keep.contains(key) && store.contains(key);
+            let wanted = placements.made == generation && keep.contains(key) && store.contains(key);
             if !wanted {
                 for &(id, ref objects) in &placements.jobs {
                     if objects.is_none() {
@@ -118,7 +118,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
 
     /// Tiles workers finished whole.
     fn take_tiles(&mut self, state: &mut TerrainState) {
-        let handed: Vec<(TileKey, (JobId, u64, u32))> = state
+        let handed: Vec<(TileKey, (JobId, Generation, u32))> = state
             .dispatched
             .iter()
             .map(|(&key, &job)| (key, job))
@@ -133,7 +133,9 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
             state.dispatched.remove(&key);
             match job_output(TILE_JOB, output, engine_terrain::jobs::tile_output) {
                 Ok(tile)
-                    if made == self.revision && self.target.contains(&key) && tile.key() == key =>
+                    if made == self.generation
+                        && self.target.contains(&key)
+                        && tile.key() == key =>
                 {
                     // After its shape a tile uploads its control values alone.
                     self.work.upload(
@@ -210,7 +212,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                     continue;
                 }
             };
-            if banding.made != self.revision || !self.target.contains(&key) {
+            if banding.made != self.generation || !self.target.contains(&key) {
                 continue;
             }
             self.work.upload(2 * TILE_ARRAY_BYTES);
@@ -269,7 +271,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
         state.placements.insert(
             key,
             Placements {
-                made: self.revision,
+                made: self.generation,
                 priority,
                 placing,
                 jobs,
@@ -320,7 +322,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
             let Some(tile) = state.store.get(&key).cloned() else {
                 continue;
             };
-            if placements.made != self.revision || !self.target.contains(&key) {
+            if placements.made != self.generation || !self.target.contains(&key) {
                 continue;
             }
             let objects: Vec<engine_terrain::Placed> = placements
@@ -338,7 +340,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
     /// draws, with coarser levels' materials, and collides until the whole
     /// tile arrives.
     fn take_shapes(&mut self, state: &mut TerrainState) {
-        let shaping: Vec<(TileKey, JobId, u64)> = state
+        let shaping: Vec<(TileKey, JobId, Generation)> = state
             .dispatched
             .iter()
             .map(|(&key, &(id, made, _))| (key, id, made))
@@ -351,7 +353,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                 continue;
             };
             if let Ok(shape) = engine_terrain::jobs::tile_output(&part)
-                && made == self.revision
+                && made == self.generation
                 && self.target.contains(&key)
                 && shape.key() == key
                 && state.shape(shape)
@@ -399,7 +401,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
     /// Tiles generated ahead of need go to memory; with tiles
     /// `missing`, or out of the idle reach, their jobs stop.
     fn take_ahead(&mut self, state: &mut TerrainState, missing: &[(TileKey, u32)]) {
-        let idle: Vec<(TileKey, JobId, u64)> = state
+        let idle: Vec<(TileKey, JobId, Generation)> = state
             .idle
             .iter()
             .map(|(&key, &(id, made))| (key, id, made))
@@ -410,13 +412,14 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                 if let Some(tile) = output
                     .ok()
                     .and_then(|bytes| engine_terrain::jobs::tile_output(&bytes).ok())
-                    && made == self.revision
+                    && made == self.generation
                     && tile.key() == key
                     && !state.store.contains(&key)
                 {
                     state.store.keep_in_memory(Arc::new(tile), self.frame);
                 }
-            } else if !missing.is_empty() || made != self.revision || !state.ahead.contains(&key) {
+            } else if !missing.is_empty() || made != self.generation || !state.ahead.contains(&key)
+            {
                 self.slots.jobs.cancel(id);
                 self.slots.release();
                 state.idle.remove(&key);
@@ -483,7 +486,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
         state.banded.insert(
             key,
             Banding {
-                made: self.revision,
+                made: self.generation,
                 priority,
                 placing,
                 jobs,
@@ -579,7 +582,9 @@ impl Executor for OnWorkers<'_, '_> {
             priority,
             job.identity(),
         );
-        state.dispatched.insert(key, (id, self.revision, priority));
+        state
+            .dispatched
+            .insert(key, (id, self.generation, priority));
         true
     }
 
@@ -619,7 +624,7 @@ impl Executor for OnWorkers<'_, '_> {
                 priority,
                 job.identity(),
             );
-            state.idle.insert(key, (id, self.revision));
+            state.idle.insert(key, (id, self.generation));
         }
     }
 }
@@ -629,12 +634,12 @@ impl Executor for OnWorkers<'_, '_> {
 /// generate from change: their stack, shared once for every terrain seeing
 /// it, and how its terrain sees it. Shares are named by their content,
 /// so jobs reading them are the same bytes in every
-/// session; `shares` counts recipes for their revisions, and the key of
-/// the recipe replaced goes to `released`.
+/// session; `stacks` holds the stacks shared with their keys, and the key
+/// of the recipe replaced goes to `released`.
 pub(crate) fn share_recipe(
     state: &mut TerrainState,
     jobs: &mut Jobs,
-    (stacks, shares): (&mut Vec<(Arc<Layers>, String)>, &mut u64),
+    stacks: &mut Vec<(Arc<Layers>, String)>,
     released: &mut Vec<String>,
 ) {
     let TerrainSource::Generated(authored) = &state.terrain.source else {
@@ -678,7 +683,6 @@ pub(crate) fn share_recipe(
             key
         }
     };
-    *shares += 1;
     let recipe = TerrainRecipe {
         stack: stack_key,
         view,
@@ -694,7 +698,7 @@ pub(crate) fn share_recipe(
     let shared = SharedRecipe {
         key,
         stack,
-        revision: *shares,
+        generation: state.store.generation(),
         materials: state.materials,
     };
     if let Some(old) = state.recipe.replace(shared) {

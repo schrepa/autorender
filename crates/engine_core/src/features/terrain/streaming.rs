@@ -389,12 +389,7 @@ impl Terrains {
             if let Some(slots) = slots.as_mut()
                 && slots.jobs.workers() > 0
             {
-                share_recipe(
-                    state,
-                    slots.jobs,
-                    (&mut self.stacks, &mut self.shares),
-                    &mut released,
-                );
+                share_recipe(state, slots.jobs, &mut self.stacks, &mut released);
             }
             if load_tiles(
                 state,

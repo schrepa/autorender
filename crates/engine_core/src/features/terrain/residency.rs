@@ -71,11 +71,11 @@ pub(super) struct TerrainState {
     pub(super) target: HashSet<TileKey>,
     pub(super) keep: HashSet<TileKey>,
     /// Workers' share: the recipe they generate its tiles
-    /// from, the tiles generating there (each one's job, the recipe's
-    /// revision it generates from and its priority) and its bakes running
+    /// from, the tiles generating there (each one's job, the generation it
+    /// generates and its priority) and its bakes running
     /// there, unless they failed there; and its jobs that failed there.
     pub(super) recipe: Option<SharedRecipe>,
-    pub(super) dispatched: HashMap<TileKey, (JobId, u64, u32)>,
+    pub(super) dispatched: HashMap<TileKey, (JobId, Generation, u32)>,
     /// Resident tiles without their objects standing far away,
     /// with their tiles' priorities, and the jobs placing those, each
     /// with the tile it places on and that tile's arrival.
@@ -85,14 +85,13 @@ pub(super) struct TerrainState {
     pub(super) bake_inline: bool,
     pub(super) failures: JobFailures,
     /// Tiles generating ahead of the view on workers while nothing is
-    /// missing, for memory: each one's job and the recipe's
-    /// revision it generates from; and the tiles to generate so, nearest
-    /// first.
-    pub(super) idle: HashMap<TileKey, (JobId, u64)>,
+    /// missing, for memory: each one's job and the generation it
+    /// generates; and the tiles to generate so, nearest first.
+    pub(super) idle: HashMap<TileKey, (JobId, Generation)>,
     pub(super) ahead: Vec<TileKey>,
     /// Tiles generating in bands of rows on several workers;
     /// tiles their bands made whose objects a job places, each with
-    /// that job, the recipe's revision, its priority and its placing; and
+    /// that job, the generation it generates, its priority and its placing; and
     /// how many tiles generated so.
     pub(super) banded: HashMap<TileKey, Banding>,
     pub(super) placements: HashMap<TileKey, Placements>,
@@ -106,20 +105,20 @@ pub(super) struct TerrainState {
 }
 
 /// The objects of a tile its bands made, placed in bands of
-/// candidate rows: the recipe's revision, its priority and
+/// candidate rows: the generation they are placed for, its priority and
 /// placing, and each band's job with its objects once done.
 pub(super) struct Placements {
-    pub(super) made: u64,
+    pub(super) made: Generation,
     pub(super) priority: u32,
     pub(super) placing: Placing,
     pub(super) jobs: Vec<(JobId, Option<Vec<engine_terrain::Placed>>)>,
 }
 
-/// A tile generating in bands of rows: the recipe's revision
+/// A tile generating in bands of rows: the generation it generates
 /// and the priority it generates at, the objects placed after, and its
 /// bands' jobs, each with its band once done.
 pub(super) struct Banding {
-    pub(super) made: u64,
+    pub(super) made: Generation,
     pub(super) priority: u32,
     pub(super) placing: Placing,
     pub(super) jobs: Vec<(JobId, Option<TileBand>)>,
@@ -142,7 +141,7 @@ impl TerrainState {
     pub(super) fn new(entity: Entity, terrain: Terrain) -> Self {
         Self {
             entity,
-            store: TileStore::new(terrain.pyramid),
+            store: TileStore::new(terrain.pyramid, Generation::of(&terrain.edits, true)),
             terrain,
             jobs: HashMap::default(),
             in_flight: HashSet::default(),
@@ -208,7 +207,8 @@ impl TerrainState {
         };
         if materials != self.materials {
             self.materials = materials;
-            self.store.invalidate(|_| true);
+            self.store
+                .invalidate(Generation::of(&self.terrain.edits, materials), |_| true);
         }
     }
 
@@ -289,7 +289,8 @@ impl TerrainState {
         };
         self.jobs.retain(|key, _| !under(key));
         // Tiles kept in memory under the edits are no longer the ground.
-        self.store.invalidate(under);
+        let generation = Generation::of(&self.terrain.edits, self.materials);
+        self.store.invalidate(generation, under);
     }
 
     /// The layers its tiles generate from: `base`, its layers
@@ -597,11 +598,10 @@ pub struct Terrains {
     /// Whether the camera's view has loaded whole since terrains arrived.
     pub(super) loaded: bool,
     /// Workers' share: how many ran at the last frame, the
-    /// stacks shared with them and keys handed out so far, and the jobs and
+    /// stacks shared with them and their keys, and the jobs and
     /// recipes of terrains gone, to drop.
     pub(super) workers: u32,
     pub(super) stacks: Vec<(Arc<Layers>, String)>,
-    pub(super) shares: u64,
     pub(super) retired: Retired,
     /// Tiles returned from memory since terrains started;
     /// and bytes of the frame's upload budget left for work between

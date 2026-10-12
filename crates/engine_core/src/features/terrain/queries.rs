@@ -187,7 +187,7 @@ impl Terrains {
 
     /// The input of a walk job over the generated terrain
     /// under world `from` and `to` (x and z) as `options` walk, once workers
-    /// hold its recipe for the layers its tiles generate from now: the
+    /// hold its recipe for the generation its tiles are made from now: the
     /// terrain, its origin, which the walk's terrain-local points are from,
     /// and the input. `None` otherwise, as for [`Self::walk_search`].
     pub fn walk_job(
@@ -199,8 +199,7 @@ impl Terrains {
         let state = self.walked(from, to)?;
         let (entity, origin) = (state.entity, state.terrain.origin);
         let recipe = state.recipe.as_ref()?;
-        let layers = self.layers(entity)?;
-        if !Arc::ptr_eq(&recipe.stack, &layers) {
+        if recipe.generation != state.store.generation() {
             return None;
         }
         let corner = Vec2::new(origin.x, origin.z);

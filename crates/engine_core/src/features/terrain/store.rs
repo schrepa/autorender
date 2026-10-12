@@ -1,8 +1,9 @@
 //! A terrain's resident tiles, and the tiles kept in memory after they
 //! left: the one owner of what each resident tile is. Each holds how much
-//! of it is here (its [`Phase`]) and the generation it was made from; a
-//! tile of an older generation lies under an edit since (or was made before
-//! its terrain's materials changed) and regenerates, drawn until then. The
+//! of it is here (its [`Phase`]) and the [`Generation`] it was made from;
+//! a tile of another generation than its terrain makes now lies under an
+//! edit since (or was made before its terrain's materials changed) and
+//! regenerates, drawn until then. The
 //! store measures the levels' morph errors as tiles arrive and advances its
 //! revision with every change, which renderers and collision follow. Tiles
 //! become resident through [`TileStore::arrive`] alone.
@@ -31,7 +32,7 @@ pub(super) enum Phase {
 struct Resident {
     tile: Arc<Tile>,
     phase: Phase,
-    made: u64,
+    made: Generation,
     arrival: u64,
 }
 
@@ -61,7 +62,7 @@ pub(super) struct TileStore {
     pyramid: Pyramid,
     tiles: HashMap<TileKey, Resident>,
     /// The generation tiles arriving now are made from.
-    generation: u64,
+    generation: Generation,
     /// Arrivals so far.
     arrivals: u64,
     revision: u64,
@@ -79,12 +80,12 @@ pub(super) struct TileStore {
 }
 
 impl TileStore {
-    /// No tiles of `pyramid`.
-    pub(super) fn new(pyramid: Pyramid) -> Self {
+    /// No tiles of `pyramid`, which tiles of `generation` arrive at.
+    pub(super) fn new(pyramid: Pyramid, generation: Generation) -> Self {
         Self {
             pyramid,
             tiles: HashMap::default(),
-            generation: 0,
+            generation,
             arrivals: 0,
             revision: 1,
             errors: vec![0.0; pyramid.levels() as usize],
@@ -113,7 +114,12 @@ impl TileStore {
         self.tiles.get(key).map(|resident| resident.arrival)
     }
 
-    /// Whether resident tile `key` was made from an older generation than
+    /// The generation tiles are made from now.
+    pub(super) fn generation(&self) -> Generation {
+        self.generation
+    }
+
+    /// Whether resident tile `key` was made from another generation than
     /// tiles are made from now.
     pub(super) fn stale(&self, key: &TileKey) -> bool {
         self.tiles
@@ -121,7 +127,7 @@ impl TileStore {
             .is_some_and(|resident| resident.made != self.generation)
     }
 
-    /// Whether `key` still loads: not resident, resident of an older
+    /// Whether `key` still loads: not resident, resident of another
     /// generation, or resident without its materials or objects in bands.
     pub(super) fn loads(&self, key: &TileKey) -> bool {
         self.tiles.get(key).is_none_or(|resident| {
@@ -187,7 +193,7 @@ impl TileStore {
         self.put(tile, Phase::Whole, made);
     }
 
-    fn put(&mut self, tile: Arc<Tile>, phase: Phase, made: u64) {
+    fn put(&mut self, tile: Arc<Tile>, phase: Phase, made: Generation) {
         let key = tile.key();
         let level = usize::from(key.level);
         if let Some(parent) = self
@@ -230,16 +236,16 @@ impl TileStore {
         })
     }
 
-    /// Starts a generation for the resident tiles `under` takes: they
-    /// regenerate in their turn and draw until they do; every other
-    /// resident tile is of the new generation too. Tiles kept in memory
-    /// under it are no longer the ground.
-    pub(super) fn invalidate(&mut self, under: impl Fn(&TileKey) -> bool) {
-        let previous = self.generation;
-        self.generation += 1;
+    /// Makes `generation` the one tiles are made from, which the resident
+    /// tiles `under` takes are not: they regenerate in their turn and draw
+    /// until they do; every other resident tile of the generation before
+    /// is of the new one too. Tiles kept in memory under it are no longer
+    /// the ground.
+    pub(super) fn invalidate(&mut self, generation: Generation, under: impl Fn(&TileKey) -> bool) {
+        let previous = std::mem::replace(&mut self.generation, generation);
         for (key, resident) in &mut self.tiles {
             if resident.made == previous && !under(key) {
-                resident.made = self.generation;
+                resident.made = generation;
             }
         }
         let gone: Vec<TileKey> = self
@@ -346,10 +352,6 @@ impl TileStore {
                 resident.tile.key() == *key && u32::from(key.level) < levels,
                 "R1: resident tile {key:?} holds tile {:?} ({levels} levels)",
                 resident.tile.key()
-            );
-            assert!(
-                resident.made <= self.generation,
-                "R1: resident tile {key:?} is of a generation to come"
             );
             assert!(
                 resident.phase != Phase::Shape
