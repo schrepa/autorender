@@ -25,7 +25,8 @@
 //! `shown` ones are listed. An unstable capture carries its reason in the
 //! matrix and passes when a candidate run matches one of the base's over
 //! `--repeat` runs, or lies no farther from the nearest than the base's own
-//! images lie from each other; `--aa` runs the base against itself to find
+//! images lie from each other; its work counters fail only where they fail
+//! against every base run. `--aa` runs the base against itself to find
 //! them.
 //! Exit 0: equal; 3: different; 1: could not check.
 

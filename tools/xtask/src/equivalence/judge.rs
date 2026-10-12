@@ -286,7 +286,27 @@ pub(super) fn judge(
             verdicts.push((key, Verdict::Unchecked(problems.join("; "))));
             continue;
         };
-        changed.extend(compare_work(&key, base_work, candidate_work, catalog));
+        let mut work = compare_work(&key, base_work, candidate_work, catalog);
+        if cell.unstable.contains_key(&key) {
+            // Runs that vary vary their work too: a counter fails only
+            // where it fails against every base run.
+            let against: Vec<Vec<Changed>> = base
+                .iter()
+                .filter_map(|run| match run.shots.get(&key) {
+                    Some(Shot::Taken { work, .. }) => Some(work),
+                    _ => None,
+                })
+                .map(|other| compare_work(&key, other, candidate_work, catalog))
+                .collect();
+            for change in &mut work {
+                change.fails = against.iter().all(|changes| {
+                    changes
+                        .iter()
+                        .any(|other| other.name == change.name && other.fails)
+                });
+            }
+        }
+        changed.extend(work);
         let distinct: BTreeSet<&str> = base_hashes.iter().copied().collect();
         let verdict = if cell.unstable.contains_key(&key) {
             if candidate_hashes.iter().any(|hash| distinct.contains(hash)) {
