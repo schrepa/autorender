@@ -690,8 +690,7 @@
       "inspector": "Reflections",
       "section": "reflections",
       "smokes": [
-        "agent",
-        "lod"
+        "agent"
       ],
       "stats": true
     },
@@ -771,7 +770,6 @@
       "inspector": "Wind",
       "section": "wind",
       "smokes": [
-        "jobs",
         "terrain"
       ],
       "stats": false
@@ -841,7 +839,6 @@
       "section": "sky",
       "smokes": [
         "host-parity",
-        "jobs",
         "terrain"
       ],
       "stats": true
