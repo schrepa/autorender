@@ -43,11 +43,11 @@
 mod bakes;
 mod bridges;
 mod components;
+mod dispatch;
 mod extract;
 mod files;
 mod ground_cover;
 mod identity;
-mod in_place;
 mod occupancy;
 mod plan;
 mod queries;
@@ -60,15 +60,14 @@ mod surroundings;
 mod water;
 mod waterfalls;
 mod wind;
-mod workers;
 
 use bakes::*;
 pub use bridges::*;
 pub use components::*;
+use dispatch::*;
 pub use extract::*;
 pub use files::*;
 pub use ground_cover::*;
-use in_place::*;
 pub use occupancy::*;
 use plan::*;
 pub use queries::*;
@@ -80,7 +79,6 @@ pub(crate) use streaming::*;
 pub use surroundings::*;
 pub use water::*;
 pub use wind::*;
-use workers::*;
 
 use crate::collections::{HashMap, HashSet};
 use std::sync::Arc;

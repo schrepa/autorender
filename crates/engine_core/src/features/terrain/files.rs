@@ -1,5 +1,5 @@
-//! Terrains read from files: the byte ranges hosts fetch, and the tiles
-//! they deliver.
+//! Terrains read from files: the byte ranges hosts fetch, the tiles they
+//! deliver, and decoding them, or tiles of a whole file at hand.
 
 use super::*;
 
@@ -60,4 +60,103 @@ impl Terrains {
             state.arrivals.push((key, bytes));
         }
     }
+}
+
+/// Decodes `missing` tiles of `state`, a terrain whose whole file
+/// (`header`, `data`) is here, within `work`'s time from slices of
+/// `budget`, then gives each tile its surface.
+pub(super) fn decode_file(
+    state: &mut TerrainState,
+    (header, data): (&FileHeader, &[u8]),
+    missing: &[(TileKey, u32)],
+    (work, budget): (&Work, &mut u64),
+    frame: u64,
+) {
+    for &(key, _) in missing {
+        if *budget == 0 && !work.refill(budget) {
+            break;
+        }
+        if state.surface_job(key, budget) {
+            continue;
+        }
+        let Some(entry) = header.tile(key) else {
+            continue;
+        };
+        let range = usize::try_from(entry.offset)
+            .ok()
+            .and_then(|start| data.get(start..start.checked_add(entry.length as usize)?));
+        *budget = budget.saturating_sub(u64::from(TILE_STRIDE * TILE_STRIDE));
+        match range.map(|bytes| decode_tile(header, key, bytes)) {
+            Some(Ok(tile)) => state.resurface(tile, budget),
+            _ => {
+                state.failed.insert(key, frame);
+            }
+        }
+    }
+}
+
+/// Requests the byte ranges of `missing` tiles of `state`, a terrain
+/// whose file (`header`) hosts fetch from `url`, unless under way or failed
+/// a moment ago; decodes those delivered that `target` still holds within
+/// `work`'s time from slices of `budget`, keeping the rest for later, and
+/// gives each tile its surface.
+pub(super) fn fetch_file(
+    state: &mut TerrainState,
+    (header, url): (&FileHeader, &Arc<str>),
+    (missing, target): (&[(TileKey, u32)], &HashSet<TileKey>),
+    (work, budget): (&Work, &mut u64),
+    frame: u64,
+    requests: &mut Vec<TileRequest>,
+) {
+    for &(key, _) in missing {
+        if *budget > 0 || work.refill(budget) {
+            state.surface_job(key, budget);
+        }
+        if state.in_flight.contains(&key)
+            || state.jobs.contains_key(&key)
+            || (state.store.contains(&key)
+                && !matches!(state.store.phase(&key), Some(Phase::Shape | Phase::Placing)))
+            || state
+                .failed
+                .get(&key)
+                .is_some_and(|&at| frame < at + RETRY_AFTER)
+        {
+            continue;
+        }
+        let Some(entry) = header.tile(key) else {
+            continue;
+        };
+        state.in_flight.insert(key);
+        requests.push(TileRequest {
+            terrain: state.entity,
+            key,
+            url: url.clone(),
+            offset: entry.offset,
+            length: entry.length,
+        });
+    }
+    let arrivals = std::mem::take(&mut state.arrivals);
+    let mut later = Vec::new();
+    for (key, bytes) in arrivals {
+        if *budget == 0 {
+            work.refill(budget);
+        }
+        if *budget == 0 || !target.contains(&key) {
+            if target.contains(&key) {
+                later.push((key, bytes));
+            }
+            continue;
+        }
+        *budget = budget.saturating_sub(u64::from(TILE_STRIDE * TILE_STRIDE));
+        match bytes.map(|bytes| decode_tile(header, key, &bytes)) {
+            Some(Ok(tile)) => {
+                state.failed.remove(&key);
+                state.resurface(tile, budget);
+            }
+            _ => {
+                state.failed.insert(key, frame);
+            }
+        }
+    }
+    state.arrivals = later;
 }

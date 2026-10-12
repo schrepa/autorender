@@ -34,6 +34,59 @@ pub(super) fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
     state.bake = None;
 }
 
+/// Bakes run before any tile loads, each reading the layers below it, in
+/// stack order: `layers`' first bake not done advances on a worker where
+/// `slots` has workers, unless one failed there, or here within `work`'s
+/// time from slices of `budget`. Whether a bake was not done, which no tile
+/// loads behind.
+pub(super) fn bake(
+    state: &mut TerrainState,
+    layers: &Arc<Layers>,
+    work: &Work,
+    budget: &mut u64,
+    mut slots: Option<&mut JobBudget<'_>>,
+) -> bool {
+    let Some(unbaked) = layers.unbaked() else {
+        return false;
+    };
+    let pyramid = state.terrain.pyramid;
+    if let Some(slots) = slots.as_deref_mut()
+        && slots.jobs.workers() > 0
+        && !state.bake_inline
+    {
+        bake_on_worker(state, slots.jobs, layers, &pyramid);
+        return true;
+    }
+    // A bake handed to workers that stopped runs here.
+    if let Some(id) = state.bake_job.take()
+        && let Some(slots) = slots
+    {
+        slots.jobs.cancel(id);
+    }
+    let bake = state
+        .bake
+        .get_or_insert_with(|| TerrainBake::new(layers, unbaked.clone(), &pyramid));
+    let _profile = engine_profile::span("cpu", "terrain_bake");
+    let baked = loop {
+        if let Some(baked) = bake.advance(&pyramid, budget) {
+            break Some(baked);
+        }
+        if !work.refill(budget) {
+            break None;
+        }
+    };
+    if let Some(baked) = baked {
+        match &baked {
+            Baked::Hydrology(found) => state.hydrology = Some(found.stats),
+            Baked::Erosion(found) => state.erosion = Some(found.stats),
+            Baked::Path(_) => {}
+        }
+        let index = unbaked.0;
+        finish_bake(state, Arc::new(layers.with_baked(index, baked)));
+    }
+    true
+}
+
 /// Bakes `layers` over `pyramid` on a worker: hands it every
 /// bake at once, then makes what it baked the layers tiles generate from. A
 /// bake that failed there runs in place instead.
