@@ -18,14 +18,14 @@ pub(crate) struct TerrainTables {
     // Each layer's fades, then the hole bits of the tiles
     // with holes, and where each tile's start; the fades last written and
     // the words they take.
-    pub(super) holes: wgpu::Buffer,
+    pub(super) holes: crate::buffers::Growable,
     pub(super) hole_offsets: HashMap<(u64, TileKey), u32>,
     pub(super) holes_generation: u64,
     fades_written: Vec<u32>,
     pub(super) fade_words: u32,
     // Every terrain's levels and their resident tiles' layers, and where
     // each terrain's start.
-    pub(super) directory: wgpu::Buffer,
+    pub(super) directory: crate::buffers::Growable,
     pub(super) directory_written: Vec<u32>,
     pub(super) directory_generation: u64,
     // Advances whenever the directory's words change.
@@ -56,7 +56,7 @@ impl TerrainTables {
             uniforms: crate::buffers::uniform(device, "engine/terrain-uniforms", SLOT),
             uniform_generation: 0,
             uniform_ids: Vec::new(),
-            holes: crate::buffers::storage(
+            holes: crate::buffers::Growable::new(
                 device,
                 "engine/terrain-holes",
                 16,
@@ -66,7 +66,7 @@ impl TerrainTables {
             holes_generation: 0,
             fades_written: Vec::new(),
             fade_words: 0,
-            directory: crate::buffers::storage(
+            directory: crate::buffers::Growable::new(
                 device,
                 "engine/terrain-directory",
                 16,
@@ -133,13 +133,7 @@ impl TerrainTables {
         }
         let start = u64::from(fade_words) * 4;
         let bytes = start + (words.len() * 4) as u64;
-        if bytes > self.holes.size() {
-            self.holes = crate::buffers::storage(
-                device,
-                "engine/terrain-holes",
-                bytes.next_power_of_two(),
-                wgpu::BufferUsages::empty(),
-            );
+        if self.holes.grow(device, bytes) {
             self.holes_generation += 1;
             // A new buffer holds no fades yet.
             self.fades_written.clear();
@@ -284,14 +278,8 @@ impl TerrainTables {
         self.vt_base = words.len().next_multiple_of(64) as u32;
         let texture_words = crate::terrain_vt::VirtualTexture::words(terrains.terrains.len());
         let bytes = ((self.vt_base as usize + texture_words) * 4) as u64;
-        let grown = bytes > self.directory.size();
+        let grown = self.directory.grow(device, bytes);
         if grown {
-            self.directory = crate::buffers::storage(
-                device,
-                "engine/terrain-directory",
-                bytes.next_power_of_two(),
-                wgpu::BufferUsages::empty(),
-            );
             self.directory_generation += 1;
         }
         if words.is_empty() || (words == self.directory_written && !grown) {

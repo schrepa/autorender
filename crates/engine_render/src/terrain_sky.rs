@@ -54,7 +54,7 @@ pub(crate) struct SkyMaps {
     // A one-texel map of open sky bound while no terrain has one.
     empty: wgpu::TextureView,
     uniforms: wgpu::Buffer,
-    tables: wgpu::Buffer,
+    tables: crate::buffers::Growable,
     // What each layer holds once built, and the build under way with the
     // next row it builds.
     built: Vec<Option<Source>>,
@@ -99,7 +99,7 @@ impl SkyMaps {
             maps: None,
             empty: array_view(&empty),
             uniforms: crate::buffers::uniform(device, "engine/terrain-sky-builds", SLOT),
-            tables: crate::buffers::storage(
+            tables: crate::buffers::Growable::new(
                 device,
                 "engine/terrain-sky-tables",
                 16,
@@ -259,14 +259,7 @@ impl SkyMaps {
         }
         queue.write_buffer(&self.uniforms, 0, &uniforms);
         let bytes = (tables.len() * 4) as u64;
-        if bytes > self.tables.size() {
-            self.tables = crate::buffers::storage(
-                device,
-                "engine/terrain-sky-tables",
-                bytes.next_power_of_two(),
-                wgpu::BufferUsages::empty(),
-            );
-        }
+        self.tables.grow(device, bytes);
         if !tables.is_empty() {
             queue.write_buffer(&self.tables, 0, bytemuck::cast_slice(&tables));
         }

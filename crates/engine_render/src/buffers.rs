@@ -1,6 +1,6 @@
 //! Buffers every pass shares the shape of: storage buffers and their
-//! whole-buffer bindings, growth by powers of two, and values read back a
-//! few frames late.
+//! whole-buffer bindings, growth by powers of two within what one binding
+//! holds, and values read back a few frames late.
 
 use std::{
     cell::{Cell, RefCell},
@@ -33,21 +33,68 @@ pub(crate) fn uniform(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::B
     })
 }
 
-/// Replaces `buffer` by a [`storage`] buffer of the next power of two of
-/// `bytes` unless it holds them already, advancing its generation; returns
-/// whether it did. The new buffer holds nothing of the old one.
-pub(crate) fn ensure_storage(
-    device: &wgpu::Device,
-    buffer: &mut crate::cached::Versioned<wgpu::Buffer>,
-    label: &str,
-    bytes: u64,
+/// A [`storage`] buffer bound whole whose content sizes it: it grows by
+/// powers of two to hold what it is asked to, but never past what one
+/// storage binding of its device holds, its room. The one way such
+/// buffers grow; what is asked past the room is the caller's to leave out
+/// and count.
+pub(crate) struct Growable {
+    buffer: crate::cached::Versioned<wgpu::Buffer>,
+    label: &'static str,
     extra: wgpu::BufferUsages,
-) -> bool {
-    if bytes <= buffer.size() {
-        return false;
+    room: u64,
+}
+
+impl std::ops::Deref for Growable {
+    type Target = crate::cached::Versioned<wgpu::Buffer>;
+
+    fn deref(&self) -> &crate::cached::Versioned<wgpu::Buffer> {
+        &self.buffer
     }
-    buffer.replace(storage(device, label, bytes.next_power_of_two(), extra));
-    true
+}
+
+impl Growable {
+    /// A [`storage`] buffer of `bytes` labeled `label`, with `extra`
+    /// usages, on `device`.
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        label: &'static str,
+        bytes: u64,
+        extra: wgpu::BufferUsages,
+    ) -> Self {
+        let limits = device.limits();
+        // Sizes are whole 16-byte words.
+        let room = limits
+            .max_storage_buffer_binding_size
+            .min(limits.max_buffer_size)
+            / 16
+            * 16;
+        Self {
+            buffer: crate::cached::Versioned::new(storage(device, label, bytes.min(room), extra)),
+            label,
+            extra,
+            room,
+        }
+    }
+
+    /// Grows to hold `bytes`, to the next power of two of them within its
+    /// room, unless it holds them already, advancing its generation;
+    /// returns whether it did. The new buffer holds nothing of the old one.
+    pub(crate) fn grow(&mut self, device: &wgpu::Device, bytes: u64) -> bool {
+        let size = bytes.next_power_of_two().min(self.room);
+        if bytes <= self.buffer.size() || size <= self.buffer.size() {
+            return false;
+        }
+        self.buffer
+            .replace(storage(device, self.label, size, self.extra));
+        true
+    }
+
+    /// The most bytes it holds: what one storage binding of its device
+    /// holds, in whole 16-byte words.
+    pub(crate) fn room(&self) -> u64 {
+        self.room
+    }
 }
 
 /// A buffer bound whole as binding `name`.

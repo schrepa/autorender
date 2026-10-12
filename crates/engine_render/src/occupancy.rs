@@ -75,7 +75,7 @@ pub(crate) struct OccupancyPass {
     // one adds covers up.
     pipelines: [Option<wgpu::RenderPipeline>; 2],
     uniforms: [wgpu::Buffer; 2],
-    covers: Versioned<wgpu::Buffer>,
+    covers: crate::buffers::Growable,
     covers_written: Vec<Cover>,
     // The coverage and heights targets, the views shading reads (made anew
     // with the targets) and each map's layer of them.
@@ -106,12 +106,12 @@ impl OccupancyPass {
                 uniform("engine/occupancy-splat"),
                 uniform("engine/occupancy-far-splat"),
             ],
-            covers: Versioned::new(crate::buffers::storage(
+            covers: crate::buffers::Growable::new(
                 device,
                 "engine/occupancy-covers",
                 size_of::<Cover>() as u64,
                 wgpu::BufferUsages::empty(),
-            )),
+            ),
             covers_written: Vec::new(),
             targets,
             views,
@@ -174,13 +174,7 @@ impl OccupancyPass {
         }
         if covers != self.covers_written.as_slice() {
             let bytes: &[u8] = bytemuck::cast_slice(covers);
-            crate::buffers::ensure_storage(
-                device,
-                &mut self.covers,
-                "engine/occupancy-covers",
-                bytes.len() as u64,
-                wgpu::BufferUsages::empty(),
-            );
+            self.covers.grow(device, bytes.len() as u64);
             queue.write_buffer(&self.covers, 0, bytes);
             self.covers_written = covers.to_vec();
             self.drawn = [None, None];

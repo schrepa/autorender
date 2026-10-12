@@ -264,7 +264,7 @@ pub(crate) struct VirtualTexture {
     arrived: Arrived,
     // This frame's bakes by sheet and terrain, and their buffer.
     bakes: Vec<(u32, u64, BakeRecord)>,
-    bake_buffer: wgpu::Buffer,
+    bake_buffer: crate::buffers::Growable,
     // Bakes' and feedback's layouts and pipelines.
     bake_layout: crate::pipelines::GroupLayout,
     bake_pipeline: Option<wgpu::RenderPipeline>,
@@ -307,7 +307,7 @@ impl VirtualTexture {
             snapshots: HashMap::default(),
             arrived: Rc::new(RefCell::new(Vec::new())),
             bakes: Vec::new(),
-            bake_buffer: crate::buffers::storage(
+            bake_buffer: crate::buffers::Growable::new(
                 device,
                 "engine/terrain-vt-bakes",
                 16,
@@ -819,14 +819,7 @@ impl VirtualTexture {
             return;
         }
         let bytes = std::mem::size_of_val(records.as_slice()) as u64;
-        if bytes > self.bake_buffer.size() {
-            self.bake_buffer = crate::buffers::storage(
-                device,
-                "engine/terrain-vt-bakes",
-                bytes.next_power_of_two(),
-                wgpu::BufferUsages::empty(),
-            );
-        }
+        self.bake_buffer.grow(device, bytes);
         queue.write_buffer(&self.bake_buffer, 0, bytemuck::cast_slice(&records));
     }
 

@@ -60,7 +60,7 @@ pub(crate) struct Horizons {
     records_view: Versioned<wgpu::TextureView>,
     records_written: Vec<[f32; 4]>,
     uniforms: wgpu::Buffer,
-    tables: wgpu::Buffer,
+    tables: crate::buffers::Growable,
     // What each layer holds, and the layers this frame builds with what
     // they will then hold: a layer counts as built once its build is
     // recorded.
@@ -103,7 +103,7 @@ impl Horizons {
             records_view,
             records_written: Vec::new(),
             uniforms: crate::buffers::uniform(device, "engine/terrain-horizon-builds", SLOT),
-            tables: crate::buffers::storage(
+            tables: crate::buffers::Growable::new(
                 device,
                 "engine/terrain-horizon-tables",
                 16,
@@ -270,14 +270,7 @@ impl Horizons {
         }
         queue.write_buffer(&self.uniforms, 0, &uniforms);
         let bytes = (tables.len() * 4) as u64;
-        if bytes > self.tables.size() {
-            self.tables = crate::buffers::storage(
-                device,
-                "engine/terrain-horizon-tables",
-                bytes.next_power_of_two(),
-                wgpu::BufferUsages::empty(),
-            );
-        }
+        self.tables.grow(device, bytes);
         if !tables.is_empty() {
             queue.write_buffer(&self.tables, 0, bytemuck::cast_slice(&tables));
         }

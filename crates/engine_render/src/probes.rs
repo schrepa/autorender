@@ -9,7 +9,7 @@ use engine_core::{
     math,
 };
 
-use crate::cached::{Bound, Cached, Versioned};
+use crate::cached::{Bound, Cached};
 use crate::gpu_data::STILL_FRAMES;
 use crate::gpu_layouts::constants::PROBE_ENTRY_WORDS;
 
@@ -237,7 +237,7 @@ pub(crate) struct ProbePass {
     // Depth of the face being captured, and its size.
     depth: Cached<u32, wgpu::TextureView>,
     // The grid words surfaces read (`meshes/declarations.wgsl`'s `probe_words`).
-    words: Versioned<wgpu::Buffer>,
+    words: crate::buffers::Growable,
     staging: Vec<[u32; 4]>,
 }
 
@@ -253,12 +253,12 @@ impl ProbePass {
             },
             cameras,
             depth: Cached::default(),
-            words: Versioned::new(crate::buffers::storage(
+            words: crate::buffers::Growable::new(
                 device,
                 GRID_LABEL,
                 32,
                 wgpu::BufferUsages::empty(),
-            )),
+            ),
             staging: Vec::new(),
         }
     }
@@ -301,13 +301,7 @@ impl ProbePass {
         };
         grid_words(&ready, &mut self.staging);
         let bytes = (self.staging.len() * 16) as u64;
-        crate::buffers::ensure_storage(
-            device,
-            &mut self.words,
-            GRID_LABEL,
-            bytes,
-            wgpu::BufferUsages::empty(),
-        );
+        self.words.grow(device, bytes);
         queue.write_buffer(&self.words, 0, bytemuck::cast_slice(&self.staging));
     }
 

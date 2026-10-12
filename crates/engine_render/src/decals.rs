@@ -80,7 +80,7 @@ mod gpu {
 
     use super::*;
     use crate::bindings::DECALS;
-    use crate::buffers::storage;
+    use crate::buffers::Growable;
     use crate::cached::{Bound, GroupCache, Versioned};
     use crate::materials::MaterialStore;
     use crate::profiling::Span;
@@ -104,7 +104,8 @@ mod gpu {
         pipeline_layouts: [Option<wgpu::PipelineLayout>; 2],
         pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
         surface_format: wgpu::TextureFormat,
-        records: Versioned<wgpu::Buffer>,
+        // As many records as its room holds.
+        records: Growable,
         staging: Vec<DecalData>,
         uploaded: Vec<DecalData>,
         runs: Vec<DecalRun>,
@@ -112,8 +113,6 @@ mod gpu {
         // parity this frame binds.
         groups: [GroupCache<3>; 2],
         parity: usize,
-        // Records a storage binding holds, read once.
-        room: usize,
     }
 
     impl DecalPass {
@@ -121,27 +120,22 @@ mod gpu {
             // Group 2 beside the mesh poses' bindings: the joint palette
             // holds retained frames' decal poses.
             let layout = crate::pipelines::layout(device, &DECALS);
-            let limits = device.limits();
-            let binding = limits
-                .max_storage_buffer_binding_size
-                .min(limits.max_buffer_size);
             Self {
                 layout,
                 pipeline_layouts: [None, None],
                 pipelines: HashMap::default(),
                 surface_format,
-                records: Versioned::new(storage(
+                records: Growable::new(
                     device,
                     "engine/decal-records",
                     size_of::<DecalData>() as u64,
                     wgpu::BufferUsages::empty(),
-                )),
+                ),
                 staging: Vec::new(),
                 uploaded: Vec::new(),
                 runs: Vec::new(),
                 groups: Default::default(),
                 parity: 0,
-                room: (binding / size_of::<DecalData>() as u64) as usize,
             }
         }
 
@@ -162,7 +156,7 @@ mod gpu {
             (palette, parity): (Bound<'_>, usize),
             depth: &Versioned<wgpu::TextureView>,
         ) -> Option<DecalFrame> {
-            let room = self.room;
+            let room = (self.records.room() / size_of::<DecalData>() as u64) as usize;
             let dropped = pack_decals(
                 &snapshot.decals.list,
                 room,
@@ -173,13 +167,7 @@ mod gpu {
                 return None;
             }
             let bytes = (self.staging.len() * size_of::<DecalData>()) as u64;
-            if bytes > self.records.size() {
-                self.records.replace(storage(
-                    device,
-                    "engine/decal-records",
-                    bytes.next_power_of_two(),
-                    wgpu::BufferUsages::empty(),
-                ));
+            if self.records.grow(device, bytes) {
                 self.uploaded.clear();
             }
             if self.staging != self.uploaded {

@@ -55,7 +55,7 @@ pub(crate) struct GroundCoverPass {
     // frame that has cover.
     compute: Option<(wgpu::ComputePipeline, wgpu::ComputePipeline)>,
     pipelines: HashMap<(Targets, bool), wgpu::RenderPipeline>,
-    blades: wgpu::Buffer,
+    blades: crate::buffers::Growable,
     capacity: u32,
     blades_generation: u64,
     counts: wgpu::Buffer,
@@ -82,7 +82,12 @@ impl GroundCoverPass {
             draw_layout: crate::pipelines::layout(device, &COVER_DRAW),
             compute: None,
             pipelines: HashMap::default(),
-            blades: blades_buffer(device, 1),
+            blades: crate::buffers::Growable::new(
+                device,
+                "engine/cover-blades",
+                BLADE_BYTES,
+                wgpu::BufferUsages::empty(),
+            ),
             capacity: 0,
             blades_generation: 0,
             counts: crate::buffers::storage(
@@ -257,13 +262,16 @@ impl GroundCoverPass {
         if self.growths.is_empty() {
             return false;
         }
-        // Room for the most blades the discs can grow, or the budget.
+        // Room for the most blades the discs can grow, or the budget, within
+        // what one storage binding holds: growth leaves the rest out and
+        // counts them.
+        let room = (self.blades.room() / BLADE_BYTES).min(u64::from(u32::MAX)) as u32;
         let capacity = settings
             .max_blades
             .map_or(most.ceil() as u32, |budget| budget.min(most.ceil() as u32))
-            .max(1);
-        if u64::from(capacity) * BLADE_BYTES > self.blades.size() {
-            self.blades = blades_buffer(device, capacity.next_power_of_two());
+            .max(1)
+            .min(room);
+        if self.blades.grow(device, u64::from(capacity) * BLADE_BYTES) {
             self.blades_generation += 1;
         }
         self.capacity = capacity;
@@ -523,15 +531,6 @@ fn cover_share(away: f32, radius: f32, reach: f32) -> f32 {
 fn smoothstep(from: f32, to: f32, value: f32) -> f32 {
     let t = engine_core::math::clamp((value - from) / (to - from), 0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
-}
-
-fn blades_buffer(device: &wgpu::Device, blades: u32) -> wgpu::Buffer {
-    crate::buffers::storage(
-        device,
-        "engine/cover-blades",
-        u64::from(blades) * BLADE_BYTES,
-        wgpu::BufferUsages::empty(),
-    )
 }
 
 /// The view's frustum planes from its view-projection (world), each

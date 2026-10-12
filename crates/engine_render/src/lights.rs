@@ -117,7 +117,7 @@ mod gpu {
 
     use super::*;
     use crate::bindings::{LIGHT_BINNING, LIGHT_SHADING};
-    use crate::buffers::{ReadbackRing, entry, storage};
+    use crate::buffers::{Growable, ReadbackRing, entry, storage};
     use crate::cached::Cached;
     use crate::gpu_data::LIGHT_SHADER;
     use crate::profiling::Span;
@@ -153,11 +153,8 @@ mod gpu {
         capacity: usize,
         counts: wgpu::Buffer,
         ranges: wgpu::Buffer,
-        indices: wgpu::Buffer,
-        // Entries `indices` holds.
-        index_capacity: u64,
-        // What one storage binding holds, read once.
-        binding_limit: u64,
+        // The clusters' lists of lights, an entry each.
+        indices: Growable,
         totals: wgpu::Buffer,
         staged: Vec<LightInput>,
         // The retained stream and light revision the inputs hold.
@@ -216,9 +213,7 @@ mod gpu {
                 capacity: 1,
                 counts: storage(device, "engine/light-cluster-counts", CLUSTERS * 4, none),
                 ranges: storage(device, "engine/light-cluster-ranges", CLUSTERS * 8, none),
-                indices: storage(device, "engine/light-cluster-indices", CLUSTERS * 4, none),
-                index_capacity: CLUSTERS,
-                binding_limit: device.limits().max_storage_buffer_binding_size,
+                indices: Growable::new(device, "engine/light-cluster-indices", CLUSTERS * 4, none),
                 totals: storage(
                     device,
                     "engine/light-totals",
@@ -312,20 +307,12 @@ mod gpu {
             // back, and to a first guess of a few dozen clusters per light,
             // within what one storage binding holds; until then, entries
             // beyond it are lost and counted.
-            let binding = self.binding_limit / 4;
             let needed = self
                 .totals_read
                 .get()
                 .map_or(0, |[_, _, needed]| u64::from(needed))
                 .max(count as u64 * 32);
-            if needed > self.index_capacity && self.index_capacity < binding {
-                self.index_capacity = needed.next_power_of_two().min(binding);
-                self.indices = storage(
-                    device,
-                    "engine/light-cluster-indices",
-                    self.index_capacity * 4,
-                    wgpu::BufferUsages::empty(),
-                );
+            if self.indices.grow(device, needed * 4) {
                 self.buffers_generation += 1;
             }
             let uniform = ClusterUniform::new(
@@ -335,7 +322,7 @@ mod gpu {
                 snapshot.environment.local_lights.distance,
                 count as u32,
                 snapshot.environment.local_lights.lights_per_cluster,
-                self.index_capacity.min(u64::from(u32::MAX)) as u32,
+                self.index_capacity(),
             );
             if self.written != Some(uniform) {
                 queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
@@ -393,6 +380,11 @@ mod gpu {
                 count: count as u32,
                 group,
             })
+        }
+
+        /// Entries the clusters' lists hold: what binning may write.
+        fn index_capacity(&self) -> u32 {
+            (self.indices.size() / 4).min(u64::from(u32::MAX)) as u32
         }
 
         /// The bindings lit mesh pipelines read at group 3.
@@ -470,7 +462,7 @@ mod gpu {
                 settings.distance,
                 frame.count,
                 settings.lights_per_cluster,
-                self.index_capacity.min(u64::from(u32::MAX)) as u32,
+                self.index_capacity(),
             );
             uniform.lights[3] = 1;
             queue.write_buffer(&self.probe_uniforms[face], 0, bytemuck::bytes_of(&uniform));

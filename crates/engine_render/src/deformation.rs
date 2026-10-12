@@ -72,7 +72,7 @@ pub(crate) struct DeformationPass {
     // Jobs and stamps recorded since the last encoding, in order.
     jobs: Vec<Job>,
     records: Vec<StampRecord>,
-    stamps: wgpu::Buffer,
+    stamps: crate::buffers::Growable,
     uniforms: wgpu::Buffer,
     buffers_generation: u64,
     group: Cached<(u64, u64), wgpu::BindGroup>,
@@ -96,7 +96,7 @@ impl DeformationPass {
             refill: 0.0,
             jobs: Vec::new(),
             records: Vec::new(),
-            stamps: crate::buffers::storage(
+            stamps: crate::buffers::Growable::new(
                 device,
                 "engine/deformation-stamps",
                 size_of::<StampRecord>() as u64,
@@ -311,13 +311,7 @@ impl DeformationPass {
             return;
         }
         let record_bytes = (self.records.len().max(1) * size_of::<StampRecord>()) as u64;
-        if record_bytes > self.stamps.size() {
-            self.stamps = crate::buffers::storage(
-                device,
-                "engine/deformation-stamps",
-                record_bytes.next_power_of_two(),
-                wgpu::BufferUsages::empty(),
-            );
+        if self.stamps.grow(device, record_bytes) {
             self.buffers_generation += 1;
         }
         if !self.records.is_empty() {

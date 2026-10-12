@@ -117,7 +117,7 @@ mod gpu {
 
     use super::*;
     use crate::bindings::PARTICLES;
-    use crate::buffers::{ensure_storage, storage};
+    use crate::buffers::Growable;
     use crate::cached::{Bound, GroupCache, Versioned};
     use crate::gpu_data::PARTICLE_SHADER;
 
@@ -141,10 +141,9 @@ mod gpu {
         depth_format: wgpu::TextureFormat,
         uniform: wgpu::Buffer,
         written: Option<ParticleUniform>,
-        emitters: Versioned<wgpu::Buffer>,
-        owners: Versioned<wgpu::Buffer>,
-        // Particles a storage binding holds, an owner entry each.
-        room: u64,
+        emitters: Growable,
+        // An owner entry each particle: as many particles as its room holds.
+        owners: Growable,
         records: Vec<EmitterData>,
         uploaded: Vec<EmitterData>,
         owner_staging: Vec<u32>,
@@ -165,11 +164,6 @@ mod gpu {
             transparent_targets: &[Option<wgpu::ColorTargetState>],
         ) -> Self {
             let layout = crate::pipelines::layout(device, &PARTICLES);
-            let limits = device.limits();
-            let room = limits
-                .max_storage_buffer_binding_size
-                .min(limits.max_buffer_size)
-                / 4;
             let pipeline_layout = crate::pipelines::pipeline_layout(
                 device,
                 &crate::pipeline_layouts::PARTICLE_PIPELINES,
@@ -202,19 +196,18 @@ mod gpu {
                     size_of::<ParticleUniform>() as u64,
                 ),
                 written: None,
-                emitters: Versioned::new(storage(
+                emitters: Growable::new(
                     device,
                     "engine/particle-emitters",
                     128,
                     wgpu::BufferUsages::empty(),
-                )),
-                owners: Versioned::new(storage(
+                ),
+                owners: Growable::new(
                     device,
                     "engine/particle-owners",
                     4,
                     wgpu::BufferUsages::empty(),
-                )),
-                room,
+                ),
                 records: Vec::new(),
                 uploaded: Vec::new(),
                 owner_staging: Vec::new(),
@@ -279,29 +272,18 @@ mod gpu {
         /// per particle and one record per emitter, within what a storage
         /// binding holds: owners only when emitters' instances changed.
         fn pack(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, snapshot: &RenderSnapshot) {
-            self.counts = pack_emitters(&snapshot.particles.list, &mut self.records, self.room);
+            let room = self.owners.room() / 4;
+            self.counts = pack_emitters(&snapshot.particles.list, &mut self.records, room);
             let total = self.counts.1;
             if total == 0 {
                 return;
             }
             let emitter_bytes = (self.records.len() * size_of::<EmitterData>()) as u64;
-            if ensure_storage(
-                device,
-                &mut self.emitters,
-                "engine/particle-emitters",
-                emitter_bytes,
-                wgpu::BufferUsages::empty(),
-            ) {
+            if self.emitters.grow(device, emitter_bytes) {
                 self.uploaded.clear();
             }
             let owner_bytes = u64::from(total) * 4;
-            let owners_replaced = ensure_storage(
-                device,
-                &mut self.owners,
-                "engine/particle-owners",
-                owner_bytes,
-                wgpu::BufferUsages::empty(),
-            );
+            let owners_replaced = self.owners.grow(device, owner_bytes);
             if owners_replaced || !same_instances(&self.records, &self.uploaded) {
                 pack_owners(&self.records, &mut self.owner_staging);
                 queue.write_buffer(&self.owners, 0, bytemuck::cast_slice(&self.owner_staging));

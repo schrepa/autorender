@@ -18,6 +18,7 @@ use crate::shaders::entry::{scatter_cull, scatter_snap};
 use engine_core::glam::{Mat4, Vec3};
 
 use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, TEMPORAL_POSES};
+use crate::buffers::Growable;
 use crate::cached::Cached;
 use crate::gpu_data::{ColorData, GroundData, PoseData};
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -109,7 +110,7 @@ pub(crate) struct ScatterPass {
     snap_layout: crate::pipelines::GroupLayout,
     snap_pipeline: Option<wgpu::ComputePipeline>,
     snap: wgpu::Buffer,
-    terrains: wgpu::Buffer,
+    terrains: Growable,
     snap_group: Cached<SnapKey, wgpu::BindGroup>,
     snapping: bool,
     // What objects were last set on: the group's key, the resident tiles'
@@ -120,25 +121,25 @@ pub(crate) struct ScatterPass {
     // Advances when objects' poses or records change.
     version: u64,
     frame: wgpu::Buffer,
-    views: wgpu::Buffer,
-    records: wgpu::Buffer,
-    groups: wgpu::Buffer,
-    ids: wgpu::Buffer,
-    draws: wgpu::Buffer,
-    poses: wgpu::Buffer,
-    colors: wgpu::Buffer,
+    views: Growable,
+    records: Growable,
+    groups: Growable,
+    ids: Growable,
+    draws: Growable,
+    poses: Growable,
+    colors: Growable,
     palette: wgpu::Buffer,
     // What lies under each object.
-    grounds: wgpu::Buffer,
+    grounds: Growable,
     // Each view's impostor cards (each one's slot and impostor record, as
     // many as objects a view) and their draws.
-    cards: wgpu::Buffer,
-    card_args: wgpu::Buffer,
+    cards: Growable,
+    card_args: Growable,
     // Advances when buffers are replaced.
     generation: u64,
     // How each terrain's placement layers thin with distance,
     // as last written.
-    thins: wgpu::Buffer,
+    thins: Growable,
     thins_written: Vec<[f32; 4]>,
     cull_group: Cached<u64, wgpu::BindGroup>,
     // The pose groups of plain and temporal mesh pipelines, and of depth
@@ -168,6 +169,8 @@ impl ScatterPass {
         let storage = |label, bytes| {
             crate::buffers::storage(device, label, bytes, wgpu::BufferUsages::empty())
         };
+        let growable =
+            |label, bytes| Growable::new(device, label, bytes, wgpu::BufferUsages::empty());
         Self {
             layout: crate::pipelines::layout(device, &SCATTER_CULL),
             pose_layouts: [
@@ -179,7 +182,7 @@ impl ScatterPass {
             snap_layout: crate::pipelines::layout(device, &SCATTER_SNAP),
             snap_pipeline: None,
             snap: crate::buffers::uniform(device, "engine/scatter-snap", 16),
-            terrains: storage("engine/scatter-terrains", size_of::<TerrainInfo>() as u64),
+            terrains: growable("engine/scatter-terrains", size_of::<TerrainInfo>() as u64),
             snap_group: Cached::default(),
             snapping: false,
             snapped: None,
@@ -191,44 +194,34 @@ impl ScatterPass {
                 "engine/scatter-frame",
                 size_of::<FrameUniform>() as u64,
             ),
-            views: storage("engine/scatter-views", size_of::<ViewData>() as u64),
-            records: storage("engine/scatter-records", 32),
-            groups: storage("engine/scatter-groups", 32),
-            ids: crate::buffers::storage(
-                device,
-                "engine/scatter-ids",
-                16,
-                wgpu::BufferUsages::VERTEX,
-            ),
-            draws: crate::buffers::storage(
+            views: growable("engine/scatter-views", size_of::<ViewData>() as u64),
+            records: growable("engine/scatter-records", 32),
+            groups: growable("engine/scatter-groups", 32),
+            ids: Growable::new(device, "engine/scatter-ids", 16, wgpu::BufferUsages::VERTEX),
+            draws: Growable::new(
                 device,
                 "engine/scatter-draws",
                 20,
                 wgpu::BufferUsages::INDIRECT,
             ),
-            poses: storage("engine/scatter-poses", size_of::<PoseData>() as u64),
-            colors: storage("engine/scatter-colors", size_of::<ColorData>() as u64),
+            poses: growable("engine/scatter-poses", size_of::<PoseData>() as u64),
+            colors: growable("engine/scatter-colors", size_of::<ColorData>() as u64),
             palette: storage("engine/scatter-palette", size_of::<PoseData>() as u64),
-            grounds: storage("engine/scatter-grounds", size_of::<GroundData>() as u64),
-            cards: crate::buffers::storage(
+            grounds: growable("engine/scatter-grounds", size_of::<GroundData>() as u64),
+            cards: Growable::new(
                 device,
                 "engine/scatter-cards",
                 8,
                 wgpu::BufferUsages::VERTEX,
             ),
-            card_args: crate::buffers::storage(
+            card_args: Growable::new(
                 device,
                 "engine/scatter-card-args",
                 16,
                 wgpu::BufferUsages::INDIRECT,
             ),
             generation: 0,
-            thins: crate::buffers::storage(
-                device,
-                "engine/scatter-thins",
-                16,
-                wgpu::BufferUsages::empty(),
-            ),
+            thins: growable("engine/scatter-thins", 16),
             thins_written: Vec::new(),
             cull_group: Cached::default(),
             pose_groups: Cached::default(),
@@ -298,13 +291,7 @@ impl ScatterPass {
             ids += count * LEVELS;
         }
         let bytes: &[u8] = bytemuck::cast_slice(&data);
-        if grow(
-            device,
-            &mut self.groups,
-            "engine/scatter-groups",
-            bytes.len() as u64,
-            wgpu::BufferUsages::empty(),
-        ) {
+        if self.groups.grow(device, bytes.len() as u64) {
             self.generation += 1;
         }
         if !bytes.is_empty() {
@@ -326,31 +313,13 @@ impl ScatterPass {
         dirty: Option<std::ops::Range<u32>>,
     ) -> Option<std::ops::Range<u32>> {
         let mut grown = false;
-        for (buffer, label, bytes) in [
-            (&mut self.poses, "engine/scatter-poses", size_of_val(poses)),
-            (
-                &mut self.colors,
-                "engine/scatter-colors",
-                size_of_val(colors),
-            ),
-            (
-                &mut self.records,
-                "engine/scatter-records",
-                size_of_val(records),
-            ),
-            (
-                &mut self.grounds,
-                "engine/scatter-grounds",
-                size_of_val(grounds),
-            ),
+        for (buffer, bytes) in [
+            (&mut self.poses, size_of_val(poses)),
+            (&mut self.colors, size_of_val(colors)),
+            (&mut self.records, size_of_val(records)),
+            (&mut self.grounds, size_of_val(grounds)),
         ] {
-            grown |= grow(
-                device,
-                buffer,
-                label,
-                bytes as u64,
-                wgpu::BufferUsages::empty(),
-            );
+            grown |= buffer.grow(device, bytes as u64);
         }
         if grown {
             self.generation += 1;
@@ -416,13 +385,7 @@ impl ScatterPass {
             return;
         }
         let bytes: &[u8] = bytemuck::cast_slice(thins);
-        if grow(
-            device,
-            &mut self.thins,
-            "engine/scatter-thins",
-            (bytes.len() as u64).max(16),
-            wgpu::BufferUsages::empty(),
-        ) {
+        if self.thins.grow(device, (bytes.len() as u64).max(16)) {
             self.generation += 1;
         }
         queue.write_buffer(&self.thins, 0, bytes);
@@ -500,41 +463,20 @@ impl ScatterPass {
         self.fading_view = views.len();
         let lists = view_count + 1;
         let mut replaced = false;
-        replaced |= grow(
+        replaced |= self
+            .views
+            .grow(device, (views.len() * size_of::<ViewData>()) as u64);
+        replaced |= self
+            .ids
+            .grow(device, u64::from(self.ids_per_view) * u64::from(lists) * 4);
+        replaced |= self.draws.grow(
             device,
-            &mut self.views,
-            "engine/scatter-views",
-            (views.len() * size_of::<ViewData>()) as u64,
-            wgpu::BufferUsages::empty(),
-        );
-        replaced |= grow(
-            device,
-            &mut self.ids,
-            "engine/scatter-ids",
-            u64::from(self.ids_per_view) * u64::from(lists) * 4,
-            wgpu::BufferUsages::VERTEX,
-        );
-        replaced |= grow(
-            device,
-            &mut self.draws,
-            "engine/scatter-draws",
             u64::from(draws_per_view) * u64::from(lists) * size_of::<DrawArgs>() as u64,
-            wgpu::BufferUsages::INDIRECT,
         );
-        replaced |= grow(
-            device,
-            &mut self.cards,
-            "engine/scatter-cards",
-            u64::from(self.objects) * u64::from(view_count) * 8,
-            wgpu::BufferUsages::VERTEX,
-        );
-        replaced |= grow(
-            device,
-            &mut self.card_args,
-            "engine/scatter-card-args",
-            u64::from(view_count) * 16,
-            wgpu::BufferUsages::INDIRECT,
-        );
+        replaced |= self
+            .cards
+            .grow(device, u64::from(self.objects) * u64::from(view_count) * 8);
+        replaced |= self.card_args.grow(device, u64::from(view_count) * 16);
         if replaced {
             self.generation += 1;
         }
@@ -651,13 +593,7 @@ impl ScatterPass {
             return;
         }
         let bytes: &[u8] = bytemuck::cast_slice(sources.terrains);
-        if grow(
-            device,
-            &mut self.terrains,
-            "engine/scatter-terrains",
-            bytes.len() as u64,
-            wgpu::BufferUsages::empty(),
-        ) {
+        if self.terrains.grow(device, bytes.len() as u64) {
             self.terrains_generation += 1;
         }
         queue.write_buffer(&self.terrains, 0, bytes);
@@ -796,22 +732,6 @@ impl ScatterPass {
             (draw * size_of::<DrawArgs>()) as u64,
         )
     }
-}
-
-/// Replaces `buffer` with one of the next power of two at least `bytes`
-/// long when it is shorter; returns whether it did.
-fn grow(
-    device: &wgpu::Device,
-    buffer: &mut wgpu::Buffer,
-    label: &str,
-    bytes: u64,
-    extra: wgpu::BufferUsages,
-) -> bool {
-    if bytes <= buffer.size() {
-        return false;
-    }
-    *buffer = crate::buffers::storage(device, label, bytes.next_power_of_two(), extra);
-    true
 }
 
 fn snap_pipeline(
