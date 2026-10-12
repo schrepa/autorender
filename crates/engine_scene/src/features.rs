@@ -12,7 +12,12 @@ use crate::{SceneDocument, SceneEnvironment, SceneError, SceneObject, SectionVis
 macro_rules! object_features {
     ($(
         $(#[$doc:meta])*
-        $field:ident: $type:ty { feature: $feature:ident, shows: $shows:literal, direct },
+        $field:ident: $type:ty {
+            feature: $feature:ident,
+            shows: $shows:literal,
+            rule: $rule:ident $(($($arg:expr),*))?,
+            $kind:ident
+        },
     )*) => {
         impl SceneObject {
             /// The features this object authors, by field.
@@ -26,7 +31,6 @@ macro_rules! object_features {
                     ),)*
                     ("animation", self.animation.is_some(), Some(Feature::Animation)),
                     ("skin", self.skin.is_some(), Some(Feature::Animation)),
-                    ("collider", self.collider.is_some(), Some(Feature::Collision)),
                 ]
                 .into_iter()
                 .filter_map(|(field, authored, feature)| {

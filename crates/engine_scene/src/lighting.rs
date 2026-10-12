@@ -4,10 +4,14 @@
 
 use engine_core::{
     LocalLight, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MIN_SPOT_DEGREES, ParticleBlend,
-    ParticleEmitter, Spot, glam::Vec3,
+    ParticleEmitter, Spot, bevy_ecs::world::EntityWorldMut, glam::Vec3,
 };
 use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
 use serde::{Deserialize, Serialize};
+
+use crate::components::{Placement, Reach, SceneComponent};
+use crate::instance::Lookups;
+use crate::{SceneDocument, SceneError};
 
 settings! {
     /// A point or spot light on this entity.
@@ -226,5 +230,49 @@ impl SceneEmitter {
             radius: self.radius,
             seed: self.seed,
         }
+    }
+}
+
+impl SceneComponent for SceneLight {
+    type Prepared = LocalLight;
+
+    const PLACEMENT: Placement = Placement::Anywhere;
+
+    fn prepare(&self, _: &str, _: &SceneDocument) -> Result<LocalLight, SceneError> {
+        Ok(self.runtime())
+    }
+
+    fn spawn(prepared: &LocalLight, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*prepared);
+    }
+
+    // Its light reaches its range.
+    fn reach(prepared: &LocalLight, reach: &Reach) -> Option<f32> {
+        Some(reach.from + prepared.range)
+    }
+}
+
+impl SceneComponent for SceneEmitter {
+    type Prepared = ParticleEmitter;
+
+    const PLACEMENT: Placement = Placement::Anywhere;
+
+    fn prepare(&self, _: &str, _: &SceneDocument) -> Result<ParticleEmitter, SceneError> {
+        Ok(self.runtime())
+    }
+
+    fn spawn(prepared: &ParticleEmitter, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*prepared);
+    }
+
+    // Its particles reach as far as they fly in their lifetime.
+    fn reach(emitter: &ParticleEmitter, reach: &Reach) -> Option<f32> {
+        Some(
+            reach.from
+                + emitter.offset.length()
+                + emitter.radius
+                + emitter.speed * emitter.lifetime
+                + 0.5 * emitter.acceleration.length() * emitter.lifetime * emitter.lifetime,
+        )
     }
 }

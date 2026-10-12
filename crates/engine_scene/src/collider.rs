@@ -1,9 +1,12 @@
 use engine_collision::{Collider, ColliderShape, CollisionLayers, validate_collider_transform};
+use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::glam::Mat4;
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
-use crate::SceneError;
+use crate::components::{Placement, SceneComponent};
+use crate::instance::Lookups;
+use crate::{SceneDocument, SceneError};
 
 /// Explicit local collision geometry. Parent transforms apply as full affine
 /// matrices; rendering meshes never supply implicit collider dimensions.
@@ -89,5 +92,19 @@ impl SceneCollider {
         validate_collider_transform(self.shape.runtime(), matrix).map_err(|error| {
             SceneError::new(ErrorCode::InvalidColliderTransform, path, error.to_string())
         })
+    }
+}
+
+impl SceneComponent for SceneCollider {
+    type Prepared = Collider;
+
+    const PLACEMENT: Placement = Placement::Anywhere;
+
+    fn prepare(&self, path: &str, _: &SceneDocument) -> Result<Collider, SceneError> {
+        self.runtime(path)
+    }
+
+    fn spawn(prepared: &Collider, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*prepared);
     }
 }

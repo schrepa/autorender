@@ -303,22 +303,21 @@ fn listed(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
         .and_then(|(_, rest)| rest.split_once("$then!"))
         .map(|(_, rest)| rest)
         .ok_or("engine_scene/src/components.rs declares no entity_components! list")?;
-    // Each entry's type, `field: path::Type {`, by its last segment.
-    let listed: Vec<&str> = list
+    // A type as entries and impls name it: its path's last segment.
+    let last = |path: &str| path.rsplit("::").next().unwrap_or(path).trim().to_owned();
+    // Each entry's type, `field: Type {`.
+    let listed: Vec<String> = list
         .lines()
         .filter_map(|line| line.trim().split_once(": "))
         .filter(|(field, _)| field.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
         .filter_map(|(_, rest)| rest.split_once(" {"))
-        .map(|(path, _)| path.rsplit("::").next().unwrap_or(path))
+        .map(|(path, _)| last(path))
         .collect();
     for (_, path) in entries(&scene)? {
         let text = read(&path)?;
         for (at, _) in text.match_indices("SceneComponent for ") {
-            let component: String = text[at + "SceneComponent for ".len()..]
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == ':')
-                .collect();
-            let component = component.rsplit("::").next().unwrap_or_default();
+            let rest = &text[at + "SceneComponent for ".len()..];
+            let component = last(rest.split_once(" {").map_or(rest, |(path, _)| path));
             if !component.starts_with('$') && !listed.contains(&component) {
                 violations.push(format!(
                     "scene component {component} is in no entity_components! entry: list it"

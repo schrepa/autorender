@@ -3,8 +3,8 @@ use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    SceneAnimation, SceneCollider, SceneEmitter, SceneEnvironment, SceneError, SceneFiles,
-    SceneLight, SceneMaterial, ScenePlayer, SceneSkin, SceneTexture, files::valid_uri,
+    SceneAnimation, SceneEnvironment, SceneError, SceneFiles, SceneMaterial, ScenePlayer,
+    SceneSkin, SceneTexture, files::valid_uri,
 };
 
 /// Largest scene source parsed: a sanity bound on JSON, not on content,
@@ -509,11 +509,16 @@ pub struct ScenePrefab {
 }
 
 /// The document's part of `entity_components!`: [`SceneObject`], with a
-/// field for each component listed, after the spline's.
+/// field for each component listed, after the skin's.
 macro_rules! scene_object {
     ($(
         $(#[$doc:meta])*
-        $field:ident: $type:ty { feature: $feature:ident, shows: $shows:literal, direct },
+        $field:ident: $type:ty {
+            feature: $feature:ident,
+            shows: $shows:literal,
+            rule: $rule:ident $(($($arg:expr),*))?,
+            $kind:ident
+        },
     )*) => {
         engine_settings::settings! {
             /// One local transform, optional renderable, or prefab instance root.
@@ -557,19 +562,6 @@ macro_rules! scene_object {
                     schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
                 )]
                 pub prefab: Option<String> = None => any,
-                /// Local collision shape, independent of rendering.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub collider: Option<SceneCollider> = None => any,
-                /// A point or spot light.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub light: Option<SceneLight> = None => any,
-                /// A particle emitter.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub particles: Option<SceneEmitter> = None => any,
-                /// Multiplies this object's color and opacity channel by channel,
-                /// each factor finite and in `[0, 1]`.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub tint: Option<[f32; 4]> = None => range(0.0, 1.0),
                 /// Plays an animation on its targets.
                 #[serde(default, skip_serializing_if = "Option::is_none")]
                 pub animation: Option<ScenePlayer> = None => any,
@@ -581,10 +573,11 @@ macro_rules! scene_object {
                     schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
                 )]
                 pub skin: Option<String> = None => any,
-                /// Projects a material onto the opaque surfaces inside this entity's
-                /// box.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub decal: Option<crate::SceneDecal> = None => any,
+                $(
+                    $(#[$doc])*
+                    #[serde(default, skip_serializing_if = "Option::is_none")]
+                    pub $field: Option<$type> = None => $rule $(($($arg),*))?,
+                )*
                 /// Captures this entity's surroundings into an environment map that
                 /// surfaces inside its world box reflect.
                 #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -595,11 +588,6 @@ macro_rules! scene_object {
                 /// One of this document's meshes bent along a curve.
                 #[serde(default, skip_serializing_if = "Option::is_none")]
                 pub spline: Option<crate::SceneSpline> = None => any,
-                $(
-                    $(#[$doc])*
-                    #[serde(default, skip_serializing_if = "Option::is_none")]
-                    pub $field: Option<$type> = None => any,
-                )*
                 #[serde(default)]
                 pub transform: SceneTransform = SceneTransform::default() => any,
                 /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

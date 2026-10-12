@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use engine_core::{
-    AnimationClip, LocalLight, Mesh, ParticleEmitter, ReflectionProbe, Texture, Tint, Transform,
+    AnimationClip, Mesh, ReflectionProbe, Texture, Transform,
     glam::{Mat4, Vec3},
 };
 
@@ -11,7 +11,7 @@ use crate::error::broken_rule;
 use crate::{
     MeshSource, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles,
     animation::{PreparedPlayer, PreparedSkin},
-    decal::PreparedDecal,
+    components::{PreparedComponents, Reach},
     hierarchy::{ExpandedObject, ExpandedScene},
     material::PreparedMaterial,
 };
@@ -56,11 +56,8 @@ pub(crate) struct PreparedItem {
 /// An expanded entity's validated components besides its transform, mesh
 /// and material.
 pub(crate) struct PreparedEntity {
-    pub collider: Option<engine_collision::Collider>,
-    pub light: Option<LocalLight>,
-    pub emitter: Option<ParticleEmitter>,
-    pub tint: Option<Tint>,
-    pub decal: Option<PreparedDecal>,
+    /// The listed ones.
+    pub components: PreparedComponents,
     pub probe: Option<ReflectionProbe>,
     pub player: Option<PreparedPlayer>,
     pub skin: Option<PreparedSkin>,
@@ -364,20 +361,10 @@ impl SceneDocument {
             let position = items[item].position;
             let world = worlds[index].expect("every world matrix is composed");
             let from = world.w_axis.truncate().distance(position);
-            let box_reach = |min: Vec3, max: Vec3| {
-                (0..8)
-                    .map(|corner| {
-                        let pick = |bit: u32, low: f32, high: f32| {
-                            if corner & (1 << bit) == 0 { low } else { high }
-                        };
-                        let point = Vec3::new(
-                            pick(0, min.x, max.x),
-                            pick(1, min.y, max.y),
-                            pick(2, min.z, max.z),
-                        );
-                        world.transform_point3(point).distance(position)
-                    })
-                    .fold(0.0, engine_core::math::max)
+            let standing = Reach {
+                world,
+                position,
+                from,
             };
             let source = &streamed.entities[index].source;
             let component = &components[index];
@@ -389,22 +376,9 @@ impl SceneDocument {
                 .and_then(|id| mesh_indices.get(id.as_str()))
             {
                 let bounds = meshes[*mesh].bounds();
-                extend(box_reach(bounds.min(), bounds.max()));
+                extend(standing.of_box(bounds.min(), bounds.max()));
             }
-            if let Some(light) = component.light {
-                extend(from + light.range);
-            }
-            if let Some(emitter) = component.emitter {
-                extend(
-                    from + emitter.offset.length()
-                        + emitter.radius
-                        + emitter.speed * emitter.lifetime
-                        + 0.5 * emitter.acceleration.length() * emitter.lifetime * emitter.lifetime,
-                );
-            }
-            if component.decal.is_some() {
-                extend(box_reach(Vec3::splat(-0.5), Vec3::splat(0.5)));
-            }
+            component.components.reach(&standing, &mut extend);
             if let Some(probe) = component.probe {
                 extend(from + probe.extent.length());
             }
@@ -586,17 +560,7 @@ impl SceneDocument {
         Ok(PreparedEntity {
             player: self.prepare_player(entity, resolve, &rigs.animation_ids)?,
             skin: self.prepare_skin(entity, resolve, &rigs.skin_ids)?,
-            collider: source
-                .collider
-                .map(|collider| collider.runtime(&format!("{path}.collider")))
-                .transpose()?,
-            light: source.light.map(|light| light.runtime()),
-            emitter: source.particles.map(|emitter| emitter.runtime()),
-            tint: source.tint.map(Tint),
-            decal: source
-                .decal
-                .as_ref()
-                .map(|decal| decal.prepare(&self.materials)),
+            components: source.prepare_components(path, self)?,
             probe: source.reflection_probe.map(|probe| probe.runtime()),
             terrain: None,
         })

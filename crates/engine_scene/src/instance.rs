@@ -544,12 +544,12 @@ impl SceneDocument {
 /// What spawning a document's entities needs of one instantiation: the
 /// scene's ID, its assets' handles by authored ID and in source order, and
 /// its clips.
-struct Lookups {
+pub(crate) struct Lookups {
     scene_id: String,
     meshes: BTreeMap<String, MeshHandle>,
     materials: BTreeMap<String, MaterialHandle>,
     owned_meshes: Vec<MeshHandle>,
-    owned_materials: Vec<MaterialHandle>,
+    pub(crate) owned_materials: Vec<MaterialHandle>,
     clips: Vec<ClipHandle>,
 }
 
@@ -605,22 +605,7 @@ fn spawn_entity(
             material: lookups.materials[material.as_str()],
         });
     }
-    if let Some(collider) = component.collider {
-        entity.insert(collider);
-    }
-    if let Some(light) = component.light {
-        entity.insert(light);
-    }
-    if let Some(emitter) = component.emitter {
-        entity.insert(emitter);
-    }
-    if let Some(tint) = component.tint {
-        entity.insert(tint);
-    }
-    if let Some(decal) = &component.decal {
-        entity.insert(decal.runtime(lookups.owned_materials[decal.material]));
-    }
-    source.spawn_components(&mut entity);
+    component.components.spawn(&mut entity, lookups);
     if let Some(spline) = &source.spline {
         entity.insert(spline.runtime(
             lookups.meshes[spline.mesh.as_str()],

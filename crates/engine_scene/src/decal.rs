@@ -2,11 +2,13 @@
 //! the document's materials onto the opaque surfaces inside the entity's
 //! box. Angles are in degrees.
 
-use engine_core::{Decal, DecalBlend, MaterialHandle};
+use engine_core::{Decal, DecalBlend, MaterialHandle, bevy_ecs::world::EntityWorldMut, glam::Vec3};
 use engine_settings::{Setting, settings};
 use serde::{Deserialize, Serialize};
 
-use crate::SceneMaterial;
+use crate::components::{Placement, Reach, SceneComponent};
+use crate::instance::Lookups;
+use crate::{SceneDocument, SceneError, SceneMaterial};
 
 impl Setting for SceneDecalBlend {}
 
@@ -125,5 +127,24 @@ impl SceneDecal {
                 Decal::MAX_FADE_DEGREES.to_radians(),
             ),
         }
+    }
+}
+
+impl SceneComponent for SceneDecal {
+    type Prepared = PreparedDecal;
+
+    const PLACEMENT: Placement = Placement::Anywhere;
+
+    fn prepare(&self, _: &str, document: &SceneDocument) -> Result<PreparedDecal, SceneError> {
+        Ok(SceneDecal::prepare(self, &document.materials))
+    }
+
+    fn spawn(prepared: &PreparedDecal, entity: &mut EntityWorldMut<'_>, lookups: &Lookups) {
+        entity.insert(prepared.runtime(lookups.owned_materials[prepared.material]));
+    }
+
+    // It projects inside its entity's unit box.
+    fn reach(_: &PreparedDecal, reach: &Reach) -> Option<f32> {
+        Some(reach.of_box(Vec3::splat(-0.5), Vec3::splat(0.5)))
     }
 }
