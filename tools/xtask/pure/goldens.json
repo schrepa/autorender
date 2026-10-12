@@ -85,7 +85,7 @@
       "components": {
         "GlobalTransform": {
           "count": 10100,
-          "hash": "653dad38373ae017"
+          "hash": "93290e77f952981c"
         },
         "Hierarchy": {
           "count": 10100,
@@ -105,11 +105,11 @@
         },
         "Transform": {
           "count": 10100,
-          "hash": "9cab85ec4109b670"
+          "hash": "71d2976ae2d9972e"
         }
       },
       "entities": 10159,
-      "hash": "62505b89204d62db"
+      "hash": "d1a13d5c91035c99"
     },
     "content field": {
       "assets": {
@@ -189,7 +189,7 @@
         },
         "GlobalTransform": {
           "count": 10314,
-          "hash": "b6942995532fe9ee"
+          "hash": "7b3611cd9503036f"
         },
         "Grounded": {
           "count": 1,
@@ -221,11 +221,11 @@
         },
         "Transform": {
           "count": 10314,
-          "hash": "5676d51a7046f1f1"
+          "hash": "cdd1696b966b996a"
         }
       },
       "entities": 10378,
-      "hash": "c58f55e3f0d4f956"
+      "hash": "7e23dbfc35b31fb6"
     },
     "content metro": {
       "assets": {

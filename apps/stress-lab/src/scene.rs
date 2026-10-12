@@ -170,18 +170,19 @@ pub fn create_workload_with(
     if config.scene == StressScene::Highlands {
         highlands::add_systems(&mut engine.app);
     }
-    // The metro's billboards change pictures whether or not anything moves.
-    if config.scene == StressScene::Metro {
-        metro::add_systems(&mut engine.app);
-    } else if moving_nodes > 0 {
-        match config.scene {
-            StressScene::Field => {
-                engine
-                    .app
-                    .add_systems(FixedSimulation, animate.in_set(Animation));
-            }
-            _ => city::add_systems(&mut engine.app),
+    // What moves each world's moving objects: the tower field's motion (the
+    // field, the highlands' towers and the dense scene's objects), the
+    // city's vehicles and walkers; the metro's billboards change pictures
+    // whether or not anything moves.
+    match config.scene {
+        StressScene::Metro => metro::add_systems(&mut engine.app),
+        StressScene::Field | StressScene::Highlands | StressScene::Dense if moving_nodes > 0 => {
+            engine
+                .app
+                .add_systems(FixedSimulation, animate.in_set(Animation));
         }
+        StressScene::City if moving_nodes > 0 => city::add_systems(&mut engine.app),
+        StressScene::Field | StressScene::Highlands | StressScene::Dense | StressScene::City => {}
     }
     if config.queries_per_tick > 0 {
         engine
