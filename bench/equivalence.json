@@ -1,14 +1,14 @@
 {
   "note": "The cells `cargo xtask equivalence` runs on a base and a candidate natively, one after the other: each a workload (scene: bench/scenes/NAME.json) or an authored scene (source: a file under web/scripts/fixtures/ or bench/) with its switches (options, as bench/options.json names them), environment sections merged over the scene's, the ticks it steps, its views (scene: as launched; a Stress Lab view; or {name, camera} with the camera control's fields) and its captures (exact; cpu:ALPHA and gpu:ALPHA, a fraction of the last tick presented on the CPU or the GPU; display:FRAMES, the last of that many ordinary frames). Every cell runs with bench/settings/default.json, job workers off and each side's own generated files. tolerance is the largest channel difference a pixel may show and count as equal (0 unless given). unstable lists the captures (VIEW CAPTURE) that vary from run to run, each with why: they pass when a candidate run matches one of the base's over --repeat runs, or lies no farther from the nearest than the base's own images lie from each other. not_toggled names the environment sections no cell's environment switches, each with why. The smoke tier runs by default; --tier full adds the rest. cargo xtask lint holds this file to the bench files and the Stress Lab.",
   "not_toggled": {
-    "terrain": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
-    "ground_cover": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
-    "wind": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
-    "occupancy": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
-    "water": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
-    "ocean": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
-    "deformation": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
-    "navigation": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
+    "terrain": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
+    "ground_cover": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
+    "wind": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
+    "occupancy": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
+    "water": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
+    "ocean": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
+    "deformation": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
+    "navigation": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
     "world_streaming": "No cell's scene streams world cells; the streaming smoke drives them."
   },
   "cells": [
@@ -94,14 +94,15 @@
     {
       "name": "highlands",
       "tier": "full",
-      "note": "The 8 km generated terrain: tile streaming in place, placement, far objects, water, clouds and the navigation agent. In the full tier only: every run gives its own image until terrain streams by a frame clock instead of the host's wall clock.",
+      "note": "The 8 km generated terrain: tile streaming in place, placement, far objects, water, clouds and the navigation agent, terrain streaming by frames (--terrain-clock frames: bases from c24f963 on). In the full tier only: a run on the frame clock takes about 2.5 min to settle.",
       "scene": "highlands",
+      "options": { "terrain-clock": "frames" },
       "ticks": 30,
       "views": ["overview"],
       "captures": ["exact", "gpu:0.5"],
       "unstable": {
-        "overview exact": "A different image every A/A run (2026-10-12): terrain streams under the host's wall-clock budget (Terrains::set_clock(now_ms)), and tile hysteresis and virtual texture feedback keep the history it loaded in.",
-        "overview gpu:0.5": "A different image every A/A run (2026-10-12), as the exact capture: wall-clock terrain streaming and virtual texture feedback."
+        "overview exact": "On the host's wall clock a different image every A/A run (2026-10-12). On the frame clock the same image in all 6 runs of an A/A (2026-10-12, a58d955), but this workload's other views still vary on it (highlands-views), so the overview stays judged by the base's runs until more A/A runs show it holds.",
+        "overview gpu:0.5": "As the exact capture: a different image every run on the wall clock, the same in 6 of 6 on the frame clock (2026-10-12), kept unstable with highlands-views."
       }
     },
     {
@@ -122,8 +123,8 @@
       "views": ["scene"],
       "captures": ["exact", "gpu:0.5"],
       "unstable": {
-        "scene exact": "A different image every run of a six-run A/A (2026-10-12), up to 3 levels over 15k pixels, though the digest is the same every run: hosts give terrain a wall clock (Terrains::set_clock(now_ms)), so how much each frame streams, and the history tile hysteresis keeps, depend on timing.",
-        "scene gpu:0.5": "A different image every run of a six-run A/A (2026-10-12), up to 8 levels over some 600 pixels: the wall-clock terrain streaming of the exact capture."
+        "scene exact": "A different image every run of a six-run A/A (2026-10-12), up to 3 levels over 15k pixels, though the digest is the same every run: hosts give terrain a wall clock (Terrains::set_clock(now_ms)), so how much each frame streams, and the history tile hysteresis keeps, depend on timing. On the frame clock (--terrain-clock frames, A/A on a58d955) it still gave 3 images in 3 runs, up to 5 levels apart over 620k pixels: what varies is more than the streaming budget, and the cell keeps the wall clock, which every base accepts.",
+        "scene gpu:0.5": "A different image every run of a six-run A/A (2026-10-12), up to 8 levels over some 600 pixels: the wall-clock terrain streaming of the exact capture; the frame clock did not steady it either (2026-10-12)."
       }
     },
     {
@@ -192,16 +193,17 @@
     {
       "name": "highlands-views",
       "tier": "full",
-      "note": "The highlands workload's other views.",
+      "note": "The highlands workload's other views, terrain streaming by frames as for highlands.",
       "scene": "highlands",
+      "options": { "terrain-clock": "frames" },
       "ticks": 30,
       "views": ["close", "away"],
       "captures": ["exact", "gpu:0.5"],
       "unstable": {
-        "close exact": "A different image every run of the full-tier A/A (2026-10-12): terrain streams under the host's wall-clock budget, as for highlands.",
-        "close gpu:0.5": "A different image every run of the full-tier A/A (2026-10-12): terrain streams under the host's wall-clock budget, as for highlands.",
-        "away exact": "A different image every run of the full-tier A/A (2026-10-12): terrain streams under the host's wall-clock budget, as for highlands.",
-        "away gpu:0.5": "A different image every run of the full-tier A/A (2026-10-12): terrain streams under the host's wall-clock budget, as for highlands."
+        "close exact": "A different image every run on the wall clock (full-tier A/A, 2026-10-12); on the frame clock still 3 distinct images in 3 base runs (A/A on a58d955): what streams near the eye still depends on more than the frames drawn.",
+        "close gpu:0.5": "As close exact: every run differs on the wall clock, 3 images in 3 runs on the frame clock (2026-10-12).",
+        "away exact": "A different image every run on the wall clock (2026-10-12); on the frame clock one image in 3 base runs but a second among the 3 runs after them (A/A on a58d955).",
+        "away gpu:0.5": "As away exact: every run differs on the wall clock, 2 images in 6 runs on the frame clock (2026-10-12)."
       }
     },
     {
