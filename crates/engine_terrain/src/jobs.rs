@@ -481,7 +481,7 @@ impl TerrainWorker {
     pub fn take_part(&mut self, id: u64) -> Option<Vec<u8>> {
         match self.running.get_mut(&id)? {
             Running::Tile(generator) => generator.take_shape().map(|shape| codec::encode(&shape)),
-            _ => None,
+            Running::Far(_) | Running::Band(_) | Running::Walk(_) | Running::Bake(_) => None,
         }
     }
 

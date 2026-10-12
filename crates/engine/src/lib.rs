@@ -3,6 +3,10 @@
 //! The root and [`prelude`] hold what games use; [`terrain`] holds terrain
 //! authoring, [`render`] the renderer's contract, [`stats`] the frame
 //! statistics and [`host`] what hosts wire.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 /// Opt-in collision geometry, filtered queries, and fixed-tick sensor events.
 pub use engine_collision as collision;

@@ -461,7 +461,7 @@ impl Narrow {
             GJKResult::Intersection => EPA_SCRATCH
                 .with_borrow_mut(|epa| epa.closest_points(&pose, &a_support, &b_support, &simplex)),
             GJKResult::ClosestPoints(p1, p2, normal) => Some((p1, p2, normal)),
-            _ => None,
+            GJKResult::Proximity(_) | GJKResult::NoIntersection(_) => None,
         };
         if matches!(proximity, GJKResult::Intersection) && contact.is_none() {
             return Err(CollisionError::NumericalFailure);

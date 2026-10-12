@@ -195,6 +195,7 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
         }
     }
 
+    #[expect(clippy::wildcard_enum_match_arm, reason = "winit's other events")]
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         let Some(running) = &mut self.running else {
             return;

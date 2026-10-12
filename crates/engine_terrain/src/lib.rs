@@ -17,6 +17,10 @@
 //! Cells split into two triangles along the diagonal from their (x, z+1)
 //! corner to their (x+1, z) corner, as `parry3d` heightfields split them;
 //! renderers, collision and [`Layers::height_at`] use the same split.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 mod bake;
 pub mod codec;

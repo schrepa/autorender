@@ -103,7 +103,15 @@ impl From<AssetError> for Error {
             | AssetError::MaterialCapacity { .. }
             | AssetError::TextureCapacity { .. }
             | AssetError::CpuBudget { .. } => ErrorCode::AssetBudgetExceeded,
-            _ => ErrorCode::InvalidMesh,
+            AssetError::EmptyMesh
+            | AssetError::InvalidTriangleCount { .. }
+            | AssetError::InvalidVertex { .. }
+            | AssetError::InvalidNormal { .. }
+            | AssetError::InvalidUv { .. }
+            | AssetError::AttributeCount { .. }
+            | AssetError::InvalidAttribute { .. }
+            | AssetError::IndexOutOfBounds { .. }
+            | AssetError::InvalidVirtualMesh { .. } => ErrorCode::InvalidMesh,
         };
         Self::new(code, "$", error.to_string())
     }

@@ -168,7 +168,9 @@ impl Arguments {
                 serde_json::Value::Null => {
                     return Err(failed(format!("option {name} has no value")));
                 }
-                json => json.to_string(),
+                json @ (serde_json::Value::Array(_) | serde_json::Value::Object(_)) => {
+                    json.to_string()
+                }
             };
             expanded.extend([format!("--{name}"), value]);
         }

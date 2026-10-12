@@ -3,6 +3,10 @@
 //! Call [`DevTools::execute`] at an exclusive frame boundary. Inspectors are
 //! explicitly registered read-only projections; no reflection or serialization
 //! runs during ordinary frames. The browser host owns sessions and controls.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 mod animation;
 mod collision;

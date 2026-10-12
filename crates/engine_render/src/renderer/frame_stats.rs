@@ -35,7 +35,9 @@ fn stat_counters(stats: &RenderStats) {
             }
             serde_json::Value::Number(number) => number.as_f64(),
             serde_json::Value::Bool(flag) => Some(f64::from(u8::from(*flag))),
-            _ => None,
+            serde_json::Value::Null
+            | serde_json::Value::String(_)
+            | serde_json::Value::Array(_) => None,
         };
         if let Some(number) = number {
             let name = NAMES.with_borrow_mut(|names| {

@@ -69,7 +69,9 @@ impl Method {
         let stats = match &settle["stats"] {
             Value::Object(stats) => stats.clone(),
             Value::Null => Map::new(),
-            _ => return Err("method: settle.stats is an object of statistics' values".into()),
+            Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
+                return Err("method: settle.stats is an object of statistics' values".into());
+            }
         };
         let mut below = BTreeMap::new();
         for (metric, threshold) in settle["metrics"].as_object().into_iter().flatten() {
@@ -92,7 +94,11 @@ impl Method {
         }
         let capture = match &method["capture"] {
             Value::Null => None,
-            capture => {
+            capture @ (Value::Bool(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Array(_)
+            | Value::Object(_)) => {
                 if capture["overlays"] == true {
                     return Err("method: capture.overlays: offscreen frames have none".into());
                 }

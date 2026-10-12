@@ -3,6 +3,10 @@
 //! [`AssetLibrary`] owns assets. Handles are weak runtime references and cannot
 //! be persisted or used in another library. Meshes are shared with owned render
 //! snapshots using `Arc`; removing a handle never invalidates an existing snapshot.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 mod animation;
 mod error;

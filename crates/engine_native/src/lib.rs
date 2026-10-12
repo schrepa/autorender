@@ -5,6 +5,10 @@
 //! windows measured, offscreen frames, measured runs, captures, profiles,
 //! hardware counters, vendor deep dives and development sessions, which
 //! `engine_profiler` measures and captures for.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 #[cfg(feature = "dev")]
 pub mod dev;

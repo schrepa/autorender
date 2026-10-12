@@ -123,7 +123,10 @@ impl SceneDocument {
             match &mesh.source {
                 MeshSource::Buffer { uri } => add(uri, SceneFileKind::Buffer),
                 MeshSource::Virtual { uri, .. } => add(uri, SceneFileKind::VirtualMesh),
-                _ => {}
+                MeshSource::Cube { .. }
+                | MeshSource::Plane { .. }
+                | MeshSource::Octahedron { .. }
+                | MeshSource::Inline { .. } => {}
             }
         }
         for animation in &self.animations {

@@ -83,7 +83,25 @@ impl BrowserControl {
                     }
                 }
             }
-            _ => {}
+            // Their handlers check what the rest carry.
+            Self::Present { .. }
+            | Self::Culling { .. }
+            | Self::Environment(_)
+            | Self::Terrain { .. }
+            | Self::TerrainEdit { .. }
+            | Self::TerrainUndo { .. }
+            | Self::TerrainRedo { .. }
+            | Self::Deform { .. }
+            | Self::NavGo { .. }
+            | Self::Animation { .. }
+            | Self::WorldChanges { .. }
+            | Self::Camera { .. }
+            | Self::Step { .. }
+            | Self::Input { .. }
+            | Self::Render { .. }
+            | Self::Pause { .. }
+            | Self::Resume { .. }
+            | Self::DebugPanic { .. } => {}
         }
         Ok(())
     }

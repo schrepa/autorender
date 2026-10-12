@@ -156,7 +156,22 @@ impl Renderer {
                     revealed
                 }
             }
-            _ => unreachable!("{resource:?} is no attachment of the renderer's passes"),
+            Resource::History
+            | Resource::Tiles
+            | Resource::Poses
+            | Resource::Visible
+            | Resource::Placed
+            | Resource::Occupancy
+            | Resource::Casters
+            | Resource::ShadowMaps
+            | Resource::Clusters
+            | Resource::Lights
+            | Resource::Pyramid
+            | Resource::Effects
+            | Resource::Probes
+            | Resource::CloudView => {
+                unreachable!("{resource:?} is no attachment of the renderer's passes")
+            }
         }
     }
 

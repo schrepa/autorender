@@ -2,6 +2,10 @@
 //!
 //! The browser renderer owns one canvas and all its GPU resources. CPU upload
 //! records and WGSL live together; ordinary gameplay never handles GPU objects.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 pub use engine_core::RenderStats;
 

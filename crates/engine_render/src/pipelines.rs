@@ -330,7 +330,12 @@ impl Fillers {
                 view: View::D2,
             } => wgpu::BindingResource::TextureView(&self.texture),
             Kind::Sampler(Sampling::Filtering) => wgpu::BindingResource::Sampler(&self.sampler),
-            kind => panic!("no filler for {kind:?}"),
+            kind @ (Kind::Texture { .. }
+            | Kind::Storage(_)
+            | Kind::Storage3d(_)
+            | Kind::Sampler(_)) => {
+                panic!("no filler for {kind:?}")
+            }
         }
     }
 }

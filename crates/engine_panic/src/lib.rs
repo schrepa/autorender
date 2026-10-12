@@ -8,6 +8,10 @@
 //! more. Natively it writes that line on standard error and aborts the
 //! process. Hosts then answer every development request with
 //! `runtime_panicked` and the report's message.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 /// What a panic records: its message, which says where it happened, and
 /// that place.

@@ -5,6 +5,10 @@
 //! field made to keep its rule, then [`ExtraRules::sanitize_extra`]) and the
 //! bounds its JSON schema states. Every field names a rule, `any` where none
 //! applies, so none goes unchecked by omission.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 use std::borrow::Cow;
 
@@ -388,7 +392,13 @@ impl Setting for f32 {
             Rule::AboveTo(min, max) if self > min as f32 => engine_math::min(self, max as f32),
             Rule::Above(min) | Rule::AboveTo(min, _) if self <= min as f32 => default,
             Rule::AtLeast(min) => engine_math::max(self, min as f32),
-            _ => self,
+            Rule::Any
+            | Rule::Finite
+            | Rule::AboveTo(..)
+            | Rule::Above(_)
+            | Rule::Budget
+            | Rule::PowerOfTwo(..)
+            | Rule::Multiple(..) => self,
         }
     }
 

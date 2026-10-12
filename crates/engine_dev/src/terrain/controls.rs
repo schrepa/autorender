@@ -262,7 +262,7 @@ pub fn edit_terrain(
             // Levels to a world height, as the terrain's stamps hold it.
             let op = match change {
                 StampOp::Flatten(height) => StampOp::Flatten(height - origin.y),
-                other => other,
+                other @ (StampOp::Raise(_) | StampOp::Lower(_) | StampOp::Hole) => other,
             };
             let stamp = Stamp {
                 center: [x - origin.x, z - origin.z],

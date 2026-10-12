@@ -3,6 +3,10 @@
 //! This crate owns no browser or GPU APIs. The composition supplies a monotonic
 //! millisecond clock. Profiling builds pay allocator accounting costs even when
 //! not capturing; ordinary builds contain neither collector nor allocator hooks.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 /// Events one capture holds at most; tooling bounds its requests by it.
 pub const MAX_EVENTS: usize = 65_536;

@@ -409,7 +409,7 @@ impl MaterialUniform {
         }
         let cutoff = match material.alpha_mode() {
             AlphaMode::Mask { cutoff } => cutoff,
-            _ => 0.5,
+            AlphaMode::Opaque | AlphaMode::Blend => 0.5,
         };
         // Maps reading the second texture coordinates, one bit each.
         let second = material

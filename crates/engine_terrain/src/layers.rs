@@ -1125,7 +1125,11 @@ impl Layers {
             .iter()
             .map(|layer| match layer {
                 Layer::Noise(noise) => Some(NoiseTables::new(*noise)),
-                _ => None,
+                Layer::Heightmap(_)
+                | Layer::Stamp(_)
+                | Layer::Hydrology(_)
+                | Layer::Erosion(_)
+                | Layer::Path(_) => None,
             })
             .collect();
         Ok(Self {
@@ -1147,7 +1151,9 @@ impl Layers {
         self.layers.iter().any(|layer| match layer {
             Layer::Stamp(stamp) => matches!(stamp.op, StampOp::Hole),
             Layer::Path(stage) => stage.layer.tunnel_cut > 0.0,
-            _ => false,
+            Layer::Noise(_) | Layer::Heightmap(_) | Layer::Hydrology(_) | Layer::Erosion(_) => {
+                false
+            }
         })
     }
 
@@ -1258,7 +1264,12 @@ impl Layers {
                 Layer::Hydrology(HydrologyStage {
                     baked: Some(baked), ..
                 }) => Some((index, baked.as_ref())),
-                _ => None,
+                Layer::Noise(_)
+                | Layer::Heightmap(_)
+                | Layer::Stamp(_)
+                | Layer::Hydrology(_)
+                | Layer::Erosion(_)
+                | Layer::Path(_) => None,
             })
     }
 
@@ -1282,7 +1293,12 @@ impl Layers {
                 baked: Some(profile),
                 ..
             }) => Some(profile.as_ref()),
-            _ => None,
+            Layer::Noise(_)
+            | Layer::Heightmap(_)
+            | Layer::Stamp(_)
+            | Layer::Hydrology(_)
+            | Layer::Erosion(_)
+            | Layer::Path(_) => None,
         })
     }
 
@@ -1302,7 +1318,12 @@ impl Layers {
                         nearest
                     }
                 }
-                _ => nearest,
+                Layer::Noise(_)
+                | Layer::Heightmap(_)
+                | Layer::Stamp(_)
+                | Layer::Hydrology(_)
+                | Layer::Erosion(_)
+                | Layer::Path(_) => nearest,
             })
     }
 
@@ -1325,7 +1346,12 @@ impl Layers {
             }) => profile.portal_bounds().is_some_and(|(low, high)| {
                 low.x <= max.x && low.y <= max.y && high.x >= min.x && high.y >= min.y
             }),
-            _ => false,
+            Layer::Noise(_)
+            | Layer::Heightmap(_)
+            | Layer::Stamp(_)
+            | Layer::Hydrology(_)
+            | Layer::Erosion(_)
+            | Layer::Path(_) => false,
         })
     }
 
@@ -1345,7 +1371,12 @@ impl Layers {
                 baked: Some(profile),
                 ..
             }) => profile.portal_hole(Vec2::new(x, z)),
-            _ => false,
+            Layer::Noise(_)
+            | Layer::Heightmap(_)
+            | Layer::Stamp(_)
+            | Layer::Hydrology(_)
+            | Layer::Erosion(_)
+            | Layer::Path(_) => false,
         })
     }
 

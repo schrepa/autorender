@@ -503,7 +503,7 @@ impl Residency {
                 .iter()
                 .map(|page| match page.state {
                     PageState::Resident(slot) => slot,
-                    _ => NO_PAGE,
+                    PageState::Absent | PageState::Loading => NO_PAGE,
                 })
                 .collect()
         })

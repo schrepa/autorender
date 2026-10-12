@@ -19,6 +19,10 @@
 //! `Quat::from_rotation_y`, `from_axis_angle`, `from_euler`, `slerp` and the
 //! other rotation constructors use the same routine.
 #![no_std]
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 /// Largest `|x|` reduced by the fast path: quadrant indices below 2^13 keep
 /// the reduction's first two products exact.

@@ -712,7 +712,7 @@ fn numbers(value: &Value, prefix: &str, out: &mut Vec<(String, f64)>) {
                     ));
                 }
                 Value::Object(_) => numbers(value, &format!("{prefix}{key}."), out),
-                _ => {}
+                Value::Null | Value::Bool(_) | Value::String(_) | Value::Array(_) => {}
             }
         }
     }

@@ -420,7 +420,11 @@ impl SceneTerrain {
             .iter()
             .filter_map(|layer| match layer {
                 SceneTerrainLayer::Heightmap(map) => Some((&map.uri, false)),
-                _ => None,
+                SceneTerrainLayer::Noise(_)
+                | SceneTerrainLayer::Stamp(_)
+                | SceneTerrainLayer::Hydrology(_)
+                | SceneTerrainLayer::Erosion(_)
+                | SceneTerrainLayer::Path(_) => None,
             })
             .chain(self.file.iter().map(|uri| (uri, true)))
     }

@@ -363,7 +363,7 @@ fn cast_triangle(
             epa.closest_points(&Pose::IDENTITY, &support, &triangle, &simplex)
         }
         GJKResult::ClosestPoints(p1, p2, normal) => Some((p1, p2, normal)),
-        _ => None,
+        GJKResult::Proximity(_) | GJKResult::NoIntersection(_) => None,
     };
     if let Some((_, p2, _)) = contact {
         let normal = triangle.normal().unwrap_or(Vec3::Y);

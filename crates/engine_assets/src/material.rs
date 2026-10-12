@@ -391,7 +391,7 @@ impl Material {
                     field: "alpha_cutoff",
                 });
             }
-            _ => {}
+            AlphaMode::Mask { .. } | AlphaMode::Blend => {}
         }
         self.alpha_mode = mode;
         Ok(self)
@@ -681,7 +681,7 @@ impl Material {
                 self.emissive[2],
                 match self.alpha_mode {
                     AlphaMode::Mask { cutoff } => cutoff,
-                    _ => 0.0,
+                    AlphaMode::Opaque | AlphaMode::Blend => 0.0,
                 },
                 self.transmission.factor,
                 self.transmission.ior,

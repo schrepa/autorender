@@ -15,6 +15,10 @@
 //!   while a measuring tool times a run ([`load`]).
 //!
 //! Every unsafe call the native tools make is here, allowed item by item.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 #[cfg(feature = "profiling")]
 mod capabilities;

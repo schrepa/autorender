@@ -6,6 +6,10 @@
 //! time: hosts start one, step it until done, and between
 //! steps take up a more urgent one or drop one the engine cancelled; parts
 //! of an output ready early go back before the rest.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 use engine_terrain::jobs::TerrainWorker;
 

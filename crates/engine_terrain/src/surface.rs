@@ -300,6 +300,40 @@ fn ramp(value: f32, ends: [f32; 2]) -> f32 {
     smooth((value - ends[0]) / (ends[1] - ends[0]))
 }
 
+/// Each sample's `input` of its hydrology sample in `waters`, ramped
+/// between `ends`, into `out`.
+fn water(
+    out: &mut [f32],
+    waters: &[crate::HydrologySample],
+    ends: [f32; 2],
+    input: impl Fn(&crate::HydrologySample) -> f32,
+) {
+    for (value, water) in out.iter_mut().zip(waters) {
+        *value = ramp(input(water), ends);
+    }
+}
+
+/// `masks` folded over `row` into `out` with `op`, from `start`, in the
+/// masks' order.
+fn fold(
+    masks: &[Compiled],
+    row: &RowInputs<'_>,
+    out: &mut [f32],
+    scratch: &mut RowScratch,
+    start: f32,
+    op: impl Fn(f32, f32) -> f32,
+) {
+    out.fill(start);
+    let mut part = scratch.take(out.len());
+    for mask in masks {
+        mask.evaluate_row(row, &mut part, scratch);
+        for (value, &next) in out.iter_mut().zip(&part) {
+            *value = op(*value, next);
+        }
+    }
+    scratch.give(part);
+}
+
 impl Compiled {
     pub(crate) fn from(mask: &Mask, path: &str, depth: usize) -> Result<Self, BiomeError> {
         let fail = |rule: &str| BiomeError {
@@ -484,17 +518,10 @@ impl Compiled {
             Self::Height(ends) => each(out, row.height, *ends),
             Self::Gradient(ends) => each(out, row.gradient, *ends),
             Self::Curvature(ends) => each(out, row.curvature, *ends),
-            Self::Flow(ends) | Self::Wetness(ends) | Self::Lake(ends) | Self::River(ends) => {
-                for (value, water) in out.iter_mut().zip(row.water) {
-                    let input = match self {
-                        Self::Flow(_) => water.flow,
-                        Self::Wetness(_) => water.wetness,
-                        Self::Lake(_) => water.lake,
-                        _ => water.river,
-                    };
-                    *value = ramp(input, *ends);
-                }
-            }
+            Self::Flow(ends) => water(out, row.water, *ends, |water| water.flow),
+            Self::Wetness(ends) => water(out, row.water, *ends, |water| water.wetness),
+            Self::Lake(ends) => water(out, row.water, *ends, |water| water.lake),
+            Self::River(ends) => water(out, row.water, *ends, |water| water.river),
             Self::Path(ends) => {
                 for (value, &PathSample { distance, half }) in out.iter_mut().zip(row.path) {
                     *value = [-0.375, -0.125, 0.125, 0.375]
@@ -550,30 +577,13 @@ impl Compiled {
                 scratch.give(at_x);
                 scratch.give(at_z);
             }
-            Self::Multiply(masks) | Self::Add(masks) | Self::Min(masks) | Self::Max(masks) => {
-                // The folds `product`, `sum` and the evaluation's own take:
-                // from 1, -0 (the standard library's), +infinity and
-                // -infinity, in the masks' order.
-                out.fill(match self {
-                    Self::Multiply(_) => 1.0,
-                    Self::Add(_) => -0.0,
-                    Self::Min(_) => f32::INFINITY,
-                    _ => f32::NEG_INFINITY,
-                });
-                let mut part = scratch.take(out.len());
-                for mask in masks {
-                    mask.evaluate_row(row, &mut part, scratch);
-                    for (value, &next) in out.iter_mut().zip(&part) {
-                        *value = match self {
-                            Self::Multiply(_) => *value * next,
-                            Self::Add(_) => *value + next,
-                            Self::Min(_) => min(*value, next),
-                            _ => max(*value, next),
-                        };
-                    }
-                }
-                scratch.give(part);
-            }
+            // The folds `product`, `sum` and the evaluation's own take: from
+            // 1, -0 (the standard library's), +infinity and -infinity, in the
+            // masks' order.
+            Self::Multiply(masks) => fold(masks, row, out, scratch, 1.0, |a, b| a * b),
+            Self::Add(masks) => fold(masks, row, out, scratch, -0.0, |a, b| a + b),
+            Self::Min(masks) => fold(masks, row, out, scratch, f32::INFINITY, min),
+            Self::Max(masks) => fold(masks, row, out, scratch, f32::NEG_INFINITY, max),
             Self::Invert(mask) => {
                 mask.evaluate_row(row, out, scratch);
                 for value in out.iter_mut() {

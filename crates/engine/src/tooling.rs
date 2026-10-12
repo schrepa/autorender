@@ -112,7 +112,9 @@ fn type_of(schema: &Value) -> String {
     let types: Vec<&str> = match &schema["type"] {
         Value::String(name) => vec![name.as_str()],
         Value::Array(names) => names.iter().filter_map(Value::as_str).collect(),
-        other => panic!("no TypeScript type for the schema type {other}"),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_)) => {
+            panic!("no TypeScript type for the schema type {other}")
+        }
     };
     types
         .into_iter()
