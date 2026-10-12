@@ -13,7 +13,8 @@
 //! (both runs settled), the deadline, or a run that never settles. A deep
 //! profile of each arm and the offline shader report follow where the task
 //! wants them. `--extend` adds rounds to an earlier report of the same task
-//! with the same builds.
+//! with the same builds. The runs and profiles hold the machine's heavy-run
+//! lock ([`crate::heavy`]); the checks after them take it themselves.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -1143,6 +1144,9 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
             }
         }
     }
+    // The runs and profiles hold the machine's heavy-run lock: nothing else
+    // draws on its GPU meanwhile.
+    let heavy = crate::heavy::HeavyRun::hold(&format!("cargo xtask measure (task {task_id})"))?;
     let machine = Machine {
         backend: backend.to_owned(),
         timer_resolution_us: timer_resolution_us(),
@@ -1286,6 +1290,7 @@ pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
             "unavailable": unavailable,
         }));
     }
+    drop(heavy);
     let (base, candidate) = (&builds[base_sha], &builds[candidate_sha]);
     let shaders_changed = base.shader_hash != candidate.shader_hash;
     let static_part = if spec["want"]["shader_report"] == true || shaders_changed {
