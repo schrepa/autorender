@@ -11,7 +11,7 @@ use engine_settings::settings;
 settings! {
     /// Temporal antialiasing settings: whether ordinary GPU-presented frames
     /// jitter and resolve against their history. Its targets cost 16 bytes per
-    /// canvas pixel while it runs. Off by default. Requires version 9.
+    /// canvas pixel while it runs. Off by default.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

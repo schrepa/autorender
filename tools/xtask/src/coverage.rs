@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 /// Each environment section's key and settings type, in authored order.
 macro_rules! section_names {
-    ($($key:ident: $settings:ident { since: $since:literal, opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
+    ($($key:ident: $settings:ident { opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
         &[$((stringify!($key), stringify!($settings))),*]
     };
 }

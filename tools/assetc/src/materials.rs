@@ -1,5 +1,5 @@
 //! glTF 2.0 metallic-roughness materials, mapped one to one onto scene
-//! version 8 materials. Images are written beside the scene
+//! materials. Images are written beside the scene
 //! unchanged, for the host to decode.
 
 use engine_scene::{

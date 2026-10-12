@@ -54,7 +54,7 @@ export function sceneUrl(query = {}) {
   return devUrl("stress.html", { source: fixtureScene, ...query });
 }
 
-/** The garden fixture: a version 4 scene with a player, solids,
+/** The garden fixture: a scene with a player, solids,
  * pickups, a textured prefab and parents, as a fresh object. */
 export function gardenScene() {
   return JSON.parse(readFileSync(new URL("fixtures/garden.scene.json", import.meta.url), "utf8"));

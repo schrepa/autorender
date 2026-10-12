@@ -1,13 +1,13 @@
 use serde::Serialize;
 
-/// A heightfield terrain on this entity as a scene version 9 `terrain` field:
+/// A heightfield terrain on this entity as a scene's `terrain` field:
 /// its origin, tiles, spacing, layers or file, material, collision and
 /// surroundings, with its streaming state: resident tiles by level, and its
 /// surroundings' once they stream.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainView {
-    /// The terrain as a scene version 9 `terrain` field: `SceneTerrain` of
+    /// The terrain as a scene's `terrain` field: `SceneTerrain` of
     /// the SceneDocument schema (describe SceneDocument).
     #[cfg_attr(not(target_arch = "wasm32"), schemars(with = "serde_json::Value"))]
     pub terrain: engine_scene::SceneTerrain,
@@ -166,7 +166,7 @@ pub struct StreamedCellView {
     pub distance: f32,
 }
 
-/// A navigation agent as a scene version 9 `nav_agent` field: it walks over the
+/// A navigation agent as a scene's `nav_agent` field: it walks over the
 /// terrain to its destination (world x, z) at its speed, on the ground, around
 /// obstacles widened by its radius, no steeper than max_slope, wading no deeper
 /// than max_water; with its walk's status, length, points, next point, meters
@@ -259,7 +259,7 @@ pub struct StreamedIdView {
     pub id: String,
 }
 
-/// Stands on the terrain as a scene version 9 `grounded` field: the entity's
+/// Stands on the terrain as a scene's `grounded` field: the entity's
 /// translation's y is kept `offset` meters above the ground under it, from the
 /// finest terrain tile resident there, sampling again as finer tiles arrive and
 /// when its x, z or offset changes; with the level of the tile it last stood
@@ -316,7 +316,7 @@ pub struct TerrainsView {
     pub surroundings_patches: u32,
 }
 
-/// An animation player as a scene version 8 `animation` field with its clip
+/// An animation player as a scene's `animation` field with its clip
 /// and its targets: every fixed tick it advances `time` by the tick
 /// times `speed`, wrapping when `loop` is set, and poses its targets'
 /// transforms.
@@ -334,7 +334,7 @@ pub struct AnimationPlayerView {
     pub targets: Vec<Option<String>>,
 }
 
-/// A decal on this entity as a scene version 8 `decal` field: its material
+/// A decal on this entity as a scene's `decal` field: its material
 /// projected down the entity's local y onto the opaque surfaces inside its unit
 /// box, fading on surfaces turning away beyond `fade_degrees`.
 #[derive(Serialize)]
@@ -349,7 +349,7 @@ pub struct DecalView {
     pub fade_degrees: f32,
 }
 
-/// A mesh bent along a curve on this entity as a scene version 9 `spline`
+/// A mesh bent along a curve on this entity as a scene's `spline`
 /// field: copies of the mesh end to end along a centripetal Catmull-Rom curve
 /// through `points` (entity space), its x along the curve, y up and z across,
 /// drawn by child entities a chunk of at most 256 m each; with the curve's
@@ -370,7 +370,7 @@ pub struct SplineMeshView {
     pub error: Option<String>,
 }
 
-/// A clip as a scene version 8 animation authors it, without its keys.
+/// A clip as a scene's animation authors it, without its keys.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct ClipView {
@@ -387,7 +387,7 @@ pub struct ClipView {
     pub duration: f32,
 }
 
-/// The skin deforming this entity's mesh, as a scene version 8 `skin` names
+/// The skin deforming this entity's mesh, as a scene's `skin` names
 /// it: each vertex moves by its weighted joints' displayed world matrices
 /// times their inverse bind matrices.
 #[derive(Serialize)]
@@ -712,7 +712,7 @@ pub struct CollisionWorldView {
     pub limits: CollisionLimitsView,
 }
 
-/// Per-object color factors as a scene version 8 `tint` field: red, green, blue
+/// Per-object color factors as a scene's `tint` field: red, green, blue
 /// and opacity multiply this object's material or cube color, each in [0, 1].
 /// Changing it uploads only this object's colors.
 #[derive(Serialize)]

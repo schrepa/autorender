@@ -7,9 +7,6 @@ use crate::{
     SceneLight, SceneMaterial, ScenePlayer, SceneSkin, SceneTexture, files::valid_uri,
 };
 
-/// Accepted authoring format version. Changes require an explicit migration.
-pub const SCENE_VERSION: u32 = 9;
-
 /// Largest scene source parsed: a sanity bound on JSON, not on content,
 /// which references image and buffer files for bulk data.
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
@@ -17,7 +14,7 @@ pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 /// A persistent scene source. IDs are authored ASCII names, never runtime IDs.
 ///
 /// Loading sets no count budget; bulk pixels and geometry
-/// belong in files beside the scene (version 7). Prefabs share scene-wide
+/// belong in files beside the scene. Prefabs share scene-wide
 /// assets across their placements.
 /// Unknown fields are rejected to expose authoring mistakes. Arrays retain
 /// authored order when serialized, yielding stable, readable source diffs.
@@ -25,8 +22,6 @@ pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneDocument {
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = SCENE_VERSION)))]
-    pub version: u32,
     #[cfg_attr(
         feature = "schema",
         schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
@@ -35,13 +30,12 @@ pub struct SceneDocument {
     pub revision: u64,
     #[serde(default)]
     pub camera: SceneCamera,
-    /// The scene's atmosphere and rendering effects. Requires
-    /// version 5. With it the scene owns the whole look: instantiation sets
-    /// every section, omitted ones to the engine defaults. Without it the
-    /// game's own settings stay.
+    /// The scene's atmosphere and rendering effects. With it the scene
+    /// owns the whole look: instantiation sets every section, omitted ones
+    /// to the engine defaults. Without it the game's own settings stay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<SceneEnvironment>,
-    /// Opaque sRGB pixels: inline base64, or image files (version 7).
+    /// Opaque sRGB pixels: inline base64, or image files.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub textures: Vec<SceneTexture>,
     pub materials: Vec<SceneMaterial>,
@@ -50,10 +44,9 @@ pub struct SceneDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prefabs: Vec<ScenePrefab>,
     /// Keyframed clips that entity `animation` players play.
-    /// Version 8.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub animations: Vec<SceneAnimation>,
-    /// Joint lists that deform skinned meshes. Version 8.
+    /// Joint lists that deform skinned meshes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skins: Vec<SceneSkin>,
     pub entities: Vec<SceneObject>,
@@ -61,7 +54,7 @@ pub struct SceneDocument {
     /// with its descendants is one item, which world streaming spawns when
     /// its cell comes within range and despawns when it leaves. Parents,
     /// animation targets and skin joints stay within an item; IDs differ
-    /// from `entities`'. No terrains. Requires version 9.
+    /// from `entities`'. No terrains.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub streamed: Vec<SceneObject>,
 }
@@ -79,31 +72,6 @@ impl SceneDocument {
         let document: Self = crate::parse_json(source)?;
         document.validate()?;
         Ok(document)
-    }
-
-    /// Moves this document to [`SCENE_VERSION`] without changing what it
-    /// describes: from before version 8, plain texture IDs become maps that
-    /// clamp at the texture's edges, as those versions sample them.
-    pub fn upgrade(&mut self) {
-        if self.version < 8 {
-            for material in &mut self.materials {
-                if let Some(crate::SceneMap::Id(id)) = &material.texture {
-                    material.texture = Some(crate::SceneMap::Map(crate::SceneTextureMap {
-                        id: id.clone(),
-                        wrap_u: Some(crate::SceneWrap::ClampToEdge),
-                        wrap_v: Some(crate::SceneWrap::ClampToEdge),
-                        mag_filter: None,
-                        min_filter: None,
-                        mipmap_filter: None,
-                        offset: None,
-                        rotation: None,
-                        scale: None,
-                        tex_coord: None,
-                    }));
-                }
-            }
-        }
-        self.version = SCENE_VERSION;
     }
 
     /// Writes validated, pretty JSON with stable field order and a final newline.
@@ -308,7 +276,7 @@ pub enum MeshSource {
         #[cfg_attr(feature = "schema", schemars(length(min = 3)))]
         indices: Vec<u32>,
     },
-    /// An engine mesh buffer file (`EMB1`) beside the scene. Version 7.
+    /// An engine mesh buffer file (`EMB1`) beside the scene.
     Buffer {
         #[cfg_attr(
             feature = "schema",
@@ -323,7 +291,7 @@ pub enum MeshSource {
     /// cluster hierarchy renderers draw as the clusters each view needs, and
     /// elsewhere as its most detailed cut of at most `fallback_triangles`
     /// triangles (4096 when omitted). Built by `cargo xtask asset import`
-    /// for dense meshes. Version 8.
+    /// for dense meshes.
     Virtual {
         #[cfg_attr(
             feature = "schema",
@@ -342,13 +310,7 @@ pub enum MeshSource {
 impl MeshSource {
     /// The mesh at authored path `path`. Without `files` (structural
     /// validation) a buffer mesh reads as the cube.
-    /// The mesh at authored path `path` of a document of `version`.
-    pub(crate) fn mesh(
-        &self,
-        path: &str,
-        files: Option<&SceneFiles>,
-        version: u32,
-    ) -> Result<Mesh, SceneError> {
+    pub(crate) fn mesh(&self, path: &str, files: Option<&SceneFiles>) -> Result<Mesh, SceneError> {
         match self {
             Self::Cube {} => Ok(Mesh::cube()),
             Self::Plane {} => Ok(Mesh::plane()),
@@ -360,15 +322,6 @@ impl MeshSource {
                     return Ok(Mesh::cube());
                 };
                 let buffer = files.mesh(uri, &uri_path)?;
-                if version < 8
-                    && (buffer.colors.is_some() || buffer.uv1.is_some() || buffer.skin.is_some())
-                {
-                    return Err(crate::versions::version_required(
-                        uri_path,
-                        "vertex colors, second texture coordinates, joints and weights",
-                        8,
-                    ));
-                }
                 with_extras(
                     Mesh::new(buffer.vertices, buffer.indices),
                     buffer.colors,
@@ -495,19 +448,6 @@ fn with_extras(
     Ok(mesh)
 }
 
-impl MeshSource {
-    /// Whether any inline vertex has a color, second coordinates, joints or
-    /// weights.
-    pub(crate) fn has_vertex_extras(&self) -> bool {
-        matches!(self, Self::Inline { vertices, .. } if vertices.iter().any(|vertex| {
-            vertex.color.is_some()
-                || vertex.uv1.is_some()
-                || vertex.joints.is_some()
-                || vertex.weights.is_some()
-        }))
-    }
-}
-
 /// CPU vertex authoring data; the renderer owns its separate upload layout.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -518,20 +458,20 @@ pub struct SceneVertex {
     /// Top-left origin texture coordinates.
     #[serde(default, skip_serializing_if = "zero_uv")]
     pub uv: [f32; 2],
-    /// Version 8: linear RGBA in `[0, 1]` multiplying the material's base
+    /// Linear RGBA in `[0, 1]` multiplying the material's base
     /// color. Every vertex of a mesh has one or none does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<[f32; 4]>,
-    /// Version 8: second texture coordinates, which texture maps may read.
+    /// Second texture coordinates, which texture maps may read.
     /// Every vertex of a mesh has them or none does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uv1: Option<[f32; 2]>,
-    /// Version 8: up to four joints (indices into the skin of the entities
+    /// Up to four joints (indices into the skin of the entities
     /// drawing the mesh) moving this vertex. Every vertex of
     /// a mesh has joints and weights or none does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub joints: Option<[u16; 4]>,
-    /// Version 8: the joints' weights, not negative and not all zero; they
+    /// The joints' weights, not negative and not all zero; they
     /// are normalized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weights: Option<[f32; 4]>,
@@ -610,24 +550,24 @@ engine_settings::settings! {
             schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
         )]
         pub prefab: Option<String> = None => any,
-        /// Local collision shape, independent of rendering. Requires version 4.
+        /// Local collision shape, independent of rendering.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub collider: Option<SceneCollider> = None => any,
-        /// A point or spot light. Requires version 6.
+        /// A point or spot light.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub light: Option<SceneLight> = None => any,
-        /// A particle emitter. Requires version 6.
+        /// A particle emitter.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub particles: Option<SceneEmitter> = None => any,
         /// Multiplies this object's color and opacity channel by channel,
-        /// each factor finite and in `[0, 1]`. Requires version 8.
+        /// each factor finite and in `[0, 1]`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub tint: Option<[f32; 4]> = None => range(0.0, 1.0),
-        /// Plays an animation on its targets. Requires version 8.
+        /// Plays an animation on its targets.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub animation: Option<ScenePlayer> = None => any,
-        /// The skin deforming this object's mesh. Requires
-        /// version 8 and a mesh with joints and weights.
+        /// The skin deforming this object's mesh. Requires a mesh with
+        /// joints and weights.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(
             feature = "schema",
@@ -635,40 +575,34 @@ engine_settings::settings! {
         )]
         pub skin: Option<String> = None => any,
         /// Projects a material onto the opaque surfaces inside this entity's
-        /// box. Requires version 8.
+        /// box.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub decal: Option<crate::SceneDecal> = None => any,
         /// Captures this entity's surroundings into an environment map that
-        /// surfaces inside its world box reflect. Requires
-        /// version 8.
+        /// surfaces inside its world box reflect.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub reflection_probe: Option<crate::SceneReflectionProbe> = None => any,
         /// A heightfield terrain whose tiles stream around the camera.
-        /// Requires version 9.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub terrain: Option<crate::SceneTerrain> = None => any,
         /// One of this document's meshes bent along a curve.
-        /// Requires version 9.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub spline: Option<crate::SceneSpline> = None => any,
-        /// Rides the sea. Requires version 9.
+        /// Rides the sea.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub floating: Option<engine_core::Floating> = None => any,
-        /// Presses tracks into deformable ground. Requires
-        /// version 9.
+        /// Presses tracks into deformable ground.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub deformer: Option<engine_core::Deformer> = None => any,
         /// Walks over the terrain to a destination. Roots only.
-        /// Requires version 9.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub nav_agent: Option<engine_core::NavAgent> = None => any,
         /// Stands on the terrain: its translation's y becomes
-        /// `offset` meters above the ground under it. Roots only. Requires
-        /// version 9.
+        /// `offset` meters above the ground under it. Roots only.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub grounded: Option<engine_core::Grounded> = None => any,
         /// Names it a place the camera may be sent to, whose
-        /// terrain workers generate ahead of need. Requires version 9.
+        /// terrain workers generate ahead of need.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub prefetch: Option<engine_core::TerrainPrefetch> = None => any,
         #[serde(default)]

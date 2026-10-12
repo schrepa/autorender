@@ -156,7 +156,6 @@ impl SceneDocument {
     /// `files`: `None` validates structure only, reading referenced files as
     /// placeholders.
     pub(crate) fn prepare(&self, files: Option<&SceneFiles>) -> Result<PreparedScene, SceneError> {
-        self.check_version()?;
         identifier(&self.id, "$.id")?;
         self.validate_camera()?;
         let mesh_ids = unique_ids(self.meshes.iter().map(|mesh| mesh.id.as_str()), "$.meshes")?;
@@ -515,10 +514,7 @@ impl SceneDocument {
             .textures
             .iter()
             .enumerate()
-            .map(|(index, texture)| {
-                // Texel alpha is coverage from version 8.
-                texture.texture(&format!("$.textures[{index}]"), files, self.version >= 8)
-            })
+            .map(|(index, texture)| texture.texture(&format!("$.textures[{index}]"), files))
             .collect::<Result<Vec<_>, _>>()?;
         let meshes = self
             .meshes
@@ -526,16 +522,14 @@ impl SceneDocument {
             .enumerate()
             .map(|(index, mesh)| {
                 mesh.source
-                    .mesh(&format!("$.meshes[{index}].source"), files, self.version)
+                    .mesh(&format!("$.meshes[{index}].source"), files)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let materials = self
             .materials
             .iter()
             .enumerate()
-            .map(|(index, material)| {
-                material.prepare(&format!("$.materials[{index}]"), self.version)
-            })
+            .map(|(index, material)| material.prepare(&format!("$.materials[{index}]")))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(CpuAssets {
             textures,

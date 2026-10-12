@@ -1,4 +1,4 @@
-//! Scene version 8 decals: an entity field projecting one of
+//! Scene decals: an entity field projecting one of
 //! the document's materials onto the opaque surfaces inside the entity's
 //! box. Angles are in degrees.
 
@@ -26,7 +26,7 @@ pub enum SceneDecalBlend {
 }
 
 settings! {
-    /// A decal on this entity. Requires version 8.
+    /// A decal on this entity.
     ///
     /// Its box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):
     /// scale the entity to size it. The material's color, base color map,

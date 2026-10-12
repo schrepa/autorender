@@ -54,7 +54,7 @@ impl ExtraRules for Cover {
 }
 
 settings! {
-    /// Ground cover settings. Requires version 9.
+    /// Ground cover settings.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

@@ -1,5 +1,5 @@
 /**
- * Spline meshes: a version 9 fixture bends a box
+ * Spline meshes: a fixture bends a box
  * along a curve; the inspector reports what it built and its chunks draw;
  * moving a point rebuilds them, an invalid curve is refused with the scene
  * kept, and removing the field removes the chunks.
@@ -13,7 +13,7 @@ const curve = [[-12, 0.5, 4], [-4, 0.5, -2], [4, 0.5, 3], [12, 0.5, -3]];
 /** Meters along the straight lines between `points`, which the curve through them exceeds a little. */
 const polyline = points => points.slice(1).reduce((sum, point, index) => sum + Math.hypot(...point.map((value, axis) => value - points[index][axis])), 0);
 const fixture = {
-  version: 9, id: "spline-fixture", revision: 1,
+  id: "spline-fixture", revision: 1,
   camera: { position: [0, 14, 22], target: [0, 0, 0], fov_degrees: 55, near: 0.1, far: 500 },
   materials: [{ id: "plain", color: [0.8, 0.3, 0.2, 1] }, { id: "ground", color: [0.3, 0.32, 0.28, 1] }, { id: "rail", color: [0.85, 0.8, 0.7, 1] }],
   meshes: [{ id: "box", source: { kind: "cube" } }],

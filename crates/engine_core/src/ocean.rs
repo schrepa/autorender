@@ -31,7 +31,7 @@ const GRAVITY: f32 = 9.81;
 
 settings! {
     extra_rules;
-    /// The sea. Requires version 9.
+    /// The sea.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -260,7 +260,7 @@ impl Ocean {
 settings! {
     /// Rides the sea: each fixed tick the entity rises and falls with the sea's
     /// surface under it and leans about its own heading. Unparented entities
-    /// only; nothing moves without an enabled sea. Requires version 9.
+    /// only; nothing moves without an enabled sea.
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

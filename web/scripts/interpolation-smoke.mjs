@@ -7,7 +7,7 @@ const url = sceneUrl(process.env.ENGINE_BUILD ? { engine_build: process.env.ENGI
 const output = await artifacts("interpolation-smoke");
 const camera = { position: [1.3, 0.8, 2.4], target: [0, 0.3, 0], vertical_fov_radians: Math.PI / 3, near: 0.1, far: 30 };
 const fixture = {
-  version: 4, id: "interpolation-fixture", revision: 1,
+  id: "interpolation-fixture", revision: 1,
   camera: { position: camera.position, target: camera.target, fov_degrees: 60, near: 0.1, far: 30 },
   materials: [{ id: "player-color", color: [0.08, 0.65, 0.85, 1] }, { id: "accessory-color", color: [0.95, 0.35, 0.06, 1] }],
   meshes: [{ id: "box", source: { kind: "cube" } }],

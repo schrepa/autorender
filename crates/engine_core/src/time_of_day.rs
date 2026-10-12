@@ -12,7 +12,7 @@ use crate::math::{max, sin_cos};
 use engine_settings::settings;
 
 settings! {
-    /// The time of day. Opt-in. Requires version 9.
+    /// The time of day. Opt-in.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

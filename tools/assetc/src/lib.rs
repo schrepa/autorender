@@ -10,7 +10,7 @@ mod validation;
 
 use std::{error::Error, fmt};
 
-use engine_scene::{SCENE_VERSION, SceneCamera, SceneDocument, SceneError, ScenePrefab};
+use engine_scene::{SceneCamera, SceneDocument, SceneError, ScenePrefab};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -150,7 +150,6 @@ pub fn import_glb_with(
         .ok_or_else(|| ImportError::new("missing_binary", "$", "a GLB BIN chunk is required"))?;
     validation::buffers(&gltf.document, binary)?;
     let mut scene = SceneDocument {
-        version: SCENE_VERSION,
         id: id.to_owned(),
         revision: 1,
         camera: SceneCamera::default(),

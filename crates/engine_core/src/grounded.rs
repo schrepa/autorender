@@ -18,8 +18,7 @@ settings! {
     /// kept `offset` meters above the ground under its x and z. Unparented
     /// entities only; without a resident tile under it (or over a hole) the
     /// entity keeps its translation, as walking navigation agents keep theirs:
-    /// their walks stand them, on bridges' decks too. Requires
-    /// version 9.
+    /// their walks stand them, on bridges' decks too.
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]

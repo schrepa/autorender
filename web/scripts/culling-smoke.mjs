@@ -8,7 +8,7 @@ const camera = { position: [0, 0.6, 8], target: [0, 0.6, 0], vertical_fov_radian
 // Shadows start off, so residency first follows visibility alone: shadow maps
 // draw off-screen casters too.
 const fixture = {
-  version: 5, id: "culling-fixture", revision: 1,
+  id: "culling-fixture", revision: 1,
   camera: { position: camera.position, target: camera.target, fov_degrees: 60, near: 1, far: 50 },
   environment: { shadows: { enabled: false } },
   textures: [{ id: "pixel", width: 1, height: 1, rgba8: Buffer.from([255, 90, 25, 255]).toString("base64") }],

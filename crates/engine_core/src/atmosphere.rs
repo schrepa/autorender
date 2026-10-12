@@ -10,80 +10,78 @@ use glam::Vec3;
 use crate::environment::InvalidSetting;
 use engine_settings::Setting;
 
-/// Every atmosphere field once: its doc, which authors read too, its type,
-/// the scene version that introduced it and the [`engine_settings::Rule`] its
-/// values keep.
+/// Every atmosphere field once: its doc, which authors read too, its type
+/// and the [`engine_settings::Rule`] its values keep.
 /// engine_core builds [`Atmosphere`] and its validation from this list, and
-/// engine_scene the authored atmosphere: its fields, schema, overrides and
-/// version checks.
+/// engine_scene the authored atmosphere: its fields, schema and overrides.
 #[macro_export]
 macro_rules! atmosphere_fields {
     ($then:ident) => {
         $then! {
             /// Direction toward the sun; any nonzero length, normalized when
             /// rendered.
-            sun_direction: Vec3, since 5, any;
+            sun_direction: Vec3, any;
             /// Sun color times intensity.
-            sun_color: Vec3, since 5, at_least(0.0);
+            sun_color: Vec3, at_least(0.0);
             /// Sky color straight up: upward surfaces take their ambient light
             /// from it.
-            zenith: Vec3, since 5, at_least(0.0);
+            zenith: Vec3, at_least(0.0);
             /// Sky color at the horizon: vertical surfaces take their ambient
             /// light from it.
-            horizon: Vec3, since 5, at_least(0.0);
+            horizon: Vec3, at_least(0.0);
             /// Sky color below the horizon: downward surfaces take their
             /// ambient light from it.
-            ground: Vec3, since 5, at_least(0.0);
+            ground: Vec3, at_least(0.0);
             /// Scale of the sky's ambient light on surfaces.
-            ambient: f32, since 5, at_least(0.0);
+            ambient: f32, at_least(0.0);
             /// Fog begins this far from the camera (world units).
-            fog_start: f32, since 5, at_least(0.0);
+            fog_start: f32, at_least(0.0);
             /// Fog density per world unit at height zero.
-            fog_density: f32, since 5, at_least(0.0);
+            fog_density: f32, at_least(0.0);
             /// How fast fog thins with height, per world unit.
-            fog_falloff: f32, since 5, at_least(0.0);
+            fog_falloff: f32, at_least(0.0);
             /// The most fog can cover.
-            fog_max: f32, since 5, range(0.0, 1.0);
+            fog_max: f32, range(0.0, 1.0);
             /// Aerial perspective begins this far from the camera (world
             /// units): beyond it, air dims what lies behind it toward the light
             /// it scatters. Unlike fog it is unbounded and spans kilometers.
-            aerial_start: f32, since 9, at_least(0.0);
+            aerial_start: f32, at_least(0.0);
             /// Aerial extinction per world unit at height zero; 0 turns it off.
-            aerial_density: f32, since 9, at_least(0.0);
+            aerial_density: f32, at_least(0.0);
             /// How fast the air thins with height, per world unit.
-            aerial_falloff: f32, since 9, at_least(0.0);
+            aerial_falloff: f32, at_least(0.0);
             /// The color distant ridges fade into away from the sun.
-            aerial_color: Vec3, since 9, at_least(0.0);
+            aerial_color: Vec3, at_least(0.0);
             /// How strongly distant ridges fade into a glow of the sun's color
             /// toward the sun.
-            aerial_glow: f32, since 9, at_least(0.0);
+            aerial_glow: f32, at_least(0.0);
             /// Silhouette light in the horizon color, facing away from the
             /// camera.
-            rim: f32, since 5, at_least(0.0);
+            rim: f32, at_least(0.0);
             /// Scale of sun highlights and sky reflections; 1 is physically
             /// based.
-            specular: f32, since 5, at_least(0.0);
+            specular: f32, at_least(0.0);
             /// Scale of material emission: how strongly lamps, lit windows and
             /// other artificial lights show in this light, dim by day and full
             /// at night.
-            emission: f32, since 5, at_least(0.0);
+            emission: f32, at_least(0.0);
             /// Exposure before tone mapping.
-            exposure: f32, since 5, at_least(0.0);
+            exposure: f32, at_least(0.0);
             /// Saturation after tone mapping; 1 keeps it.
-            saturation: f32, since 5, at_least(0.0);
+            saturation: f32, at_least(0.0);
             /// Contrast around mid grey after tone mapping: the slope of an
             /// S-curve that keeps black and white; 0 flattens, 1 keeps it, and
             /// the curve is steepest at 1.5.
-            contrast: f32, since 6, at_least(0.0);
+            contrast: f32, at_least(0.0);
             /// Saturation added to muted colors more than to vivid ones; 0 adds
             /// none.
-            vibrance: f32, since 6, at_least(0.0);
+            vibrance: f32, at_least(0.0);
             /// Hue of dark tones after tone mapping (split toning), as a color
             /// gain scaled to keep luminance; white, like black, keeps them.
             /// Cool shadows against warm highlights read as vivid.
-            shadow_tint: Vec3, since 6, at_least(0.0);
+            shadow_tint: Vec3, at_least(0.0);
             /// Hue of bright tones, like `shadow_tint`.
-            highlight_tint: Vec3, since 6, at_least(0.0);
+            highlight_tint: Vec3, at_least(0.0);
         }
     };
 }
@@ -91,7 +89,7 @@ macro_rules! atmosphere_fields {
 /// engine_core's part of [`atmosphere_fields`]: the atmosphere, its
 /// validation, and the rules an authored atmosphere's schema states.
 macro_rules! core_atmosphere {
-    ($($(#[$doc:meta])* $field:ident: $ty:ident, since $since:literal, $rule:ident $(($($arg:expr),*))?;)*) => {
+    ($($(#[$doc:meta])* $field:ident: $ty:ident, $rule:ident $(($($arg:expr),*))?;)*) => {
         /// Lighting of the rendered scene, read when frames are extracted.
         ///
         /// Colors are linear RGB. The sun and sky may exceed 1: the renderer

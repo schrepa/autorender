@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use engine_settings::settings;
 
 settings! {
-    /// Water settings. Requires version 9.
+    /// Water settings.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

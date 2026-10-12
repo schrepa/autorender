@@ -1,5 +1,4 @@
 //! Authored animation clips and players, and skins.
-//! Version 8.
 
 use engine_settings::ErrorCode;
 use std::sync::Arc;

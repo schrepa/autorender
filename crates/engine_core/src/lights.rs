@@ -132,7 +132,7 @@ impl LocalLight {
 }
 
 settings! {
-    /// Local lighting settings. Requires version 6.
+    /// Local lighting settings.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

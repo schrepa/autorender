@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use engine_settings::settings;
 
 settings! {
-    /// Contact shadow settings. Requires version 9.
+    /// Contact shadow settings.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

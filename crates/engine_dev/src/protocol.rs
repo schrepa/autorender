@@ -760,7 +760,7 @@ impl BrowserControl {
 /// engine_dev's part of [`engine_core::environment_sections`]: the
 /// environment control's request.
 macro_rules! control_sections {
-    ($($key:ident: $settings:ident { since: $since:literal, opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
+    ($($key:ident: $settings:ident { opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
         /// The environment control: the protocol version and the sections it
         /// replaces, each in its scene environment shape.
         #[derive(Debug, Deserialize, Serialize)]

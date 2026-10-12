@@ -642,7 +642,6 @@
         "plugins",
         "spline",
         "streaming",
-        "terrain",
         "texture"
       ]
     },

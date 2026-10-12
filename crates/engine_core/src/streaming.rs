@@ -72,7 +72,7 @@ pub const STREAMING_GRIDS: [StreamingGrid; 3] = [
 const JUMP_SPEED: f32 = 1000.0;
 
 settings! {
-    /// World streaming. Requires version 9.
+    /// World streaming.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

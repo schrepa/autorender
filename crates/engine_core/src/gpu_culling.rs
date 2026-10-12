@@ -13,7 +13,6 @@ settings! {
     /// last frame showed, test every other frustum-visible instance against a
     /// depth pyramid of those depths, then draw only what it does not hide.
     /// Output is unchanged; hidden instances cost no drawing. On by default.
-    /// Requires version 9.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -38,7 +37,6 @@ settings! {
     /// Sub-pixel culling settings: whether GPU-presented frames leave visible
     /// instances whose projected bounds cover no pixel center undrawn. They
     /// could produce no fragments, so output is unchanged. On by default.
-    /// Requires version 9.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

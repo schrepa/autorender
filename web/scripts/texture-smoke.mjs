@@ -77,15 +77,10 @@ try {
   const progressBefore = await page.locator("canvas").evaluate(canvas => JSON.parse(canvas.dataset.progress));
   const beforeFailure = await command("assets");
   const invalidResults = [];
-  for (const kind of ["base64", "alpha"]) {
+  for (const kind of ["base64"]) {
     const invalid = structuredClone(source);
     invalid.revision++;
-    if (kind === "base64") invalid.textures[0].rgba8 = "!invalid-base64!";
-    else {
-      const pixels = Buffer.from(invalid.textures[0].rgba8, "base64");
-      pixels[3] = 254;
-      invalid.textures[0].rgba8 = pixels.toString("base64");
-    }
+    invalid.textures[0].rgba8 = "!invalid-base64!";
     scene.serve(invalid);
     const failed = await command("reload", {
       expected_revision: String(source.revision), revision: String(invalid.revision),

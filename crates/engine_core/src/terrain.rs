@@ -656,7 +656,6 @@ settings! {
     /// while the view wants nothing, workers generate the terrain tiles a camera
     /// there wants into memory, as they do ahead of the camera, and those tiles
     /// stay there while it is named, so the camera sent there finds them at once.
-    /// Requires version 9.
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
@@ -686,7 +685,7 @@ impl Default for Viewport {
 }
 
 settings! {
-    /// Terrain settings. Requires version 9.
+    /// Terrain settings.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "SceneDocument",
-  "description": "A persistent scene source. IDs are authored ASCII names, never runtime IDs.\n\nLoading sets no count budget; bulk pixels and geometry\nbelong in files beside the scene (version 7). Prefabs share scene-wide\nassets across their placements.\nUnknown fields are rejected to expose authoring mistakes. Arrays retain\nauthored order when serialized, yielding stable, readable source diffs.",
+  "description": "A persistent scene source. IDs are authored ASCII names, never runtime IDs.\n\nLoading sets no count budget; bulk pixels and geometry\nbelong in files beside the scene. Prefabs share scene-wide\nassets across their placements.\nUnknown fields are rejected to expose authoring mistakes. Arrays retain\nauthored order when serialized, yielding stable, readable source diffs.",
   "type": "object",
   "properties": {
     "animations": {
-      "description": "Keyframed clips that entity `animation` players play.\nVersion 8.",
+      "description": "Keyframed clips that entity `animation` players play.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/SceneAnimation"
@@ -36,7 +36,7 @@
       }
     },
     "environment": {
-      "description": "The scene's atmosphere and rendering effects. Requires\nversion 5. With it the scene owns the whole look: instantiation sets\nevery section, omitted ones to the engine defaults. Without it the\ngame's own settings stay.",
+      "description": "The scene's atmosphere and rendering effects. With it the scene\nowns the whole look: instantiation sets every section, omitted ones\nto the engine defaults. Without it the game's own settings stay.",
       "anyOf": [
         {
           "$ref": "#/$defs/SceneEnvironment"
@@ -77,36 +77,29 @@
       "minimum": 0
     },
     "skins": {
-      "description": "Joint lists that deform skinned meshes. Version 8.",
+      "description": "Joint lists that deform skinned meshes.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/SceneSkin"
       }
     },
     "streamed": {
-      "description": "Entities that exist only near the camera: each root\nwith its descendants is one item, which world streaming spawns when\nits cell comes within range and despawns when it leaves. Parents,\nanimation targets and skin joints stay within an item; IDs differ\nfrom `entities`'. No terrains. Requires version 9.",
+      "description": "Entities that exist only near the camera: each root\nwith its descendants is one item, which world streaming spawns when\nits cell comes within range and despawns when it leaves. Parents,\nanimation targets and skin joints stay within an item; IDs differ\nfrom `entities`'. No terrains.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/SceneObject"
       }
     },
     "textures": {
-      "description": "Opaque sRGB pixels: inline base64, or image files (version 7).",
+      "description": "Opaque sRGB pixels: inline base64, or image files.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/SceneTexture"
       }
-    },
-    "version": {
-      "type": "integer",
-      "format": "uint32",
-      "maximum": 9,
-      "minimum": 1
     }
   },
   "additionalProperties": false,
   "required": [
-    "version",
     "id",
     "revision",
     "materials",
@@ -303,7 +296,7 @@
       "additionalProperties": false
     },
     "Deformer": {
-      "description": "Presses tracks into deformable ground as a scene version 9 `deformer`\nfield: each fixed tick, while its entity's world position lies at most\n`contact` meters above the terrain under it (or below it), it presses a\nfootprint from where it pressed the tick before. Put it where an object\nmeets the ground: a wheel's or a foot's lowest point.",
+      "description": "Presses tracks into deformable ground as a scene's `deformer`\nfield: each fixed tick, while its entity's world position lies at most\n`contact` meters above the terrain under it (or below it), it presses a\nfootprint from where it pressed the tick before. Put it where an object\nmeets the ground: a wheel's or a foot's lowest point.",
       "type": "object",
       "properties": {
         "contact": {
@@ -406,7 +399,7 @@
       ]
     },
     "Grounded": {
-      "description": "Stands its entity on the terrain: its translation's y is\nkept `offset` meters above the ground under its x and z. Unparented\nentities only; without a resident tile under it (or over a hole) the\nentity keeps its translation, as walking navigation agents keep theirs:\ntheir walks stand them, on bridges' decks too. Requires\nversion 9.",
+      "description": "Stands its entity on the terrain: its translation's y is\nkept `offset` meters above the ground under its x and z. Unparented\nentities only; without a resident tile under it (or over a hole) the\nentity keeps its translation, as walking navigation agents keep theirs:\ntheir walks stand them, on bridges' decks too.",
       "type": "object",
       "properties": {
         "offset": {
@@ -483,7 +476,7 @@
       "additionalProperties": false
     },
     "Interior": {
-      "description": "An interior's light, blending in over the probe's blend distance inside\nits faces. Requires version 9.",
+      "description": "An interior's light, blending in over the probe's blend distance inside\nits faces.",
       "type": "object",
       "properties": {
         "sky": {
@@ -858,7 +851,7 @@
           ]
         },
         {
-          "description": "An engine mesh buffer file (`EMB1`) beside the scene. Version 7.",
+          "description": "An engine mesh buffer file (`EMB1`) beside the scene.",
           "type": "object",
           "properties": {
             "kind": {
@@ -879,7 +872,7 @@
           ]
         },
         {
-          "description": "A virtual mesh file (`EVG1`) beside the scene: a\ncluster hierarchy renderers draw as the clusters each view needs, and\nelsewhere as its most detailed cut of at most `fallback_triangles`\ntriangles (4096 when omitted). Built by `cargo xtask asset import`\nfor dense meshes. Version 8.",
+          "description": "A virtual mesh file (`EVG1`) beside the scene: a\ncluster hierarchy renderers draw as the clusters each view needs, and\nelsewhere as its most detailed cut of at most `fallback_triangles`\ntriangles (4096 when omitted). Built by `cargo xtask asset import`\nfor dense meshes.",
           "type": "object",
           "properties": {
             "fallback_triangles": {
@@ -910,7 +903,7 @@
       ]
     },
     "NavAgent": {
-      "description": "Walks its entity over the terrain under it to `destination`. Changing\nthe destination searches anew; none stands still. Requires version 9.",
+      "description": "Walks its entity over the terrain under it to `destination`. Changing\nthe destination searches anew; none stands still.",
       "type": "object",
       "properties": {
         "destination": {
@@ -1832,7 +1825,7 @@
       ]
     },
     "SceneClouds": {
-      "description": "The cloud layer. Opt-in: a scene without a `clouds` section has none.\nRequires version 9.",
+      "description": "The cloud layer. Opt-in: a scene without a `clouds` section has none.",
       "type": "object",
       "properties": {
         "base": {
@@ -2026,7 +2019,7 @@
       ]
     },
     "SceneContactShadows": {
-      "description": "Contact shadow settings. Requires version 9.",
+      "description": "Contact shadow settings.",
       "type": "object",
       "properties": {
         "distance": {
@@ -2062,7 +2055,7 @@
       "additionalProperties": false
     },
     "SceneDecal": {
-      "description": "A decal on this entity. Requires version 8.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected\ndown its y onto the opaque surfaces inside it that face its +y.",
+      "description": "A decal on this entity.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected\ndown its y onto the opaque surfaces inside it that face its +y.",
       "type": "object",
       "properties": {
         "blend": {
@@ -2115,7 +2108,7 @@
       ]
     },
     "SceneDecals": {
-      "description": "Decal settings. Requires version 8.",
+      "description": "Decal settings.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -2136,7 +2129,7 @@
       "additionalProperties": false
     },
     "SceneDeformation": {
-      "description": "Runtime deformation. Requires version 9.",
+      "description": "Runtime deformation.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -2195,7 +2188,7 @@
       "additionalProperties": false
     },
     "SceneEmitter": {
-      "description": "A particle emitter on this entity. Requires version 6.\nOmitted fields take the engine's defaults.",
+      "description": "A particle emitter on this entity.\nOmitted fields take the engine's defaults.",
       "type": "object",
       "properties": {
         "acceleration": {
@@ -2672,7 +2665,7 @@
       ]
     },
     "SceneFloating": {
-      "description": "Rides the sea: each fixed tick the entity rises and falls with the sea's\nsurface under it and leans about its own heading. Unparented entities\nonly; nothing moves without an enabled sea. Requires version 9.",
+      "description": "Rides the sea: each fixed tick the entity rises and falls with the sea's\nsurface under it and leans about its own heading. Unparented entities\nonly; nothing moves without an enabled sea.",
       "type": "object",
       "properties": {
         "draft": {
@@ -2695,7 +2688,7 @@
       "additionalProperties": false
     },
     "SceneGroundCover": {
-      "description": "Ground cover settings. Requires version 9.",
+      "description": "Ground cover settings.",
       "type": "object",
       "properties": {
         "density": {
@@ -2866,7 +2859,7 @@
       ]
     },
     "SceneLevelOfDetail": {
-      "description": "Level of detail settings: whether instances draw\nsimplified levels of their meshes, and impostors, where the\nsimplification stays within a pixel error. Requires version 8.",
+      "description": "Level of detail settings: whether instances draw\nsimplified levels of their meshes, and impostors, where the\nsimplification stays within a pixel error.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -2908,7 +2901,7 @@
       "additionalProperties": false
     },
     "SceneLight": {
-      "description": "A point or spot light on this entity. Requires version 6.\nOn an entity with a mesh it follows the mesh's displayed pose.",
+      "description": "A point or spot light on this entity.\nOn an entity with a mesh it follows the mesh's displayed pose.",
       "type": "object",
       "properties": {
         "color": {
@@ -2974,7 +2967,7 @@
       "additionalProperties": false
     },
     "SceneLocalLights": {
-      "description": "Local lighting settings. Requires version 6.",
+      "description": "Local lighting settings.",
       "type": "object",
       "properties": {
         "distance": {
@@ -3020,7 +3013,7 @@
       "additionalProperties": false
     },
     "SceneMap": {
-      "description": "A material's use of a texture: its ID, or (version 8) a map with glTF\nsampler and `KHR_texture_transform` settings.",
+      "description": "A material's use of a texture: its ID, or a map with glTF sampler and\n`KHR_texture_transform` settings.",
       "anyOf": [
         {
           "type": "string"
@@ -3031,11 +3024,11 @@
       ]
     },
     "SceneMaterial": {
-      "description": "One named material; color channels are linear values in `[0, 1]` and\nalpha is 1. `opacity` below 1 (version 6) draws it transparent unless\n`alpha_mode` says otherwise. Version 8 adds glTF's texture maps, emissive\ncolor, alpha modes and double-sided surfaces; `surface`\nroughness and metalness are glTF's roughness and metallic factors.",
+      "description": "One named material; color channels are linear values in `[0, 1]` and\nalpha is 1. `opacity` below 1 draws it transparent unless `alpha_mode`\nsays otherwise. glTF's texture maps, emissive color, alpha modes and\ndouble-sided surfaces complete it; `surface`\nroughness and metalness are glTF's roughness and metallic factors.",
       "type": "object",
       "properties": {
         "alpha_cutoff": {
-          "description": "Version 8, `mask` only: alpha below it is not drawn; default 0.5.",
+          "description": "With `mask` only: alpha below it is not drawn; default 0.5.",
           "type": [
             "number",
             "null"
@@ -3044,7 +3037,7 @@
           "minimum": 0.0
         },
         "alpha_mode": {
-          "description": "Version 8: how alpha (opacity times base color texture alpha) is\nused. Default `blend` below opacity 1, `opaque` otherwise.",
+          "description": "How alpha (opacity times base color texture alpha) is\nused. Default `blend` below opacity 1, `opaque` otherwise.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneAlphaMode"
@@ -3066,14 +3059,14 @@
           "minItems": 4
         },
         "double_sided": {
-          "description": "Version 8: draw back faces too, lit from their own side.",
+          "description": "Draw back faces too, lit from their own side.",
           "type": [
             "boolean",
             "null"
           ]
         },
         "emissive": {
-          "description": "Version 8: emitted linear color, not negative (glTF's emissive factor\ntimes its emissive strength).",
+          "description": "Emitted linear color, not negative (glTF's emissive factor\ntimes its emissive strength).",
           "type": [
             "array",
             "null"
@@ -3087,7 +3080,7 @@
           "minItems": 3
         },
         "emissive_texture": {
-          "description": "Version 8: sRGB color multiplying `emissive`.",
+          "description": "SRGB color multiplying `emissive`.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneMap"
@@ -3098,7 +3091,7 @@
           ]
         },
         "grounding": {
-          "description": "Version 9: the ground staining the base of objects terrains place.",
+          "description": "The ground staining the base of objects terrains place.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneGrounding"
@@ -3115,7 +3108,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "ior": {
-          "description": "Version 8, with `transmission`: the index of refraction in `[1, 3]`;\ndefault 1.5.",
+          "description": "With `transmission`: the index of refraction in `[1, 3]`;\ndefault 1.5.",
           "type": [
             "number",
             "null"
@@ -3125,7 +3118,7 @@
           "minimum": 1.0
         },
         "metallic_roughness_texture": {
-          "description": "Version 8: linear green multiplies roughness and blue metalness.",
+          "description": "Linear green multiplies roughness and blue metalness.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneMap"
@@ -3136,7 +3129,7 @@
           ]
         },
         "normal_scale": {
-          "description": "Version 8: scales the normal map's deflection; default 1.",
+          "description": "Scales the normal map's deflection; default 1.",
           "type": [
             "number",
             "null"
@@ -3144,7 +3137,7 @@
           "format": "float"
         },
         "normal_texture": {
-          "description": "Version 8: a tangent-space normal map (green up the image).",
+          "description": "A tangent-space normal map (green up the image).",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneMap"
@@ -3155,7 +3148,7 @@
           ]
         },
         "occlusion_strength": {
-          "description": "Version 8: how much the occlusion map darkens, in `[0, 1]`; default 1.",
+          "description": "How much the occlusion map darkens, in `[0, 1]`; default 1.",
           "type": [
             "number",
             "null"
@@ -3165,7 +3158,7 @@
           "minimum": 0.0
         },
         "occlusion_texture": {
-          "description": "Version 8: linear red darkens indirect light.",
+          "description": "Linear red darkens indirect light.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneMap"
@@ -3176,7 +3169,7 @@
           ]
         },
         "opacity": {
-          "description": "The fraction of light behind it the surface covers, in `(0, 1]`.\nBelow 1 it draws transparent, blending in any order,\nwriting no depth and casting no shadow. Requires version 6. With\n`alpha_mode` `mask` it is the alpha the cutoff tests.",
+          "description": "The fraction of light behind it the surface covers, in `(0, 1]`.\nBelow 1 it draws transparent, blending in any order,\nwriting no depth and casting no shadow. With\n`alpha_mode` `mask` it is the alpha the cutoff tests.",
           "type": [
             "number",
             "null"
@@ -3186,7 +3179,7 @@
           "maximum": 1.0
         },
         "surface": {
-          "description": "How the surface responds to light beyond its color.\nRequires version 5; without it the material is matte.",
+          "description": "How the surface responds to light beyond its color; without it the\nmaterial is matte.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSurface"
@@ -3197,7 +3190,7 @@
           ]
         },
         "texture": {
-          "description": "Base color texture: its sRGB color multiplies `color`. A texture ID,\nor (version 8) a map with sampler and transform settings. IDs clamp at\nthe texture's edges before version 8 and repeat from version 8.",
+          "description": "Base color texture: its sRGB color multiplies `color`. A texture ID,\nwhich repeats, or a map with sampler and transform settings.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneMap"
@@ -3208,7 +3201,7 @@
           ]
         },
         "thickness": {
-          "description": "Version 8, with `transmission`: the depth in world units of the\nvolume beneath the surface that bends rays; default 0, a thin wall.",
+          "description": "With `transmission`: the depth in world units of the\nvolume beneath the surface that bends rays; default 0, a thin wall.",
           "type": [
             "number",
             "null"
@@ -3217,7 +3210,7 @@
           "minimum": 0.0
         },
         "top": {
-          "description": "Version 9: a layer settling on faces turned up, such as moss,\nlichen, dust or snow.",
+          "description": "A layer settling on faces turned up, such as moss,\nlichen, dust or snow.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTopLayer"
@@ -3228,7 +3221,7 @@
           ]
         },
         "transmission": {
-          "description": "Version 8: the share of light passing through the surface instead of\ndiffusing off it, in `[0, 1]`, tinted by its color (\nglTF `KHR_materials_transmission`). Transmissive materials draw in\nthe transparent pass; the environment's `refraction` bends what shows\nthrough them.",
+          "description": "The share of light passing through the surface instead of\ndiffusing off it, in `[0, 1]`, tinted by its color (\nglTF `KHR_materials_transmission`). Transmissive materials draw in\nthe transparent pass; the environment's `refraction` bends what shows\nthrough them.",
           "type": [
             "number",
             "null"
@@ -3238,7 +3231,7 @@
           "minimum": 0.0
         },
         "world_tiling": {
-          "description": "Version 9: lays the maps from the world's axes, one repeat every\nthis many meters, instead of by texture coordinates:\nno seams and one texel density at any size, for surfaces that stay\nwhere they are, such as rocks. In `(0, 10000]`.",
+          "description": "Lays the maps from the world's axes, one repeat every\nthis many meters, instead of by texture coordinates:\nno seams and one texel density at any size, for surfaces that stay\nwhere they are, such as rocks. In `(0, 10000]`.",
           "type": [
             "number",
             "null"
@@ -3283,7 +3276,7 @@
       ]
     },
     "SceneNavigation": {
-      "description": "Navigation. Requires version 9.",
+      "description": "Navigation.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -3306,7 +3299,7 @@
       "type": "object",
       "properties": {
         "animation": {
-          "description": "Plays an animation on its targets. Requires version 8.",
+          "description": "Plays an animation on its targets.",
           "anyOf": [
             {
               "$ref": "#/$defs/ScenePlayer"
@@ -3317,7 +3310,7 @@
           ]
         },
         "collider": {
-          "description": "Local collision shape, independent of rendering. Requires version 4.",
+          "description": "Local collision shape, independent of rendering.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneCollider"
@@ -3328,7 +3321,7 @@
           ]
         },
         "decal": {
-          "description": "Projects a material onto the opaque surfaces inside this entity's\nbox. Requires version 8.",
+          "description": "Projects a material onto the opaque surfaces inside this entity's\nbox.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneDecal"
@@ -3339,7 +3332,7 @@
           ]
         },
         "deformer": {
-          "description": "Presses tracks into deformable ground. Requires\nversion 9.",
+          "description": "Presses tracks into deformable ground.",
           "anyOf": [
             {
               "$ref": "#/$defs/Deformer"
@@ -3350,7 +3343,7 @@
           ]
         },
         "floating": {
-          "description": "Rides the sea. Requires version 9.",
+          "description": "Rides the sea.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneFloating"
@@ -3361,7 +3354,7 @@
           ]
         },
         "grounded": {
-          "description": "Stands on the terrain: its translation's y becomes\n`offset` meters above the ground under it. Roots only. Requires\nversion 9.",
+          "description": "Stands on the terrain: its translation's y becomes\n`offset` meters above the ground under it. Roots only.",
           "anyOf": [
             {
               "$ref": "#/$defs/Grounded"
@@ -3378,7 +3371,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "light": {
-          "description": "A point or spot light. Requires version 6.",
+          "description": "A point or spot light.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneLight"
@@ -3413,7 +3406,7 @@
           "maxLength": 128
         },
         "nav_agent": {
-          "description": "Walks over the terrain to a destination. Roots only.\nRequires version 9.",
+          "description": "Walks over the terrain to a destination. Roots only.",
           "anyOf": [
             {
               "$ref": "#/$defs/NavAgent"
@@ -3434,7 +3427,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "particles": {
-          "description": "A particle emitter. Requires version 6.",
+          "description": "A particle emitter.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneEmitter"
@@ -3455,7 +3448,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "prefetch": {
-          "description": "Names it a place the camera may be sent to, whose\nterrain workers generate ahead of need. Requires version 9.",
+          "description": "Names it a place the camera may be sent to, whose\nterrain workers generate ahead of need.",
           "anyOf": [
             {
               "$ref": "#/$defs/TerrainPrefetch"
@@ -3466,7 +3459,7 @@
           ]
         },
         "reflection_probe": {
-          "description": "Captures this entity's surroundings into an environment map that\nsurfaces inside its world box reflect. Requires\nversion 8.",
+          "description": "Captures this entity's surroundings into an environment map that\nsurfaces inside its world box reflect.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneReflectionProbe"
@@ -3477,7 +3470,7 @@
           ]
         },
         "skin": {
-          "description": "The skin deforming this object's mesh. Requires\nversion 8 and a mesh with joints and weights.",
+          "description": "The skin deforming this object's mesh. Requires a mesh with\njoints and weights.",
           "type": [
             "string",
             "null"
@@ -3487,7 +3480,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "spline": {
-          "description": "One of this document's meshes bent along a curve.\nRequires version 9.",
+          "description": "One of this document's meshes bent along a curve.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSpline"
@@ -3507,7 +3500,7 @@
           "maxItems": 16
         },
         "terrain": {
-          "description": "A heightfield terrain whose tiles stream around the camera.\nRequires version 9.",
+          "description": "A heightfield terrain whose tiles stream around the camera.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrain"
@@ -3518,7 +3511,7 @@
           ]
         },
         "tint": {
-          "description": "Multiplies this object's color and opacity channel by channel,\neach factor finite and in `[0, 1]`. Requires version 8.",
+          "description": "Multiplies this object's color and opacity channel by channel,\neach factor finite and in `[0, 1]`.",
           "type": [
             "array",
             "null"
@@ -3559,7 +3552,7 @@
       ]
     },
     "SceneOcclusionCulling": {
-      "description": "Occlusion culling settings: whether GPU-presented frames draw what the\nlast frame showed, test every other frustum-visible instance against a\ndepth pyramid of those depths, then draw only what it does not hide.\nOutput is unchanged; hidden instances cost no drawing. On by default.\nRequires version 9.",
+      "description": "Occlusion culling settings: whether GPU-presented frames draw what the\nlast frame showed, test every other frustum-visible instance against a\ndepth pyramid of those depths, then draw only what it does not hide.\nOutput is unchanged; hidden instances cost no drawing. On by default.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -3571,7 +3564,7 @@
       "additionalProperties": false
     },
     "SceneOccupancy": {
-      "description": "Occupancy settings. Requires version 9.",
+      "description": "Occupancy settings.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -3615,7 +3608,7 @@
       "additionalProperties": false
     },
     "SceneOcean": {
-      "description": "The sea. Requires version 9.",
+      "description": "The sea.",
       "type": "object",
       "properties": {
         "choppiness": {
@@ -3730,7 +3723,7 @@
       ]
     },
     "SceneParticles": {
-      "description": "Particle settings. Requires version 6.",
+      "description": "Particle settings.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -3810,7 +3803,7 @@
       ]
     },
     "SceneReflectionProbe": {
-      "description": "A reflection probe on this entity. Requires version 8.\n\nIts box is axis-aligned in world space and centered on the entity's\nworld position, so the entity's rotation and scale leave it unchanged.\nSurfaces inside it reflect what the probe captured from its center\n(still objects and still lights), fading out over `blend` toward its\nfaces into the probes around it or the sky.",
+      "description": "A reflection probe on this entity.\n\nIts box is axis-aligned in world space and centered on the entity's\nworld position, so the entity's rotation and scale leave it unchanged.\nSurfaces inside it reflect what the probe captured from its center\n(still objects and still lights), fading out over `blend` toward its\nfaces into the probes around it or the sky.",
       "type": "object",
       "properties": {
         "blend": {
@@ -3832,7 +3825,7 @@
           "minItems": 3
         },
         "interior": {
-          "description": "Makes the box an interior: a cave or a hall letting in\nonly these shares of the sky's light and the sun's. Requires\nversion 9.",
+          "description": "Makes the box an interior: a cave or a hall letting in\nonly these shares of the sky's light and the sun's.",
           "anyOf": [
             {
               "$ref": "#/$defs/Interior"
@@ -3849,7 +3842,7 @@
       ]
     },
     "SceneReflectionProbes": {
-      "description": "Reflection probe settings. Requires version 8.",
+      "description": "Reflection probe settings.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -3893,7 +3886,7 @@
       "additionalProperties": false
     },
     "SceneReflections": {
-      "description": "Screen-space reflections. Requires version 6; an intensity\nof 0 turns them off.",
+      "description": "Screen-space reflections; an intensity\nof 0 turns them off.",
       "type": "object",
       "properties": {
         "distance": {
@@ -3924,7 +3917,7 @@
       "additionalProperties": false
     },
     "SceneRefraction": {
-      "description": "Refraction through glass. Requires version 8; a strength\nof 0 turns it off.",
+      "description": "Refraction through glass; a strength\nof 0 turns it off.",
       "type": "object",
       "properties": {
         "blur": {
@@ -3962,7 +3955,7 @@
           ]
         },
         "cascades": {
-          "description": "Sharper maps (cascades) splitting `near_distance`, each reaching a\nthird as far as the next; 3 when omitted. Version 6.",
+          "description": "Sharper maps (cascades) splitting `near_distance`, each reaching a\nthird as far as the next; 3 when omitted.",
           "type": [
             "integer",
             "null"
@@ -4056,7 +4049,7 @@
       ]
     },
     "SceneSky": {
-      "description": "A physically based sky. Defaults are Earth's. Opt-in. Requires version 9.",
+      "description": "A physically based sky. Defaults are Earth's. Opt-in.",
       "type": "object",
       "properties": {
         "adaptation": {
@@ -4215,7 +4208,7 @@
       "additionalProperties": false
     },
     "SceneSpline": {
-      "description": "A mesh bent along a curve on this entity. Requires\nversion 9.\n\nThe curve passes through `points` (2 to 4096, in the entity's space),\njoined by a centripetal Catmull-Rom spline. Copies of the mesh lie end\nto end along it, the mesh's x axis along the curve, its y up and its z\nacross, each stretched along x so a whole number of them spans it; the\ncurve's frames keep y up. Chunks of at most 256 meters of curve draw\nwith the material.",
+      "description": "A mesh bent along a curve on this entity.\n\nThe curve passes through `points` (2 to 4096, in the entity's space),\njoined by a centripetal Catmull-Rom spline. Copies of the mesh lie end\nto end along it, the mesh's x axis along the curve, its y up and its z\nacross, each stretched along x so a whole number of them spans it; the\ncurve's frames keep y up. Chunks of at most 256 meters of curve draw\nwith the material.",
       "type": "object",
       "properties": {
         "material": {
@@ -4293,7 +4286,7 @@
       "additionalProperties": false
     },
     "SceneSubpixelCulling": {
-      "description": "Sub-pixel culling settings: whether GPU-presented frames leave visible\ninstances whose projected bounds cover no pixel center undrawn. They\ncould produce no fragments, so output is unchanged. On by default.\nRequires version 9.",
+      "description": "Sub-pixel culling settings: whether GPU-presented frames leave visible\ninstances whose projected bounds cover no pixel center undrawn. They\ncould produce no fragments, so output is unchanged. On by default.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -4305,7 +4298,7 @@
       "additionalProperties": false
     },
     "SceneSunShafts": {
-      "description": "Sun shafts: sunlight scattered by the fog between shadow\ncasters. Requires version 6 and shadows; an intensity of 0 turns them\noff.",
+      "description": "Sun shafts: sunlight scattered by the fog between shadow\ncasters. Requires shadows; an intensity of 0 turns them\noff.",
       "type": "object",
       "properties": {
         "anisotropy": {
@@ -4397,7 +4390,7 @@
       ]
     },
     "SceneTemporalAntialiasing": {
-      "description": "Temporal antialiasing settings: whether ordinary GPU-presented frames\njitter and resolve against their history. Its targets cost 16 bytes per\ncanvas pixel while it runs. Off by default. Requires version 9.",
+      "description": "Temporal antialiasing settings: whether ordinary GPU-presented frames\njitter and resolve against their history. Its targets cost 16 bytes per\ncanvas pixel while it runs. Off by default.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -4409,7 +4402,7 @@
       "additionalProperties": false
     },
     "SceneTerrain": {
-      "description": "A heightfield terrain on this entity. Requires version 9.\n\nIts first corner (least x and z) lies at `origin` in world space,\nwhatever the entity's transform; heights rise from the origin's y. Its\nheights come from `layers`, applied in order to every sample (later\nlayers win), or from an `ETR1` `file` beside the scene, whose tiles\nstream by byte range. Level-0 tiles span 256 samples `spacing` meters\napart; coarser levels halve the tiles up to one.",
+      "description": "A heightfield terrain on this entity.\n\nIts first corner (least x and z) lies at `origin` in world space,\nwhatever the entity's transform; heights rise from the origin's y. Its\nheights come from `layers`, applied in order to every sample (later\nlayers win), or from an `ETR1` `file` beside the scene, whose tiles\nstream by byte range. Level-0 tiles span 256 samples `spacing` meters\napart; coarser levels halve the tiles up to one.",
       "type": "object",
       "properties": {
         "collision": {
@@ -4789,7 +4782,7 @@
       "additionalProperties": false
     },
     "SceneTerrainSettings": {
-      "description": "Terrain settings. Requires version 9.",
+      "description": "Terrain settings.",
       "type": "object",
       "properties": {
         "cache_bytes": {
@@ -5029,7 +5022,7 @@
       ]
     },
     "SceneTexture": {
-      "description": "Opaque RGBA8 sRGB pixels in row-major, top-to-bottom order: inline as\nbase64, or (version 7) an image file beside the scene that\nthe host decodes with the platform's own decoder when the scene loads.\n\nDecoding never happens in simulation or rendering. Scenes store one level;\nthe renderer generates mip levels and samples them trilinearly.",
+      "description": "Opaque RGBA8 sRGB pixels in row-major, top-to-bottom order: inline as\nbase64, or an image file beside the scene that\nthe host decodes with the platform's own decoder when the scene loads.\n\nDecoding never happens in simulation or rendering. Scenes store one level;\nthe renderer generates mip levels and samples them trilinearly.",
       "type": "object",
       "properties": {
         "height": {
@@ -5055,7 +5048,7 @@
           ]
         },
         "uri": {
-          "description": "An image file (PNG, JPEG or WebP) as a path relative to the scene,\ninstead of inline pixels. Version 7.",
+          "description": "An image file (PNG, JPEG or WebP) as a path relative to the scene,\ninstead of inline pixels.",
           "type": [
             "string",
             "null"
@@ -5189,7 +5182,7 @@
       ]
     },
     "SceneTimeOfDay": {
-      "description": "The time of day. Opt-in. Requires version 9.",
+      "description": "The time of day. Opt-in.",
       "type": "object",
       "properties": {
         "day": {
@@ -5348,7 +5341,7 @@
       "type": "object",
       "properties": {
         "color": {
-          "description": "Version 8: linear RGBA in `[0, 1]` multiplying the material's base\ncolor. Every vertex of a mesh has one or none does.",
+          "description": "Linear RGBA in `[0, 1]` multiplying the material's base\ncolor. Every vertex of a mesh has one or none does.",
           "type": [
             "array",
             "null"
@@ -5361,7 +5354,7 @@
           "minItems": 4
         },
         "joints": {
-          "description": "Version 8: up to four joints (indices into the skin of the entities\ndrawing the mesh) moving this vertex. Every vertex of\na mesh has joints and weights or none does.",
+          "description": "Up to four joints (indices into the skin of the entities\ndrawing the mesh) moving this vertex. Every vertex of\na mesh has joints and weights or none does.",
           "type": [
             "array",
             "null"
@@ -5404,7 +5397,7 @@
           "minItems": 2
         },
         "uv1": {
-          "description": "Version 8: second texture coordinates, which texture maps may read.\nEvery vertex of a mesh has them or none does.",
+          "description": "Second texture coordinates, which texture maps may read.\nEvery vertex of a mesh has them or none does.",
           "type": [
             "array",
             "null"
@@ -5417,7 +5410,7 @@
           "minItems": 2
         },
         "weights": {
-          "description": "Version 8: the joints' weights, not negative and not all zero; they\nare normalized.",
+          "description": "The joints' weights, not negative and not all zero; they\nare normalized.",
           "type": [
             "array",
             "null"
@@ -5437,7 +5430,7 @@
       ]
     },
     "SceneVirtualGeometry": {
-      "description": "Virtual geometry settings: whether meshes built as cluster\nhierarchies draw the clusters each view needs, and how coarse those may\nbe. Requires version 8.",
+      "description": "Virtual geometry settings: whether meshes built as cluster\nhierarchies draw the clusters each view needs, and how coarse those may\nbe.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -5470,7 +5463,7 @@
       "additionalProperties": false
     },
     "SceneWater": {
-      "description": "Water settings. Requires version 9.",
+      "description": "Water settings.",
       "type": "object",
       "properties": {
         "clarity": {
@@ -5539,7 +5532,7 @@
       "additionalProperties": false
     },
     "SceneWind": {
-      "description": "The wind. Requires version 9.",
+      "description": "The wind.",
       "type": "object",
       "properties": {
         "gusts": {
@@ -5570,7 +5563,7 @@
       "additionalProperties": false
     },
     "SceneWorldStreaming": {
-      "description": "World streaming. Requires version 9.",
+      "description": "World streaming.",
       "type": "object",
       "properties": {
         "distance": {
@@ -5732,7 +5725,7 @@
       ]
     },
     "TerrainPrefetch": {
-      "description": "Names a place the camera may be sent to, such as a spawn point:\nwhile the view wants nothing, workers generate the terrain tiles a camera\nthere wants into memory, as they do ahead of the camera, and those tiles\nstay there while it is named, so the camera sent there finds them at once.\nRequires version 9.",
+      "description": "Names a place the camera may be sent to, such as a spawn point:\nwhile the view wants nothing, workers generate the terrain tiles a camera\nthere wants into memory, as they do ahead of the camera, and those tiles\nstay there while it is named, so the camera sent there finds them at once.",
       "type": "object",
       "properties": {
         "reach": {

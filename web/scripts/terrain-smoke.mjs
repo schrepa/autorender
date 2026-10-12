@@ -1,11 +1,10 @@
 /**
- * Terrain checks: a version 9 fixture with a
+ * Terrain checks: a fixture with a
  * generated terrain streams, draws, casts shadows, collides and answers
  * height queries; the terrain control and environment section change what
  * draws; its horizon map casts long shadows and aerial
  * perspective hazes it; an `ETR1` file baked from the same
- * layers streams by byte range and matches; a version 8 scene with terrain
- * or aerial perspective is refused; the import tool brings
+ * layers streams by byte range and matches; the import tool brings
  * the dome in as a heightmap of its own and the scene it writes loads.
  *
  * Bakes its file with engine_assetc's `terrain_bake` and imports with
@@ -1109,24 +1108,6 @@ try {
   await command("pause");
   assert.ok(probes.reflection_probes.ready > 0, `probe captured: ${JSON.stringify(probes)}`);
   checks.push({ check: "probe captures", probes: probes.reflection_probes.ready });
-
-  // Version 8 scenes cannot author terrain or aerial perspective.
-  const old = structuredClone(fixture);
-  old.version = 8;
-  old.revision = scene.revision + 1;
-  scene.serve(old);
-  const refused = await command("reload", { expected_revision: String(scene.revision), revision: String(old.revision) }, false);
-  assert.equal(refused.error.code, "version_required");
-  assert.equal(refused.error.path, "$.entities[1].terrain");
-  const hazy = structuredClone(old);
-  hazy.entities.splice(1, 1);
-  hazy.environment = { atmosphere: { preset: "day", aerial_density: 0.0002 } };
-  hazy.revision = old.revision + 1;
-  scene.serve(hazy);
-  const refusedAir = await command("reload", { expected_revision: String(scene.revision), revision: String(hazy.revision) }, false);
-  assert.equal(refusedAir.error.code, "version_required");
-  assert.equal(refusedAir.error.path, "$.environment.atmosphere.aerial_density");
-  checks.push({ check: "version 9 required" });
 
   // The import tool reads the dome as a RAW heightmap of its
   // own, centered on its middle without detail noise, and the scene it

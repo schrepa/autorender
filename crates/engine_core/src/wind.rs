@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use engine_settings::settings;
 
 settings! {
-    /// The wind. Requires version 9.
+    /// The wind.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

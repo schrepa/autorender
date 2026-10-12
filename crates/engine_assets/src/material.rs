@@ -177,8 +177,8 @@ impl Sampler {
         mipmap_filter: Some(Filter::Linear),
     };
 
-    /// Clamped at the edges and trilinear: how [`Material::textured`] and
-    /// scenes before version 8 sample.
+    /// Clamped at the edges and trilinear: how [`Material::textured`]
+    /// samples.
     pub const CLAMP: Self = Self {
         wrap_u: Wrap::ClampToEdge,
         wrap_v: Wrap::ClampToEdge,

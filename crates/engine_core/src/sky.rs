@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use engine_settings::settings;
 
 settings! {
-    /// A physically based sky. Defaults are Earth's. Opt-in. Requires version 9.
+    /// A physically based sky. Defaults are Earth's. Opt-in.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

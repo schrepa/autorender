@@ -89,7 +89,7 @@ settings! {
         /// than `distance`.
         pub near_distance: f32 = 100.0 => above(0.0),
         /// Sharper maps (cascades) splitting `near_distance`, each reaching a
-        /// third as far as the next; 3 when omitted. Version 6.
+        /// third as far as the next; 3 when omitted.
         #[serde(
             deserialize_with = "cascades_or_default",
             skip_serializing_if = "is_default_cascades"
@@ -201,8 +201,7 @@ fn cascades_or_default<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32
     Ok(Option::<u32>::deserialize(deserializer)?.unwrap_or(Shadows::default().cascades))
 }
 
-/// Scenes omit the default cascade count, which documents before version 6
-/// cannot change.
+/// Scenes omit the default cascade count.
 fn is_default_cascades(cascades: &u32) -> bool {
     *cascades == Shadows::default().cascades
 }
@@ -292,7 +291,7 @@ impl Bloom {
 
 settings! {
     /// Sun shafts: sunlight scattered by the fog between shadow
-    /// casters. Requires version 6 and shadows; an intensity of 0 turns them
+    /// casters. Requires shadows; an intensity of 0 turns them
     /// off.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
@@ -326,7 +325,7 @@ impl SunShafts {
 }
 
 settings! {
-    /// Screen-space reflections. Requires version 6; an intensity
+    /// Screen-space reflections; an intensity
     /// of 0 turns them off.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
@@ -360,7 +359,7 @@ impl Reflections {
 }
 
 settings! {
-    /// Refraction through glass. Requires version 8; a strength
+    /// Refraction through glass; a strength
     /// of 0 turns it off.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(

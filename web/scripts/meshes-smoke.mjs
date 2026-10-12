@@ -1,5 +1,5 @@
 /**
- * Meshes as inspected: a version 9 fixture's inline two-joint ribbon with
+ * Meshes as inspected: a fixture's inline two-joint ribbon with
  * its skin and a clip bending its upper joint, and a dense ball near and
  * far. The skin, mesh and player inspect as authored (IDs, the inline
  * source, joints, inverse binds, the clip's targets and channels), the
@@ -42,7 +42,7 @@ const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 // The tip joint stands one unit up: its inverse bind moves one unit down.
 const tipBind = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1];
 const fixture = {
-  version: 9, id: "skin-fixture", revision: 1,
+  id: "skin-fixture", revision: 1,
   camera: { position: [0, 1, 4], target: [0, 1, 0], fov_degrees: 60, near: 0.1, far: 2000 },
   materials: [{ id: "plain", color: [0.8, 0.4, 0.2, 1], double_sided: true }, { id: "stone", color: [0.5, 0.55, 0.6, 1], double_sided: true }],
   meshes: [

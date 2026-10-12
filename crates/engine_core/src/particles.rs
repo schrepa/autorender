@@ -120,7 +120,7 @@ impl ParticleEmitter {
 }
 
 settings! {
-    /// Particle settings. Requires version 6.
+    /// Particle settings.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

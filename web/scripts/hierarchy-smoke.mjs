@@ -46,7 +46,6 @@ async function capture(name) {
 
 try {
   const source = gardenScene();
-  assert.equal(source.version, 4, "This smoke requires the current hierarchy/collider sample.");
   assert.ok(Number.isSafeInteger(source.revision) && source.revision < Number.MAX_SAFE_INTEGER - 20);
   const fixture = structuredClone(source);
   const prefab = fixture.prefabs.find(prefab => prefab.id === "garden-lantern");

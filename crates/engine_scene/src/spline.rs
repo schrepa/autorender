@@ -1,4 +1,4 @@
-//! Scene version 9 spline meshes: an entity field bending
+//! Scene spline meshes: an entity field bending
 //! copies of one of the document's meshes along a curve.
 
 use engine_core::{MAX_SPLINE_POINTS, MaterialHandle, MeshHandle, SplineMesh, glam::Vec3};
@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::SceneError;
 
-/// A mesh bent along a curve on this entity. Requires
-/// version 9.
+/// A mesh bent along a curve on this entity.
 ///
 /// The curve passes through `points` (2 to 4096, in the entity's space),
 /// joined by a centripetal Catmull-Rom spline. Copies of the mesh lie end

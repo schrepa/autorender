@@ -1,4 +1,4 @@
-//! Scene version 9 terrain: an entity field describing a
+//! Scene terrain: an entity field describing a
 //! heightfield terrain, generated from a layer stack or read from an `ETR1`
 //! file beside the scene, and its surface: the materials its
 //! ground is made of and the biomes deciding where each lies.
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{SceneError, SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
 
-/// A heightfield terrain on this entity. Requires version 9.
+/// A heightfield terrain on this entity.
 ///
 /// Its first corner (least x and z) lies at `origin` in world space,
 /// whatever the entity's transform; heights rise from the origin's y. Its

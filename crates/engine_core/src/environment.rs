@@ -11,13 +11,12 @@ use crate::Atmosphere;
 pub use engine_settings::InvalidSetting;
 
 /// An environment section: the settings of one engine feature, a resource
-/// that is section [`Self::KEY`] of a scene `environment` (from scene version
-/// [`Self::SINCE`]), of the environment control and of inspection, in the
-/// same JSON shape. A world without the resource reads as
-/// [`Self::section_off`]; opt-in sections are off unless a scene names them,
-/// the others start at their defaults. [`environment_sections`] implements it
-/// for every type it lists, from each type's own `off`, `validate` and
-/// `sanitized`.
+/// that is section [`Self::KEY`] of a scene `environment`, of the
+/// environment control and of inspection, in the same JSON shape. A world
+/// without the resource reads as [`Self::section_off`]; opt-in sections are
+/// off unless a scene names them, the others start at their defaults.
+/// [`environment_sections`] implements it for every type it lists, from each
+/// type's own `off`, `validate` and `sanitized`.
 pub trait EnvironmentSection:
     Resource + Copy + Default + PartialEq + serde::Serialize + std::fmt::Debug
 {
@@ -26,8 +25,6 @@ pub trait EnvironmentSection:
     const KEY: &'static str;
     /// The settings type's name.
     const NAME: &'static str;
-    /// The scene version that first authors the section.
-    const SINCE: u32;
     /// Whether the section is off unless a scene names it.
     const OPT_IN: bool;
     /// The feature whose plugin adds the section; None for the renderer's
@@ -46,12 +43,12 @@ pub trait EnvironmentSection:
 }
 
 /// Every environment section in authored order: the one list of them. Each
-/// entry is `key: Settings { since: VERSION, opt_in: BOOL, feature: FEATURE }`,
-/// the section's key, its settings type in this crate (which has `off`,
-/// `validate` and `sanitized`), the scene version that first authors it,
-/// whether it is off unless a scene names it, and the [`crate::Feature`] whose
-/// plugin adds it (`Core` for the renderer's own, always present). Code listing sections passes a macro that
-/// receives this list (`environment_sections!(callback)`) instead of
+/// entry is `key: Settings { opt_in: BOOL, feature: FEATURE }`, the
+/// section's key, its settings type in this crate (which has `off`,
+/// `validate` and `sanitized`), whether it is off unless a scene names it,
+/// and the [`crate::Feature`] whose plugin adds it (`Core` for the
+/// renderer's own, always present). Code listing sections passes a macro
+/// that receives this list (`environment_sections!(callback)`) instead of
 /// writing them out, so a section added here reaches the environment
 /// snapshot, resource registration, scenes, the environment control and
 /// inspection at once.
@@ -59,34 +56,34 @@ pub trait EnvironmentSection:
 macro_rules! environment_sections {
     ($then:ident) => {
         $then! {
-            shadows: Shadows { since: 5, opt_in: false, feature: Core },
-            ambient_occlusion: AmbientOcclusion { since: 5, opt_in: false, feature: Core },
-            bloom: Bloom { since: 5, opt_in: false, feature: Core },
-            local_lights: LocalLightSettings { since: 6, opt_in: false, feature: Core },
-            sun_shafts: SunShafts { since: 6, opt_in: true, feature: Core },
-            reflections: Reflections { since: 6, opt_in: true, feature: Core },
-            particles: ParticleSettings { since: 6, opt_in: false, feature: Core },
-            refraction: Refraction { since: 8, opt_in: true, feature: Core },
-            decals: DecalSettings { since: 8, opt_in: false, feature: Core },
-            reflection_probes: ReflectionProbeSettings { since: 8, opt_in: false, feature: Core },
-            virtual_geometry: VirtualGeometry { since: 8, opt_in: false, feature: Core },
-            level_of_detail: LevelOfDetail { since: 8, opt_in: false, feature: Core },
-            terrain: TerrainSettings { since: 9, opt_in: false, feature: Terrain },
-            ground_cover: GroundCover { since: 9, opt_in: false, feature: Terrain },
-            wind: Wind { since: 9, opt_in: false, feature: Terrain },
-            occupancy: Occupancy { since: 9, opt_in: false, feature: Terrain },
-            contact_shadows: ContactShadows { since: 9, opt_in: false, feature: Core },
-            water: Water { since: 9, opt_in: false, feature: Terrain },
-            ocean: Ocean { since: 9, opt_in: false, feature: Ocean },
-            deformation: Deformation { since: 9, opt_in: false, feature: Deformation },
-            clouds: Clouds { since: 9, opt_in: true, feature: Core },
-            world_streaming: WorldStreaming { since: 9, opt_in: false, feature: WorldStreaming },
-            sky: Sky { since: 9, opt_in: true, feature: Core },
-            time_of_day: TimeOfDay { since: 9, opt_in: true, feature: TimeOfDay },
-            navigation: Navigation { since: 9, opt_in: false, feature: Navigation },
-            occlusion_culling: OcclusionCulling { since: 9, opt_in: false, feature: Core },
-            subpixel_culling: SubpixelCulling { since: 9, opt_in: false, feature: Core },
-            temporal_antialiasing: TemporalAntialiasing { since: 9, opt_in: false, feature: Core },
+            shadows: Shadows { opt_in: false, feature: Core },
+            ambient_occlusion: AmbientOcclusion { opt_in: false, feature: Core },
+            bloom: Bloom { opt_in: false, feature: Core },
+            local_lights: LocalLightSettings { opt_in: false, feature: Core },
+            sun_shafts: SunShafts { opt_in: true, feature: Core },
+            reflections: Reflections { opt_in: true, feature: Core },
+            particles: ParticleSettings { opt_in: false, feature: Core },
+            refraction: Refraction { opt_in: true, feature: Core },
+            decals: DecalSettings { opt_in: false, feature: Core },
+            reflection_probes: ReflectionProbeSettings { opt_in: false, feature: Core },
+            virtual_geometry: VirtualGeometry { opt_in: false, feature: Core },
+            level_of_detail: LevelOfDetail { opt_in: false, feature: Core },
+            terrain: TerrainSettings { opt_in: false, feature: Terrain },
+            ground_cover: GroundCover { opt_in: false, feature: Terrain },
+            wind: Wind { opt_in: false, feature: Terrain },
+            occupancy: Occupancy { opt_in: false, feature: Terrain },
+            contact_shadows: ContactShadows { opt_in: false, feature: Core },
+            water: Water { opt_in: false, feature: Terrain },
+            ocean: Ocean { opt_in: false, feature: Ocean },
+            deformation: Deformation { opt_in: false, feature: Deformation },
+            clouds: Clouds { opt_in: true, feature: Core },
+            world_streaming: WorldStreaming { opt_in: false, feature: WorldStreaming },
+            sky: Sky { opt_in: true, feature: Core },
+            time_of_day: TimeOfDay { opt_in: true, feature: TimeOfDay },
+            navigation: Navigation { opt_in: false, feature: Navigation },
+            occlusion_culling: OcclusionCulling { opt_in: false, feature: Core },
+            subpixel_culling: SubpixelCulling { opt_in: false, feature: Core },
+            temporal_antialiasing: TemporalAntialiasing { opt_in: false, feature: Core },
         }
     };
 }
@@ -104,12 +101,11 @@ macro_rules! section_feature {
 /// engine_core's part: each section's [`EnvironmentSection`], the
 /// [`Environment`] snapshot and the registration of default settings.
 macro_rules! core_sections {
-    ($($key:ident: $settings:ident { since: $since:literal, opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
+    ($($key:ident: $settings:ident { opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
         $(
             impl EnvironmentSection for crate::$settings {
                 const KEY: &'static str = stringify!($key);
                 const NAME: &'static str = stringify!($settings);
-                const SINCE: u32 = $since;
                 const OPT_IN: bool = $opt_in;
                 const FEATURE: Option<crate::Feature> = section_feature!($feature);
                 fn section_off() -> Self {

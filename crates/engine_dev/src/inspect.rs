@@ -1403,7 +1403,7 @@ impl DevTools {
         };
         match name {
             "SceneDocument" => Ok(
-                json!({"name": name, "kind": "authoring", "schema": scene_schema(definition)?, "constraints": format!("Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Fields newer than version 1 require the version that introduced them: {}. Every older version stays accepted with its own semantics. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state; the opt-in ones ({}) are then off.", engine_scene::version_features(), SceneEnvironment::opt_in_sections().join(", "))}),
+                json!({"name": name, "kind": "authoring", "schema": scene_schema(definition)?, "constraints": format!("Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state; the opt-in ones ({}) are then off.", SceneEnvironment::opt_in_sections().join(", "))}),
             ),
             "protocol" | "BrowserControl" => {
                 let schemas: Value =

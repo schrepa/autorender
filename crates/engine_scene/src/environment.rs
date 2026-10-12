@@ -1,8 +1,7 @@
 //! A scene's environment: its atmosphere and
 //! rendering effects
 //! and terrain settings as authored data.
-//! Version 5 documents with an `environment` apply it when instantiated
-//! (each section needs the scene version its settings type declares);
+//! Documents with an `environment` apply it when instantiated;
 //! development controls apply the same sections temporarily, and inspection
 //! reports the current resources in the same shape.
 //!
@@ -11,7 +10,7 @@
 //! atmosphere is authored differently, as a preset with overrides.
 
 use engine_core::{
-    Atmosphere, Environment, EnvironmentSection, InvalidSetting, Shadows, bevy_ecs::prelude::World,
+    Atmosphere, Environment, EnvironmentSection, InvalidSetting, bevy_ecs::prelude::World,
     glam::Vec3,
 };
 use engine_settings::ErrorCode;
@@ -74,10 +73,9 @@ impl AuthoredValue for Vec3 {
 }
 
 /// engine_scene's part of [`engine_core::atmosphere_fields`]: the authored
-/// atmosphere, its schema's rules, its overrides of a preset and the fields
-/// each scene version introduced.
+/// atmosphere, its schema's rules and its overrides of a preset.
 macro_rules! scene_atmosphere {
-    ($($(#[$doc:meta])* $field:ident: $ty:ident, since $since:literal, $rule:ident $(($($arg:expr),*))?;)*) => {
+    ($($(#[$doc:meta])* $field:ident: $ty:ident, $rule:ident $(($($arg:expr),*))?;)*) => {
         /// Sun, sky, fog and grade: a preset and the fields that
         /// differ from it. Colors are linear RGB and may exceed 1.
         #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
@@ -117,15 +115,6 @@ macro_rules! scene_atmosphere {
                 })*
                 atmosphere
             }
-
-            /// The first field present that scene version `version`
-            /// introduced, as its path below the environment.
-            pub(crate) fn first_field_since(&self, version: u32) -> Option<&'static str> {
-                $(if $since == version && self.$field.is_some() {
-                    return Some(concat!("atmosphere.", stringify!($field)));
-                })*
-                None
-            }
         }
     };
 }
@@ -164,7 +153,7 @@ pub trait SectionVisitor {
 /// authored [`SceneEnvironment`], read back from a world, and the visit of
 /// its sections.
 macro_rules! scene_sections {
-    ($($key:ident: $settings:ident { since: $since:literal, opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
+    ($($key:ident: $settings:ident { opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
         /// A scene's look. In a document, every omitted section takes the
         /// engine's default state (opt-in sections: off); in a development
         /// control, omitted sections stay as they are. Each section is the
@@ -223,22 +212,6 @@ impl SceneEnvironment {
         names.0
     }
 
-    /// The first section present that a scene version after `version`
-    /// introduced, and that version.
-    pub(crate) fn section_after(&self, version: u32) -> Option<(&'static str, u32)> {
-        struct After(u32, Option<(&'static str, u32)>);
-        impl SectionVisitor for After {
-            fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>) {
-                if self.1.is_none() && section.is_some() && T::SINCE > self.0 {
-                    self.1 = Some((name, T::SINCE));
-                }
-            }
-        }
-        let mut after = After(version, None);
-        self.visit(&mut after);
-        after.1
-    }
-
     /// The keys of the sections that are off unless a scene names them.
     pub fn opt_in_sections() -> Vec<&'static str> {
         struct OptIn(Vec<&'static str>);
@@ -252,38 +225,6 @@ impl SceneEnvironment {
         let mut keys = OptIn(Vec::new());
         Self::default().visit(&mut keys);
         keys.0
-    }
-
-    /// Every section's key with the scene version that introduced it.
-    pub(crate) fn section_versions() -> Vec<(u32, &'static str)> {
-        struct Versions(Vec<(u32, &'static str)>);
-        impl SectionVisitor for Versions {
-            fn section<T: EnvironmentSection>(&mut self, name: &'static str, _: Option<T>) {
-                self.0.push((T::SINCE, name));
-            }
-        }
-        let mut versions = Versions(Vec::new());
-        Self::default().visit(&mut versions);
-        versions.0
-    }
-
-    /// The first version 6 field present, as its path below the environment:
-    /// the grade's contrast, vibrance and tints, and a shadow cascade count
-    /// other than the default.
-    pub(crate) fn version_six_field(&self) -> Option<&'static str> {
-        let cascades = self
-            .shadows
-            .is_some_and(|shadows| shadows.cascades != Shadows::default().cascades);
-        self.atmosphere
-            .and_then(|atmosphere| atmosphere.first_field_since(6))
-            .or(cascades.then_some("shadows.cascades"))
-    }
-
-    /// The first version 9 field present, as its path below the environment:
-    /// aerial perspective.
-    pub(crate) fn version_nine_field(&self) -> Option<&'static str> {
-        self.atmosphere
-            .and_then(|atmosphere| atmosphere.first_field_since(9))
     }
 
     /// Checks every section present at authored path `path`.

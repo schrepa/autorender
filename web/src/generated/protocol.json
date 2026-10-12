@@ -172,8 +172,7 @@
     "unknown_variant": "A tag, such as an op, names no variant its type has.",
     "unsafe_output_path": "An output path lies outside the build's folder.",
     "unsupported_command": "The game or host runs no such command.",
-    "unsupported_version": "The protocol or scene version is not one this build reads.",
-    "version_required": "The field needs a newer scene version than the source declares.",
+    "unsupported_version": "The protocol version is not one this build reads.",
     "watch_locked": "The watch is already running.",
     "wrong_world": "The scene instance belongs to another engine's world."
   },

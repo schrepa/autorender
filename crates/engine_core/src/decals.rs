@@ -105,7 +105,7 @@ impl Decal {
 }
 
 settings! {
-    /// Decal settings. Requires version 8.
+    /// Decal settings.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

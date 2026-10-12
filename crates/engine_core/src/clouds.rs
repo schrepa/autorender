@@ -15,7 +15,6 @@ use engine_settings::settings;
 
 settings! {
     /// The cloud layer. Opt-in: a scene without a `clouds` section has none.
-    /// Requires version 9.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

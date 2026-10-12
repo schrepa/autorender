@@ -49,7 +49,7 @@ pub struct ReflectionProbe {
 
 settings! {
     /// An interior's light, blending in over the probe's blend distance inside
-    /// its faces. Requires version 9.
+    /// its faces.
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
@@ -107,7 +107,7 @@ impl ReflectionProbe {
 }
 
 settings! {
-    /// Reflection probe settings. Requires version 8.
+    /// Reflection probe settings.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use engine_settings::settings;
 
 settings! {
-    /// Occupancy settings. Requires version 9.
+    /// Occupancy settings.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

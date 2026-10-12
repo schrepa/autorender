@@ -273,8 +273,6 @@ fn merge(
             "namespace belongs to another or ambiguous import mode; use a new namespace or explicitly migrate its authoring data before import",
         ));
     }
-    // Upgrading keeps the meaning of the scene's own content.
-    current.upgrade();
     if replace {
         let retained = if as_prefab {
             current

@@ -72,10 +72,8 @@ error_codes! {
     RequestTooLarge => "request_too_large",
     /// The reply would exceed the reply size limit; ask for less.
     ResponseTooLarge => "response_too_large",
-    /// The protocol or scene version is not one this build reads.
+    /// The protocol version is not one this build reads.
     UnsupportedVersion => "unsupported_version",
-    /// The field needs a newer scene version than the source declares.
-    VersionRequired => "version_required",
     /// The game or host runs no such command.
     UnsupportedCommand => "unsupported_command",
     /// Text is not UTF-8.

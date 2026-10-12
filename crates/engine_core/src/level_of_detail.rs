@@ -20,7 +20,7 @@ use engine_settings::settings;
 settings! {
     /// Level of detail settings: whether instances draw
     /// simplified levels of their meshes, and impostors, where the
-    /// simplification stays within a pixel error. Requires version 8.
+    /// simplification stays within a pixel error.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

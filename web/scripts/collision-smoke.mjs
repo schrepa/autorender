@@ -9,7 +9,7 @@ const cube = half_extents => ({ kind: "cuboid", half_extents });
 const collider = (shape, memberships = 1, filter = 2, sensor = false) => ({ shape, memberships, filter, sensor });
 const filter = { memberships: 2, filter: 1, sensors: "exclude" };
 const fixture = {
-  version: 4, id: "collision-fixture", revision: 1,
+  id: "collision-fixture", revision: 1,
   camera: { position: [12, 10, 16], target: [0, 0, 0] },
   meshes: [{ id: "box", source: { kind: "cube" } }],
   materials: [{ id: "blue", color: [0.1, 0.6, 0.85, 1] }, { id: "gold", color: [0.9, 0.65, 0.1, 1] }],

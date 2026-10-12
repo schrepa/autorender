@@ -17,7 +17,7 @@
 //! ```
 //!
 //! It writes `DIR/NAME/height.r16`, the report `DIR/NAME/import.json` and a
-//! version 9 scene `DIR/NAME.scene.json` (for `stress.html?source=`, with a player
+//! scene `DIR/NAME.scene.json` (for `stress.html?source=`, with a player
 //! box at its middle): a terrain `--size` meters across
 //! (a multiple of 256, 16384 by default) whose first layer is the import,
 //! with `--detail` meters of noise (8 by default, 0 for none) and the
@@ -1080,7 +1080,6 @@ fn scene(
     // Its streams and rivers, carved and filled.
     layers.push(json!({"hydrology": {"level": 4, "channel_area": 400000.0, "depth": 1.5, "width": 8.0, "max_depth": 6.0, "max_width": 40.0}}));
     json!({
-        "version": 9,
         "id": id,
         "revision": 1,
         "camera": {

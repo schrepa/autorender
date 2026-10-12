@@ -1,5 +1,5 @@
 /**
- * World streaming checks: a version 9 fixture's
+ * World streaming checks: a fixture's
  * streamed entities bin into grids by their reach and spawn only while
  * their cells are within range of the camera, with hysteresis, a per-frame
  * spawn budget, prefetch along the camera's motion, and freezing and
@@ -17,7 +17,7 @@ const url = sceneUrl();
 const output = await artifacts("streaming-smoke");
 const cube = { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] } };
 const fixture = {
-  version: 9, id: "streaming-fixture", revision: 1,
+  id: "streaming-fixture", revision: 1,
   camera: { position: [0, 60, 40], target: [20, 20, 0], fov_degrees: 60, near: 0.5, far: 20000 },
   materials: [{ id: "plain", color: [0.8, 0.3, 0.2, 1] }],
   meshes: [{ id: "box", source: { kind: "cube" } }],
@@ -203,7 +203,6 @@ try {
 
   // Refused documents keep the current scene.
   for (const [name, change, code, path] of [
-    ["version 8", document => { document.version = 8; }, "version_required", "$.streamed"],
     ["terrain", document => { document.streamed.push({ id: "land", terrain: fixture.entities[1].terrain }); }, "invalid_streamed", "$.streamed[6].terrain"],
     ["parent across lists", document => { document.streamed[5].parent = "player"; }, "unknown_parent", "$.streamed[5].parent"],
     ["grounded child", document => { document.streamed[3].grounded = {}; }, "invalid_grounded", "$.streamed[3].grounded"],

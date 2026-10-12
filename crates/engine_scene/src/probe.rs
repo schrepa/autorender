@@ -1,4 +1,4 @@
-//! Scene version 8 reflection probes: an entity field
+//! Scene reflection probes: an entity field
 //! capturing the entity's surroundings into an environment map, which
 //! surfaces inside its world box reflect. It mirrors the runtime component
 //! field for field, so inspected values paste back into scenes.
@@ -12,7 +12,7 @@ use crate::SceneError;
 use crate::error::broken_rule;
 
 settings! {
-    /// A reflection probe on this entity. Requires version 8.
+    /// A reflection probe on this entity.
     ///
     /// Its box is axis-aligned in world space and centered on the entity's
     /// world position, so the entity's rotation and scale leave it unchanged.
@@ -30,8 +30,7 @@ settings! {
         #[serde(default = "default_blend")]
         pub blend: f32 = default_blend() => at_least(0.0),
         /// Makes the box an interior: a cave or a hall letting in
-        /// only these shares of the sky's light and the sun's. Requires
-        /// version 9.
+        /// only these shares of the sky's light and the sun's.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub interior: Option<Interior> = None => any,
     }

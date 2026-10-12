@@ -1,5 +1,5 @@
-//! Authored materials: color, surface and opacity, and from version 8 the
-//! glTF 2.0 metallic-roughness texture maps.
+//! Authored materials: color, surface and opacity, and the glTF 2.0
+//! metallic-roughness texture maps.
 
 use engine_core::{
     AlphaMode, Filter, Material, Sampler, TextureHandle, TextureRef, Transmission, UvTransform,
@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use crate::{SceneError, SceneSurface};
 
 /// One named material; color channels are linear values in `[0, 1]` and
-/// alpha is 1. `opacity` below 1 (version 6) draws it transparent unless
-/// `alpha_mode` says otherwise. Version 8 adds glTF's texture maps, emissive
-/// color, alpha modes and double-sided surfaces; `surface`
+/// alpha is 1. `opacity` below 1 draws it transparent unless `alpha_mode`
+/// says otherwise. glTF's texture maps, emissive color, alpha modes and
+/// double-sided surfaces complete it; `surface`
 /// roughness and metalness are glTF's roughness and metallic factors.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(
@@ -30,78 +30,77 @@ pub struct SceneMaterial {
     pub id: String,
     pub color: [f32; 4],
     /// Base color texture: its sRGB color multiplies `color`. A texture ID,
-    /// or (version 8) a map with sampler and transform settings. IDs clamp at
-    /// the texture's edges before version 8 and repeat from version 8.
+    /// which repeats, or a map with sampler and transform settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub texture: Option<SceneMap>,
-    /// How the surface responds to light beyond its color.
-    /// Requires version 5; without it the material is matte.
+    /// How the surface responds to light beyond its color; without it the
+    /// material is matte.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<SceneSurface>,
     /// The fraction of light behind it the surface covers, in `(0, 1]`.
     /// Below 1 it draws transparent, blending in any order,
-    /// writing no depth and casting no shadow. Requires version 6. With
+    /// writing no depth and casting no shadow. With
     /// `alpha_mode` `mask` it is the alpha the cutoff tests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f32>,
-    /// Version 8: linear green multiplies roughness and blue metalness.
+    /// Linear green multiplies roughness and blue metalness.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metallic_roughness_texture: Option<SceneMap>,
-    /// Version 8: a tangent-space normal map (green up the image).
+    /// A tangent-space normal map (green up the image).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normal_texture: Option<SceneMap>,
-    /// Version 8: scales the normal map's deflection; default 1.
+    /// Scales the normal map's deflection; default 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normal_scale: Option<f32>,
-    /// Version 8: linear red darkens indirect light.
+    /// Linear red darkens indirect light.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occlusion_texture: Option<SceneMap>,
-    /// Version 8: how much the occlusion map darkens, in `[0, 1]`; default 1.
+    /// How much the occlusion map darkens, in `[0, 1]`; default 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occlusion_strength: Option<f32>,
-    /// Version 8: emitted linear color, not negative (glTF's emissive factor
+    /// Emitted linear color, not negative (glTF's emissive factor
     /// times its emissive strength).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive: Option<[f32; 3]>,
-    /// Version 8: sRGB color multiplying `emissive`.
+    /// SRGB color multiplying `emissive`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive_texture: Option<SceneMap>,
-    /// Version 8: how alpha (opacity times base color texture alpha) is
+    /// How alpha (opacity times base color texture alpha) is
     /// used. Default `blend` below opacity 1, `opaque` otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpha_mode: Option<SceneAlphaMode>,
-    /// Version 8, `mask` only: alpha below it is not drawn; default 0.5.
+    /// With `mask` only: alpha below it is not drawn; default 0.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpha_cutoff: Option<f32>,
-    /// Version 8: draw back faces too, lit from their own side.
+    /// Draw back faces too, lit from their own side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub double_sided: Option<bool>,
-    /// Version 8: the share of light passing through the surface instead of
+    /// The share of light passing through the surface instead of
     /// diffusing off it, in `[0, 1]`, tinted by its color (
     /// glTF `KHR_materials_transmission`). Transmissive materials draw in
     /// the transparent pass; the environment's `refraction` bends what shows
     /// through them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transmission: Option<f32>,
-    /// Version 8, with `transmission`: the index of refraction in `[1, 3]`;
+    /// With `transmission`: the index of refraction in `[1, 3]`;
     /// default 1.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ior: Option<f32>,
-    /// Version 8, with `transmission`: the depth in world units of the
+    /// With `transmission`: the depth in world units of the
     /// volume beneath the surface that bends rays; default 0, a thin wall.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thickness: Option<f32>,
-    /// Version 9: lays the maps from the world's axes, one repeat every
+    /// Lays the maps from the world's axes, one repeat every
     /// this many meters, instead of by texture coordinates:
     /// no seams and one texel density at any size, for surfaces that stay
     /// where they are, such as rocks. In `(0, 10000]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub world_tiling: Option<f32>,
-    /// Version 9: a layer settling on faces turned up, such as moss,
+    /// A layer settling on faces turned up, such as moss,
     /// lichen, dust or snow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top: Option<SceneTopLayer>,
-    /// Version 9: the ground staining the base of objects terrains place.
+    /// The ground staining the base of objects terrains place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grounding: Option<SceneGrounding>,
 }
@@ -160,8 +159,8 @@ pub struct SceneTopLayer {
     pub roughness: Option<f32>,
 }
 
-/// A material's use of a texture: its ID, or (version 8) a map with glTF
-/// sampler and `KHR_texture_transform` settings.
+/// A material's use of a texture: its ID, or a map with glTF sampler and
+/// `KHR_texture_transform` settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
@@ -388,47 +387,8 @@ impl SceneMaterial {
         ]
     }
 
-    /// The first field needing version 8, if any.
-    pub(crate) fn version_eight_field(&self) -> Option<&'static str> {
-        if matches!(self.texture, Some(SceneMap::Map(_))) {
-            return Some("texture");
-        }
-        [
-            (
-                "metallic_roughness_texture",
-                self.metallic_roughness_texture.is_some(),
-            ),
-            ("normal_texture", self.normal_texture.is_some()),
-            ("normal_scale", self.normal_scale.is_some()),
-            ("occlusion_texture", self.occlusion_texture.is_some()),
-            ("occlusion_strength", self.occlusion_strength.is_some()),
-            ("emissive", self.emissive.is_some()),
-            ("emissive_texture", self.emissive_texture.is_some()),
-            ("alpha_mode", self.alpha_mode.is_some()),
-            ("alpha_cutoff", self.alpha_cutoff.is_some()),
-            ("double_sided", self.double_sided.is_some()),
-            ("transmission", self.transmission.is_some()),
-            ("ior", self.ior.is_some()),
-            ("thickness", self.thickness.is_some()),
-        ]
-        .into_iter()
-        .find_map(|(field, set)| set.then_some(field))
-    }
-
-    /// The first field needing version 9, if any.
-    pub(crate) fn version_nine_field(&self) -> Option<&'static str> {
-        [
-            ("world_tiling", self.world_tiling.is_some()),
-            ("top", self.top.is_some()),
-            ("grounding", self.grounding.is_some()),
-        ]
-        .into_iter()
-        .find_map(|(field, set)| set.then_some(field))
-    }
-
-    /// The material at authored path `path` (`$.materials[i]`) of a
-    /// document of `version`.
-    pub(crate) fn prepare(&self, path: &str, version: u32) -> Result<PreparedMaterial, SceneError> {
+    /// The material at authored path `path` (`$.materials[i]`).
+    pub(crate) fn prepare(&self, path: &str) -> Result<PreparedMaterial, SceneError> {
         let invalid = |field: &str, message: String| {
             SceneError::new(
                 ErrorCode::InvalidMaterial,
@@ -551,18 +511,8 @@ impl SceneMaterial {
                 continue;
             };
             *slot = Some(match map {
-                // Plain IDs clamp before version 8 (their original meaning)
-                // and take glTF's defaults from version 8.
-                SceneMap::Id(id) => (
-                    id.clone(),
-                    if version < 8 {
-                        Sampler::CLAMP
-                    } else {
-                        Sampler::REPEAT
-                    },
-                    UvTransform::IDENTITY,
-                    0,
-                ),
+                // Plain IDs take glTF's defaults.
+                SceneMap::Id(id) => (id.clone(), Sampler::REPEAT, UvTransform::IDENTITY, 0),
                 SceneMap::Map(map) => {
                     let transform = UvTransform {
                         offset: map.offset.unwrap_or([0.0; 2]),

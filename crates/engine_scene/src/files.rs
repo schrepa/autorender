@@ -69,7 +69,7 @@ impl SceneFiles {
 
     /// Adds image `uri` transcoded to block-compressed `format`:
     /// `width` × `height`, its levels from the base down. Validated
-    /// when a scene uses it; version 8 scenes use it.
+    /// when a scene uses it.
     pub fn add_compressed_image(
         &mut self,
         uri: &str,
@@ -145,34 +145,16 @@ impl SceneFiles {
         Ok((header, url, whole.then(|| bytes.clone())))
     }
 
-    /// Image `uri` as a texture, validated.
-    /// Image `uri` as a texture; with `alpha` its alpha channel is kept,
-    /// otherwise every texel must be opaque.
-    pub(crate) fn texture(
-        &self,
-        uri: &str,
-        path: &str,
-        alpha: bool,
-    ) -> Result<Texture, SceneError> {
+    /// Image `uri` as a texture, validated, its alpha channel kept.
+    pub(crate) fn texture(&self, uri: &str, path: &str) -> Result<Texture, SceneError> {
         if let Some((format, width, height, levels)) = self.compressed.get(uri) {
-            if !alpha {
-                return Err(crate::versions::version_required(
-                    path,
-                    "compressed textures",
-                    8,
-                ));
-            }
             return Texture::compressed(*format, *width, *height, levels.clone()).map_err(
                 |error| SceneError::new(ErrorCode::InvalidTexture, path, error.to_string()),
             );
         }
         let (width, height, pixels) = self.images.get(uri).ok_or_else(|| missing(uri, path))?;
-        let texture = if alpha {
-            Texture::from_rgba(*width, *height, pixels.clone())
-        } else {
-            Texture::new(*width, *height, pixels.clone())
-        };
-        texture.map_err(|error| SceneError::new(ErrorCode::InvalidTexture, path, error.to_string()))
+        Texture::from_rgba(*width, *height, pixels.clone())
+            .map_err(|error| SceneError::new(ErrorCode::InvalidTexture, path, error.to_string()))
     }
 
     /// Buffer `uri` decoded as a mesh buffer.
@@ -268,8 +250,7 @@ pub struct MeshStreams<'a> {
 /// `EMB2`: after the counts a u32 of flags (1 colors, 2 second
 /// coordinates, 4 joints and weights), then the vertices, the colors (four
 /// f32 each), the second coordinates (two f32 each), the joints (four u16
-/// each), the weights (four f32 each) and the indices. Scenes read `EMB2`
-/// from version 8.
+/// each), the weights (four f32 each) and the indices.
 ///
 /// # Panics
 /// Panics when only one of joints and weights is given.

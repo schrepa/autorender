@@ -22,7 +22,7 @@ use crate::{FixedTime, JobId, Jobs, Parent, Terrains, Transform};
 use engine_settings::settings;
 
 settings! {
-    /// Navigation. Requires version 9.
+    /// Navigation.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -51,7 +51,7 @@ impl Navigation {
 
 settings! {
     /// Walks its entity over the terrain under it to `destination`. Changing
-    /// the destination searches anew; none stands still. Requires version 9.
+    /// the destination searches anew; none stands still.
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[require(NavWalk, crate::HeightHeld)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

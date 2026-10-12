@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{SceneError, SceneFiles, files::valid_uri};
 
 /// Opaque RGBA8 sRGB pixels in row-major, top-to-bottom order: inline as
-/// base64, or (version 7) an image file beside the scene that
+/// base64, or an image file beside the scene that
 /// the host decodes with the platform's own decoder when the scene loads.
 ///
 /// Decoding never happens in simulation or rendering. Scenes store one level;
@@ -38,7 +38,7 @@ pub struct SceneTexture {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rgba8: Option<String>,
     /// An image file (PNG, JPEG or WebP) as a path relative to the scene,
-    /// instead of inline pixels. Version 7.
+    /// instead of inline pixels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
@@ -74,14 +74,12 @@ impl SceneTexture {
     }
 
     /// The texture at authored path `path`. Without `files` (structural
-    /// validation) a file texture reads as one white texel. With `alpha`
-    /// (version 8) texels may be translucent: coverage for masked and
-    /// blended materials.
+    /// validation) a file texture reads as one white texel. Texels may be
+    /// translucent: coverage for masked and blended materials.
     pub(crate) fn texture(
         &self,
         path: &str,
         files: Option<&SceneFiles>,
-        alpha: bool,
     ) -> Result<Texture, SceneError> {
         match (&self.uri, self.width, self.height, &self.rgba8) {
             (Some(uri), None, None, None) => {
@@ -89,7 +87,7 @@ impl SceneTexture {
                 valid_uri(uri, &uri_path)?;
                 match files {
                     None => Ok(Texture::new(1, 1, vec![255; 4]).expect("one opaque texel")),
-                    Some(files) => files.texture(uri, &uri_path, alpha),
+                    Some(files) => files.texture(uri, &uri_path),
                 }
             }
             (None, Some(width), Some(height), Some(rgba8)) => {
@@ -118,12 +116,7 @@ impl SceneTexture {
                         error.to_string(),
                     )
                 })?;
-                let texture = if alpha {
-                    Texture::from_rgba(width, height, pixels)
-                } else {
-                    Texture::new(width, height, pixels)
-                };
-                texture.map_err(|error| {
+                Texture::from_rgba(width, height, pixels).map_err(|error| {
                     SceneError::new(ErrorCode::InvalidTexture, path, error.to_string())
                 })
             }

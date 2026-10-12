@@ -1,4 +1,4 @@
-//! Scene version 6 entity fields: local lights and particle
+//! Scene entity fields: local lights and particle
 //! emitters. Each mirrors its runtime component field for
 //! field, so inspected values paste back into scenes; angles are in degrees.
 
@@ -14,7 +14,7 @@ use crate::SceneError;
 use crate::error::broken_rule;
 
 settings! {
-    /// A point or spot light on this entity. Requires version 6.
+    /// A point or spot light on this entity.
     /// On an entity with a mesh it follows the mesh's displayed pose.
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -128,7 +128,7 @@ fn default_emitter() -> SceneEmitter {
 
 settings! {
     extra_rules;
-    /// A particle emitter on this entity. Requires version 6.
+    /// A particle emitter on this entity.
     /// Omitted fields take the engine's defaults.
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

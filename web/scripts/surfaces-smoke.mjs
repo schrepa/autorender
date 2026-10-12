@@ -1,5 +1,5 @@
 /**
- * Surfaces: a version 9 fixture with a decal, a refracting glass box, a
+ * Surfaces: a fixture with a decal, a refracting glass box, a
  * tinted box and a reflection probe. Frames draw the decal and refract;
  * the components inspect as authored; a merged environment control keeps
  * the fields it omits and answers with each section before and after; a
@@ -13,7 +13,7 @@ import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, ro
 const url = sceneUrl();
 const output = await artifacts("surfaces-smoke");
 const fixture = {
-  version: 9, id: "surfaces-fixture", revision: 1,
+  id: "surfaces-fixture", revision: 1,
   camera: { position: [0, 9, 16], target: [0, 0, 0], fov_degrees: 55, near: 0.1, far: 500 },
   materials: [
     { id: "ground", color: [0.6, 0.62, 0.58, 1] },

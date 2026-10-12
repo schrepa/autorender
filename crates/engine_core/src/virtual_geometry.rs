@@ -16,7 +16,7 @@ use engine_settings::settings;
 settings! {
     /// Virtual geometry settings: whether meshes built as cluster
     /// hierarchies draw the clusters each view needs, and how coarse those may
-    /// be. Requires version 8.
+    /// be.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",

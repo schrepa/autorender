@@ -1,4 +1,4 @@
-//! Versioned authoring data and explicitly owned scene instances.
+//! Authoring data and explicitly owned scene instances.
 //!
 //! Parse and validate at load/reload boundaries, then instantiate through an
 //! exclusive [`engine_core::bevy_ecs::world::World`] borrow between frames.
@@ -23,7 +23,6 @@ mod spline;
 mod terrain;
 mod texture;
 mod validation;
-mod versions;
 
 pub use animation::{
     SceneAnimation, SceneChannel, SceneInterpolation, ScenePlayer, SceneProperty, SceneSkin,
@@ -31,8 +30,8 @@ pub use animation::{
 pub use collider::{SceneCollider, SceneColliderShape};
 pub use decal::{SceneDecal, SceneDecalBlend};
 pub use document::{
-    MAX_SOURCE_BYTES, MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMesh,
-    SceneObject, ScenePrefab, SceneSurface, SceneTransform, SceneVertex,
+    MAX_SOURCE_BYTES, MeshSource, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
+    SceneSurface, SceneTransform, SceneVertex,
 };
 pub use engine_core::EnvironmentSection;
 pub use environment::{AtmospherePreset, SceneAtmosphere, SceneEnvironment, SectionVisitor};
@@ -56,4 +55,3 @@ pub use terrain::{
     SceneTerrainLod, SceneTerrainMaterial, SceneTerrainSurface,
 };
 pub use texture::SceneTexture;
-pub use versions::version_features;

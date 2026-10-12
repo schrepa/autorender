@@ -8,7 +8,7 @@
 pub use engine_collision as collision;
 /// Optional bounded profiling scopes; calls compile away without `profiling`.
 pub use engine_profile as profiling;
-/// Versioned authoring, validation, and explicit scene ownership.
+/// Authoring, validation, and explicit scene ownership.
 pub use engine_scene as scene;
 /// Settings declared once with their rules (`settings!`), as the engine's own are.
 pub use engine_settings as settings;

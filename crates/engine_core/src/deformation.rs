@@ -44,7 +44,7 @@ const MERGE_LENGTH: f32 = 32.0;
 const FORGOTTEN: f32 = 5.0e-4;
 
 settings! {
-    /// Runtime deformation. Requires version 9.
+    /// Runtime deformation.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -96,7 +96,7 @@ impl Deformation {
 }
 
 settings! {
-    /// Presses tracks into deformable ground as a scene version 9 `deformer`
+    /// Presses tracks into deformable ground as a scene's `deformer`
     /// field: each fixed tick, while its entity's world position lies at most
     /// `contact` meters above the terrain under it (or below it), it presses a
     /// footprint from where it pressed the tick before. Put it where an object

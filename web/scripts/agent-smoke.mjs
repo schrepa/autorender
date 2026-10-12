@@ -194,20 +194,12 @@ try {
   await sceneCommand(["validate", "--file", invalidPath], false);
   await sceneCommand(["save", "--file", sourcePath, "--candidate", invalidPath, "--expected-revision", String(source.revision)], false);
   assert.deepEqual(await readFile(sourcePath), sourceBytes);
-  const legacyLook = structuredClone(source);
-  legacyLook.revision++;
-  legacyLook.environment = { bloom: { intensity: 1 } };
-  const legacyPath = join(output, "legacy-environment.scene.json");
-  await writeFile(legacyPath, JSON.stringify(legacyLook));
-  const legacyError = await sceneCommand(["validate", "--file", legacyPath], false);
-  assert.deepEqual([legacyError.error.code, legacyError.error.path], ["version_required", "$.environment"]);
 
   const candidate = structuredClone(source);
   candidate.revision++;
-  candidate.version = 6;
   candidate.environment = { atmosphere: { preset: "dusk" }, ambient_occlusion: { intensity: 0 } };
   candidate.entities.find(entity => entity.id === playerId).name = "Agent verified player";
-  // Version 6: a light and a particle emitter on a transform-only node, and a
+  // A light and a particle emitter on a transform-only node, and a
   // glass box where the camera looks.
   candidate.materials.push({ id: "agent-glass", color: [0.6, 0.85, 1.0, 1.0], opacity: 0.4 });
   candidate.entities.push(
@@ -251,7 +243,7 @@ try {
   await cli("pause");
   const diagnostics = await cli("diagnostics");
   assert.deepEqual(diagnostics.result.entries.filter(entry => entry.kind === "pageerror" || entry.kind === "error"), []);
-  console.log(JSON.stringify({ ok: true, session, artifact: capture.result.artifact.path, checks: ["discovery", "description", "inspection", "digest", "precise_step", "input", "capture", "environment_inspection", "environment_control", "failed_reload", "source_validation", "guarded_save", "reload_revision", "saved_environment", "version_six_lights_particles_glass", "resume_pause", "diagnostics"] }));
+  console.log(JSON.stringify({ ok: true, session, artifact: capture.result.artifact.path, checks: ["discovery", "description", "inspection", "digest", "precise_step", "input", "capture", "environment_inspection", "environment_control", "failed_reload", "source_validation", "guarded_save", "reload_revision", "saved_environment", "lights_particles_glass", "resume_pause", "diagnostics"] }));
 } finally {
   lines.close();
   try {

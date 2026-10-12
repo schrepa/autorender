@@ -18,7 +18,7 @@ const features = protocol.features.map(feature => feature.name);
 const needs = Object.fromEntries(protocol.features.map(feature => [feature.name, feature.needs]));
 const plugin = name => protocol.features.find(feature => feature.name === name).plugin;
 const core = () => ({
-  version: 9, id: "plugins-fixture", revision: 1,
+  id: "plugins-fixture", revision: 1,
   camera: { position: [0, 6, 12], target: [0, 0, 0], fov_degrees: 55, near: 0.1, far: 1000 },
   materials: [{ id: "plain", color: [0.7, 0.6, 0.5, 1] }],
   meshes: [{ id: "box", source: { kind: "cube" } }],
