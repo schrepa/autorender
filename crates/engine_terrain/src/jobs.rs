@@ -100,17 +100,36 @@ pub fn share_recipe(recipe: &TerrainRecipe) -> Vec<u8> {
     writer.into_bytes()
 }
 
-/// The input of a [`TILE_JOB`]: tile `key` of the recipe shared as
-/// `recipe`, with `placing`'s objects, its shape handed out
-/// first where `staged`.
-pub fn tile_input(recipe: &str, key: TileKey, placing: Placing, staged: bool) -> Vec<u8> {
-    let mut writer = Writer::new();
-    writer
-        .put(&recipe.to_owned())
-        .put(&key)
-        .put(&placing)
-        .put(&staged);
-    writer.into_bytes()
+/// A [`TILE_JOB`]: tile `key` of the recipe shared as `recipe`, with
+/// `placing`'s objects. Like every terrain job, it is its own identity:
+/// each field is something its output depends on, and hosts keep the
+/// output by the job encoded.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TileJob {
+    pub recipe: String,
+    pub key: TileKey,
+    pub placing: Placing,
+}
+
+record!(TileJob {
+    recipe,
+    key,
+    placing,
+});
+
+impl TileJob {
+    /// What hosts keep its output by: the job.
+    pub fn identity(&self) -> Vec<u8> {
+        codec::encode(self)
+    }
+
+    /// Its input: the job, its tile's shape handed out first where
+    /// `staged` (the same tile either way).
+    pub fn input(&self, staged: bool) -> Vec<u8> {
+        let mut writer = Writer::new();
+        writer.put(self).put(&staged);
+        writer.into_bytes()
+    }
 }
 
 /// A [`TILE_JOB`]'s output, and its part: the tile, or its shape alone.
@@ -118,24 +137,57 @@ pub fn tile_output(bytes: &[u8]) -> Result<Tile, CodecError> {
     codec::decode(bytes)
 }
 
-/// The input of a [`FAR_JOB`]: the objects of the recipe
-/// shared as `recipe` standing far away on `tile`, one of its tiles.
-pub fn far_input(recipe: &str, tile: &Tile) -> Vec<u8> {
-    let mut writer = Writer::new();
-    writer.put(&recipe.to_owned()).put(tile);
-    writer.into_bytes()
+/// A [`FAR_JOB`]: the objects of the recipe shared as `recipe` standing
+/// far away on its tile `key`, which that recipe generates.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FarJob {
+    pub recipe: String,
+    pub key: TileKey,
 }
 
-/// The input of a [`BAND_JOB`]: stored rows `rows` (0 to
-/// 259) of tile `key` of the recipe shared as `recipe`.
-pub fn band_input(recipe: &str, key: TileKey, rows: std::ops::Range<u32>) -> Vec<u8> {
-    let mut writer = Writer::new();
-    writer
-        .put(&recipe.to_owned())
-        .put(&key)
-        .put(&rows.start)
-        .put(&rows.end);
-    writer.into_bytes()
+record!(FarJob { recipe, key });
+
+impl FarJob {
+    /// What hosts keep its output by: the job.
+    pub fn identity(&self) -> Vec<u8> {
+        codec::encode(self)
+    }
+
+    /// Its input: the recipe and `tile`, the job's tile, whole.
+    pub fn input(&self, tile: &Tile) -> Vec<u8> {
+        let mut writer = Writer::new();
+        writer.put(&self.recipe).put(tile);
+        writer.into_bytes()
+    }
+}
+
+/// A [`BAND_JOB`]: stored rows `first` up to `end` (0 to 259) of tile
+/// `key` of the recipe shared as `recipe`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BandJob {
+    pub recipe: String,
+    pub key: TileKey,
+    pub first: u32,
+    pub end: u32,
+}
+
+record!(BandJob {
+    recipe,
+    key,
+    first,
+    end,
+});
+
+impl BandJob {
+    /// What hosts keep its output by: the job.
+    pub fn identity(&self) -> Vec<u8> {
+        codec::encode(self)
+    }
+
+    /// Its input: the job.
+    pub fn input(&self) -> Vec<u8> {
+        self.identity()
+    }
 }
 
 /// A [`BAND_JOB`]'s output: the band's rows, which
@@ -144,53 +196,45 @@ pub fn band_output(bytes: &[u8]) -> Result<TileBand, CodecError> {
     codec::decode(bytes)
 }
 
-/// The input of a [`PLACE_JOB`]: `placing`'s objects of the
-/// recipe shared as `recipe` on `tile`, one of its tiles without them,
-/// from layer and row `start` up to `end` (none for the
-/// rest, with what authors stand on it). Its output is the objects, as a
-/// [`FAR_JOB`]'s ([`far_output`]).
-pub fn place_input(
-    recipe: &str,
-    tile: &Tile,
-    placing: Placing,
-    rows: ((u32, u32), Option<(u32, u32)>),
-) -> Vec<u8> {
-    let mut writer = Writer::new();
-    writer
-        .put(&recipe.to_owned())
-        .put(tile)
-        .put(&placing)
-        .put(&rows.0.0)
-        .put(&rows.0.1)
-        .put(&rows.1);
-    writer.into_bytes()
+/// A [`PLACE_JOB`]: `placing`'s objects of the recipe shared as `recipe`
+/// on its tile `key`, from layer and row `from` up to `end` (none for
+/// the rest, with what authors stand on it). Its output is the objects, as
+/// a [`FAR_JOB`]'s ([`far_output`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlaceJob {
+    pub recipe: String,
+    pub key: TileKey,
+    pub placing: Placing,
+    pub from: (u32, u32),
+    pub end: Option<(u32, u32)>,
 }
 
-/// What a [`PLACE_JOB`]'s output depends on: its recipe,
-/// tile, placing and rows.
-pub fn place_identity(
-    recipe: &str,
-    key: TileKey,
-    placing: Placing,
-    rows: ((u32, u32), Option<(u32, u32)>),
-) -> Vec<u8> {
-    let mut writer = Writer::new();
-    writer
-        .put(&recipe.to_owned())
-        .put(&key)
-        .put(&placing)
-        .put(&rows.0.0)
-        .put(&rows.0.1)
-        .put(&rows.1);
-    writer.into_bytes()
-}
+record!(PlaceJob {
+    recipe,
+    key,
+    placing,
+    from,
+    end,
+});
 
-/// What a [`FAR_JOB`]'s output depends on: its recipe and
-/// tile, which that recipe generates.
-pub fn far_identity(recipe: &str, key: TileKey) -> Vec<u8> {
-    let mut writer = Writer::new();
-    writer.put(&recipe.to_owned()).put(&key);
-    writer.into_bytes()
+impl PlaceJob {
+    /// What hosts keep its output by: the job.
+    pub fn identity(&self) -> Vec<u8> {
+        codec::encode(self)
+    }
+
+    /// Its input: the job with `tile`, its tile without those objects,
+    /// in place of the tile's key.
+    pub fn input(&self, tile: &Tile) -> Vec<u8> {
+        let mut writer = Writer::new();
+        writer
+            .put(&self.recipe)
+            .put(tile)
+            .put(&self.placing)
+            .put(&self.from)
+            .put(&self.end);
+        writer.into_bytes()
+    }
 }
 
 /// A [`FAR_JOB`]'s output: the objects, which [`crate::merge_placed`] adds
@@ -199,23 +243,36 @@ pub fn far_output(bytes: &[u8]) -> Result<Vec<Placed>, CodecError> {
     codec::decode(bytes)
 }
 
-/// The input of a [`WALK_JOB`]: the shortest walk over the recipe shared
-/// as `recipe` from terrain-local `from` to `to` among `obstacles`, as
-/// `options` walk.
-pub fn walk_input(
-    recipe: &str,
-    (from, to): (Vec2, Vec2),
-    obstacles: &[Obstacle],
-    options: &NavOptions,
-) -> Vec<u8> {
-    let mut writer = Writer::new();
-    writer
-        .put(&recipe.to_owned())
-        .put(&from)
-        .put(&to)
-        .put(&obstacles.to_vec())
-        .put(options);
-    writer.into_bytes()
+/// A [`WALK_JOB`]: the shortest walk over the recipe shared as `recipe`
+/// from terrain-local `from` to `to` among `obstacles`, as `options`
+/// walk.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WalkJob {
+    pub recipe: String,
+    pub from: Vec2,
+    pub to: Vec2,
+    pub obstacles: Vec<Obstacle>,
+    pub options: NavOptions,
+}
+
+record!(WalkJob {
+    recipe,
+    from,
+    to,
+    obstacles,
+    options,
+});
+
+impl WalkJob {
+    /// What hosts keep its output by: the job.
+    pub fn identity(&self) -> Vec<u8> {
+        codec::encode(self)
+    }
+
+    /// Its input: the job.
+    pub fn input(&self) -> Vec<u8> {
+        self.identity()
+    }
 }
 
 /// A [`WALK_JOB`]'s output: the walk, `None` where none reaches.
@@ -223,11 +280,22 @@ pub fn walk_output(bytes: &[u8]) -> Result<Option<NavPath>, CodecError> {
     codec::decode(bytes)
 }
 
-/// The input of a [`BAKE_JOB`]: every bake of `layers` over `pyramid`.
-pub fn bake_input(layers: &Layers, pyramid: &Pyramid) -> Vec<u8> {
-    let mut writer = Writer::new();
-    writer.put(layers).put(pyramid);
-    writer.into_bytes()
+/// A [`BAKE_JOB`]: every bake of `layers` over `pyramid`. Its input is the
+/// job; as its layers can hold whole heightmaps, hosts keep its output by
+/// that input's content hash, which engines compute.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BakeJob {
+    pub layers: Layers,
+    pub pyramid: Pyramid,
+}
+
+record!(BakeJob { layers, pyramid });
+
+impl BakeJob {
+    /// Its input: the job.
+    pub fn input(&self) -> Vec<u8> {
+        codec::encode(self)
+    }
 }
 
 /// A [`BAKE_JOB`]'s output: the layers with every bake done.
@@ -331,9 +399,11 @@ impl TerrainWorker {
         let mut reader = Reader::new(input);
         let running = match kind {
             TILE_JOB => {
-                let recipe: String = reader.get().map_err(invalid)?;
-                let key: TileKey = reader.get().map_err(invalid)?;
-                let placing: Placing = reader.get().map_err(invalid)?;
+                let TileJob {
+                    recipe,
+                    key,
+                    placing,
+                } = reader.get().map_err(invalid)?;
                 let staged: bool = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
                 let recipe = self.recipe(&recipe)?;
@@ -385,10 +455,12 @@ impl TerrainWorker {
                 ))
             }
             BAND_JOB => {
-                let recipe: String = reader.get().map_err(invalid)?;
-                let key: TileKey = reader.get().map_err(invalid)?;
-                let first: u32 = reader.get().map_err(invalid)?;
-                let end: u32 = reader.get().map_err(invalid)?;
+                let BandJob {
+                    recipe,
+                    key,
+                    first,
+                    end,
+                } = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
                 let recipe = self.recipe(&recipe)?;
                 if !recipe.pyramid.contains(key) {
@@ -408,11 +480,13 @@ impl TerrainWorker {
                 )
             }
             WALK_JOB => {
-                let recipe: String = reader.get().map_err(invalid)?;
-                let from: Vec2 = reader.get().map_err(invalid)?;
-                let to: Vec2 = reader.get().map_err(invalid)?;
-                let obstacles: Vec<Obstacle> = reader.get().map_err(invalid)?;
-                let options: NavOptions = reader.get().map_err(invalid)?;
+                let WalkJob {
+                    recipe,
+                    from,
+                    to,
+                    obstacles,
+                    options,
+                } = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
                 options.validate().map_err(|invalid| invalid.to_string())?;
                 let recipe = self.recipe(&recipe)?;
@@ -425,8 +499,7 @@ impl TerrainWorker {
                 )))
             }
             BAKE_JOB => {
-                let layers: Layers = reader.get().map_err(invalid)?;
-                let pyramid: Pyramid = reader.get().map_err(invalid)?;
+                let BakeJob { layers, pyramid } = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
                 Running::Bake(Box::new((layers, pyramid)))
             }

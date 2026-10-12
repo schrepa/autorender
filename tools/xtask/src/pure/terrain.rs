@@ -14,8 +14,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::{Terrain, TerrainSource};
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use engine_terrain::jobs::{
-    self, BAKE_JOB, BAND_JOB, FAR_JOB, PLACE_JOB, StackView, TILE_JOB, TerrainRecipe,
-    TerrainWorker, WALK_JOB,
+    self, BAKE_JOB, BAND_JOB, BakeJob, BandJob, FAR_JOB, FarJob, PLACE_JOB, PlaceJob, StackView,
+    TILE_JOB, TerrainRecipe, TerrainWorker, TileJob, WALK_JOB, WalkJob,
 };
 use engine_terrain::{
     BiomeRules, FileHeader, Generator, Layer, Layers, NavOptions, Obstacle, Placing, Pyramid,
@@ -62,7 +62,14 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         || "the bakes in slices differ from the bakes at once".into(),
     );
     observed.check(
-        worker.run(BAKE_JOB, &jobs::bake_input(authored, &pyramid))? == bytes,
+        worker.run(
+            BAKE_JOB,
+            &BakeJob {
+                layers: Layers::clone(authored),
+                pyramid,
+            }
+            .input(),
+        )? == bytes,
         || "the bake job differs from the bakes in place".into(),
     );
     record_bakes(&baked, observed);
@@ -106,7 +113,11 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     for (&key, tile) in &tiles {
         if rules.places(key.level, Placing::Far) {
             let near = recipe.tile(&mut worker, key, Placing::Near, observed)?;
-            let far = jobs::far_output(&worker.run(FAR_JOB, &jobs::far_input("recipe", &near))?)
+            let job = FarJob {
+                recipe: "recipe".into(),
+                key,
+            };
+            let far = jobs::far_output(&worker.run(FAR_JOB, &job.input(&near))?)
                 .map_err(|error| error.to_string())?;
             observed.hash(format!("far {}", name(key)), &codec::encode(&far));
             observed.record(format!("far objects {}", name(key)), far.len());
@@ -193,10 +204,14 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         radius: 12.0,
     }];
     let options = NavOptions::default();
-    let job = worker.run(
-        WALK_JOB,
-        &jobs::walk_input("recipe", route, &obstacles, &options),
-    )?;
+    let walked = WalkJob {
+        recipe: "recipe".into(),
+        from: route.0,
+        to: route.1,
+        obstacles: obstacles.to_vec(),
+        options,
+    };
+    let job = worker.run(WALK_JOB, &walked.input())?;
     let found = walk(&baked, &pyramid, route.0, route.1, &obstacles, &options);
     observed.check(job == codec::encode(&found), || {
         "the walk job differs from the walk in place".into()
@@ -367,7 +382,12 @@ impl Recipe {
         placing: Placing,
         observed: &mut Observations,
     ) -> Result<Tile, String> {
-        let input = jobs::tile_input(self.key, key, placing, false);
+        let job = TileJob {
+            recipe: self.key.into(),
+            key,
+            placing,
+        };
+        let input = job.input(false);
         let whole = worker.run(TILE_JOB, &input)?;
         let what = format!("{} tile {} placing {placing:?}", self.key, name(key));
         let mut generator = Generator::new(self.layers.clone(), &self.pyramid, key)
@@ -384,7 +404,7 @@ impl Recipe {
         observed.check(worker.sliced(TILE_JOB, &input)? == whole, || {
             format!("{what}: the job run a slice at a time differs from the job run whole")
         });
-        let (shape, staged) = worker.staged(&jobs::tile_input(self.key, key, placing, true))?;
+        let (shape, staged) = worker.staged(&job.input(true))?;
         observed.check(staged == whole, || {
             format!("{what}: the staged job differs from the job")
         });
@@ -415,8 +435,13 @@ impl Recipe {
         let size = (TILE_STRIDE as usize).div_ceil(bands);
         let mut parts = Vec::with_capacity(bands);
         for band in 0..bands {
-            let rows = (band * size) as u32..((band + 1) * size).min(TILE_STRIDE as usize) as u32;
-            let output = worker.run(BAND_JOB, &jobs::band_input(self.key, key, rows))?;
+            let job = BandJob {
+                recipe: self.key.into(),
+                key,
+                first: (band * size) as u32,
+                end: ((band + 1) * size).min(TILE_STRIDE as usize) as u32,
+            };
+            let output = worker.run(BAND_JOB, &job.input())?;
             parts.push(jobs::band_output(&output).map_err(|error| error.to_string())?);
         }
         let spacing = self.pyramid.spacing(u32::from(key.level));
@@ -440,10 +465,14 @@ impl Recipe {
                 starts[band * starts.len() / bands]
             };
             let end = (band + 1 < bands).then(|| starts[(band + 1) * starts.len() / bands]);
-            let output = worker.run(
-                PLACE_JOB,
-                &jobs::place_input(self.key, &tile, placing, (start, end)),
-            )?;
+            let job = PlaceJob {
+                recipe: self.key.into(),
+                key,
+                placing,
+                from: start,
+                end,
+            };
+            let output = worker.run(PLACE_JOB, &job.input(&tile))?;
             objects.extend(jobs::far_output(&output).map_err(|error| error.to_string())?);
         }
         Ok(tile.with_placed(objects, placing))

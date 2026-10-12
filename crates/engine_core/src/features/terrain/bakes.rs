@@ -44,7 +44,11 @@ pub(super) fn bake_on_worker(
     pyramid: &Pyramid,
 ) {
     let Some(id) = state.bake_job else {
-        let input = engine_terrain::jobs::bake_input(layers, pyramid);
+        let input = BakeJob {
+            layers: layers.clone(),
+            pyramid: *pyramid,
+        }
+        .input();
         let priority = job_priority(URGENT_JOBS, 0);
         // Hosts may keep the baked layers, by the input's
         // hash.

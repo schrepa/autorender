@@ -95,7 +95,8 @@ use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::jobs::{
-    BAKE_JOB, BAND_JOB, FAR_JOB, PLACE_JOB, StackView, TILE_JOB, TerrainRecipe,
+    BAKE_JOB, BAND_JOB, BakeJob, BandJob, FAR_JOB, FarJob, PLACE_JOB, PlaceJob, StackView,
+    TILE_JOB, TerrainRecipe, TileJob, WalkJob,
 };
 use engine_terrain::{
     Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats,
@@ -107,8 +108,9 @@ use engine_terrain::{
 };
 
 use crate::{
-    Camera, GlobalTransforms, IDLE_JOBS, JobId, Jobs, RenderMaterial, RenderMesh, RenderSnapshot,
-    RenderTexture, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
+    Camera, GlobalTransforms, IDLE_JOBS, JobBudget, JobFailures, JobId, Jobs, RenderMaterial,
+    RenderMesh, RenderSnapshot, RenderTexture, URGENT_JOBS, VIEW_JOBS, content_hash, job_class,
+    job_output, job_priority,
 };
 use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
 

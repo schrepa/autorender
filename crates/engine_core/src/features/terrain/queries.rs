@@ -75,6 +75,18 @@ impl Terrains {
         self.stats
     }
 
+    /// The jobs of every terrain that failed on workers since it arrived,
+    /// and the latest one's error.
+    pub fn job_failures(&self) -> (u64, Option<&str>) {
+        let failures = self.entries.iter().map(|state| &state.failures);
+        let count = failures.clone().map(|failures| failures.count).sum();
+        let last = failures
+            .filter_map(|failures| failures.last.as_ref())
+            .max_by_key(|&&(frame, _)| frame)
+            .map(|(_, error)| error.as_str());
+        (count, last)
+    }
+
     /// The terrain of `entity`, while it streams.
     pub fn terrain(&self, entity: Entity) -> Option<&Terrain> {
         self.entries
@@ -192,13 +204,14 @@ impl Terrains {
             return None;
         }
         let corner = Vec2::new(origin.x, origin.z);
-        let input = engine_terrain::jobs::walk_input(
-            &recipe.key,
-            (from - corner, to - corner),
-            &Self::obstacles(state),
-            options,
-        );
-        Some((entity, origin, input))
+        let job = WalkJob {
+            recipe: recipe.key.clone(),
+            from: from - corner,
+            to: to - corner,
+            obstacles: Self::obstacles(state),
+            options: *options,
+        };
+        Some((entity, origin, job.input()))
     }
 
     /// The terrain both world `from` and `to` (x and z) lie on, which walks

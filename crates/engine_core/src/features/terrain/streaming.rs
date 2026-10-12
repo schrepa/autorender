@@ -51,7 +51,7 @@ impl Terrains {
         let Some(clock) = self.clock else {
             return false;
         };
-        let mut slots = jobs.map(JobSlots::of);
+        let mut slots = jobs.map(JobBudget::of);
         // Smaller slices than frames take, so work ends close to its time.
         let work = Work {
             slice: u64::from(settings.samples_per_frame / 4).max(1),
@@ -167,7 +167,7 @@ impl Terrains {
         self.frame += 1;
         self.sync_surroundings();
         // Jobs of terrains gone are dropped, and so are their recipes.
-        let mut slots = jobs.map(JobSlots::of);
+        let mut slots = jobs.map(JobBudget::of);
         let retired = std::mem::take(&mut self.retired);
         self.workers = slots.as_ref().map_or(0, |slots| slots.jobs.workers());
         let workers = self.workers;

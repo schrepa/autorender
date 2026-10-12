@@ -3,50 +3,6 @@
 
 use super::*;
 
-/// Workers a frame hands terrain jobs to: the jobs, and how
-/// many more it may hand out, of any priority and urgent.
-pub(super) struct JobSlots<'a> {
-    pub(super) jobs: &'a mut Jobs,
-    slots: usize,
-    urgent: usize,
-}
-
-impl JobSlots<'_> {
-    /// The frame's jobs: two in flight per worker, so each has its next
-    /// ready, and a third for urgent jobs, which workers take up first;
-    /// less those still running.
-    pub(super) fn of(jobs: &mut Jobs) -> JobSlots<'_> {
-        let workers = jobs.workers() as usize;
-        let running = jobs.running();
-        JobSlots {
-            slots: (workers * 2).saturating_sub(running),
-            urgent: (workers * 3).saturating_sub(running),
-            jobs,
-        }
-    }
-
-    /// Takes a slot for a job of `priority`; whether one was free.
-    fn take(&mut self, priority: u32) -> bool {
-        let free = if job_class(priority) == URGENT_JOBS {
-            self.urgent
-        } else {
-            self.slots
-        };
-        if free == 0 {
-            return false;
-        }
-        self.slots = self.slots.saturating_sub(1);
-        self.urgent = self.urgent.saturating_sub(1);
-        true
-    }
-
-    /// Gives back the slot of a job cancelled while running.
-    fn release(&mut self) {
-        self.slots += 1;
-        self.urgent += 1;
-    }
-}
-
 /// A terrain's recipe as workers hold it: its key, the
 /// stack it shares (the layers its tiles generate from, which surroundings
 /// see from afar) and its revision, which its tiles' jobs carry.
@@ -75,7 +31,7 @@ pub(super) fn generate_on_workers(
     missing: &[(TileKey, u32)],
     (target, keep): (&HashSet<TileKey>, &HashSet<TileKey>),
     work: &Work,
-    slots: &mut JobSlots<'_>,
+    slots: &mut JobBudget<'_>,
     frame: u64,
 ) {
     let Some((recipe, revision)) = state
@@ -143,11 +99,8 @@ pub(super) fn generate_on_workers(
             continue;
         };
         state.dispatched.remove(&key);
-        let tile = output
-            .ok()
-            .and_then(|bytes| engine_terrain::jobs::tile_output(&bytes).ok());
-        match tile {
-            Some(tile) if made == revision && target.contains(&key) && tile.key() == key => {
+        match job_output(TILE_JOB, output, engine_terrain::jobs::tile_output) {
+            Ok(tile) if made == revision && target.contains(&key) && tile.key() == key => {
                 // After its shape a tile uploads its control values alone.
                 work.upload(
                     if matches!(state.store.phase(&key), Some(Phase::Shape | Phase::Placing)) {
@@ -160,10 +113,10 @@ pub(super) fn generate_on_workers(
                 state.arrive(tile, priority, Some(&mut *slots.jobs));
                 inserted = true;
             }
-            Some(_) => {}
-            None => {
+            Ok(_) => {}
+            Err(error) => {
                 state.failed.insert(key, frame);
-                state.worker_failures += 1;
+                state.failures.record(frame, error);
             }
         }
     }
@@ -178,21 +131,18 @@ pub(super) fn generate_on_workers(
         let Some(banding) = state.banded.get_mut(&key) else {
             continue;
         };
-        let mut failed = false;
+        let mut failed = None;
         for (id, band) in &mut banding.jobs {
             if band.is_none()
                 && let Some(output) = slots.jobs.take(*id)
             {
-                match output
-                    .ok()
-                    .and_then(|bytes| engine_terrain::jobs::band_output(&bytes).ok())
-                {
-                    Some(done) => *band = Some(done),
-                    None => failed = true,
+                match job_output(BAND_JOB, output, engine_terrain::jobs::band_output) {
+                    Ok(done) => *band = Some(done),
+                    Err(error) => failed = Some(error),
                 }
             }
         }
-        if !failed && banding.jobs.iter().any(|(_, band)| band.is_none()) {
+        if failed.is_none() && banding.jobs.iter().any(|(_, band)| band.is_none()) {
             continue;
         }
         let Some(banding) = state.banded.remove(&key) else {
@@ -206,17 +156,22 @@ pub(super) fn generate_on_workers(
             }
         }
         let spacing = state.terrain.pyramid.spacing(u32::from(key.level));
-        let tile = (!failed)
-            .then(|| engine_terrain::merge_bands(key, spacing, &bands))
-            .flatten();
-        let Some(tile) = tile else {
-            for id in running {
-                slots.jobs.cancel(id);
-                slots.release();
+        let tile = match failed {
+            Some(error) => Err(error),
+            None => engine_terrain::merge_bands(key, spacing, &bands)
+                .ok_or_else(|| format!("{BAND_JOB}: the bands of {key:?} do not join")),
+        };
+        let tile = match tile {
+            Ok(tile) => tile,
+            Err(error) => {
+                for id in running {
+                    slots.jobs.cancel(id);
+                    slots.release();
+                }
+                state.failed.insert(key, frame);
+                state.failures.record(frame, error);
+                continue;
             }
-            state.failed.insert(key, frame);
-            state.worker_failures += 1;
-            continue;
         };
         if banding.made != revision || !target.contains(&key) {
             continue;
@@ -242,21 +197,19 @@ pub(super) fn generate_on_workers(
                     starts[band * starts.len() / bands]
                 };
                 let end = (band + 1 < bands).then(|| starts[(band + 1) * starts.len() / bands]);
-                let input = engine_terrain::jobs::place_input(
-                    &recipe,
-                    &tile,
-                    banding.placing,
-                    (start, end),
-                );
-                let identity = engine_terrain::jobs::place_identity(
-                    &recipe,
+                let job = PlaceJob {
+                    recipe: recipe.clone(),
                     key,
-                    banding.placing,
-                    (start, end),
+                    placing: banding.placing,
+                    from: start,
+                    end,
+                };
+                let id = slots.jobs.submit_cacheable(
+                    PLACE_JOB,
+                    job.input(&tile),
+                    banding.priority,
+                    job.identity(),
                 );
-                let id = slots
-                    .jobs
-                    .submit_cacheable(PLACE_JOB, input, banding.priority, identity);
                 jobs.push((id, None));
             }
             state.placements.insert(
@@ -284,27 +237,24 @@ pub(super) fn generate_on_workers(
         let Some(placements) = state.placements.get_mut(&key) else {
             continue;
         };
-        let mut failed = false;
+        let mut failed = None;
         for (id, objects) in &mut placements.jobs {
             if objects.is_none()
                 && let Some(output) = slots.jobs.take(*id)
             {
-                match output
-                    .ok()
-                    .and_then(|bytes| engine_terrain::jobs::far_output(&bytes).ok())
-                {
-                    Some(placed) => *objects = Some(placed),
-                    None => failed = true,
+                match job_output(PLACE_JOB, output, engine_terrain::jobs::far_output) {
+                    Ok(placed) => *objects = Some(placed),
+                    Err(error) => failed = Some(error),
                 }
             }
         }
-        if !failed && placements.jobs.iter().any(|(_, objects)| objects.is_none()) {
+        if failed.is_none() && placements.jobs.iter().any(|(_, objects)| objects.is_none()) {
             continue;
         }
         let Some(placements) = state.placements.remove(&key) else {
             continue;
         };
-        if failed {
+        if let Some(error) = failed {
             for (id, objects) in placements.jobs {
                 if objects.is_none() {
                     slots.jobs.cancel(id);
@@ -312,7 +262,7 @@ pub(super) fn generate_on_workers(
                 }
             }
             state.failed.insert(key, frame);
-            state.worker_failures += 1;
+            state.failures.record(frame, error);
             continue;
         }
         let Some(tile) = state.store.get(&key).cloned() else {
@@ -371,20 +321,17 @@ pub(super) fn generate_on_workers(
         let Some((_, tile, _)) = state.far_jobs.remove(&key) else {
             continue;
         };
-        match output
-            .ok()
-            .and_then(|bytes| engine_terrain::jobs::far_output(&bytes).ok())
-        {
-            Some(far) => {
+        match job_output(FAR_JOB, output, engine_terrain::jobs::far_output) {
+            Ok(far) => {
                 let placed = merge_placed(tile.placed(), &far);
                 state.store.complete(Arc::new(
                     Tile::clone(&tile).with_placed(placed, Placing::All),
                 ));
                 inserted = true;
             }
-            None => {
+            Err(error) => {
                 state.far_wanted.insert(key, job_priority(VIEW_JOBS, 0));
-                state.worker_failures += 1;
+                state.failures.record(frame, error);
             }
         }
     }
@@ -454,11 +401,14 @@ pub(super) fn generate_on_workers(
             else {
                 continue;
             };
-            let input = engine_terrain::jobs::far_input(&recipe, &tile);
-            let identity = engine_terrain::jobs::far_identity(&recipe, key);
+            let job = FarJob {
+                recipe: recipe.clone(),
+                key,
+            };
+            let input = job.input(&tile);
             let id = slots
                 .jobs
-                .submit_cacheable(FAR_JOB, input, priority, identity);
+                .submit_cacheable(FAR_JOB, input, priority, job.identity());
             state.far_wanted.remove(&key);
             state.far_jobs.insert(key, (id, tile, arrival));
         } else {
@@ -477,7 +427,7 @@ pub(super) fn generate_on_workers(
             let urgent = job_class(priority) == URGENT_JOBS;
             urgent_left = urgent_left.saturating_sub(usize::from(urgent));
             let bands = if urgent && !resident {
-                std::cmp::min(1 + slots.urgent / (urgent_left + 1), work.bands)
+                std::cmp::min(1 + slots.urgent() / (urgent_left + 1), work.bands)
             } else {
                 1
             };
@@ -489,11 +439,18 @@ pub(super) fn generate_on_workers(
                         break;
                     }
                     let end = std::cmp::min((band + 1) * size, TILE_STRIDE as usize);
-                    let rows = (band * size) as u32..end as u32;
-                    let input = engine_terrain::jobs::band_input(&recipe, key, rows);
-                    let id = slots
-                        .jobs
-                        .submit_cacheable(BAND_JOB, input.clone(), priority, input);
+                    let job = BandJob {
+                        recipe: recipe.clone(),
+                        key,
+                        first: (band * size) as u32,
+                        end: end as u32,
+                    };
+                    let id = slots.jobs.submit_cacheable(
+                        BAND_JOB,
+                        job.input(),
+                        priority,
+                        job.identity(),
+                    );
                     jobs.push((id, None));
                 }
                 // Unless every band found a slot, the tile generates whole.
@@ -516,12 +473,17 @@ pub(super) fn generate_on_workers(
                     continue;
                 }
             }
-            let input = engine_terrain::jobs::tile_input(&recipe, key, placing, !resident);
-            // Staged or not, the same tile.
-            let identity = engine_terrain::jobs::tile_input(&recipe, key, placing, false);
-            let id = slots
-                .jobs
-                .submit_cacheable(TILE_JOB, input, priority, identity);
+            let job = TileJob {
+                recipe: recipe.clone(),
+                key,
+                placing,
+            };
+            let id = slots.jobs.submit_cacheable(
+                TILE_JOB,
+                job.input(!resident),
+                priority,
+                job.identity(),
+            );
             state.dispatched.insert(key, (id, revision, priority));
         }
     }
@@ -547,10 +509,15 @@ pub(super) fn generate_on_workers(
             if !slots.take(priority) {
                 break;
             }
-            let input = engine_terrain::jobs::tile_input(&recipe, key, Placing::All, false);
-            let id = slots
-                .jobs
-                .submit_cacheable(TILE_JOB, input.clone(), priority, input);
+            let job = TileJob {
+                recipe: recipe.clone(),
+                key,
+                placing: Placing::All,
+            };
+            let id =
+                slots
+                    .jobs
+                    .submit_cacheable(TILE_JOB, job.input(false), priority, job.identity());
             state.idle.insert(key, (id, revision));
         }
     }

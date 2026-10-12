@@ -69,7 +69,7 @@ pub(super) fn load_tiles(
     budget: &mut u64,
     frame: u64,
     requests: &mut Vec<TileRequest>,
-    mut slots: Option<&mut JobSlots<'_>>,
+    mut slots: Option<&mut JobBudget<'_>>,
 ) -> bool {
     let pyramid = state.terrain.pyramid;
     match state.terrain.source.clone() {
@@ -123,7 +123,7 @@ pub(super) fn load_tiles(
             if let Some(slots) = slots.as_deref_mut()
                 && slots.jobs.workers() > 0
                 && state.recipe.is_some()
-                && state.worker_failures < WORKER_FAILURES
+                && state.failures.count < WORKER_FAILURES
             {
                 generate_on_workers(state, missing, (target, keep), work, slots, frame);
                 return false;

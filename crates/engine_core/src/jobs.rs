@@ -417,3 +417,81 @@ impl Jobs {
         }
     }
 }
+
+/// A job of `kind`'s output decoded by `decode`, or why there is none: the
+/// job failed, or its output does not decode.
+pub(crate) fn job_output<T, E: std::fmt::Display>(
+    kind: &str,
+    output: Result<Vec<u8>, String>,
+    decode: impl FnOnce(&[u8]) -> Result<T, E>,
+) -> Result<T, String> {
+    let bytes = output.map_err(|error| format!("{kind}: {error}"))?;
+    decode(&bytes).map_err(|error| format!("{kind}: its output does not decode: {error}"))
+}
+
+/// An owner's jobs that failed: how many, and the last one's error with
+/// the owner's frame it failed at. Owners read outputs with [`job_output`]
+/// and record what failed here instead of dropping it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct JobFailures {
+    pub(crate) count: u64,
+    pub(crate) last: Option<(u64, String)>,
+}
+
+impl JobFailures {
+    /// Counts a failure: `error`, at the owner's frame `frame`.
+    pub(crate) fn record(&mut self, frame: u64, error: String) {
+        self.count += 1;
+        self.last = Some((frame, error));
+    }
+}
+
+/// The jobs a frame may hand workers, the one rule every owner admits jobs
+/// by: two in flight per worker, so each has its next ready, and a third
+/// for urgent jobs, which workers take up first; less every job still
+/// running, whoever submitted it. An owner handing out jobs as views want
+/// them takes a budget when it starts and a slot for each job.
+pub(crate) struct JobBudget<'a> {
+    pub(crate) jobs: &'a mut Jobs,
+    slots: usize,
+    urgent: usize,
+}
+
+impl JobBudget<'_> {
+    /// What `jobs`' workers leave free now.
+    pub(crate) fn of(jobs: &mut Jobs) -> JobBudget<'_> {
+        let workers = jobs.workers() as usize;
+        let running = jobs.running();
+        JobBudget {
+            slots: (workers * 2).saturating_sub(running),
+            urgent: (workers * 3).saturating_sub(running),
+            jobs,
+        }
+    }
+
+    /// Takes a slot for a job of `priority`; whether one was free.
+    pub(crate) fn take(&mut self, priority: u32) -> bool {
+        let free = if job_class(priority) == URGENT_JOBS {
+            self.urgent
+        } else {
+            self.slots
+        };
+        if free == 0 {
+            return false;
+        }
+        self.slots = self.slots.saturating_sub(1);
+        self.urgent = self.urgent.saturating_sub(1);
+        true
+    }
+
+    /// Gives back the slot of a job cancelled while running.
+    pub(crate) fn release(&mut self) {
+        self.slots += 1;
+        self.urgent += 1;
+    }
+
+    /// Slots left for urgent jobs.
+    pub(crate) fn urgent(&self) -> usize {
+        self.urgent
+    }
+}

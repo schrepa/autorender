@@ -55,6 +55,7 @@ async function settle(label) {
   assert.ok(quiet >= 3, `${label}: the terrain settles: ${JSON.stringify(terrains)}`);
   // However its tiles arrived, each holds the objects its level places.
   assert.equal(terrains.unplaced_tiles, 0, `${label}: every resident tile holds its objects: ${JSON.stringify(terrains)}`);
+  assert.equal(terrains.failed_jobs, 0, `${label}: no terrain job failed: ${terrains.latest_job_failure}`);
   return terrains;
 }
 

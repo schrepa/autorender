@@ -6,9 +6,9 @@ use super::*;
 /// Frames a failed fetch waits before it is requested again.
 pub(super) const RETRY_AFTER: u64 = 120;
 
-/// Tiles failing on workers after which a terrain generates
-/// its own, as when the workers' module does not match the engine's.
-pub(super) const WORKER_FAILURES: u32 = 8;
+/// Jobs failing on workers after which a terrain generates
+/// its own tiles, as when the workers' module does not match the engine's.
+pub(super) const WORKER_FAILURES: u64 = 8;
 
 /// Ranges, as multiples of each level's, within which tiles load and stay:
 /// beyond its range a level's tiles still shade the coarser level's
@@ -73,7 +73,7 @@ pub(super) struct TerrainState {
     /// Workers' share: the recipe they generate its tiles
     /// from, the tiles generating there (each one's job, the recipe's
     /// revision it generates from and its priority) and its bakes running
-    /// there, unless they failed there; and the tiles that failed there.
+    /// there, unless they failed there; and its jobs that failed there.
     pub(super) recipe: Option<SharedRecipe>,
     pub(super) dispatched: HashMap<TileKey, (JobId, u64, u32)>,
     /// Resident tiles without their objects standing far away,
@@ -83,7 +83,7 @@ pub(super) struct TerrainState {
     pub(super) far_jobs: HashMap<TileKey, (JobId, Arc<Tile>, u64)>,
     pub(super) bake_job: Option<JobId>,
     pub(super) bake_inline: bool,
-    pub(super) worker_failures: u32,
+    pub(super) failures: JobFailures,
     /// Tiles generating ahead of the view on workers while nothing is
     /// missing, for memory: each one's job and the recipe's
     /// revision it generates from; and the tiles to generate so, nearest
@@ -169,7 +169,7 @@ impl TerrainState {
             far_jobs: HashMap::default(),
             bake_job: None,
             bake_inline: false,
-            worker_failures: 0,
+            failures: JobFailures::default(),
             idle: HashMap::default(),
             ahead: Vec::new(),
             banded: HashMap::default(),

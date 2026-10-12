@@ -328,6 +328,11 @@ pub struct TerrainsView {
     /// which the asset library refused, and why the latest was.
     pub refused_falls: u64,
     pub latest_fall_refusal: Option<String>,
+    /// Terrains' jobs that failed on workers since each terrain arrived
+    /// (after several, a terrain generates its tiles itself), and why the
+    /// latest did.
+    pub failed_jobs: u64,
+    pub latest_job_failure: Option<String>,
 }
 
 /// An animation player as a scene's `animation` field with its clip

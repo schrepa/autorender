@@ -67,6 +67,7 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
             InspectorDescriptor::generated(schemas, "Terrains"),
             |terrains| {
                 let stats = terrains.stats();
+                let (failed_jobs, latest_job_failure) = terrains.job_failures();
                 json!(crate::views::TerrainsView {
                     terrains: stats.terrains,
                     resident_tiles: stats.resident_tiles,
@@ -92,6 +93,8 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
                     latest_read_failure: terrains.latest_read_failure().map(str::to_owned),
                     refused_falls: stats.refused_falls,
                     latest_fall_refusal: terrains.latest_fall_refusal().map(str::to_owned),
+                    failed_jobs,
+                    latest_job_failure: latest_job_failure.map(str::to_owned),
                 })
             },
         )
