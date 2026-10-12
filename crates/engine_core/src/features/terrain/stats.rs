@@ -4,6 +4,7 @@ use super::*;
 
 /// Counters of the last streaming update, over every terrain.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TerrainStats {
     pub terrains: u32,
     /// Tiles resident now.

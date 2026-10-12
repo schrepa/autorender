@@ -13,20 +13,20 @@ use engine_settings::ErrorCode;
 #[cfg(not(target_arch = "wasm32"))]
 use engine_settings::stated;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
+use super::results::{
+    HeightSample, RouteFound, StandingWater, SweepExample, SweepLayers, SweepRays,
+    TerrainHeightResult, TerrainRouteResult, TerrainSweepResult, Worst,
+};
 use crate::features::{EngineQuery, feature};
 use crate::protocol::bounds::{self, MAX_POINTS};
+use crate::results::result;
 use crate::{DevError, bounded, coordinate};
 
 /// Hits a sweep ray may meet: placed objects above the
 /// ground, and the ground itself.
 const PLACED_RAY_HITS: usize = 16;
-
-/// A terrain's authored ID, or its entity bits outside scenes.
-pub(crate) fn terrain_id(world: &World, entity: engine_core::bevy_ecs::prelude::Entity) -> Value {
-    json!(terrain_key(world, entity))
-}
 
 /// A terrain as replies name it: its authored ID, or its entity's bits
 /// outside scenes.
@@ -205,22 +205,22 @@ impl EngineQuery for TerrainRouteQuery {
         };
         let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
         let route = terrains.route(sample.terrain, from, to, &options);
-        Ok(json!({
-            "terrain": terrain_id(world, sample.terrain),
-            "options": options,
-            "origin": origin.to_array(),
+        Ok(result::terrain_route(TerrainRouteResult {
+            terrain: terrain_key(world, sample.terrain),
+            options,
+            origin: origin.to_array(),
             // Centimeters are plenty, and keep long routes within the
             // response limit.
-            "route": route.map(|route| json!({
-                "points": route
+            route: route.map(|route| RouteFound {
+                points: route
                     .points
                     .iter()
                     .map(|point| point.map(|value| (f64::from(value) * 100.0).round() / 100.0))
-                    .collect::<Vec<_>>(),
-                "length": route.length,
-                "steepest": route.steepest,
-                "hairpin_steps": route.hairpin_steps,
-            })),
+                    .collect(),
+                length: route.length,
+                steepest: route.steepest,
+                hairpin_steps: route.hairpin_steps,
+            }),
         }))
     }
 }
@@ -257,7 +257,7 @@ fn heights(engine: &mut Engine, points: &[[f64; 2]]) -> Result<Value, DevError> 
         .map(|(index, point)| {
             let x = coordinate(point[0], &format!("$.points[{index}][0]"))?;
             let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
-            Ok(terrains.sample(x, z).map_or(Value::Null, |sample| {
+            Ok(terrains.sample(x, z).map(|sample| {
                 // What its hydrology bake found there,
                 // as the finest level sees it, and the water standing
                 // there: its surface (world height)
@@ -272,9 +272,10 @@ fn heights(engine: &mut Engine, points: &[[f64; 2]]) -> Result<Value, DevError> 
                         .water_at(local.0, local.1)
                         .map(|(surface, _)| terrain.origin.y + surface)
                         .filter(|&surface| surface > sample.height)
-                        .map(
-                            |surface| json!({"surface": surface, "depth": surface - sample.height}),
-                        );
+                        .map(|surface| StandingWater {
+                            surface,
+                            depth: surface - sample.height,
+                        });
                     Some((
                         water.at(local.0, local.1, terrain.pyramid.spacing(0)),
                         standing,
@@ -287,40 +288,23 @@ fn heights(engine: &mut Engine, points: &[[f64; 2]]) -> Result<Value, DevError> 
                     let road = layers.path_at(x - terrain.origin.x, z - terrain.origin.z);
                     (road.distance < engine_core::terrain_data::PATH_FAR).then_some(road.edge())
                 });
-                json!({
-                    "terrain": terrain_id(world, sample.terrain),
-                    "height": sample.height,
-                    "normal": sample.normal.to_array(),
-                    "hole": sample.hole,
-                    "level": sample.level,
-                    "water": bake.as_ref().map(|(found, _)| found),
-                    "standing_water": bake.and_then(|(_, standing)| standing),
-                    "path": path,
-                })
+                HeightSample {
+                    terrain: terrain_key(world, sample.terrain),
+                    height: sample.height,
+                    normal: sample.normal.to_array(),
+                    hole: sample.hole,
+                    level: sample.level,
+                    water: bake.as_ref().map(|&(found, _)| found),
+                    standing_water: bake.and_then(|(_, standing)| standing),
+                    path,
+                }
             }))
         })
         .collect::<Result<Vec<_>, DevError>>()?;
-    Ok(json!({"samples": samples, "stats": terrains.stats()}))
-}
-
-/// The largest difference so far and where.
-#[derive(Default)]
-struct Worst {
-    difference: f32,
-    at: Option<[f32; 2]>,
-}
-
-impl Worst {
-    fn add(&mut self, difference: f32, point: Vec2) {
-        if difference > self.difference || self.at.is_none() {
-            self.difference = engine_core::math::max(self.difference, difference);
-            self.at = Some(point.to_array());
-        }
-    }
-
-    fn value(&self) -> Value {
-        json!({"max_difference": self.difference, "at": self.at})
-    }
+    Ok(result::terrain_height(TerrainHeightResult {
+        samples,
+        stats: terrains.stats(),
+    }))
 }
 
 /// The ground under a grid of `samples` by `samples` points across
@@ -400,22 +384,28 @@ fn sweep(
                 layers.add((height - sample.height).abs(), point);
             }
             if collected.len() < 8 {
-                collected.push(json!({"at": point.to_array(), "height": sample.height}));
+                collected.push(SweepExample {
+                    at: point.to_array(),
+                    height: sample.height,
+                });
             }
         }
     }
-    Ok(json!({
-        "points": samples * samples,
-        "resident": queried,
-        "level_zero": level_zero,
-        "holes": holes,
-        "collision": collision.then(|| json!({
-            "compared": ray_checks,
-            "missed": ray_misses,
-            "placed_first": placed_first,
-            "worst": rays.value(),
-        })),
-        "layers": json!({"compared": layer_checks, "worst": layers.value()}),
-        "examples": collected,
+    Ok(result::terrain_sweep(TerrainSweepResult {
+        points: samples * samples,
+        resident: queried,
+        level_zero,
+        holes,
+        collision: collision.then_some(SweepRays {
+            compared: ray_checks,
+            missed: ray_misses,
+            placed_first,
+            worst: rays,
+        }),
+        layers: SweepLayers {
+            compared: layer_checks,
+            worst: layers,
+        },
+        examples: collected,
     }))
 }

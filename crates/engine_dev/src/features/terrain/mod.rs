@@ -4,6 +4,7 @@
 
 mod controls;
 mod queries;
+mod results;
 
 use engine_core::bevy_ecs;
 use engine_core::bevy_ecs::prelude::{Entity, Resource, World};
@@ -26,6 +27,10 @@ use controls::{TerrainEditing, edit_terrain};
 pub use queries::TerrainKey;
 pub(crate) use queries::terrain_key;
 pub use queries::{TerrainHeightQuery, TerrainRouteQuery, TerrainSweepQuery};
+pub use results::{
+    HeightSample, Reach, RouteFound, StandingWater, SweepExample, SweepLayers, SweepRays,
+    TerrainEdited, TerrainHeightResult, TerrainRouteResult, TerrainSweepResult, Worst,
+};
 
 /// Registers terrain's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
@@ -364,6 +369,7 @@ impl EngineControl for TerrainEditControl {
                 change: self.change,
             },
         )
+        .map(result::terrain_edit)
     }
 }
 
@@ -384,6 +390,7 @@ impl EngineControl for TerrainUndoControl {
 
     fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
         editing(engine, scene, self.terrain.as_deref(), TerrainEditing::Undo)
+            .map(result::terrain_undo)
     }
 }
 
@@ -404,6 +411,7 @@ impl EngineControl for TerrainRedoControl {
 
     fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
         editing(engine, scene, self.terrain.as_deref(), TerrainEditing::Redo)
+            .map(result::terrain_redo)
     }
 }
 
@@ -419,7 +427,7 @@ fn editing(
     scene: Option<&SceneInstance>,
     name: Option<&str>,
     editing: TerrainEditing,
-) -> Result<Value, DevError> {
+) -> Result<TerrainEdited, DevError> {
     let mut redo = engine
         .app
         .world_mut()

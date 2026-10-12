@@ -10,8 +10,8 @@ use engine_core::{
 };
 use engine_scene::SceneInstance;
 use engine_settings::ErrorCode;
-use serde_json::{Value, json};
 
+use super::results::{Reach, TerrainEdited};
 use crate::DevError;
 use crate::coordinate;
 use crate::features::feature;
@@ -46,7 +46,7 @@ pub(super) fn edit_terrain(
     name: Option<&str>,
     redo: &mut Vec<(Entity, TerrainEdit)>,
     editing: TerrainEditing,
-) -> Result<Value, DevError> {
+) -> Result<TerrainEdited, DevError> {
     let world = engine.app.world_mut();
     let entity = match name {
         Some(name) => scene
@@ -80,10 +80,10 @@ pub(super) fn edit_terrain(
     let reach = |stamp: &Stamp| {
         let center = Vec2::from(stamp.center) + Vec2::new(origin.x, origin.z);
         let radius = stamp.radius + stamp.falloff;
-        json!({
-            "min": [center.x - radius, center.y - radius],
-            "max": [center.x + radius, center.y + radius],
-        })
+        Reach {
+            min: [center.x - radius, center.y - radius],
+            max: [center.x + radius, center.y + radius],
+        }
     };
     let result = match editing {
         TerrainEditing::Edit {
@@ -108,14 +108,14 @@ pub(super) fn edit_terrain(
             let (radius, falloff) = (radius as f32, falloff as f32);
             if edits.iter().any(|edit| *edit.id == *id) {
                 let standing = edits.iter().find(|edit| *edit.id == *id).expect("found");
-                return Ok(json!({
-                    "temporary": true,
-                    "applied": false,
-                    "id": id,
-                    "edits": edits.len(),
-                    "dirty": reach(&standing.stamp),
-                    "largest_change": 0.0,
-                }));
+                return Ok(TerrainEdited::Edit {
+                    temporary: true,
+                    applied: false,
+                    id,
+                    edits: edits.len(),
+                    dirty: reach(&standing.stamp),
+                    largest_change: 0.0,
+                });
             }
             // Levels to a world height, as the terrain's stamps hold it.
             let op = match change {
@@ -164,27 +164,32 @@ pub(super) fn edit_terrain(
                 stamp,
             });
             redo.retain(|(terrain, _)| *terrain != entity);
-            json!({
-                "temporary": true,
-                "applied": true,
-                "id": id,
-                "edits": edits.len(),
-                "dirty": reach(&stamp),
-                "largest_change": largest,
-            })
+            TerrainEdited::Edit {
+                temporary: true,
+                applied: true,
+                id,
+                edits: edits.len(),
+                dirty: reach(&stamp),
+                largest_change: largest,
+            }
         }
         TerrainEditing::Undo => match edits.pop() {
             Some(edit) => {
-                let result = json!({
-                    "temporary": true,
-                    "undone": &*edit.id,
-                    "edits": edits.len(),
-                    "dirty": reach(&edit.stamp),
-                });
+                let result = TerrainEdited::Undo {
+                    temporary: true,
+                    undone: Some(edit.id.to_string()),
+                    edits: edits.len(),
+                    dirty: Some(reach(&edit.stamp)),
+                };
                 redo.push((entity, edit));
                 result
             }
-            None => json!({"temporary": true, "undone": null, "edits": 0}),
+            None => TerrainEdited::Undo {
+                temporary: true,
+                undone: None,
+                edits: 0,
+                dirty: None,
+            },
         },
         TerrainEditing::Redo => {
             match redo
@@ -193,16 +198,21 @@ pub(super) fn edit_terrain(
                 .map(|index| redo.remove(index).1)
             {
                 Some(edit) => {
-                    let result = json!({
-                        "temporary": true,
-                        "redone": &*edit.id,
-                        "edits": edits.len() + 1,
-                        "dirty": reach(&edit.stamp),
-                    });
+                    let result = TerrainEdited::Redo {
+                        temporary: true,
+                        redone: Some(edit.id.to_string()),
+                        edits: edits.len() + 1,
+                        dirty: Some(reach(&edit.stamp)),
+                    };
                     edits.push(edit);
                     result
                 }
-                None => json!({"temporary": true, "redone": null, "edits": edits.len()}),
+                None => TerrainEdited::Redo {
+                    temporary: true,
+                    redone: None,
+                    edits: edits.len(),
+                    dirty: None,
+                },
             }
         }
     };

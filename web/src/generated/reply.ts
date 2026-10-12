@@ -327,6 +327,29 @@ export interface EnvironmentResult {
   temporary: boolean;
 }
 
+/** The ground under one point. */
+export interface HeightSample {
+  /** The ground's world height. */
+  height: number;
+  /** Whether a hole cuts it there. */
+  hole: boolean;
+  /** The level of the resident tile answering: 0, the finest. */
+  level: number;
+  /** Its normal. */
+  normal: number[];
+  /**
+   * Meters from the nearest road's edge (negative on roads); null
+   * beyond every path's masks' reach.
+   */
+  path?: number | null;
+  /** The water standing there, where any does. */
+  standing_water?: StandingWater | null;
+  /** The terrain answering. */
+  terrain: TerrainKey;
+  /** What the terrain's hydrology bake found there, where it has one. */
+  water?: HydrologySample | null;
+}
+
 /** An entity a hit or event names, by its authored identity. */
 export interface HitEntity {
   /** Whether it still exists. */
@@ -363,6 +386,21 @@ export interface HostContext {
   user_agent: string;
   /** The view's width, in physical pixels. */
   width: number;
+}
+
+/**
+ * What a bake found about one place: the base-10 logarithm of its
+ * upstream area (square meters), its wetness index, how deep water would
+ * stand there in a filled pit and how deep channels carve it (meters), and
+ * meters from the nearest river's edge, negative in its
+ * water; [`RIVER_FAR`] beyond every river's reach.
+ */
+export interface HydrologySample {
+  carve: number;
+  flow: number;
+  lake: number;
+  river: number;
+  wetness: number;
 }
 
 /** What `input` answers: the batch waits for the next step. */
@@ -481,6 +519,12 @@ export interface OpResults {
   status: StatusResult;
   step: StepResult;
   terrain: TerrainControlResult;
+  terrain_edit: TerrainEdited;
+  terrain_height: TerrainHeightResult;
+  terrain_redo: TerrainEdited;
+  terrain_route: TerrainRouteResult;
+  terrain_sweep: TerrainSweepResult;
+  terrain_undo: TerrainEdited;
   water_query: WaterQueryResult;
   world_changes: WorldChangesResult;
 }
@@ -608,10 +652,48 @@ export interface RaycastResult {
   snapshot: CollisionWorldView;
 }
 
+/** Where an edit reaches, world x and z. */
+export interface Reach {
+  /** Its greatest. */
+  max: number[];
+  /** Its least corner. */
+  min: number[];
+}
+
 /** What `render` answers. */
 export interface RenderResult {
   /** Always true: the frame rendered. */
   rendered: boolean;
+}
+
+/** A route over the terrain. */
+export interface RouteFound {
+  /** Steps of its hairpin turns. */
+  hairpin_steps: number;
+  /** Its length, meters. */
+  length: number;
+  /** Its points, terrain-local x and z, rounded to centimeters. */
+  points: number[][];
+  /** Its steepest step, rise per meter. */
+  steepest: number;
+}
+
+/** How a route finder weighs the ground. */
+export interface RouteOptions {
+  /** How much a meter's cost grows per squared grade. */
+  grade_cost?: number;
+  /** The pyramid level whose samples it walks between. */
+  level?: number;
+  /** The steepest grade it climbs: rise per meter. */
+  max_grade?: number;
+  /**
+   * The meters a turn costs per unit of one less the cosine of its
+   * angle: a right angle costs it once, turning back twice, so
+   * switchbacks run long legs.
+   */
+  turn_cost?: number;
+  /** The meters a meter through standing water costs on top. */
+  water_cost?: number;
 }
 
 /** The authored scene a reply observed. */
@@ -658,6 +740,14 @@ export interface ShapeCastResult {
   hit?: CastHit | null;
   /** The collision world queried. */
   snapshot: CollisionWorldView;
+}
+
+/** Water standing over the ground. */
+export interface StandingWater {
+  /** Its depth over the ground. */
+  depth: number;
+  /** Its surface's world height. */
+  surface: number;
 }
 
 /** What requests and replies keep within. */
@@ -713,6 +803,34 @@ export interface StepResult {
   ticks: number;
 }
 
+/** A point swept and its height. */
+export interface SweepExample {
+  /** World x and z. */
+  at: number[];
+  /** The tile's height there. */
+  height: number;
+}
+
+/** Generated terrains' layers against the tiles. */
+export interface SweepLayers {
+  /** Points compared. */
+  compared: number;
+  /** The largest difference and where. */
+  worst: Worst;
+}
+
+/** Collision rays against the tiles. */
+export interface SweepRays {
+  /** Rays that met the terrain. */
+  compared: number;
+  /** Rays that met another entity or nothing. */
+  missed: number;
+  /** Rays that met a placed object first. */
+  placed_first: number;
+  /** The largest difference and where. */
+  worst: Worst;
+}
+
 /** What `terrain` answers: terrain's view and level of detail after. */
 export interface TerrainControlResult {
   /** Where streaming stays frozen, where it does (world space). */
@@ -727,11 +845,139 @@ export interface TerrainControlResult {
   view?: TerrainView | null;
 }
 
+/** What `terrain_edit`, `terrain_undo` and `terrain_redo` answer. */
+export type TerrainEdited = { applied: boolean; dirty: Reach; edits: number; id: string; largest_change: number; temporary: boolean } | { dirty?: Reach | null; edits: number; temporary: boolean; undone?: string | null } | { dirty?: Reach | null; edits: number; redone?: string | null; temporary: boolean };
+
+/**
+ * What `terrain_height` answers: each point's ground, null where no tile
+ * is resident, and the terrains' streaming counters.
+ */
+export interface TerrainHeightResult {
+  /** Each point's, in the order asked. */
+  samples: HeightSample | null[];
+  /** The terrains' streaming counters. */
+  stats: TerrainStats;
+}
+
 /**
  * A terrain as replies name it: its authored ID, or its entity's bits
  * outside scenes.
  */
 export type TerrainKey = string | number;
+
+/** What `terrain_route` answers: the route found, if one reaches. */
+export interface TerrainRouteResult {
+  /** How the route weighed the ground. */
+  options: RouteOptions;
+  /**
+   * The terrain's origin, world x and z, which the route's points are
+   * relative to.
+   */
+  origin: number[];
+  /** The route; null where none reaches. */
+  route?: RouteFound | null;
+  /** The terrain routed over. */
+  terrain: TerrainKey;
+}
+
+/** Counters of the last streaming update, over every terrain. */
+export interface TerrainStats {
+  /**
+   * Terrains whose bakes are in progress: they
+   * load no tiles until done.
+   */
+  baking: number;
+  /**
+   * Tiles that generated in bands of rows on several workers since
+   * terrains started.
+   */
+  banded_tiles: number;
+  /**
+   * Bridges terrains' roads span, tunnels they bore,
+   * and waterfalls their rivers drop over.
+   */
+  bridges: number;
+  cached_bytes: number;
+  /**
+   * Tiles kept in memory after the view left them and
+   * their bytes, tiles that returned from there since terrains started,
+   * and tiles generating ahead of the view.
+   */
+  cached_tiles: number;
+  /** Wanted tiles beyond the tile budget or the device's capacity. */
+  dropped_tiles: number;
+  /**
+   * Tile reads that failed since terrains started (read again later),
+   * and falls drawn without their white water, which the asset library
+   * refused; [`Terrains::latest_read_failure`] and
+   * [`Terrains::latest_fall_refusal`] say why the latest did.
+   */
+  failed_reads: number;
+  fallback_patches: number;
+  falls: number;
+  idle_tiles: number;
+  /**
+   * Whether the camera's view has yet to load whole since terrains
+   * arrived or [`Terrains::begin_loading`]: frames work
+   * on terrain for the settings' `loading_work_ms`, then `work_ms`.
+   */
+  loading: boolean;
+  /**
+   * Tiles being generated, fetched or decoded, and every tile the
+   * camera's view and collision want that is not resident yet.
+   */
+  loading_tiles: number;
+  missing_tiles: number;
+  /**
+   * Patches the camera draws, and of those how many stand in for finer
+   * levels not resident yet.
+   */
+  patches: number;
+  refused_falls: number;
+  /** Tiles resident now. */
+  resident_tiles: number;
+  restored_tiles: number;
+  /**
+   * Of the resident tiles, those holding their shape alone so far:
+   * heights and holes, drawn with coarser levels'
+   * materials while the rest loads.
+   */
+  shaped_tiles: number;
+  surroundings_patches: number;
+  /** Of the resident tiles and patches, those of terrains' surroundings. */
+  surroundings_tiles: number;
+  terrains: number;
+  tunnels: number;
+  /**
+   * Resident tiles lacking objects their levels place with nothing
+   * under way to place them: none unless streaming lost
+   * track of them.
+   */
+  unplaced_tiles: number;
+  /** Tiles the view wants that wait while the camera moves fast. */
+  waiting_tiles: number;
+}
+
+/**
+ * What `terrain_sweep` answers: how far what terrain queries, collision
+ * rays and generated terrains' layers say of the ground differ.
+ */
+export interface TerrainSweepResult {
+  /** Collision rays against the tiles, where the engine has collision. */
+  collision?: SweepRays | null;
+  /** A few points swept and their heights. */
+  examples: SweepExample[];
+  /** Those in holes. */
+  holes: number;
+  /** Generated terrains' layers against the tiles. */
+  layers: SweepLayers;
+  /** Those whose tile is of level 0. */
+  level_zero: number;
+  /** Points swept. */
+  points: number;
+  /** Those under a resident tile. */
+  resident: number;
+}
 
 /**
  * What terrain shows: its material, or for development its
@@ -825,4 +1071,12 @@ export interface WorldChangesResult {
   restored: number;
   /** Controls change the session's world, not the scene's source. */
   temporary: boolean;
+}
+
+/** The largest difference so far and where. */
+export interface Worst {
+  /** Where, world x and z; null before any comparison. */
+  at?: number[] | null;
+  /** Meters. */
+  max_difference: number;
 }

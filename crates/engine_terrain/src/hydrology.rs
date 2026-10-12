@@ -620,6 +620,7 @@ fn falls(
 /// meters from the nearest river's edge, negative in its
 /// water; [`RIVER_FAR`] beyond every river's reach.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct HydrologySample {
     pub flow: f32,
     pub wetness: f32,

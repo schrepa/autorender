@@ -22,12 +22,6 @@ pub const UNTYPED_RESULTS: &[&str] = &[
     "pause",
     "reload",
     "resume",
-    "terrain_edit",
-    "terrain_height",
-    "terrain_redo",
-    "terrain_route",
-    "terrain_sweep",
-    "terrain_undo",
 ];
 
 /// Declares each typed op's result type, `op: Type`: handlers hand a result
@@ -81,6 +75,12 @@ results! {
     input: crate::results::InputResult,
     step: crate::results::StepResult,
     environment: crate::results::EnvironmentResult,
+    terrain_height: crate::features::terrain::TerrainHeightResult,
+    terrain_sweep: crate::features::terrain::TerrainSweepResult,
+    terrain_route: crate::features::terrain::TerrainRouteResult,
+    terrain_edit: crate::features::terrain::TerrainEdited,
+    terrain_undo: crate::features::terrain::TerrainEdited,
+    terrain_redo: crate::features::terrain::TerrainEdited,
 }
 
 /// The engine as a session finds it: the world's size, the inspectors,
