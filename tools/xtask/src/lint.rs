@@ -27,8 +27,8 @@ pub(crate) struct Stage {
 /// formatting, the web host's text checks, the drift checks (scene sources,
 /// generated files, bench/ and its equivalence matrix, smoke coverage, each
 /// smoke's opening description, the path map `cargo xtask verify` selects
-/// checks by, feature layering, the
-/// facade's exports), the structure ratchet (file
+/// checks by, feature layering, the schedules' ordering of conflicting
+/// systems, the facade's exports), the structure ratchet (file
 /// lengths, struct widths), the Stress Lab's content locality, shaders against their Rust layouts, the pure
 /// checks' corpora, Clippy (the workspace, the native host's tools, the
 /// browser clients, the app template), rustdoc, the browser clients the web
@@ -98,6 +98,11 @@ pub(crate) const LINT: &[Stage] = &[
         name: "features",
         needs: &[],
         run: crate::features::check,
+    },
+    Stage {
+        name: "schedule ambiguities",
+        needs: &[],
+        run: crate::ambiguities::check,
     },
     Stage {
         name: "exports",

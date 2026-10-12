@@ -3717,6 +3717,7 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "bevy_ecs",
  "engine",
  "engine_assetc",
  "engine_assets",

@@ -50,6 +50,7 @@ const QUICK_STAGES: &[&str] = &[
     "smoke descriptions",
     "path map",
     "features",
+    "schedule ambiguities",
     "exports",
     "structure",
     "content locality",
