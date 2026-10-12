@@ -1,4 +1,312 @@
 {
+  "caches": {
+    "caches checks": 50,
+    "caches entities": 2201,
+    "caches mismatches": 0,
+    "content city": {
+      "assets": {
+        "clips": {
+          "count": 0,
+          "hash": "0000000000000000"
+        },
+        "materials": {
+          "count": 119,
+          "hash": "463c2e42e5cac752"
+        },
+        "meshes": {
+          "count": 9,
+          "hash": "4e98c490cfdda85d"
+        },
+        "textures": {
+          "count": 15,
+          "hash": "d085efb9d314d884"
+        }
+      },
+      "components": {
+        "Collider": {
+          "count": 1000,
+          "hash": "dd2e1b0520e7762c"
+        },
+        "GlobalTransform": {
+          "count": 10697,
+          "hash": "3195bbd31877de44"
+        },
+        "Hierarchy": {
+          "count": 10697,
+          "hash": "208811f02241125a"
+        },
+        "InterpolateTransform": {
+          "count": 2324,
+          "hash": "3b6f27367b9b7ce7"
+        },
+        "LocalLight": {
+          "count": 900,
+          "hash": "12a5c94ec627ade8"
+        },
+        "Mesh3d": {
+          "count": 10000,
+          "hash": "a25cc4add845bb9c"
+        },
+        "ParticleEmitter": {
+          "count": 307,
+          "hash": "6cb0d8eb62867331"
+        },
+        "PresentedTransform": {
+          "count": 10697,
+          "hash": "57c28bcd2f200bae"
+        },
+        "Transform": {
+          "count": 10697,
+          "hash": "cec8a534d0550bf0"
+        }
+      },
+      "entities": 10756,
+      "hash": "108aa48c9db5e4db"
+    },
+    "content dense": {
+      "assets": {
+        "clips": {
+          "count": 0,
+          "hash": "0000000000000000"
+        },
+        "materials": {
+          "count": 5,
+          "hash": "e041ba7209dae6f3"
+        },
+        "meshes": {
+          "count": 5,
+          "hash": "4472c906431d39c2"
+        },
+        "textures": {
+          "count": 0,
+          "hash": "0000000000000000"
+        }
+      },
+      "components": {
+        "GlobalTransform": {
+          "count": 10100,
+          "hash": "653dad38373ae017"
+        },
+        "Hierarchy": {
+          "count": 10100,
+          "hash": "e958d88741e8e418"
+        },
+        "InterpolateTransform": {
+          "count": 2500,
+          "hash": "df3860cd16aee302"
+        },
+        "Mesh3d": {
+          "count": 10100,
+          "hash": "e9322e48df25b1af"
+        },
+        "PresentedTransform": {
+          "count": 10100,
+          "hash": "b1b2bab025c40b81"
+        },
+        "Transform": {
+          "count": 10100,
+          "hash": "9cab85ec4109b670"
+        }
+      },
+      "entities": 10159,
+      "hash": "62505b89204d62db"
+    },
+    "content field": {
+      "assets": {
+        "clips": {
+          "count": 0,
+          "hash": "0000000000000000"
+        },
+        "materials": {
+          "count": 8,
+          "hash": "e4271ab9d8ef9a58"
+        },
+        "meshes": {
+          "count": 9,
+          "hash": "d8f78fd376d4b1c5"
+        },
+        "textures": {
+          "count": 8,
+          "hash": "71b6cf5ea8666d2d"
+        }
+      },
+      "components": {
+        "Collider": {
+          "count": 1000,
+          "hash": "728b2907755171fd"
+        },
+        "GlobalTransform": {
+          "count": 10313,
+          "hash": "4d82694b850aedb1"
+        },
+        "Hierarchy": {
+          "count": 10313,
+          "hash": "ef3e886093e1fbba"
+        },
+        "InterpolateTransform": {
+          "count": 2500,
+          "hash": "df3860cd16aee302"
+        },
+        "Mesh3d": {
+          "count": 10000,
+          "hash": "74a86396d111e1f9"
+        },
+        "PresentedTransform": {
+          "count": 10313,
+          "hash": "f2d82d4a54d7ff14"
+        },
+        "Transform": {
+          "count": 10313,
+          "hash": "857359c078750dcd"
+        }
+      },
+      "entities": 10372,
+      "hash": "6a7032a82d969f38"
+    },
+    "content highlands": {
+      "assets": {
+        "clips": {
+          "count": 0,
+          "hash": "0000000000000000"
+        },
+        "materials": {
+          "count": 25,
+          "hash": "965a91f58f23bb1c"
+        },
+        "meshes": {
+          "count": 50,
+          "hash": "63c8efc32852066e"
+        },
+        "textures": {
+          "count": 27,
+          "hash": "c8ed4e72cd1431b0"
+        }
+      },
+      "components": {
+        "Collider": {
+          "count": 1000,
+          "hash": "728b2907755171fd"
+        },
+        "GlobalTransform": {
+          "count": 10314,
+          "hash": "b6942995532fe9ee"
+        },
+        "Grounded": {
+          "count": 1,
+          "hash": "4a43e1abe30fa8f6"
+        },
+        "Hierarchy": {
+          "count": 10314,
+          "hash": "68d58651651f99a2"
+        },
+        "InterpolateTransform": {
+          "count": 2501,
+          "hash": "2198ea062eca3bf9"
+        },
+        "Mesh3d": {
+          "count": 10001,
+          "hash": "6e118f8fe01c4804"
+        },
+        "NavAgent": {
+          "count": 1,
+          "hash": "e78562ae47d235b3"
+        },
+        "PresentedTransform": {
+          "count": 10314,
+          "hash": "f0f236f71717b73e"
+        },
+        "Terrain": {
+          "count": 1,
+          "hash": "6be1af59c3028667"
+        },
+        "Transform": {
+          "count": 10314,
+          "hash": "5676d51a7046f1f1"
+        }
+      },
+      "entities": 10378,
+      "hash": "1bc8bd2ace14a8d5"
+    },
+    "content metro": {
+      "assets": {
+        "clips": {
+          "count": 12,
+          "hash": "971e942bcc978c09"
+        },
+        "materials": {
+          "count": 48,
+          "hash": "8325dedc841be6cb"
+        },
+        "meshes": {
+          "count": 17,
+          "hash": "8a0d6ecf6f0110d1"
+        },
+        "textures": {
+          "count": 116,
+          "hash": "d2ab05d2bb6b6719"
+        }
+      },
+      "components": {
+        "AnimationPlayer": {
+          "count": 480,
+          "hash": "0a845bd7b23c6068"
+        },
+        "Collider": {
+          "count": 1000,
+          "hash": "fdc23ea13c14eb8d"
+        },
+        "GlobalTransform": {
+          "count": 15270,
+          "hash": "e5e2aefdd053e874"
+        },
+        "Hierarchy": {
+          "count": 15270,
+          "hash": "3dbadb1557962806"
+        },
+        "InterpolateTransform": {
+          "count": 6832,
+          "hash": "77ef86fe2f0400ab"
+        },
+        "LocalLight": {
+          "count": 2205,
+          "hash": "2fa9d86282203e61"
+        },
+        "Mesh3d": {
+          "count": 10000,
+          "hash": "fd29d165fb1cb515"
+        },
+        "ParticleEmitter": {
+          "count": 21,
+          "hash": "3f5096d12236f72b"
+        },
+        "PresentedTransform": {
+          "count": 15270,
+          "hash": "52f96e941bbfdd12"
+        },
+        "ReflectionProbe": {
+          "count": 230,
+          "hash": "8b506d0b3c78b8db"
+        },
+        "Skin": {
+          "count": 375,
+          "hash": "5a18222e9383d7f4"
+        },
+        "Tint": {
+          "count": 4757,
+          "hash": "797acd26fffb7cb0"
+        },
+        "Transform": {
+          "count": 15270,
+          "hash": "47123809d28c1818"
+        }
+      },
+      "entities": 15331,
+      "hash": "bd6d3fcb1a3679fc"
+    },
+    "terrain frames": 400,
+    "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, shaped_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141572, restored_tiles: 12, idle_tiles: 0, banded_tiles: 0, unplaced_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, loading: false } | terrain tiles 854854a0fbb2ae0d patches 3c83553fdfed650c | surroundings tiles a2eadb7ccd455bc5 patches 36dbb04c85cad6bc",
+    "terrain trace": "a24d4531a4c1f472"
+  },
   "terrain": {
     "bake 1": {
       "deepest": 1.4122734069824219,

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_profile", "crates/engine_terrain", "crates/engine_worker", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "apps/*", "tools/xtask", "tools/assetc", "tools/vgbuild", "tools/policy"]
+members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_profile", "crates/engine_terrain", "crates/engine_worker", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "apps/*", "tools/xtask", "tools/assetc", "tools/vgbuild", "tools/policy", "tools/coresmoke"]
 resolver = "3"
 # The vendored glam copy is patched in below, not a workspace member.
 exclude = ["vendor"]
@@ -30,6 +30,7 @@ engine_panic = { path = "crates/engine_panic" }
 engine_assetc = { path = "tools/assetc" }
 engine_vgbuild = { path = "tools/vgbuild" }
 policy = { path = "tools/policy" }
+stress-lab = { path = "apps/stress-lab" }
 base64 = "=0.22.1"
 gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "allow_empty_texture", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
 png = "=0.17.16"

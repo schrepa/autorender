@@ -8,6 +8,7 @@
 //! diff of that file, which `--bless` rewrites from a run whose promises
 //! hold.
 
+mod caches;
 mod terrain;
 
 use std::collections::BTreeMap;
@@ -30,10 +31,16 @@ pub(crate) struct Corpus {
 }
 
 /// Every corpus, in the order `cargo xtask pure` runs them.
-pub(crate) const CORPORA: &[Corpus] = &[Corpus {
-    name: "terrain",
-    run: terrain::run,
-}];
+pub(crate) const CORPORA: &[Corpus] = &[
+    Corpus {
+        name: "terrain",
+        run: terrain::run,
+    },
+    Corpus {
+        name: "caches",
+        run: caches::run,
+    },
+];
 
 /// What a corpus observed, by name, and the promises it found broken.
 #[derive(Default)]

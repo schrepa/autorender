@@ -96,6 +96,11 @@ fn execute() -> Result<(), Failure> {
     if task == "pure" {
         return pure::pure(&root, &options);
     }
+    if task == "core-smoke" {
+        let mut corpus = vec!["caches".to_owned()];
+        corpus.extend(options);
+        return pure::pure(&root, &corpus);
+    }
     if task == "bench" {
         return Ok(bench::bench(&root, &options)?);
     }
@@ -176,7 +181,8 @@ fn commands() -> Vec<(String, &'static str)> {
         ("schema".into(), "Write the generated protocol summary, client list, stats and game surface types, and each app's own"),
         ("new app NAME".into(), "Start a game in apps/NAME with its page web/NAME.html, from the engine's app template"),
         ("smoke --list | [--serve] [--keep-going] (--all | NAME...)".into(), "List or run the browser smoke checks: against the development server DEMO_URL names, or with --serve one of this checkout started on a free port (never 5173-5175) and stopped after; holding the machine's heavy-run lock; stopping at the first failure, or with --keep-going running every one and listing each result; exit 3 when an assertion failed"),
-        ("pure [--bless] [CORPUS...]".into(), "Run the deterministic checks of engine code over tracked fixtures, without a GPU or browser (corpora: terrain): each checks what the code promises and that its outputs equal the goldens in tools/xtask/pure/goldens.json; --bless rewrites them from a run whose promises hold, for review; exit 3 when a promise broke or an output changed"),
+        ("pure [--bless] [CORPUS...]".into(), "Run the deterministic checks of engine code over tracked fixtures, without a GPU or browser (corpora: terrain, caches): each checks what the code promises and that its outputs equal the goldens in tools/xtask/pure/goldens.json; --bless rewrites them from a run whose promises hold, for review; exit 3 when a promise broke or an output changed"),
+        ("core-smoke [--bless]".into(), "Run the core smoke (the caches corpus of pure): tools/coresmoke in the dev profile, debug assertions on, checks the incremental caches against fresh engines under seeded random edits, and holds a deterministic terrain streaming trace (written to target/coresmoke/terrain-trace.txt) and the Stress Lab's content digests to their goldens; a failure prints the seed and the edits"),
         ("gpu".into(), "Check the renderer's shaders against its Rust GPU layouts and bindings"),
         ("gpu --report DIR [--no-rga]".into(), "Report every shader entry point's cost offline, on any machine: naga's counts and SPIR-V, and with Radeon GPU Analyzer (downloaded once, Windows and Linux) its AMD machine code, registers and memory on RDNA 2, 3 and 4"),
         ("bench check".into(), "Check bench/ against the code: the metric catalog names what measurements report, the scene and settings files known options, the shader paths every shader"),

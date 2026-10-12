@@ -338,7 +338,7 @@ impl Options {
 /// their files, and the highlands' terrain material maps, without which
 /// its ground shows plain colors, and with `rocks` its optional scanned
 /// rock maps.
-fn stress_files(
+pub fn stress_files(
     assets: &Path,
     scene: StressScene,
     rocks: bool,

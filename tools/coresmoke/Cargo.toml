@@ -1,0 +1,21 @@
+[package]
+name = "coresmoke"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The engine's incremental caches, terrain streaming and the Stress Lab's content, checked without a GPU"
+
+[dependencies]
+# Its own components (the drift the caches check moves entities with).
+bevy_ecs.workspace = true
+engine = { workspace = true, features = ["dev"] }
+engine_core = { workspace = true, features = ["dev"] }
+engine_dev.workspace = true
+engine_native.workspace = true
+engine_scene.workspace = true
+stress-lab.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
