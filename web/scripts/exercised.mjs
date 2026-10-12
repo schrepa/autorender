@@ -8,6 +8,7 @@
  * it starts inherits the variable), each into its own `PID.json` as it
  * exits, and the runner merges them.
  */
+// @ts-check
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 

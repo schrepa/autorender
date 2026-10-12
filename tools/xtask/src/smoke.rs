@@ -81,6 +81,17 @@ fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(smokes)
 }
 
+/// Fails unless every smoke check opens with the `/**` comment saying what
+/// it checks, which `smoke --list` shows: lint's stage.
+pub fn check(root: &Path) -> Result<(), String> {
+    let smokes = smokes(root)?;
+    println!(
+        "{} smoke checks, each opening with what it checks.",
+        smokes.len()
+    );
+    Ok(())
+}
+
 /// `smoke --list` lists the checks; `smoke NAME...` runs those in order and
 /// `smoke --all` every one, stopping at the first failure unless
 /// `--keep-going`, against the server `DEMO_URL` names or, with `--serve`,

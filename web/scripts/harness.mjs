@@ -18,6 +18,7 @@
  * (`workspace.mjs`). What their commands send is recorded for the smoke
  * runner (`exercised.mjs`).
  */
+// @ts-check
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -72,7 +73,7 @@ export function cargoBinaries(cargoArguments) {
     const child = spawn(process.env.CARGO ?? "cargo", ["build", "-q", "--locked", "--message-format=json", ...cargoArguments],
       { cwd: workspace, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     // The compilers it starts inherit the priority.
-    try { setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* Not permitted: normal priority. */ }
+    try { if (child.pid !== undefined) setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* Not permitted: normal priority. */ }
     let stdout = "", stderr = "";
     child.stdout.on("data", bytes => { stdout += bytes; });
     child.stderr.on("data", bytes => { stderr = (stderr + bytes).slice(-16_384); });
@@ -159,7 +160,11 @@ export function strictStats(stats) {
 /** Waits while the page runs ordinary frames (after `resume`) until
  * `frames` more were drawn and `done` holds for a status reply: frame
  * counts and the engine's own state, not milliseconds, say when enough
- * ran, on a fast machine and a slow one alike. Resolves to that reply. */
+ * ran, on a fast machine and a slow one alike. Resolves to that reply.
+ * @param {(op: string) => Promise<any>} command
+ * @param {number} frames
+ * @param {{ done?: (status: any) => boolean, deadline?: number }} [options]
+ */
 export async function waitFrames(command, frames, { done = () => true, deadline = 120_000 } = {}) {
   const first = Number((await command("status")).observation.frame);
   const until = Date.now() + deadline;
@@ -202,7 +207,7 @@ export function differentPixels(page, images, { tolerance = 0, alpha = false } =
       await image.decode();
       const canvas = document.createElement("canvas");
       canvas.width = image.width; canvas.height = image.height;
-      const context = canvas.getContext("2d");
+      const context = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
       context.drawImage(image, 0, 0);
       return context.getImageData(0, 0, image.width, image.height);
     }));

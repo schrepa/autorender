@@ -1,4 +1,5 @@
 /** Own one identified development runtime, independent of its HTTP transport. */
+// @ts-check
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
@@ -33,7 +34,7 @@ async function compareCaptures(command, requestBrowser, page) {
       await image.decode();
       const canvas = document.createElement("canvas");
       canvas.width = image.width; canvas.height = image.height;
-      const context = canvas.getContext("2d");
+      const context = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
       context.drawImage(image, 0, 0);
       return context.getImageData(0, 0, image.width, image.height);
     }));
@@ -67,6 +68,12 @@ async function pruneSessions(root) {
   await Promise.all(sessions.slice(SESSIONS_KEPT).map(({ path }) => rm(path, { recursive: true, force: true })));
 }
 
+/**
+ * A development session of the page `url` (a loopback address) in Chrome,
+ * `browserPath`'s where given, named `session`, refusing a page of another
+ * build than `expectedBuild` where given, which `signal` ends.
+ * @param {{ url: string | URL, browserPath?: string, session?: string, expectedBuild?: string | null, signal?: AbortSignal }} options
+ */
 export async function launchBrowserSession({ url: value, browserPath, session = randomUUID(), expectedBuild, signal }) {
   const url = loopbackUrl(String(value));
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "Session identity must be a bounded identifier.", "session");

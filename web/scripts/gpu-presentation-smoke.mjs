@@ -1,6 +1,7 @@
 /** GPU presentation against the exact CPU reference in real Chrome, and its
  * occlusion and sub-pixel culling settings: inspected, changed by the
  * paused environment control and observed in GPU-presented frames. */
+// @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { artifacts, commander, devUrl, differentPixels, launch, openPaused, waitFrames } from "./harness.mjs";

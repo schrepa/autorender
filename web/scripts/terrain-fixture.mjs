@@ -18,6 +18,7 @@
  * their bakes eased out over 128 m. Beside it: the player, a reflection
  * probe, a buoy, an interior's probe, a hiker and a roller.
  */
+// @ts-check
 import assert from "node:assert/strict";
 import { cp, mkdir, readFile, rm } from "node:fs/promises";
 import { sep } from "node:path";
@@ -149,7 +150,7 @@ export async function skyColor(page, png) {
     await image.decode();
     const canvas = document.createElement("canvas");
     canvas.width = image.width; canvas.height = image.height;
-    const context = canvas.getContext("2d");
+    const context = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
     context.drawImage(image, 0, 0);
     const { data } = context.getImageData(0, 0, image.width, Math.floor(image.height / 3));
     const sum = [0, 0, 0];

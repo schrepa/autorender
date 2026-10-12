@@ -9,6 +9,7 @@
  * terrain, and running frames capture the reflection probe. The fixture:
  * terrain-fixture.mjs.
  */
+// @ts-check
 import assert from "node:assert/strict";
 import { differentPixels } from "./harness.mjs";
 import { fast, openTerrain, overview, skyColor } from "./terrain-fixture.mjs";
@@ -133,7 +134,7 @@ try {
       await image.decode();
       const canvas = document.createElement("canvas");
       canvas.width = image.width; canvas.height = image.height;
-      const context = canvas.getContext("2d");
+      const context = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
       context.drawImage(image, 0, 0);
       const { data, width, height } = context.getImageData(0, 0, image.width, image.height);
       const sums = [0, 0], counts = [0, 0];

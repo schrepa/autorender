@@ -8,6 +8,7 @@
  * ground as deep as its materials let them and refill; kept shadow levels
  * sharpen still casters. The fixture: terrain-fixture.mjs.
  */
+// @ts-check
 import assert from "node:assert/strict";
 import { differentPixels } from "./harness.mjs";
 import { COMPILE_MS, fast, openTerrain, overview } from "./terrain-fixture.mjs";

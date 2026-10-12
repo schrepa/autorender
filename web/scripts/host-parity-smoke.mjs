@@ -10,6 +10,7 @@
  * and calls into its module no more. Builds `stress-lab` natively
  * (`--profile quick --features dev`) and opens the development server's
  * stress.html (`DEMO_URL`). */
+// @ts-check
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";
 import { launchBrowserSession } from "./agent-browser.mjs";
@@ -187,7 +188,7 @@ try {
   web.page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
   // Ninety of the browser's animation frames, in which the stopped page
   // must call into its module no more.
-  await web.page.evaluate(() => new Promise(resolve => {
+  await web.page.evaluate(() => new Promise(/** @param {(value?: unknown) => void} resolve */ resolve => {
     let frames = 0;
     const next = () => (++frames >= 90 ? resolve() : requestAnimationFrame(next));
     requestAnimationFrame(next);

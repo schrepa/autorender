@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /** Machine-readable local agent client and development browser owner. */
+// @ts-check
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { open } from "node:fs/promises";

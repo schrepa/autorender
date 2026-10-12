@@ -4,6 +4,7 @@
  * program after its panic hook writes the report on standard error; the
  * session then answers every request `runtime_panicked` with the report's
  * message, as a page's does. */
+// @ts-check
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
@@ -118,6 +119,11 @@ async function compareCaptures(command, request) {
   return { ...response, result: { compare: result, a: command.a, b: command.b, tolerance } };
 }
 
+/**
+ * A development session of the native host `program`, started paused with
+ * `args`, named `session`, which `signal` ends.
+ * @param {{ program: string, args?: string[], session?: string, signal?: AbortSignal }} options
+ */
 export async function launchNativeSession({ program, args = [], session = randomUUID(), signal }) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "Session identity must be a bounded identifier.", "session");
   const artifacts = resolve(workspace, "artifacts", "agent", session);
@@ -163,7 +169,7 @@ export async function launchNativeSession({ program, args = [], session = random
   child.on("close", invalidate);
   function close() {
     if (!closing) {
-      closing = new Promise(resolveClose => {
+      closing = new Promise(/** @param {(value?: unknown) => void} resolveClose */ resolveClose => {
         if (child.exitCode !== null || child.signalCode !== null) { resolveClose(); return; }
         child.once("exit", () => resolveClose());
         child.stdin.end();

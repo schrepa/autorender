@@ -9,6 +9,7 @@
  * PATH while the page opens; they write into web/public/scenes/, and what
  * they wrote is removed afterwards. The fixture: terrain-fixture.mjs.
  */
+// @ts-check
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";

@@ -47,6 +47,7 @@ const QUICK_STAGES: &[&str] = &[
     "bench",
     "equivalence matrix",
     "coverage",
+    "smoke descriptions",
     "path map",
     "features",
     "exports",

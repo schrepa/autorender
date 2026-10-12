@@ -11,6 +11,7 @@
  * and a place a game names prefetches its tiles. The fixture and what the
  * terrain smokes share: terrain-fixture.mjs.
  */
+// @ts-check
 import assert from "node:assert/strict";
 import { differentPixels } from "./harness.mjs";
 import { fast, fixture, openTerrain, overview, terrain } from "./terrain-fixture.mjs";
