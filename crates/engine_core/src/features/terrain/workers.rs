@@ -633,31 +633,3 @@ pub(super) fn share_recipe(
         released.push(old.key);
     }
 }
-
-/// Pushes `key` onto `order` after those of its ancestors not yet there,
-/// coarsest first: a tile draws only within its parent, so a
-/// finer one loaded first would wait unused, while what stands on the
-/// ground (blades, placed objects) already followed its finer heights.
-pub(super) fn push_with_ancestors(
-    pyramid: &engine_terrain::Pyramid,
-    key: TileKey,
-    order: &mut Vec<TileKey>,
-    seen: &mut HashSet<TileKey>,
-) {
-    if seen.contains(&key) {
-        return;
-    }
-    let mut chain = vec![key];
-    let mut child = key;
-    while let Some(parent) = pyramid.parent(child) {
-        if seen.contains(&parent) {
-            break;
-        }
-        chain.push(parent);
-        child = parent;
-    }
-    for key in chain.into_iter().rev() {
-        seen.insert(key);
-        order.push(key);
-    }
-}
