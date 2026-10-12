@@ -55,17 +55,19 @@ impl Executor for InPlace<'_, '_> {
         let banded = state
             .banded
             .drain()
+            .into_iter()
             .flat_map(|(_, banding)| banding.jobs.into_iter().map(|(id, _)| id));
         let placing = state
             .placements
             .drain()
+            .into_iter()
             .flat_map(|(_, placements)| placements.jobs.into_iter().map(|(id, _)| id));
         for id in banded.chain(placing).collect::<Vec<_>>() {
             if let Some(slots) = self.slots.as_deref_mut() {
                 slots.jobs.cancel(id);
             }
         }
-        for key in std::mem::take(&mut state.far_wanted).into_keys() {
+        for key in std::mem::take(&mut state.far_wanted).keys() {
             state.store.leave(&key);
         }
     }

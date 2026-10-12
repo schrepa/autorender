@@ -57,6 +57,7 @@ mod stats;
 mod store;
 mod streaming;
 mod surroundings;
+mod tile_map;
 mod water;
 mod waterfalls;
 mod wind;
@@ -78,6 +79,7 @@ pub use stats::*;
 use store::*;
 pub(crate) use streaming::*;
 pub use surroundings::*;
+use tile_map::TileMap;
 pub use water::*;
 pub use wind::*;
 

@@ -333,13 +333,7 @@ impl Terrains {
             stats.dropped_tiles += (ordered - kept) as u32;
             remaining -= kept;
             // Tiles leaving stay in memory.
-            let leaving: Vec<TileKey> = state
-                .store
-                .keys()
-                .filter(|key| !keep.contains(key))
-                .copied()
-                .collect();
-            for key in leaving {
+            for key in state.store.keys_where(|key| !keep.contains(key)) {
                 state.leave(&key, frame);
             }
             if kept < ordered && state.store.len() > kept {
@@ -348,13 +342,8 @@ impl Terrains {
                 // loading and keeping reaches) stay: a tile whose own
                 // bounds put it past the loading reach, where its parent's
                 // had it inside, must not leave and return frame by frame.
-                let mut extra: Vec<TileKey> = state
-                    .store
-                    .keys()
-                    .filter(|key| !target.contains(key))
-                    .copied()
-                    .collect();
-                extra.sort_unstable_by_key(|key| key.level);
+                let mut extra = state.store.keys_where(|key| !target.contains(key));
+                extra.sort_by_key(|key| key.level);
                 for key in extra.into_iter().take(state.store.len() - kept) {
                     state.leave(&key, frame);
                 }

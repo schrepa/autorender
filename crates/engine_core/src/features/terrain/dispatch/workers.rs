@@ -121,7 +121,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
         let handed: Vec<(TileKey, (JobId, Generation, u32))> = state
             .dispatched
             .iter()
-            .map(|(&key, &job)| (key, job))
+            .map(|(key, &job)| (key, job))
             .collect();
         for (key, (id, made, priority)) in handed {
             if !self.arrives() {
@@ -162,7 +162,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
     /// done: resident at once with their materials, their objects placed by
     /// a job after.
     fn join_bands(&mut self, state: &mut TerrainState) {
-        let joining: Vec<TileKey> = state.banded.keys().copied().collect();
+        let joining = state.banded.keys();
         for key in joining {
             if !self.arrives() {
                 break;
@@ -283,7 +283,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
     /// Then the objects of tiles bands made, once every band of them is
     /// done, joined in order.
     fn join_placements(&mut self, state: &mut TerrainState) {
-        let placing_keys: Vec<TileKey> = state.placements.keys().copied().collect();
+        let placing_keys = state.placements.keys();
         for key in placing_keys {
             if self.inserted && self.work.expired() {
                 break;
@@ -343,7 +343,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
         let shaping: Vec<(TileKey, JobId, Generation)> = state
             .dispatched
             .iter()
-            .map(|(&key, &(id, made, _))| (key, id, made))
+            .map(|(key, &(id, made, _))| (key, id, made))
             .collect();
         for (key, id, made) in shaping {
             if !self.arrives() {
@@ -370,7 +370,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
         let placing: Vec<(TileKey, JobId)> = state
             .far_jobs
             .iter()
-            .map(|(&key, &(id, _, _))| (key, id))
+            .map(|(key, &(id, _, _))| (key, id))
             .collect();
         for (key, id) in placing {
             if self.inserted && self.work.expired() {
@@ -404,7 +404,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
         let idle: Vec<(TileKey, JobId, Generation)> = state
             .idle
             .iter()
-            .map(|(&key, &(id, made))| (key, id, made))
+            .map(|(key, &(id, made))| (key, id, made))
             .collect();
         for (key, id, made) in idle {
             if let Some(output) = self.slots.jobs.take(id) {

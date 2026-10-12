@@ -33,11 +33,11 @@ pub(super) struct TerrainState {
     /// Its resident tiles, and those kept in memory.
     pub(super) store: TileStore,
     /// Generators of tiles in progress.
-    pub(super) jobs: HashMap<TileKey, Generator>,
+    pub(super) jobs: TileMap<Generator>,
     /// File tiles requested and not yet delivered.
     pub(super) in_flight: HashSet<TileKey>,
     pub(super) arrivals: Vec<(TileKey, Option<Vec<u8>>)>,
-    pub(super) failed: HashMap<TileKey, u64>,
+    pub(super) failed: TileMap<u64>,
     pub(super) selection: Selection,
     /// Level-0 tiles collision wants.
     pub(super) collision: Vec<TileKey>,
@@ -75,26 +75,26 @@ pub(super) struct TerrainState {
     /// generates and its priority) and its bakes running
     /// there, unless they failed there; and its jobs that failed there.
     pub(super) recipe: Option<SharedRecipe>,
-    pub(super) dispatched: HashMap<TileKey, (JobId, Generation, u32)>,
+    pub(super) dispatched: TileMap<(JobId, Generation, u32)>,
     /// Resident tiles without their objects standing far away,
     /// with their tiles' priorities, and the jobs placing those, each
     /// with the tile it places on and that tile's arrival.
-    pub(super) far_wanted: HashMap<TileKey, u32>,
-    pub(super) far_jobs: HashMap<TileKey, (JobId, Arc<Tile>, u64)>,
+    pub(super) far_wanted: TileMap<u32>,
+    pub(super) far_jobs: TileMap<(JobId, Arc<Tile>, u64)>,
     pub(super) bake_job: Option<JobId>,
     pub(super) bake_inline: bool,
     pub(super) failures: JobFailures,
     /// Tiles generating ahead of the view on workers while nothing is
     /// missing, for memory: each one's job and the generation it
     /// generates; and the tiles to generate so, nearest first.
-    pub(super) idle: HashMap<TileKey, (JobId, Generation)>,
+    pub(super) idle: TileMap<(JobId, Generation)>,
     pub(super) ahead: Vec<TileKey>,
     /// Tiles generating in bands of rows on several workers;
     /// tiles their bands made whose objects a job places, each with
     /// that job, the generation it generates, its priority and its placing; and
     /// how many tiles generated so.
-    pub(super) banded: HashMap<TileKey, Banding>,
-    pub(super) placements: HashMap<TileKey, Placements>,
+    pub(super) banded: TileMap<Banding>,
+    pub(super) placements: TileMap<Placements>,
     pub(super) banded_tiles: u64,
     /// The layers its tiles generate from and its surface's data for the
     /// GPU from them, `None` where the program needs more
@@ -143,10 +143,10 @@ impl TerrainState {
             entity,
             store: TileStore::new(terrain.pyramid, Generation::of(&terrain.edits, true)),
             terrain,
-            jobs: HashMap::default(),
+            jobs: TileMap::default(),
             in_flight: HashSet::default(),
             arrivals: Vec::new(),
-            failed: HashMap::default(),
+            failed: TileMap::default(),
             selection: Selection::default(),
             collision: Vec::new(),
             standing: 0,
@@ -163,16 +163,16 @@ impl TerrainState {
             target: HashSet::default(),
             keep: HashSet::default(),
             recipe: None,
-            dispatched: HashMap::default(),
-            far_wanted: HashMap::default(),
-            far_jobs: HashMap::default(),
+            dispatched: TileMap::default(),
+            far_wanted: TileMap::default(),
+            far_jobs: TileMap::default(),
             bake_job: None,
             bake_inline: false,
             failures: JobFailures::default(),
-            idle: HashMap::default(),
+            idle: TileMap::default(),
             ahead: Vec::new(),
-            banded: HashMap::default(),
-            placements: HashMap::default(),
+            banded: TileMap::default(),
+            placements: TileMap::default(),
             banded_tiles: 0,
             surface: None,
             materials: true,
@@ -217,21 +217,23 @@ impl TerrainState {
     pub(super) fn retire(&self, retired: &mut Retired) {
         retired
             .jobs
-            .extend(self.dispatched.values().map(|&(id, _, _)| id));
+            .extend(self.dispatched.iter().map(|(_, &(id, _, _))| id));
         retired
             .jobs
-            .extend(self.far_jobs.values().map(|&(id, _, _)| id));
+            .extend(self.far_jobs.iter().map(|(_, &(id, _, _))| id));
         retired.jobs.extend(self.bake_job);
-        retired.jobs.extend(self.idle.values().map(|&(id, _)| id));
+        retired
+            .jobs
+            .extend(self.idle.iter().map(|(_, &(id, _))| id));
         retired.jobs.extend(
             self.banded
-                .values()
-                .flat_map(|banding| banding.jobs.iter().map(|&(id, _)| id)),
+                .iter()
+                .flat_map(|(_, banding)| banding.jobs.iter().map(|&(id, _)| id)),
         );
         retired.jobs.extend(
             self.placements
-                .values()
-                .flat_map(|placements| placements.jobs.iter().map(|&(id, _)| id)),
+                .iter()
+                .flat_map(|(_, placements)| placements.jobs.iter().map(|&(id, _)| id)),
         );
         retired
             .recipes
@@ -432,7 +434,7 @@ impl TerrainState {
                 )
             })
             .collect();
-        let unplaced = self.store.keys().filter(|key| {
+        let unplaced = self.store.keys_where(|key| {
             let (Some(&(near, far)), Some(tile)) =
                 (levels.get(usize::from(key.level)), self.store.get(key))
             else {
@@ -451,7 +453,7 @@ impl TerrainState {
                 && !self.far_jobs.contains_key(key);
             near || far
         });
-        unplaced.count() as u32
+        unplaced.len() as u32
     }
 
     /// Takes tile `key` out of residency at frame `frame`, keeping it in
@@ -483,16 +485,16 @@ impl TerrainState {
         self.store.check();
         for key in self.placements.keys() {
             assert!(
-                self.store.phase(key) == Some(Phase::Placing),
+                self.store.phase(&key) == Some(Phase::Placing),
                 "R3: objects place in bands for tile {key:?} in phase {:?}",
-                self.store.phase(key)
+                self.store.phase(&key)
             );
         }
         for key in self.store.keys() {
-            if self.store.phase(key) == Some(Phase::Far) {
+            if self.store.phase(&key) == Some(Phase::Far) {
                 let (wanted, placing) = (
-                    self.far_wanted.contains_key(key),
-                    self.far_jobs.contains_key(key),
+                    self.far_wanted.contains_key(&key),
+                    self.far_jobs.contains_key(&key),
                 );
                 assert!(
                     wanted != placing,
@@ -500,16 +502,21 @@ impl TerrainState {
                 );
             }
         }
-        for key in self.far_wanted.keys().chain(self.far_jobs.keys()) {
+        for key in self
+            .far_wanted
+            .keys()
+            .into_iter()
+            .chain(self.far_jobs.keys())
+        {
             assert!(
-                self.store.phase(key) == Some(Phase::Far),
+                self.store.phase(&key) == Some(Phase::Far),
                 "R4: objects standing far away are wanted for tile {key:?} in phase {:?}",
-                self.store.phase(key)
+                self.store.phase(&key)
             );
         }
-        for (key, (_, tile, arrival)) in &self.far_jobs {
+        for (key, (_, tile, arrival)) in self.far_jobs.iter() {
             assert!(
-                self.store.arrival(key) == Some(*arrival) && tile.key() == *key,
+                self.store.arrival(&key) == Some(*arrival) && tile.key() == key,
                 "R4: a far job places on tile {key:?} as it was resident before"
             );
         }

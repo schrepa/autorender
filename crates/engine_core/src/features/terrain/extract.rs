@@ -122,8 +122,9 @@ pub struct RenderTerrain {
     /// of the tiles holding them, the level they also stand far away at and
     /// the share standing there (their own level and 0 without).
     pub thinning: Vec<(u8, u8, f32)>,
-    /// Its resident tiles: renderers upload those they lack and release
-    /// the rest. The list changes only when `tiles_revision` advances.
+    /// Its resident tiles, in key order: renderers upload those they lack
+    /// and release the rest. The list changes only when `tiles_revision`
+    /// advances.
     pub tiles: Arc<[Arc<Tile>]>,
     pub tiles_revision: u64,
     /// The patches the camera draws.
@@ -249,8 +250,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
             );
         }
         if render.tiles_revision != state.revision() || render.id != state.render_id() {
-            let mut tiles: Vec<Arc<Tile>> = state.store.tiles().cloned().collect();
-            tiles.sort_unstable_by_key(|tile| tile.key());
+            let tiles: Vec<Arc<Tile>> = state.store.tiles().cloned().collect();
             render.tiles = Arc::from(tiles);
             render.tiles_revision = state.revision();
         }

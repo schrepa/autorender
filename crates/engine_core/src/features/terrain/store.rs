@@ -60,7 +60,7 @@ fn memory_bytes(tile: &Tile) -> u64 {
 
 pub(super) struct TileStore {
     pyramid: Pyramid,
-    tiles: HashMap<TileKey, Resident>,
+    tiles: TileMap<Resident>,
     /// The generation tiles arriving now are made from.
     generation: Generation,
     /// Arrivals so far.
@@ -72,7 +72,7 @@ pub(super) struct TileStore {
     errors: Vec<f32>,
     /// Tiles that left whole, kept in memory to return at once while the
     /// layers they generated from stay, and their bytes.
-    cache: HashMap<TileKey, CachedTile>,
+    cache: TileMap<CachedTile>,
     cached_bytes: u64,
     /// The most memory one tile kept took: the room each tile generated
     /// ahead of need is given.
@@ -84,12 +84,12 @@ impl TileStore {
     pub(super) fn new(pyramid: Pyramid, generation: Generation) -> Self {
         Self {
             pyramid,
-            tiles: HashMap::default(),
+            tiles: TileMap::default(),
             generation,
             arrivals: 0,
             revision: 1,
             errors: vec![0.0; pyramid.levels() as usize],
-            cache: HashMap::default(),
+            cache: TileMap::default(),
             cached_bytes: 0,
             tile_bytes: 0,
         }
@@ -147,19 +147,22 @@ impl TileStore {
     /// Resident tiles in `phases`.
     pub(super) fn count(&self, phases: &[Phase]) -> usize {
         self.tiles
-            .values()
-            .filter(|resident| phases.contains(&resident.phase))
-            .count()
+            .count(|resident| phases.contains(&resident.phase))
     }
 
-    /// The resident tiles' keys.
-    pub(super) fn keys(&self) -> impl Iterator<Item = &TileKey> {
+    /// The resident tiles' keys, in order.
+    pub(super) fn keys(&self) -> Vec<TileKey> {
         self.tiles.keys()
     }
 
-    /// The resident tiles.
+    /// The resident tiles' keys `wanted` holds for, in order.
+    pub(super) fn keys_where(&self, wanted: impl Fn(&TileKey) -> bool) -> Vec<TileKey> {
+        self.tiles.keys_where(|key, _| wanted(key))
+    }
+
+    /// The resident tiles, in key order.
     pub(super) fn tiles(&self) -> impl Iterator<Item = &Arc<Tile>> {
-        self.tiles.values().map(|resident| &resident.tile)
+        self.tiles.iter().map(|(_, resident)| &resident.tile)
     }
 
     /// Advances whenever the resident tiles change, or which of them
@@ -243,18 +246,15 @@ impl TileStore {
     /// the ground.
     pub(super) fn invalidate(&mut self, generation: Generation, under: impl Fn(&TileKey) -> bool) {
         let previous = std::mem::replace(&mut self.generation, generation);
-        for (key, resident) in &mut self.tiles {
-            if resident.made == previous && !under(key) {
+        for key in self
+            .tiles
+            .keys_where(|key, resident| resident.made == previous && !under(key))
+        {
+            if let Some(resident) = self.tiles.get_mut(&key) {
                 resident.made = generation;
             }
         }
-        let gone: Vec<TileKey> = self
-            .cache
-            .keys()
-            .filter(|key| under(key))
-            .copied()
-            .collect();
-        for key in gone {
+        for key in self.cache.keys_where(|key, _| under(key)) {
             self.forget(key);
         }
         self.revision += 1;
@@ -300,7 +300,7 @@ impl TileStore {
 
     /// The tiles kept in memory, by the frame each left.
     pub(super) fn kept(&self) -> impl Iterator<Item = (u64, TileKey)> + '_ {
-        self.cache.iter().map(|(key, kept)| (kept.left, *key))
+        self.cache.iter().map(|(key, kept)| (kept.left, key))
     }
 
     pub(super) fn kept_tiles(&self) -> usize {
@@ -347,9 +347,9 @@ impl TileStore {
     #[cfg(debug_assertions)]
     pub(super) fn check(&self) {
         let levels = self.pyramid.levels();
-        for (key, resident) in &self.tiles {
+        for (key, resident) in self.tiles.iter() {
             assert!(
-                resident.tile.key() == *key && u32::from(key.level) < levels,
+                resident.tile.key() == key && u32::from(key.level) < levels,
                 "R1: resident tile {key:?} holds tile {:?} ({levels} levels)",
                 resident.tile.key()
             );
@@ -360,9 +360,9 @@ impl TileStore {
             );
         }
         let mut bytes = 0;
-        for (key, cached) in &self.cache {
+        for (key, cached) in self.cache.iter() {
             assert!(
-                cached.tile.key() == *key,
+                cached.tile.key() == key,
                 "R1: tile {key:?} kept in memory holds tile {:?}",
                 cached.tile.key()
             );

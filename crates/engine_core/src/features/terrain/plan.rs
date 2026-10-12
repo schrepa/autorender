@@ -289,6 +289,7 @@ pub(super) fn ahead_of_need(
         a.score
             .total_cmp(&b.score)
             .then(b.key.level.cmp(&a.key.level))
+            .then(a.key.cmp(&b.key))
     });
     let mut listed = HashSet::default();
     nearest

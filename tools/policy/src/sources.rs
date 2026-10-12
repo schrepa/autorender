@@ -1,7 +1,8 @@
 //! Source rules: unsafe code stays in the files the list names and every
 //! unsafe block and impl says why it is sound (in files Clippy does not
 //! build on this platform too), crate roots allow no workspace lint
-//! crate-wide, and no file leaves work for later behind a marker.
+//! crate-wide, terrain keys no hash map by tile, and no file leaves work for
+//! later behind a marker.
 
 use crate::{Problems, rust};
 
@@ -28,6 +29,15 @@ const ENGINE_DENIES: [&str; 2] = [
     "clippy::wildcard_enum_match_arm",
     "clippy::match_wildcard_for_single_variants",
 ];
+
+/// Terrain's folder, whose maps keyed by tile are `TileMap`s (its
+/// tile_map.rs), which no one walks in a hash table's order: that order
+/// differs between native and Wasm builds and follows each table's
+/// history, and what a frame does would too.
+const TILE_MAPS: (&str, &str) = (
+    "crates/engine_core/src/features/terrain/",
+    "crates/engine_core/src/features/terrain/tile_map.rs",
+);
 
 /// The files that may contain unsafe code, each for a reason. Every other
 /// Rust file has none (the workspace denies `unsafe_code`, and a file
@@ -148,6 +158,15 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
                     ),
                 );
             }
+        }
+    }
+    if path.starts_with(TILE_MAPS.0) && path != TILE_MAPS.1 {
+        let code: String = split.code.concat().split_whitespace().collect();
+        if code.contains("HashMap<TileKey") {
+            problems.file(
+                path,
+                "keys a hash map by tile: use TileMap (tile_map.rs), whose tiles walk in key order",
+            );
         }
     }
     let listed = UNSAFE_FILES.iter().any(|(file, _)| *file == path);

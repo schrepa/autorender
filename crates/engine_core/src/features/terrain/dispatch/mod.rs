@@ -203,7 +203,7 @@ fn tasks(
             priority,
             far: false,
         })
-        .chain(state.far_wanted.iter().map(|(&key, &priority)| TileTask {
+        .chain(state.far_wanted.iter().map(|(key, &priority)| TileTask {
             key,
             priority: job_priority(VIEW_JOBS, priority & 0xff_ffff),
             far: true,
