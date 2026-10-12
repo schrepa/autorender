@@ -100,7 +100,7 @@ pub(crate) fn hash(bytes: &[u8]) -> String {
 pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
     let usage = || {
         format!(
-            "usage: pure [--bless] [CORPUS...], corpora: {}",
+            "usage: pure [--bless] [--wasm] [CORPUS...], corpora: {}",
             CORPORA
                 .iter()
                 .map(|corpus| corpus.name)
@@ -108,11 +108,12 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
                 .join(", ")
         )
     };
-    let mut bless = false;
+    let (mut bless, mut wasm) = (false, false);
     let mut chosen = Vec::new();
     for option in options {
         match option.as_str() {
             "--bless" => bless = true,
+            "--wasm" => wasm = true,
             name => match CORPORA.iter().find(|corpus| corpus.name == name) {
                 Some(corpus) => chosen.push(corpus),
                 None => return Err(usage().into()),
@@ -131,7 +132,7 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
     };
     let mut problems = Vec::new();
     let mut summary = Vec::new();
-    for corpus in chosen {
+    for corpus in &chosen {
         let start = Instant::now();
         let mut observed = Observations::default();
         (corpus.run)(root, &mut observed)
@@ -183,6 +184,26 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
             }
         }
     }
+    // The terrain corpus's jobs again in the browser worker's Wasm module:
+    // the same bits as natively.
+    if wasm && chosen.iter().any(|corpus| corpus.name == "terrain") {
+        let start = Instant::now();
+        let replayed = replay_in_wasm(root)?;
+        let seconds = start.elapsed().as_secs_f64();
+        let mismatched = replayed["mismatched"].as_u64().unwrap_or(0);
+        summary.push(format!(
+            "{:15} {:8} {:5} jobs {seconds:6.1} s",
+            "terrain in Wasm",
+            if mismatched == 0 { "equal" } else { "DIFFERS" },
+            replayed["jobs"]
+        ));
+        if mismatched > 0 {
+            problems.push(format!(
+                "terrain in Wasm: {mismatched} job(s) give other bits than natively: {}",
+                replayed["mismatches"]
+            ));
+        }
+    }
     if bless {
         let text = serde_json::to_string_pretty(&goldens).expect("goldens serialize") + "\n";
         if let Some(folder) = path.parent() {
@@ -201,4 +222,28 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
         problems.len(),
         problems.join("\n")
     )))
+}
+
+/// Replays the terrain corpus's jobs ([`terrain::JOBS`]) in the browser
+/// worker's Wasm module, built first as lint builds it, with Node
+/// (web/scripts/pure-wasm.mjs): its report.
+fn replay_in_wasm(root: &Path) -> Result<Value, Failure> {
+    crate::pipeline::build_wasm(root, true, crate::pipeline::QUICK)?;
+    let jobs = root.join(terrain::JOBS).display().to_string();
+    println!("Running node web/scripts/pure-wasm.mjs {jobs}");
+    let output = std::process::Command::new("node")
+        .args(["web/scripts/pure-wasm.mjs", &jobs])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("cannot run node: {error}"))?;
+    if !(output.status.success() || output.status.code() == Some(3)) {
+        return Err(format!(
+            "the Wasm replay stopped ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("the Wasm replay printed no report: {error}").into())
 }

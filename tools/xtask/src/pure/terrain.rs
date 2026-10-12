@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::{Terrain, TerrainSource};
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use engine_terrain::jobs::{
@@ -24,7 +25,7 @@ use engine_terrain::{
 use glam::Vec2;
 use serde_json::json;
 
-use super::Observations;
+use super::{Observations, hash};
 
 /// The fixture scene and the entity holding its terrain.
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
@@ -34,6 +35,10 @@ const ENTITY: &str = "ground";
 const SLICE: u64 = 4096;
 /// The height step of the terrain file, `terrain_bake`'s default.
 const STEP: f32 = 1.0 / 256.0;
+/// Every share and job the corpus ran through its worker, in order, each
+/// job's output by its hash: what `cargo xtask pure --wasm` replays in the
+/// browser worker's Wasm module.
+pub const JOBS: &str = "target/pure/terrain-jobs.json";
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let terrain = load(root)?;
@@ -235,7 +240,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             },
         );
     }
-    Ok(())
+    worker.write(root)
 }
 
 /// The fixture's terrain, its heightmaps read from beside the scene.
@@ -441,21 +446,32 @@ impl Recipe {
     }
 }
 
-/// A job worker as hosts run one beside the engine.
+/// A job worker as hosts run one beside the engine, recording every share
+/// and job (with its output's hash) for the replay in Wasm.
 #[derive(Default)]
 struct Worker {
     worker: TerrainWorker,
     next: u64,
+    /// What `cargo xtask pure --wasm` replays: [`JOBS`].
+    log: Vec<serde_json::Value>,
 }
 
 impl Worker {
     fn share(&mut self, key: &str, bytes: &[u8]) -> Result<(), String> {
+        self.log
+            .push(json!({"share": key, "bytes": STANDARD.encode(bytes)}));
         self.worker.share(key, bytes)
     }
 
     /// Job `kind` on `input`, run whole.
     fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
-        self.worker.run(kind, input)
+        let output = self.worker.run(kind, input)?;
+        self.log.push(json!({
+            "job": kind,
+            "input": STANDARD.encode(input),
+            "output": hash(&output),
+        }));
+        Ok(output)
     }
 
     /// Job `kind` on `input`, run a slice at a time.
@@ -464,6 +480,12 @@ impl Worker {
         self.worker.start(self.next, kind, input)?;
         loop {
             if let Some(output) = self.worker.step(self.next, SLICE)? {
+                self.log.push(json!({
+                    "job": kind,
+                    "input": STANDARD.encode(input),
+                    "slice": SLICE,
+                    "output": hash(&output),
+                }));
                 return Ok(output);
             }
         }
@@ -481,8 +503,29 @@ impl Worker {
                 part = self.worker.take_part(self.next);
             }
             if let Some(output) = output {
+                self.log.push(json!({
+                    "job": TILE_JOB,
+                    "input": STANDARD.encode(input),
+                    "slice": SLICE,
+                    "part": part.as_deref().map(hash),
+                    "output": hash(&output),
+                }));
                 return Ok((part, output));
             }
         }
+    }
+
+    /// Writes what it ran to [`JOBS`].
+    fn write(&self, root: &Path) -> Result<(), String> {
+        let path = root.join(JOBS);
+        if let Some(folder) = path.parent() {
+            std::fs::create_dir_all(folder)
+                .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
+        }
+        std::fs::write(
+            &path,
+            serde_json::Value::Array(self.log.clone()).to_string(),
+        )
+        .map_err(|error| format!("cannot write {JOBS}: {error}"))
     }
 }

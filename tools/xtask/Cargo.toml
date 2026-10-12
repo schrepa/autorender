@@ -8,7 +8,9 @@ publish.workspace = true
 [dependencies]
 engine_scene = { workspace = true, features = ["schema"] }
 engine_dev.workspace = true
-# The pure checks' corpora run engine code directly, and meshoptimizer.
+# The pure checks' corpora run engine code directly, and meshoptimizer;
+# the terrain corpus's jobs replay in Wasm from base64.
+base64.workspace = true
 engine_assets.workspace = true
 engine_core.workspace = true
 engine_terrain.workspace = true
