@@ -626,6 +626,7 @@
         "host-parity",
         "input",
         "interpolation",
+        "jobs",
         "meshes",
         "native",
         "taa",
@@ -657,6 +658,7 @@
       "op": "game",
       "smokes": [
         "host-parity",
+        "jobs",
         "lod",
         "native",
         "surfaces"

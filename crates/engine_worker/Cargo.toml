@@ -14,9 +14,14 @@ worker = true
 
 [dependencies]
 engine_terrain.workspace = true
+# The job cache's keys and index (`JobCache`).
+engine_math.workspace = true
+sha2.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
+js-sys.workspace = true
 engine_panic.workspace = true
 
 [lints]

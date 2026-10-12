@@ -1,9 +1,9 @@
 //! The engine's side of a game a host runs, on a page or in a native
 //! window: its app, the game, the input gathered for its frames and the
 //! development tools.
-use crate::app_host::{AppHost, JobMessage};
+use crate::app_host::AppHost;
 use crate::game::Game;
-use crate::host::{FrameLoop, FramePhase, InputGatherer};
+use crate::host::{FrameLoop, FramePhase, InputGatherer, JobOrder, JobScheduler};
 use engine_core::{ActionInput, Engine, ErrorCode, JobId};
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
@@ -14,6 +14,7 @@ pub struct GameHost<G: Game> {
     game: G,
     input: InputGatherer,
     frames: FrameLoop,
+    jobs: JobScheduler,
     #[cfg(feature = "dev")]
     development: crate::dev_host::DevHost,
     // The development request under way: what it waits for from its host.
@@ -52,6 +53,7 @@ impl<G: Game> GameHost<G> {
             game,
             input,
             frames: FrameLoop::default(),
+            jobs: JobScheduler::default(),
             #[cfg(feature = "dev")]
             development,
             #[cfg(feature = "dev")]
@@ -179,24 +181,89 @@ impl<G: Game> GameHost<G> {
         self.app.work_between_frames(milliseconds)
     }
 
+    /// Workers the host runs the engine's jobs on; without, the engine runs
+    /// them itself.
     pub fn set_job_workers(&mut self, workers: u32) {
-        self.app.set_job_workers(workers);
+        self.jobs.set_workers(workers);
+        self.app.set_job_workers(self.jobs.working());
     }
 
-    pub fn take_jobs(&mut self) -> Vec<JobMessage> {
-        self.app.take_jobs()
+    /// Whether the host keeps keepable jobs' outputs, and runs every job
+    /// anyway to verify them.
+    pub fn set_job_cache(&mut self, caching: bool, verify: bool) {
+        self.jobs.set_cache(caching, verify);
     }
 
+    /// What the host does for the engine's jobs since the last call, in
+    /// order ([`JobOrder`]).
+    pub fn take_jobs(&mut self) -> Vec<JobOrder> {
+        let messages = self.app.take_jobs();
+        let mut finished = Vec::new();
+        let orders = self.jobs.take(messages, &mut finished);
+        self.finish_jobs(finished);
+        orders
+    }
+
+    /// Job `id`'s output from its worker.
     pub fn complete_job(&mut self, id: JobId, output: Vec<u8>) {
-        self.app.complete_job(id, output);
+        let mut finished = Vec::new();
+        self.jobs.done(id, output, &mut finished);
+        self.finish_jobs(finished);
     }
 
+    /// Job `id` failed on its worker, for `error`.
     pub fn fail_job(&mut self, id: JobId, error: String) {
-        self.app.fail_job(id, error);
+        let mut finished = Vec::new();
+        self.jobs.failed(id, error, &mut finished);
+        self.finish_jobs(finished);
     }
 
+    /// A part of job `id`'s output its worker handed back before the rest,
+    /// such as a tile's shape.
     pub fn part_job(&mut self, id: JobId, part: Vec<u8>) {
-        self.app.part_job(id, part);
+        if self.jobs.part(id) {
+            self.app.part_job(id, part);
+        }
+    }
+
+    /// The job cache's answer for job `id` ([`JobOrder::Lookup`]): the key
+    /// of its work, and the output it keeps, if any.
+    pub fn job_kept(&mut self, id: JobId, key: String, output: Option<Vec<u8>>) {
+        let mut finished = Vec::new();
+        self.jobs.kept(id, key, output, &mut finished);
+        self.finish_jobs(finished);
+    }
+
+    /// Worker `worker` broke, for `error`: the engine takes back its jobs,
+    /// and the host `replaced` it or runs one fewer.
+    pub fn lose_job_worker(&mut self, worker: u32, error: &str, replaced: bool) {
+        let mut finished = Vec::new();
+        self.jobs.lost(worker, error, replaced, &mut finished);
+        self.finish_jobs(finished);
+        self.app.set_job_workers(self.jobs.working());
+    }
+
+    /// The worker a task of the host's own waits least on, counted on it
+    /// until [`Self::job_task_done`]; none without workers.
+    pub fn job_task(&mut self) -> Option<u32> {
+        self.jobs.task()
+    }
+
+    /// A task of the host's own on `worker` ended.
+    pub fn job_task_done(&mut self, worker: u32) {
+        self.jobs.task_done(worker);
+    }
+
+    /// Hands the engine the jobs that ended: their outputs, or why each
+    /// failed.
+    fn finish_jobs(&mut self, finished: Vec<crate::host::Finished>) {
+        for (id, result) in finished {
+            match result {
+                Ok(output) => self.app.complete_job(id, output),
+                Err(error) => self.app.fail_job(id, error),
+            }
+        }
+        self.app.report_jobs_held(self.jobs.held());
     }
 
     pub fn report_job_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {

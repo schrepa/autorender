@@ -95,6 +95,7 @@ impl DevTools {
                     cache_misses: stats.cache_misses,
                     cache_bytes: stats.cache_bytes,
                     cache_mismatches: stats.cache_mismatches,
+                    held: stats.held,
                 })
             },
         )

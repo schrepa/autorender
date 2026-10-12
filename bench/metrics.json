@@ -399,6 +399,17 @@
       "direction": null
     },
     {
+      "name": "jobs.held",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "jobs.cancelled",
       "kind": "work",
       "rule": "shown",

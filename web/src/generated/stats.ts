@@ -314,6 +314,12 @@ export interface JobStats {
   completed: number;
   /** Jobs failed. */
   failed: number;
+  /**
+   * Jobs the host's scheduler holds: on its workers, or looked up in its
+   * cache. None once every job handed out ended, an earlier engine's
+   * included.
+   */
+  held: number;
   /** Parts handed back early. */
   parts: number;
   /** Jobs handed out and not done. */

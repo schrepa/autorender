@@ -142,9 +142,32 @@ try {
   assert.equal(kept.jobs.cache_mismatches, 0, `kept outputs match fresh runs: ${JSON.stringify(kept.jobs)}`);
   assert.deepEqual(kept.samples, workers.samples, "kept outputs sample as fresh ones");
   assert.deepEqual(kept.drawn, workers.drawn, "kept outputs draw as fresh ones");
+  // A workload switched while the highlands load replaces the engine with
+  // jobs on the workers: the scheduler drops the earlier engine's, and holds
+  // none once the new one's ended.
+  await page.goto(String(devUrl("stress.html", { preset: "highlands", prepare: "1", jobcache: "off" })), { waitUntil: "domcontentloaded" });
+  await developmentReady(page, { timeout: 600_000 });
+  let loading;
+  for (let attempt = 0; attempt < 600; attempt++) {
+    loading = await inspect("Jobs");
+    if (loading.held > 0) break;
+    await delay(20);
+  }
+  assert.ok(loading.held > 0, `jobs are on the workers mid-load: ${JSON.stringify(loading)}`);
+  // Game controls run paused; the workers go on meanwhile.
+  await command("pause");
+  await command("game", { name: "workload", args: { preset: "visual" } });
+  await command("resume");
+  let switched;
+  for (let attempt = 0; attempt < 600; attempt++) {
+    switched = await inspect("Jobs");
+    if (switched.held === 0 && switched.running === 0) break;
+    await delay(50);
+  }
+  assert.equal(switched.held, 0, `the switch leaves no job held: ${JSON.stringify(switched)}`);
   checks.push({ workers: { shown: workers.shown, jobs: workers.jobs, terrains: workers.terrains, drawn: workers.drawn },
     page: { shown: page_.shown, terrains: page_.terrains, drawn: page_.drawn },
-    kept: { shown: kept.shown, jobs: kept.jobs }, answered });
+    kept: { shown: kept.shown, jobs: kept.jobs }, switched: { loading, switched }, answered });
   assert.deepEqual(errors, [], `page errors: ${errors.join("\n")}`);
   await writeFile(`${output}/report.json`, JSON.stringify(checks, null, 2));
   console.log(JSON.stringify({ ok: true, output, checks }, null, 2));

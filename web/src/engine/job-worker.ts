@@ -3,16 +3,15 @@
 // out with the engine's own code (the engine_worker module); and decodes
 // images and KTX2 textures at load boundaries off the page's thread.
 // Messages take effect in the order they came, so shares come before the
-// jobs reading them. Jobs run a slice at a time: between
-// slices the worker reads its messages and runs its most urgent job, and
-// a job the engine cancelled stops there. A part of a job's output ready
-// before the rest, as a tile's shape, goes back after its
-// slice. The engine's code panicking here (or its module trapping) stops
-// the engine: the worker says so with the panic's report and runs no more.
-// A worker that breaks otherwise says so, and the pool replaces it.
+// jobs reading them. The module runs its most urgent job a slice at a
+// time; between slices the worker reads its messages, and a job the engine
+// cancelled stops there. A part of a job's output ready before the rest, as
+// a tile's shape, goes back after its slice. The engine's code panicking
+// here (or its module trapping) stops the engine: the worker says so with
+// the panic's report and runs no more. A worker that breaks otherwise says
+// so, and the pool replaces it.
 
 import type { JobWorker } from "../../pkg/engine_worker";
-import { JOB_SLICE_MS, JOB_STEP_UNITS } from "../generated/host";
 import { decodeImagePixels } from "./decode";
 import { type TranscodedImage, transcodeWith, workerTranscoder } from "./ktx2";
 import { fatal, panicReport } from "./panic";
@@ -27,13 +26,8 @@ type Request =
   | { type: "ktx2"; task: number; uri: string; bytes: Uint8Array; format: TranscodedImage["format"]; basis: string }
   | { type: "image"; task: number; uri: string; blob: Blob };
 
-interface Job {
-  id: number;
-  kind: string;
-  input: Uint8Array;
-  priority: number;
-  started: boolean;
-}
+/** What a slice came to (`engine_worker::Report`), as the pool reads it. */
+type Report = { type: "done" | "part"; id: number; output: Uint8Array } | { type: "failed"; id: number; error: string };
 
 const scope = self as unknown as {
   postMessage(message: unknown, transfer?: Transferable[]): void;
@@ -43,7 +37,6 @@ const scope = self as unknown as {
 let worker: JobWorker | undefined;
 let broken = false;
 let queue: Promise<void> = Promise.resolve();
-const jobs: Job[] = [];
 let running = false;
 
 scope.onmessage = (event) => {
@@ -76,54 +69,19 @@ function yieldToMessages(): Promise<void> {
   });
 }
 
-/** The most urgent job held: lowest priority, then first handed. */
-function urgent(): Job | undefined {
-  let best: Job | undefined;
-  for (const job of jobs) {
-    if (!best || job.priority < best.priority || (job.priority === best.priority && job.id < best.id)) best = job;
-  }
-  return best;
-}
-
-function drop(job: Job) {
-  const index = jobs.indexOf(job);
-  if (index >= 0) jobs.splice(index, 1);
-}
-
-/** Runs the jobs held, the most urgent a slice at a time, until none is
- * left. */
+/** Runs the jobs held a slice at a time until none is left, reading
+ * messages between slices. */
 async function work() {
   if (running) return;
   running = true;
   try {
-    for (let job = urgent(); job; job = urgent()) {
-      if (!worker || broken) {
-        for (const left of jobs.splice(0)) scope.postMessage({ type: "failed", id: left.id, error: "worker unavailable" });
-        return;
-      }
+    while (worker && !broken && worker.busy()) {
       try {
-        if (!job.started) {
-          worker.start(job.id, job.kind, job.input);
-          job.started = true;
-        }
-        const start = performance.now();
-        let output: Uint8Array | undefined;
-        do output = worker.step(job.id, JOB_STEP_UNITS);
-        while (output === undefined && performance.now() - start < JOB_SLICE_MS);
-        if (output !== undefined) {
-          drop(job);
-          scope.postMessage({ type: "done", id: job.id, output }, [output.buffer as ArrayBuffer]);
-        } else {
-          const part = worker.take_part(job.id);
-          if (part !== undefined) scope.postMessage({ type: "part", id: job.id, output: part }, [part.buffer as ArrayBuffer]);
-        }
+        const report = worker.slice() as Report | undefined;
+        if (report) scope.postMessage(report, "output" in report ? [report.output.buffer as ArrayBuffer] : []);
       } catch (error) {
-        drop(job);
-        if (fatal(error)) {
-          stopped(error);
-          return;
-        }
-        scope.postMessage({ type: "failed", id: job.id, error: String(error) });
+        if (fatal(error)) stopped(error); else fail(error);
+        return;
       }
       await yieldToMessages();
     }
@@ -151,7 +109,6 @@ async function handle(request: Request) {
       return;
     case "clear":
       // An earlier engine's jobs are no one's.
-      jobs.length = 0;
       worker?.clear();
       return;
     case "share": {
@@ -164,16 +121,16 @@ async function handle(request: Request) {
       worker?.unshare(request.key);
       return;
     case "run":
-      jobs.push({ id: request.id, kind: request.kind, input: request.input, priority: request.priority, started: false });
+      if (!worker || broken) {
+        scope.postMessage({ type: "failed", id: request.id, error: "worker unavailable" });
+        return;
+      }
+      worker.hold(request.id, request.kind, request.input, request.priority);
       void work();
       return;
-    case "cancel": {
-      const job = jobs.find(job => job.id === request.id);
-      if (!job) return;
-      drop(job);
-      if (job.started) worker?.cancel(job.id);
+    case "cancel":
+      worker?.cancel(request.id);
       return;
-    }
     case "ktx2":
       try {
         const image = transcodeWith(await workerTranscoder(request.basis), request.uri, request.bytes, request.format);

@@ -38,12 +38,6 @@ policy! {
     pub const PACE_INTERVAL_LIMIT_MS: f64 = 100.0;
     /// Milliseconds loading between frames leaves before the next is due.
     pub const BETWEEN_MARGIN_MS: f64 = 4.0;
-    /// Milliseconds a job worker runs a job before it looks at its messages
-    /// and more urgent jobs again.
-    pub const JOB_SLICE_MS: u64 = 8;
-    /// Work units a job worker asks a job to do at a time, about one a
-    /// sample.
-    pub const JOB_STEP_UNITS: u64 = 4096;
     /// Logical processors per job worker a host runs by default.
     pub const CORES_PER_DEFAULT_WORKER: u32 = 2;
     /// The most job workers a host runs by default.

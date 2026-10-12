@@ -1,25 +1,20 @@
 //! Worker jobs natively, as the page runs them: threads beside the game,
-//! each holding the engine's job worker. The engine hands the host, in
-//! order, what every worker should hold (terrain stacks and recipes) and
-//! jobs (a terrain tile, a walk, a bake); the pool hands each share to
-//! every worker and each job to the worker with the fewest in flight, among
-//! those the one whose most urgent job is least urgent, and hands outputs
-//! back as workers finish them. Workers run their most urgent job a slice at
-//! a time; jobs the engine cancels stop at their worker's next slice, and
-//! parts of outputs ready early, as a tile's shape, go back as they come.
-//! Outputs of jobs the engine marks keepable come from the job cache where
-//! the same build made them before. A worker's panic ends the program, as
-//! every engine panic does (`engine_panic`'s hook).
+//! each holding the engine's job worker, which runs its most urgent job a
+//! slice at a time (`engine_worker::Worker::slice`). The engine schedules
+//! its jobs (`engine::host::JobScheduler`): the pool carries its orders to
+//! the workers and to the job cache's folder, and hands back what workers
+//! report and the cache reads. A worker's panic ends the program, as every
+//! engine panic does (`engine_panic`'s hook).
 
-use engine::collections::HashMap;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
 
-use engine::host::{JobId, JobMessage, JobRequest, JobShare, policy};
+use engine::host::{JobId, JobOrder, JobShare, policy};
 use engine::{Game, GameHost};
+use engine_worker::Report;
 
-use crate::job_cache::{DEFAULT_BUDGET, JobCache};
+use crate::job_cache::{DEFAULT_BUDGET, JobStore};
 
 /// How a native host runs the engine's jobs, as the page's `workers` and
 /// `jobcache` parameters choose.
@@ -59,21 +54,18 @@ impl Default for JobOptions {
 impl JobOptions {
     /// The pool these options run; none without workers.
     pub fn pool(self) -> Option<JobPool> {
-        let cache = match self.cache {
+        let store = match self.cache {
             CacheOptions::Off => None,
-            CacheOptions::Keep { budget } => JobCache::open(budget, false),
-            CacheOptions::Verify => JobCache::open(DEFAULT_BUDGET, true),
+            CacheOptions::Keep { budget } => JobStore::open(budget, false),
+            CacheOptions::Verify => JobStore::open(DEFAULT_BUDGET, true),
         };
-        (self.workers > 0).then(|| JobPool::new(self.workers, cache))
+        (self.workers > 0).then(|| JobPool::new(self.workers, store))
     }
 }
 
-// A slice of work between a worker's looks at its messages.
-const SLICE: Duration = Duration::from_millis(policy::JOB_SLICE_MS);
-
 /// What the pool tells a worker, in order.
 enum Order {
-    Share(String, std::sync::Arc<[u8]>),
+    Share(String, Arc<[u8]>),
     Unshare(String),
     Clear,
     Run {
@@ -86,38 +78,25 @@ enum Order {
     Stop,
 }
 
-/// What a worker tells the pool.
-enum Report {
-    Done(u64, Vec<u8>),
-    Part(u64, Vec<u8>),
-    Failed(u64, String),
-}
-
 struct Slot {
     orders: Sender<Order>,
     // The worker, as a sampler samples it.
     #[cfg(feature = "profiling")]
     sampled: Option<engine_profiler::sampler::SampledThread>,
     thread: Option<JoinHandle<()>>,
-    // Jobs in flight, each with its priority (lower first).
-    jobs: HashMap<u64, u32>,
 }
 
-/// Job workers beside a game, and the cache of their outputs.
+/// Job workers beside a game, and the folder keeping their outputs.
 pub struct JobPool {
     slots: Vec<Slot>,
     reports: Receiver<Report>,
-    cache: Option<JobCache>,
-    // The keys of keepable jobs in flight, and outputs kept that fresh
-    // runs verify.
-    keys: HashMap<u64, String>,
-    verifying: HashMap<u64, Vec<u8>>,
+    store: Option<JobStore>,
     reported: Option<(u64, u64, u64, u64)>,
 }
 
 impl JobPool {
-    /// `count` workers, with `cache` keeping their outputs.
-    pub fn new(count: usize, cache: Option<JobCache>) -> Self {
+    /// `count` workers, with `store` keeping their outputs.
+    pub fn new(count: usize, store: Option<JobStore>) -> Self {
         let (report, reports) = channel();
         let slots = (0..count)
             .map(|index| {
@@ -141,16 +120,13 @@ impl JobPool {
                     #[cfg(feature = "profiling")]
                     sampled: registered.recv().ok().flatten(),
                     thread: Some(thread),
-                    jobs: HashMap::default(),
                 }
             })
             .collect();
         Self {
             slots,
             reports,
-            cache,
-            keys: HashMap::default(),
-            verifying: HashMap::default(),
+            store,
             reported: None,
         }
     }
@@ -172,158 +148,84 @@ impl JobPool {
     /// Serves `host`'s jobs from now on.
     pub fn attach<G: Game>(&mut self, host: &mut GameHost<G>) {
         host.set_job_workers(self.size() as u32);
+        let cache = self.store.as_ref().map(JobStore::verify);
+        host.set_job_cache(cache.is_some(), cache == Some(true));
     }
 
-    /// Hands workers what `host` made since the last exchange, and `host`
-    /// what workers finished.
+    /// Hands `host` what workers finished since the last exchange, and
+    /// carries out its orders since.
     pub fn exchange<G: Game>(&mut self, host: &mut GameHost<G>) {
-        self.collect(host);
-        for message in host.take_jobs() {
-            match message {
-                JobMessage::Cancel(id) => {
-                    self.keys.remove(&id.0);
-                    self.verifying.remove(&id.0);
-                    if let Some(slot) = self
-                        .slots
-                        .iter_mut()
-                        .find(|slot| slot.jobs.contains_key(&id.0))
-                    {
-                        slot.jobs.remove(&id.0);
-                        let _ = slot.orders.send(Order::Cancel(id.0));
-                    }
-                }
-                JobMessage::Share(JobShare::Clear) => {
-                    // A new engine's first message: workers drop the earlier
-                    // engine's jobs, and so do their slots and keys here.
-                    for slot in &mut self.slots {
-                        slot.jobs.clear();
-                    }
-                    self.keys.clear();
-                    self.verifying.clear();
-                    self.broadcast(|| Order::Clear);
-                }
-                JobMessage::Share(JobShare::Set { key, bytes }) => {
-                    let bytes: std::sync::Arc<[u8]> = bytes.into();
-                    self.broadcast(|| Order::Share(key.clone(), bytes.clone()));
-                }
-                JobMessage::Share(JobShare::Remove { key }) => {
-                    self.broadcast(|| Order::Unshare(key.clone()));
-                }
-                JobMessage::Run(request) => self.request(host, request),
+        while let Ok(report) = self.reports.try_recv() {
+            match report {
+                Report::Done(id, output) => host.complete_job(JobId(id), output),
+                Report::Part(id, part) => host.part_job(JobId(id), part),
+                Report::Failed(id, error) => host.fail_job(JobId(id), error),
             }
         }
-        self.report(host);
+        // Reads from the cache answer at once, and may order more.
+        let mut orders = host.take_jobs();
+        while !orders.is_empty() {
+            for order in orders {
+                self.carry(host, order);
+            }
+            orders = host.take_jobs();
+        }
+        if let Some(store) = &self.store {
+            let counters = store.counters();
+            if self.reported != Some(counters) {
+                self.reported = Some(counters);
+                let (hits, misses, bytes, mismatches) = counters;
+                host.report_job_cache(hits, misses, bytes, mismatches);
+            }
+        }
     }
 
-    /// Answers a keepable job from the cache, or hands it to a worker and
-    /// keeps its output once done; verifying, runs it anyway and compares.
-    fn request<G: Game>(&mut self, host: &mut GameHost<G>, request: JobRequest) {
-        if let (Some(cache), Some(identity)) = (&mut self.cache, &request.identity) {
-            let key = cache.key(request.kind, identity);
-            if let Some(kept) = cache.lookup(&key) {
-                if !cache.verify() {
-                    host.complete_job(request.id, kept);
+    /// Carries `order` to the workers or the job cache's folder.
+    fn carry<G: Game>(&mut self, host: &mut GameHost<G>, order: JobOrder) {
+        match order {
+            JobOrder::Share(JobShare::Clear) => self.broadcast(|| Order::Clear),
+            JobOrder::Share(JobShare::Set { key, bytes }) => {
+                let bytes: Arc<[u8]> = bytes.into();
+                self.broadcast(|| Order::Share(key.clone(), bytes.clone()));
+            }
+            JobOrder::Share(JobShare::Remove { key }) => {
+                self.broadcast(|| Order::Unshare(key.clone()));
+            }
+            JobOrder::Run { worker, request } => {
+                let _ = self.slots[worker as usize].orders.send(Order::Run {
+                    id: request.id.0,
+                    kind: request.kind,
+                    input: request.input,
+                    priority: request.priority,
+                });
+            }
+            JobOrder::Cancel { worker, id } => {
+                let _ = self.slots[worker as usize].orders.send(Order::Cancel(id.0));
+            }
+            JobOrder::Lookup { id, kind, identity } => {
+                let Some(store) = &mut self.store else {
+                    host.job_kept(id, String::new(), None);
                     return;
-                }
-                host.complete_job(request.id, kept.clone());
-                self.verifying.insert(request.id.0, kept);
+                };
+                let (key, kept) = store.lookup(kind, &identity);
+                host.job_kept(id, key, kept);
             }
-            self.keys.insert(request.id.0, key);
+            JobOrder::Keep { key, output } => {
+                if let Some(store) = &mut self.store {
+                    store.keep(&key, &output);
+                }
+            }
+            JobOrder::Mismatch { key } => {
+                if let Some(store) = &mut self.store {
+                    store.mismatch(&key);
+                }
+            }
         }
-        self.dispatch(host, request);
-    }
-
-    /// Hands `request` to the worker with the fewest jobs in flight; among
-    /// those, the one whose most urgent job is least urgent.
-    fn dispatch<G: Game>(&mut self, host: &mut GameHost<G>, request: JobRequest) {
-        let slot = self.slots.iter_mut().min_by_key(|slot| {
-            let urgent = slot.jobs.values().min().copied().unwrap_or(u32::MAX);
-            (slot.jobs.len(), std::cmp::Reverse(urgent))
-        });
-        let Some(slot) = slot else {
-            host.fail_job(request.id, "no workers".into());
-            return;
-        };
-        slot.jobs.insert(request.id.0, request.priority);
-        let _ = slot.orders.send(Order::Run {
-            id: request.id.0,
-            kind: request.kind,
-            input: request.input,
-            priority: request.priority,
-        });
     }
 
     fn broadcast(&mut self, order: impl Fn() -> Order) {
         for slot in &self.slots {
             let _ = slot.orders.send(order());
-        }
-    }
-
-    /// Hands `host` what workers finished since the last call.
-    fn collect<G: Game>(&mut self, host: &mut GameHost<G>) {
-        while let Ok(report) = self.reports.try_recv() {
-            match report {
-                Report::Done(id, output) => {
-                    // Jobs cancelled since are no one's.
-                    let Some(slot) = self
-                        .slots
-                        .iter_mut()
-                        .find(|slot| slot.jobs.contains_key(&id))
-                    else {
-                        continue;
-                    };
-                    slot.jobs.remove(&id);
-                    let key = self.keys.remove(&id);
-                    // A kept output the engine already took is compared,
-                    // not taken.
-                    if let Some(kept) = self.verifying.remove(&id) {
-                        if let (Some(cache), Some(key)) = (&mut self.cache, key)
-                            && kept != output
-                        {
-                            cache.mismatch(&key);
-                        }
-                        continue;
-                    }
-                    if let (Some(cache), Some(key)) = (&mut self.cache, key) {
-                        cache.store(&key, &output);
-                    }
-                    host.complete_job(JobId(id), output);
-                }
-                Report::Part(id, part) => {
-                    if self.slots.iter().any(|slot| slot.jobs.contains_key(&id))
-                        && !self.verifying.contains_key(&id)
-                    {
-                        host.part_job(JobId(id), part);
-                    }
-                }
-                Report::Failed(id, error) => {
-                    let Some(slot) = self
-                        .slots
-                        .iter_mut()
-                        .find(|slot| slot.jobs.contains_key(&id))
-                    else {
-                        continue;
-                    };
-                    slot.jobs.remove(&id);
-                    self.keys.remove(&id);
-                    if self.verifying.remove(&id).is_none() {
-                        host.fail_job(JobId(id), error);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Tells `host` the cache's counters when they change.
-    fn report<G: Game>(&mut self, host: &mut GameHost<G>) {
-        let Some(cache) = &self.cache else {
-            return;
-        };
-        let counters = cache.counters();
-        if self.reported != Some(counters) {
-            self.reported = Some(counters);
-            let (hits, misses, bytes, mismatches) = counters;
-            host.report_job_cache(hits, misses, bytes, mismatches);
         }
     }
 }
@@ -338,37 +240,27 @@ impl Drop for JobPool {
                 let _ = thread.join();
             }
         }
-        if let Some(cache) = &mut self.cache {
-            cache.save();
+        if let Some(store) = &mut self.store {
+            store.save();
         }
     }
 }
 
-/// A job a worker holds.
-struct Held {
-    id: u64,
-    kind: &'static str,
-    input: Vec<u8>,
-    priority: u32,
-    started: bool,
-}
-
-/// A worker's loop: its orders in turn, and between them its most urgent
-/// job a slice at a time; reports to `report`.
+/// A worker's loop: its orders in turn, and between them a slice of its
+/// most urgent job; reports to `report`.
 fn work(inbox: &Receiver<Order>, report: &Sender<Report>) {
     let mut worker = engine_worker::Worker::new();
     worker.warm();
-    let mut jobs: Vec<Held> = Vec::new();
     loop {
         // Orders first: waiting for one while no job is held.
-        let mut next = if jobs.is_empty() {
+        let mut next = if worker.busy() {
+            inbox.try_recv().ok()
+        } else {
             match inbox.recv() {
                 Ok(order) => Some(order),
                 // The pool is gone.
                 Err(_) => return,
             }
-        } else {
-            inbox.try_recv().ok()
         };
         while let Some(order) = next.take() {
             match order {
@@ -378,68 +270,20 @@ fn work(inbox: &Receiver<Order>, report: &Sender<Report>) {
                     }
                 }
                 Order::Unshare(key) => worker.unshare(&key),
-                Order::Clear => {
-                    worker.clear();
-                    jobs.clear();
-                }
+                Order::Clear => worker.clear(),
                 Order::Run {
                     id,
                     kind,
                     input,
                     priority,
-                } => jobs.push(Held {
-                    id,
-                    kind,
-                    input,
-                    priority,
-                    started: false,
-                }),
-                Order::Cancel(id) => {
-                    jobs.retain(|job| job.id != id);
-                    worker.cancel(id);
-                }
+                } => worker.hold(id, kind, input, priority),
+                Order::Cancel(id) => worker.cancel(id),
                 Order::Stop => return,
             }
             next = inbox.try_recv().ok();
         }
-        // The most urgent job: lowest priority, then first handed.
-        let Some(at) = (0..jobs.len()).min_by_key(|&at| (jobs[at].priority, jobs[at].id)) else {
-            continue;
-        };
-        let job = &mut jobs[at];
-        let id = job.id;
-        match slice(&mut worker, job) {
-            Ok(Some(output)) => {
-                jobs.remove(at);
-                let _ = report.send(Report::Done(id, output));
-            }
-            Ok(None) => {
-                if let Some(part) = worker.take_part(id) {
-                    let _ = report.send(Report::Part(id, part));
-                }
-            }
-            Err(error) => {
-                jobs.remove(at);
-                worker.cancel(id);
-                let _ = report.send(Report::Failed(id, error));
-            }
-        }
-    }
-}
-
-/// One slice of `job` on `worker`: its output once done, else none yet.
-fn slice(worker: &mut engine_worker::Worker, job: &mut Held) -> Result<Option<Vec<u8>>, String> {
-    if !job.started {
-        worker.start(job.id, job.kind, &job.input)?;
-        job.started = true;
-    }
-    let start = Instant::now();
-    loop {
-        if let Some(output) = worker.step(job.id, policy::JOB_STEP_UNITS)? {
-            return Ok(Some(output));
-        }
-        if start.elapsed() >= SLICE {
-            return Ok(None);
+        if let Some(sliced) = worker.slice() {
+            let _ = report.send(sliced);
         }
     }
 }

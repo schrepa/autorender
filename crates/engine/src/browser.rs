@@ -3,7 +3,7 @@
 //! which [`crate::export_game!`] exports.
 use crate::GameHost;
 use crate::game::Game;
-use crate::host::JobMessage;
+use crate::host::JobOrder;
 use engine_core::{Engine, JobId, JobShare};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
@@ -194,57 +194,64 @@ impl<G: Game> PageHost<G> {
         Ok(self.host.animation_frame(timestamp, width, height)? as u32)
     }
 
-    /// [`GameHost::take_jobs`] as the page's workers read them:
-    /// `{cancel}`, `{clear: true}`, `{share, bytes}`, `{unshare}` and
-    /// `{id, kind, input, priority, identity?}`.
+    /// [`GameHost::take_jobs`] as the page's pool reads them:
+    /// `{clear: true}`, `{share, bytes}`, `{unshare}`, `{run, worker, kind,
+    /// input, priority}`, `{cancel, worker}`, `{lookup, kind, identity}`,
+    /// `{keep, output}` and `{mismatch}`.
     pub fn take_jobs(&mut self) -> js_sys::Array {
         let out = js_sys::Array::new();
         let set = |object: &js_sys::Object, field: &str, value: &JsValue| {
             // Setting a field of a plain new object cannot fail.
             let _ = js_sys::Reflect::set(object, &JsValue::from_str(field), value);
         };
-        for message in self.host.take_jobs() {
+        let bytes = |bytes: &[u8]| JsValue::from(js_sys::Uint8Array::from(bytes));
+        let id = |id: JobId| JsValue::from_f64(id.0 as f64);
+        for order in self.host.take_jobs() {
             let object = js_sys::Object::new();
-            match message {
-                JobMessage::Cancel(id) => set(&object, "cancel", &JsValue::from_f64(id.0 as f64)),
-                JobMessage::Share(JobShare::Clear) => set(&object, "clear", &JsValue::TRUE),
-                JobMessage::Share(JobShare::Set { key, bytes }) => {
+            match order {
+                JobOrder::Share(JobShare::Clear) => set(&object, "clear", &JsValue::TRUE),
+                JobOrder::Share(JobShare::Set { key, bytes: shared }) => {
                     set(&object, "share", &JsValue::from_str(&key));
-                    set(
-                        &object,
-                        "bytes",
-                        &js_sys::Uint8Array::from(bytes.as_slice()),
-                    );
+                    set(&object, "bytes", &bytes(&shared));
                 }
-                JobMessage::Share(JobShare::Remove { key }) => {
+                JobOrder::Share(JobShare::Remove { key }) => {
                     set(&object, "unshare", &JsValue::from_str(&key));
                 }
-                JobMessage::Run(request) => {
-                    set(&object, "id", &JsValue::from_f64(request.id.0 as f64));
+                JobOrder::Run { worker, request } => {
+                    set(&object, "run", &id(request.id));
+                    set(&object, "worker", &JsValue::from(worker));
                     set(&object, "kind", &JsValue::from_str(request.kind));
-                    set(
-                        &object,
-                        "input",
-                        &js_sys::Uint8Array::from(request.input.as_slice()),
-                    );
-                    set(
-                        &object,
-                        "priority",
-                        &JsValue::from_f64(f64::from(request.priority)),
-                    );
-                    // What hosts may keep its output by.
-                    if let Some(identity) = &request.identity {
-                        set(
-                            &object,
-                            "identity",
-                            &js_sys::Uint8Array::from(identity.as_slice()),
-                        );
-                    }
+                    set(&object, "input", &bytes(&request.input));
+                    set(&object, "priority", &JsValue::from(request.priority));
                 }
+                JobOrder::Cancel { worker, id: job } => {
+                    set(&object, "cancel", &id(job));
+                    set(&object, "worker", &JsValue::from(worker));
+                }
+                JobOrder::Lookup {
+                    id: job,
+                    kind,
+                    identity,
+                } => {
+                    set(&object, "lookup", &id(job));
+                    set(&object, "kind", &JsValue::from_str(kind));
+                    set(&object, "identity", &bytes(&identity));
+                }
+                JobOrder::Keep { key, output } => {
+                    set(&object, "keep", &JsValue::from_str(&key));
+                    set(&object, "output", &bytes(&output));
+                }
+                JobOrder::Mismatch { key } => set(&object, "mismatch", &JsValue::from_str(&key)),
             }
             out.push(&object);
         }
         out
+    }
+
+    pub fn job_kept(&mut self, id: f64, key: String, output: Option<Vec<u8>>) {
+        if let Some(id) = job_id(id) {
+            self.host.job_kept(id, key, output);
+        }
     }
 
     pub fn complete_job(&mut self, id: f64, output: Vec<u8>) {

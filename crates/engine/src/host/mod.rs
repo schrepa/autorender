@@ -9,11 +9,12 @@ mod adapter;
 mod environment;
 mod frame_loop;
 mod input;
+mod jobs;
 pub mod policy;
 mod resolution;
 mod settings;
 
-pub use crate::app_host::{JobMessage, TerrainClock, now_ms};
+pub use crate::app_host::{TerrainClock, now_ms};
 pub use adapter::{AdapterStatus, vendor};
 pub use engine_core::{
     Distribution, FileHeader, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs,
@@ -24,6 +25,8 @@ pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub use environment::{HostEnvironment, KNOWN_DIFFERENCES};
 pub use frame_loop::{FrameLoop, FramePhase};
 pub use input::{FrameInput, InputGatherer, KEYS};
+pub use jobs::JobOrder;
+pub(crate) use jobs::{Finished, JobScheduler};
 pub use resolution::view_size;
 pub use settings::{HostSettings, SETTINGS, Setting};
 

@@ -93,18 +93,6 @@ export const PACE_INTERVAL_LIMIT_MS = 100.0;
 /** Milliseconds loading between frames leaves before the next is due. */
 export const BETWEEN_MARGIN_MS = 4.0;
 
-/**
- * Milliseconds a job worker runs a job before it looks at its messages
- * and more urgent jobs again.
- */
-export const JOB_SLICE_MS = 8;
-
-/**
- * Work units a job worker asks a job to do at a time, about one a
- * sample.
- */
-export const JOB_STEP_UNITS = 4096;
-
 /** Logical processors per job worker a host runs by default. */
 export const CORES_PER_DEFAULT_WORKER = 2;
 

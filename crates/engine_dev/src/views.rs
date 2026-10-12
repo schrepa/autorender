@@ -227,6 +227,10 @@ pub struct JobsView {
     pub cache_misses: u64,
     pub cache_bytes: u64,
     pub cache_mismatches: u64,
+    /// Jobs the host's scheduler holds: on its workers, or looked up in its
+    /// cache; none once every job handed out ended, an earlier engine's
+    /// included.
+    pub held: u32,
 }
 
 /// One agent of [`NavAgentsView`].

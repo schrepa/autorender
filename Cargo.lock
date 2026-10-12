@@ -1016,8 +1016,12 @@ dependencies = [
 name = "engine_worker"
 version = "0.1.0"
 dependencies = [
+ "engine_math",
  "engine_panic",
  "engine_terrain",
+ "js-sys",
+ "serde_json",
+ "sha2",
  "wasm-bindgen",
 ]
 

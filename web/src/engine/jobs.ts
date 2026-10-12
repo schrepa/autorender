@@ -1,45 +1,39 @@
-// Worker jobs: a pool of Web Workers beside the page, each
-// running the engine's job worker module. The engine hands the page, in
-// order, what every worker should hold (terrain stacks and recipes) and jobs
-// (a terrain tile, a walk, a bake); the pool hands each share to every
-// worker and each job to the worker with the fewest in flight, and hands
-// outputs back as workers finish them. Images and KTX2 textures decode on
-// it at load boundaries too. Workers hold their own memory: shares travel
-// as Blobs, which every worker reads without the page copying them again.
+// Worker jobs: a pool of Web Workers beside the page, each running the
+// engine's job worker module. The engine schedules its jobs (which worker
+// runs each, what every worker holds, which outputs the job cache answers
+// and which a fresh run verifies); the pool carries its orders to the
+// workers and the cache (job-cache.ts), and hands back what workers report
+// and the cache reads. Workers run their most urgent job a slice at a
+// time, in the module. Images and KTX2 textures decode on them at load
+// boundaries too. Workers hold their own memory: shares travel as Blobs,
+// which every worker reads without the page copying them again.
 // ?workers=N runs N workers and ?workers=off none, so the engine does the
 // work itself; a worker that breaks is replaced once, and the engine takes
 // back its jobs. A worker's panic, as the game module's, stops the engine
-// for good: the pool's workers end and it calls the module no more. Jobs
-// carry priorities: each goes to the
-// worker with the fewest in flight, among those the one whose most urgent
-// job is least urgent, and workers run their most urgent job a slice at a
-// time; jobs the engine cancels stop at their worker's next slice. Parts of
-// outputs ready early, as a tile's shape, go back as they
-// come. Outputs of jobs the engine marks keepable, and KTX2 textures, come
-// from the page's job cache where the same build made them before
-// (job-cache.ts).
+// for good: the pool's workers end and it calls the module no more.
 
 import workerWasmUrl from "../../pkg/engine_worker_bg.wasm?url";
 import { CORES_PER_DEFAULT_WORKER, MAX_DEFAULT_WORKERS, MAX_WORKERS, PANIC_PREFIX } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 import { engineWorkerModule } from "./bindings";
-import { JobCache, jobCacheSettings } from "./job-cache";
+import { JobStore, jobCacheSettings } from "./job-cache";
 import type { TranscodedImage } from "./ktx2";
 import { fatal, type PanicReport } from "./panic";
 
 /** The game methods a pool serves. */
-export type JobRuntime = Pick<Runtime, "set_job_workers" | "take_jobs" | "complete_job" | "fail_job" | "part_job" | "report_job_cache">;
+export type JobRuntime = Pick<Runtime, "set_job_workers" | "set_job_cache" | "take_jobs" | "complete_job" | "fail_job"
+  | "part_job" | "job_kept" | "lose_job_worker" | "job_task" | "job_task_done" | "report_job_cache">;
 
-/** A job `take_jobs` lists: its identity where its output may be kept. */
-interface JobRequest { id: number; kind: string; input: Uint8Array; priority: number; identity?: Uint8Array }
-
-/** What `take_jobs` lists, in order. */
-export type JobMessage =
-  | { cancel: number }
+/** What the engine orders, in order (`engine::host::JobOrder`). */
+export type JobOrder =
   | { clear: true }
   | { share: string; bytes: Uint8Array }
   | { unshare: string }
-  | JobRequest;
+  | { run: number; worker: number; kind: string; input: Uint8Array; priority: number }
+  | { cancel: number; worker: number }
+  | { lookup: number; kind: string; identity: Uint8Array }
+  | { keep: string; output: Uint8Array }
+  | { mismatch: string };
 
 /** What workers send back. */
 type WorkerMessage =
@@ -56,9 +50,8 @@ export interface Pixels { width: number; height: number; pixels: Uint8Array }
 
 interface Slot {
   worker: Worker;
-  /** Jobs in flight, each with its priority (lower first). */
-  jobs: Map<number, number>;
-  tasks: Set<number>;
+  /** The page's tasks on it, each with whether the engine counts it. */
+  tasks: Map<number, boolean>;
   broken: boolean;
   /** Messages held until the worker has its module. */
   held?: [unknown, Transferable[]][];
@@ -76,25 +69,19 @@ export class JobPool {
   private runtime: JobRuntime | undefined;
   /** What the attached runtime's host does once a module stopped. */
   private failed: ((error: unknown) => void) | undefined;
+  /** The cache is open (or off) and the runtime knows: jobs flow. */
+  private ready = false;
   private timer = 0;
   private nextTask = 1;
   private restarts = 0;
-  /** The output cache, once open; the keys of jobs whose
-   * outputs it keeps when done; jobs looking it up and those cancelled
-   * meanwhile; outputs kept that fresh runs verify; and the counters last
-   * reported. */
-  private readonly cache: Promise<JobCache | undefined> = workerWasm().then(openCache);
+  private reported = "";
   /** The job worker module, compiled once for every worker;
-   * `undefined` where it did not compile, and each compiles its
-   * own. */
+   * `undefined` where it did not compile, and each compiles its own. */
   private readonly module: Promise<WebAssembly.Module | undefined> = workerWasm()
     .then(bytes => bytes && WebAssembly.compile(bytes))
     .catch(() => undefined);
-  private readonly keys = new Map<number, string>();
-  private readonly looking = new Set<number>();
-  private readonly dropped = new Set<number>();
-  private readonly verifying = new Map<number, Uint8Array>();
-  private reported = "";
+  /** The output cache, once open; `undefined` when off. */
+  private readonly store: Promise<JobStore | undefined> = this.module.then(openStore);
 
   constructor(private readonly count: number) {
     for (let index = 0; index < count; index++) this.slots.push(this.spawn());
@@ -106,13 +93,21 @@ export class JobPool {
   }
 
   /** Serves `runtime`'s jobs: it hands them to the pool's workers from now
-   * on, and the pool polls it for them between frames too, so jobs made
-   * by development commands in paused sessions run. Once the runtime's
-   * module or a worker's stops, the pool ends and calls `failed`. */
+   * on, once the cache opened, and the pool polls it for them between
+   * frames too, so jobs made by development commands in paused sessions
+   * run. Once the runtime's module or a worker's stops, the pool ends and
+   * calls `failed`. */
   attach(runtime: JobRuntime, failed: (error: unknown) => void) {
     this.runtime = runtime;
     this.failed = failed;
+    this.ready = false;
     this.call(runtime => runtime.set_job_workers(this.size));
+    void this.store.then(store => {
+      if (this.runtime !== runtime) return;
+      this.call(runtime => runtime.set_job_cache(store !== undefined, store?.verify ?? false));
+      this.ready = true;
+      this.exchange();
+    });
     clearInterval(this.timer);
     this.timer = window.setInterval(() => this.exchange(), 50);
   }
@@ -123,6 +118,7 @@ export class JobPool {
     this.timer = 0;
     this.runtime = undefined;
     this.failed = undefined;
+    this.ready = false;
   }
 
   /** Ends the pool for good: it serves no runtime, its workers end and its
@@ -140,14 +136,15 @@ export class JobPool {
 
   /** Runs `use` on the attached runtime; a module that stopped ends the pool
    * and tells the host. */
-  private call(use: (runtime: JobRuntime) => void) {
+  private call<T>(use: (runtime: JobRuntime) => T): T | undefined {
     const runtime = this.runtime;
-    if (!runtime) return;
+    if (!runtime) return undefined;
     try {
-      use(runtime);
+      return use(runtime);
     } catch (error) {
       if (!fatal(error)) throw error;
       this.stop(error);
+      return undefined;
     }
   }
 
@@ -158,112 +155,76 @@ export class JobPool {
     failed?.(error);
   }
 
-  /** Hands workers what the attached runtime made since the last exchange. */
+  /** Carries out what the attached runtime ordered since the last exchange. */
   exchange() {
-    this.call(runtime => this.hand(runtime, runtime.take_jobs()));
-    this.report();
+    if (!this.ready) return;
+    const orders = this.call(runtime => runtime.take_jobs()) ?? [];
+    for (const order of orders) this.carry(order);
+    void this.report();
   }
 
-  /** Hands workers `messages`, which `runtime` made. */
-  private hand(runtime: JobRuntime, messages: JobMessage[]) {
-    for (const message of messages) {
-      if ("cancel" in message) {
-        if (this.looking.has(message.cancel)) {
-          this.dropped.add(message.cancel);
-          continue;
-        }
-        this.keys.delete(message.cancel);
-        const slot = this.slots.find(slot => slot.jobs.has(message.cancel));
-        if (!slot) continue;
-        slot.jobs.delete(message.cancel);
-        this.post(slot, { type: "cancel", id: message.cancel });
-      } else if ("clear" in message) {
-        // A new engine's first message: workers drop the earlier engine's
-        // jobs, and so do their slots, keys and lookups here.
-        for (const slot of this.slots) slot.jobs.clear();
-        this.keys.clear();
-        this.verifying.clear();
-        for (const id of this.looking) this.dropped.add(id);
-        this.shares.clear();
-        this.broadcast({ type: "clear" });
-      } else if ("share" in message) {
-        const blob = new Blob([message.bytes as Uint8Array<ArrayBuffer>]);
-        this.shares.set(message.share, blob);
-        this.broadcast({ type: "share", key: message.share, blob });
-      } else if ("unshare" in message) {
-        this.shares.delete(message.unshare);
-        this.broadcast({ type: "unshare", key: message.unshare });
-      } else if (message.identity) {
-        void this.cached(runtime, message, message.identity);
-      } else {
-        this.dispatch(runtime, message);
-      }
+  /** Carries `order` to the workers or the cache. */
+  private carry(order: JobOrder) {
+    if ("clear" in order) {
+      // A new engine's first order: workers drop the earlier engine's jobs.
+      this.shares.clear();
+      this.broadcast({ type: "clear" });
+    } else if ("share" in order) {
+      const blob = new Blob([order.bytes as Uint8Array<ArrayBuffer>]);
+      this.shares.set(order.share, blob);
+      this.broadcast({ type: "share", key: order.share, blob });
+    } else if ("unshare" in order) {
+      this.shares.delete(order.unshare);
+      this.broadcast({ type: "unshare", key: order.unshare });
+    } else if ("run" in order) {
+      this.post(this.slots[order.worker], { type: "run", id: order.run, kind: order.kind, input: order.input, priority: order.priority },
+        [order.input.buffer as ArrayBuffer]);
+    } else if ("cancel" in order) {
+      this.post(this.slots[order.worker], { type: "cancel", id: order.cancel });
+    } else if ("lookup" in order) {
+      void this.lookup(order.lookup, order.kind, order.identity);
+    } else if ("keep" in order) {
+      void this.store.then(store => store?.keep(order.keep, order.output));
+    } else {
+      void this.store.then(store => store?.mismatch(order.mismatch));
     }
   }
 
-  /** Hands `message`'s job to the worker with the fewest in flight. */
-  private dispatch(runtime: JobRuntime, message: JobRequest) {
-    const slot = this.least();
-    if (!slot) {
-      runtime.fail_job(message.id, "no workers");
-      return;
-    }
-    slot.jobs.set(message.id, message.priority);
-    this.post(slot, { type: "run", id: message.id, kind: message.kind, input: message.input, priority: message.priority }, [message.input.buffer as ArrayBuffer]);
-  }
-
-  /** Answers a keepable job from the cache, or hands it to
-   * a worker and keeps its output once done; verifying, runs it anyway
-   * and compares. */
-  private async cached(runtime: JobRuntime, message: JobRequest, identity: Uint8Array) {
-    this.looking.add(message.id);
-    try {
-      const cache = await this.cache;
-      const key = cache && await cache.key(message.kind, identity);
-      const kept = cache && key ? await cache.lookup(key) : undefined;
-      if (this.dropped.has(message.id) || this.runtime !== runtime) return;
-      if (kept) {
-        this.call(runtime => runtime.complete_job(message.id, kept));
-        if (!cache?.verify || this.runtime !== runtime) return;
-        this.verifying.set(message.id, kept);
-      }
-      if (key) this.keys.set(message.id, key);
-      this.call(runtime => this.dispatch(runtime, message));
-    } catch (error) {
-      this.call(runtime => runtime.fail_job(message.id, String(error)));
-    } finally {
-      this.looking.delete(message.id);
-      this.dropped.delete(message.id);
-    }
+  /** Hands the runtime what the cache keeps of job `id`'s work, if
+   * anything, and carries out what that orders. */
+  private async lookup(id: number, kind: string, identity: Uint8Array) {
+    const runtime = this.runtime;
+    const store = await this.store;
+    const [key, kept] = store ? await store.lookup(kind, identity) : ["", undefined];
+    if (this.runtime !== runtime) return;
+    this.call(runtime => runtime.job_kept(id, key, kept));
+    this.exchange();
   }
 
   /** Tells the runtime the cache's counters when they change. */
-  private report() {
+  private async report() {
     const runtime = this.runtime;
-    if (!runtime) return;
-    void this.cache.then(cache => {
-      if (!cache) return;
-      const { hits, misses, bytes, mismatches } = cache.stats();
-      const text = `${hits} ${misses} ${bytes} ${mismatches}`;
-      if (text === this.reported || this.runtime !== runtime) return;
-      this.reported = text;
-      this.call(runtime => runtime.report_job_cache(hits, misses, bytes, mismatches));
-    });
+    const store = await this.store;
+    if (!store || this.runtime !== runtime) return;
+    const [hits, misses, bytes, mismatches] = store.index.counters();
+    const text = `${hits} ${misses} ${bytes} ${mismatches}`;
+    if (text === this.reported) return;
+    this.reported = text;
+    this.call(runtime => runtime.report_job_cache(hits, misses, bytes, mismatches));
   }
 
   /** KTX2 image `uri` transcoded to `format` on a worker,
    * or kept from an earlier transcoding by the same build. */
   async transcodeKtx2(uri: string, bytes: Uint8Array, format: TranscodedImage["format"], basis: string): Promise<TranscodedImage> {
-    const cache = await this.cache;
-    const key = cache && await cache.key(`ktx2 ${format} ${basis}`, bytes);
-    const kept = cache && key ? await cache.lookup(key) : undefined;
+    const store = await this.store;
+    const [key, kept] = store ? await store.lookup(`ktx2 ${format} ${basis}`, bytes) : [undefined, undefined];
     const image = kept && readTranscoded(kept);
-    if (image && !cache?.verify) return image;
+    if (image && !store?.verify) return image;
     const fresh = await this.task({ type: "ktx2", uri, bytes, format, basis }, [bytes.buffer as ArrayBuffer]) as TranscodedImage;
-    if (cache && key) {
+    if (store && key) {
       const written = writeTranscoded(fresh);
-      if (!kept) cache.store(key, written);
-      else if (!sameBytes(kept, written)) cache.mismatch(key);
+      if (!kept) store.keep(key, written);
+      else if (!sameBytes(kept, written)) store.mismatch(key);
     }
     return fresh;
   }
@@ -273,20 +234,29 @@ export class JobPool {
     return this.task({ type: "image", uri, blob }, []) as Promise<Pixels>;
   }
 
+  /** Runs the page's own task on the worker the engine says it waits least
+   * on, or, before an engine, the one with the fewest tasks. */
   private task(message: Record<string, unknown>, transfer: Transferable[]): Promise<unknown> {
-    const slot = this.least();
-    if (!slot) return Promise.reject(new Error("no workers"));
+    const counted = this.call(runtime => runtime.job_task());
+    const slot = counted !== undefined ? this.slots[counted] : this.fewestTasks();
+    if (!slot || slot.broken) return Promise.reject(new Error("no workers"));
     const task = this.nextTask++;
-    slot.tasks.add(task);
+    slot.tasks.set(task, counted !== undefined);
     return new Promise((resolve, reject) => {
       this.tasks.set(task, { resolve, reject });
       this.post(slot, { ...message, task }, transfer);
     });
   }
 
+  private fewestTasks(): Slot | undefined {
+    let best: Slot | undefined;
+    for (const slot of this.slots) if (!slot.broken && (!best || slot.tasks.size < best.tasks.size)) best = slot;
+    return best;
+  }
+
   private spawn(): Slot {
     const worker = new Worker(new URL("./job-worker.ts", import.meta.url), { type: "module", name: "engine-jobs" });
-    const slot: Slot = { worker, jobs: new Map(), tasks: new Set(), broken: false, held: [] };
+    const slot: Slot = { worker, tasks: new Map(), broken: false, held: [] };
     worker.onmessage = (event: MessageEvent<WorkerMessage>) => this.receive(slot, event.data);
     worker.onerror = (event) => { event.preventDefault(); this.lose(slot, event.message || "worker error"); };
     // Workers start from the module compiled once; what is
@@ -311,66 +281,28 @@ export class JobPool {
     for (const slot of this.slots) if (!slot.broken) this.post(slot, message);
   }
 
-  /** The working slot with the fewest jobs and tasks in flight; among
-   * those, the one whose most urgent job is least urgent, where a new job
-   * would wait least. */
-  private least(): Slot | undefined {
-    let best: Slot | undefined;
-    let bestLoad = Infinity;
-    let bestUrgent = -Infinity;
-    for (const slot of this.slots) {
-      if (slot.broken) continue;
-      const load = slot.jobs.size + slot.tasks.size;
-      let urgent = Infinity;
-      for (const priority of slot.jobs.values()) urgent = Math.min(urgent, priority);
-      if (load < bestLoad || (load === bestLoad && urgent > bestUrgent)) {
-        best = slot;
-        bestLoad = load;
-        bestUrgent = urgent;
-      }
-    }
-    return best;
-  }
-
   private receive(slot: Slot, message: WorkerMessage) {
     switch (message.type) {
-      // Jobs cancelled since are no one's.
-      case "done": {
-        if (!slot.jobs.delete(message.id)) break;
-        const key = this.keys.get(message.id);
-        this.keys.delete(message.id);
-        const kept = this.verifying.get(message.id);
-        this.verifying.delete(message.id);
-        // A kept output the engine already took is compared, not taken.
-        if (kept) {
-          if (key && !sameBytes(kept, message.output)) void this.cache.then(cache => cache?.mismatch(key));
-          break;
-        }
+      case "done":
         this.call(runtime => runtime.complete_job(message.id, message.output));
-        if (key) void this.cache.then(cache => cache?.store(key, message.output));
         break;
-      }
       case "part":
-        if (slot.jobs.has(message.id)) this.call(runtime => runtime.part_job(message.id, message.output));
+        this.call(runtime => runtime.part_job(message.id, message.output));
         break;
       case "failed":
-        this.keys.delete(message.id);
-        if (this.verifying.delete(message.id)) {
-          slot.jobs.delete(message.id);
-          break;
-        }
-        if (slot.jobs.delete(message.id)) this.call(runtime => runtime.fail_job(message.id, message.error));
+        this.call(runtime => runtime.fail_job(message.id, message.error));
         break;
       case "task":
+      case "task_failed": {
+        const index = this.slots.indexOf(slot);
+        if (slot.tasks.get(message.task)) this.call(runtime => runtime.job_task_done(index));
         slot.tasks.delete(message.task);
-        this.tasks.get(message.task)?.resolve(message.result);
+        const task = this.tasks.get(message.task);
         this.tasks.delete(message.task);
+        if (message.type === "task") task?.resolve(message.result);
+        else task?.reject(new Error(message.error));
         break;
-      case "task_failed":
-        slot.tasks.delete(message.task);
-        this.tasks.get(message.task)?.reject(new Error(message.error));
-        this.tasks.delete(message.task);
-        break;
+      }
       case "broken":
         this.lose(slot, message.error);
         break;
@@ -383,7 +315,7 @@ export class JobPool {
     }
   }
 
-  /** Retires a broken worker: its jobs fail back to the engine, its tasks
+  /** Retires a broken worker: the engine takes back its jobs, its tasks
    * fail, and a new worker holding every share takes its place, while
    * replacements last. */
   private lose(slot: Slot, error: string) {
@@ -391,21 +323,17 @@ export class JobPool {
     slot.broken = true;
     slot.worker.terminate();
     console.warn(`An engine worker stopped: ${error}`);
-    for (const id of slot.jobs.keys()) {
-      this.keys.delete(id);
-      if (!this.verifying.delete(id)) this.call(runtime => runtime.fail_job(id, error));
-    }
-    slot.jobs.clear();
-    for (const task of slot.tasks) {
+    for (const task of slot.tasks.keys()) {
       this.tasks.get(task)?.reject(new Error(error));
       this.tasks.delete(task);
     }
-    slot.tasks.clear();
-    if (this.restarts < this.count) {
+    const index = this.slots.indexOf(slot);
+    const replaced = this.restarts < this.count;
+    if (replaced) {
       this.restarts++;
-      this.slots[this.slots.indexOf(slot)] = this.spawn();
+      this.slots[index] = this.spawn();
     }
-    this.call(runtime => runtime.set_job_workers(this.size));
+    this.call(runtime => runtime.lose_job_worker(index, error, replaced));
   }
 }
 
@@ -432,12 +360,16 @@ async function fetchWorkerWasm(): Promise<ArrayBuffer | undefined> {
   }
 }
 
-/** Opens the page's job output cache for the job worker
- * module `module` (its bytes), unless the page turned it off. */
-async function openCache(module: ArrayBuffer | undefined): Promise<JobCache | undefined> {
+/** Opens the page's job output cache, its index in the job worker module
+ * (`module`, compiled), unless the page turned it off. */
+async function openStore(module: WebAssembly.Module | undefined): Promise<JobStore | undefined> {
   const settings = jobCacheSettings();
-  if (!settings || !module) return undefined;
-  return JobCache.open(module, settings.budget, settings.verify);
+  const bytes = await workerWasm();
+  if (!settings || !module || !bytes) return undefined;
+  const pinned = engineWorkerModule();
+  const bindings = (pinned ? await import(/* @vite-ignore */ pinned) : await import("../../pkg/engine_worker")) as typeof import("../../pkg/engine_worker");
+  await bindings.default({ module_or_path: module });
+  return JobStore.open(bytes, bindings, settings.budget, settings.verify);
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {

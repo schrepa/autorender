@@ -462,6 +462,18 @@ impl AppHost {
         }
     }
 
+    /// The jobs the host's scheduler holds, on workers or in cache lookups.
+    pub fn report_jobs_held(&mut self, held: u32) {
+        if let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Jobs>()
+        {
+            jobs.report_held(held);
+        }
+    }
+
     /// A part of job `id`'s output its worker handed back before the rest,
     /// such as a tile's shape.
     pub fn part_job(&mut self, id: JobId, part: Vec<u8>) {

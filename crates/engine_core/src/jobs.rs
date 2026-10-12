@@ -169,6 +169,10 @@ pub struct JobStats {
     pub cache_bytes: u64,
     /// Verifying, cached outputs differing from a fresh run.
     pub cache_mismatches: u64,
+    /// Jobs the host's scheduler holds: on its workers, or looked up in its
+    /// cache. None once every job handed out ended, an earlier engine's
+    /// included.
+    pub held: u32,
 }
 
 /// Jobs handed to the host's workers. Inserted by default,
@@ -189,6 +193,8 @@ pub struct Jobs {
     // The host's cache counters: hits, misses, bytes and
     // mismatches.
     cache: [u64; 4],
+    // Jobs the host's scheduler holds.
+    held: u32,
     // What is shared now, by key: its size.
     shared: HashMap<String, u64>,
     stats: JobStats,
@@ -205,6 +211,7 @@ impl Default for Jobs {
             done: HashMap::default(),
             parts: HashMap::default(),
             cache: [0; 4],
+            held: 0,
             shared: HashMap::default(),
             stats: JobStats::default(),
         }
@@ -369,6 +376,12 @@ impl Jobs {
         self.cache = [hits, misses, bytes, mismatches];
     }
 
+    /// Hosts: the jobs their scheduler holds, on workers or in cache
+    /// lookups.
+    pub fn report_held(&mut self, held: u32) {
+        self.held = held;
+    }
+
     fn finish(&mut self, id: JobId, output: Result<Vec<u8>, String>) {
         self.parts.remove(&id);
         match &output {
@@ -388,6 +401,7 @@ impl Jobs {
             cache_misses: self.cache[1],
             cache_bytes: self.cache[2],
             cache_mismatches: self.cache[3],
+            held: self.held,
             ..self.stats
         }
     }
