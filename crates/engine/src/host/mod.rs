@@ -2,29 +2,30 @@
 //! times its work by and the terrain's debug views; and what the page and
 //! the native host share instead of each keeping its own: the engine
 //! switches they take, the input they gather, the size views draw at, their
-//! policies' values, the spread of measured values, the GPU they name and
-//! what a panic reports.
+//! policies' values, the spread of measured values, the GPU they name, the
+//! host their reports name and what a panic reports.
 
 mod adapter;
+mod environment;
 mod frame_loop;
 mod input;
 pub mod policy;
 mod resolution;
 mod settings;
-mod statistics;
 
 pub use crate::app_host::{JobMessage, TerrainClock, now_ms};
 pub use adapter::{AdapterStatus, vendor};
 pub use engine_core::{
-    FileHeader, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs, TerrainDebug,
-    TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
+    Distribution, FileHeader, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs,
+    TerrainDebug, TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash, job_class,
+    job_priority, median,
 };
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
+pub use environment::{HostEnvironment, KNOWN_DIFFERENCES};
 pub use frame_loop::{FrameLoop, FramePhase};
 pub use input::{FrameInput, InputGatherer, KEYS};
 pub use resolution::view_size;
 pub use settings::{HostSettings, SETTINGS, Setting};
-pub use statistics::{Distribution, median};
 
 /// The types and values the web host shares with the engine, in
 /// TypeScript: what `cargo xtask schema` writes to

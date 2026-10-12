@@ -47,6 +47,9 @@ pub mod bounds {
     pub const MAX_CHANGES: usize = 256;
     /// Bytes of a terrain edit's ID at most.
     pub const MAX_EDIT_ID: usize = 64;
+    /// Values a distribution request names at most, within the request's
+    /// bytes (`MAX_REQUEST_BYTES`).
+    pub const MAX_VALUES: usize = 1024;
 }
 
 /// The schema transform stating a stamp's `field` rule on the request field
@@ -132,6 +135,9 @@ pub(crate) enum ToolsQuery {
     Describe {
         name: Option<String>,
         definition: Option<String>,
+    },
+    Distribution {
+        values: Vec<f64>,
     },
 }
 
@@ -222,6 +228,16 @@ pub enum DevRequest {
     Digest {
         version: u32,
     },
+    /// The spread of measured `values` as every host computes it: the
+    /// smallest and largest, and the median, 95th and 99th percentiles,
+    /// each interpolated linearly between the two sorted values around its
+    /// rank; `null` without values, or with one that is not a finite number
+    /// of at least 0.
+    Distribution {
+        version: u32,
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = bounds::MAX_VALUES)))]
+        values: Vec<f64>,
+    },
     Describe {
         version: u32,
         #[serde(default)]
@@ -273,6 +289,9 @@ impl DevRequest {
             }),
             Self::Assets { version: _ } => Route::Tools(ToolsQuery::Assets),
             Self::Digest { version: _ } => Route::Tools(ToolsQuery::Digest),
+            Self::Distribution { version: _, values } => {
+                Route::Tools(ToolsQuery::Distribution { values })
+            }
             Self::Describe {
                 version: _,
                 name,
@@ -297,6 +316,7 @@ impl DevRequest {
             | Self::Inspect { version, .. }
             | Self::Assets { version }
             | Self::Digest { version }
+            | Self::Distribution { version, .. }
             | Self::Describe { version, .. }
             | Self::Raycast(RaycastQuery { version, .. })
             | Self::Overlap(OverlapQuery { version, .. })

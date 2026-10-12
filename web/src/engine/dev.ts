@@ -1,14 +1,15 @@
-/** On-demand adapter, dynamically imported only by the Vite development host. */
-import { readDistribution, readStats, type Runtime } from "./host";
+/** On-demand adapter, dynamically imported only by the Vite development
+ * host: the engine's development bridge runs each request and the control
+ * it names step by step; the page carries out what only it can (`Effect`)
+ * and resumes the request with how it went. */
+import type { Runtime } from "./host";
 import { adapterInfo } from "./adapter";
-import { BenchmarkError, type BenchmarkOptions, sampleBenchmark } from "./benchmark.ts";
 import { fatal } from "./panic";
 import { engineError, type ErrorCode } from "../generated/errors";
 import type { AdapterStatus } from "../generated/host";
-import type { Reply } from "../generated/reply";
+import type { Effect, HostContext, Outcome, Reply, Step } from "../generated/reply";
 import { parseJson } from "../generated/runtime";
-// The protocol's version, request limit and ops, generated from the engine
-// (`cargo xtask schema`).
+// The protocol's version, generated from the engine (`cargo xtask schema`).
 import protocol from "../generated/protocol.json";
 
 type Command = { op: string; [field: string]: unknown };
@@ -50,107 +51,71 @@ declare global {
   }
 }
 
-/** Commands run between frames; no borrowed Wasm views escape. */
+/** What a benchmark's frame intervals include on a page. */
+const TIMING = "CPU timings exclude JSON/stats collection; frame intervals include host work and browser pacing; GPU execution time is not measured";
+
+/** Requests run between frames; no borrowed Wasm views escape. */
 export function connectDevelopment(host: Host): () => void {
   let disposed = false;
   let busy = false;
   const runtime = host.game;
-  if (!runtime.dev_command) throw new Error("Development Wasm is missing; run cargo xtask dev.");
-
-  function invoke(command: Command): Reply {
-    if (disposed || host.signal.aborted) throw new Error("Development session has been disposed.");
+  if (!runtime.dev_request) throw new Error("Development Wasm is missing; run cargo xtask dev.");
+  const closed = () => disposed || host.signal.aborted;
+  /** The page's side of each call to the bridge. */
+  function context(): string {
     const [width, height] = host.size();
-    return parseJson(runtime.dev_command!(JSON.stringify({ ...command, version: protocol.version }), width, height, host.paused()));
+    const page: HostContext = {
+      width, height, paused: host.paused(), device_pixel_ratio: globalThis.devicePixelRatio ?? 1,
+      user_agent: globalThis.navigator?.userAgent ?? "unknown", source: host.source?.url ?? null, timing: TIMING,
+    };
+    return JSON.stringify(page);
   }
-  /** The reply to every request once the engine's module stopped. */
-  function panicked(message: string): Reply {
-    return { ok: false, error: { code: "runtime_panicked", path: "$", message } };
-  }
-  function error(code: ErrorCode, path: string, message: string): Reply {
-    const reply: Reply = { ok: false, error: { code, path, message } };
-    if (!disposed && !host.signal.aborted && !host.stopped()) {
-      try { reply.observation = invoke({ op: "status" }).observation; } catch { /* Preserve the original runtime failure. */ }
+  /** A refusal the page decided, with the engine's observation while it runs. */
+  function refuse(code: ErrorCode, path: string, message: string): Reply {
+    if (!closed() && !host.stopped()) {
+      try { return parseJson(runtime.dev_refusal!(code, path, message)); } catch { /* Preserve the original failure. */ }
     }
-    return reply;
+    return { ok: false, error: { code, path, message } };
   }
-  function finish(reply: Reply): Reply {
-    if (reply.ok) {
-      const rendering = readStats(runtime);
-        reply.result = {
-          ...reply.result, observation: reply.observation, paused: host.paused(),
-          source: host.source?.url ?? null,
-          rendering,
-        };
-      host.poll();
-    }
-    return reply;
-  }
-  /** The controls the engine hands back for the page to carry out. */
-  const hostControls: Record<string, (control: Command) => Promise<Reply>> = {
-    async pause() {
-      host.setPaused(true);
-      return invoke({ op: "status" });
-    },
-    async resume() {
-      host.setPaused(false);
-      return invoke({ op: "status" });
-    },
-    async benchmark(control) {
-      const options = control as unknown as BenchmarkOptions;
-      const benchmark = await sampleBenchmark({
-        signal: host.signal, invoke, stats: () => readStats(runtime), size: host.size,
-        distribution: values => readDistribution(runtime, values),
-        interrupted: () => disposed || !host.paused() || (globalThis.document?.hidden ?? false),
-      }, options);
-      return { ok: true, version: protocol.version, observation: benchmark.observation.end, result: { benchmark, temporary: true } };
-    },
-    async frames(control) {
-      const count = control.count as number;
-      const interval = control.interval_ms as number;
-      // As play after a pause: the first frame advances no time.
-      runtime.suspend();
-      for (let index = 0; index < count; index++) {
+  /** Carries out `effect` for the request under way: its next step. */
+  async function carry(effect: Effect): Promise<Step> {
+    const resumed = (outcome: Outcome): Step => {
+      if (closed()) throw new Error("session closed");
+      return parseJson(runtime.dev_resume!(JSON.stringify(outcome), context()));
+    };
+    switch (effect.kind) {
+      case "pause":
+        host.setPaused(effect.paused);
+        return resumed({});
+      case "wait": {
+        const now = await animationFrames(1, host.signal, effect.within_ms);
+        return resumed(globalThis.document?.hidden ? { interrupted: true } : { now });
+      }
+      case "frame":
         await animationFrames(1, host.signal);
-        if (disposed) return error("session_closed", "$", "runtime was disposed during the frames");
-        host.frame(index * interval);
+        if (closed()) throw new Error("session closed");
+        host.frame(effect.timestamp);
+        return resumed({});
+      case "show":
+        await animationFrames(2, host.signal);
+        return resumed({});
+      case "game": {
+        const control = host.controls?.[effect.name];
+        if (!control) return resumed({ missing: Object.keys(host.controls ?? {}) });
+        let outcome: Outcome;
+        try { outcome = { result: await control.run(effect.args) ?? null }; }
+        catch (cause) { outcome = { failed: String(cause) }; }
+        return resumed(outcome);
       }
-      if (control.capture) await animationFrames(2, host.signal);
-      return { ...invoke({ op: "status" }), result: { frames: count, interval_ms: interval, temporary: true } };
-    },
-    async capture(control) {
-      const reply = invoke("alpha" in control ? { op: "present", alpha: control.alpha, ...(control.gpu ? { gpu: true } : {}) } : { op: "render" });
-      if (reply.ok) await animationFrames(2, host.signal);
-      return reply;
-    },
-    async game(control) {
-      const name = control.name as string;
-      const page = host.controls?.[name];
-      if (!page) {
-        return error("unsupported_command", "$.name", `this game has no control ${name}; it has ${Object.keys(host.controls ?? {}).join(", ") || "none"}`);
+      case "source": {
+        if (!host.source) return resumed({ missing: [] });
+        const source = await host.source.load(host.signal);
+        const files = await host.source.files?.(source, host.signal);
+        if (closed()) throw new Error("session closed");
+        return parseJson(runtime.dev_reloaded!(source, context(), files));
       }
-      let result: unknown;
-      try { result = await page.run(control.args as Record<string, unknown>); }
-      catch (cause) { return error("game_rule", "$.args", String(cause)); }
-      if (disposed) return error("session_closed", "$", "runtime was disposed during the control");
-      const rendered = invoke({ op: "render" });
-      if (!rendered.ok) return rendered;
-      return { ...rendered, result: { game: name, result } };
-    },
-    async reload(control) {
-      if (!host.source || !runtime.dev_reload) return error("unsupported_command", "$.op", "this game has no authored scene reload adapter");
-      const source = await host.source.load(host.signal);
-      const files = await host.source.files?.(source, host.signal);
-      host.signal.throwIfAborted();
-      if (disposed) return error("session_closed", "$", "runtime was disposed during scene fetch");
-      const reply = parseJson(runtime.dev_reload(source, control.expected_revision as string, control.revision as string, files));
-      if (reply.ok) {
-        const rendered = invoke({ op: "render" });
-        if (!rendered.ok) return rendered;
-        reply.observation = rendered.observation;
-      }
-      return reply;
-    },
-  };
+    }
+  }
   const api = {
     version: protocol.version,
     instance: crypto.randomUUID(),
@@ -159,52 +124,35 @@ export function connectDevelopment(host: Host): () => void {
     controls: Object.fromEntries(Object.entries(host.controls ?? {}).map(([name, control]) => [name, control.description])),
     parameters: host.parameters ?? {},
     async request(command: Command): Promise<Reply> {
-      if (disposed || host.signal.aborted) return error("session_closed", "$", "the browser runtime was disposed");
+      if (closed()) return refuse("session_closed", "$", "the browser runtime was disposed");
       const stopped = host.stopped();
-      if (stopped) return panicked(stopped);
-      if (busy || host.isBusy?.()) return error("command_busy", "$", "one development command is already running");
-      if (!command || typeof command !== "object" || Array.isArray(command) || typeof command.op !== "string") {
-        return error("invalid_request", "$.command", "expected an object with an op string");
-      }
-      try {
-        if (new TextEncoder().encode(JSON.stringify(command)).byteLength > protocol.max_request_bytes) {
-          return error("request_too_large", "$.command", `command exceeds ${protocol.max_request_bytes} bytes`);
-        }
-      } catch { return error("invalid_request", "$.command", "command must be serializable JSON"); }
+      if (stopped) return { ok: false, error: { code: "runtime_panicked", path: "$", message: stopped } };
+      if (busy || host.isBusy?.()) return refuse("command_busy", "$", "one development command is already running");
+      let line: string;
+      try { line = JSON.stringify(command) ?? "null"; }
+      catch { return refuse("invalid_request", "$.command", "command must be serializable JSON"); }
       busy = true;
       host.setBusy(true);
       try {
-        // The engine checks every command, pause rules included, and runs
-        // it, or returns the control the page carries out, validated with
-        // its defaults.
-        let reply = invoke(command);
-        const control = reply.ok ? reply.result?.control as Command | undefined : undefined;
-        if (control) {
-          const carry = hostControls[command.op];
-          if (!carry) return error("unsupported_command", "$.op", `this host cannot carry out ${command.op}`);
-          reply = await carry(control);
-          if (!reply.ok) return finish(reply);
+        let step = parseJson(runtime.dev_request!(line, context()));
+        while ("effect" in step) step = await carry(step.effect);
+        const reply = step.reply;
+        if (closed()) return refuse("session_closed", "$", "runtime was disposed during command");
+        if (reply.ok) {
+          await nameAdapters(reply);
+          host.poll();
         }
-        if (disposed || host.signal.aborted) return error("session_closed", "$", "runtime was disposed during command");
-        // Status names the GPU as every host does; the browser adds its
-        // vendor and architecture, which the engine cannot read on a page.
-        if (command.op === "status" && reply.ok && reply.result?.adapter) {
-          const adapter = reply.result.adapter as AdapterStatus;
-          const browser = await adapterInfo();
-          reply.result.adapter = { ...adapter, vendor: adapter.vendor || browser?.vendor || "", architecture: browser?.architecture ?? "" };
-        }
-        return finish(reply);
+        return reply;
       } catch (cause) {
-        if (disposed || host.signal.aborted) return error("session_closed", "$", "runtime was disposed during command");
-        if (cause instanceof BenchmarkError) return error(cause.code, "$", cause.message);
+        if (closed()) return refuse("session_closed", "$", "runtime was disposed during command");
         if (fatal(cause)) {
           host.fail(cause);
-          return panicked(host.stopped() ?? String(cause));
+          return { ok: false, error: { code: "runtime_panicked", path: "$", message: host.stopped() ?? String(cause) } };
         }
         // The engine's own errors keep their code and path.
         const thrown = engineError(cause);
-        if (thrown) return error(thrown.code, thrown.path, thrown.message);
-        return error("browser_command_failed", "$", String(cause));
+        if (thrown) return refuse(thrown.code, thrown.path, thrown.message);
+        return refuse("browser_command_failed", "$", String(cause));
       } finally {
         busy = false;
         host.setBusy(false);
@@ -220,22 +168,35 @@ export function connectDevelopment(host: Host): () => void {
   return dispose;
 }
 
-/** Resolves within the `count`th animation frame from now: two show what
- * was drawn before. */
-function animationFrames(count: number, signal: AbortSignal): Promise<void> {
+/** The GPUs `reply` names (status's, a benchmark's environment's) with the
+ * vendor and architecture the browser names, which the engine cannot read
+ * on a page. */
+async function nameAdapters(reply: Reply) {
+  const result = reply.result as { adapter?: AdapterStatus; benchmark?: { environment?: { adapter?: AdapterStatus } } } | null | undefined;
+  for (const holder of [result, result?.benchmark?.environment]) {
+    if (!holder?.adapter) continue;
+    const browser = await adapterInfo();
+    holder.adapter = { ...holder.adapter, vendor: holder.adapter.vendor || browser?.vendor || "", architecture: browser?.architecture ?? "" };
+  }
+}
+
+/** The timestamp of the `count`th animation frame from now (two show what
+ * was drawn before); none within `within` milliseconds resolves with the
+ * time then, and without `within` none within five seconds rejects. */
+function animationFrames(count: number, signal: AbortSignal, within?: number): Promise<number> {
   return new Promise((resolve, reject) => {
     let request = 0;
     let left = count;
-    const timeout = setTimeout(() => finish(new Error("browser presentation timed out")), 5000);
-    function finish(error?: Error) {
+    const timeout = setTimeout(() => (within === undefined ? finish(new Error("browser presentation timed out")) : finish(undefined, performance.now())), within ?? 5000);
+    function finish(error?: Error, timestamp = 0) {
       clearTimeout(timeout);
       cancelAnimationFrame(request);
       signal.removeEventListener("abort", aborted);
-      if (error) reject(error); else resolve();
+      if (error) reject(error); else resolve(timestamp);
     }
     function aborted() { finish(new Error("session closed")); }
-    function next() {
-      if (--left <= 0) finish();
+    function next(timestamp: number) {
+      if (--left <= 0) finish(undefined, timestamp);
       else request = requestAnimationFrame(next);
     }
     signal.addEventListener("abort", aborted, { once: true });

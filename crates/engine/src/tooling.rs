@@ -106,8 +106,13 @@ fn comment(output: &mut String, indent: &str, description: &Value) {
 }
 
 fn type_of(schema: &Value) -> String {
-    // A schema of any value.
-    if schema == &Value::Bool(true) || schema.as_object().is_some_and(serde_json::Map::is_empty) {
+    // A schema of any value: one that only describes it, if anything.
+    let annotation = |key: &String| ["description", "title", "default"].contains(&key.as_str());
+    if schema == &Value::Bool(true)
+        || schema
+            .as_object()
+            .is_some_and(|fields| fields.keys().all(annotation))
+    {
         return "unknown".to_owned();
     }
     if let Some(reference) = schema["$ref"].as_str() {
@@ -142,11 +147,26 @@ fn type_of(schema: &Value) -> String {
         }
         return types.join(" | ");
     }
+    // An object of its own fields, written in place, as a union's members
+    // are: a field it does not require is optional.
+    if let Some(properties) = schema["properties"].as_object() {
+        let required = schema["required"].as_array();
+        let fields: Vec<String> = properties
+            .iter()
+            .map(|(field, property)| {
+                let required =
+                    required.is_some_and(|required| required.iter().any(|name| name == field));
+                let mark = if required { "" } else { "?" };
+                format!("{field}{mark}: {}", type_of(property))
+            })
+            .collect();
+        return format!("{{ {} }}", fields.join("; "));
+    }
     let types: Vec<&str> = match &schema["type"] {
         Value::String(name) => vec![name.as_str()],
         Value::Array(names) => names.iter().filter_map(Value::as_str).collect(),
         other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_)) => {
-            panic!("no TypeScript type for the schema type {other}")
+            panic!("no TypeScript type for the schema type {other}: {schema}")
         }
     };
     types

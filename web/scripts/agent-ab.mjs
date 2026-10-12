@@ -3,21 +3,15 @@
  * measurement windows in ABBA order, so drift cancels; each window runs a
  * benchmark, and with `--profile on` also a profiling capture whose GPU
  * spans (and native sessions' per-draw times) it reads, after each variant
- * ran once unmeasured. The report gives
- * each variant's median of window medians, B against A, and the noise the
- * repeated windows of one variant show (A against A, B against B). */
+ * ran once unmeasured. The report gives each variant's median of window
+ * medians (the engine's, as its `distribution` computes them on every
+ * host), B against A, and the noise the repeated windows of one variant
+ * show (A against A, B against B). */
 // @ts-check
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { AgentError } from "./agent-protocol.mjs";
 import { workspace } from "./workspace.mjs";
-
-const median = values => {
-  const sorted = [...values].sort((a, b) => a - b);
-  if (!sorted.length) return null;
-  const middle = (sorted.length - 1) / 2;
-  return (sorted[Math.floor(middle)] + sorted[Math.ceil(middle)]) / 2;
-};
 
 /** The commands `text` (JSON) lists: one command or an array of them. */
 function commands(text, name) {
@@ -53,6 +47,9 @@ export async function runAb(session, values) {
     if (!reply.ok) throw new AgentError(reply.error?.code ?? "bridge_error", `${command.op}: ${reply.error?.message ?? "failed"}`, reply.error?.path);
     return reply.result;
   };
+  /** The median of `values` as the engine computes it on every host
+   * (`distribution`); null without values. */
+  const median = async values => (values.length ? (await run({ op: "distribution", values })).distribution?.median ?? null : null);
   const status = await run({ op: "status" });
   if (status.paused !== true) await run({ op: "pause" });
   for (const command of [...variants.a, ...variants.b]) {
@@ -84,12 +81,12 @@ export async function runAb(session, values) {
       const gpu = report.gpu ?? report.engine?.gpu ?? {};
       const spans = new Map();
       for (const sample of gpu.samples ?? []) spans.set(sample.name, [...(spans.get(sample.name) ?? []), sample.duration_ms]);
-      for (const [name, durations] of spans) window.gpu_ms[name] = median(durations);
+      for (const [name, durations] of spans) window.gpu_ms[name] = await median(durations);
       const draws = new Map();
       for (const draw of gpu.draw_samples ?? []) {
         if (draw.duration_ms !== null) draws.set(draw.label, [...(draws.get(draw.label) ?? []), draw.duration_ms]);
       }
-      for (const [label, durations] of draws) window.draws_ms[label] = median(durations);
+      for (const [label, durations] of draws) window.draws_ms[label] = await median(durations);
       window.profile = result.artifacts.trace;
     }
     windows.push(window);
@@ -102,7 +99,7 @@ export async function runAb(session, values) {
   for (const measure of measures) {
     const of = variant => windows.filter(window => window.variant === variant).map(window => read(window, measure)).filter(value => typeof value === "number");
     const [a, b] = [of("a"), of("b")];
-    const [ma, mb] = [median(a), median(b)];
+    const [ma, mb] = [await median(a), await median(b)];
     if (ma === null || mb === null) continue;
     const spread = (values, center) => center ? Math.max(...values.map(value => Math.abs(value - center))) / center : null;
     compared[measure] = {
@@ -112,11 +109,13 @@ export async function runAb(session, values) {
   }
   // The draws whose time changed most, by their medians over each variant.
   const labels = new Set(windows.flatMap(window => Object.keys(window.draws_ms)));
-  const draws = [...labels].map(label => {
+  const changed = [];
+  for (const label of labels) {
     const of = variant => median(windows.filter(window => window.variant === variant).map(window => window.draws_ms[label]).filter(value => typeof value === "number"));
-    const [a, b] = [of("a"), of("b")];
-    return { label, a, b, b_minus_a: a !== null && b !== null ? b - a : null };
-  }).filter(draw => draw.b_minus_a !== null).sort((x, y) => Math.abs(/** @type {number} */ (y.b_minus_a)) - Math.abs(/** @type {number} */ (x.b_minus_a))).slice(0, 20);
+    const [a, b] = [await of("a"), await of("b")];
+    if (a !== null && b !== null) changed.push({ label, a, b, b_minus_a: b - a });
+  }
+  const draws = changed.sort((x, y) => Math.abs(y.b_minus_a) - Math.abs(x.b_minus_a)).slice(0, 20);
   return {
     order: order.join(""), mode, warmup, samples, profile: profile ? { duration_ms: durationMs } : null,
     variants, compared, draws, windows,

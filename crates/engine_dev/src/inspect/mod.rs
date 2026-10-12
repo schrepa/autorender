@@ -476,6 +476,16 @@ impl DevTools {
             ToolsQuery::Describe { name, definition } => {
                 self.describe(name.as_deref(), definition.as_deref())
             }
+            ToolsQuery::Distribution { values } => {
+                if values.len() > crate::bounds::MAX_VALUES {
+                    return Err(DevError::new(
+                        ErrorCode::OutOfRange,
+                        "$.values",
+                        format!("at most {} values", crate::bounds::MAX_VALUES),
+                    ));
+                }
+                Ok(json!({"distribution": engine_core::Distribution::of(&values)}))
+            }
             ToolsQuery::Inspect {
                 entity,
                 parent,

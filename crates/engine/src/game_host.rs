@@ -16,6 +16,9 @@ pub struct GameHost<G: Game> {
     frames: FrameLoop,
     #[cfg(feature = "dev")]
     development: crate::dev_host::DevHost,
+    // The development request under way: what it waits for from its host.
+    #[cfg(feature = "dev")]
+    pub(crate) dev_pending: Option<crate::dev_host::bridge::Pending>,
 }
 
 impl<G: Game> GameHost<G> {
@@ -51,6 +54,8 @@ impl<G: Game> GameHost<G> {
             frames: FrameLoop::default(),
             #[cfg(feature = "dev")]
             development,
+            #[cfg(feature = "dev")]
+            dev_pending: None,
         })
     }
 

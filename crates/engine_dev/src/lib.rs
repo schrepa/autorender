@@ -8,6 +8,7 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+mod bridge;
 mod controls;
 mod digest;
 mod error;
@@ -22,6 +23,7 @@ pub mod authoring;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod schemas;
 
+pub use bridge::{Artifact, Effect, HostContext, Outcome, Step};
 pub use controls::{validated_camera, validated_presentation_alpha};
 pub use engine_settings::ErrorCode;
 pub use error::DevError;

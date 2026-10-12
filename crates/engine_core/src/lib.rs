@@ -41,6 +41,7 @@ mod retained_render;
 mod scene;
 mod sky;
 mod spline_mesh;
+mod statistics;
 mod transform_edits;
 mod virtual_geometry;
 
@@ -98,6 +99,7 @@ pub use retained_render::*;
 pub use scene::*;
 pub use sky::*;
 pub use spline_mesh::*;
+pub use statistics::{Distribution, median};
 pub use transform_edits::*;
 pub use virtual_geometry::*;
 

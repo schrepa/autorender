@@ -208,7 +208,13 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
         }
         if (command.op === "profile") {
           const { captureProfile } = await import("./agent-profile.mjs");
-          return captureProfile({ page, requestBrowser, command, artifacts, workspace });
+          try { return await captureProfile({ page, requestBrowser, command, artifacts, workspace }); }
+          catch (error) {
+            if (!(error instanceof AgentError)) throw error;
+            // A refusal carries the engine's observation, as every host's does.
+            const { observation } = await requestBrowser({ op: "status" });
+            return { ok: false, ...(observation ? { observation } : {}), error: { code: error.code, path: error.path, message: error.message } };
+          }
         }
         if (command.op === "compare") {
           return compareCaptures(command, requestBrowser, page);

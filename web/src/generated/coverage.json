@@ -337,6 +337,12 @@
       ]
     },
     {
+      "op": "distribution",
+      "smokes": [
+        "host-parity"
+      ]
+    },
+    {
       "op": "describe",
       "smokes": [
         "agent",

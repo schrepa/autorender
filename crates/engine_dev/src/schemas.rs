@@ -24,9 +24,41 @@ pub struct Generated {
 }
 
 /// The schema of every development reply ([`crate::Reply`]), which the
-/// page's reply types are generated from.
+/// page's reply types are generated from, with the bridge's types beside
+/// its own definitions: the steps the engine answers ([`crate::Step`]),
+/// the outcomes of the host's effects ([`crate::Outcome`]) and the host's
+/// side of each call ([`crate::HostContext`]).
 pub fn reply() -> Value {
-    serde_json::to_value(schemars::schema_for!(crate::Reply)).expect("schemas serialize")
+    let serialized = |schema: schemars::Schema| -> Value {
+        serde_json::to_value(schema).expect("schemas serialize")
+    };
+    let mut reply = serialized(schemars::schema_for!(crate::Reply));
+    let mut definitions = reply["$defs"].as_object().cloned().unwrap_or_default();
+    for mut schema in [
+        serialized(schemars::schema_for!(crate::Step)),
+        serialized(schemars::schema_for!(crate::Outcome)),
+        serialized(schemars::schema_for!(crate::HostContext)),
+    ] {
+        let Some(fields) = schema.as_object_mut() else {
+            continue;
+        };
+        // The reply is the root here, the definitions the others' too.
+        if let Some(Value::Object(theirs)) = fields.remove("$defs") {
+            for (name, definition) in theirs {
+                if name != "Reply" {
+                    definitions.entry(name).or_insert(definition);
+                }
+            }
+        }
+        fields.remove("$schema");
+        let name = fields["title"]
+            .as_str()
+            .expect("root schemas name their type")
+            .to_owned();
+        definitions.insert(name, schema);
+    }
+    reply["$defs"] = Value::Object(definitions);
+    reply
 }
 
 /// The generated files and values, or every rule the types break.

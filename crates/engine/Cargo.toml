@@ -12,7 +12,7 @@ profiling = ["engine_profile/enabled", "engine_core/profiling", "engine_collisio
 attribution = ["engine_core/attribution", "engine_collision/attribution"]
 # JSON schemas of settings apps declare (`engine::settings`), and of the
 # types hosts share (`engine::host`), for their tooling.
-schema = ["engine_settings/schema", "engine_panic/schema", "dep:schemars"]
+schema = ["engine_core/schema", "engine_settings/schema", "engine_panic/schema", "dep:schemars"]
 
 [dependencies]
 engine_core.workspace = true

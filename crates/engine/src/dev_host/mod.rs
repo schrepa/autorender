@@ -3,6 +3,7 @@
 //!
 //! Calls are synchronous between frames. Input is a temporary batch,
 //! replaced by each input command and consumed only by explicit stepping.
+pub(crate) mod bridge;
 mod controls;
 
 use crate::app_host::AppHost;

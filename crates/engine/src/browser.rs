@@ -314,22 +314,74 @@ impl<G: Game> PageHost<G> {
     }
 }
 
+/// The development bridge's calls ([`GameHost::dev_request`] and the
+/// rest) with the page's JSON, as JSON; JSON the bridge cannot read is the
+/// request's refusal.
 #[cfg(feature = "dev")]
 impl<G: Game> PageHost<G> {
-    pub fn dev_reload(
+    pub fn dev_request(&mut self, line: &str, context: &str) -> String {
+        let step = match read::<engine_dev::HostContext>(context, "host context") {
+            Ok(context) => self.host.dev_request(line, &context),
+            Err(message) => self.unreadable(&message),
+        };
+        written(&step)
+    }
+
+    pub fn dev_resume(&mut self, outcome: &str, context: &str) -> String {
+        let step = match (
+            read::<engine_dev::Outcome>(outcome, "outcome"),
+            read::<engine_dev::HostContext>(context, "host context"),
+        ) {
+            (Ok(outcome), Ok(context)) => self.host.dev_resume(outcome, &context),
+            (Err(message), _) | (_, Err(message)) => self.unreadable(&message),
+        };
+        written(&step)
+    }
+
+    pub fn dev_reloaded(
         &mut self,
         source: &str,
-        expected_revision: &str,
-        revision: &str,
+        context: &str,
         files: Option<SceneFileSet>,
     ) -> String {
-        self.host.dev_reload(
-            source,
-            expected_revision,
-            revision,
-            files.as_ref().map(SceneFileSet::files),
-        )
+        let step = match read::<engine_dev::HostContext>(context, "host context") {
+            Ok(context) => {
+                self.host
+                    .dev_reloaded(source, files.as_ref().map(SceneFileSet::files), &context)
+            }
+            Err(message) => self.unreadable(&message),
+        };
+        written(&step)
     }
+
+    /// [`GameHost::dev_refusal`] of the code `code` names; an unknown one
+    /// is `browser_command_failed`.
+    pub fn dev_refusal(&mut self, code: &str, path: &str, message: &str) -> String {
+        let code = engine_core::ErrorCode::named(code)
+            .unwrap_or(engine_core::ErrorCode::BrowserCommandFailed);
+        self.host.dev_refusal(code, path, message).to_string()
+    }
+
+    /// The refusal of a call whose JSON the bridge could not read.
+    fn unreadable(&mut self, message: &str) -> engine_dev::Step {
+        engine_dev::Step::Reply(self.host.dev_refusal(
+            engine_core::ErrorCode::InvalidRequest,
+            "$",
+            message,
+        ))
+    }
+}
+
+/// `json`, the page's `what`, or why it is no such thing.
+#[cfg(feature = "dev")]
+fn read<T: serde::de::DeserializeOwned>(json: &str, what: &str) -> Result<T, String> {
+    serde_json::from_str(json).map_err(|error| format!("invalid {what}: {error}"))
+}
+
+/// `step` as the page reads it.
+#[cfg(feature = "dev")]
+fn written(step: &engine_dev::Step) -> String {
+    serde_json::to_string(step).expect("development steps serialize")
 }
 
 #[cfg(feature = "profiling")]

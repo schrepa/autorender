@@ -2,7 +2,7 @@
 // (`engine::export_game!`); do not edit.
 import type { JobMessage } from "../engine/jobs";
 import type { Distribution } from "./host";
-import type { Reply } from "./reply";
+import type { Reply, Step } from "./reply";
 import type { FrameStats } from "./stats";
 
 /** JSON text the engine wrote of a `T`, which `parseJson` reads. */
@@ -80,8 +80,14 @@ export interface Runtime {
   view_size(width: number, height: number, pixel_ratio: number, scale: number): Uint32Array;
   /** Runs development request `request` (JSON) on a `width` × `height` canvas; `paused` says whether the page is paused. */
   dev_command?(request: string, width: number, height: number, paused: boolean): Json<Reply>;
-  /** Reloads the authored scene's saved `source` when the active revision is `expected_revision` and the saved one `revision`. */
-  dev_reload?(source: string, expected_revision: string, revision: string, files?: unknown): Json<Reply>;
+  /** Development request `line` (JSON, as an agent sent it) on the page `context` describes (JSON `HostContext`): the engine's reply, or the first effect of the control it names, which the page carries out. */
+  dev_request?(line: string, context: string): Json<Step>;
+  /** The request under way resumed with the `outcome` (JSON `Outcome`) of the effect the page carried out, on the page `context` describes: the next step. */
+  dev_resume?(outcome: string, context: string): Json<Step>;
+  /** The reload under way resumed with the authored scene's saved `source` and the `files` it references, on the page `context` describes: the next step. */
+  dev_reloaded?(source: string, context: string, files?: unknown): Json<Step>;
+  /** A refusal of `code` at `path` the page decided, with the engine's observation. */
+  dev_refusal?(code: string, path: string, message: string): Json<Reply>;
   /** Starts a capture of at most `max_events` CPU events. */
   profiling_start?(max_events: number): void;
   /** Stops the capture: its report, as JSON. */

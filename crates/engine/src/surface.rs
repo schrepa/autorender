@@ -104,9 +104,22 @@ macro_rules! __game_surface {
                 /// Runs development request `request` (JSON) on a `width` ×
                 /// `height` canvas; `paused` says whether the page is paused.
                 fn dev_command(request: &str, width: u32, height: u32, paused: bool) -> String as Json<Reply>;
-                /// Reloads the authored scene's saved `source` when the active
-                /// revision is `expected_revision` and the saved one `revision`.
-                fn dev_reload(source: &str, expected_revision: &str, revision: &str, files: Option<$crate::browser::SceneFileSet>) -> String as Json<Reply>;
+                /// Development request `line` (JSON, as an agent sent it) on the
+                /// page `context` describes (JSON `HostContext`): the engine's
+                /// reply, or the first effect of the control it names, which the
+                /// page carries out.
+                fn dev_request(line: &str, context: &str) -> String as Json<Step>;
+                /// The request under way resumed with the `outcome` (JSON
+                /// `Outcome`) of the effect the page carried out, on the page
+                /// `context` describes: the next step.
+                fn dev_resume(outcome: &str, context: &str) -> String as Json<Step>;
+                /// The reload under way resumed with the authored scene's saved
+                /// `source` and the `files` it references, on the page `context`
+                /// describes: the next step.
+                fn dev_reloaded(source: &str, context: &str, files: Option<$crate::browser::SceneFileSet>) -> String as Json<Step>;
+                /// A refusal of `code` at `path` the page decided, with the
+                /// engine's observation.
+                fn dev_refusal(code: &str, path: &str, message: &str) -> String as Json<Reply>;
             }
             profiling_mut {
                 /// Starts a capture of at most `max_events` CPU events.
@@ -266,7 +279,7 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
          // (`engine::export_game!`); do not edit.\n\
          import type { JobMessage } from \"../engine/jobs\";\n\
          import type { Distribution } from \"./host\";\n\
-         import type { Reply } from \"./reply\";\n\
+         import type { Reply, Step } from \"./reply\";\n\
          import type { FrameStats } from \"./stats\";\n\n\
          /** JSON text the engine wrote of a `T`, which `parseJson` reads. */\n\
          export type Json<T> = string & { readonly json?: T };\n\n\

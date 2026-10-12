@@ -25,9 +25,6 @@ const binaries = cargoBinaries(["-p", "stress-lab", "--bin", "stress-lab-native"
  * names (`*` stands for any text), the hosts step that removes them, and
  * what differs. */
 const KNOWN = [
-  ["benchmark*: native only result.benchmark.environment.adapter*", "hosts 8", "native benchmarks name their adapter"],
-  ["benchmark*: web only result.benchmark.op", "hosts 8", "the page's benchmark repeats its control's op"],
-  ["profile: native only observation*", "hosts 8", "the native session's refusal carries an observation, the browser driver's none"],
   ["describe ProfileCapture: native only *", "host", "native profiles take hardware counters and PIX"],
   ["describe PageParameters: web only engine_dev", "host", "the page's development tools are a URL parameter"],
   ["describe PageParameters: web only prepare", "host", "a page's development session may start as players' do"],
@@ -71,6 +68,7 @@ const CASES = [
   ["game look", { op: "game", name: "look", args: { name: "night" } }],
   ["game workload", { op: "game", name: "workload", args: { preset: "visual" } }],
   ["terrain height", { op: "terrain_height", points: [[0, 0]] }],
+  ["distribution", { op: "distribution", values: [4, 1, 3, 2] }],
   // Refusals: the same code at the same path.
   ["unknown op", { op: "weather" }, "error"],
   ["unknown field", { op: "render", sky: 1 }, "error"],

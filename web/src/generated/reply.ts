@@ -23,6 +23,18 @@ export interface Reply {
   version?: number | null;
 }
 
+/** A file a host wrote for a request. */
+export interface Artifact {
+  /** Its size in bytes. */
+  bytes: number;
+  /** Its MIME type, such as `image/png`. */
+  mime_type: string;
+  /** Where it is. */
+  path: string;
+  /** Its SHA-256, in lowercase hexadecimal. */
+  sha256: string;
+}
+
 /** Stable machine-readable code and affected field; messages are for people. */
 export interface DevError {
   /** What failed, as the catalog names it. */
@@ -31,6 +43,33 @@ export interface DevError {
   message: string;
   /** Where in the request: a JSON path such as `$.ticks`. */
   path: string;
+}
+
+/** What a host does for the request under way. */
+export type Effect = { kind: "pause"; paused: boolean } | { kind: "wait"; within_ms: number } | { kind: "frame"; timestamp: number } | { kind: "show" } | { args: Record<string, unknown>; kind: "game"; name: string } | { kind: "source" };
+
+/**
+ * The host's side of each call the bridge takes: its view, whether its
+ * frames are paused, and what it is.
+ */
+export interface HostContext {
+  /** Device pixels per CSS pixel; 1 natively. */
+  device_pixel_ratio: number;
+  /** The view's height, in physical pixels. */
+  height: number;
+  /** Whether the host's frames are paused. */
+  paused: boolean;
+  /**
+   * The authored scene the host reloads, where it has one: its URL or
+   * path.
+   */
+  source?: string | null;
+  /** What a benchmark's frame intervals include on this host. */
+  timing: string;
+  /** The host: the browser's user agent, or `engine_native`. */
+  user_agent: string;
+  /** The view's width, in physical pixels. */
+  width: number;
 }
 
 /**
@@ -46,6 +85,25 @@ export interface Observation {
   scene?: SceneObservation | null;
   /** The last fixed tick, as `FixedTime` counts it. */
   tick?: string | null;
+}
+
+/** How a host's effect went: each [`Effect`] says what it sets. */
+export interface Outcome {
+  /** The PNG file a host wrote of the frame it showed. */
+  artifact?: Artifact | null;
+  /** Why the effect failed. */
+  failed?: string | null;
+  /** The view stopped showing during a wait, as a hidden page does. */
+  interrupted?: boolean;
+  /**
+   * What the game has instead of what the effect named: its controls'
+   * names, or none.
+   */
+  missing?: string[] | null;
+  /** When a wait ended, in milliseconds on the host's clock. */
+  now?: number | null;
+  /** What the game's control returned. */
+  result?: unknown;
 }
 
 export type PresentationModeView = "current" | "interpolated";
@@ -93,3 +151,11 @@ export interface SceneObservation {
   /** The scene's revision, a decimal string. */
   revision: string;
 }
+
+/**
+ * What the engine answers a request, or the effect it waits for: the
+ * request's reply, finished as every one is (its result with the
+ * observation again, whether the host is paused, the authored scene's
+ * source and the last frame's statistics), or what the host does next.
+ */
+export type Step = { reply: Reply } | { effect: Effect };
