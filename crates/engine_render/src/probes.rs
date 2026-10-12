@@ -9,7 +9,7 @@ use engine_core::{
     math,
 };
 
-use crate::cached::Cached;
+use crate::cached::{Bound, Cached, Versioned};
 use crate::gpu_data::STILL_FRAMES;
 use crate::gpu_layouts::constants::PROBE_ENTRY_WORDS;
 
@@ -237,10 +237,8 @@ pub(crate) struct ProbePass {
     // Depth of the face being captured, and its size.
     depth: Cached<u32, wgpu::TextureView>,
     // The grid words surfaces read (`meshes/declarations.wgsl`'s `probe_words`).
-    words: wgpu::Buffer,
+    words: Versioned<wgpu::Buffer>,
     staging: Vec<[u32; 4]>,
-    // Advances when `words` is replaced: groups binding it rebuild.
-    generation: u64,
 }
 
 impl ProbePass {
@@ -255,9 +253,13 @@ impl ProbePass {
             },
             cameras,
             depth: Cached::default(),
-            words: crate::buffers::storage(device, GRID_LABEL, 32, wgpu::BufferUsages::empty()),
+            words: Versioned::new(crate::buffers::storage(
+                device,
+                GRID_LABEL,
+                32,
+                wgpu::BufferUsages::empty(),
+            )),
             staging: Vec::new(),
-            generation: 0,
         }
     }
 
@@ -266,9 +268,9 @@ impl ProbePass {
         &self.cameras[face]
     }
 
-    /// The grid words surfaces read, and their generation.
-    pub(crate) fn words(&self) -> (&wgpu::Buffer, u64) {
-        (&self.words, self.generation)
+    /// The grid words surfaces read, as a group binds them.
+    pub(crate) fn words(&self) -> Bound<'_> {
+        self.words.bound()
     }
 
     /// The `format` depth target of a face `size` texels across.
@@ -301,15 +303,13 @@ impl ProbePass {
         };
         grid_words(&ready, &mut self.staging);
         let bytes = (self.staging.len() * 16) as u64;
-        if crate::buffers::ensure_storage(
+        crate::buffers::ensure_storage(
             device,
             &mut self.words,
             GRID_LABEL,
             bytes,
             wgpu::BufferUsages::empty(),
-        ) {
-            self.generation += 1;
-        }
+        );
         queue.write_buffer(&self.words, 0, bytemuck::cast_slice(&self.staging));
     }
 

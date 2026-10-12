@@ -316,15 +316,10 @@ impl ShadowPass {
         self.groups_generation
     }
 
-    /// Advances when the map views bound by [`Self::entries`] change.
-    pub(crate) fn generation(&self) -> u64 {
-        self.maps.generation()
-    }
-
     /// Bindings of the main passes' first group (`bindings::CAMERA`): the
     /// lookup uniform, the near cascades, the kept and moving maps, the
     /// comparison sampler and the texel sampler of receiver planes.
-    pub(crate) fn entries(&self) -> [(&'static str, wgpu::BindingResource<'_>); 7] {
+    pub(crate) fn entries(&self) -> [(&'static str, crate::cached::Bound<'_>); 7] {
         self.maps.entries()
     }
 

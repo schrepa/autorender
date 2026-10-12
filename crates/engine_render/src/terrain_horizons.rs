@@ -14,6 +14,7 @@ use engine_core::glam::{Vec2, Vec3};
 use engine_core::{RenderTerrain, RenderTerrains, TerrainSettings, TileKey};
 
 use crate::bindings::TERRAIN_HORIZON;
+use crate::cached::{Bound, Versioned};
 use crate::gpu_layouts::constants::HORIZON_GROUP as GROUP;
 use crate::gpu_layouts::constants::MISSING;
 
@@ -41,7 +42,7 @@ struct Source {
 }
 
 struct Maps {
-    view: wgpu::TextureView,
+    view: Versioned<wgpu::TextureView>,
     // Each layer as a build writes it.
     layers: Vec<wgpu::TextureView>,
     size: u32,
@@ -55,10 +56,8 @@ pub(crate) struct Horizons {
     empty: wgpu::TextureView,
     sampler: wgpu::Sampler,
     records: wgpu::Texture,
-    records_view: wgpu::TextureView,
+    records_view: Versioned<wgpu::TextureView>,
     records_written: Vec<[f32; 4]>,
-    // Advances when the bound views are replaced.
-    generation: u64,
     uniforms: wgpu::Buffer,
     tables: wgpu::Buffer,
     // What each layer holds, and the layers this frame builds with what
@@ -102,7 +101,6 @@ impl Horizons {
             records,
             records_view,
             records_written: Vec::new(),
-            generation: 0,
             uniforms: crate::buffers::uniform(device, "engine/terrain-horizon-builds", SLOT),
             tables: crate::buffers::storage(
                 device,
@@ -117,24 +115,19 @@ impl Horizons {
         }
     }
 
-    /// Advances when [`Self::entries`] binds other views.
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// The main passes' bindings (`bindings::CAMERA`): the maps, their
-    /// records and their sampler.
-    pub(crate) fn entries(&self) -> [(&'static str, wgpu::BindingResource<'_>); 3] {
-        let maps = self.maps.as_ref().map_or(&self.empty, |maps| &maps.view);
+    /// The main passes' bindings (`bindings::CAMERA`): the maps (the empty
+    /// stand-in without them), their records and their sampler.
+    pub(crate) fn entries(&self) -> [(&'static str, Bound<'_>); 3] {
+        let maps = self.maps.as_ref().map_or_else(
+            || Bound::fixed(crate::pipelines::view(&self.empty)),
+            |maps| maps.view.bound(),
+        );
         [
-            ("terrain_horizons", crate::pipelines::view(maps)),
-            (
-                "terrain_horizon_records",
-                crate::pipelines::view(&self.records_view),
-            ),
+            ("terrain_horizons", maps),
+            ("terrain_horizon_records", self.records_view.bound()),
             (
                 "terrain_horizon_sampler",
-                crate::pipelines::sampler(&self.sampler),
+                Bound::fixed(crate::pipelines::sampler(&self.sampler)),
             ),
         ]
     }
@@ -200,7 +193,6 @@ impl Horizons {
         {
             self.maps = Some(maps(device, size, layers as u32));
             self.built = vec![None; layers];
-            self.generation += 1;
         }
         let mut sources = Vec::with_capacity(layers);
         let mut records = Vec::with_capacity(2 * layers);
@@ -236,7 +228,6 @@ impl Horizons {
         if records != self.records_written {
             if records.len() != self.records_written.len() {
                 (self.records, self.records_view) = records_texture(device, records.len() as u32);
-                self.generation += 1;
             }
             queue.write_texture(
                 self.records.as_image_copy(),
@@ -349,14 +340,11 @@ impl Horizons {
 
     /// Drops the maps, binding the stand-ins.
     fn release(&mut self, device: &wgpu::Device) {
-        if self.maps.take().is_some() {
-            self.generation += 1;
-        }
+        self.maps = None;
         self.built.clear();
         if !self.records_written.is_empty() {
             (self.records, self.records_view) = records_texture(device, 1);
             self.records_written.clear();
-            self.generation += 1;
         }
     }
 }
@@ -494,11 +482,18 @@ fn maps(device: &wgpu::Device, size: u32, layers: u32) -> Maps {
             })
         })
         .collect();
-    Maps { view, layers, size }
+    Maps {
+        view: Versioned::new(view),
+        layers,
+        size,
+    }
 }
 
 /// The records texture of `texels` texels (one stands in without terrain).
-fn records_texture(device: &wgpu::Device, texels: u32) -> (wgpu::Texture, wgpu::TextureView) {
+fn records_texture(
+    device: &wgpu::Device,
+    texels: u32,
+) -> (wgpu::Texture, Versioned<wgpu::TextureView>) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("engine/terrain-horizon-records"),
         size: wgpu::Extent3d {
@@ -514,7 +509,7 @@ fn records_texture(device: &wgpu::Device, texels: u32) -> (wgpu::Texture, wgpu::
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    (texture, view)
+    (texture, Versioned::new(view))
 }
 
 fn pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {

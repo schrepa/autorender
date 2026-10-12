@@ -1390,10 +1390,9 @@ impl Renderer {
             );
         }
         if refraction && let Some(post) = self.post.as_ref() {
-            let (scene, ..) = post.targets();
             self.camera.prepare_refraction(
                 &self.device,
-                (scene, post.generation()),
+                post.scene(),
                 &camera::GroupSources {
                     shadows: &self.shadows,
                     environment: &self.environment,

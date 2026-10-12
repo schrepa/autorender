@@ -155,10 +155,6 @@ fn lod_chain(source: &engine_core::Mesh, levels: usize) -> (Vec<u32>, Vec<(u32, 
     (lods.indices, levels)
 }
 
-/// Generations of the shadow maps, environment maps and reflection probe
-/// grid the camera groups bind.
-type CameraGroupsKey = (u64, u64, u64, u64, u64);
-
 /// Occlusion culling's depth pyramid, kept while the `OcclusionCulling`
 /// settings have it run.
 struct Culling {

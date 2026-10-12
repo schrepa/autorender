@@ -51,7 +51,7 @@ impl Renderer {
                 &self.device,
                 encoder,
                 &self.mesh_shader,
-                (&self.camera.terrain_layout, &self.camera.terrain_group),
+                (&self.camera.terrain_layout, self.camera.terrain_group()),
             ),
             Pass::GroundCover => self
                 .ground_cover
@@ -384,7 +384,7 @@ impl Renderer {
         );
         decals.draw(
             &mut pass,
-            &self.camera.group,
+            self.camera.group(),
             &self.materials,
             features
                 .light_frame
@@ -414,7 +414,7 @@ impl Renderer {
             self.profiler.span("water").map(Span::render),
         );
         self.water
-            .draw(&mut pass, &self.camera.group, state.shape.targets)
+            .draw(&mut pass, self.camera.group(), state.shape.targets)
     }
 
     /// The view's clouds laid over the scene's color.
@@ -434,7 +434,7 @@ impl Renderer {
         );
         self.clouds.draw_composite(
             &mut pass,
-            &self.camera.group,
+            self.camera.group(),
             self.cloud_target(state.shape.targets),
         );
     }
@@ -487,7 +487,7 @@ impl Renderer {
             // Glass reads the opaque color the pass draws over.
             let camera_group = match self.camera.refraction_group() {
                 Some(group) if refraction && post_frame.is_some() => group,
-                _ => &self.camera.group,
+                _ => self.camera.group(),
             };
             pass.set_bind_group(0, camera_group, &[]);
             if let Some((_, lights)) = lit {
@@ -520,7 +520,7 @@ impl Renderer {
             }
         }
         if let (Some(frame), Some(particles)) = (particle_frame, self.particles.as_ref()) {
-            particles.draw_alpha(&mut pass, &self.camera.group, frame);
+            particles.draw_alpha(&mut pass, self.camera.group(), frame);
         }
         draws
     }
@@ -552,7 +552,7 @@ impl Renderer {
         if let (Some(frame), Some(particles)) =
             (&state.features.particle_frame, self.particles.as_ref())
         {
-            particles.draw_additive(&mut pass, &self.camera.group, frame, post);
+            particles.draw_additive(&mut pass, self.camera.group(), frame, post);
         }
     }
 
@@ -561,7 +561,7 @@ impl Renderer {
     fn encode_screen_effects(&self, state: &FrameState<'_>, encoder: &mut wgpu::CommandEncoder) {
         let post_frame = state.features.post_frame.expect("planned with effects");
         let post = self.post.as_ref().expect("post frames create it");
-        post.encode_effects(encoder, post_frame, &self.camera.group, &self.profiler);
+        post.encode_effects(encoder, post_frame, self.camera.group(), &self.profiler);
     }
 
     /// The screen effects' composite into the canvas.

@@ -4,6 +4,7 @@
 //! lookup uniform and the samplers, with placeholders while shadows (or
 //! levels) are off.
 
+use crate::cached::{Bound, Versioned};
 use crate::gpu_data::ShadowUniform;
 
 use crate::pipelines::{sampler, view};
@@ -106,10 +107,9 @@ impl MapTextures {
 }
 
 pub(super) struct ShadowMaps {
-    textures: Option<MapTextures>,
-    // Advances when the views `entries` binds change: bindings of the main
+    // The maps, replaced (or released) as a whole: bindings of the main
     // passes follow.
-    generation: u64,
+    textures: Versioned<Option<MapTextures>>,
     uniform: wgpu::Buffer,
     written: Option<ShadowUniform>,
     sampler: wgpu::Sampler,
@@ -158,8 +158,7 @@ impl ShadowMaps {
             ..Default::default()
         });
         Self {
-            textures: None,
-            generation: 0,
+            textures: Versioned::new(None),
             uniform,
             written: None,
             sampler,
@@ -170,22 +169,17 @@ impl ShadowMaps {
         }
     }
 
-    /// Advances when the map views bound by [`Self::entries`] change.
-    pub(super) fn generation(&self) -> u64 {
-        self.generation
-    }
-
     /// The maps, once shadows ran.
     pub(super) fn textures(&self) -> Option<&MapTextures> {
-        self.textures.as_ref()
+        Option::as_ref(&self.textures)
     }
 
     /// Bindings of the main passes' first group (`bindings::CAMERA`): the
     /// lookup uniform, the near cascades, the kept and moving maps, the
     /// comparison sampler, the texel sampler of receiver planes and the
     /// kept levels.
-    pub(super) fn entries(&self) -> [(&'static str, wgpu::BindingResource<'_>); 7] {
-        let (near, kept, moving, levels) = match &self.textures {
+    pub(super) fn entries(&self) -> [(&'static str, Bound<'_>); 7] {
+        let (near, kept, moving, levels) = match &*self.textures {
             Some(maps) => (
                 &maps.near_array,
                 &maps.kept,
@@ -199,20 +193,21 @@ impl ShadowMaps {
                 &self.placeholder_array,
             ),
         };
+        let map = |texture| Bound::of(&self.textures, view(texture));
         [
-            ("shadow", self.uniform.as_entire_binding()),
-            ("near_shadows", view(near)),
-            ("kept_shadows", view(kept)),
-            ("moving_shadows", view(moving)),
-            ("shadow_sampler", sampler(&self.sampler)),
-            ("shadow_texels", sampler(&self.texel_sampler)),
-            ("kept_levels", view(levels)),
+            ("shadow", Bound::fixed(self.uniform.as_entire_binding())),
+            ("near_shadows", map(near)),
+            ("kept_shadows", map(kept)),
+            ("moving_shadows", map(moving)),
+            ("shadow_sampler", Bound::fixed(sampler(&self.sampler))),
+            ("shadow_texels", Bound::fixed(sampler(&self.texel_sampler))),
+            ("kept_levels", map(levels)),
         ]
     }
 
     /// Bytes of the maps.
     pub(super) fn capacity_bytes(&self) -> u64 {
-        self.textures.as_ref().map_or(0, |maps| {
+        self.textures().map_or(0, |maps| {
             let far = u64::from(maps.resolution) * u64::from(maps.resolution) * 2;
             2 * far + u64::from(maps.cascades + maps.levels) * far / 4
         })
@@ -228,20 +223,20 @@ impl ShadowMaps {
         cascades: u32,
         levels: u32,
     ) -> bool {
-        if self.textures.as_ref().is_some_and(|maps| {
+        if self.textures().is_some_and(|maps| {
             maps.resolution == resolution && maps.cascades == cascades && maps.levels == levels
         }) {
             return false;
         }
-        self.textures = Some(MapTextures::new(device, resolution, cascades, levels));
-        self.generation += 1;
+        self.textures
+            .replace(Some(MapTextures::new(device, resolution, cascades, levels)));
         true
     }
 
     /// Releases the maps while shadows are off.
     pub(super) fn release(&mut self) {
-        if self.textures.take().is_some() {
-            self.generation += 1;
+        if self.textures.is_some() {
+            self.textures.replace(None);
         }
     }
 

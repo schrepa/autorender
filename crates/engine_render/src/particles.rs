@@ -114,7 +114,7 @@ mod gpu {
 
     use super::*;
     use crate::bindings::PARTICLES;
-    use crate::buffers::{ensure_versioned, storage};
+    use crate::buffers::{ensure_storage, storage};
     use crate::cached::{Bound, GroupCache, Versioned};
     use crate::gpu_data::PARTICLE_SHADER;
 
@@ -282,7 +282,7 @@ mod gpu {
                 return;
             }
             let emitter_bytes = (self.records.len() * size_of::<EmitterData>()) as u64;
-            if ensure_versioned(
+            if ensure_storage(
                 device,
                 &mut self.emitters,
                 "engine/particle-emitters",
@@ -292,7 +292,7 @@ mod gpu {
                 self.uploaded.clear();
             }
             let owner_bytes = u64::from(total) * 4;
-            let owners_replaced = ensure_versioned(
+            let owners_replaced = ensure_storage(
                 device,
                 &mut self.owners,
                 "engine/particle-owners",

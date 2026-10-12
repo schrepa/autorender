@@ -326,7 +326,7 @@ impl Renderer {
     /// The camera's terrain patches into terrain's visibility target;
     /// returns the draws.
     pub(super) fn draw_terrain_ids(&self, pass: &mut wgpu::RenderPass<'_>) -> u32 {
-        pass.set_bind_group(0, &self.camera.group, &[]);
+        pass.set_bind_group(0, self.camera.group(), &[]);
         let mut draws = 0;
         for holes in [false, true] {
             let Some(pipeline) = self.terrain.pipelines.deferred_ids.get(&holes) else {
@@ -358,7 +358,7 @@ impl Renderer {
             return 0;
         };
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, &self.camera.terrain_group, &[]);
+        pass.set_bind_group(0, self.camera.terrain_group(), &[]);
         pass.set_bind_group(2, group, &[]);
         if kind.lit {
             let Some(lights) = self.lights.as_ref() else {
@@ -398,7 +398,7 @@ impl Renderer {
         let Some(targets) = kind.targets().filter(|_| state.terrain) else {
             return 0;
         };
-        pass.set_bind_group(0, &self.camera.group, &[]);
+        pass.set_bind_group(0, self.camera.group(), &[]);
         if kind.lit {
             let Some(lights) = self.lights.as_ref() else {
                 return 0;
@@ -420,7 +420,7 @@ impl Renderer {
         let Some(targets) = kind.targets().filter(|_| state.terrain) else {
             return 0;
         };
-        pass.set_bind_group(0, &self.camera.group, &[]);
+        pass.set_bind_group(0, self.camera.group(), &[]);
         if kind.lit {
             let Some(lights) = self.lights.as_ref() else {
                 return 0;

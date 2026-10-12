@@ -31,25 +31,9 @@ pub(crate) fn uniform(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::B
 }
 
 /// Replaces `buffer` by a [`storage`] buffer of the next power of two of
-/// `bytes` unless it holds them already; returns whether it did. The new
-/// buffer holds nothing of the old one.
+/// `bytes` unless it holds them already, advancing its generation; returns
+/// whether it did. The new buffer holds nothing of the old one.
 pub(crate) fn ensure_storage(
-    device: &wgpu::Device,
-    buffer: &mut wgpu::Buffer,
-    label: &str,
-    bytes: u64,
-    extra: wgpu::BufferUsages,
-) -> bool {
-    if bytes <= buffer.size() {
-        return false;
-    }
-    *buffer = storage(device, label, bytes.next_power_of_two(), extra);
-    true
-}
-
-/// [`ensure_storage`] of a versioned buffer, whose generation advances
-/// when it is replaced.
-pub(crate) fn ensure_versioned(
     device: &wgpu::Device,
     buffer: &mut crate::cached::Versioned<wgpu::Buffer>,
     label: &str,

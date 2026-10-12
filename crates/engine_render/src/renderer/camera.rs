@@ -1,12 +1,13 @@
 //! The main passes' first group: the camera and lighting uniforms, shadow
 //! lookups, what glass refracts,
 //! what surfaces reflect, terrain's horizon maps
-//! and what placed objects cover, rebuilt when the
-//! shadow maps, environment maps, reflection probe grid, horizon maps or
-//! occupancy map it binds are replaced.
+//! and what placed objects cover, keyed by the generations of what it
+//! binds, so it rebuilds when the shadow maps, environment maps, reflection
+//! probe grid, horizon maps or occupancy maps are replaced.
 
 use super::*;
 use crate::bindings::CAMERA;
+use crate::cached::GroupCache;
 use crate::terrain_horizons::Horizons;
 
 /// What the first group binds besides the camera and lighting uniforms.
@@ -18,17 +19,10 @@ pub(super) struct GroupSources<'a> {
     pub(super) occupancy: &'a crate::occupancy::OccupancyPass,
 }
 
-impl GroupSources<'_> {
-    fn key(&self) -> CameraGroupsKey {
-        (
-            self.shadows.generation(),
-            self.environment.generation(),
-            self.probes.words().1,
-            self.horizons.generation(),
-            self.occupancy.views().2,
-        )
-    }
-}
+/// Bindings of the first group: [`CAMERA`]'s.
+const CAMERA_BINDINGS: usize = 20;
+/// Bindings of terrain's resolves' first group: `CAMERA_TERRAIN`'s.
+const TERRAIN_BINDINGS: usize = 18;
 
 pub(super) struct CameraBindings {
     pub(super) layout: wgpu::BindGroupLayout,
@@ -38,23 +32,19 @@ pub(super) struct CameraBindings {
     pub(super) cloud_shadows: wgpu::Buffer,
     // The scene's atmosphere, written when it changes.
     lighting: Option<LightingUniform>,
-    // The group, for the shadow maps, environment maps and probe grid of
-    // these generations.
-    pub(super) group: wgpu::BindGroup,
-    pub(super) key: CameraGroupsKey,
+    group: GroupCache<CAMERA_BINDINGS>,
     // Refraction through glass: the white texel bound where
     // no opaque color is, its sampler, and the group of transparent passes
-    // over the opaque color of post target generation `.0`.
+    // over the opaque color.
     refraction_fallback: wgpu::TextureView,
     refraction_sampler: wgpu::Sampler,
-    refraction_group: Cached<(u64, CameraGroupsKey), wgpu::BindGroup>,
-    // Each reflection probe face's group, built with the
-    // main group's key.
-    probe_groups: Vec<wgpu::BindGroup>,
+    refraction_group: GroupCache<CAMERA_BINDINGS>,
+    // Each reflection probe face's group, over the face's camera.
+    probe_groups: [GroupCache<CAMERA_BINDINGS>; FACES],
     // Terrain's resolves' first group, the main one without
     // what glass refracts, and its layout.
     pub(super) terrain_layout: wgpu::BindGroupLayout,
-    pub(super) terrain_group: wgpu::BindGroup,
+    terrain_group: GroupCache<TERRAIN_BINDINGS>,
 }
 
 impl CameraBindings {
@@ -88,35 +78,23 @@ impl CameraBindings {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let group = camera_group(
-            device,
-            &layout,
-            (&buffer, &lighting_buffer, &cloud_shadows),
-            (&refraction_fallback, &refraction_sampler),
-            sources,
-        );
         let terrain_layout = crate::pipelines::layout(device, &crate::bindings::CAMERA_TERRAIN);
-        let terrain_group = camera_terrain_group(
-            device,
-            &terrain_layout,
-            (&buffer, &lighting_buffer, &cloud_shadows),
-            sources,
-        );
-        Self {
+        let mut bindings = Self {
             terrain_layout,
-            terrain_group,
+            terrain_group: GroupCache::default(),
             layout,
             buffer,
             lighting_buffer,
             cloud_shadows,
             lighting: None,
-            group,
-            key: sources.key(),
+            group: GroupCache::default(),
             refraction_fallback,
             refraction_sampler,
-            refraction_group: Cached::default(),
-            probe_groups: Vec::new(),
-        }
+            refraction_group: GroupCache::default(),
+            probe_groups: Default::default(),
+        };
+        bindings.refresh(device, sources);
+        bindings
     }
 
     /// The lighting uniform's buffer, which the physically based sky's light
@@ -135,50 +113,60 @@ impl CameraBindings {
         size_of::<LightingUniform>() as u64
     }
 
-    /// Rebuilds the group when the maps or probe grid of `sources` it binds
-    /// were replaced, and forgets the probe faces' groups.
+    /// Rebuilds the first group and terrain's when what `sources` binds was
+    /// replaced.
     pub(super) fn refresh(&mut self, device: &wgpu::Device, sources: &GroupSources<'_>) {
-        let key = sources.key();
-        if key == self.key {
-            return;
-        }
-        self.key = key;
-        self.group = camera_group(
-            device,
-            &self.layout,
-            (&self.buffer, &self.lighting_buffer, &self.cloud_shadows),
-            (&self.refraction_fallback, &self.refraction_sampler),
-            sources,
+        let refraction = (
+            Bound::fixed(crate::pipelines::view(&self.refraction_fallback)),
+            Bound::fixed(crate::pipelines::sampler(&self.refraction_sampler)),
         );
-        self.terrain_group = camera_terrain_group(
+        let uniforms = (&self.buffer, &self.lighting_buffer, &self.cloud_shadows);
+        self.group.bind(
             device,
-            &self.terrain_layout,
-            (&self.buffer, &self.lighting_buffer, &self.cloud_shadows),
-            sources,
+            "engine/camera-bind-group",
+            (&CAMERA, &self.layout),
+            camera_entries(uniforms, refraction, sources),
         );
-        self.probe_groups.clear();
+        self.terrain_group.bind(
+            device,
+            "engine/camera-terrain-bind-group",
+            (&crate::bindings::CAMERA_TERRAIN, &self.terrain_layout),
+            terrain_entries(uniforms, sources),
+        );
+    }
+
+    /// The main passes' first group.
+    pub(super) fn group(&self) -> &wgpu::BindGroup {
+        self.group.get().expect("built with the bindings")
+    }
+
+    /// Terrain's resolves' first group.
+    pub(super) fn terrain_group(&self) -> &wgpu::BindGroup {
+        self.terrain_group.get().expect("built with the bindings")
     }
 
     /// The group of transparent passes when glass refracts:
-    /// the main group over `scene`, the opaque color of post target
-    /// generation `generation`.
+    /// the main group over `scene`, the opaque color.
     pub(super) fn prepare_refraction(
         &mut self,
         device: &wgpu::Device,
-        (scene, generation): (&wgpu::TextureView, u64),
+        scene: Bound<'_>,
         sources: &GroupSources<'_>,
     ) {
-        let key = (generation, self.key);
-        if self.refraction_group.stale(&key) {
-            let group = camera_group(
-                device,
-                &self.layout,
+        let refraction = (
+            scene,
+            Bound::fixed(crate::pipelines::sampler(&self.refraction_sampler)),
+        );
+        self.refraction_group.bind(
+            device,
+            "engine/camera-bind-group",
+            (&CAMERA, &self.layout),
+            camera_entries(
                 (&self.buffer, &self.lighting_buffer, &self.cloud_shadows),
-                (scene, &self.refraction_sampler),
+                refraction,
                 sources,
-            );
-            self.refraction_group.set(key, group);
-        }
+            ),
+        );
     }
 
     /// The group glass refracting the opaque color binds, once prepared.
@@ -193,123 +181,107 @@ impl CameraBindings {
         device: &wgpu::Device,
         sources: &GroupSources<'_>,
     ) {
-        if self.probe_groups.is_empty() {
-            self.probe_groups = (0..FACES)
-                .map(|face| {
-                    camera_group(
-                        device,
-                        &self.layout,
-                        (
-                            sources.probes.camera(face),
-                            &self.lighting_buffer,
-                            &self.cloud_shadows,
-                        ),
-                        (&self.refraction_fallback, &self.refraction_sampler),
-                        sources,
-                    )
-                })
-                .collect();
+        for (face, group) in self.probe_groups.iter_mut().enumerate() {
+            let refraction = (
+                Bound::fixed(crate::pipelines::view(&self.refraction_fallback)),
+                Bound::fixed(crate::pipelines::sampler(&self.refraction_sampler)),
+            );
+            group.bind(
+                device,
+                "engine/camera-bind-group",
+                (&CAMERA, &self.layout),
+                camera_entries(
+                    (
+                        sources.probes.camera(face),
+                        &self.lighting_buffer,
+                        &self.cloud_shadows,
+                    ),
+                    refraction,
+                    sources,
+                ),
+            );
         }
     }
 
     /// Reflection probe face `face`'s group, once prepared.
     pub(super) fn probe_group(&self, face: usize) -> &wgpu::BindGroup {
-        &self.probe_groups[face]
+        self.probe_groups[face]
+            .get()
+            .expect("prepared before captures")
     }
 }
 
-/// [`camera_group`] without what glass refracts, for terrain's resolves
+/// [`camera_entries`] without what glass refracts, for terrain's resolves
 /// (`bindings::CAMERA_TERRAIN`).
-fn camera_terrain_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    (camera, lighting, cloud_shadows): (&wgpu::Buffer, &wgpu::Buffer, &wgpu::Buffer),
-    sources: &GroupSources<'_>,
-) -> wgpu::BindGroup {
+fn terrain_entries<'a>(
+    (camera, lighting, cloud_shadows): (&'a wgpu::Buffer, &'a wgpu::Buffer, &'a wgpu::Buffer),
+    sources: &GroupSources<'a>,
+) -> [(&'static str, Bound<'a>); TERRAIN_BINDINGS] {
     let [shadow, near, kept, moving, sampler, texel_sampler, levels] = sources.shadows.entries();
     let [horizons, horizon_records, horizon_sampler] = sources.horizons.entries();
     let (environment, environment_sampler) = sources.environment.binding();
-    let probe_words = sources.probes.words().0;
-    let (coverage, heights, _) = sources.occupancy.views();
-    crate::pipelines::group(
-        device,
-        "engine/camera-terrain-bind-group",
-        &crate::bindings::CAMERA_TERRAIN,
-        layout,
-        &[
-            ("camera", camera.as_entire_binding()),
-            ("lighting", lighting.as_entire_binding()),
-            shadow,
-            near,
-            kept,
-            moving,
-            sampler,
-            texel_sampler,
-            ("environment_maps", crate::pipelines::view(environment)),
-            (
-                "environment_sampler",
-                crate::pipelines::sampler(environment_sampler),
-            ),
-            ("probe_words", probe_words.as_entire_binding()),
-            horizons,
-            horizon_records,
-            horizon_sampler,
-            ("occupancy_coverage", crate::pipelines::view(coverage)),
-            ("occupancy_heights", crate::pipelines::view(heights)),
-            levels,
-            ("cloud_shadows", cloud_shadows.as_entire_binding()),
-        ],
-    )
+    let (coverage, heights) = sources.occupancy.views();
+    [
+        ("camera", Bound::fixed(camera.as_entire_binding())),
+        ("lighting", Bound::fixed(lighting.as_entire_binding())),
+        shadow,
+        near,
+        kept,
+        moving,
+        sampler,
+        texel_sampler,
+        ("environment_maps", environment),
+        ("environment_sampler", environment_sampler),
+        ("probe_words", sources.probes.words()),
+        horizons,
+        horizon_records,
+        horizon_sampler,
+        ("occupancy_coverage", coverage),
+        ("occupancy_heights", heights),
+        levels,
+        (
+            "cloud_shadows",
+            Bound::fixed(cloud_shadows.as_entire_binding()),
+        ),
+    ]
 }
 
-/// The main passes' first group over the `camera` and `lighting` uniforms:
-/// shadow lookups, what glass refracts with its sampler,
-/// what surfaces reflect: the environment maps with their
+/// The main passes' first group's entries over the `camera` and
+/// `lighting` uniforms: shadow lookups, what glass refracts with its
+/// sampler, what surfaces reflect: the environment maps with their
 /// sampler and the reflection probes' grid, and terrain's horizon maps.
-fn camera_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    (camera, lighting, cloud_shadows): (&wgpu::Buffer, &wgpu::Buffer, &wgpu::Buffer),
-    (refraction, refraction_sampler): (&wgpu::TextureView, &wgpu::Sampler),
-    sources: &GroupSources<'_>,
-) -> wgpu::BindGroup {
+fn camera_entries<'a>(
+    (camera, lighting, cloud_shadows): (&'a wgpu::Buffer, &'a wgpu::Buffer, &'a wgpu::Buffer),
+    (refraction, refraction_sampler): (Bound<'a>, Bound<'a>),
+    sources: &GroupSources<'a>,
+) -> [(&'static str, Bound<'a>); CAMERA_BINDINGS] {
     let [shadow, near, kept, moving, sampler, texel_sampler, levels] = sources.shadows.entries();
     let [horizons, horizon_records, horizon_sampler] = sources.horizons.entries();
     let (environment, environment_sampler) = sources.environment.binding();
-    let probe_words = sources.probes.words().0;
-    let (coverage, heights, _) = sources.occupancy.views();
-    crate::pipelines::group(
-        device,
-        "engine/camera-bind-group",
-        &CAMERA,
-        layout,
-        &[
-            ("camera", camera.as_entire_binding()),
-            ("lighting", lighting.as_entire_binding()),
-            shadow,
-            near,
-            kept,
-            moving,
-            sampler,
-            texel_sampler,
-            ("refraction_source", crate::pipelines::view(refraction)),
-            (
-                "refraction_sampler",
-                crate::pipelines::sampler(refraction_sampler),
-            ),
-            ("environment_maps", crate::pipelines::view(environment)),
-            (
-                "environment_sampler",
-                crate::pipelines::sampler(environment_sampler),
-            ),
-            ("probe_words", probe_words.as_entire_binding()),
-            horizons,
-            horizon_records,
-            horizon_sampler,
-            ("occupancy_coverage", crate::pipelines::view(coverage)),
-            ("occupancy_heights", crate::pipelines::view(heights)),
-            levels,
-            ("cloud_shadows", cloud_shadows.as_entire_binding()),
-        ],
-    )
+    let (coverage, heights) = sources.occupancy.views();
+    [
+        ("camera", Bound::fixed(camera.as_entire_binding())),
+        ("lighting", Bound::fixed(lighting.as_entire_binding())),
+        shadow,
+        near,
+        kept,
+        moving,
+        sampler,
+        texel_sampler,
+        ("refraction_source", refraction),
+        ("refraction_sampler", refraction_sampler),
+        ("environment_maps", environment),
+        ("environment_sampler", environment_sampler),
+        ("probe_words", sources.probes.words()),
+        horizons,
+        horizon_records,
+        horizon_sampler,
+        ("occupancy_coverage", coverage),
+        ("occupancy_heights", heights),
+        levels,
+        (
+            "cloud_shadows",
+            Bound::fixed(cloud_shadows.as_entire_binding()),
+        ),
+    ]
 }

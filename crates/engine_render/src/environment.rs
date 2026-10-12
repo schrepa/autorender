@@ -7,6 +7,7 @@
 //! fall back to them.
 
 use crate::bindings::{ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY};
+use crate::cached::{Bound, Versioned};
 use crate::gpu_data::{ENVIRONMENT_SHADER, LightingUniform, mip_levels};
 use crate::probes::FACES;
 
@@ -32,9 +33,10 @@ struct Maps {
     down_groups: Vec<wgpu::BindGroup>,
     // Reads every radiance level for the blur.
     prefilter_group: wgpu::BindGroup,
-    // The environment maps, sampled as a cube array.
+    // The environment maps, sampled as a cube array through a view each
+    // replacement makes anew.
     maps: wgpu::Texture,
-    maps_view: wgpu::TextureView,
+    maps_view: Versioned<wgpu::TextureView>,
     // Each cube's render targets, a face of a level each (level by level),
     // made when it is first blurred.
     cube_targets: Vec<Option<Vec<wgpu::TextureView>>>,
@@ -67,8 +69,6 @@ pub(crate) struct Environment {
     ),
     // The atmosphere, clouds and sky values the sky map was drawn with.
     drawn: Option<[[f32; 4]; 7]>,
-    // Advances whenever the maps are replaced: groups binding them rebuild.
-    generation: u64,
 }
 
 impl Environment {
@@ -143,7 +143,6 @@ impl Environment {
             clouds: clouds_key,
             air: (air.0.clone(), air.1.clone(), air.2.clone(), air.3.clone()),
             drawn: None,
-            generation: 0,
         }
     }
 
@@ -163,13 +162,11 @@ impl Environment {
 
     /// The environment maps as a cube array and the sampler surfaces read
     /// them with, for the main passes' first group.
-    pub(crate) fn binding(&self) -> (&wgpu::TextureView, &wgpu::Sampler) {
-        (&self.maps.maps_view, &self.sampler)
-    }
-
-    /// Advances whenever the maps are replaced.
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
+    pub(crate) fn binding(&self) -> (Bound<'_>, Bound<'_>) {
+        (
+            self.maps.maps_view.bound(),
+            Bound::fixed(crate::pipelines::sampler(&self.sampler)),
+        )
     }
 
     /// Texels across each face.
@@ -225,7 +222,6 @@ impl Environment {
             self.drawn = None;
         }
         self.maps = maps;
-        self.generation += 1;
         !kept
     }
 
@@ -435,7 +431,7 @@ fn create_maps(
         down_groups,
         prefilter_group,
         maps,
-        maps_view,
+        maps_view: Versioned::new(maps_view),
         cube_targets: std::iter::repeat_with(|| None)
             .take(cubes as usize)
             .collect(),

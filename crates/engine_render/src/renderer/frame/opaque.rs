@@ -145,7 +145,7 @@ impl Renderer {
     /// The sky over the pixels nothing covers, after the opaque surfaces.
     fn draw_sky(&self, state: &FrameState<'_>, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(self.sky_pipeline(state));
-        pass.set_bind_group(0, &self.camera.group, &[]);
+        pass.set_bind_group(0, self.camera.group(), &[]);
         pass.set_bind_group(1, self.clouds.sky_group(), &[]);
         pass.draw(0..3, 0..1);
     }
@@ -221,7 +221,7 @@ impl Renderer {
             .light_frame
             .as_ref()
             .zip(self.lights.as_ref());
-        pass.set_bind_group(0, &self.camera.group, &[]);
+        pass.set_bind_group(0, self.camera.group(), &[]);
         if let Some((_, lights)) = lit {
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
@@ -358,7 +358,7 @@ impl Renderer {
         };
         let (current, _) = self.pose_parities(state);
         let mut pass = self.render_pass(encoder, node, view, "engine/visibility", None);
-        pass.set_bind_group(0, &self.camera.group, &[]);
+        pass.set_bind_group(0, self.camera.group(), &[]);
         pass.set_bind_group(1, &self.mesh_pipelines.empty_group, &[]);
         for (bin, (_, variant)) in self.virtual_draws.bins.iter().enumerate() {
             if !self.visibility.bins[bin] {
@@ -419,7 +419,7 @@ impl Renderer {
             "engine/visibility-resolve",
             timestamp_writes,
         );
-        pass.set_bind_group(0, &self.camera.group, &[]);
+        pass.set_bind_group(0, self.camera.group(), &[]);
         if let Some((_, lights)) = lit {
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
@@ -439,7 +439,7 @@ impl Renderer {
         }
         if phase + 1 == phases {
             pass.set_pipeline(self.sky_pipeline(state));
-            pass.set_bind_group(0, &self.camera.group, &[]);
+            pass.set_bind_group(0, self.camera.group(), &[]);
             pass.set_bind_group(1, self.clouds.sky_group(), &[]);
             pass.draw(0..3, 0..1);
         }

@@ -13,7 +13,7 @@ use engine_core::Occupancy;
 use engine_core::glam::Vec3;
 
 use crate::bindings::OCCUPANCY;
-use crate::cached::Cached;
+use crate::cached::{Bound, GroupCache, Versioned};
 
 /// The coverage target's format, and the heights target's.
 const COVERAGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
@@ -72,16 +72,14 @@ pub(crate) struct OccupancyPass {
     // one adds covers up.
     pipelines: [Option<wgpu::RenderPipeline>; 2],
     uniforms: [wgpu::Buffer; 2],
-    covers: wgpu::Buffer,
+    covers: Versioned<wgpu::Buffer>,
     covers_written: Vec<Cover>,
-    // The coverage and heights targets, the views shading reads, each
-    // map's layer of them, and a generation advancing when they are
-    // replaced.
+    // The coverage and heights targets, the views shading reads (made anew
+    // with the targets) and each map's layer of them.
     targets: [wgpu::Texture; 2],
-    views: [wgpu::TextureView; 2],
+    views: [Versioned<wgpu::TextureView>; 2],
     layers: [[wgpu::TextureView; 2]; 2],
-    generation: u64,
-    groups: [Cached<(u64, u64, u64), wgpu::BindGroup>; 2],
+    groups: [GroupCache<5>; 2],
     // Each map's area last drawn and what it was drawn from: the slots'
     // version.
     drawn: [Option<(Area, u64)>; 2],
@@ -105,18 +103,17 @@ impl OccupancyPass {
                 uniform("engine/occupancy-splat"),
                 uniform("engine/occupancy-far-splat"),
             ],
-            covers: crate::buffers::storage(
+            covers: Versioned::new(crate::buffers::storage(
                 device,
                 "engine/occupancy-covers",
                 size_of::<Cover>() as u64,
                 wgpu::BufferUsages::empty(),
-            ),
+            )),
             covers_written: Vec::new(),
             targets,
             views,
             layers,
-            generation: 0,
-            groups: [Cached::default(), Cached::default()],
+            groups: Default::default(),
             drawn: [None, None],
             pending: [None, None],
             redraws: 0,
@@ -124,10 +121,10 @@ impl OccupancyPass {
         }
     }
 
-    /// The coverage and heights views the main passes read, and the
-    /// generation that changes when they are replaced.
-    pub(crate) fn views(&self) -> (&wgpu::TextureView, &wgpu::TextureView, u64) {
-        (&self.views[0], &self.views[1], self.generation)
+    /// The coverage and heights views the main passes read, as a group
+    /// binds them.
+    pub(crate) fn views(&self) -> (Bound<'_>, Bound<'_>) {
+        (self.views[0].bound(), self.views[1].bound())
     }
 
     /// Bytes of the maps' targets.
@@ -170,20 +167,17 @@ impl OccupancyPass {
             self.targets = targets;
             self.views = views;
             self.layers = layers;
-            self.generation += 1;
             self.drawn = [None, None];
         }
         if covers != self.covers_written.as_slice() {
             let bytes: &[u8] = bytemuck::cast_slice(covers);
-            if bytes.len() as u64 > self.covers.size() {
-                self.covers = crate::buffers::storage(
-                    device,
-                    "engine/occupancy-covers",
-                    (bytes.len() as u64).next_power_of_two(),
-                    wgpu::BufferUsages::empty(),
-                );
-                self.generation += 1;
-            }
+            crate::buffers::ensure_storage(
+                device,
+                &mut self.covers,
+                "engine/occupancy-covers",
+                bytes.len() as u64,
+                wgpu::BufferUsages::empty(),
+            );
             queue.write_buffer(&self.covers, 0, bytes);
             self.covers_written = covers.to_vec();
             self.drawn = [None, None];
@@ -280,25 +274,33 @@ impl OccupancyPass {
                 continue;
             };
             self.pipelines[map].get_or_insert_with(|| pipeline(device, &self.layout, map));
-            let key = (generation, self.generation, 0);
-            if self.groups[map].stale(&key) {
-                let group = crate::pipelines::group(
-                    device,
-                    "engine/occupancy",
-                    &OCCUPANCY,
-                    &self.layout,
-                    &[
-                        crate::buffers::entry("splat", &self.uniforms[map]),
-                        crate::buffers::entry("records", records),
-                        crate::buffers::entry("poses", poses),
-                        crate::buffers::entry("covers", &self.covers),
-                        crate::buffers::entry("thins", thins),
-                    ],
-                );
-                self.groups[map].set(key, group);
-            }
-            let (Some(pipeline), Some(group)) = (&self.pipelines[map], self.groups[map].get())
-            else {
+            // The slots' buffers are replaced together, counted by the
+            // scatter pass.
+            let group = self.groups[map].bind(
+                device,
+                "engine/occupancy",
+                (&OCCUPANCY, &self.layout),
+                [
+                    (
+                        "splat",
+                        Bound::fixed(self.uniforms[map].as_entire_binding()),
+                    ),
+                    (
+                        "records",
+                        Bound::counted(generation, records.as_entire_binding()),
+                    ),
+                    (
+                        "poses",
+                        Bound::counted(generation, poses.as_entire_binding()),
+                    ),
+                    ("covers", self.covers.bound()),
+                    (
+                        "thins",
+                        Bound::counted(generation, thins.as_entire_binding()),
+                    ),
+                ],
+            );
+            let Some(pipeline) = &self.pipelines[map] else {
                 continue;
             };
             let attachment = |view, clear: f64| {
@@ -345,7 +347,7 @@ fn targets(
     resolution: u32,
 ) -> (
     [wgpu::Texture; 2],
-    [wgpu::TextureView; 2],
+    [Versioned<wgpu::TextureView>; 2],
     [[wgpu::TextureView; 2]; 2],
 ) {
     let target = |label, format| {
@@ -384,7 +386,10 @@ fn targets(
             ..Default::default()
         })
     };
-    let views = [whole(&targets[0]), whole(&targets[1])];
+    let views = [
+        Versioned::new(whole(&targets[0])),
+        Versioned::new(whole(&targets[1])),
+    ];
     let layers = [
         [layer(&targets[0], 0), layer(&targets[0], 1)],
         [layer(&targets[1], 0), layer(&targets[1], 1)],
