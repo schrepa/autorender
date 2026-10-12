@@ -19,7 +19,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::bench::hex;
-use crate::measure::{checkout, commit_id, git, iso, output, read_json};
+use crate::checkouts::checkout;
+use crate::measure::{commit_id, git, iso, output, read_json};
 use crate::serve::{Server, free_port};
 
 /// Attempts a check gets in all.
@@ -224,6 +225,7 @@ pub fn run(
         }
         drop(server);
     }
+    crate::checkouts::prune(root);
     Ok((entries, incomplete))
 }
 

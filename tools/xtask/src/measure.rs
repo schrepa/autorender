@@ -266,20 +266,6 @@ pub(crate) fn dxc() -> Option<PathBuf> {
         .find(|file| file.is_file())
 }
 
-/// The source at `sha`, checked out under `target/measure/source/`.
-pub fn checkout(root: &Path, sha: &str, pull: Option<u64>) -> Result<PathBuf, String> {
-    ensure_commit(root, sha, pull)?;
-    let source = root.join("target").join("measure").join("source").join(sha);
-    if !source.join("Cargo.toml").is_file() {
-        let path = source.display().to_string();
-        git(
-            root,
-            &["worktree", "add", "--detach", "--force", &path, sha],
-        )?;
-    }
-    Ok(source)
-}
-
 /// The commit `sha`: its source checked out under `target/measure/source/`,
 /// built into `target/measure/builds/`, where a build of the same commit is
 /// reused (its program unchanged), and its generated files made by its own
@@ -290,7 +276,7 @@ fn prepare_build(
     pull: Option<u64>,
     backend: &str,
 ) -> Result<Build, String> {
-    let source = checkout(root, sha, pull)?;
+    let source = crate::checkouts::checkout(root, sha, pull)?;
     let folder = root.join("target").join("measure").join("builds").join(sha);
     let program = folder.join(program_name());
     let identity = folder.join("build.json");
@@ -1153,6 +1139,7 @@ pub(crate) fn measure_with(
             builds.insert(sha.to_owned(), prepare_build(root, sha, pull, backend)?);
         }
     }
+    crate::checkouts::prune(root);
     if let Some(previous) = &previous {
         for (role, sha) in [("base", base_sha), ("candidate", candidate_sha)] {
             if previous["builds"][role]["artifact_hash"] != builds[sha].build["artifact_hash"] {

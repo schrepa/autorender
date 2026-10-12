@@ -3,6 +3,7 @@
 
 mod authoring;
 mod bench;
+mod checkouts;
 mod checks;
 mod coverage;
 mod development;
