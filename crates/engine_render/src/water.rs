@@ -238,7 +238,11 @@ impl WaterPass {
         self.records.clear();
         self.terrains
             .retain(|id, _| terrains.terrains.iter().any(|terrain| terrain.id == *id));
+        // What each terrain's water draws is this frame's, nothing until
+        // its preparation says.
         for water in self.terrains.values_mut() {
+            water.draws.clear();
+            water.river_draws.clear();
             water.drawn = false;
         }
         if settings.enabled {
@@ -426,8 +430,6 @@ impl WaterPass {
                 self.terrains.insert(terrain.id, water);
             }
             let water = self.terrains.get_mut(&terrain.id).expect("inserted above");
-            water.draws.clear();
-            water.river_draws.clear();
             let relative_origin = terrain.origin - eye;
             // Rivers' ribbons: built when the rivers change,
             // their chunks culled.
