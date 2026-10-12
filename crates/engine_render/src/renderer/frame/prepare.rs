@@ -1043,14 +1043,12 @@ impl Renderer {
         &mut self,
         snapshot: &RenderSnapshot,
         temporal_frame: &Option<TemporalFrame>,
-    ) -> (Option<PostFrame>, bool) {
+    ) -> (Option<Effects>, bool) {
         // Screen effects; temporal frames apply them in their
-        // resolve, whose history averages the occlusion noise.
-        let effects = snapshot.environment.ambient_occlusion.sanitized().enabled()
-            || snapshot.environment.bloom.sanitized().enabled()
-            || snapshot.environment.reflections.sanitized().enabled()
-            || (snapshot.environment.sun_shafts.sanitized().enabled()
-                && snapshot.environment.shadows.enabled)
+        // resolve, whose history averages the occlusion noise. Contact
+        // shadows take the effects' targets even with the sun down, where
+        // they trace nothing.
+        let effects = Effects::of(&snapshot.environment).any()
             || snapshot.environment.contact_shadows.sanitized().traces();
         // Glass refracts the opaque color of the scene target:
         // frames drawing it render into the target.
@@ -1096,7 +1094,7 @@ impl Renderer {
         snapshot: &RenderSnapshot,
         emitters: (u64, u64),
         temporal_frame: &Option<TemporalFrame>,
-        post_frame: Option<PostFrame>,
+        post_frame: Option<Effects>,
     ) -> (bool, Option<ParticleFrame>, bool) {
         // Transparent surfaces and particles. Particles
         // sample the depth buffer for their soft edges.
@@ -1157,7 +1155,7 @@ impl Renderer {
         snapshot: &RenderSnapshot,
         temporal_frame: &Option<TemporalFrame>,
         light_frame: &Option<LightFrame>,
-        post_frame: Option<PostFrame>,
+        post_frame: Option<Effects>,
     ) -> Option<DecalFrame> {
         // Decals cover the opaque surfaces the depth buffer
         // holds and read their displayed poses from the joint palette.
@@ -1308,7 +1306,7 @@ impl Renderer {
     fn frame_targets(
         &self,
         temporal_frame: &Option<TemporalFrame>,
-        post_frame: Option<PostFrame>,
+        post_frame: Option<Effects>,
     ) -> Targets {
         match (temporal_frame, post_frame.filter(|_| self.post.is_some())) {
             (Some(_), Some(_)) if self.temporal.is_some() => Targets::Temporal,
@@ -1361,13 +1359,7 @@ impl Renderer {
             clouds: false,
             transparency: features.transparency && self.transparent.is_some(),
             refraction: features.refraction && post.is_some(),
-            effects: post.map_or(Effects::default(), |frame| Effects {
-                occlusion: frame.occlusion,
-                bloom: frame.bloom,
-                reflections: frame.reflections,
-                shafts: frame.shafts,
-                contact: frame.contact,
-            }),
+            effects: post.unwrap_or_default(),
             probes: kind.gpu_mode && !features.probe_list.is_empty(),
         }
     }

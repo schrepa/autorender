@@ -112,6 +112,24 @@ fn glowing(color: vec3<f32>, bloom: texture_2d<f32>, linear: sampler, uv: vec2<f
     return vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - light);
 }
 
+// The share of a pixel's light the ambient occlusion and the contact
+// shadows leave: its ambient share `ambient` (the scene target's alpha)
+// darkened by the occlusion, the rest by the contact shadows, as
+// `screen_effects` gives them in `effects`.
+fn effect_shade(ambient: f32, effects: vec3<f32>, settings: Post) -> f32 {
+    return occlusion_factor(ambient, effects.x, settings)
+        * contact_factor(ambient, effects.z, settings);
+}
+
+// `color` with the effects that add light laid over it at `uv`: the
+// reflections, the sun shafts' light in `effects`, then bloom.
+fn effect_light(color: vec3<f32>, effects: vec3<f32>, reflections: texture_2d<f32>,
+        bloom: texture_2d<f32>, linear: sampler, uv: vec2<f32>, settings: Post) -> vec3<f32> {
+    let mirrored = reflected(color, reflections, linear, uv, settings);
+    let lit = shafted(mirrored, effects.y, settings);
+    return glowing(lit, bloom, linear, uv, settings);
+}
+
 fn encode_srgb(color: vec3<f32>) -> vec3<f32> {
     let low = color * 12.92;
     let high = 1.055 * pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;

@@ -679,11 +679,8 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     let texel = textureLoad(scene, vec2<i32>(position.xy), 0);
     let uv = position.xy * post.size.zw;
     let effects = screen_effects(occlusion, linear, uv, post);
-    let shade = occlusion_factor(texel.a, effects.x, post)
-        * contact_factor(texel.a, effects.z, post);
-    let mirrored = reflected(texel.rgb * shade, reflections, linear, uv, post);
-    let lit = shafted(mirrored, effects.y, post);
-    let color = glowing(lit, bloom, linear, uv, post);
+    let shaded = texel.rgb * effect_shade(texel.a, effects, post);
+    let color = effect_light(shaded, effects, reflections, bloom, linear, uv, post);
     // The UNORM canvas stores encoded color.
     return vec4<f32>(encode_srgb(color), 1.0);
 }

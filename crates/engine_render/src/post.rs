@@ -21,6 +21,7 @@ use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::gpu_data::{POST_SHADER, PostUniform, SHAFTS_SHADER};
 use crate::pipelines::{self, Fillers, Fullscreen, filled_group, fullscreen};
 use crate::profiling::{GpuProfiler, Span};
+use crate::screen_effects::{Effects, UniformFrame};
 
 /// Linear color with 8 perceptual bits; alpha holds the ambient share.
 pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -57,17 +58,6 @@ const SHAFT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const BLOOM_LEVELS: u32 = 6;
 /// Blurred half-resolution levels of the scene rough reflections read.
 const SCENE_LEVELS: u32 = 6;
-
-/// Which effects a frame applies.
-#[derive(Clone, Copy)]
-pub(crate) struct PostFrame {
-    pub occlusion: bool,
-    pub bloom: bool,
-    pub reflections: bool,
-    pub shafts: bool,
-    // Contact shadows, traced with the occlusion.
-    pub contact: bool,
-}
 
 struct Targets {
     size: (u32, u32),
@@ -369,10 +359,6 @@ impl PostPass {
     /// `temporal` frames trace reflections from another pixel of each 2x2
     /// block than the frame before.
     #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub(crate) fn begin(
         &mut self,
         device: &wgpu::Device,
@@ -382,7 +368,7 @@ impl PostPass {
         depth: &wgpu::TextureView,
         depth_generation: u64,
         temporal: bool,
-    ) -> PostFrame {
+    ) -> Effects {
         if self
             .targets
             .as_ref()
@@ -392,26 +378,7 @@ impl PostPass {
             self.targets = Some(self.create_targets(device, size));
             self.generation += 1;
         }
-        let occlusion = snapshot.environment.ambient_occlusion.sanitized();
-        let bloom = snapshot.environment.bloom.sanitized();
-        let reflections = snapshot.environment.reflections.sanitized();
-        let shafts = snapshot.environment.sun_shafts.sanitized();
-        let contact = snapshot.environment.contact_shadows.sanitized();
-        let toward_sun = snapshot
-            .environment
-            .atmosphere
-            .sanitized()
-            .sun_direction
-            .normalize_or_zero();
-        let frame = PostFrame {
-            occlusion: occlusion.enabled(),
-            bloom: bloom.enabled(),
-            reflections: reflections.enabled(),
-            // Shafts gather light through the shadow maps.
-            shafts: shafts.enabled() && snapshot.environment.shadows.enabled,
-            // Contact shadows trace toward a sun above the horizon.
-            contact: contact.traces() && toward_sun.y > 0.0,
-        };
+        let frame = Effects::of(&snapshot.environment);
         let targets_key = (depth_generation, self.generation);
         if (frame.occlusion || frame.contact) && self.occlusion_group.stale(&targets_key) {
             let group = self.group(
@@ -506,6 +473,14 @@ impl PostPass {
         let focal = view_projection.row(1).truncate().length();
         let half = ((size.0 / 2).max(1) as f32, (size.1 / 2).max(1) as f32);
         let atmosphere = snapshot.environment.atmosphere.sanitized();
+        let toward_sun = atmosphere.sun_direction.normalize_or_zero();
+        let effects = frame.uniforms(
+            &snapshot.environment,
+            &UniformFrame {
+                half_texel: [1.0 / half.0, 1.0 / half.1],
+                trace_index: self.trace_index,
+            },
+        );
         let uniform = PostUniform {
             inverse_view_projection: inverse_or_identity(view_projection).to_cols_array_2d(),
             view_projection: view_projection.to_cols_array_2d(),
@@ -514,39 +489,14 @@ impl PostPass {
                 .extend(focal * height * 0.5)
                 .to_array(),
             size: [width, height, 1.0 / width, 1.0 / height],
-            occlusion: [
-                occlusion.radius,
-                occlusion.intensity,
-                0.0,
-                if frame.occlusion { 1.0 } else { 0.0 },
-            ],
-            bloom: [
-                bloom.intensity,
-                if frame.bloom { 1.0 } else { 0.0 },
-                1.0 / half.0,
-                1.0 / half.1,
-            ],
-            reflections: [
-                reflections.distance,
-                reflections.intensity,
-                if frame.reflections { 1.0 } else { 0.0 },
-                self.trace_index as f32,
-            ],
-            shafts: [
-                shafts.intensity,
-                shafts.anisotropy,
-                shafts.distance,
-                if frame.shafts { 1.0 } else { 0.0 },
-            ],
+            occlusion: effects.occlusion,
+            bloom: effects.bloom,
+            reflections: effects.reflections,
+            shafts: effects.shafts,
             sun: (atmosphere.sun_color * atmosphere.exposure)
                 .extend(0.0)
                 .to_array(),
-            contact: [
-                contact.length,
-                contact.strength,
-                contact.distance,
-                if frame.contact { 1.0 } else { 0.0 },
-            ],
+            contact: effects.contact,
             sun_direction: toward_sun.extend(0.0).to_array(),
         };
         if self.written != Some(uniform) {
@@ -599,7 +549,7 @@ impl PostPass {
     pub(crate) fn encode_effects(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        frame: PostFrame,
+        frame: Effects,
         camera: &wgpu::BindGroup,
         profiler: &GpuProfiler,
     ) {

@@ -47,6 +47,7 @@ mod post;
 mod profiling;
 mod renderer;
 mod scatter;
+mod screen_effects;
 mod shadows;
 mod staging;
 mod targets;

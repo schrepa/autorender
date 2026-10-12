@@ -12,6 +12,8 @@
 //! derived operations. [`plan`] declares the renderer's frame from its
 //! [`FrameShape`].
 
+pub(crate) use crate::screen_effects::Effects;
+
 /// Builds [`Resource`], the list of every resource and each one's
 /// [`Lifetime`] from one table: `Name: Lifetime`.
 macro_rules! resources {
@@ -684,23 +686,6 @@ pub(crate) enum Targets {
     Temporal,
 }
 
-/// The screen effects a frame runs.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Effects {
-    pub(crate) occlusion: bool,
-    pub(crate) bloom: bool,
-    pub(crate) reflections: bool,
-    pub(crate) shafts: bool,
-    /// Contact shadows, traced with the occlusion.
-    pub(crate) contact: bool,
-}
-
-impl Effects {
-    fn any(self) -> bool {
-        self.occlusion || self.bloom || self.reflections || self.shafts || self.contact
-    }
-}
-
 /// What a frame runs, from which [`plan`] declares its passes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FrameShape {
@@ -963,17 +948,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     }
     let effects = shape.effects;
     if shape.targets != Targets::Canvas && effects.any() {
-        graph
-            .add(Pass::Effects)
-            .read_if(
-                effects.occlusion || effects.reflections || effects.shafts || effects.contact,
-                Depth,
-            )
-            .read_if(effects.bloom || effects.reflections, Scene)
-            .read_if(effects.bloom || effects.reflections, Glow)
-            .read_if(effects.reflections, Surface)
-            .read_if(effects.shafts, ShadowMaps)
-            .write(Effects);
+        effects.reads(graph.add(Pass::Effects)).write(Effects);
     }
     match shape.targets {
         Targets::Canvas => {}

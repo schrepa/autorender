@@ -92,8 +92,7 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     let screen = position.xy * resolve.texel;
     // The neighborhood darkens with this pixel: its box scales alike.
     let effects = screen_effects(occlusion, history_sampler, screen, post);
-    let shade = occlusion_factor(texel.a, effects.x, post)
-        * contact_factor(texel.a, effects.z, post);
+    let shade = effect_shade(texel.a, effects, post);
     let current = texel.rgb * shade;
     var color = current;
     let offset = textureLoad(motion, pixel, 0).xy;
@@ -119,9 +118,7 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     color = max(color, vec3<f32>(0.0));
     var output: Outputs;
     output.history = vec4<f32>(color, 1.0);
-    let mirrored = reflected(color, reflections, history_sampler, screen, post);
-    let lit = shafted(mirrored, effects.y, post);
-    let shown = glowing(lit, bloom, history_sampler, screen, post);
+    let shown = effect_light(color, effects, reflections, bloom, history_sampler, screen, post);
     // The UNORM canvas stores encoded color.
     output.canvas = vec4<f32>(encode_srgb(shown), 1.0);
     return output;

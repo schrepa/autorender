@@ -8,7 +8,6 @@ use super::*;
 use crate::decals::DecalFrame;
 use crate::gpu_presentation::{CullingView, GpuPrepared, PresentationInputs, RecordsKey, Staging};
 use crate::particles::ParticleFrame;
-use crate::post::PostFrame;
 use crate::render_graph::{
     self, Clear, Effects, FrameShape, Load, Node, Ops, Pass, Phase, Resource,
 };
@@ -152,7 +151,7 @@ pub(super) struct Features<'s> {
     pub(super) probe_list: &'s [engine_core::RenderReflectionProbe],
     pub(super) dropped_probes: u64,
     pub(super) light_frame: Option<LightFrame>,
-    pub(super) post_frame: Option<PostFrame>,
+    pub(super) post_frame: Option<Effects>,
     pub(super) refraction: bool,
     pub(super) transparent_draws: bool,
     pub(super) particle_frame: Option<ParticleFrame>,
