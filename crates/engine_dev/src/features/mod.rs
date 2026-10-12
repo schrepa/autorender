@@ -2,8 +2,10 @@
 //! own has a file here that registers its inspectors, states their schemas
 //! and answers its queries.
 
-use engine_core::{Engine, Feature};
+use engine_core::bevy_ecs::prelude::{Resource, World};
+use engine_core::{Engine, Feature, has_feature};
 use engine_scene::SceneInstance;
+use engine_settings::ErrorCode;
 use serde_json::Value;
 
 use crate::{DevError, DevTools};
@@ -40,6 +42,56 @@ pub trait EngineQuery {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn schema<T: schemars::JsonSchema>() -> Value {
     serde_json::json!(schemars::schema_for!(T))
+}
+
+/// A development control a feature's file applies: a
+/// [`BrowserControl`](crate::BrowserControl) variant holds it, and the host
+/// applies it to its engine, then renders.
+pub trait EngineControl {
+    /// What it changes, which a render failing after it names.
+    fn changed(&self) -> &'static str;
+
+    /// Applies it to `engine`'s world, beside the active `scene`: its result.
+    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError>;
+}
+
+/// The `missing_plugin` error of requests about `feature`, which the engine
+/// lacks.
+pub(crate) fn missing(feature: Feature) -> DevError {
+    DevError::new(
+        ErrorCode::MissingPlugin,
+        "$.op",
+        format!(
+            "{} is not added: add it, or EnginePlugins, to the engine",
+            feature.plugin()
+        ),
+    )
+}
+
+/// `world`'s resource `R` of `feature`, or [`missing`].
+pub(crate) fn feature<R: Resource>(world: &World, feature: Feature) -> Result<&R, DevError> {
+    world
+        .get_resource::<R>()
+        .filter(|_| has_feature(world, feature))
+        .ok_or_else(|| missing(feature))
+}
+
+/// [`feature`]'s resource, mutably.
+pub(crate) fn feature_mut<
+    R: Resource
+        + engine_core::bevy_ecs::component::Component<
+            Mutability = engine_core::bevy_ecs::component::Mutable,
+        >,
+>(
+    world: &mut World,
+    feature: Feature,
+) -> Result<engine_core::bevy_ecs::prelude::Mut<'_, R>, DevError> {
+    if !has_feature(world, feature) {
+        return Err(missing(feature));
+    }
+    world
+        .get_resource_mut::<R>()
+        .ok_or_else(|| missing(feature))
 }
 
 impl DevTools {

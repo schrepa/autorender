@@ -1,163 +1,24 @@
-//! Controls of terrain and what stands on it: temporary edits of generated
-//! terrains, with undo and redo, tracks pressed, navigation agents sent and
-//! streamed items removed and restored.
+//! Temporary edits of generated terrains, with undo and redo.
 
 use std::sync::Arc;
 
 use engine_core::{
-    Deformation, Engine, Feature, FixedTime, Terrain, TerrainEdit, TerrainSource, Terrains, Track,
-    Tracks,
+    Engine, Feature, Terrain, TerrainEdit, TerrainSource, Terrains,
     bevy_ecs::prelude::Entity,
     glam::Vec2,
-    has_feature,
     terrain_data::{Stamp, StampOp},
 };
 use engine_scene::SceneInstance;
 use engine_settings::ErrorCode;
 use serde_json::{Value, json};
 
-use super::{coordinate, feature, feature_mut, missing};
-use crate::protocol::bounds::{self, MAX_EDIT_ID};
-use crate::{DevError, bounded};
-
-/// A track an agent presses.
-pub struct Press {
-    pub from: [f64; 2],
-    pub to: Option<[f64; 2]>,
-    pub radius: f64,
-    pub depth: f64,
-    pub flatness: f64,
-    pub clear: bool,
-}
-
-/// Sends navigation agent `id` in `scene` to `destination` (world x and
-/// z), or stops it.
-pub fn nav_go(
-    engine: &mut Engine,
-    scene: Option<&SceneInstance>,
-    id: &str,
-    destination: Option<[f32; 2]>,
-) -> Result<Value, DevError> {
-    if let Some(destination) = destination
-        && !destination
-            .iter()
-            .all(|value| value.is_finite() && value.abs() <= 1.0e6)
-    {
-        return Err(DevError::new(
-            ErrorCode::OutOfRange,
-            "$.destination",
-            "must be finite and within 1000000 meters",
-        ));
-    }
-    let world = engine.app.world_mut();
-    if !has_feature(world, Feature::Navigation) {
-        return Err(missing(Feature::Navigation));
-    }
-    let entity = scene
-        .and_then(|scene| crate::inspect::authored_entity(world, scene, id))
-        .filter(|&entity| world.get::<engine_core::NavAgent>(entity).is_some())
-        .ok_or_else(|| {
-            DevError::new(
-                ErrorCode::UnknownEntity,
-                "$.entity",
-                format!("no navigation agent {id} in the scene"),
-            )
-        })?;
-    let mut agent = world
-        .get_mut::<engine_core::NavAgent>(entity)
-        .expect("checked above");
-    agent.destination = destination;
-    Ok(json!({ "temporary": true, "destination": destination }))
-}
-
-/// Removes and restores streamed items: `remove` and
-/// `restore` name item IDs (at most 256 each, each 1 to 192 bytes);
-/// `clear` restores every item first.
-pub fn change_world(
-    engine: &mut Engine,
-    remove: &[String],
-    restore: &[String],
-    clear: bool,
-) -> Result<Value, DevError> {
-    for (ids, path) in [(remove, "$.remove"), (restore, "$.restore")] {
-        if ids.len() > bounds::MAX_CHANGES {
-            return Err(DevError::new(
-                ErrorCode::OutOfRange,
-                path,
-                format!("at most {} IDs", bounds::MAX_CHANGES),
-            ));
-        }
-        if let Some(index) = ids.iter().position(|id| id.is_empty() || id.len() > 192) {
-            return Err(DevError::new(
-                ErrorCode::OutOfRange,
-                format!("{path}[{index}]"),
-                "IDs are 1 to 192 bytes",
-            ));
-        }
-    }
-    let mut changes =
-        feature_mut::<engine_core::WorldChanges>(engine.app.world_mut(), Feature::WorldStreaming)?;
-    if clear {
-        changes.clear();
-    }
-    let removed = remove.iter().filter(|id| changes.remove(id)).count();
-    let restored = restore.iter().filter(|id| changes.restore(id)).count();
-    Ok(json!({
-        "temporary": true,
-        "newly_removed": removed,
-        "restored": restored,
-        "removed": changes.removed().len(),
-    }))
-}
-
-/// Presses `press` into the log as a deformer would at the fixed clock's
-/// time; its result.
-pub fn press_track(engine: &mut Engine, press: Press) -> Result<Value, DevError> {
-    let from = [
-        coordinate(press.from[0], "$.from[0]")?,
-        coordinate(press.from[1], "$.from[1]")?,
-    ];
-    let to = match press.to {
-        Some(to) => [coordinate(to[0], "$.to[0]")?, coordinate(to[1], "$.to[1]")?],
-        None => from,
-    };
-    // A press keeps a deformer's rules.
-    for (value, field) in [
-        (press.radius, "radius"),
-        (press.depth, "depth"),
-        (press.flatness, "flatness"),
-    ] {
-        let rule = engine_core::Deformer::rule_of(field).expect("deformers declare the field");
-        bounded(value, rule, ErrorCode::OutOfRange, &format!("$.{field}"))?;
-    }
-    let world = engine.app.world_mut();
-    let seconds = world.resource::<FixedTime>().elapsed_seconds;
-    let resource = world.get_resource::<Deformation>().copied();
-    let settings = resource.unwrap_or_default().sanitized();
-    let track = Track {
-        from,
-        to,
-        radius: press.radius as f32,
-        depth: press.depth as f32,
-        flatness: press.flatness as f32,
-        seconds,
-    };
-    let mut tracks = feature_mut::<Tracks>(world, Feature::Deformation)?;
-    if press.clear {
-        tracks.clear();
-    }
-    tracks.press(track, &settings);
-    Ok(json!({
-        "temporary": true,
-        "track": track,
-        "stamps": tracks.len(),
-        "dropped": tracks.dropped(),
-        "enabled": resource.is_some_and(|settings| settings.enabled),
-    }))
-}
+use crate::coordinate;
+use crate::features::feature;
+use crate::protocol::bounds::MAX_EDIT_ID;
+use crate::DevError;
 
 /// A terrain edit control.
-pub enum TerrainEditing {
+pub(super) enum TerrainEditing {
     Edit {
         id: String,
         center: [f64; 2],
@@ -180,7 +41,7 @@ const CHANGE_SAMPLES: usize = 9;
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
-pub fn edit_terrain(
+pub(super) fn edit_terrain(
     engine: &mut Engine,
     scene: Option<&SceneInstance>,
     name: Option<&str>,

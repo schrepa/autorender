@@ -6,7 +6,9 @@
 use crate::app_host::AppHost;
 use engine_core::ErrorCode;
 use engine_core::{ActionInput, DevStepError, InputState};
-use engine_dev::{BrowserControl, Context, DevError, DevTools, RenderedMesh, RendererFacts};
+use engine_dev::{
+    BrowserControl, Context, Control, DevError, DevTools, HostControl, RenderedMesh, RendererFacts,
+};
 use engine_scene::SceneInstance;
 use serde_json::{Value, json};
 
@@ -41,11 +43,6 @@ impl RendererFacts for Facts<'_> {
 pub(crate) struct DevHost {
     pub(crate) tools: DevTools,
     input: InputBatch,
-    // Terrain edits undo took away, latest last.
-    terrain_redo: Vec<(
-        engine_core::bevy_ecs::prelude::Entity,
-        engine_core::TerrainEdit,
-    )>,
 }
 
 #[derive(Default)]
@@ -188,8 +185,14 @@ impl DevHost {
                 format!("pause the host before {op}"),
             ));
         }
-        match control {
-            BrowserControl::Present { alpha, gpu, .. } => {
+        match control.route() {
+            // Every feature's control: its development file applies it.
+            Control::Feature(control) => {
+                let result = control.apply(&mut app.engine, scene)?;
+                rendered(app.dev_render(width, height), control.changed())?;
+                Ok(result)
+            }
+            Control::Host(HostControl::Present { alpha, gpu }) => {
                 let alpha = engine_dev::validated_presentation_alpha(alpha)?;
                 rendered(
                     app.dev_present(alpha, width, height, gpu),
@@ -197,19 +200,18 @@ impl DevHost {
                 )?;
                 Ok(json!({"temporary":true,"rendered":true}))
             }
-            BrowserControl::Culling { enabled, .. } => {
+            Control::Host(HostControl::Culling { enabled }) => {
                 app.engine.set_frustum_culling(enabled);
                 rendered(app.dev_render(width, height), "culling changed")?;
                 Ok(json!({"temporary":true,"culling_enabled":enabled}))
             }
-            BrowserControl::Camera {
+            Control::Host(HostControl::Camera {
                 position,
                 target,
                 vertical_fov_radians,
                 near,
                 far,
-                ..
-            } => {
+            }) => {
                 let camera = engine_dev::validated_camera(
                     position,
                     target,
@@ -227,7 +229,7 @@ impl DevHost {
                 rendered(app.dev_render(width, height), "camera changed")?;
                 Ok(json!({"temporary":true,"camera_changed":true}))
             }
-            BrowserControl::Environment(control) => {
+            Control::Host(HostControl::Environment(control)) => {
                 // The sections of a scene environment, validated alike; the
                 // named ones replace their resources, the others stay.
                 let current = |app: &AppHost| {
@@ -275,155 +277,7 @@ impl DevHost {
                     "after": pick(&after),
                 }))
             }
-            BrowserControl::TerrainEdit {
-                terrain,
-                id,
-                center,
-                radius,
-                falloff,
-                change,
-                ..
-            } => self.terrain_editing(
-                app,
-                scene,
-                terrain.as_deref(),
-                engine_dev::TerrainEditing::Edit {
-                    id,
-                    center,
-                    radius,
-                    falloff,
-                    change,
-                },
-                (width, height),
-            ),
-            BrowserControl::Deform {
-                from,
-                to,
-                radius,
-                depth,
-                flatness,
-                clear,
-                ..
-            } => {
-                let result = engine_dev::press_track(
-                    &mut app.engine,
-                    engine_dev::Press {
-                        from,
-                        to,
-                        radius,
-                        depth,
-                        flatness,
-                        clear,
-                    },
-                )?;
-                rendered(app.dev_render(width, height), "track pressed")?;
-                Ok(result)
-            }
-            BrowserControl::NavGo {
-                entity,
-                destination,
-                ..
-            } => {
-                let result = engine_dev::nav_go(&mut app.engine, scene, &entity, destination)?;
-                rendered(app.dev_render(width, height), "agent sent")?;
-                Ok(result)
-            }
-            BrowserControl::Animation {
-                entity,
-                clip,
-                time,
-                speed,
-                looping,
-                ..
-            } => {
-                let result = engine_dev::animate(
-                    &mut app.engine,
-                    scene,
-                    &entity,
-                    engine_dev::Animate {
-                        clip,
-                        time,
-                        speed,
-                        looping,
-                    },
-                )?;
-                rendered(app.dev_render(width, height), "animation changed")?;
-                Ok(result)
-            }
-            BrowserControl::WorldChanges {
-                remove,
-                restore,
-                clear,
-                ..
-            } => {
-                let result = engine_dev::change_world(&mut app.engine, &remove, &restore, clear)?;
-                rendered(app.dev_render(width, height), "world changed")?;
-                Ok(result)
-            }
-            BrowserControl::TerrainUndo { terrain, .. } => self.terrain_editing(
-                app,
-                scene,
-                terrain.as_deref(),
-                engine_dev::TerrainEditing::Undo,
-                (width, height),
-            ),
-            BrowserControl::TerrainRedo { terrain, .. } => self.terrain_editing(
-                app,
-                scene,
-                terrain.as_deref(),
-                engine_dev::TerrainEditing::Redo,
-                (width, height),
-            ),
-            BrowserControl::Terrain {
-                pixel_error,
-                freeze,
-                view,
-                ..
-            } => {
-                let world = app.engine.app.world_mut();
-                if let Some(pixel_error) = pixel_error {
-                    // The settings' own rule.
-                    let rule = engine_core::TerrainSettings::rule_of("pixel_error")
-                        .expect("terrain settings declare pixel_error");
-                    if let Err(invalid) =
-                        engine_settings::Setting::check(&pixel_error, "pixel_error", rule)
-                    {
-                        return Err(DevError::new(
-                            ErrorCode::OutOfRange,
-                            "$.pixel_error",
-                            invalid.to_string(),
-                        ));
-                    }
-                    let mut settings = world
-                        .get_resource::<engine_core::TerrainSettings>()
-                        .copied()
-                        .unwrap_or_default();
-                    settings.pixel_error = pixel_error;
-                    world.insert_resource(settings);
-                }
-                let eye = world.resource::<engine_core::Camera>().eye();
-                let mut debug = world
-                    .get_resource::<engine_core::TerrainDebug>()
-                    .copied()
-                    .unwrap_or_default();
-                if let Some(freeze) = freeze {
-                    debug.freeze = freeze.then_some(debug.freeze.unwrap_or(eye));
-                }
-                if let Some(view) = view {
-                    debug.view = view;
-                }
-                world.insert_resource(debug);
-                rendered(app.dev_render(width, height), "terrain changed")?;
-                let world = app.engine.app.world();
-                Ok(json!({
-                    "temporary": true,
-                    "terrain_changed": true,
-                    "frozen_at": debug.freeze.map(|eye| eye.to_array()),
-                    "view": view.map(|_| debug.view),
-                    "pixel_error": world.get_resource::<engine_core::TerrainSettings>().map(|settings| settings.pixel_error),
-                }))
-            }
-            BrowserControl::Input {
+            Control::Host(HostControl::Input {
                 forward,
                 right,
                 up,
@@ -432,8 +286,7 @@ impl DevHost {
                 held,
                 pressed,
                 released,
-                ..
-            } => {
+            }) => {
                 use engine_dev::bounds;
                 use engine_settings::Setting;
                 for (value, field, rule) in [
@@ -463,7 +316,7 @@ impl DevHost {
                 };
                 Ok(json!({"temporary":true,"applies_on":"next_step"}))
             }
-            BrowserControl::Step { ticks, .. } => {
+            Control::Host(HostControl::Step { ticks }) => {
                 DevStepError::validate(ticks).map_err(|error| {
                     DevError::new(ErrorCode::InvalidStep, "$.ticks", error.to_string())
                 })?;
@@ -493,24 +346,18 @@ impl DevHost {
                 })?;
                 Ok(json!({"ticks":ticks,"temporary":true}))
             }
-            BrowserControl::Render { .. } => {
+            Control::Host(HostControl::Render) => {
                 app.dev_render(width, height).map_err(|error| {
                     DevError::new(ErrorCode::RenderFailed, "$", error.to_string())
                 })?;
                 Ok(json!({"rendered":true}))
             }
-            BrowserControl::DebugPanic { .. } => {
+            Control::Host(HostControl::DebugPanic) => {
                 panic!("debug_panic: a development session asked the engine to panic")
             }
-            // The host runs these: it receives them validated, with their
-            // defaults.
-            control @ (BrowserControl::Benchmark { .. }
-            | BrowserControl::Frames { .. }
-            | BrowserControl::Pause { .. }
-            | BrowserControl::Resume { .. }
-            | BrowserControl::Capture { .. }
-            | BrowserControl::Game { .. }
-            | BrowserControl::Reload { .. }) => Ok(json!({ "control": control })),
+            // The host's loop runs these: it receives them validated, with
+            // their defaults.
+            Control::Host(HostControl::Loop(control)) => Ok(json!({ "control": control })),
         }
     }
 
@@ -569,30 +416,6 @@ fn execute(
     tools.execute(&mut app.engine, context, source)
 }
 
-/// What rendering after `what` came to: a development error when it failed.
-impl DevHost {
-    /// Edits, undoes or redoes the terrain `name` names, then
-    /// renders.
-    fn terrain_editing(
-        &mut self,
-        app: &mut AppHost,
-        scene: Option<&SceneInstance>,
-        name: Option<&str>,
-        editing: engine_dev::TerrainEditing,
-        (width, height): (u32, u32),
-    ) -> Result<Value, DevError> {
-        let result = engine_dev::edit_terrain(
-            &mut app.engine,
-            scene,
-            name,
-            &mut self.terrain_redo,
-            editing,
-        )?;
-        rendered(app.dev_render(width, height), "terrain edited")?;
-        Ok(result)
-    }
-}
-
 /// What this build is: the engine's version, the commit xtask built it from
 /// (`-dirty` with uncommitted changes) and its features.
 fn build_identity() -> Value {
@@ -623,6 +446,7 @@ fn overlay(base: &mut Value, patch: Value) {
     }
 }
 
+/// What rendering after `what` came to: a development error when it failed.
 fn rendered(outcome: crate::Result<()>, what: &str) -> Result<(), DevError> {
     outcome.map_err(|error| {
         DevError::new(

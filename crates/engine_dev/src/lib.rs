@@ -8,7 +8,6 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-mod animation;
 mod collision;
 mod controls;
 mod digest;
@@ -24,7 +23,6 @@ pub mod authoring;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod schemas;
 
-pub use animation::{Animate, animate};
 pub use controls::{validated_camera, validated_presentation_alpha};
 pub use engine_settings::ErrorCode;
 pub use error::DevError;
@@ -35,7 +33,8 @@ pub use protocol::bounds;
 pub use protocol::bounds::{MAX_DESCRIPTION_BYTES, MAX_PAGE_SIZE};
 pub use protocol::{
     BenchmarkMode, BrowserControl, CollisionFilterRequest, CollisionSensorFilter,
-    CollisionShapeRequest, DevRequest, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
+    CollisionShapeRequest, Control, DevRequest, HostControl, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+    PROTOCOL_VERSION,
 };
 
 /// The ops of queries and controls, as requests name them, from the
@@ -48,7 +47,6 @@ pub use ops::{CONTROL_OPS, QUERY_OPS};
 /// The JSON schema of [`engine_core::FrameStats`], what every reply's
 /// `rendering` holds ([`schemas`] generates it).
 pub const FRAME_STATS_SCHEMA: &str = include_str!("generated/frame_stats.schema.json");
-pub use terrain::{Press, TerrainEditing, change_world, edit_terrain, nav_go, press_track};
 
 pub const MAX_INSPECTOR_BYTES: usize = 16 * 1024;
 /// Inspectors a game may register beside the engine's own.

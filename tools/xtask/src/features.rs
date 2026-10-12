@@ -246,7 +246,8 @@ pub fn check(root: &Path) -> Result<(), String> {
 /// Adds to `violations` each development file of a feature that
 /// `dev_features!` (engine_dev/src/features/mod.rs) does not list, which
 /// would be no module, each query a feature answers (`impl EngineQuery
-/// for T`) that no `DevRequest` variant holds, which no request would
+/// for T`) or control it applies (`impl EngineControl for T`) that no
+/// `DevRequest` or `BrowserControl` variant holds, which no request would
 /// reach, and each scene component (`impl SceneComponent for T`) that
 /// `entity_components!` (engine_scene/src/components.rs) does not list,
 /// which no scene would author.
@@ -282,16 +283,26 @@ fn listed(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
                 continue;
             }
             let text = read(&file)?;
-            // `impl EngineQuery for T`, its trait's path written or not.
-            for (at, _) in text.match_indices("EngineQuery for ") {
-                let query: String = text[at + "EngineQuery for ".len()..]
-                    .chars()
-                    .take_while(|c| c.is_alphanumeric() || *c == '_')
-                    .collect();
-                if !protocol.contains(&format!("::{query})")) {
-                    violations.push(format!(
-                        "{name}'s query {query} is held by no DevRequest variant: add one"
-                    ));
+            // `impl EngineQuery for T` and `impl EngineControl for T`, their
+            // trait's path written or not: a protocol variant holds T.
+            for (kind, request) in [("query", "DevRequest"), ("control", "BrowserControl")] {
+                let pattern = if kind == "query" {
+                    "EngineQuery for "
+                } else {
+                    "EngineControl for "
+                };
+                for (at, _) in text.match_indices(pattern) {
+                    let held: String = text[at + pattern.len()..]
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    if !protocol.contains(&format!("::{held})"))
+                        && !protocol.contains(&format!("({held})"))
+                    {
+                        violations.push(format!(
+                            "{name}'s {kind} {held} is held by no {request} variant: add one"
+                        ));
+                    }
                 }
             }
         }

@@ -2,7 +2,7 @@ use engine_scene::{SceneAtmosphere, SceneEnvironment};
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
-use engine_settings::{rule::same, stated};
+use engine_settings::stated;
 
 /// The bounds requests keep: their schemas state them and their handlers
 /// check them, so neither restates a number.
@@ -52,7 +52,7 @@ pub mod bounds {
 /// The schema transform stating a stamp's `field` rule on the request field
 /// of that name.
 #[cfg(not(target_arch = "wasm32"))]
-fn stamp_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
+pub(crate) fn stamp_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
     engine_settings::stated(engine_core::Stamp::rule_of(field).expect("stamps declare the field"))
 }
 
@@ -70,6 +70,15 @@ fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
         schema.insert("default".into(), default.clone());
     }
 }
+
+use crate::features::{
+    EngineControl,
+    animation::AnimationControl,
+    deformation::DeformControl,
+    navigation::NavGoControl,
+    terrain::{TerrainControl, TerrainEditControl, TerrainRedoControl, TerrainUndoControl},
+    world_streaming::WorldChangesControl,
+};
 
 /// The development protocol's version, independent of scene format versions.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -199,6 +208,58 @@ pub(crate) enum TerrainQuery {
         water_cost: Option<f64>,
         turn_cost: Option<f64>,
     },
+}
+
+/// A control as the host runs it: [`BrowserControl::route`].
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one short-lived control at a time, as BrowserControl"
+)]
+pub enum Control {
+    /// A feature's control, which its development file applies; the host
+    /// renders after it.
+    Feature(Box<dyn EngineControl>),
+    /// One the host runs itself.
+    Host(HostControl),
+}
+
+/// The controls the host runs itself ([`BrowserControl`]'s, which document
+/// them).
+pub enum HostControl {
+    Present {
+        alpha: f64,
+        gpu: bool,
+    },
+    Culling {
+        enabled: bool,
+    },
+    Environment(EnvironmentControl),
+    Camera {
+        position: [f32; 3],
+        target: [f32; 3],
+        vertical_fov_radians: f32,
+        near: f32,
+        far: f32,
+    },
+    Step {
+        ticks: u32,
+    },
+    Input {
+        forward: f32,
+        right: f32,
+        up: f32,
+        yaw: f32,
+        pitch: f32,
+        held: u32,
+        pressed: u32,
+        released: u32,
+    },
+    Render,
+    DebugPanic,
+    /// The ones the host's loop runs, as the request named them:
+    /// benchmarks, frames, pausing, resuming, captures, the game's controls
+    /// and reloads.
+    Loop(BrowserControl),
 }
 
 /// Versioned, read-only requests processed synchronously between frames.
@@ -635,129 +696,14 @@ pub enum BrowserControl {
     /// sections stay. A scene with an environment restores its own on
     /// reload; persist a look by saving it there.
     Environment(EnvironmentControl),
-    /// Temporarily set terrain's level of detail and view and
-    /// render while paused: `pixel_error` replaces the settings', `freeze`
-    /// keeps streaming and patches following the camera's
-    /// current position while the camera moves on, and `view` shows terrain
-    /// shaded or its levels, normals, tiles and patches, materials, sky
-    /// visibility or detail. Omitted fields stay as they
-    /// are.
-    Terrain {
-        version: u32,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::TerrainSettings::rule_of("pixel_error")))))]
-        pixel_error: Option<f32>,
-        #[serde(default)]
-        freeze: Option<bool>,
-        #[serde(default)]
-        view: Option<engine_core::TerrainView>,
-    },
-    /// Temporarily edit a generated terrain over its layers and bakes
-    /// and render while paused: `change` raises or lowers the
-    /// ground by meters, levels it to a world height or cuts holes in it, at
-    /// full strength within `radius` meters of world `center` `[x, z]` and
-    /// fading over `falloff` more, under `id` (letters, digits, `_`, `-` and
-    /// `.`), which repeating leaves the terrain alone. Only the tiles
-    /// under it regenerate. Returns whether it applied, the edits standing,
-    /// where tiles regenerate (world `min` and `max` `[x, z]`) and the most
-    /// the ground moved (meters). `terrain` names a scene's terrain entity
-    /// (the first terrain when omitted). The `Terrain` inspector lists the
-    /// edits as stamp layers to save into the scene.
-    TerrainEdit {
-        version: u32,
-        #[serde(default)]
-        terrain: Option<String>,
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(length(min = 1, max = bounds::MAX_EDIT_ID), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-        )]
-        id: String,
-        center: [f64; 2],
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stamp_rule("radius")))]
-        radius: f64,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stamp_rule("falloff")))]
-        falloff: f64,
-        change: engine_core::terrain_data::StampOp,
-    },
-    /// Take the terrain's last edit away and render while
-    /// paused; `terrain` as for `terrain_edit`.
-    TerrainUndo {
-        version: u32,
-        #[serde(default)]
-        terrain: Option<String>,
-    },
-    /// Put back the last edit undo took away, unless an edit came since,
-    /// and render while paused.
-    TerrainRedo {
-        version: u32,
-        #[serde(default)]
-        terrain: Option<String>,
-    },
-    /// Press a track as a deformer would, now, and render
-    /// while paused: a capsule `radius` meters across from world `from`
-    /// `[x, z]` to `to` (a footprint at `from` when omitted), sinking ground
-    /// as deformable as that `depth` meters along its middle, round
-    /// (`flatness` 0) to flat (1). `clear`
-    /// forgets every track first. Not a source change: the log and the map
-    /// keep it until cleared or refilled. Returns the stamp, the stamps the
-    /// log holds and whether deformation is enabled.
-    Deform {
-        version: u32,
-        from: [f64; 2],
-        #[serde(default)]
-        to: Option<[f64; 2]>,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::Deformer::rule_of("radius")))))]
-        radius: f64,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::Deformer::rule_of("depth")))))]
-        depth: f64,
-        #[serde(default = "default_flatness")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::Deformer::rule_of("flatness")))))]
-        flatness: f64,
-        #[serde(default)]
-        clear: bool,
-    },
-    /// Send navigation agent `entity` (authored ID) walking to world
-    /// `destination` `[x, z]`, or stop it with null, and
-    /// render while paused; steps then walk it. Not a source change.
-    /// Returns its status.
-    NavGo {
-        version: u32,
-        entity: String,
-        #[serde(default)]
-        destination: Option<[f32; 2]>,
-    },
-    /// Set an authored entity's animation player and render while paused:
-    /// its clip (an animation ID of the scene), time in seconds, speed and
-    /// looping; omitted values stay. Returns them before and after.
-    Animation {
-        version: u32,
-        entity: String,
-        #[serde(default)]
-        clip: Option<String>,
-        #[serde(default)]
-        time: Option<f32>,
-        #[serde(default)]
-        speed: Option<f32>,
-        #[serde(default)]
-        looping: Option<bool>,
-    },
-    /// Remove streamed items for good, or restore them, by
-    /// ID (`scene/root` for scenes), and render while
-    /// paused: `clear` restores every item first. Loaded cells despawn and
-    /// spawn them at once. Not a source change: WorldChanges keeps them,
-    /// as a game's save would. Returns how many items are removed.
-    WorldChanges {
-        version: u32,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = bounds::MAX_CHANGES)))]
-        remove: Vec<String>,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = bounds::MAX_CHANGES)))]
-        restore: Vec<String>,
-        #[serde(default)]
-        clear: bool,
-    },
+    Terrain(TerrainControl),
+    TerrainEdit(TerrainEditControl),
+    TerrainUndo(TerrainUndoControl),
+    TerrainRedo(TerrainRedoControl),
+    Deform(DeformControl),
+    NavGo(NavGoControl),
+    Animation(AnimationControl),
+    WorldChanges(WorldChangesControl),
     /// Set a complete temporary world-space camera and render while paused.
     Camera {
         version: u32,
@@ -895,6 +841,76 @@ pub enum BrowserControl {
 }
 
 impl BrowserControl {
+    /// The control as the host runs it: the one routing table of
+    /// controls. Every field of the host's own is named, so one added
+    /// reaches the host or fails to build.
+    pub fn route(self) -> Control {
+        match self {
+            Self::Present {
+                version: _,
+                alpha,
+                gpu,
+            } => Control::Host(HostControl::Present { alpha, gpu }),
+            Self::Culling {
+                version: _,
+                enabled,
+            } => Control::Host(HostControl::Culling { enabled }),
+            Self::Environment(control) => Control::Host(HostControl::Environment(control)),
+            Self::Terrain(control) => Control::Feature(Box::new(control)),
+            Self::TerrainEdit(control) => Control::Feature(Box::new(control)),
+            Self::TerrainUndo(control) => Control::Feature(Box::new(control)),
+            Self::TerrainRedo(control) => Control::Feature(Box::new(control)),
+            Self::Deform(control) => Control::Feature(Box::new(control)),
+            Self::NavGo(control) => Control::Feature(Box::new(control)),
+            Self::Animation(control) => Control::Feature(Box::new(control)),
+            Self::WorldChanges(control) => Control::Feature(Box::new(control)),
+            Self::Camera {
+                version: _,
+                position,
+                target,
+                vertical_fov_radians,
+                near,
+                far,
+            } => Control::Host(HostControl::Camera {
+                position,
+                target,
+                vertical_fov_radians,
+                near,
+                far,
+            }),
+            Self::Step { version: _, ticks } => Control::Host(HostControl::Step { ticks }),
+            Self::Input {
+                version: _,
+                forward,
+                right,
+                up,
+                yaw,
+                pitch,
+                held,
+                pressed,
+                released,
+            } => Control::Host(HostControl::Input {
+                forward,
+                right,
+                up,
+                yaw,
+                pitch,
+                held,
+                pressed,
+                released,
+            }),
+            Self::Render { version: _ } => Control::Host(HostControl::Render),
+            Self::DebugPanic { version: _ } => Control::Host(HostControl::DebugPanic),
+            control @ (Self::Benchmark { .. }
+            | Self::Frames { .. }
+            | Self::Pause { .. }
+            | Self::Resume { .. }
+            | Self::Capture { .. }
+            | Self::Game { .. }
+            | Self::Reload { .. }) => Control::Host(HostControl::Loop(control)),
+        }
+    }
+
     /// Whether the control needs a paused host: every one but pausing and
     /// resuming.
     pub fn needs_pause(&self) -> bool {
@@ -902,14 +918,14 @@ impl BrowserControl {
             Self::Present { .. }
             | Self::Culling { .. }
             | Self::Environment(..)
-            | Self::Terrain { .. }
-            | Self::TerrainEdit { .. }
-            | Self::TerrainUndo { .. }
-            | Self::TerrainRedo { .. }
-            | Self::Deform { .. }
-            | Self::WorldChanges { .. }
-            | Self::NavGo { .. }
-            | Self::Animation { .. }
+            | Self::Terrain(_)
+            | Self::TerrainEdit(_)
+            | Self::TerrainUndo(_)
+            | Self::TerrainRedo(_)
+            | Self::Deform(_)
+            | Self::WorldChanges(_)
+            | Self::NavGo(_)
+            | Self::Animation(_)
             | Self::Camera { .. }
             | Self::Benchmark { .. }
             | Self::Step { .. }
@@ -928,14 +944,14 @@ impl BrowserControl {
         match self {
             Self::Present { version, .. }
             | Self::Culling { version, .. }
-            | Self::Terrain { version, .. }
-            | Self::TerrainEdit { version, .. }
-            | Self::TerrainUndo { version, .. }
-            | Self::TerrainRedo { version, .. }
-            | Self::Deform { version, .. }
-            | Self::WorldChanges { version, .. }
-            | Self::NavGo { version, .. }
-            | Self::Animation { version, .. }
+            | Self::Terrain(TerrainControl { version, .. })
+            | Self::TerrainEdit(TerrainEditControl { version, .. })
+            | Self::TerrainUndo(TerrainUndoControl { version, .. })
+            | Self::TerrainRedo(TerrainRedoControl { version, .. })
+            | Self::Deform(DeformControl { version, .. })
+            | Self::WorldChanges(WorldChangesControl { version, .. })
+            | Self::NavGo(NavGoControl { version, .. })
+            | Self::Animation(AnimationControl { version, .. })
             | Self::Camera { version, .. }
             | Self::Benchmark { version, .. }
             | Self::Step { version, .. }
@@ -998,10 +1014,6 @@ pub enum BenchmarkMode {
     Step,
     Render,
     Present,
-}
-
-fn default_flatness() -> f64 {
-    0.5
 }
 
 fn default_warmup() -> u32 {

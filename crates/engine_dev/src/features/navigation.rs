@@ -1,13 +1,16 @@
 //! Navigation's development tools: the inspectors of agents and of their
 //! walks.
 
-use engine_core::Transform;
+use engine_core::{Engine, Feature, Transform, has_feature};
 use engine_core::bevy_ecs::prelude::Entity;
-use engine_scene::SceneEntity;
+use engine_scene::{SceneEntity, SceneInstance};
+use engine_settings::ErrorCode;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::{EngineControl, missing};
 use crate::inspect::Inspector;
-use crate::{DevTools, InspectorDescriptor, InspectorKind};
+use crate::{DevError, DevTools, InspectorDescriptor, InspectorKind};
 
 /// Registers navigation's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
@@ -98,4 +101,68 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
 pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
     schemas.insert("NavAgent".into(), super::schema::<crate::views::NavAgentView>());
     schemas.insert("NavAgents".into(), super::schema::<crate::views::NavAgentsView>());
+}
+
+/// Send navigation agent `entity` (authored ID) walking to world
+/// `destination` `[x, z]`, or stop it with null, and
+/// render while paused; steps then walk it. Not a source change.
+/// Returns its status.
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct NavGoControl {
+    pub version: u32,
+    pub entity: String,
+    #[serde(default)]
+    pub destination: Option<[f32; 2]>,
+}
+
+impl EngineControl for NavGoControl {
+    fn changed(&self) -> &'static str {
+        "agent sent"
+    }
+
+    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
+        nav_go(engine, scene, &self.entity, self.destination)
+    }
+}
+
+/// Sends navigation agent `id` in `scene` to `destination` (world x and
+/// z), or stops it.
+fn nav_go(
+    engine: &mut Engine,
+    scene: Option<&SceneInstance>,
+    id: &str,
+    destination: Option<[f32; 2]>,
+) -> Result<Value, DevError> {
+    if let Some(destination) = destination
+        && !destination
+            .iter()
+            .all(|value| value.is_finite() && value.abs() <= 1.0e6)
+    {
+        return Err(DevError::new(
+            ErrorCode::OutOfRange,
+            "$.destination",
+            "must be finite and within 1000000 meters",
+        ));
+    }
+    let world = engine.app.world_mut();
+    if !has_feature(world, Feature::Navigation) {
+        return Err(missing(Feature::Navigation));
+    }
+    let entity = scene
+        .and_then(|scene| crate::inspect::authored_entity(world, scene, id))
+        .filter(|&entity| world.get::<engine_core::NavAgent>(entity).is_some())
+        .ok_or_else(|| {
+            DevError::new(
+                ErrorCode::UnknownEntity,
+                "$.entity",
+                format!("no navigation agent {id} in the scene"),
+            )
+        })?;
+    let mut agent = world
+        .get_mut::<engine_core::NavAgent>(entity)
+        .expect("checked above");
+    agent.destination = destination;
+    Ok(json!({ "temporary": true, "destination": destination }))
 }

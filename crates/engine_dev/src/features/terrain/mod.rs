@@ -1,13 +1,25 @@
 //! Terrain's development tools: the inspectors of terrains, their streaming,
 //! prefetch places and the development view.
 
-use engine_core::TerrainDebug;
-use engine_core::bevy_ecs::prelude::{Entity, World};
+mod controls;
+
+use engine_core::bevy_ecs;
+use engine_core::bevy_ecs::prelude::{Entity, Resource, World};
+use engine_core::{Engine, TerrainDebug};
+use engine_scene::SceneInstance;
+use engine_settings::ErrorCode;
+#[cfg(not(target_arch = "wasm32"))]
+use engine_settings::{rule::same, stated};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::EngineControl;
 use crate::inspect::Inspector;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::protocol::{bounds, stamp_rule};
+use controls::{TerrainEditing, edit_terrain};
 use crate::views::TerrainDebugView;
-use crate::{Context, DevTools, InspectorDescriptor, InspectorKind};
+use crate::{Context, DevError, DevTools, InspectorDescriptor, InspectorKind};
 
 /// Registers terrain's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
@@ -189,4 +201,192 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
                     patches: status.patches,
                 }),
         }))
+}
+
+/// Temporarily set terrain's level of detail and view and
+/// render while paused: `pixel_error` replaces the settings', `freeze`
+/// keeps streaming and patches following the camera's
+/// current position while the camera moves on, and `view` shows terrain
+/// shaded or its levels, normals, tiles and patches, materials, sky
+/// visibility or detail. Omitted fields stay as they
+/// are.
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TerrainControl {
+    pub version: u32,
+    #[serde(default)]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::TerrainSettings::rule_of("pixel_error")))))]
+    pub pixel_error: Option<f32>,
+    #[serde(default)]
+    pub freeze: Option<bool>,
+    #[serde(default)]
+    pub view: Option<engine_core::TerrainView>,
+}
+
+impl EngineControl for TerrainControl {
+    fn changed(&self) -> &'static str {
+        "terrain changed"
+    }
+
+    fn apply(&self, engine: &mut Engine, _: Option<&SceneInstance>) -> Result<Value, DevError> {
+        let world = engine.app.world_mut();
+        if let Some(pixel_error) = self.pixel_error {
+            // The settings' own rule.
+            let rule = engine_core::TerrainSettings::rule_of("pixel_error")
+                .expect("terrain settings declare pixel_error");
+            if let Err(invalid) =
+                engine_settings::Setting::check(&pixel_error, "pixel_error", rule)
+            {
+                return Err(DevError::new(
+                    ErrorCode::OutOfRange,
+                    "$.pixel_error",
+                    invalid.to_string(),
+                ));
+            }
+            let mut settings = world
+                .get_resource::<engine_core::TerrainSettings>()
+                .copied()
+                .unwrap_or_default();
+            settings.pixel_error = pixel_error;
+            world.insert_resource(settings);
+        }
+        let eye = world.resource::<engine_core::Camera>().eye();
+        let mut debug = world
+            .get_resource::<engine_core::TerrainDebug>()
+            .copied()
+            .unwrap_or_default();
+        if let Some(freeze) = self.freeze {
+            debug.freeze = freeze.then_some(debug.freeze.unwrap_or(eye));
+        }
+        if let Some(view) = self.view {
+            debug.view = view;
+        }
+        world.insert_resource(debug);
+        Ok(json!({
+            "temporary": true,
+            "terrain_changed": true,
+            "frozen_at": debug.freeze.map(|eye| eye.to_array()),
+            "view": self.view.map(|_| debug.view),
+            "pixel_error": world.get_resource::<engine_core::TerrainSettings>().map(|settings| settings.pixel_error),
+        }))
+    }
+}
+
+/// Temporarily edit a generated terrain over its layers and bakes
+/// and render while paused: `change` raises or lowers the
+/// ground by meters, levels it to a world height or cuts holes in it, at
+/// full strength within `radius` meters of world `center` `[x, z]` and
+/// fading over `falloff` more, under `id` (letters, digits, `_`, `-` and
+/// `.`), which repeating leaves the terrain alone. Only the tiles
+/// under it regenerate. Returns whether it applied, the edits standing,
+/// where tiles regenerate (world `min` and `max` `[x, z]`) and the most
+/// the ground moved (meters). `terrain` names a scene's terrain entity
+/// (the first terrain when omitted). The `Terrain` inspector lists the
+/// edits as stamp layers to save into the scene.
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TerrainEditControl {
+    pub version: u32,
+    #[serde(default)]
+    pub terrain: Option<String>,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        schemars(length(min = 1, max = bounds::MAX_EDIT_ID), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+    )]
+    pub id: String,
+    pub center: [f64; 2],
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stamp_rule("radius")))]
+    pub radius: f64,
+    #[serde(default)]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stamp_rule("falloff")))]
+    pub falloff: f64,
+    pub change: engine_core::terrain_data::StampOp,
+}
+
+impl EngineControl for TerrainEditControl {
+    fn changed(&self) -> &'static str {
+        "terrain edited"
+    }
+
+    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
+        editing(
+            engine,
+            scene,
+            self.terrain.as_deref(),
+            TerrainEditing::Edit {
+                id: self.id.clone(),
+                center: self.center,
+                radius: self.radius,
+                falloff: self.falloff,
+                change: self.change,
+            },
+        )
+    }
+}
+
+/// Take the terrain's last edit away and render while
+/// paused; `terrain` as for `terrain_edit`.
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TerrainUndoControl {
+    pub version: u32,
+    #[serde(default)]
+    pub terrain: Option<String>,
+}
+
+impl EngineControl for TerrainUndoControl {
+    fn changed(&self) -> &'static str {
+        "terrain edited"
+    }
+
+    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
+        editing(engine, scene, self.terrain.as_deref(), TerrainEditing::Undo)
+    }
+}
+
+/// Put back the last edit undo took away, unless an edit came since,
+/// and render while paused.
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TerrainRedoControl {
+    pub version: u32,
+    #[serde(default)]
+    pub terrain: Option<String>,
+}
+
+impl EngineControl for TerrainRedoControl {
+    fn changed(&self) -> &'static str {
+        "terrain edited"
+    }
+
+    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
+        editing(engine, scene, self.terrain.as_deref(), TerrainEditing::Redo)
+    }
+}
+
+/// The terrain edits undo took away in this session, latest last: redo
+/// puts them back.
+#[derive(Resource, Default)]
+struct TerrainRedo(Vec<(Entity, engine_core::TerrainEdit)>);
+
+/// Runs `editing` on the terrain `name` names in `scene`, with the session's
+/// redo stack.
+fn editing(
+    engine: &mut Engine,
+    scene: Option<&SceneInstance>,
+    name: Option<&str>,
+    editing: TerrainEditing,
+) -> Result<Value, DevError> {
+    let mut redo = engine
+        .app
+        .world_mut()
+        .remove_resource::<TerrainRedo>()
+        .unwrap_or_default();
+    let result = edit_terrain(engine, scene, name, &mut redo.0, editing);
+    engine.app.world_mut().insert_resource(redo);
+    result
 }

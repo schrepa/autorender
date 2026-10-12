@@ -531,7 +531,7 @@ impl DevTools {
     fn check_feature(&self, world: &World, name: &str) -> Result<(), DevError> {
         match self.features.get(name) {
             Some(&feature) if !engine_core::has_feature(world, feature) => {
-                Err(crate::terrain::missing(feature))
+                Err(crate::features::missing(feature))
             }
             _ => Ok(()),
         }
