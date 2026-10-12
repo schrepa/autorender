@@ -8,6 +8,7 @@
 
 use crate::bindings::TRANSPARENT_COMPOSITE;
 use crate::gpu_data::TRANSPARENT_SHADER;
+use crate::targets::{FrameSize, ScreenTarget};
 
 /// Weighted premultiplied color and coverage, added.
 pub(crate) const ACCUMULATED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -47,7 +48,6 @@ pub(crate) fn accumulation_targets() -> [Option<wgpu::ColorTargetState>; 2] {
 }
 
 struct Targets {
-    size: (u32, u32),
     textures: [wgpu::Texture; 2],
     accumulated: wgpu::TextureView,
     revealed: wgpu::TextureView,
@@ -70,7 +70,7 @@ pub(crate) struct TransparentPass {
     composite: [Option<wgpu::RenderPipeline>; 2],
     surface_format: wgpu::TextureFormat,
     depth_format: wgpu::TextureFormat,
-    targets: Option<Targets>,
+    targets: ScreenTarget<Targets>,
 }
 
 impl TransparentPass {
@@ -96,25 +96,20 @@ impl TransparentPass {
             composite: [None, None],
             surface_format,
             depth_format,
-            targets: None,
+            targets: ScreenTarget::default(),
         }
     }
 
     /// Sizes the accumulation targets to `size`.
-    pub(crate) fn begin(&mut self, device: &wgpu::Device, size: (u32, u32)) {
-        if self
-            .targets
-            .as_ref()
-            .is_some_and(|targets| targets.size == size)
-        {
+    pub(crate) fn begin(&mut self, device: &wgpu::Device, size: FrameSize) {
+        if !self.targets.resizes(size) {
             return;
         }
-        self.targets = None;
         let texture = |label, format| {
             crate::targets::texture_2d(
                 device,
                 label,
-                (size.0, size.1),
+                size.pixels(),
                 1,
                 1,
                 format,
@@ -138,31 +133,33 @@ impl TransparentPass {
                 ("revealed", crate::pipelines::view(&revealed)),
             ],
         );
-        self.targets = Some(Targets {
+        self.targets.set(
             size,
-            textures,
-            accumulated,
-            revealed,
-            group,
-        });
+            Targets {
+                textures,
+                accumulated,
+                revealed,
+                group,
+            },
+        );
     }
 
     /// Releases the targets while frames draw nothing transparent.
     pub(crate) fn release_targets(&mut self) {
-        self.targets = None;
+        self.targets.release();
     }
 
     /// Target bytes: 8 accumulated and 1 revealed per pixel.
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.targets.as_ref().map_or(0, |targets| {
-            u64::from(targets.size.0) * u64::from(targets.size.1) * 9
-        })
+        self.targets
+            .size()
+            .map_or(0, |size| u64::from(size.width) * u64::from(size.height) * 9)
     }
 
     /// The accumulation pass's targets, accumulated color and revealage,
     /// which it clears to nothing added and everything revealed.
     pub(crate) fn views(&self) -> [&wgpu::TextureView; 2] {
-        let targets = self.targets.as_ref().expect("sized in begin");
+        let targets = self.targets.get().expect("sized in begin");
         [&targets.accumulated, &targets.revealed]
     }
 
@@ -227,7 +224,7 @@ impl TransparentPass {
 
     /// Draws the composite; call [`Self::ensure_composite`] first.
     pub(crate) fn composite(&self, pass: &mut wgpu::RenderPass<'_>, post: bool) {
-        let targets = self.targets.as_ref().expect("sized in begin");
+        let targets = self.targets.get().expect("sized in begin");
         pass.set_pipeline(self.composite[usize::from(post)].as_ref().expect("ensured"));
         pass.set_bind_group(0, &targets.group, &[]);
         pass.draw(0..3, 0..1);

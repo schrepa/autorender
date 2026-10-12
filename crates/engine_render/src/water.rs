@@ -34,6 +34,7 @@ use engine_core::{Environment, MAX_OCEAN_WAVES, Ocean, RenderTerrains, Water, Wa
 use crate::bindings::{WATER, WATER_DEPTH};
 use crate::gpu_layouts::constants::WATER_DEPTH_RANGE as DEPTH_RANGE;
 use crate::render_graph::Targets;
+use crate::targets::{FrameSize, ScreenTarget};
 
 /// Quads along each side of a chunk at full detail; coarser chunks draw a
 /// vertex every second, fourth or eighth sample.
@@ -132,18 +133,16 @@ const RIBBON_STRIDES: [(usize, &[u32], f32); 4] = [
     (8, &[0, 3, 6], f32::INFINITY),
 ];
 
-/// The opaque depth's copy water reads, its group and its
-/// size.
+/// The opaque depth's copy water reads, and its group.
 struct DepthCopy {
     texture: wgpu::Texture,
     group: wgpu::BindGroup,
-    size: (u32, u32),
 }
 
 pub(crate) struct WaterPass {
     pub(crate) layout: wgpu::BindGroupLayout,
     depth_layout: wgpu::BindGroupLayout,
-    depth: Option<DepthCopy>,
+    depth: ScreenTarget<DepthCopy>,
     terrains: HashMap<u64, TerrainWater>,
     instances: wgpu::Buffer,
     pipeline_layout: Option<wgpu::PipelineLayout>,
@@ -160,7 +159,7 @@ impl WaterPass {
         Self {
             layout: crate::pipelines::layout(device, &WATER),
             depth_layout: crate::pipelines::layout(device, &WATER_DEPTH),
-            depth: None,
+            depth: ScreenTarget::default(),
             terrains: HashMap::default(),
             instances: chunk_buffer(device, 256),
             pipeline_layout: None,
@@ -189,9 +188,10 @@ impl WaterPass {
 
     /// Bytes of the water's textures and its depth copy.
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        let depth = self.depth.as_ref().map_or(0, |copy| {
-            u64::from(copy.size.0) * u64::from(copy.size.1) * 4
-        });
+        let depth = self
+            .depth
+            .size()
+            .map_or(0, |size| u64::from(size.width) * u64::from(size.height) * 4);
         self.terrains
             .values()
             .map(|water| {
@@ -208,7 +208,7 @@ impl WaterPass {
     /// Copies the opaque `depth` into the copy water reads, before it
     /// draws.
     pub(crate) fn copy_depth(&self, encoder: &mut wgpu::CommandEncoder, depth: &wgpu::Texture) {
-        if let Some(copy) = &self.depth
+        if let Some(copy) = self.depth.get()
             && depth.size() == copy.texture.size()
         {
             encoder.copy_texture_to_texture(
@@ -256,17 +256,16 @@ impl WaterPass {
         if self.records.is_empty() && !sea && !rivers {
             return false;
         }
-        // The depth copy, at the frame's size.
-        let depth_size = (depth.width(), depth.height());
-        if self
-            .depth
-            .as_ref()
-            .is_none_or(|copy| copy.size != depth_size)
-        {
+        // The depth copy, at the depth buffer's size: the frame's.
+        let size = FrameSize {
+            width: depth.width(),
+            height: depth.height(),
+        };
+        if self.depth.resizes(size) {
             let texture = crate::targets::texture_2d(
                 device,
                 "engine/water-depth",
-                depth_size,
+                size.pixels(),
                 1,
                 1,
                 depth.format(),
@@ -280,11 +279,7 @@ impl WaterPass {
                 &self.depth_layout,
                 &[("water_depth", crate::pipelines::view(&view))],
             );
-            self.depth = Some(DepthCopy {
-                texture,
-                group,
-                size: depth_size,
-            });
+            self.depth.set(size, DepthCopy { texture, group });
         }
         if !self.records.is_empty() {
             let bytes = std::mem::size_of_val(self.records.as_slice()) as u64;
@@ -642,7 +637,7 @@ impl WaterPass {
         camera: &wgpu::BindGroup,
         targets: Targets,
     ) -> u32 {
-        let Some(depth) = &self.depth else {
+        let Some(depth) = self.depth.get() else {
             return 0;
         };
         let mut draws = 0;

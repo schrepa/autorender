@@ -37,7 +37,7 @@ use crate::profiling::{GpuProfiler, Span};
 use crate::retained_uploads::RetainedUploads;
 use crate::shadows::{CasterDraw, ShadowPass};
 use crate::staging::{self, StagingRing};
-use crate::targets::Targets;
+use crate::targets::{FrameSize, ScreenTarget, Targets};
 use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::transparent::{TransparentPass, accumulation_targets};
 use crate::uploads::UploadCache;
@@ -202,7 +202,7 @@ pub struct Renderer {
     display: Display,
     depth: DepthTarget,
     // Terrain's visibility target and its resolves' group.
-    terrain_ids: Option<terrain_draws::TerrainIds>,
+    terrain_ids: ScreenTarget<terrain_draws::TerrainIds>,
     // Resident meshes, in the shared arena's buffers (or their own when it
     // had no room), and a generation that advances whenever a mesh is
     // placed or retired.

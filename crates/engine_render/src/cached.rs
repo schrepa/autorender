@@ -66,6 +66,7 @@ impl Versioned<wgpu::TextureView> {
 }
 
 /// A resource a group binds, with the generation of what it came from.
+#[derive(Clone)]
 pub(crate) struct Bound<'a> {
     generation: u64,
     resource: wgpu::BindingResource<'a>,

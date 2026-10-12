@@ -131,7 +131,7 @@ impl Renderer {
             Resource::TerrainIds => {
                 &self
                     .terrain_ids
-                    .as_ref()
+                    .get()
                     .expect("deferred terrain's frames create it")
                     .view
             }
@@ -340,7 +340,7 @@ impl Renderer {
     /// The pages the first phase's terrain resolves wanted of the runtime
     /// virtual texture, read from terrain's visibility target.
     fn encode_vt_feedback(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        let Some(ids) = &self.terrain_ids else {
+        let Some(ids) = self.terrain_ids.get() else {
             return;
         };
         let size = self.depth.texture.size();

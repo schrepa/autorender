@@ -10,11 +10,12 @@
 use engine_core::{RenderFrame, glam::Mat4};
 
 use crate::bindings::{TAA_RESOLVE, TEMPORAL_POSES};
-use crate::cached::Cached;
+use crate::cached::{Bound, Cached, GroupCache};
 use crate::gpu_data::{
     CameraUniform, ResolveUniform, TEMPORAL_SHADER, jitter_clip, jitter_offset, jittered,
 };
 use crate::post::PostPass;
+use crate::targets::{FrameSize, ScreenTarget};
 
 pub(crate) const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -23,14 +24,10 @@ const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const CURRENT_WEIGHT: f32 = 0.1;
 
 struct Targets {
-    size: (u32, u32),
     // Motion and both histories, destroyed with the targets.
     textures: [wgpu::Texture; 3],
     motion: wgpu::TextureView,
     history: [wgpu::TextureView; 2],
-    // Frames writing history `p` read history `1 - p` through group `p`,
-    // over the screen-effect targets of that generation.
-    groups: Cached<u64, [wgpu::BindGroup; 2]>,
 }
 
 impl Drop for Targets {
@@ -48,7 +45,7 @@ impl Drop for Targets {
 struct History {
     // Its unjittered view-projection, the origin of camera motion.
     view_projection: Mat4,
-    size: (u32, u32),
+    size: FrameSize,
     // Retained render identity, structure revision and pose storage
     // generation: previous poses are per slot of that structure.
     identity: u64,
@@ -82,7 +79,10 @@ pub(crate) struct TemporalPass {
     sampler: wgpu::Sampler,
     uniform: wgpu::Buffer,
     written: Option<ResolveUniform>,
-    targets: Option<Targets>,
+    targets: ScreenTarget<Targets>,
+    // Frames writing history `p` read history `1 - p` through group `p`,
+    // over the screen effects' targets.
+    resolve_groups: [GroupCache<9>; 2],
     // Pose groups for (current, previous) buffer pairs, index 2 * current +
     // previous, of the pose storage generation they were built for.
     pose_groups: Cached<u64, [wgpu::BindGroup; 4]>,
@@ -156,7 +156,8 @@ impl TemporalPass {
             sampler,
             uniform,
             written: None,
-            targets: None,
+            targets: ScreenTarget::default(),
+            resolve_groups: Default::default(),
             pose_groups: Cached::default(),
             history: None,
             frame: 0,
@@ -166,8 +167,8 @@ impl TemporalPass {
     /// Target bytes: motion and two history textures of 4 bytes per pixel
     /// each (the scene target belongs to the screen effects).
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.targets.as_ref().map_or(0, |targets| {
-            u64::from(targets.size.0) * u64::from(targets.size.1) * 12
+        self.targets.size().map_or(0, |size| {
+            u64::from(size.width) * u64::from(size.height) * 12
         })
     }
 
@@ -179,16 +180,13 @@ impl TemporalPass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &RenderFrame<'_>,
-        size: (u32, u32),
+        size: FrameSize,
         pose_generation: u64,
     ) -> TemporalFrame {
-        if self
-            .targets
-            .as_ref()
-            .is_none_or(|targets| targets.size != size)
-        {
+        if self.targets.resizes(size) {
             // Recreated history starts over.
-            self.targets = Some(self.create_targets(device, size));
+            let targets = self.create_targets(device, size);
+            self.targets.set(size, targets);
             self.history = None;
         }
         let view_projection = frame.snapshot().view_projection;
@@ -202,10 +200,10 @@ impl TemporalPass {
         let last = self
             .history
             .filter(|last| last.size == size && last.identity == history.identity);
-        let jitter = jitter_clip(jitter_offset(self.frame), size.0, size.1);
+        let jitter = jitter_clip(jitter_offset(self.frame), size.width, size.height);
         let previous = last.map_or(view_projection, |last| last.view_projection);
         let uniform = ResolveUniform {
-            texel: [1.0 / size.0 as f32, 1.0 / size.1 as f32],
+            texel: [1.0 / size.width as f32, 1.0 / size.height as f32],
             current_weight: CURRENT_WEIGHT,
             history_valid: u32::from(last.is_some()),
         };
@@ -224,7 +222,7 @@ impl TemporalPass {
                 frame.snapshot().elapsed_seconds,
                 previous,
                 jitter,
-                size,
+                size.pixels(),
                 u64::from(self.frame),
             ),
             rasterized: jittered(view_projection, jitter),
@@ -328,40 +326,37 @@ impl TemporalPass {
 
     /// The motion target of the opaque pass.
     pub(crate) fn motion(&self) -> &wgpu::TextureView {
-        &self.targets.as_ref().expect("sized in begin").motion
+        &self.targets.get().expect("sized in begin").motion
     }
 
     /// Binds the resolve to the screen effects' current targets.
     pub(crate) fn prepare_resolve(&mut self, device: &wgpu::Device, post: &PostPass) {
-        let generation = post.generation();
-        let Some(targets) = self.targets.as_mut() else {
+        let Some(targets) = self.targets.get() else {
             return;
         };
-        if !targets.groups.stale(&generation) {
-            return;
-        }
         let ([scene, occlusion, bloom, reflections], settings) = post.resolve_inputs();
-        let group = |previous: &wgpu::TextureView| {
-            crate::pipelines::group(
+        let target = |view| Bound::of(targets, crate::pipelines::view(view));
+        for (parity, group) in self.resolve_groups.iter_mut().enumerate() {
+            group.bind(
                 device,
                 "engine/taa-resolve-group",
-                &TAA_RESOLVE,
-                &self.resolve_layout,
-                &[
-                    ("resolve", self.uniform.as_entire_binding()),
-                    ("scene", crate::pipelines::view(scene)),
-                    ("motion", crate::pipelines::view(&targets.motion)),
-                    ("history", crate::pipelines::view(previous)),
-                    ("history_sampler", crate::pipelines::sampler(&self.sampler)),
-                    ("occlusion", crate::pipelines::view(occlusion)),
-                    ("bloom", crate::pipelines::view(bloom)),
-                    ("reflections", crate::pipelines::view(reflections)),
-                    ("post", settings.as_entire_binding()),
+                (&TAA_RESOLVE, &self.resolve_layout),
+                [
+                    ("resolve", Bound::fixed(self.uniform.as_entire_binding())),
+                    ("scene", scene.clone()),
+                    ("motion", target(&targets.motion)),
+                    ("history", target(&targets.history[1 - parity])),
+                    (
+                        "history_sampler",
+                        Bound::fixed(crate::pipelines::sampler(&self.sampler)),
+                    ),
+                    ("occlusion", occlusion.clone()),
+                    ("bloom", bloom.clone()),
+                    ("reflections", reflections.clone()),
+                    ("post", settings.clone()),
                 ],
-            )
-        };
-        let groups = [group(&targets.history[1]), group(&targets.history[0])];
-        targets.groups.set(generation, groups);
+            );
+        }
     }
 
     /// Records the resolve of `frame` into `canvas` and its history texture,
@@ -374,8 +369,10 @@ impl TemporalPass {
         [canvas_ops, history_ops]: [wgpu::Operations<wgpu::Color>; 2],
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
-        let targets = self.targets.as_ref().expect("sized in begin");
-        let groups = targets.groups.get().expect("bound in prepare_resolve");
+        let targets = self.targets.get().expect("sized in begin");
+        let group = self.resolve_groups[frame.parity]
+            .get()
+            .expect("bound in prepare_resolve");
         let attachment = |view, ops| {
             Some(wgpu::RenderPassColorAttachment {
                 view,
@@ -396,7 +393,7 @@ impl TemporalPass {
             multiview_mask: None,
         });
         pass.set_pipeline(&self.resolve_pipeline);
-        pass.set_bind_group(0, &groups[frame.parity], &[]);
+        pass.set_bind_group(0, group, &[]);
         pass.draw(0..3, 0..1);
     }
 
@@ -411,12 +408,12 @@ impl TemporalPass {
         self.history = None;
     }
 
-    fn create_targets(&self, device: &wgpu::Device, (width, height): (u32, u32)) -> Targets {
+    fn create_targets(&self, device: &wgpu::Device, size: FrameSize) -> Targets {
         let texture = |label, format| {
             crate::targets::texture_2d(
                 device,
                 label,
-                (width, height),
+                size.pixels(),
                 1,
                 1,
                 format,
@@ -432,11 +429,9 @@ impl TemporalPass {
             .each_ref()
             .map(|texture| texture.create_view(&Default::default()));
         Targets {
-            size: (width, height),
             textures,
             motion,
             history: [first, second],
-            groups: Cached::default(),
         }
     }
 }

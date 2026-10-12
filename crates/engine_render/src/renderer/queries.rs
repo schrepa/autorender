@@ -19,7 +19,7 @@ impl Renderer {
     /// fitted within the device's largest texture; `None` while a view
     /// without area suspends drawing.
     pub fn view_size(&self) -> Option<(u32, u32)> {
-        (!self.display.suspended).then(|| self.display.size())
+        (!self.display.suspended).then(|| self.display.size().pixels())
     }
 
     /// Start a bounded GPU capture. Allocate its reusable storage outside frame work.

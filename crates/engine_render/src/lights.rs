@@ -266,7 +266,7 @@ mod gpu {
             device: &wgpu::Device,
             queue: &wgpu::Queue,
             snapshot: &RenderSnapshot,
-            size: (u32, u32),
+            size: crate::targets::FrameSize,
             poses: FramePoses<'_>,
             revision: (u64, u64),
         ) -> Option<LightFrame> {
@@ -321,8 +321,8 @@ mod gpu {
             }
             let uniform = ClusterUniform::new(
                 snapshot.view_projection,
-                size.0,
-                size.1,
+                size.width,
+                size.height,
                 snapshot.environment.local_lights.distance,
                 count as u32,
                 snapshot.environment.local_lights.lights_per_cluster,

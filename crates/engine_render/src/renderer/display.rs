@@ -85,7 +85,7 @@ impl Display {
                 self.offscreen = Some(crate::targets::texture_2d(
                     device,
                     "engine/offscreen",
-                    self.size(),
+                    self.size().pixels(),
                     1,
                     1,
                     self.configuration.format,
@@ -95,9 +95,12 @@ impl Display {
         }
     }
 
-    /// The surface's size in physical pixels.
-    pub(super) fn size(&self) -> (u32, u32) {
-        (self.configuration.width, self.configuration.height)
+    /// The surface's size in physical pixels: the frame's, once acquired.
+    pub(super) fn size(&self) -> FrameSize {
+        FrameSize {
+            width: self.configuration.width,
+            height: self.configuration.height,
+        }
     }
 
     pub(super) fn format(&self) -> wgpu::TextureFormat {
@@ -212,11 +215,11 @@ pub(super) struct DepthTarget {
 }
 
 impl DepthTarget {
-    pub(super) fn new(device: &wgpu::Device, (width, height): (u32, u32)) -> Self {
+    pub(super) fn new(device: &wgpu::Device, size: FrameSize) -> Self {
         let texture = crate::targets::texture_2d(
             device,
             "engine/depth",
-            (width, height),
+            size.pixels(),
             1,
             1,
             DEPTH_FORMAT,
@@ -232,7 +235,7 @@ impl DepthTarget {
     }
 
     /// Replaces the buffer with one of `size`, its view of a new generation.
-    fn resize(&mut self, device: &wgpu::Device, size: (u32, u32)) {
+    fn resize(&mut self, device: &wgpu::Device, size: FrameSize) {
         *self = Self::new(device, size);
     }
 }

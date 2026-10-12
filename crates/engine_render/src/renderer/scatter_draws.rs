@@ -265,7 +265,7 @@ impl Renderer {
             .then_some(level_of_detail.pixel_error);
         // How much of their way the camera's switches fade this frame.
         let fade = self.switch_fades.share;
-        let height = self.display.size().1 as f32;
+        let height = self.display.size().height as f32;
         // Frames keeping still casters cast placed objects into the kept map,
         // not the moving one.
         let keeps_still = self.shadows.keeps_still();

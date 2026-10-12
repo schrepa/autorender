@@ -22,6 +22,7 @@ use crate::gpu_data::{POST_SHADER, PostUniform, SHAFTS_SHADER};
 use crate::pipelines::{self, Fillers, Fullscreen, filled_group, fullscreen};
 use crate::profiling::{GpuProfiler, Span};
 use crate::screen_effects::{Effects, UniformFrame};
+use crate::targets::{FrameSize, ScreenTarget};
 
 /// Linear color with 8 perceptual bits; alpha holds the ambient share.
 pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -60,7 +61,6 @@ const BLOOM_LEVELS: u32 = 6;
 const SCENE_LEVELS: u32 = 6;
 
 struct Targets {
-    size: (u32, u32),
     // Scene, glow, occlusion (with shafts), bloom, reflections, traced
     // shafts, traced reflections, raw occlusion, surface and scene levels,
     // destroyed with the targets.
@@ -136,7 +136,7 @@ pub(crate) struct PostPass {
     uniform: wgpu::Buffer,
     written: Option<PostUniform>,
     sampler: wgpu::Sampler,
-    targets: Option<Versioned<Targets>>,
+    targets: ScreenTarget<Targets>,
     // Occlusion, filter, reflection and shaft bindings over the depth
     // buffer and targets (and reflections', the pyramid).
     occlusion_group: GroupCache<2>,
@@ -313,7 +313,7 @@ impl PostPass {
             uniform,
             written: None,
             sampler,
-            targets: None,
+            targets: ScreenTarget::default(),
             occlusion_group: GroupCache::default(),
             effects_filter_group: GroupCache::default(),
             reflections_group: GroupCache::default(),
@@ -322,17 +322,10 @@ impl PostPass {
         }
     }
 
-    /// Advances when targets are replaced: the temporal resolve rebinds.
-    pub(crate) fn generation(&self) -> u64 {
-        self.targets
-            .as_ref()
-            .map_or(0, |targets| targets.generation())
-    }
-
     /// Releases the targets while no frame uses an effect; the next such
     /// frame recreates them.
     pub(crate) fn release_targets(&mut self) {
-        self.targets = None;
+        self.targets.release();
         self.occlusion_group.clear();
         self.effects_filter_group.clear();
         self.reflections_group.clear();
@@ -347,8 +340,8 @@ impl PostPass {
     /// scene levels (8 bytes per texel of their first levels), and the
     /// reflections' depth pyramid.
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.targets.as_ref().map_or(0, |targets| {
-            let pixels = u64::from(targets.size.0) * u64::from(targets.size.1);
+        self.targets.size().map_or(0, |size| {
+            let pixels = u64::from(size.width) * u64::from(size.height);
             pixels * 10 + pixels / 4 * 24 + pixels / 16 * 4 + pixels / 4 * 8 * 4 / 3 * 2
         }) + self.nearest.capacity_bytes()
     }
@@ -362,20 +355,16 @@ impl PostPass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         snapshot: &RenderSnapshot,
-        size: (u32, u32),
+        size: FrameSize,
         depth: &Versioned<wgpu::TextureView>,
         temporal: bool,
     ) -> Effects {
-        if self
-            .targets
-            .as_ref()
-            .is_none_or(|targets| targets.size != size)
-        {
-            self.targets = None;
-            self.targets = Some(Versioned::new(self.create_targets(device, size)));
+        if self.targets.resizes(size) {
+            let targets = self.create_targets(device, size);
+            self.targets.set(size, targets);
         }
         let frame = Effects::of(&snapshot.environment);
-        let targets = self.targets.as_ref().expect("sized above");
+        let targets = self.targets.get().expect("sized above");
         let post = || Bound::fixed(self.uniform.as_entire_binding());
         let target = |view| Bound::of(targets, pipelines::view(view));
         let shared = (&POST, &self.layout);
@@ -449,13 +438,16 @@ impl PostPass {
                 [("post", post()), ("depth_texture", depth.bound())],
             );
         }
-        let (width, height) = (size.0 as f32, size.1 as f32);
+        let (width, height) = (size.width as f32, size.height as f32);
         let view_projection = snapshot.view_projection;
         // Row y of a perspective view-projection is the focal scale times a
         // unit axis of the view: its length converts world units at unit
         // distance into half the viewport height.
         let focal = view_projection.row(1).truncate().length();
-        let half = ((size.0 / 2).max(1) as f32, (size.1 / 2).max(1) as f32);
+        let half = (
+            (size.width / 2).max(1) as f32,
+            (size.height / 2).max(1) as f32,
+        );
         let atmosphere = snapshot.environment.atmosphere.sanitized();
         let toward_sun = atmosphere.sun_direction.normalize_or_zero();
         let effects = frame.uniforms(
@@ -503,28 +495,30 @@ impl PostPass {
 
     /// The scene color, glow and surface targets of the opaque pass.
     pub(crate) fn targets(&self) -> (&wgpu::TextureView, &wgpu::TextureView, &wgpu::TextureView) {
-        let targets = self.targets.as_ref().expect("sized in begin");
+        let targets = self.targets.get().expect("sized in begin");
         (&targets.scene, &targets.glow, &targets.surface)
     }
 
     /// The scene color as a group binds it, for glass refracting it.
     pub(crate) fn scene(&self) -> Bound<'_> {
-        let targets = self.targets.as_ref().expect("sized in begin");
+        let targets = self.targets.get().expect("sized in begin");
         Bound::of(targets, pipelines::view(&targets.scene))
     }
 
-    /// Views the temporal resolve reads: scene, occlusion with shafts, bloom
-    /// and reflections, and the settings uniform.
-    pub(crate) fn resolve_inputs(&self) -> ([&wgpu::TextureView; 4], &wgpu::Buffer) {
-        let targets = self.targets.as_ref().expect("sized in begin");
+    /// What the temporal resolve reads, as its group binds them: the scene,
+    /// occlusion with shafts, bloom and reflections, and the settings
+    /// uniform.
+    pub(crate) fn resolve_inputs(&self) -> ([Bound<'_>; 4], Bound<'_>) {
+        let targets = self.targets.get().expect("sized in begin");
+        let target = |view| Bound::of(targets, pipelines::view(view));
         (
             [
-                &targets.scene,
-                &targets.occlusion,
-                &targets.bloom[0],
-                &targets.reflections,
+                target(&targets.scene),
+                target(&targets.occlusion),
+                target(&targets.bloom[0]),
+                target(&targets.reflections),
             ],
-            &self.uniform,
+            Bound::fixed(self.uniform.as_entire_binding()),
         )
     }
 
@@ -543,7 +537,7 @@ impl PostPass {
         camera: &wgpu::BindGroup,
         profiler: &GpuProfiler,
     ) {
-        let targets = self.targets.as_ref().expect("sized in begin");
+        let targets = self.targets.get().expect("sized in begin");
         if (frame.occlusion || frame.contact)
             && let Some(group) = self.occlusion_group.get()
         {
@@ -659,7 +653,7 @@ impl PostPass {
         scene_levels: bool,
         profiler: &GpuProfiler,
     ) -> usize {
-        let targets = self.targets.as_ref().expect("sized in begin");
+        let targets = self.targets.get().expect("sized in begin");
         let levels = targets.bloom.len();
         // The first pass down begins the span, the last pass up ends it.
         let span = profiler.span("bloom");
@@ -743,7 +737,7 @@ impl PostPass {
         ops: wgpu::Operations<wgpu::Color>,
         profiler: &GpuProfiler,
     ) {
-        let targets = self.targets.as_ref().expect("sized in begin");
+        let targets = self.targets.get().expect("sized in begin");
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("engine/post-composite"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -762,7 +756,11 @@ impl PostPass {
         pass.draw(0..3, 0..1);
     }
 
-    fn create_targets(&self, device: &wgpu::Device, (width, height): (u32, u32)) -> Targets {
+    fn create_targets(
+        &self,
+        device: &wgpu::Device,
+        FrameSize { width, height }: FrameSize,
+    ) -> Targets {
         let half = ((width / 2).max(1), (height / 2).max(1));
         let quarter = (width.div_ceil(4).max(1), height.div_ceil(4).max(1));
         let texture = |label, (width, height): (u32, u32), format, levels| {
@@ -880,7 +878,6 @@ impl PostPass {
             texture_entry("reflections", &reflections),
         ]);
         Targets {
-            size: (width, height),
             textures,
             scene,
             glow,

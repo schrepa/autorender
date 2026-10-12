@@ -10,7 +10,6 @@ use crate::terrain::{FrameTerrain, TerrainViews};
 /// depth target generation `generation`, and the group its resolves read
 /// it through.
 pub(super) struct TerrainIds {
-    generation: u64,
     pub(super) view: wgpu::TextureView,
     group: wgpu::BindGroup,
 }
@@ -48,7 +47,7 @@ impl Renderer {
         let canopy = (cover.enabled && cover.density > 0.0).then(|| {
             (
                 cover,
-                crate::ground_cover::pixels_per_meter(culling, self.display.size().1 as f32),
+                crate::ground_cover::pixels_per_meter(culling, self.display.size().height as f32),
             )
         });
         let drawn = self.terrain.prepare(
@@ -95,7 +94,7 @@ impl Renderer {
                 snapshot.camera_position,
                 snapshot.elapsed_seconds,
             ),
-            self.display.size().1 as f32,
+            self.display.size().height as f32,
         );
         let lit = opaque_kind.lit;
         let lights = self.lights.as_ref().map(LightPass::fragment_layout);
@@ -271,19 +270,13 @@ impl Renderer {
             (targets, false),
             (self.display.format(), DEPTH_FORMAT),
         );
-        // Terrain's visibility target, the depth target's
-        // size.
-        let generation = self.depth.view.generation();
-        if self
-            .terrain_ids
-            .as_ref()
-            .is_none_or(|ids| ids.generation != generation)
-        {
-            let size = self.depth.texture.size();
+        // Terrain's visibility target, at the frame's size.
+        let size = self.display.size();
+        if self.terrain_ids.resizes(size) {
             let texture = crate::targets::texture_2d(
                 &self.device,
                 "engine/terrain-ids",
-                (size.width, size.height),
+                size.pixels(),
                 1,
                 1,
                 wgpu::TextureFormat::Rg32Uint,
@@ -297,11 +290,7 @@ impl Renderer {
                 &self.terrain.pipelines.resolve_layout,
                 &[("terrain_ids_texture", crate::pipelines::view(&view))],
             );
-            self.terrain_ids = Some(TerrainIds {
-                generation,
-                view,
-                group,
-            });
+            self.terrain_ids.set(size, TerrainIds { view, group });
         }
         true
     }
@@ -313,7 +302,7 @@ impl Renderer {
     pub(super) fn terrain_deferred(&self, terrain: bool, kind: PassKind) -> bool {
         terrain
             && self.terrain.patches.frame.shaded
-            && self.terrain_ids.is_some()
+            && self.terrain_ids.get().is_some()
             && kind.targets().is_some_and(|targets| {
                 self.terrain
                     .pipelines
@@ -350,7 +339,8 @@ impl Renderer {
         pass: &mut wgpu::RenderPass<'_>,
     ) -> u32 {
         let kind = state.passes.opaque_kind;
-        let (Some(targets), Some(TerrainIds { group, .. })) = (kind.targets(), &self.terrain_ids)
+        let (Some(targets), Some(TerrainIds { group, .. })) =
+            (kind.targets(), self.terrain_ids.get().map(|ids| &**ids))
         else {
             return 0;
         };

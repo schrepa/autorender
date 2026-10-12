@@ -9,6 +9,7 @@ use crate::cached::{Cached, Versioned};
 use crate::gpu_data::{DEPTH_PYRAMID_SHADER, mip_levels};
 use crate::gpu_layouts::constants::PYRAMID_GROUP as GROUP;
 use crate::profiling::Span;
+use crate::targets::FrameSize;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
@@ -94,7 +95,7 @@ impl DepthPyramid {
         &mut self,
         device: &wgpu::Device,
         depth: &Versioned<wgpu::TextureView>,
-        (width, height): (u32, u32),
+        FrameSize { width, height }: FrameSize,
     ) -> u32 {
         let depth_generation = depth.generation();
         if !self.levels.stale(&depth_generation) {

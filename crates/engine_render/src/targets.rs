@@ -1,7 +1,9 @@
 //! The color targets of the frame's main passes (the render graph's
 //! [`Targets`]): the formats every pipeline drawing into them declares, in
-//! pipeline order; and the 2D textures passes draw into and sample.
+//! pipeline order; the 2D textures passes draw into and sample; and the
+//! frame's size, which screen-sized targets are made at.
 
+use crate::cached::Versioned;
 use crate::post::{GLOW_FORMAT, SCENE_FORMAT, SURFACE_FORMAT};
 pub(crate) use crate::render_graph::Targets;
 use crate::temporal::MOTION_FORMAT;
@@ -94,4 +96,65 @@ pub(crate) fn texel(
         },
     );
     texture
+}
+
+/// The frame's size in physical pixels: the display's, which every
+/// screen-sized target is made at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FrameSize {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+}
+
+impl FrameSize {
+    /// Width and height, as textures are sized.
+    pub(crate) fn pixels(self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+}
+
+/// Targets made at the frame's size: made when a frame first wants them
+/// and again, once, at each new size, each set a new generation, so the
+/// groups binding them rebuild. Those of the old size are dropped before
+/// the new ones are made (their textures destroyed with them).
+pub(crate) struct ScreenTarget<T> {
+    made: Option<(FrameSize, Versioned<T>)>,
+}
+
+impl<T> Default for ScreenTarget<T> {
+    fn default() -> Self {
+        Self { made: None }
+    }
+}
+
+impl<T> ScreenTarget<T> {
+    /// Whether targets must be made at `size`: none are held, or those
+    /// held, which this drops, were made at another size.
+    pub(crate) fn resizes(&mut self, size: FrameSize) -> bool {
+        if self.size() == Some(size) {
+            return false;
+        }
+        self.made = None;
+        true
+    }
+
+    /// Keeps `targets`, made at `size`, as a new generation.
+    pub(crate) fn set(&mut self, size: FrameSize, targets: T) {
+        self.made = Some((size, Versioned::new(targets)));
+    }
+
+    /// The targets, once made.
+    pub(crate) fn get(&self) -> Option<&Versioned<T>> {
+        self.made.as_ref().map(|(_, targets)| targets)
+    }
+
+    /// The size the targets were made at.
+    pub(crate) fn size(&self) -> Option<FrameSize> {
+        self.made.as_ref().map(|(size, _)| *size)
+    }
+
+    /// Drops the targets.
+    pub(crate) fn release(&mut self) {
+        self.made = None;
+    }
 }

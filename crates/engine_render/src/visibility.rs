@@ -109,10 +109,10 @@ impl VisibilityBuffer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        size: (u32, u32),
+        size: crate::targets::FrameSize,
         visible_bases: [&[u32]; 2],
     ) -> bool {
-        let (width, height) = (size.0.max(1), size.1.max(1));
+        let (width, height) = (size.width.max(1), size.height.max(1));
         let bins = visible_bases[0].len();
         self.tiles = (width.div_ceil(TILE), height.div_ceil(TILE));
         let capacity = u64::from(self.tiles.0) * u64::from(self.tiles.1);

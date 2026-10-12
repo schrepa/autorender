@@ -235,7 +235,7 @@ mod gpu {
             queue: &wgpu::Queue,
             snapshot: &RenderSnapshot,
             emitters: (u64, u64),
-            size: (u32, u32),
+            size: crate::targets::FrameSize,
             depth: &Versioned<wgpu::TextureView>,
         ) -> Option<ParticleFrame> {
             if !snapshot.environment.particles.enabled || snapshot.particles.list.is_empty() {
@@ -249,7 +249,7 @@ mod gpu {
             if total == 0 {
                 return None;
             }
-            let uniform = ParticleUniform::new(snapshot.view_projection, size.0, size.1);
+            let uniform = ParticleUniform::new(snapshot.view_projection, size.width, size.height);
             if self.written != Some(uniform) {
                 queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
                 self.written = Some(uniform);

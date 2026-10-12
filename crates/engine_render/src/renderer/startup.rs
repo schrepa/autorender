@@ -203,7 +203,7 @@ impl Renderer {
             debugger_capture: false,
             display,
             depth,
-            terrain_ids: None,
+            terrain_ids: ScreenTarget::default(),
             meshes: BTreeMap::new(),
             mesh_arena,
             mesh_layout: 0,

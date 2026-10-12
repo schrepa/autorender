@@ -402,7 +402,7 @@ impl Renderer {
             |frame| frame.camera,
         );
         camera.options[1] =
-            crate::gpu_data::pixel_angle(snapshot.view_projection, self.display.size().1);
+            crate::gpu_data::pixel_angle(snapshot.view_projection, self.display.size().height);
         // The wind placed objects sway in, and the time they
         // swayed at last frame for temporal frames' motion.
         let seconds = snapshot.elapsed_seconds;
@@ -675,9 +675,9 @@ impl Renderer {
                 .culling
                 .pyramid
                 .get_or_insert_with(|| DepthPyramid::new(device, Reduction::Farthest));
-            let (width, height) = self.display.size();
-            let levels = pyramid.prepare(device, &self.depth.view, (width, height));
-            Some((width, height, levels))
+            let size = self.display.size();
+            let levels = pyramid.prepare(device, &self.depth.view, size);
+            Some((size.width, size.height, levels))
         } else {
             None
         };
@@ -737,7 +737,7 @@ impl Renderer {
                     .as_ref()
                     .map_or(snapshot.view_projection, |temporal| temporal.rasterized),
                 eye: snapshot.camera_position,
-                viewport: self.display.size(),
+                viewport: self.display.size().pixels(),
                 motion: temporal_frame
                     .as_ref()
                     .is_some_and(|temporal| temporal.motion_valid),

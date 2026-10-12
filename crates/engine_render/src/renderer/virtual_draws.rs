@@ -145,7 +145,7 @@ impl Renderer {
             // The projection's y scale: its second row's length.
             projection: view_projection.row(1).truncate().length() * 0.5,
             threshold: snapshot.environment.virtual_geometry.pixel_error
-                / self.display.size().1.max(1) as f32,
+                / self.display.size().height.max(1) as f32,
             unseen_error: 0.0,
             cone: Cone::Eye,
         };
@@ -224,8 +224,8 @@ impl Renderer {
         let tests = CameraTests {
             view_projection: rasterized,
             viewport: (
-                self.display.size().0,
-                self.display.size().1,
+                self.display.size().width,
+                self.display.size().height,
                 pyramid_levels.unwrap_or(0),
             ),
             previous,
