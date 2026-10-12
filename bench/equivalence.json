@@ -103,6 +103,19 @@
       "captures": ["exact", "gpu:0.5"]
     },
     {
+      "name": "terrain",
+      "tier": "full",
+      "note": "The terrain fixture: a generated terrain with erosion, hydrology, roads, a bridge and a tunnel, an imported heightmap, materials, ground cover, placements, surroundings, water, a probe, a floating buoy, a walking agent and a deformer, from its own camera. In the full tier only: every run gives its own image until terrain streams by a frame clock instead of the host's wall clock.",
+      "source": "web/scripts/fixtures/terrain.scene.json",
+      "ticks": 30,
+      "views": ["scene"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "scene exact": "A different image every run of a six-run A/A (2026-10-12), up to 3 levels over 15k pixels, though the digest is the same every run: hosts give terrain a wall clock (Terrains::set_clock(now_ms)), so how much each frame streams, and the history tile hysteresis keeps, depend on timing.",
+        "scene gpu:0.5": "A different image every run of a six-run A/A (2026-10-12), up to 8 levels over some 600 pixels: the wall-clock terrain streaming of the exact capture."
+      }
+    },
+    {
       "name": "metro-taa",
       "tier": "smoke",
       "note": "Metro up close with temporal antialiasing: ordinary display frames, each resolving the last.",
