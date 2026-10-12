@@ -137,14 +137,21 @@ pub fn write_generated(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Fails, naming every generated file that is missing or out of date,
+/// unless all match what `cargo xtask schema` writes.
 pub fn check_generated(root: &Path) -> Result<(), String> {
+    let mut stale = Vec::new();
     for (path, contents) in generated(root)? {
-        let saved = fs::read_to_string(root.join(&path))
-            .map_err(|error| format!("cannot read {path}: {error}; run `cargo xtask schema`"))?;
-        if saved.replace("\r\n", "\n") != contents {
-            return Err(format!("{path} is out of date; run `cargo xtask schema`"));
+        match fs::read_to_string(root.join(&path)) {
+            Ok(saved) if saved.replace("\r\n", "\n") == contents => {
+                println!("Generated file matches {path}.");
+            }
+            Ok(_) => stale.push(format!("{path} is out of date")),
+            Err(error) => stale.push(format!("cannot read {path}: {error}")),
         }
-        println!("Generated file matches {path}.");
     }
-    Ok(())
+    if stale.is_empty() {
+        return Ok(());
+    }
+    Err(format!("{}; run `cargo xtask schema`", stale.join("; ")))
 }

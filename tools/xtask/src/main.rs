@@ -12,6 +12,7 @@ mod gpu;
 mod heavy;
 mod importing;
 mod iteration_build;
+mod lint;
 mod measure;
 mod pipeline;
 mod process;
@@ -130,7 +131,7 @@ fn execute() -> Result<(), Failure> {
     }
     Ok(match task.as_str() {
         "build" => pipeline::build(&root),
-        "lint" => pipeline::lint(&root),
+        "lint" => lint::run_stages(&root, lint::LINT),
         "docs" => pipeline::docs(&root),
         "assets" => authoring::validate_sources(&root),
         "schema" => authoring::write_generated(&root),
@@ -176,7 +177,7 @@ fn commands() -> Vec<(String, &'static str)> {
         ("bench assets".into(), "Build the files workloads read that git does not hold into target/bench-assets/<inputs hash>/ (reused while the generators are unchanged) and write them into web/public/stress for the page; prints the folder and its generated_hash"),
         ("measure --task TASK.json --profile PROFILE.json --out REPORT.json [--extend REPORT.json] [--formats FORMATS.json]".into(), "Run an engine-factory measure task on the native host from this checkout (the task's tools commit): build each commit it names, run each workload's two arms (each its commit's program from that commit's tree, with its own switches, scene, settings and generated files) in alternating rounds until its clean pairs, profile each arm and report the shaders where the task wants them, run the task's checks, and write the factory's measure report, checked against FORMATS (the factory's /api/formats) when given"),
         ("checks --task TASK.json --profile PROFILE.json --out REPORT.json [--formats FORMATS.json]".into(), "Run an engine-factory check task from this checkout: each check's script against a development server of its commit, every attempt kept (a failing check runs again, up to 3 attempts), as the factory's check report, checked against FORMATS when given"),
-        ("lint".into(), "Check sources, generated files, bench/, shaders against Rust, formatting, native and Wasm Clippy and the web host"),
+        ("lint".into(), "Run every GPU-free check, cheapest first and each whatever failed before it: the repository policy, formatting, the web host's text checks, scene sources, generated files, bench/, smoke coverage, feature layering, shaders against Rust, native and Wasm Clippy, the browser clients and TypeScript; ends with each stage's result and time"),
         ("docs".into(), "Generate native workspace and browser API documentation"),
         ("help [--json]".into(), "Show this message, or the commands as JSON"),
     ]
