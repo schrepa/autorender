@@ -374,7 +374,8 @@ impl Terrains {
                     .map(|tile| tile.key)
             };
             let mut order: Vec<TileKey> = Vec::with_capacity(wanted.len() + loading.len());
-            let mut pushed: HashSet<TileKey> = HashSet::with_capacity(order.capacity());
+            let mut pushed: HashSet<TileKey> =
+                HashSet::with_capacity_and_hasher(order.capacity(), Default::default());
             for key in tier(|tile| tile.score < 0.0)
                 .chain(tier(|tile| tile.score >= 0.0 && tile.drawn && tile.seen))
                 .chain(under.iter().copied())
@@ -396,7 +397,7 @@ impl Terrains {
                 order.iter().copied().collect()
             } else {
                 let mut first = Vec::new();
-                let mut held = HashSet::new();
+                let mut held = HashSet::default();
                 for key in tier(|tile| tile.score < 0.0).chain(loading.iter().copied()) {
                     push_with_ancestors(&pyramid, key, &mut first, &mut held);
                 }
@@ -464,8 +465,8 @@ impl Terrains {
             // tiles wait, and until it settles those it does not show; the
             // pinned levels, collision's tiles and those under focus
             // entities, with their ancestors, never wait.
-            let mut never = HashSet::new();
-            let mut shown = HashSet::new();
+            let mut never = HashSet::default();
+            let mut shown = HashSet::default();
             if waiting > 0 || unsettled {
                 let mut chain = Vec::new();
                 for key in tier(|tile| tile.score < 0.0)
@@ -532,7 +533,7 @@ impl Terrains {
                 let fits = room
                     .checked_div(state.tile_bytes)
                     .map_or(usize::MAX, |fits| fits as usize);
-                let mut listed = HashSet::new();
+                let mut listed = HashSet::default();
                 state.ahead.extend(
                     nearest
                         .into_iter()

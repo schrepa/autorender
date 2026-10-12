@@ -32,6 +32,8 @@ pub use surface::runtime_typescript;
 pub mod tooling;
 
 // The ECS and math the engine is built on.
+/// Hash maps and sets with a fixed hasher: the same order every run.
+pub use engine_core::collections;
 pub use engine_core::{bevy_ecs, glam};
 // Every environment section, for code listing them (`environment_sections!(callback)`).
 pub use engine_core::environment_sections;

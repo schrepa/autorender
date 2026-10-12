@@ -1,7 +1,7 @@
 use engine::browser::SceneFileSet;
 use wasm_bindgen::prelude::*;
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 
 use crate::{StressConfig, StressFile, StressLab, set_view, stress_observation};
 

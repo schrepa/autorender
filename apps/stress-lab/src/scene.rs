@@ -1,6 +1,6 @@
 use engine::prelude::*;
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 
 use crate::{FrameMetrics, StressConfig, StressScene, city, dense, highlands, metrics, metro};
 
@@ -30,7 +30,7 @@ pub(crate) struct Animation;
 /// Creates an independently owned world. Failed configuration leaves the
 /// running engine untouched. Distinct AssetLibrary identities prevent GPU aliasing.
 pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
-    create_workload_with(config, &HashMap::new())
+    create_workload_with(config, &HashMap::default())
 }
 
 /// A file a workload reads: its bytes (a virtual mesh's may be the prefix)

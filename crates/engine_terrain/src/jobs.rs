@@ -16,7 +16,7 @@
 //! joined by its engine, with its objects placed by a job
 //! after.
 
-use std::collections::HashMap;
+use engine_math::collections::HashMap;
 use std::sync::Arc;
 
 use glam::Vec2;

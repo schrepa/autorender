@@ -2,7 +2,7 @@
 //! scene: a displaced boulder, a fluted column and a terrain
 //! tile, each hundreds of thousands of triangles.
 
-use std::collections::HashMap;
+use engine_math::collections::HashMap;
 
 use glam::Vec3;
 
@@ -27,7 +27,7 @@ impl Geometry {
     /// Area-weighted vertex normals of the triangles, shared by vertices at
     /// the same position (seams stay smooth).
     fn smooth_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
-        let mut first = HashMap::new();
+        let mut first = HashMap::default();
         let welded: Vec<usize> = positions
             .iter()
             .enumerate()
@@ -125,7 +125,7 @@ pub fn boulder(levels: u32, seed: u32) -> Geometry {
         8, 1,
     ];
     for _ in 0..levels {
-        let mut midpoints: HashMap<(u32, u32), u32> = HashMap::new();
+        let mut midpoints: HashMap<(u32, u32), u32> = HashMap::default();
         let mut midpoint = |a: u32, b: u32, positions: &mut Vec<Vec3>| {
             let key = (a.min(b), a.max(b));
             *midpoints.entry(key).or_insert_with(|| {

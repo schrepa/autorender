@@ -8,7 +8,9 @@
 //! first, and pages unused for a while make room under a budget or the
 //! device's limits.
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
+
+use engine_core::collections::HashMap;
 
 use engine_core::{CLUSTER_WORDS, GROUP_WORDS, MeshHandle, NODE_WORDS, PAGE_WORDS, VirtualMesh};
 
@@ -121,7 +123,7 @@ impl VirtualArena {
     pub(super) fn new() -> Self {
         Self {
             resident: Vec::new(),
-            index: HashMap::new(),
+            index: HashMap::default(),
             dirty: false,
             buffers: None,
             generation: 0,

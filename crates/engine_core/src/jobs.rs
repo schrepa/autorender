@@ -21,7 +21,7 @@
 //! ([`content_hash`]), so inputs reading shares are the same bytes in every
 //! session.
 
-use std::collections::{HashMap, HashSet};
+use crate::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bevy_ecs::prelude::*;
@@ -200,12 +200,12 @@ impl Default for Jobs {
             workers: 0,
             requests: Vec::new(),
             shares: vec![JobShare::Clear],
-            running: HashSet::new(),
+            running: HashSet::default(),
             cancels: Vec::new(),
-            done: HashMap::new(),
-            parts: HashMap::new(),
+            done: HashMap::default(),
+            parts: HashMap::default(),
             cache: [0; 4],
-            shared: HashMap::new(),
+            shared: HashMap::default(),
             stats: JobStats::default(),
         }
     }

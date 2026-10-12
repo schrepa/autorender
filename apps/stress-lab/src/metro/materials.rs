@@ -3,7 +3,7 @@
 //! library. Generated texture data (RGBA8 or BC7 levels) is kept for the page's
 //! lifetime: workloads rebuild their assets from it without generating again.
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use engine::prelude::*;
@@ -340,10 +340,10 @@ impl Library {
             variety,
             textured,
             compressed,
-            meshes: HashMap::new(),
-            materials: HashMap::new(),
-            textures: HashMap::new(),
-            clips: HashMap::new(),
+            meshes: HashMap::default(),
+            materials: HashMap::default(),
+            textures: HashMap::default(),
+            clips: HashMap::default(),
         }
     }
 

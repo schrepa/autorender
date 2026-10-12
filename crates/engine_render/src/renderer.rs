@@ -1,5 +1,6 @@
+use engine_core::collections::HashMap;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
 };
 

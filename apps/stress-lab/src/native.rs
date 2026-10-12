@@ -6,7 +6,7 @@
 //! with a settings bundle (`--settings bench/settings/NAME.json`): option
 //! files, which hold these options by name.
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -343,7 +343,7 @@ pub fn stress_files(
     scene: StressScene,
     rocks: bool,
 ) -> engine::Result<HashMap<String, StressFile>> {
-    let mut found = HashMap::new();
+    let mut found = HashMap::default();
     match scene {
         StressScene::Dense => {
             for name in DENSE_FILES {
@@ -409,7 +409,7 @@ pub fn stress_files(
                      `cargo run -p engine_assetc --release --bin terrain_materials`.",
                     error.message
                 );
-                return Ok(HashMap::new());
+                return Ok(HashMap::default());
             }
             // Scanned rock maps, kept locally and optional: without them
             // rocks wear the terrain rock's maps.

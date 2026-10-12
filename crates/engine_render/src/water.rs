@@ -21,7 +21,7 @@
 //! vertices move by the waves longer than a few of their cells, and pixels
 //! shade every wave longer than a few pixels.
 
-use std::collections::HashMap;
+use engine_core::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -161,12 +161,12 @@ impl WaterPass {
             layout: crate::pipelines::layout(device, &WATER),
             depth_layout: crate::pipelines::layout(device, &WATER_DEPTH),
             depth: None,
-            terrains: HashMap::new(),
+            terrains: HashMap::default(),
             instances: chunk_buffer(device, 256),
             pipeline_layout: None,
-            pipelines: HashMap::new(),
-            river_pipelines: HashMap::new(),
-            ocean_pipelines: HashMap::new(),
+            pipelines: HashMap::default(),
+            river_pipelines: HashMap::default(),
+            ocean_pipelines: HashMap::default(),
             records: Vec::new(),
             chunks_drawn: 0,
             ocean: None,

@@ -47,7 +47,7 @@ impl MeshPipelines {
             crate::pipelines::group(device, "engine/empty-group", &EMPTY, &empty_layout, &[]);
         Self {
             layouts: Default::default(),
-            variants: HashMap::new(),
+            variants: HashMap::default(),
             sky: Default::default(),
             empty_layout,
             empty_group,

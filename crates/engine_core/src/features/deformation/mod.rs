@@ -12,7 +12,8 @@
 //! [`Deformation::refill`] seconds, a decay renderers apply to the whole
 //! map at once. Queries read the log, never the GPU.
 
-use std::collections::{HashMap, VecDeque};
+use crate::collections::HashMap;
+use std::collections::VecDeque;
 
 use bevy_ecs::prelude::*;
 use glam::{Vec2, Vec3};

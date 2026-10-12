@@ -14,7 +14,7 @@
 //! the lake, streamed: they exist only near the camera. A
 //! hiker walks the road's first stretch and back.
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 use std::sync::Arc;
 
 use engine::prelude::*;
@@ -985,7 +985,7 @@ fn surface(
 ) -> Result<TerrainSurface, String> {
     let mut assets = world.resource_mut::<AssetLibrary>();
     let mut materials = Vec::with_capacity(LOOKS.len());
-    let mut loaded = HashMap::new();
+    let mut loaded = HashMap::default();
     for look in &LOOKS {
         materials.push(SurfaceMaterial {
             material: maps(&mut assets, files, look, &mut loaded)?,

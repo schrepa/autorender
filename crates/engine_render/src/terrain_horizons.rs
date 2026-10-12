@@ -8,7 +8,7 @@
 //! lying on it, softening with that distance (`scene.wgsl`). Two texels per
 //! terrain place its map for those lookups.
 
-use std::collections::HashMap;
+use engine_core::collections::HashMap;
 
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::{RenderTerrain, RenderTerrains, TerrainSettings, TileKey};
@@ -112,7 +112,7 @@ impl Horizons {
             ),
             built: Vec::new(),
             pending: Vec::new(),
-            reaches: HashMap::new(),
+            reaches: HashMap::default(),
             builds: 0,
         }
     }

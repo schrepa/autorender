@@ -3,7 +3,7 @@
 //! instance's scale is its size and a unit cuboid collider bounds it. Faces
 //! are flat-shaded; parts that rest on something omit faces nobody sees.
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
 use engine::prelude::*;
@@ -1489,7 +1489,7 @@ impl Library {
         variety: u32,
         textured: bool,
     ) -> Result<Self, String> {
-        let mut meshes = HashMap::new();
+        let mut meshes = HashMap::default();
         for shape in Shape::ALL {
             let shape = shape.resolve(variety);
             if let std::collections::hash_map::Entry::Vacant(entry) = meshes.entry(shape) {
@@ -1500,7 +1500,7 @@ impl Library {
                 );
             }
         }
-        let mut textures = HashMap::new();
+        let mut textures = HashMap::default();
         if textured {
             for tex in Tex::ALL {
                 textures.insert(
@@ -1515,7 +1515,7 @@ impl Library {
             variety,
             meshes,
             textures,
-            materials: HashMap::new(),
+            materials: HashMap::default(),
         })
     }
 

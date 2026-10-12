@@ -141,7 +141,7 @@ pub(crate) fn grown_layers(needed: u32, limit: u32) -> u32 {
 }
 
 mod gpu {
-    use std::collections::HashMap;
+    use engine_core::collections::HashMap;
 
     use engine_core::{Material, MaterialHandle, MeshHandle};
 
@@ -255,10 +255,10 @@ mod gpu {
             Self {
                 bake_layout,
                 bake_pipeline_layout,
-                bake_pipelines: HashMap::new(),
-                shade_pipelines: HashMap::new(),
+                bake_pipelines: HashMap::default(),
+                shade_pipelines: HashMap::default(),
                 draw_layout,
-                draw_pipelines: HashMap::new(),
+                draw_pipelines: HashMap::default(),
                 sampler,
                 no_shade: None,
             }
@@ -329,7 +329,7 @@ mod gpu {
                 arrays: None,
                 targets: None,
                 layers: Layers::default(),
-                baked: HashMap::new(),
+                baked: HashMap::default(),
                 records: record_buffer(device, 1),
                 uploaded: Vec::new(),
                 group: Cached::default(),

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use engine_core::collections::HashMap;
 
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::{SystemParam, SystemState};
@@ -126,7 +126,7 @@ impl FromWorld for CollisionWorld {
         Self {
             config: CollisionConfig::default(),
             inputs: Vec::new(),
-            statuses: HashMap::new(),
+            statuses: HashMap::default(),
             entries: Vec::new(),
             previous_entries: Vec::new(),
             bounds: Vec::new(),

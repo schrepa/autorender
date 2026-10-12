@@ -1,11 +1,8 @@
 //! CPU-only draw planning. Storage is reused for mesh/material batches.
 
-use std::{
-    collections::HashMap,
-    fmt,
-    hash::{BuildHasherDefault, Hasher},
-    ops::Range,
-};
+use std::{fmt, ops::Range};
+
+use engine_core::collections::HashMap;
 
 use engine_core::{
     MaterialHandle, MeshHandle, RenderFrame, RenderInstance, RenderSnapshot, TextureHandle,
@@ -13,30 +10,8 @@ use engine_core::{
 
 const UNMAPPED_BUCKET: u32 = u32::MAX;
 
-/// Hashes draw-group keys, which are already distinct integers, with one
-/// multiply (the bucket index takes high bits).
-#[derive(Default)]
-struct KeyHasher(u64);
-
-impl Hasher for KeyHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            self.write_u64(self.0 ^ u64::from(byte));
-        }
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        let mixed = (value ^ (value >> 31)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        self.0 = mixed ^ (mixed >> 29);
-    }
-}
-
 /// Draw group keys to their compact IDs.
-type GroupIds = HashMap<u64, u32, BuildHasherDefault<KeyHasher>>;
+type GroupIds = HashMap<u64, u32>;
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct DrawBatch {

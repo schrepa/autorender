@@ -4,7 +4,7 @@
 //! are reused first fit; the pool starts over when its assets change or
 //! freed slots outnumber live ones.
 
-use std::collections::HashMap;
+use engine_core::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 

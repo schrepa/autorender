@@ -18,7 +18,7 @@
 //! geometry draws at, so light and materials hold still as levels of
 //! detail hand over.
 
-use std::collections::HashMap;
+use engine_core::collections::HashMap;
 use std::ops::Range;
 
 use bytemuck::Zeroable;
@@ -327,7 +327,7 @@ pub(crate) struct TerrainPass {
     /// drops, and the tiles fading in last frame.
     pub(crate) vt: crate::terrain_vt::VirtualTexture,
     changed_tiles: Vec<(u64, TileKey)>,
-    fading: std::collections::HashSet<(u64, TileKey)>,
+    fading: engine_core::collections::HashSet<(u64, TileKey)>,
     // Where the texture's windows and tables start in the directory buffer,
     // and each frame terrain's id, whose uniform sits at its index's slot.
     vt_base: u32,
@@ -346,14 +346,14 @@ impl TerrainPass {
             layout: crate::pipelines::layout(device, &TERRAIN),
             atlas: None,
             atlas_generation: 0,
-            slots: HashMap::new(),
-            arrivals: HashMap::new(),
-            surfaced: HashMap::new(),
+            slots: HashMap::default(),
+            arrivals: HashMap::default(),
+            surfaced: HashMap::default(),
             now: 0.0,
-            held: HashMap::new(),
+            held: HashMap::default(),
             free: Vec::new(),
             next_layer: 0,
-            synced: HashMap::new(),
+            synced: HashMap::default(),
             indices: index_buffer,
             index_count: indices.len() as u32,
             instances: instance_buffer(device, 256),
@@ -366,17 +366,17 @@ impl TerrainPass {
                 16,
                 wgpu::BufferUsages::empty(),
             ),
-            hole_offsets: HashMap::new(),
+            hole_offsets: HashMap::default(),
             holes_generation: 0,
             fades_written: Vec::new(),
             fade_words: 0,
             group: Cached::default(),
             bake_group: Cached::default(),
-            pipelines: HashMap::new(),
-            deferred_ids: HashMap::new(),
-            resolves: HashMap::new(),
+            pipelines: HashMap::default(),
+            deferred_ids: HashMap::default(),
+            resolves: HashMap::default(),
             resolve_layout: crate::pipelines::layout(device, &crate::bindings::TERRAIN_RESOLVE),
-            probe_pipelines: HashMap::new(),
+            probe_pipelines: HashMap::default(),
             shadow: None,
             records: Vec::new(),
             written_views: None,
@@ -390,7 +390,7 @@ impl TerrainPass {
             normal_pass: None,
             control_jobs: Vec::new(),
             control_pass: None,
-            surfaces: HashMap::new(),
+            surfaces: HashMap::default(),
             // Nearest texels: control values gather as stored.
             control_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/terrain-control-sampler"),
@@ -433,7 +433,7 @@ impl TerrainPass {
             deformation: crate::deformation::DeformationPass::new(device),
             vt: crate::terrain_vt::VirtualTexture::new(device),
             changed_tiles: Vec::new(),
-            fading: std::collections::HashSet::new(),
+            fading: engine_core::collections::HashSet::default(),
             vt_base: 0,
             uniform_ids: Vec::new(),
         }
@@ -799,7 +799,7 @@ impl TerrainPass {
         self.dropped = 0;
         // Release what no terrain lists any more.
         let mut listed: HashMap<(u64, TileKey), &std::sync::Arc<engine_core::Tile>> =
-            HashMap::new();
+            HashMap::default();
         for terrain in &terrains.terrains {
             for tile in terrain.tiles.iter() {
                 listed.insert((terrain.id, tile.key()), tile);
@@ -854,7 +854,7 @@ impl TerrainPass {
         // a tile arriving whole after its shape, or with its objects
         // standing far away, has the same heights.
         let mut previous: HashMap<(u64, TileKey), std::sync::Arc<engine_core::Tile>> =
-            HashMap::new();
+            HashMap::default();
         for (key, _) in &replaced {
             self.slots.remove(key);
             if let Some(held) = self.held.remove(key) {
@@ -1057,7 +1057,7 @@ impl TerrainPass {
         let mut words = vec![0_u32; self.fade_words as usize];
         let byte = |fade: f32| (engine_core::math::clamp(fade, 0.0, 1.0) * 255.0 + 0.5) as u32;
         // Tiles that finished fading in change what pages over them hold.
-        let mut fading = std::collections::HashSet::new();
+        let mut fading = engine_core::collections::HashSet::default();
         for (key, &layer) in &self.slots {
             let normals = match self.arrivals.get(key) {
                 Some(&at) if fades => self.fade_since(at),

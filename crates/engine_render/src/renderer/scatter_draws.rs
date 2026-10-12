@@ -3,7 +3,7 @@
 //! and leave, culled each frame and drawn after terrain in the first opaque
 //! phase. Draw groups, one per terrain asset, follow the assets.
 
-use std::collections::HashMap;
+use engine_core::collections::HashMap;
 use std::sync::Arc;
 
 use super::frame::FrameState;
@@ -432,7 +432,7 @@ impl Renderer {
         let mut groups = Vec::new();
         let mut layouts = Vec::new();
         let mut covers = Vec::new();
-        let mut indices = HashMap::new();
+        let mut indices = HashMap::default();
         for terrain in terrains {
             for (asset_index, asset) in terrain.assets.iter().enumerate() {
                 let Some(asset) = asset else {

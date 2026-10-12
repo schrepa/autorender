@@ -18,7 +18,7 @@
 //! while the camera is in or above the layer, and the view's sky shows no
 //! dome then; under it, the dome shows the sky's clouds as before.
 
-use std::collections::HashMap;
+use engine_core::collections::HashMap;
 
 use engine_core::Clouds;
 
@@ -300,7 +300,7 @@ impl CloudPass {
             composite_group: Cached::default(),
             view_pipeline: None,
             composite_pipeline_layout: None,
-            composite_pipelines: HashMap::new(),
+            composite_pipelines: HashMap::default(),
             view_sampler,
             view_job: None,
             view_sky: false,

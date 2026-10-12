@@ -39,8 +39,8 @@
 //! path takes from each point's distance to the eye they bake from) the
 //! eye has turned by more than [`STALE_SHADING`] of a level.
 
+use engine_core::collections::HashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::glam::Vec3;
@@ -277,8 +277,8 @@ impl VirtualTexture {
             maps_generation: u64::MAX,
             materials: 0,
             sheet_texels: 1,
-            terrains: HashMap::new(),
-            resident: HashMap::new(),
+            terrains: HashMap::default(),
+            resident: HashMap::default(),
             owners: Vec::new(),
             asked: Vec::new(),
             baked_from: Vec::new(),
@@ -295,7 +295,7 @@ impl VirtualTexture {
             ),
             wanted_words: 0,
             readbacks: ReadbackRing::new("engine/terrain-vt-readback"),
-            snapshots: HashMap::new(),
+            snapshots: HashMap::default(),
             arrived: Rc::new(RefCell::new(Vec::new())),
             bakes: Vec::new(),
             bake_buffer: crate::buffers::storage(

@@ -225,8 +225,10 @@ pub fn build(source: &Source<'_>) -> Result<Dag, String> {
 /// meet there (terrain tiles) never crack apart.
 /// Each vertex's first vertex at the same position, and how many triangles
 /// use each edge between such positions.
-fn edge_uses(source: &Source<'_>) -> (Vec<u32>, std::collections::HashMap<(u32, u32), u32>) {
-    let mut first = std::collections::HashMap::new();
+fn edge_uses(
+    source: &Source<'_>,
+) -> (Vec<u32>, engine_math::collections::HashMap<(u32, u32), u32>) {
+    let mut first = engine_math::collections::HashMap::default();
     let remap: Vec<u32> = source
         .positions
         .iter()
@@ -237,7 +239,8 @@ fn edge_uses(source: &Source<'_>) -> (Vec<u32>, std::collections::HashMap<(u32, 
                 .or_insert(vertex as u32)
         })
         .collect();
-    let mut edges: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+    let mut edges: engine_math::collections::HashMap<(u32, u32), u32> =
+        engine_math::collections::HashMap::default();
     for triangle in source.indices.as_chunks::<3>().0 {
         for (a, b) in [(0, 1), (1, 2), (2, 0)] {
             let (a, b) = (remap[triangle[a] as usize], remap[triangle[b] as usize]);

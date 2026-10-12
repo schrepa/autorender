@@ -9,7 +9,7 @@
 //! registers, local memory and scratch. The report is
 //! `DIR/report.json`; SPIR-V and machine code sit beside it.
 
-use std::collections::HashSet;
+use engine_core::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -121,7 +121,7 @@ fn entry_report(
 ) -> Result<Value, String> {
     let module = &checked.module;
     let mut counts = Counts::default();
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
     counts.function(module, &entry.function, &mut seen);
     let options = naga::back::spv::Options {
         lang_version: (1, 3),

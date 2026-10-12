@@ -10,7 +10,7 @@
 //! size change; until its first build completes, a terrain's ground sees
 //! the whole sky.
 
-use std::collections::HashMap;
+use engine_core::collections::HashMap;
 
 use engine_core::{RenderTerrain, RenderTerrains, TerrainSettings, TileKey};
 

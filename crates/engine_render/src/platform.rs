@@ -276,8 +276,8 @@ type Parked = Box<dyn FnOnce(Result<(), wgpu::BufferAsyncError>)>;
 
 #[cfg(not(target_arch = "wasm32"))]
 thread_local! {
-    static PARKED: std::cell::RefCell<(u64, std::collections::HashMap<u64, Parked>)> =
-        std::cell::RefCell::new((0, std::collections::HashMap::new()));
+    static PARKED: std::cell::RefCell<(u64, engine_core::collections::HashMap<u64, Parked>)> =
+        std::cell::RefCell::new((0, engine_core::collections::HashMap::default()));
 }
 
 #[cfg(not(target_arch = "wasm32"))]

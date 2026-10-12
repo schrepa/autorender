@@ -2,7 +2,7 @@
 //! physical position, the game's action keys by the page's key names, and
 //! look deltas from dragging with the left button.
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 
 use engine::host::policy::{LOOK_LIMIT, MAX_ACTIONS};
 use winit::event::{ElementState, MouseButton};
@@ -10,7 +10,7 @@ use winit::keyboard::KeyCode;
 
 /// Input gathered between frames: held keys, action edges and look deltas.
 pub(crate) struct Input {
-    keys: std::collections::HashSet<KeyCode>,
+    keys: engine::collections::HashSet<KeyCode>,
     // Each bound key's action bit.
     bindings: HashMap<KeyCode, u32>,
     dragging: bool,
@@ -26,7 +26,7 @@ impl Input {
     /// Input with the game's `actions`: the page's key names (`Space`,
     /// `KeyF`...) by action index.
     pub(crate) fn new(actions: &[(&str, u32)]) -> engine::Result<Self> {
-        let mut bindings = HashMap::new();
+        let mut bindings = HashMap::default();
         for &(name, action) in actions {
             if action >= MAX_ACTIONS {
                 return Err(engine::Error::new(

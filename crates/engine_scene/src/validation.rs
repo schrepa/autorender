@@ -1,5 +1,6 @@
+use engine_core::collections::HashMap;
 use engine_settings::ErrorCode;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use engine_core::{
@@ -175,7 +176,7 @@ impl SceneDocument {
         }
         let [expanded, streamed] = self.expand(&mesh_ids, &material_ids)?;
         let rigs = self.prepare_rigs()?;
-        let entity_indices: HashMap<&str, usize> = expanded
+        let entity_indices: BTreeMap<&str, usize> = expanded
             .entities
             .iter()
             .enumerate()
@@ -239,7 +240,7 @@ impl SceneDocument {
         rigs: &Rigs<'_>,
         files: Option<&SceneFiles>,
     ) -> Result<Vec<PreparedEntity>, SceneError> {
-        let indices: HashMap<&str, usize> = streamed
+        let indices: BTreeMap<&str, usize> = streamed
             .entities
             .iter()
             .enumerate()
@@ -275,7 +276,7 @@ impl SceneDocument {
         components: Vec<PreparedEntity>,
         meshes: &[Mesh],
     ) -> PreparedStreamed {
-        let indices: HashMap<&str, usize> = streamed
+        let indices: BTreeMap<&str, usize> = streamed
             .entities
             .iter()
             .enumerate()
@@ -314,14 +315,14 @@ impl SceneDocument {
                 }));
             }
         }
-        let mesh_indices: HashMap<&str, usize> = self
+        let mesh_indices: BTreeMap<&str, usize> = self
             .meshes
             .iter()
             .enumerate()
             .map(|(index, mesh)| (mesh.id.as_str(), index))
             .collect();
         let mut items: Vec<PreparedItem> = Vec::new();
-        let mut item_of = HashMap::new();
+        let mut item_of = HashMap::default();
         for (index, &root) in roots.iter().enumerate() {
             let item = *item_of.entry(root).or_insert_with(|| {
                 items.push(PreparedItem {
@@ -633,7 +634,7 @@ impl SceneDocument {
 
 /// The root of each expanded entity's tree, by index; `indices` maps IDs
 /// to indices. The graph is validated: parents exist and form no cycle.
-fn item_roots(entities: &[ExpandedObject], indices: &HashMap<&str, usize>) -> Vec<usize> {
+fn item_roots(entities: &[ExpandedObject], indices: &BTreeMap<&str, usize>) -> Vec<usize> {
     let parent = |index: usize| {
         entities[index]
             .source

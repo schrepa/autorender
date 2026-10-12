@@ -1,11 +1,11 @@
-use crate::entity_indices::EntityIndices;
+use crate::collections::HashMap;
 use crate::interpolation::{InterpolateTransform, InterpolationState, Observer};
-use crate::{NodePose, Transform};
+use crate::{NodePose, Transform, entity_indices::EntityIndices};
 use bevy_ecs::change_detection::{ContiguousRef, MAX_CHANGE_AGE, Tick};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
 use glam::{Mat4, Vec4};
-use std::{collections::HashMap, convert::Infallible, fmt};
+use std::{convert::Infallible, fmt};
 
 mod global;
 pub(crate) mod tracking;
@@ -164,7 +164,7 @@ pub fn set_parents(
     if changes.is_empty() {
         return Ok(());
     }
-    let mut replacements = HashMap::with_capacity(changes.len());
+    let mut replacements = HashMap::with_capacity_and_hasher(changes.len(), Default::default());
     for &(child, parent) in changes {
         require_transform(world, child)?;
         if let Some(parent) = parent {
@@ -175,7 +175,7 @@ pub fn set_parents(
         }
     }
     let mut nodes = Vec::with_capacity(count);
-    let mut indices = HashMap::with_capacity(count);
+    let mut indices = HashMap::with_capacity_and_hasher(count, Default::default());
     for (entity, _, parent) in query.iter(world) {
         indices.insert(entity, nodes.len());
         nodes.push(RelationshipNode {

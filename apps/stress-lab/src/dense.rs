@@ -3,7 +3,7 @@
 //! triangles built offline (`cargo run -p engine_vgbuild --release --bin
 //! dense_assets`) and fetched by the page.
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 use std::sync::Arc;
 
 use engine::VirtualMesh;

@@ -2,7 +2,7 @@
 //! material, of the plan's batches (GPU-presented frames) or of a
 //! CPU-prepared frame's casters, each with its ID region in every map.
 
-use std::collections::{HashMap, HashSet};
+use engine_core::collections::{HashMap, HashSet};
 
 use engine_core::{AlphaMode, MaterialHandle, MeshHandle, RenderFrame};
 
@@ -146,7 +146,7 @@ impl CasterGroups {
         self.key = Some(key);
         self.groups.clear();
         self.batch_groups.clear();
-        let mut indices = GroupIndices::new();
+        let mut indices = GroupIndices::default();
         let mut counts = Vec::new();
         // Casters of alpha-masked materials test their texels.
         let masked: HashSet<MaterialHandle> = snapshot

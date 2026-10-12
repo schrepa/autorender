@@ -24,7 +24,8 @@
 //! games save, and its cell never spawns it again. Removing or restoring
 //! an ID there takes effect at the next extraction, in loaded cells too.
 
-use std::collections::{BTreeSet, HashMap};
+use crate::collections::HashMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;

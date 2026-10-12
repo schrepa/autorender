@@ -1,13 +1,9 @@
 //! Engine-owned render records. Structural admission resolves immutable assets;
 //! ordinary frames update poses and visibility without rebuilding those records.
 
-use std::{
-    collections::HashMap,
-    hash::{BuildHasherDefault, Hasher},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 use bevy_ecs::{
@@ -18,6 +14,7 @@ use bevy_ecs::{
 };
 use glam::Mat4;
 
+use crate::collections::HashMap;
 use crate::hierarchy::HierarchyScratch;
 
 use crate::{
@@ -52,39 +49,6 @@ fn changed_in_window<T: Component>(components: &Query<'_, '_, Ref<'static, T>>) 
 }
 
 static NEXT_STREAM: AtomicU64 = AtomicU64::new(1);
-
-/// Hashes asset handles and bindings, a few integers each, with one
-/// multiply per word instead of SipHash: structural passes look one up per
-/// object.
-#[derive(Default)]
-struct HandleHasher(u64);
-
-impl Hasher for HandleHasher {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            self.write_u64(u64::from(byte));
-        }
-    }
-
-    fn write_u32(&mut self, value: u32) {
-        self.write_u64(u64::from(value));
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        let mixed = (self.0 ^ value).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-        self.0 = mixed ^ (mixed >> 32);
-    }
-
-    fn write_usize(&mut self, value: usize) {
-        self.write_u64(value as u64);
-    }
-}
-
-type HandleMap<K, V> = HashMap<K, V, BuildHasherDefault<HandleHasher>>;
 
 /// What places a material's objects among draws besides its binding's
 /// contents: its pass, alpha mode, sides and transmission. A replacement
@@ -449,15 +413,15 @@ struct Sources {
     // Materials with maps and the textures they read.
     materials: Vec<RenderMaterial>,
     textures: Vec<RenderTexture>,
-    mesh_indices: HandleMap<MeshHandle, usize>,
+    mesh_indices: HashMap<MeshHandle, usize>,
     // Materials with maps to their binding's index in `materials`, which
     // holds the first material of each binding.
-    material_indices: HandleMap<MaterialHandle, usize>,
-    binding_indices: HandleMap<MaterialBinding, usize>,
-    texture_indices: HandleMap<TextureHandle, usize>,
+    material_indices: HashMap<MaterialHandle, usize>,
+    binding_indices: HashMap<MaterialBinding, usize>,
+    texture_indices: HashMap<TextureHandle, usize>,
     // The version each object's material resolved at, with maps or not:
     // a replacement re-resolves only its objects.
-    versions: HandleMap<MaterialHandle, u64>,
+    versions: HashMap<MaterialHandle, u64>,
     mesh_used: Vec<bool>,
     material_used: Vec<bool>,
     previous_mesh_used: Vec<bool>,

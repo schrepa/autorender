@@ -1,7 +1,7 @@
 //! The list of components scenes author on entities, and how each is
 //! prepared and joins the entity spawned for an object authoring it.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::glam::{Mat4, Vec3};
@@ -145,7 +145,7 @@ pub(crate) struct Reach<'a> {
     /// The entity's distance from it.
     pub from: f32,
     /// The document's meshes, and their indices by authored ID.
-    pub meshes: (&'a [Mesh], &'a HashMap<&'a str, usize>),
+    pub meshes: (&'a [Mesh], &'a BTreeMap<&'a str, usize>),
 }
 
 impl Reach<'_> {

@@ -41,7 +41,7 @@ impl VisibilityDraws {
             resolve_layout,
             pipelines: None,
             resolve_layouts: [None, None],
-            resolve_pipelines: HashMap::new(),
+            resolve_pipelines: HashMap::default(),
             groups: Cached::default(),
             bins: Vec::new(),
         }

@@ -5,7 +5,7 @@
 //! images the host transcodes to a block-compressed format its GPU samples.
 
 use engine_settings::ErrorCode;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use engine_core::{MeshVertex, Texture, TextureFormat, VirtualMesh};
 
@@ -47,13 +47,13 @@ type CompressedImage = (TextureFormat, u32, u32, Vec<Vec<u8>>);
 #[derive(Clone, Debug, Default)]
 pub struct SceneFiles {
     // Width, height and RGBA8 pixels of each decoded image.
-    images: HashMap<String, (u32, u32, Vec<u8>)>,
-    compressed: HashMap<String, CompressedImage>,
-    buffers: HashMap<String, Vec<u8>>,
+    images: BTreeMap<String, (u32, u32, Vec<u8>)>,
+    compressed: BTreeMap<String, CompressedImage>,
+    buffers: BTreeMap<String, Vec<u8>>,
     // Each virtual mesh's prefix (or whole file) and its URL.
-    virtual_meshes: HashMap<String, (Vec<u8>, Option<String>)>,
+    virtual_meshes: BTreeMap<String, (Vec<u8>, Option<String>)>,
     // Each terrain file's prefix (or whole file) and its URL.
-    terrains: HashMap<String, (Vec<u8>, Option<String>)>,
+    terrains: BTreeMap<String, (Vec<u8>, Option<String>)>,
 }
 
 impl SceneFiles {

@@ -22,8 +22,9 @@
 
 #![expect(unsafe_code, reason = "Vulkan's layer entry points and calls")]
 
+use engine::collections::HashMap;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::ffi::{CStr, c_char, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};

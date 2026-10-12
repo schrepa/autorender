@@ -34,7 +34,7 @@ impl VirtualDraws {
         let pose_layout = crate::pipelines::layout(device, &VIRTUAL_POSES);
         Self {
             pass: VirtualGeometryPass::new(device),
-            pipelines: HashMap::new(),
+            pipelines: HashMap::default(),
             pose_layout,
             layouts: [None, None],
             pose_groups: Cached::default(),

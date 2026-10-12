@@ -31,6 +31,8 @@ mod jobs;
 mod level_of_detail;
 mod lights;
 pub mod math;
+/// Hash maps and sets with a fixed hasher: the same order every run.
+pub use engine_math::collections;
 mod packed;
 mod particles;
 pub mod presentation_bounds;

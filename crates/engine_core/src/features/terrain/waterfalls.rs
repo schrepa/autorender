@@ -7,7 +7,7 @@
 //! foot (particles): the river carries no water surface over the drop, which a
 //! grid of its samples could not follow. Water that does not draw spawns none.
 
-use std::collections::HashMap;
+use crate::collections::HashMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;

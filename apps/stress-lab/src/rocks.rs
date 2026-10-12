@@ -14,7 +14,7 @@
 //! how much the shape around it hides it, darker in hollows and under
 //! ledges; the ground stains their bases where terrains place them.
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 use std::f32::consts::PI;
 
 use engine::prelude::*;
@@ -294,7 +294,7 @@ fn creased(
         }
     }
     let limit = math::cos(crease);
-    let mut shared: HashMap<(u32, [i32; 3]), u32> = HashMap::new();
+    let mut shared: HashMap<(u32, [i32; 3]), u32> = HashMap::default();
     let (mut out_positions, mut out_normals, mut sources) = (Vec::new(), Vec::new(), Vec::new());
     let mut indices = Vec::with_capacity(triangles.len() * 3);
     for (face, triangle) in triangles.iter().enumerate() {
@@ -368,7 +368,7 @@ fn icosphere(levels: u32) -> (Vec<Vec3>, Vec<[u32; 3]>) {
         [9, 8, 1],
     ];
     for _ in 0..levels {
-        let mut middles: HashMap<(u32, u32), u32> = HashMap::new();
+        let mut middles: HashMap<(u32, u32), u32> = HashMap::default();
         let mut middle = |a: u32, b: u32, positions: &mut Vec<Vec3>| {
             *middles.entry((a.min(b), a.max(b))).or_insert_with(|| {
                 positions.push(((positions[a as usize] + positions[b as usize]) * 0.5).normalize());

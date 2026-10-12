@@ -9,7 +9,7 @@
 //! agree to the bit: what the caches kept up incrementally is what
 //! computing from scratch gives.
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 use std::fmt::Write as _;
 
 use engine_core::bevy_ecs::prelude::*;
@@ -240,7 +240,7 @@ fn spawn(world: &mut World, assets: &Assets, authored: &Authored) -> Entity {
 
 /// `entity` and its descendants, parents first.
 fn subtree(world: &mut World, entity: Entity) -> Vec<Entity> {
-    let mut children: HashMap<Entity, Vec<Entity>> = HashMap::new();
+    let mut children: HashMap<Entity, Vec<Entity>> = HashMap::default();
     for (child, parent) in world.query::<(Entity, &Parent)>().iter(world) {
         children.entry(parent.parent()).or_default().push(child);
     }
@@ -411,7 +411,7 @@ fn rebuild(
         .map(|entity| (entity, read(world, living_assets, entity)))
         .collect();
     let target = fresh.app.world_mut();
-    let mut map = HashMap::with_capacity(held.len());
+    let mut map = HashMap::with_capacity_and_hasher(held.len(), Default::default());
     for (entity, authored) in &held {
         map.insert(*entity, spawn(target, &assets, authored));
     }

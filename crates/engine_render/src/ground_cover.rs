@@ -10,8 +10,8 @@
 //! farthest tend to drop first. Nothing here exists until a frame has cover
 //! to grow.
 
+use engine_core::collections::HashMap;
 use std::cell::Cell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::GroundCover;
@@ -78,7 +78,7 @@ impl GroundCoverPass {
             grow_layout: crate::pipelines::layout(device, &COVER_GROW),
             draw_layout: crate::pipelines::layout(device, &COVER_DRAW),
             compute: None,
-            pipelines: HashMap::new(),
+            pipelines: HashMap::default(),
             blades: blades_buffer(device, 1),
             capacity: 0,
             blades_generation: 0,

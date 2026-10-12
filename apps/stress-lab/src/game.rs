@@ -2,7 +2,7 @@
 //! scene, and the page's choices that outlive each workload's world.
 
 use engine::ErrorCode;
-use std::collections::HashMap;
+use engine::collections::HashMap;
 
 use engine::prelude::*;
 use engine::scene::{SceneError, SceneFiles};
@@ -50,7 +50,7 @@ impl StressLab {
     ) -> Result<(Engine, Self), String> {
         let (engine, authored) =
             AuthoredScene::new(source, files, without).map_err(|error| error.to_string())?;
-        Ok((engine, Self::new(HashMap::new(), Some(authored))))
+        Ok((engine, Self::new(HashMap::default(), Some(authored))))
     }
 
     fn new(files: HashMap<String, StressFile>, authored: Option<AuthoredScene>) -> Self {

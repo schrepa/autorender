@@ -17,7 +17,8 @@
 //!   ([`crate::counters`]), what was captured, and the deeper layers
 //!   recommended to set up.
 
-use std::collections::{BTreeMap, HashMap};
+use engine::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -155,7 +156,7 @@ struct Symbols(HashMap<u64, Resolved>);
 
 impl Symbols {
     fn of(samples: Option<&Samples>) -> Self {
-        let mut resolved = HashMap::new();
+        let mut resolved = HashMap::default();
         for thread in samples.into_iter().flat_map(|samples| &samples.threads) {
             for sample in &thread.samples {
                 for (index, &address) in sample.stack.iter().enumerate() {
@@ -506,8 +507,8 @@ fn summary(
     let mut threads = Vec::new();
     let mut deepest = 0;
     for thread in samples.into_iter().flat_map(|samples| &samples.threads) {
-        let mut own: HashMap<String, u64> = HashMap::new();
-        let mut inclusive: HashMap<String, u64> = HashMap::new();
+        let mut own: HashMap<String, u64> = HashMap::default();
+        let mut inclusive: HashMap<String, u64> = HashMap::default();
         for sample in &thread.samples {
             let names = functions(&sample.stack, symbols);
             deepest = deepest.max(names.len());
@@ -536,8 +537,8 @@ fn summary(
     // The main thread's hottest source lines and instructions: where its
     // samples were, inlined code at its own line.
     let main = samples.and_then(|samples| samples.threads.first());
-    let mut lines: HashMap<String, u64> = HashMap::new();
-    let mut hot: HashMap<u64, Hot> = HashMap::new();
+    let mut lines: HashMap<String, u64> = HashMap::default();
+    let mut hot: HashMap<u64, Hot> = HashMap::default();
     for sample in main.into_iter().flat_map(|thread| &thread.samples) {
         let Some(&leaf) = sample.stack.first() else {
             continue;

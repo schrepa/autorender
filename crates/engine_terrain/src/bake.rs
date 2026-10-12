@@ -16,7 +16,7 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-use std::collections::HashMap;
+use engine_math::collections::HashMap;
 use std::sync::Arc;
 
 use glam::Vec2;
@@ -118,7 +118,7 @@ impl RiverJob {
             }
         }
         let key = |point: Vec2| [point.x.to_bits(), point.y.to_bits()];
-        let mut ends: HashMap<[u32; 2], f32> = HashMap::new();
+        let mut ends: HashMap<[u32; 2], f32> = HashMap::default();
         let mut rivers = Vec::with_capacity(self.lines.len());
         for (line, ground) in self.lines.iter().zip(&self.ground) {
             let incoming = ends.get(&key(line.points[0])).copied();

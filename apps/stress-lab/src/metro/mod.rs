@@ -26,7 +26,7 @@ mod people;
 mod props;
 mod textures;
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use engine::prelude::*;
@@ -427,7 +427,7 @@ fn plan(config: &StressConfig) -> Metro {
         extras: Vec::new(),
         static_left: static_total,
         moving_left: moving,
-        shapes: HashMap::new(),
+        shapes: HashMap::default(),
         blocks: Vec::new(),
         rooftops: Vec::new(),
         cranes: Vec::new(),

@@ -78,7 +78,7 @@ pub use water::*;
 pub use wind::*;
 use workers::*;
 
-use std::collections::{HashMap, HashSet};
+use crate::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bevy_ecs::{

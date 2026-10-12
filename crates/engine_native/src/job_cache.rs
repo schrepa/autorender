@@ -5,7 +5,7 @@
 //! their jobs, in this run or a later one. The least recently used beyond a
 //! byte budget go. Verifying runs every job anyway and compares.
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};

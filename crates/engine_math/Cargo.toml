@@ -5,8 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+default = ["std"]
+# Hash maps and sets with a fixed hasher (`collections`), which need the
+# standard library.
+std = ["dep:foldhash"]
+
 [dependencies]
 libm.workspace = true
+foldhash = { workspace = true, optional = true }
 
 [lints]
 workspace = true

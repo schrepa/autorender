@@ -1,6 +1,6 @@
 //! Read-only spatial observations. Cache synchronization never commits sensor events.
+use engine_core::collections::HashMap;
 use engine_settings::ErrorCode;
-use std::collections::HashMap;
 
 use engine_collision::{
     Collider, ColliderShape, CollisionError, CollisionLayers, CollisionRay, CollisionWorld,

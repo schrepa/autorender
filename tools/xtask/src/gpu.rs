@@ -623,8 +623,8 @@ fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
 }
 
 /// The words of `source` outside its comments, counted.
-fn word_counts(source: &str) -> std::collections::HashMap<&str, usize> {
-    let mut counts = std::collections::HashMap::new();
+fn word_counts(source: &str) -> engine_core::collections::HashMap<&str, usize> {
+    let mut counts = engine_core::collections::HashMap::default();
     for line in source.lines() {
         let code = line.split("//").next().unwrap_or_default();
         for word in code.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {

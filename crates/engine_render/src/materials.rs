@@ -2,7 +2,8 @@
 //! maps read them in, cached samplers, and one bind group per material with
 //! maps. Materials without maps share a default group of white textures.
 
-use std::collections::{BTreeMap, HashMap};
+use engine_core::collections::HashMap;
+use std::collections::BTreeMap;
 
 use engine_core::{
     Filter, Material, MaterialHandle, RenderMaterial, RenderSnapshot, Sampler, Texture,
@@ -83,7 +84,7 @@ impl MaterialStore {
         let [white_srgb, white_linear, flat_normal] = textures
             .each_ref()
             .map(|texture| texture.create_view(&Default::default()));
-        let mut samplers = HashMap::new();
+        let mut samplers = HashMap::default();
         let sampler = sampler(device, &mut samplers, Sampler::CLAMP).clone();
         let uniform = uniform_buffer(device, &MaterialUniform::DEFAULT);
         let group = bind_group(

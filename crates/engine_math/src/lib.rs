@@ -24,6 +24,12 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+#[cfg(feature = "std")]
+extern crate std;
+
+#[cfg(feature = "std")]
+pub mod collections;
+
 /// Largest `|x|` reduced by the fast path: quadrant indices below 2^13 keep
 /// the reduction's first two products exact.
 pub const REDUCTION_LIMIT: f32 = 12_866.0;

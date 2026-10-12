@@ -15,11 +15,11 @@ use engine_core::{
 /// record nothing.
 #[cfg(feature = "profiling")]
 fn stat_counters(stats: &RenderStats) {
-    use std::collections::HashMap;
+    use engine_core::collections::HashMap;
     thread_local! {
         // Counter names live as long as the profiler: one per stats field.
         static NAMES: std::cell::RefCell<HashMap<String, &'static str>> =
-            std::cell::RefCell::new(HashMap::new());
+            std::cell::RefCell::new(HashMap::default());
     }
     fn visit(path: &mut String, value: &serde_json::Value) {
         let number = match value {

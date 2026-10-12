@@ -7,7 +7,7 @@
 //! Bridges' decks collide as a box a deck segment, reporting
 //! layer [`BRIDGE_LAYER`] and their bridge's index as the asset.
 
-use std::collections::HashMap;
+use engine_core::collections::HashMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
@@ -122,7 +122,7 @@ impl PlacedShapes {
                 }
             }
         }
-        let mut grounds: HashMap<Entity, Ground<'_>> = HashMap::new();
+        let mut grounds: HashMap<Entity, Ground<'_>> = HashMap::default();
         for (entity, origin, tile) in terrains.collision_tiles() {
             let key = tile.key();
             grounds
@@ -130,7 +130,7 @@ impl PlacedShapes {
                 .or_insert_with(|| Ground {
                     origin,
                     size: TILE_QUADS as f32 * tile.spacing(),
-                    tiles: HashMap::new(),
+                    tiles: HashMap::default(),
                 })
                 .tiles
                 .insert((key.x, key.z), tile);

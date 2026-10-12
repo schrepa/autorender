@@ -69,7 +69,7 @@ pub(crate) fn pack_decals(
 }
 
 mod gpu {
-    use std::collections::HashMap;
+    use engine_core::collections::HashMap;
 
     use engine_core::RenderSnapshot;
 
@@ -121,7 +121,7 @@ mod gpu {
             Self {
                 layout,
                 pipeline_layouts: [None, None],
-                pipelines: HashMap::new(),
+                pipelines: HashMap::default(),
                 surface_format,
                 records: storage(
                     device,

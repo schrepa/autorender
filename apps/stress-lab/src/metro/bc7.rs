@@ -4,7 +4,7 @@
 //! regions and gentle gradients keep their look; hosts transcoding real
 //! assets use the Basis Universal transcoder instead.
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 
 use engine::prelude::*;
 
@@ -35,7 +35,7 @@ pub(crate) fn encode(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
         "a level is whole 4 by 4 blocks"
     );
     let mut blocks = Vec::with_capacity((width * height) as usize);
-    let mut uniform: HashMap<[u8; 4], [u8; 16]> = HashMap::new();
+    let mut uniform: HashMap<[u8; 4], [u8; 16]> = HashMap::default();
     for by in 0..height / 4 {
         for bx in 0..width / 4 {
             let texel_at = |index: u32| {

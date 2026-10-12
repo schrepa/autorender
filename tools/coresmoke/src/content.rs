@@ -7,7 +7,7 @@
 //! digests between two builds mean the same assets, the same spawned
 //! components and the same transforms.
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 use std::path::Path;
 
 use engine_dev::{Context, DevTools};
@@ -28,7 +28,7 @@ pub fn run(assets: Option<&Path>, report: &mut Report) -> Result<(), String> {
                 report.record(name, "not built: no generated meshes (--assets)");
                 continue;
             }
-            _ => HashMap::new(),
+            _ => HashMap::default(),
         };
         let config = StressConfig {
             scene,

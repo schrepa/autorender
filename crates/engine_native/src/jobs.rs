@@ -11,7 +11,7 @@
 //! the same build made them before. A worker's panic ends the program, as
 //! every engine panic does (`engine_panic`'s hook).
 
-use std::collections::HashMap;
+use engine::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -141,7 +141,7 @@ impl JobPool {
                     #[cfg(feature = "profiling")]
                     sampled: registered.recv().ok().flatten(),
                     thread: Some(thread),
-                    jobs: HashMap::new(),
+                    jobs: HashMap::default(),
                 }
             })
             .collect();
@@ -149,8 +149,8 @@ impl JobPool {
             slots,
             reports,
             cache,
-            keys: HashMap::new(),
-            verifying: HashMap::new(),
+            keys: HashMap::default(),
+            verifying: HashMap::default(),
             reported: None,
         }
     }

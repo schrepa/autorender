@@ -67,7 +67,7 @@ impl Monitor {
 #[cfg(windows)]
 mod windows {
     use super::Load;
-    use std::collections::HashMap;
+    use engine::collections::HashMap;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread::JoinHandle;
@@ -215,7 +215,7 @@ mod windows {
             let window = end.at.duration_since(start.at).as_nanos() as f64 / 100.0;
             let foreign_gpu_pct = luid.filter(|_| window > 0.0).map(|luid| {
                 let own = format!("pid_{}_", std::process::id());
-                let mut foreign: HashMap<&str, i64> = HashMap::new();
+                let mut foreign: HashMap<&str, i64> = HashMap::default();
                 for (name, time) in &end.engines {
                     if name.starts_with(&run) || name.starts_with(&own) {
                         continue;
@@ -273,7 +273,7 @@ mod windows {
 
         /// Each `GPU Engine` instance's running time now.
         fn engines(&self) -> HashMap<String, i64> {
-            let mut engines = HashMap::new();
+            let mut engines = HashMap::default();
             if self.counter.is_null() {
                 return engines;
             }

@@ -8,7 +8,7 @@
 //! floor slab, walls and a vault) along its road; all are in their
 //! terrain's bridge material or a weathered stone.
 
-use std::collections::HashMap;
+use crate::collections::HashMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
