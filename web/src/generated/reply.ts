@@ -35,6 +35,70 @@ export interface Artifact {
   sha256: string;
 }
 
+/** Each kind of asset's digest. */
+export interface AssetDigests {
+  /** Animation clips, slot by slot. */
+  clips: DigestEntry;
+  /** Materials, slot by slot. */
+  materials: DigestEntry;
+  /** Meshes, slot by slot. */
+  meshes: DigestEntry;
+  /** Textures, slot by slot. */
+  textures: DigestEntry;
+}
+
+/** What the asset library holds, and each of the scene's textures. */
+export interface AssetsResult {
+  /** Materials the library holds. */
+  materials: number;
+  /** Meshes the library holds. */
+  meshes: number;
+  /** What the byte counts leave out. */
+  ownership: string;
+  /** When assets are ready: `synchronous`, as they are inserted. */
+  readiness: string;
+  /** Bytes the library's payloads hold. */
+  resident_cpu_bytes: number;
+  /** Each texture the authored scene names. */
+  texture_assets: TextureAsset[];
+  /** Bytes of the textures' pixels. */
+  texture_cpu_bytes: number;
+  /** Textures the library holds. */
+  textures: number;
+}
+
+export interface CollisionLimitsView {
+  max_candidate_pairs: number;
+  max_colliders: number;
+  max_query_candidates: number;
+  max_query_hits: number;
+  max_sensor_pairs: number;
+}
+
+/**
+ * Authoritative spatial cache refreshed for inspection without advancing
+ * clocks or committing sensor events. Includes source frame/tick, cache
+ * revision, completeness, invalid/overflow counts and query budgets. Memory
+ * counts are cache payload, not process totals.
+ */
+export interface CollisionWorldView {
+  active_colliders: number;
+  bvh_nodes: number;
+  /** Reserved collision cache payload; not total process memory. */
+  cache_bytes: number;
+  colliders: number;
+  complete: boolean;
+  frame: string;
+  invalid_colliders: number;
+  limits: CollisionLimitsView;
+  overflow_colliders: number;
+  /** Placed objects colliding within terrains' collision radius. */
+  placed_colliders: number;
+  /** Cache revision and source clocks are decimal strings, not runtime handles. */
+  revision: string;
+  tick: string;
+}
+
 /** Stable machine-readable code and affected field; messages are for people. */
 export interface DevError {
   /** What failed, as the catalog names it. */
@@ -43,6 +107,60 @@ export interface DevError {
   message: string;
   /** Where in the request: a JSON path such as `$.ticks`. */
   path: string;
+}
+
+/** How many of a kind and a hash of them. */
+export interface DigestEntry {
+  /** How many. */
+  count: number;
+  /** The first 16 hexadecimal digits of their content hash. */
+  hash: string;
+}
+
+/**
+ * The world's content as hashes that depend on neither entity ids nor
+ * spawn order (the `digest` query's documentation says how).
+ */
+export interface DigestResult {
+  /**
+   * Per kind of asset, how many the library holds and a hash of their
+   * contents; null without a library.
+   */
+  assets?: AssetDigests | null;
+  /**
+   * Per component inspector, the entities holding its component and a
+   * hash of their views.
+   */
+  components: Record<string, DigestEntry>;
+  /** Entities in the world. */
+  entities: number;
+  /** One hash over the components and assets. */
+  hash: string;
+}
+
+/**
+ * The spread of a set of measured values (milliseconds, counts): the
+ * smallest and the largest, and the median, 95th and 99th percentiles,
+ * each interpolated linearly between the two sorted values around its
+ * rank.
+ */
+export interface Distribution {
+  /** The largest value. */
+  max: number;
+  /** The 50th percentile. */
+  median: number;
+  /** The smallest value. */
+  min: number;
+  /** The 95th percentile. */
+  p95: number;
+  /** The 99th percentile. */
+  p99: number;
+}
+
+/** The spread of the values a `distribution` request named. */
+export interface DistributionResult {
+  /** Null without values, or with one not a finite number of at least 0. */
+  distribution?: Distribution | null;
 }
 
 /** What a host does for the request under way. */
@@ -85,6 +203,14 @@ export interface Observation {
   scene?: SceneObservation | null;
   /** The last fixed tick, as `FixedTime` counts it. */
   tick?: string | null;
+}
+
+/** Each op's result where it is typed, by op: what a successful reply's `result` holds besides what hosts add. */
+export interface OpResults {
+  assets: AssetsResult;
+  digest: DigestResult;
+  distribution: DistributionResult;
+  status: StatusResult;
 }
 
 /** How a host's effect went: each [`Effect`] says what it sets. */
@@ -152,6 +278,43 @@ export interface SceneObservation {
   revision: string;
 }
 
+/** What requests and replies keep within. */
+export interface StatusLimits {
+  /** Entries a page holds at most. */
+  page_size: number;
+  /** Bytes of a request at most. */
+  request_bytes: number;
+  /** Bytes of a reply at most. */
+  response_bytes: number;
+  /** Authored entities a lookup scans at most. */
+  scan_entities: number;
+}
+
+/**
+ * The engine as a session finds it: the world's size, the inspectors,
+ * features and limits it has, and what it presents.
+ */
+export interface StatusResult {
+  /** Entities the authored scene expands to, where one runs. */
+  authored_entities?: number | null;
+  /** The collision world, where the engine has one. */
+  collision?: CollisionWorldView | null;
+  /** Whether frames cull what the camera does not see. */
+  culling_enabled: boolean;
+  /** The features whose plugins the engine has. */
+  features?: string[] | null;
+  /** Seconds a fixed tick advances. */
+  fixed_delta_seconds?: number | null;
+  /** Inspectors registered. */
+  inspectors: number;
+  /** What requests and replies keep within. */
+  limits: StatusLimits;
+  /** What the last frame presented. */
+  presentation: PresentationStateView;
+  /** Entities in the world. */
+  world_entities: number;
+}
+
 /**
  * What the engine answers a request, or the effect it waits for: the
  * request's reply, finished as every one is (its result with the
@@ -159,3 +322,25 @@ export interface SceneObservation {
  * source and the last frame's statistics), or what the host does next.
  */
 export type Step = { reply: Reply } | { effect: Effect };
+
+/**
+ * One texture the authored scene names: its ID, whether the library holds
+ * it, its size and whether the GPU holds it.
+ */
+export interface TextureAsset {
+  /** Bytes of its pixels, where held. */
+  bytes?: number | null;
+  /** Whether the GPU holds it, where a renderer runs. */
+  gpu_resident?: boolean | null;
+  /** Its height in pixels, where held. */
+  height?: number | null;
+  /** The texture's authored ID. */
+  id: string;
+  /** Whether the library holds its pixels. */
+  state: TextureState;
+  /** Its width in pixels, where held. */
+  width?: number | null;
+}
+
+/** Whether the library holds a texture's pixels. */
+export type TextureState = "cpu_ready" | "missing";

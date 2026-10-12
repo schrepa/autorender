@@ -11,7 +11,7 @@ pub use queries::{
     CollisionEventsQuery, CollisionFilterRequest, CollisionSensorFilter, CollisionShapeRequest,
     OverlapQuery, RaycastQuery, ShapeCastQuery,
 };
-pub(crate) use queries::{native_error, world_value};
+pub(crate) use queries::{native_error, world_value, world_view};
 
 use crate::inspect::Inspector;
 use crate::{DevTools, InspectorDescriptor, InspectorKind};

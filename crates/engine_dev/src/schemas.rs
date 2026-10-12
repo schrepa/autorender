@@ -57,6 +57,34 @@ pub fn reply() -> Value {
             .to_owned();
         definitions.insert(name, schema);
     }
+    // Each typed op's result, and one object naming them by op.
+    let mut results = Map::new();
+    for (op, schema) in crate::results::result_schemas() {
+        let mut schema = serialized(schema);
+        let Some(fields) = schema.as_object_mut() else {
+            continue;
+        };
+        if let Some(Value::Object(theirs)) = fields.remove("$defs") {
+            for (name, definition) in theirs {
+                definitions.entry(name).or_insert(definition);
+            }
+        }
+        fields.remove("$schema");
+        let name = fields["title"]
+            .as_str()
+            .expect("root schemas name their type")
+            .to_owned();
+        results.insert(op.to_owned(), json!({ "$ref": format!("#/$defs/{name}") }));
+        definitions.insert(name, schema);
+    }
+    let required: Vec<&String> = results.keys().collect();
+    let op_results = json!({
+        "description": "Each op's result where it is typed, by op: what a successful reply's `result` holds besides what hosts add.",
+        "type": "object",
+        "properties": results,
+        "required": required,
+    });
+    definitions.insert("OpResults".to_owned(), op_results);
     reply["$defs"] = Value::Object(definitions);
     reply
 }
@@ -145,6 +173,7 @@ pub fn generated() -> Result<Generated, String> {
     let queries = ops(&schemas["protocol"], &mut problems);
     let controls = ops(&schemas["BrowserControl"], &mut problems);
     control_state(&controls, &schemas, &mut problems);
+    typed_results(&queries, &controls, &mut problems);
     match serde_json::from_str::<Value>(&scene_schema) {
         Ok(scene) => authored_parity(&scene, &schemas, &mut problems),
         Err(error) => problems.push(format!("the scene schema is not JSON: {error}")),
@@ -212,6 +241,32 @@ pub const {name}: [&str; {}] = {:?};
         summary,
         frame_stats: schemas["FrameStats"].clone(),
     })
+}
+
+/// Checks that every op's result is typed (`results!`) or listed in
+/// `UNTYPED_RESULTS`, not both, that both name only ops, and that the
+/// untyped list is sorted.
+fn typed_results(queries: &[String], controls: &[String], problems: &mut Vec<String>) {
+    let ops: Vec<&str> = queries.iter().chain(controls).map(String::as_str).collect();
+    let (typed, untyped) = (
+        crate::results::TYPED_RESULTS,
+        crate::results::UNTYPED_RESULTS,
+    );
+    for op in &ops {
+        if typed.contains(op) == untyped.contains(op) {
+            problems.push(format!(
+                "op {op}'s result is typed (results!) or listed in UNTYPED_RESULTS, not both or neither"
+            ));
+        }
+    }
+    for op in typed.iter().chain(untyped) {
+        if !ops.contains(op) {
+            problems.push(format!("{op} in results.rs is no op"));
+        }
+    }
+    if untyped.windows(2).any(|pair| pair[0] >= pair[1]) {
+        problems.push("UNTYPED_RESULTS (engine_dev results.rs) must be sorted and unique".into());
+    }
 }
 
 /// Each scene environment section's schema, by the name of its inspector,

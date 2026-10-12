@@ -7,6 +7,7 @@ use engine_core::bevy_ecs::world::World;
 use engine_core::{AssetLibrary, Mesh, Texture, content_hash};
 use serde_json::{Map, Value, json};
 
+use crate::results::DigestResult;
 use crate::{Context, DevTools};
 
 impl DevTools {
@@ -15,7 +16,7 @@ impl DevTools {
     /// entity ids nor spawn order count; for each kind of asset, how many
     /// the library holds and a hash of their contents in slot order (the
     /// order components name them by); and one hash over both.
-    pub fn digest(&self, world: &World, context: Context<'_>) -> Value {
+    pub fn digest(&self, world: &World, context: Context<'_>) -> DigestResult {
         let mut components = Map::new();
         for (name, mut views) in self.component_views(world, context) {
             if views.is_empty() {
@@ -35,12 +36,12 @@ impl DevTools {
                 .to_string()
                 .as_bytes(),
         );
-        json!({
-            "entities": world.iter_entities().count(),
-            "components": components,
-            "assets": assets,
-            "hash": hash,
-        })
+        DigestResult {
+            entities: world.iter_entities().count(),
+            components: Value::Object(components),
+            assets,
+            hash,
+        }
     }
 }
 

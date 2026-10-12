@@ -42,7 +42,8 @@ pub fn run(assets: Option<&Path>, report: &mut Report) -> Result<(), String> {
                 .map_err(|error| format!("{name}: {error}"))?;
         }
         engine.refresh_transforms();
-        report.record(name, tools.digest(engine.app.world(), Context::default()));
+        let digest = tools.digest(engine.app.world(), Context::default());
+        report.record(name, engine_dev::results::result::digest(digest));
     }
     Ok(())
 }

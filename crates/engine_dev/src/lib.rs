@@ -16,6 +16,7 @@ pub mod features;
 mod inspect;
 mod protocol;
 mod reply;
+pub mod results;
 mod views;
 
 #[cfg(not(target_arch = "wasm32"))]

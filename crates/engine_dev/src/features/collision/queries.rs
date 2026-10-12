@@ -308,9 +308,14 @@ fn identity_rotation() -> [f64; 4] {
 }
 
 pub(crate) fn world_value(value: &CollisionWorld) -> Value {
+    json!(world_view(value))
+}
+
+/// The collision world as replies and its inspector show it.
+pub(crate) fn world_view(value: &CollisionWorld) -> CollisionWorldView {
     let report = value.report();
     let config = value.config();
-    json!(CollisionWorldView {
+    CollisionWorldView {
         revision: report.revision.to_string(),
         frame: report.frame.to_string(),
         tick: report.tick.to_string(),
@@ -327,9 +332,9 @@ pub(crate) fn world_value(value: &CollisionWorld) -> Value {
             max_candidate_pairs: config.candidate_pairs(),
             max_sensor_pairs: config.sensor_pairs(),
             max_query_candidates: config.query_candidates(),
-            max_query_hits: config.query_hits()
+            max_query_hits: config.query_hits(),
         },
-    })
+    }
 }
 
 pub(crate) fn collider_value(world: &World, entity: Entity) -> Option<Value> {

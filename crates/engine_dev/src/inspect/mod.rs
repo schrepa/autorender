@@ -2,7 +2,7 @@ mod components;
 mod environment;
 mod poses;
 
-use poses::{presentation_value, presentation_view};
+use poses::presentation_view;
 
 use engine_settings::ErrorCode;
 use std::{collections::BTreeMap, io::Write};
@@ -24,6 +24,10 @@ use serde_json::{Value, json};
 
 use crate::protocol::{Route, ToolsQuery};
 use crate::reply::{Observation, Reply, SceneObservation};
+use crate::results::{
+    AssetsResult, DistributionResult, StatusLimits, StatusResult, TextureAsset, TextureState,
+    result,
+};
 use crate::{
     DevError, DevRequest, MAX_DESCRIPTION_BYTES, MAX_INSPECTOR_BYTES, MAX_INSPECTORS,
     MAX_PAGE_SIZE, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
@@ -455,50 +459,18 @@ impl DevTools {
         };
         let world = engine.app.world();
         match query {
-            ToolsQuery::Status => Ok(json!({
-                "world_entities": world.entities().len(),
-                "authored_entities": scene.map(SceneInstance::entity_count),
-                "inspectors": self.inspectors.len(),
-                "culling_enabled": engine.frustum_culling(),
-                // The features whose plugins the engine has.
-                "features": world.get_resource::<engine_core::Features>().map(|features| features.iter().map(engine_core::Feature::name).collect::<Vec<_>>()),
-                "presentation": presentation_value(engine.presentation()),
-                "collision": world.get_resource::<CollisionWorld>().map(crate::features::collision::world_value),
-                "fixed_delta_seconds": world.get_resource::<FixedTime>().map(|time| time.delta_seconds),
-                "limits": {"request_bytes": MAX_REQUEST_BYTES, "response_bytes": MAX_RESPONSE_BYTES, "page_size": MAX_PAGE_SIZE, "scan_entities": MAX_SCAN_ENTITIES},
-            })),
-            ToolsQuery::Assets => {
-                let assets = world.get_resource::<AssetLibrary>().ok_or_else(|| {
-                    DevError::new(
-                        ErrorCode::MissingResource,
-                        "$.assets",
-                        "AssetLibrary is not installed",
-                    )
-                })?;
-                let textures: Vec<_> = scene.into_iter().flat_map(SceneInstance::textures).map(|(id, handle)| {
-                    let texture = assets.texture(handle);
-                    json!({"id":id,"state":if texture.is_some() {"cpu_ready"} else {"missing"},
-                        "width":texture.map(|texture| texture.width()), "height":texture.map(|texture| texture.height()),
-                        "bytes":texture.map(|texture| texture.byte_len()),
-                        "gpu_resident":context.renderer.map(|renderer| renderer.texture_resident(handle))})
-                }).collect();
-                Ok(
-                    json!({"meshes": assets.mesh_count(), "materials": assets.material_count(),
-                    "textures": assets.texture_count(), "texture_cpu_bytes":assets.texture_bytes(),
-                    "texture_assets":textures, "resident_cpu_bytes": assets.resident_bytes(),
-                    "readiness": "synchronous", "ownership": "library payload excludes retained snapshots and allocator metadata"}),
-                )
-            }
+            ToolsQuery::Status => Ok(result::status(self.status(engine, scene))),
+            ToolsQuery::Assets => assets(world, context).map(result::assets),
             // The world's own state: neither what a renderer made of it nor
             // the slots it draws in.
-            ToolsQuery::Digest => Ok(self.digest(
+            ToolsQuery::Digest => Ok(result::digest(self.digest(
                 world,
                 Context {
                     scene,
                     renderer: None,
                     render_slot: None,
                 },
-            )),
+            ))),
             ToolsQuery::Describe { name, definition } => {
                 self.describe(name.as_deref(), definition.as_deref())
             }
@@ -510,7 +482,9 @@ impl DevTools {
                         format!("at most {} values", crate::bounds::MAX_VALUES),
                     ));
                 }
-                Ok(json!({"distribution": engine_core::Distribution::of(&values)}))
+                Ok(result::distribution(DistributionResult {
+                    distribution: engine_core::Distribution::of(&values),
+                }))
             }
             ToolsQuery::Inspect {
                 entity,
@@ -529,6 +503,33 @@ impl DevTools {
                     limit,
                 },
             ),
+        }
+    }
+
+    /// What `status` answers of `engine`, running `scene`.
+    fn status(&self, engine: &Engine, scene: Option<&SceneInstance>) -> StatusResult {
+        let world = engine.app.world();
+        StatusResult {
+            world_entities: world.entities().len(),
+            authored_entities: scene.map(SceneInstance::entity_count),
+            inspectors: self.inspectors.len(),
+            culling_enabled: engine.frustum_culling(),
+            features: world
+                .get_resource::<engine_core::Features>()
+                .map(|features| features.iter().map(Feature::name).collect()),
+            presentation: presentation_view(engine.presentation()),
+            collision: world
+                .get_resource::<CollisionWorld>()
+                .map(crate::features::collision::world_view),
+            fixed_delta_seconds: world
+                .get_resource::<FixedTime>()
+                .map(|time| time.delta_seconds),
+            limits: StatusLimits {
+                request_bytes: MAX_REQUEST_BYTES,
+                response_bytes: MAX_RESPONSE_BYTES,
+                page_size: MAX_PAGE_SIZE,
+                scan_entities: MAX_SCAN_ENTITIES,
+            },
         }
     }
 
@@ -835,5 +836,49 @@ pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) ->
             .iter(world)
             .find(|(_, metadata)| metadata.authored_id == id && metadata.scene_id == scene.id())
             .map(|(entity, _)| entity)
+    })
+}
+
+/// What `assets` answers of `world`'s asset library and the scene
+/// `context` names: missing_resource without a library.
+fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, DevError> {
+    let assets = world.get_resource::<AssetLibrary>().ok_or_else(|| {
+        DevError::new(
+            ErrorCode::MissingResource,
+            "$.assets",
+            "AssetLibrary is not installed",
+        )
+    })?;
+    let texture_assets = context
+        .scene
+        .into_iter()
+        .flat_map(SceneInstance::textures)
+        .map(|(id, handle)| {
+            let texture = assets.texture(handle);
+            TextureAsset {
+                id: id.to_owned(),
+                state: if texture.is_some() {
+                    TextureState::CpuReady
+                } else {
+                    TextureState::Missing
+                },
+                width: texture.map(|texture| texture.width()),
+                height: texture.map(|texture| texture.height()),
+                bytes: texture.map(|texture| texture.byte_len()),
+                gpu_resident: context
+                    .renderer
+                    .map(|renderer| renderer.texture_resident(handle)),
+            }
+        })
+        .collect();
+    Ok(AssetsResult {
+        meshes: assets.mesh_count(),
+        materials: assets.material_count(),
+        textures: assets.texture_count(),
+        texture_cpu_bytes: assets.texture_bytes(),
+        texture_assets,
+        resident_cpu_bytes: assets.resident_bytes(),
+        readiness: "synchronous",
+        ownership: "library payload excludes retained snapshots and allocator metadata",
     })
 }
