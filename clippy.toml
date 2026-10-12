@@ -15,11 +15,13 @@ disallowed-methods = [
 ]
 
 # Hash maps and sets iterate in the same order every run: the standard
-# library's seed SipHash at random.
+# library's seed SipHash at random. Removal queues lose what fixed ticks
+# skip.
 disallowed-types = [
     { path = "std::collections::HashMap", reason = "use engine_math::collections::HashMap (engine_core::collections, engine::collections): a fixed hasher, the same order every run" },
     { path = "std::collections::HashSet", reason = "use engine_math::collections::HashSet (engine_core::collections, engine::collections): a fixed hasher, the same order every run" },
     { path = "std::hash::RandomState", reason = "use engine_math::collections::FixedState: the same hashes every run" },
+    { path = "bevy_ecs::lifecycle::RemovedComponents", reason = "removals between the fixed ticks that read them are lost: observe Remove (or Despawn) instead" },
 ]
 
 # Functions longer than this fail (Cargo.toml's too_many_lines).

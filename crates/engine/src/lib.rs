@@ -217,7 +217,9 @@ pub mod prelude {
     // Bevy derives resolve this name in client scope when only the engine
     // facade is a direct dependency, so expose the crate beside the parts of
     // its prelude the engine runs: not its hierarchy (the engine's is
-    // `Parent`) nor message queues (which need schedules it never runs).
+    // `Parent`), message queues (which need schedules it never runs) nor
+    // `RemovedComponents` (removals between fixed ticks are lost; observers of
+    // `Remove` see each).
     pub use engine_core::bevy_ecs::{
         self,
         bundle::Bundle,
@@ -226,7 +228,7 @@ pub mod prelude {
         entity::Entity,
         error::{BevyError, Result},
         event::{EntityEvent, Event},
-        lifecycle::{Add, Despawn, Insert, Remove, RemovedComponents},
+        lifecycle::{Add, Despawn, Insert, Remove},
         name::Name,
         observer::{Observer, On},
         query::{Added, AnyOf, Changed, Has, Or, QueryState, With, Without},
