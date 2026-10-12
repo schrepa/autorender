@@ -2,6 +2,8 @@
 //! Counters measure requested bytes, not allocator metadata, committed Wasm
 //! pages, JS heaps or GPU memory. They include the profiler and all Rust code.
 
+#![allow(unsafe_code)]
+
 use serde::Serialize;
 use std::alloc::{GlobalAlloc, Layout};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};

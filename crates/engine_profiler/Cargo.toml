@@ -45,15 +45,5 @@ libc = { workspace = true, optional = true }
 [target.'cfg(target_vendor = "apple")'.dependencies]
 mach2 = { workspace = true, optional = true }
 
-# The workspace forbids unsafe code; loading PIX's capturer, calling PIX's
-# and RenderDoc's capture functions, sampling threads and counting through
-# Vulkan need it, so this crate denies it and allows it item by item (as
-# `engine_profile` does for its allocator). Every unsafe call the native
-# tools make is here.
-[lints.rust]
-unsafe_code = "deny"
-
-[lints.clippy]
-dbg_macro = "deny"
-todo = "deny"
-return_self_not_must_use = "deny"
+[lints]
+workspace = true

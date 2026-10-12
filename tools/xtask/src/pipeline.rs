@@ -45,6 +45,7 @@ pub fn dev(root: &Path, port: u16) -> Result<(), String> {
 }
 
 pub fn lint(root: &Path) -> Result<(), String> {
+    policy::check(root)?;
     authoring::validate_sources(root)?;
     authoring::check_generated(root)?;
     crate::bench::check(root)?;

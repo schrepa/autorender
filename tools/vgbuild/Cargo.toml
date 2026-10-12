@@ -14,11 +14,5 @@ glam.workspace = true
 [build-dependencies]
 cc.workspace = true
 
-# The workspace forbids unsafe code; calling the vendored C++ needs it, so
-# only `src/ffi.rs` allows it (as `engine_profile` does for its allocator).
-[lints.rust]
-unsafe_code = "deny"
-
-[lints.clippy]
-dbg_macro = "deny"
-todo = "deny"
+[lints]
+workspace = true

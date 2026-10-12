@@ -12,10 +12,5 @@ enabled = ["dep:serde"]
 [dependencies]
 serde = { workspace = true, optional = true }
 
-# Only allocator.rs may implement the standard allocator's unsafe contract.
-[lints.rust]
-unsafe_code = "deny"
-
-[lints.clippy]
-dbg_macro = "deny"
-todo = "deny"
+[lints]
+workspace = true

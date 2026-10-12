@@ -2155,6 +2155,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "policy"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "toml_edit",
+]
+
+[[package]]
 name = "polling"
 version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3692,6 +3700,7 @@ dependencies = [
  "engine_render",
  "engine_scene",
  "naga",
+ "policy",
  "serde_json",
  "sha2",
 ]

@@ -8,7 +8,6 @@
 pub const MAX_EVENTS: usize = 65_536;
 
 #[cfg(feature = "enabled")]
-#[allow(unsafe_code)]
 mod allocator;
 #[cfg(feature = "enabled")]
 mod collector;

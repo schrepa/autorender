@@ -1,5 +1,7 @@
 [alias]
 xtask = "run -p xtask --"
+# The repository policy alone, without building the engine (tools/policy).
+policy = "run -p policy --"
 
 # All browser artifacts share the same standard WebAssembly SIMD baseline.
 # Explicit target scoping leaves native tools and tests on their normal target.

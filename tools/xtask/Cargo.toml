@@ -1,14 +1,15 @@
 [package]
 name = "xtask"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
-publish = false
+rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
 engine_scene = { workspace = true, features = ["schema"] }
 engine_dev.workspace = true
 engine_render.workspace = true
-naga = { version = "=30.0.1", features = ["wgsl-in", "spv-out"] }
+naga = { workspace = true, features = ["wgsl-in", "spv-out"] }
 # The shader report checks the analyzer it downloads.
 sha2.workspace = true
 engine_assetc.workspace = true
@@ -16,6 +17,8 @@ engine_assetc.workspace = true
 engine_profiler = { workspace = true, features = ["load"] }
 # The game surface's types and the TypeScript generator.
 engine.workspace = true
+# The repository policy lint checks first.
+policy.workspace = true
 # Numbers read back exactly: an extended report copies its earlier runs
 # as they were measured.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
