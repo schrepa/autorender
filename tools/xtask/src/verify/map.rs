@@ -561,6 +561,7 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &[
             "tools/xtask/Cargo.toml",
             "tools/xtask/src/*.rs",
+            "tools/xtask/src/gpu/**",
             "tools/xtask/src/verify/**",
         ],
         checks: &[],

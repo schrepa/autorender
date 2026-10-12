@@ -14,6 +14,8 @@ use engine_render::pipeline_layouts::{
 use engine_render::shaders::{ENTRIES, Stage};
 use naga::valid::{Capabilities, ValidationFlags, Validator};
 
+mod inter_stage;
+
 /// A module naga parsed and validated, and what its functions use.
 pub struct Checked {
     pub name: &'static str,
@@ -1372,6 +1374,7 @@ pub fn check(root: &Path) -> Result<(), String> {
     let mirrors = check_layouts(&modules);
     let entry_points = check_bindings(&modules);
     let entries = check_entries(&modules);
+    let inter_stage = inter_stage::check(&modules);
     let ranges = check_ranges();
     let pipeline_layouts = check_pipeline_layouts();
     let functions = check_duplicate_bodies();
@@ -1382,6 +1385,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         mirrors.as_ref().err(),
         entry_points.as_ref().err(),
         entries.as_ref().err(),
+        inter_stage.as_ref().err(),
         ranges.as_ref().err(),
         pipeline_layouts.as_ref().err(),
         functions.as_ref().err(),
@@ -1400,13 +1404,14 @@ pub fn check(root: &Path) -> Result<(), String> {
         ));
     }
     println!(
-        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} bindings of shared groups within their features' ranges; {} pipeline layouts within every device's limits and their budget; {} WGSL functions, none written twice; {} WGSL constants mirror {} Rust ones.",
+        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} fragment stages read only locations a vertex stage of their module writes alike; {} bindings of shared groups within their features' ranges; {} pipeline layouts within every device's limits and their budget; {} WGSL functions, none written twice; {} WGSL constants mirror {} Rust ones.",
         modules.len(),
         mirrors?,
         layouts().len(),
         TABLES.len(),
         entry_points?,
         entries?,
+        inter_stage?,
         ranges?,
         pipeline_layouts?,
         functions?,
