@@ -4,6 +4,7 @@ import { adapterInfo } from "./adapter";
 import { BenchmarkError, type BenchmarkOptions, sampleBenchmark } from "./benchmark.ts";
 import { fatal } from "./panic";
 import type { ErrorCode } from "../generated/errors";
+import type { AdapterStatus } from "../generated/host";
 import type { Reply } from "../generated/reply";
 import { parseJson } from "../generated/runtime";
 // The protocol's version, request limit and ops, generated from the engine
@@ -185,8 +186,13 @@ export function connectDevelopment(host: Host): () => void {
           if (!reply.ok) return finish(reply);
         }
         if (disposed || host.signal.aborted) return error("session_closed", "$", "runtime was disposed during command");
-        // Status names the GPU the session renders on.
-        if (command.op === "status" && reply.ok) reply.result = { ...reply.result, adapter: await adapterInfo() };
+        // Status names the GPU as every host does; the browser adds its
+        // vendor and architecture, which the engine cannot read on a page.
+        if (command.op === "status" && reply.ok && reply.result?.adapter) {
+          const adapter = reply.result.adapter as AdapterStatus;
+          const browser = await adapterInfo();
+          reply.result.adapter = { ...adapter, vendor: adapter.vendor || browser?.vendor || "", architecture: browser?.architecture ?? "" };
+        }
         return finish(reply);
       } catch (cause) {
         if (disposed || host.signal.aborted) return error("session_closed", "$", "runtime was disposed during command");

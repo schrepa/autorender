@@ -129,7 +129,7 @@ impl DevHost {
     }
 
     /// A request the development tools answer, with the renderer's facts;
-    /// `status` replies name the build too.
+    /// `status` replies name the build and the GPU too, as every host does.
     fn tools_request(
         &mut self,
         app: &mut AppHost,
@@ -145,6 +145,8 @@ impl DevHost {
             serde_json::from_str(&response).expect("development response is JSON");
         if envelope["ok"] == true {
             envelope["result"]["build"] = build_identity();
+            envelope["result"]["adapter"] =
+                json!(crate::host::AdapterStatus::of(app.renderer.adapter()));
         }
         envelope.to_string()
     }

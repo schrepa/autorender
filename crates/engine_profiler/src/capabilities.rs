@@ -26,17 +26,11 @@ pub(crate) fn machine(adapter: &engine::AdapterInfo) -> Value {
     })
 }
 
-/// The GPU's vendor, by its PCI vendor ID or name.
+/// The GPU's vendor, by its PCI vendor ID or name, as every host names it.
 fn vendor(adapter: &engine::AdapterInfo) -> &'static str {
-    match adapter.vendor {
-        0x10de => "nvidia",
-        0x1002 | 0x1022 => "amd",
-        0x8086 => "intel",
-        0x106b => "apple",
-        0x5143 => "qualcomm",
-        0x13b5 => "arm",
-        _ if adapter.name.starts_with("Apple") => "apple",
-        _ => "other",
+    match engine::host::vendor(adapter) {
+        "" => "other",
+        vendor => vendor,
     }
 }
 

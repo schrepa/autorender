@@ -24,7 +24,6 @@ const binaries = cargoBinaries(["-p", "stress-lab", "--bin", "stress-lab-native"
  * names (`*` stands for any text), the hosts step that removes them, and
  * what differs. */
 const KNOWN = [
-  ["status: * result.adapter.*", "hosts 5", "the page names the browser's GPUAdapterInfo, the native host wgpu's adapter"],
   ["benchmark*: native only result.benchmark.environment.adapter*", "hosts 8", "native benchmarks name their adapter"],
   ["benchmark*: web only result.benchmark.op", "hosts 8", "the page's benchmark repeats its control's op"],
   ["profile: native only observation*", "hosts 8", "the native session's refusal carries an observation, the browser driver's none"],

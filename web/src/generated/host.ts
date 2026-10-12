@@ -30,6 +30,38 @@ export interface PanicReport {
   message: string;
 }
 
+/**
+ * The GPU a host draws on, in the shape every host's development status
+ * names it: what the renderer knows of it, which a page adds the browser's
+ * vendor and architecture to.
+ */
+export interface AdapterStatus {
+  /** Its architecture, where the browser names it; empty natively. */
+  architecture: string;
+  /**
+   * The GPU interface: `Dx12`, `Vulkan`, `Metal`, `Gl`, or
+   * `BrowserWebGpu` on a page.
+   */
+  backend: string;
+  /**
+   * Its kind: `IntegratedGpu`, `DiscreteGpu`, `VirtualGpu`, `Cpu` or
+   * `Other`.
+   */
+  device_type: string;
+  /** Its driver and the driver's version, natively; empty on a page. */
+  driver: string;
+  /**
+   * Its name: the driver's natively; on a page the browser's
+   * description, which browsers may leave empty.
+   */
+  name: string;
+  /**
+   * Its vendor, in lowercase: natively by its PCI vendor ID, on a page
+   * as the browser names it.
+   */
+  vendor: string;
+}
+
 /** Rust's `engine_panic::PANIC_PREFIX`. */
 export const PANIC_PREFIX = "engine-panic ";
 

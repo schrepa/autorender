@@ -258,9 +258,6 @@ impl<G: Game> DevSession<G> {
                 return reply;
             }
         }
-        if op == "status" && reply["ok"] == true {
-            reply["result"]["adapter"] = adapter(self.game.host());
-        }
         self.finish(reply)
     }
 
@@ -779,14 +776,9 @@ fn distribution(values: &[f64]) -> Result<Value, (ErrorCode, String)> {
         })
 }
 
-/// The GPU `host` draws on, as replies name it.
+/// The GPU `host` draws on, as every host's status names it.
 fn adapter<G: Game>(host: &GameHost<G>) -> Value {
-    let adapter = host.adapter();
-    json!({
-        "name": adapter.name, "vendor": adapter.vendor, "device": adapter.device,
-        "type": adapter.device_type, "driver": adapter.driver,
-        "driver_info": adapter.driver_info, "backend": adapter.backend,
-    })
+    json!(engine::host::AdapterStatus::of(host.adapter()))
 }
 
 /// Standard input's lines, read on a thread of their own so frames run

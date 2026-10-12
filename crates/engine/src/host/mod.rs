@@ -2,14 +2,16 @@
 //! times its work by and the terrain's debug views; and what the page and
 //! the native host share instead of each keeping its own: the engine
 //! switches they take, the size views draw at, their policies' values, the
-//! spread of measured values and what a panic reports.
+//! spread of measured values, the GPU they name and what a panic reports.
 
+mod adapter;
 pub mod policy;
 mod resolution;
 mod settings;
 mod statistics;
 
 pub use crate::app_host::{JobMessage, TerrainClock, now_ms};
+pub use adapter::{AdapterStatus, vendor};
 pub use engine_core::{
     FileHeader, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs, TerrainDebug,
     TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
@@ -37,6 +39,10 @@ pub fn typescript() -> String {
     output.push_str(&declarations(
         &schema(schemars::schema_for!(PanicReport)),
         "PanicReport",
+    ));
+    output.push_str(&declarations(
+        &schema(schemars::schema_for!(AdapterStatus)),
+        "AdapterStatus",
     ));
     for (name, value) in [
         ("PANIC_PREFIX", PANIC_PREFIX),
