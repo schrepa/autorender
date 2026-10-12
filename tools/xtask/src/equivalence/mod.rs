@@ -20,7 +20,9 @@
 //! `bench/metrics.json` is `equal`, `not-above` or `false` fail on a change;
 //! `shown` ones are listed. An unstable capture carries its reason in the
 //! matrix and passes when a candidate run matches one of the base's over
-//! `--repeat` runs; `--aa` runs the base against itself to find them.
+//! `--repeat` runs, or lies no farther from the nearest than the base's own
+//! images lie from each other; `--aa` runs the base against itself to find
+//! them.
 //! Exit 0: equal; 3: different; 1: could not check.
 
 mod judge;
@@ -327,6 +329,14 @@ fn cell_report(judged: &Judged) -> Value {
         .map(|(key, verdict)| {
             let (result, detail) = match verdict {
                 Verdict::Equal => ("equal", Value::Null),
+                Verdict::WithinVariation {
+                    pixels,
+                    largest,
+                    spread,
+                } => (
+                    "within-variation",
+                    json!({ "pixels": pixels, "largest": largest, "base_spread": { "pixels": spread.0, "largest": spread.1 } }),
+                ),
                 Verdict::EqualUnstable { distinct } => {
                     ("equal-unstable", json!({ "base_distinct": distinct }))
                 }
@@ -400,6 +410,14 @@ fn print_summary(options: &Options, results: &[Judged]) {
             let (view, capture) = key.split_once(' ').unwrap_or((key, ""));
             let result = match verdict {
                 Verdict::Equal => "equal".to_owned(),
+                Verdict::WithinVariation {
+                    pixels,
+                    largest,
+                    spread,
+                } => format!(
+                    "equal within the base's own variation: {pixels} pixels up to {largest} levels from its nearest image (the base's images differ by up to {} pixels, {} levels)",
+                    spread.0, spread.1
+                ),
                 Verdict::EqualUnstable { distinct } => format!(
                     "equal: matches one of the base's {distinct} distinct images (unstable)"
                 ),

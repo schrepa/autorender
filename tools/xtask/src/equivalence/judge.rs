@@ -107,6 +107,14 @@ fn difference(
 pub(super) enum Verdict {
     Equal,
     /// Unstable, and a candidate run matched a base run.
+    /// Unstable, matching no base image but no farther from the nearest
+    /// (`pixels` differing, by up to `largest`) than the base's own images
+    /// are from each other (`spread`: pixels, levels).
+    WithinVariation {
+        pixels: usize,
+        largest: u8,
+        spread: (usize, u8),
+    },
     EqualUnstable {
         distinct: usize,
     },
@@ -320,13 +328,33 @@ fn nearest_difference(
             Err(error) => return Verdict::Different(error),
         }
     }
-    let Some((_, image)) = nearest else {
+    let Some((least, image)) = nearest else {
         return Verdict::Unchecked("the base took no image".into());
     };
+    // How far the base's own images lie from each other: a candidate no
+    // farther from its nearest one varies only as the base does.
+    let mut spread = (0, 0);
+    for (index, (_, a)) in images.iter().enumerate() {
+        for (_, b) in &images[index + 1..] {
+            match difference(a, b, cell.tolerance, None) {
+                Ok(found) => spread = (spread.0.max(found.pixels), spread.1.max(found.largest)),
+                Err(error) => return Verdict::Different(error),
+            }
+        }
+    }
+    if least.pixels <= spread.0 && least.largest <= spread.1 {
+        return Verdict::WithinVariation {
+            pixels: least.pixels,
+            largest: least.largest,
+            spread,
+        };
+    }
     match describe_difference(cell, key, image, candidate, folder) {
         Verdict::Different(what) => Verdict::Different(format!(
-            "matches none of the base's {} distinct images; the nearest: {what}",
-            images.len()
+            "matches none of the base's {} distinct images, and differs from the nearest by more than they differ from each other ({} pixels, up to {} levels): {what}",
+            images.len(),
+            spread.0,
+            spread.1
         )),
         verdict => verdict,
     }
