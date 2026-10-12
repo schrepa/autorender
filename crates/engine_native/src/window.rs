@@ -57,8 +57,14 @@ pub struct WindowReport {
     /// The last frame's statistics, as JSON.
     pub stats: String,
     pub adapter: engine::AdapterInfo,
-    /// Physical pixels.
+    /// The size frames drew at, in physical pixels.
     pub size: (u32, u32),
+    /// The window's size, in physical pixels.
+    pub window: (u32, u32),
+    /// Whether frames drew at the size the resolution policy gives the
+    /// window ([`engine::host::view_size`]), which D3D12 and Metal stretch
+    /// over it; Vulkan's surfaces take the window's own size.
+    pub capped: bool,
 }
 
 impl Window {
@@ -119,8 +125,11 @@ struct Running<G: Game> {
     window: Arc<winit::window::Window>,
     // Tens of kilobytes: boxed, as moves would copy it through the stack.
     host: Box<GameHost<G>>,
-    // Physical pixels.
+    // The window's, in physical pixels.
     size: (u32, u32),
+    // Whether frames draw at the resolution policy's size: D3D12 and Metal
+    // stretch a smaller surface over the window, Vulkan's takes its size.
+    capped: bool,
     started: Instant,
     // Until play starts.
     preparation: Option<Preparation>,
@@ -163,6 +172,13 @@ impl<'a, G: Game> App<'a, G> {
             target, build,
         )))?);
         self.options.settings.apply(&mut host);
+        let backend = host.adapter().backend.clone();
+        let capped = ["Dx12", "Metal"].contains(&backend.as_str());
+        if !capped {
+            eprintln!(
+                "The resolution policy is not applied on {backend}: its surfaces take the window's size."
+            );
+        }
         let mut jobs = self.options.jobs.pool();
         if let Some(pool) = &mut jobs {
             pool.attach(&mut host);
@@ -171,6 +187,7 @@ impl<'a, G: Game> App<'a, G> {
             window,
             host,
             size,
+            capped,
             started: Instant::now(),
             preparation: Some(Preparation::new()),
             pace: Pace::default(),
@@ -249,11 +266,29 @@ impl<G: Game> Running<G> {
         self.started.elapsed().as_secs_f64() * 1000.0
     }
 
+    /// The size frames draw at, in physical pixels: the resolution
+    /// policy's for the window's size and scale factor where the surface
+    /// stretches over the window, else the window's.
+    fn drawn(&self) -> (u32, u32) {
+        let (width, height) = self.size;
+        if !self.capped {
+            return self.size;
+        }
+        let scale = self.window.scale_factor();
+        engine::host::view_size(
+            f64::from(width) / scale,
+            f64::from(height) / scale,
+            scale,
+            1.0,
+        )
+        .unwrap_or((0, 0))
+    }
+
     fn redraw(&mut self, input: &mut Input) -> engine::Result<()> {
         let timestamp = self.now();
-        let (width, height) = self.size;
+        let (width, height) = self.drawn();
         if let Some(preparation) = &mut self.preparation {
-            if preparation.frame(&mut self.host, timestamp, self.size)? {
+            if preparation.frame(&mut self.host, timestamp, (width, height))? {
                 self.preparation = None;
                 self.pace.skip();
             }
@@ -320,7 +355,9 @@ impl<G: Game> Running<G> {
             cpu_ms: self.measured.iter().map(|&(_, cpu)| cpu).collect(),
             stats: self.host.stats(),
             adapter: self.host.adapter().clone(),
-            size: self.size,
+            size: self.drawn(),
+            window: self.size,
+            capped: self.capped,
         })
     }
 }
