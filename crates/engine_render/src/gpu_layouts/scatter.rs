@@ -21,8 +21,9 @@ gpu_structs! {
     }
 
     /// WGSL `Record`: an object's bounding sphere, draw group and scale, the
-    /// terrain word (see [`TERRAIN_INDEX`]), how far its base sinks below the
-    /// ground, and how the camera shows it ([`STATE_FRESH`]).
+    /// terrain word (see [`TERRAIN_INDEX`](super::constants::TERRAIN_INDEX)),
+    /// how far its base sinks below the ground, and how the camera shows it
+    /// ([`STATE_FRESH`](crate::scatter::STATE_FRESH)).
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct Record as ["Record"] {
         pub center: [f32; 3],

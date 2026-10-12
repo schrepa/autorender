@@ -525,10 +525,10 @@ impl Rivers {
     /// samples lie `spacing` meters apart: below each river's water within
     /// its width (at least most of a sample wide, so coarse levels keep the
     /// cut; streams only their own), its bed deepest at the
-    /// middle, and its banks rising from the water at most [`BANK_SLOPE`] for
-    /// [`BANK_REACH`] meters (streams' `STREAM_BANK_REACH`), the cut easing
+    /// middle, and its banks rising from the water at most `BANK_SLOPE` for
+    /// `BANK_REACH` meters (streams' `STREAM_BANK_REACH`), the cut easing
     /// back to the ground over their outer half, each cut rounding into the
-    /// ground over [`BANK_ROUNDING`] meters.
+    /// ground over `BANK_ROUNDING` meters.
     pub fn cap(&self, x: f32, z: f32, ground: f32, spacing: f32) -> f32 {
         let point = Vec2::new(x, z);
         let mut height = ground;

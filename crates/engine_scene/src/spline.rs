@@ -84,5 +84,5 @@ impl SceneSpline {
     }
 }
 
-/// Validated with its entity's references ([`SceneSpline::validate`]).
+/// Validated with its entity's references (`SceneSpline::validate`).
 impl engine_settings::Setting for SceneSpline {}

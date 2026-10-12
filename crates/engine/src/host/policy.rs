@@ -5,7 +5,7 @@
 use engine_core::ActionId;
 
 /// Declares each policy value once: a constant, and an entry of
-/// `constants`, which [`super::typescript`] writes for the web host.
+/// `constants`, which `host::typescript` writes for the web host.
 macro_rules! policy {
     ($($(#[doc = $doc:literal])+ pub const $name:ident: $ty:ty = $value:expr;)*) => {
         $($(#[doc = $doc])+ pub const $name: $ty = $value;)*

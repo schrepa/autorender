@@ -9,7 +9,9 @@
 //! pixels that ask: a page-table read and three bilinear texel fetches.
 //!
 //! Mip m's texels span [`TEXEL`] · 2^m meters, its pages [`PAGE_TEXELS`] of
-//! them, kept with a border of [`BORDER_TEXELS`] so filtering never reaches
+//! them, kept with a border of
+//! [`VT_BORDER_TEXELS`](crate::gpu_layouts::constants::VT_BORDER_TEXELS) so
+//! filtering never reaches
 //! a neighbor. Pages lie in slots of sheets past the materials' layers of
 //! the material arrays (`terrain_maps.rs`), which grow as the views ask for
 //! more pages than they hold, up to `TerrainSettings::virtual_texture_pages`

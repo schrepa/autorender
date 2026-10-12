@@ -462,7 +462,7 @@ impl PathProfile {
 
     /// Its bridges and tunnels: each road's
     /// centerline every few meters, and bridges' piers no more than
-    /// [`PIER_SPACING`] apart wherever the ground falls [`PIER_DEPTH`] below
+    /// `PIER_SPACING` apart wherever the ground falls `PIER_DEPTH` below
     /// the deck.
     pub fn bridges(&self) -> Vec<Bridge> {
         let tunnels = self.tunnels.iter().map(|&span| (span, true));
@@ -889,7 +889,7 @@ const HAIRPIN_GRADE: f32 = 1.0;
 /// water cost where water stands, and its turn from the step before, which
 /// it turns from by 45 degrees or so at most; steps steeper than the limit
 /// are refused, but for turning steps, which hairpins may take across ground
-/// as steep as [`HAIRPIN_GRADE`]. It searches samples and the way the step
+/// as steep as `HAIRPIN_GRADE`. It searches samples and the way the step
 /// reaching each ran together (A*), 32 states a sample. `None` when no route
 /// keeps within the limits.
 pub fn route(

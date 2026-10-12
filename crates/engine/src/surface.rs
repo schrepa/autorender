@@ -1,6 +1,6 @@
 //! The methods every exported game has: one table, which
 //! [`crate::export_game!`] turns into the game's `#[wasm_bindgen]` methods and
-//! [`runtime_typescript`] into the page's `Runtime` interface, so the two
+//! `runtime_typescript` into the page's `Runtime` interface, so the two
 //! cannot differ. `PageHost` implements each, mostly as `GameHost`.
 
 /// Calls `$callback` with the game surface after `{ $context }`, in groups:

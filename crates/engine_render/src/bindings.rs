@@ -125,7 +125,7 @@ pub struct Serves {
 }
 
 /// A bind group layout: its label, the shader groups it serves and its
-/// bindings. Tables are declared with [`tables!`] alone, which registers
+/// bindings. Tables are declared with `tables!` alone, which registers
 /// each in [`TABLES`] for the GPU check.
 #[derive(Debug)]
 pub struct Table {

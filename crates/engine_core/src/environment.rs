@@ -15,7 +15,7 @@ pub use engine_settings::InvalidSetting;
 /// environment control and of inspection, in the same JSON shape. A world
 /// without the resource reads as [`Self::section_off`]; opt-in sections are
 /// off unless a scene names them, the others start at their defaults.
-/// [`environment_sections`] implements it for every type it lists, from each
+/// [`environment_sections!`](crate::environment_sections!) implements it for every type it lists, from each
 /// type's own `off`, `validate` and `sanitized`.
 pub trait EnvironmentSection:
     Resource + Copy + Default + PartialEq + serde::Serialize + std::fmt::Debug

@@ -1,5 +1,5 @@
 //! The page's side of a hosted game: the files a scene references, decoded
-//! by the page, and [`PageHost`], a [`GameHost`] with the page's types,
+//! by the page, and [`PageHost`](crate::browser::PageHost), a [`GameHost`] with the page's types,
 //! which [`crate::export_game!`] exports.
 use crate::GameHost;
 use crate::game::Game;

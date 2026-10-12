@@ -19,8 +19,8 @@ struct Lanes {
     scale: [Vec4; 3],
 }
 
-/// Local matrices of four blended poses, bit-identical to building each
-/// [`blend_block`] result's matrix, plus whether each blended pose differs
+/// Local matrices of four blended poses, each bit-identical to the blended
+/// pose's [`Transform::matrix`], plus whether each blended pose differs
 /// bitwise from its current endpoint.
 pub(super) struct BlendedMatrices {
     pub(super) matrices: [Mat4; 4],

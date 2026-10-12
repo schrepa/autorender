@@ -14,7 +14,7 @@ gpu_structs! {
         /// Tile width and height in pixels; slice = log2(depth) * z + w.
         pub grid: [f32; 4],
         /// Tiles across and down, depth slices, and the per-cluster budget
-        /// ([`NO_BUDGET`] without one).
+        /// ([`NO_BUDGET`](crate::lights::NO_BUDGET) without one).
         pub counts: [u32; 4],
         /// Lights, an unused word, the entries the cluster lists' storage holds,
         /// and 1 when only lights without a slot or on still slots are binned

@@ -151,6 +151,7 @@ pub(crate) fn valid_position(position: Vec3) -> bool {
 }
 
 engine_settings::settings! {
+    unauthored;
     /// Collision budgets, none by default: the collision world's own
     /// limits bound colliders, sensor pairs and query results. Past a budget
     /// the world reports itself incomplete or a query fails with its
@@ -354,7 +355,7 @@ pub struct PlacedPart {
 pub struct ShapeCastOptions {
     /// False permits initial contact when motion is tangential or separating.
     pub stop_at_penetration: bool,
-    /// World-space skin, in [0,1]. For two cuboids this expands the 15 SAT
+    /// World-space skin, from 0 to 1. For two cuboids this expands the 15 SAT
     /// intervals conservatively; corner distance is not an exact rounded hull.
     pub target_distance: f32,
 }

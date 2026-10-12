@@ -1,6 +1,6 @@
 //! Every struct the renderer uploads to the GPU, declared once with the WGSL
 //! structs mirroring it, and every constant Rust and WGSL share
-//! ([`constants`]). `cargo xtask lint` checks each mirror in every
+//! ([`mod@constants`]). `cargo xtask lint` checks each mirror in every
 //! shader module holding it against the Rust layout, field by field: names,
 //! offsets and sizes, a mirror holding the leading fields alone where its
 //! shaders read no more; and each constant's value. Upload structs live here

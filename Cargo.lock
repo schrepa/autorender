@@ -861,6 +861,7 @@ dependencies = [
  "engine_settings",
  "glam 0.30.9",
  "parry3d",
+ "schemars",
 ]
 
 [[package]]

@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 # JSON schemas of the collision budgets (`settings!`).
-schema = ["engine_settings/schema"]
+schema = ["dep:schemars", "engine_settings/schema"]
 default = []
 profiling = ["engine_profile/enabled", "engine_core/profiling"]
 attribution = ["engine_core/attribution"]
@@ -20,6 +20,7 @@ bevy_app.workspace = true
 bevy_ecs.workspace = true
 glam.workspace = true
 parry3d.workspace = true
+schemars = { workspace = true, optional = true }
 
 [lints]
 workspace = true

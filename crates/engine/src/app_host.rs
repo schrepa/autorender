@@ -79,7 +79,8 @@ impl TerrainFetches {
     }
 }
 
-/// What a host hands its workers, in the order [`AppHost::take_jobs`] lists
+/// What a host hands its workers, in the order
+/// [`GameHost::take_jobs`](crate::GameHost::take_jobs) lists
 /// them.
 #[derive(Debug)]
 pub enum JobMessage {

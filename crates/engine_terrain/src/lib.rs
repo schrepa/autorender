@@ -16,7 +16,7 @@
 //!
 //! Cells split into two triangles along the diagonal from their (x, z+1)
 //! corner to their (x+1, z) corner, as `parry3d` heightfields split them;
-//! renderers, collision and [`Tile::height_at`] use the same split.
+//! renderers, collision and [`Layers::height_at`] use the same split.
 
 mod bake;
 pub mod codec;

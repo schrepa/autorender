@@ -4,7 +4,7 @@
 //! Extraction reads one record per decal each frame; decals keep no GPU
 //! state of their own, so frames without decals pay nothing.
 //!
-//! The [`Decals`] settings are inserted by default; without them, or when
+//! The [`DecalSettings`] are inserted by default; without them, or when
 //! disabled, frames draw no decals. Beyond `max_decals` the decals nearest
 //! the camera win and the rest count as dropped.
 

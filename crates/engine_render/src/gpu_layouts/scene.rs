@@ -36,7 +36,7 @@ gpu_structs! {
     /// `options.x` is 1 while a reflection probe captures a cube face:
     /// its surfaces read shadows from the far maps alone, which
     /// hold every caster whatever the main camera sees; `options.y` is the angle
-    /// a pixel spans at the view's center ([`pixel_angle`]);
+    /// a pixel spans at the view's center ([`pixel_angle`](crate::gpu_data::pixel_angle));
     /// `options.z` turns fades' dither each temporally antialiased frame.
     #[derive(Clone, Copy, Pod, Zeroable)]
     pub(crate) struct CameraUniform as ["Camera"] {
@@ -71,7 +71,8 @@ gpu_structs! {
         /// the roughness beyond which surfaces reflect only the
         /// sky, and 1 when screen-space reflections run.
         pub effects: [f32; 4],
-        /// The contrast curve's weight (see [`contrast_weight`]) and vibrance;
+        /// The contrast curve's weight (see
+        /// [`contrast_weight`](crate::gpu_data::contrast_weight)) and vibrance;
         /// 1 with the physically based sky; w
         /// unused.
         pub grade: [f32; 4],
@@ -110,7 +111,8 @@ gpu_structs! {
     }
 
     /// Separate per-instance color, opacity and packed surface; unchanged colors
-    /// need no pose upload. The color is packed by [`pack_color`].
+    /// need no pose upload. The color is packed by
+    /// [`pack_color`](crate::gpu_data::pack_color).
     #[derive(Clone, Copy, Pod, Zeroable)]
     pub(crate) struct ColorData as ["SlotColor"] {
         pub color: [u32; 2],
@@ -118,7 +120,7 @@ gpu_structs! {
         pub flags: u32,
     }
 
-    /// A vertex: the position, the [`octahedral`] normal and texture
+    /// A vertex: the position, the [`octahedral`](crate::gpu_data::octahedral) normal and texture
     /// coordinates.
     /// The CPU asset representation has no GPU byte-layout contract.
     #[derive(Clone, Copy, Pod, Zeroable)]
@@ -322,12 +324,14 @@ gpu_structs! {
         pub planes: [[f32; 4]; 6],
         pub absolute_view_projection: [[f32; 4]; 4],
         /// Nonzero on temporally antialiased frames with valid previous poses:
-        /// visible IDs of moving slots then carry [`MOVED_SLOT`].
+        /// visible IDs of moving slots then carry [`MOVED_SLOT`](super::constants::MOVED_SLOT).
         pub motion: u32,
         /// Joints of skinned slots' palettes.
         pub joints: u32,
-        /// Candidate flags compaction gathers: [`FLAG_VISIBLE`] without
-        /// occlusion culling, [`FLAG_PHASE1`] or [`FLAG_PHASE2`] with it.
+        /// Candidate flags compaction gathers:
+        /// [`FLAG_VISIBLE`](super::constants::FLAG_VISIBLE) without occlusion
+        /// culling, [`FLAG_PHASE1`](super::constants::FLAG_PHASE1) or
+        /// [`FLAG_PHASE2`](super::constants::FLAG_PHASE2) with it.
         pub mask: u32,
         /// Nonzero when occlusion culling splits drawing into two phases.
         pub occlusion: u32,
@@ -396,7 +400,8 @@ gpu_structs! {
         /// index count in the mesh arena.
         pub lod_ranges: [u32; 4],
         /// Levels 1 and 2's geometric errors in mesh units, the level count
-        /// (1 to [`LOD_LEVELS`]), and the impostor card's error (0: none).
+        /// (1 to [`LOD_LEVELS`](super::constants::LOD_LEVELS)), and the impostor
+        /// card's error (0: none).
         pub lod_errors: [f32; 4],
     }
 

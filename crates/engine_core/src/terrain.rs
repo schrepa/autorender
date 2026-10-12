@@ -8,7 +8,7 @@
 //! keeps every terrain's resident tiles. Each extraction streams toward the
 //! camera: the coarsest levels stay resident everywhere, so the whole
 //! terrain always draws; finer levels load nearest and ahead of the camera
-//! first, and level-0 tiles load around the camera and [`StreamingFocus`]
+//! first, and level-0 tiles load around the camera and [`StreamingFocus`](crate::StreamingFocus)
 //! entities for collision. Generating, decoding and baking share a frame's
 //! work time, larger until the camera's view first loads
 //! whole than after; past a tile budget or the device's capacity the least
