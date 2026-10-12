@@ -338,7 +338,7 @@ impl Renderer {
                 &self.queue,
                 &frame,
                 self.display.size(),
-                self.instances.generation,
+                self.instances.generation(),
             )),
             _ => None,
         };
@@ -1131,7 +1131,7 @@ impl Renderer {
                     .as_ref()
                     .is_some_and(|frame| frame.parity == 1)
             {
-                self.instances.prepare_alternate_group(device);
+                self.instances.prepare_pose_group(device, 1);
             }
         } else if let Some(pass) = self.transparent.as_mut() {
             pass.release_targets();
@@ -1163,13 +1163,7 @@ impl Renderer {
                 device,
                 &self.queue,
                 snapshot,
-                (
-                    Bound::counted(
-                        self.instances.generation,
-                        self.instances.palettes[parity].as_entire_binding(),
-                    ),
-                    parity,
-                ),
+                (self.instances.palettes[parity].bound(), parity),
                 &self.depth.view,
             );
             if prepared.is_some() {
@@ -1380,13 +1374,14 @@ impl Renderer {
             (&state.packing.temporal_frame, state.features.refraction);
 
         if let (Some(_), Some(pass)) = (&temporal_frame, self.temporal.as_mut()) {
+            let poses = self.instances.frame_poses(0);
+            let both = [0, 1].map(|parity| poses.bound(parity).expect("temporal frames create it"));
             pass.prepare_pose_groups(
                 &self.device,
-                self.instances.generation,
-                [&self.instances.buffer, self.instances.poses(1)],
-                self.instances.colors(),
-                [&self.instances.palettes[0], &self.instances.palettes[1]],
-                self.instances.grounds(),
+                both,
+                &poses.colors.bound(),
+                poses.palettes.map(|palette| palette.bound()),
+                &Bound::fixed(self.instances.grounds().as_entire_binding()),
             );
         }
         if refraction && let Some(post) = self.post.as_ref() {

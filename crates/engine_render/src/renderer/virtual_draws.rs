@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::bindings::VIRTUAL_POSES;
+use crate::cached::GroupCache;
 use crate::entries;
 
 /// Virtual geometry's draws: the arena and cluster
@@ -19,7 +20,7 @@ pub(super) struct VirtualDraws {
     pub(super) pipelines: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
     pub(super) pose_layout: wgpu::BindGroupLayout,
     pub(super) layouts: [Option<wgpu::PipelineLayout>; 2],
-    pub(super) pose_groups: Cached<(u64, u64, bool), [wgpu::BindGroup; 4]>,
+    pub(super) pose_groups: [GroupCache<6>; 4],
     pub(super) bins: Vec<(Option<MaterialHandle>, Variant)>,
     pub(super) drawn: Vec<bool>,
     pub(super) shadow_bins: Vec<(usize, usize, u32)>,
@@ -37,7 +38,7 @@ impl VirtualDraws {
             pipelines: HashMap::default(),
             pose_layout,
             layouts: [None, None],
-            pose_groups: Cached::default(),
+            pose_groups: Default::default(),
             bins: Vec::new(),
             drawn: Vec::new(),
             shadow_bins: Vec::new(),
@@ -279,34 +280,28 @@ impl Renderer {
         let Some(([meshes, clusters, pages], arena)) = self.virtual_draws.pass.arena() else {
             return;
         };
-        let key = (
-            self.instances.generation,
-            arena,
-            self.instances.alternate().is_some(),
-        );
-        if !self.virtual_draws.pose_groups.stale(&key) {
-            return;
-        }
-        let buffers = self.instances.pose_buffers();
-        let colors = self.instances.colors();
-        let group = |current: usize, previous: usize| {
-            crate::pipelines::group(
+        let buffers = self.instances.pose_bounds();
+        let colors = self.instances.colors().bound();
+        // The arena counts its buffers' replacements itself.
+        let arena = [meshes, clusters, pages]
+            .map(|buffer| Bound::counted(arena, buffer.as_entire_binding()));
+        for (index, group) in self.virtual_draws.pose_groups.iter_mut().enumerate() {
+            let (current, previous) = (index / 2, index % 2);
+            let [meshes, clusters, pages] = arena.clone();
+            group.bind(
                 &self.device,
                 "engine/virtual-pose-group",
-                &VIRTUAL_POSES,
-                &self.virtual_draws.pose_layout,
-                &[
-                    ("poses", buffers[current].as_entire_binding()),
-                    ("colors", colors.as_entire_binding()),
-                    ("previous_poses", buffers[previous].as_entire_binding()),
-                    ("virtual_meshes", meshes.as_entire_binding()),
-                    ("virtual_clusters", clusters.as_entire_binding()),
-                    ("virtual_pages", pages.as_entire_binding()),
+                (&VIRTUAL_POSES, &self.virtual_draws.pose_layout),
+                [
+                    ("poses", buffers[current].clone()),
+                    ("colors", colors.clone()),
+                    ("previous_poses", buffers[previous].clone()),
+                    ("virtual_meshes", meshes),
+                    ("virtual_clusters", clusters),
+                    ("virtual_pages", pages),
                 ],
-            )
-        };
-        let groups = [group(0, 0), group(0, 1), group(1, 0), group(1, 1)];
-        self.virtual_draws.pose_groups.set(key, groups);
+            );
+        }
     }
 
     /// The virtual geometry pipelines of `kind` for this

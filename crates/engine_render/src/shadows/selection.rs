@@ -368,12 +368,12 @@ impl Selection {
             source,
             buffers: self.generation,
             presented: presented.map_or(0, |presented| presented.generation),
-            poses: poses.generation,
+            poses: poses.generation(),
             pose_index: poses.parity,
         };
         self.select_parity = poses.parity;
         if self.select_groups[poses.parity].stale(&key) {
-            let pose_buffer = poses.buffers[poses.parity].expect("the frame's pose buffer");
+            let pose_buffer = poses.buffer(poses.parity).expect("the frame's pose buffer");
             let (candidate_buffer, batch_buffer, flag_buffer) = match presented {
                 Some(presented) if source == Source::Presented => {
                     (presented.candidates, presented.batches, presented.flags)

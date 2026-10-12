@@ -332,7 +332,7 @@ mod gpu {
                 queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
                 self.written = Some(uniform);
             }
-            let key = (poses.generation, poses.parity, self.buffers_generation);
+            let key = (poses.generation(), poses.parity, self.buffers_generation);
             let group = match self
                 .compute_groups
                 .iter()
@@ -466,7 +466,7 @@ mod gpu {
             uniform.lights[3] = 1;
             queue.write_buffer(&self.probe_uniforms[face], 0, bytemuck::bytes_of(&uniform));
             let key = (
-                poses.generation,
+                poses.generation(),
                 poses.parity,
                 self.buffers_generation,
                 still.1,

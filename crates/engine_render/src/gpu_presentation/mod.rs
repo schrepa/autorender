@@ -416,7 +416,7 @@ impl GpuPresentationPass {
             .ensure(device, view.stillness, poses.current());
         self.fades
             .ensure(device, poses.current(), self.groups.capacity());
-        self.poses = (poses.parity, poses.generation);
+        self.poses = (poses.parity, poses.generation());
 
         // Node inputs: records newer than the last uploaded gather.
         if let Some(gather) = self.nodes.gather(gpu, held) {
@@ -517,7 +517,7 @@ impl GpuPresentationPass {
             joints.generation(),
             stillness.generation(),
             fades.generation(),
-            poses.generation,
+            poses.generation(),
             groups.skinned_count() != 0,
         );
         pose_groups[poses.parity].get_or_insert_with(key, || {

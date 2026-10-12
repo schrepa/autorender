@@ -7,10 +7,11 @@
 
 use crate::bindings::VISIBILITY_CLASSIFY;
 use crate::buffers::{storage, uniform};
-use crate::cached::Cached;
+use crate::cached::{Bound, GroupCache, Versioned};
 use crate::gpu_data::VISIBILITY_SHADER;
 use crate::gpu_layouts::constants::RESOLVE_ARGS_GROUP;
 use crate::gpu_layouts::constants::VISIBILITY_TILE as TILE;
+use crate::targets::{FrameSize, ScreenTarget};
 
 /// Each pixel's visible entry plus one (0: none) and its triangle | bin << 7.
 pub(crate) const ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
@@ -30,23 +31,21 @@ pub(crate) struct VisibilityBuffer {
     layout: wgpu::BindGroupLayout,
     classify: wgpu::ComputePipeline,
     args: wgpu::ComputePipeline,
-    ids: wgpu::Texture,
-    ids_view: wgpu::TextureView,
+    // The ID target, at the frame's size.
+    ids: ScreenTarget<wgpu::TextureView>,
     // Tiles across and down the viewport.
     tiles: (u32, u32),
     // The classification's uniform, each bin's tile count, the tile lists
     // (each bin's from `bin * capacity`), each bin's resolve arguments, and
     // the draws' uniforms (phase one's bins, then phase two's).
     params: wgpu::Buffer,
-    counts: wgpu::Buffer,
-    lists: wgpu::Buffer,
-    draw_args: wgpu::Buffer,
-    draws: wgpu::Buffer,
+    counts: Versioned<wgpu::Buffer>,
+    lists: Versioned<wgpu::Buffer>,
+    draw_args: Versioned<wgpu::Buffer>,
+    draws: Versioned<wgpu::Buffer>,
     // The bins and tile grid the buffers hold.
     held: (usize, (u32, u32)),
-    // Advances whenever the target or a buffer is replaced.
-    generation: u64,
-    group: Cached<u64, wgpu::BindGroup>,
+    group: GroupCache<5>,
 }
 
 fn ids_target(device: &wgpu::Device, (width, height): (u32, u32)) -> wgpu::Texture {
@@ -75,28 +74,25 @@ impl VisibilityBuffer {
         });
         let pipeline =
             |entry: &str| crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry);
-        let ids = ids_target(device, (1, 1));
         let none = wgpu::BufferUsages::empty();
         Self {
             classify: pipeline("classify_tiles"),
             args: pipeline("resolve_args"),
             layout,
-            ids_view: ids.create_view(&Default::default()),
-            ids,
+            ids: ScreenTarget::default(),
             tiles: (0, 0),
             params: uniform(device, "engine/visibility-classify", 32),
-            counts: storage(device, "engine/visibility-counts", 16, none),
-            lists: storage(device, "engine/visibility-tiles", 16, none),
-            draw_args: storage(
+            counts: Versioned::new(storage(device, "engine/visibility-counts", 16, none)),
+            lists: Versioned::new(storage(device, "engine/visibility-tiles", 16, none)),
+            draw_args: Versioned::new(storage(
                 device,
                 "engine/visibility-args",
                 16,
                 wgpu::BufferUsages::INDIRECT,
-            ),
-            draws: uniform(device, "engine/visibility-draws", DRAW_STRIDE),
+            )),
+            draws: Versioned::new(uniform(device, "engine/visibility-draws", DRAW_STRIDE)),
             held: (0, (0, 0)),
-            generation: 0,
-            group: Cached::default(),
+            group: GroupCache::default(),
         }
     }
 
@@ -109,7 +105,7 @@ impl VisibilityBuffer {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        size: crate::targets::FrameSize,
+        size: FrameSize,
         visible_bases: [&[u32]; 2],
     ) -> bool {
         let (width, height) = (size.width.max(1), size.height.max(1));
@@ -123,51 +119,51 @@ impl VisibilityBuffer {
         if bins as u64 * capacity * 4 > binding {
             return false;
         }
-        let extent = self.ids.size();
-        if (extent.width, extent.height) != (width, height) {
-            self.ids = ids_target(device, (width, height));
-            self.ids_view = self.ids.create_view(&Default::default());
-            self.generation += 1;
+        let target = FrameSize { width, height };
+        if self.ids.resizes(target) {
+            let view = ids_target(device, (width, height)).create_view(&Default::default());
+            self.ids.set(target, view);
         }
         if bins > self.held.0 || self.tiles != self.held.1 {
             let none = wgpu::BufferUsages::empty();
-            self.counts = storage(device, "engine/visibility-counts", bins as u64 * 4, none);
-            self.lists = storage(
+            self.counts.replace(storage(
+                device,
+                "engine/visibility-counts",
+                bins as u64 * 4,
+                none,
+            ));
+            self.lists.replace(storage(
                 device,
                 "engine/visibility-tiles",
                 bins as u64 * capacity * 4,
                 none,
-            );
-            self.draw_args = storage(
+            ));
+            self.draw_args.replace(storage(
                 device,
                 "engine/visibility-args",
                 bins as u64 * 16,
                 wgpu::BufferUsages::INDIRECT,
-            );
-            self.draws = uniform(
+            ));
+            self.draws.replace(uniform(
                 device,
                 "engine/visibility-draws",
                 2 * bins.max(1) as u64 * DRAW_STRIDE,
-            );
+            ));
             self.held = (bins, self.tiles);
-            self.generation += 1;
         }
-        if self.group.stale(&self.generation) {
-            let group = crate::pipelines::group(
-                device,
-                "engine/visibility-classify-group",
-                &VISIBILITY_CLASSIFY,
-                &self.layout,
-                &[
-                    ("classify", self.params.as_entire_binding()),
-                    ("ids", crate::pipelines::view(&self.ids_view)),
-                    ("counts", self.counts.as_entire_binding()),
-                    ("tiles", self.lists.as_entire_binding()),
-                    ("draw_args", self.draw_args.as_entire_binding()),
-                ],
-            );
-            self.group.set(self.generation, group);
-        }
+        let ids = self.ids.get().expect("sized above");
+        self.group.bind(
+            device,
+            "engine/visibility-classify-group",
+            (&VISIBILITY_CLASSIFY, &self.layout),
+            [
+                ("classify", Bound::fixed(self.params.as_entire_binding())),
+                ("ids", ids.bound()),
+                ("counts", self.counts.bound()),
+                ("tiles", self.lists.bound()),
+                ("draw_args", self.draw_args.bound()),
+            ],
+        );
         let capacity = capacity as u32;
         queue.write_buffer(
             &self.params,
@@ -217,23 +213,26 @@ impl VisibilityBuffer {
         ((phase * bins + bin) as u64 * DRAW_STRIDE) as u32
     }
 
-    pub(crate) fn ids_view(&self) -> &wgpu::TextureView {
-        &self.ids_view
+    /// The ID target, once prepared.
+    pub(crate) fn ids_view(&self) -> &Versioned<wgpu::TextureView> {
+        self.ids.get().expect("prepared before drawing")
     }
 
     /// The draws' uniforms, the tile lists and the resolve arguments.
-    pub(crate) fn buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, &wgpu::Buffer) {
+    pub(crate) fn buffers(
+        &self,
+    ) -> (
+        &Versioned<wgpu::Buffer>,
+        &Versioned<wgpu::Buffer>,
+        &Versioned<wgpu::Buffer>,
+    ) {
         (&self.draws, &self.lists, &self.draw_args)
     }
 
-    /// Advances whenever the ID target or a buffer is replaced.
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
-    }
-
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        let extent = self.ids.size();
-        u64::from(extent.width) * u64::from(extent.height) * 8
+        self.ids
+            .size()
+            .map_or(0, |size| u64::from(size.width) * u64::from(size.height) * 8)
             + self.counts.size()
             + self.lists.size()
             + self.draw_args.size()

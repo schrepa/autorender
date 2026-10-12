@@ -3,13 +3,8 @@
 
 use super::*;
 use crate::bindings::{VISIBILITY_PASS, VISIBILITY_RESOLVE};
+use crate::cached::GroupCache;
 use crate::entries;
-
-/// What the visibility buffer's groups bind: the pose buffers' generation
-/// and whether alternate poses exist, and the generations of the virtual
-/// arena, the selected clusters and the visibility buffer's target and
-/// buffers.
-type VisibilityGroupsKey = (u64, bool, u64, u64, u64);
 
 /// The visibility buffer, created with the first frame resolving through
 /// it: its passes' group layouts, pipelines (the visibility pass's single-
@@ -24,7 +19,8 @@ pub(super) struct VisibilityDraws {
     pub(super) pipelines: Option<[wgpu::RenderPipeline; 2]>,
     pub(super) resolve_layouts: [Option<wgpu::PipelineLayout>; 2],
     pub(super) resolve_pipelines: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
-    pub(super) groups: Cached<VisibilityGroupsKey, ([wgpu::BindGroup; 2], [wgpu::BindGroup; 4])>,
+    pub(super) pass_groups: [GroupCache<5>; 2],
+    pub(super) resolve_groups: [GroupCache<10>; 4],
     pub(super) bins: Vec<bool>,
 }
 
@@ -42,7 +38,8 @@ impl VisibilityDraws {
             pipelines: None,
             resolve_layouts: [None, None],
             resolve_pipelines: HashMap::default(),
-            groups: Cached::default(),
+            pass_groups: Default::default(),
+            resolve_groups: Default::default(),
             bins: Vec::new(),
         }
     }
@@ -243,85 +240,57 @@ impl Renderer {
             return;
         };
         let (visible, selection) = self.virtual_draws.pass.visible();
-        let key = (
-            self.instances.generation,
-            self.instances.alternate().is_some(),
-            arena,
-            selection,
-            visibility.generation(),
-        );
-        if !self.visibility.groups.stale(&key) {
-            return;
-        }
-        let buffers = self.instances.pose_buffers();
-        let colors = self.instances.colors();
+        let buffers = self.instances.pose_bounds();
+        let colors = self.instances.colors().bound();
         let (draws, tiles, _) = visibility.buffers();
-        let draw = (
-            "visibility_draw",
+        let draw = Bound::of(
+            draws,
             wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                 buffer: draws,
                 offset: 0,
                 size: wgpu::BufferSize::new(16),
             }),
         );
-        let arena = [meshes, clusters, pages];
-        let pass_group = |current: usize| {
-            let [poses, meshes, clusters, pages] = arena_entries(buffers[current], arena);
-            crate::pipelines::group(
+        // The arena and the selection count their buffers' replacements
+        // themselves.
+        let arena = [meshes, clusters, pages]
+            .map(|buffer| Bound::counted(arena, buffer.as_entire_binding()));
+        let visible = Bound::counted(selection, visible.as_entire_binding());
+        for (current, group) in self.visibility.pass_groups.iter_mut().enumerate() {
+            let [meshes, clusters, pages] = arena.clone();
+            group.bind(
                 &self.device,
                 "engine/visibility-group",
-                &VISIBILITY_PASS,
-                &self.visibility.layout,
-                &[poses, meshes, clusters, pages, draw.clone()],
-            )
-        };
-        let resolve_group = |current: usize, previous: usize| {
-            let [poses, meshes, clusters, pages] = arena_entries(buffers[current], arena);
-            crate::pipelines::group(
+                (&VISIBILITY_PASS, &self.visibility.layout),
+                [
+                    ("poses", buffers[current].clone()),
+                    ("virtual_meshes", meshes),
+                    ("virtual_clusters", clusters),
+                    ("virtual_pages", pages),
+                    ("visibility_draw", draw.clone()),
+                ],
+            );
+        }
+        for (index, group) in self.visibility.resolve_groups.iter_mut().enumerate() {
+            let (current, previous) = (index / 2, index % 2);
+            let [meshes, clusters, pages] = arena.clone();
+            group.bind(
                 &self.device,
                 "engine/visibility-resolve-group",
-                &VISIBILITY_RESOLVE,
-                &self.visibility.resolve_layout,
-                &[
-                    poses,
-                    ("colors", colors.as_entire_binding()),
-                    ("previous_poses", buffers[previous].as_entire_binding()),
-                    meshes,
-                    clusters,
-                    pages,
-                    draw.clone(),
-                    ("visible_clusters", visible.as_entire_binding()),
-                    (
-                        "visibility_ids",
-                        crate::pipelines::view(visibility.ids_view()),
-                    ),
-                    ("resolve_tiles", tiles.as_entire_binding()),
+                (&VISIBILITY_RESOLVE, &self.visibility.resolve_layout),
+                [
+                    ("poses", buffers[current].clone()),
+                    ("colors", colors.clone()),
+                    ("previous_poses", buffers[previous].clone()),
+                    ("virtual_meshes", meshes),
+                    ("virtual_clusters", clusters),
+                    ("virtual_pages", pages),
+                    ("visibility_draw", draw.clone()),
+                    ("visible_clusters", visible.clone()),
+                    ("visibility_ids", visibility.ids_view().bound()),
+                    ("resolve_tiles", tiles.bound()),
                 ],
-            )
-        };
-        let pass_groups = [pass_group(0), pass_group(1)];
-        let resolve_groups = [
-            resolve_group(0, 0),
-            resolve_group(0, 1),
-            resolve_group(1, 0),
-            resolve_group(1, 1),
-        ];
-        self.visibility
-            .groups
-            .set(key, (pass_groups, resolve_groups));
+            );
+        }
     }
-}
-
-/// Bindings of slot poses and the virtual arena's meshes, clusters and
-/// pages, by their names in `meshes/declarations.wgsl`.
-fn arena_entries<'a>(
-    poses: &'a wgpu::Buffer,
-    [meshes, clusters, pages]: [&'a wgpu::Buffer; 3],
-) -> [(&'static str, wgpu::BindingResource<'a>); 4] {
-    [
-        ("poses", poses.as_entire_binding()),
-        ("virtual_meshes", meshes.as_entire_binding()),
-        ("virtual_clusters", clusters.as_entire_binding()),
-        ("virtual_pages", pages.as_entire_binding()),
-    ]
 }

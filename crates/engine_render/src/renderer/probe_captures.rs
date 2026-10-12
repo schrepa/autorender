@@ -33,7 +33,7 @@ impl Renderer {
             },
         );
         if odd {
-            self.instances.prepare_alternate_group(&self.device);
+            self.instances.prepare_pose_group(&self.device, 1);
         }
         let mut used = [false; FACES];
         let mut drawn = 0;

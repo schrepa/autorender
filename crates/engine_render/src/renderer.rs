@@ -11,7 +11,7 @@ use crate::platform::{RenderError, RenderTarget, render_error};
 
 use crate::RenderStats;
 use crate::batches::{BatchPlan, DrawBatch};
-use crate::cached::{Bound, Cached, Versioned};
+use crate::cached::{Bound, Versioned};
 use crate::decals::DecalPass;
 use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::entries::{MeshPass, PassKind, Streams};

@@ -6,26 +6,24 @@
 
 use super::*;
 use crate::bindings::RETAINED_POSES;
+use crate::cached::GroupCache;
 
 pub(super) struct Instances {
     // Most slots this GPU's pose and shadow buffers hold.
     pub(super) limit: usize,
     pub(super) capacity: usize,
     // Slot poses, which upload straight from `RenderFrame::pose_rows`.
-    pub(super) buffer: wgpu::Buffer,
-    colors: wgpu::Buffer,
+    pub(super) buffer: Versioned<wgpu::Buffer>,
+    colors: Versioned<wgpu::Buffer>,
     pub(super) color_staging: Vec<ColorData>,
-    // Group 2 of retained mesh pipelines: poses, colors, palettes, and
-    // grounds none of the slots stand on.
+    // Group 2 of retained mesh pipelines, one per pose buffer: its poses,
+    // the colors, its palette, and grounds none of the slots stand on.
     pub(super) pose_layout: wgpu::BindGroupLayout,
-    pose_group: wgpu::BindGroup,
+    pose_groups: [GroupCache<4>; 2],
     grounds: wgpu::Buffer,
-    // Temporal frames cull into this buffer and `buffer` in turn; odd
-    // frames' pose group, for pose storage generation `.0`.
-    alternate: Option<wgpu::Buffer>,
-    alternate_group: Cached<u64, wgpu::BindGroup>,
-    // Advances when pose storage is replaced (compute bindings follow).
-    pub(super) generation: u64,
+    // Temporal frames cull into this buffer and `buffer` in turn; released
+    // (a new generation, so culling stops binding it) when they stop.
+    alternate: Versioned<Option<wgpu::Buffer>>,
     // Slot IDs of CPU-prepared retained frames in drawing order, staged for
     // the frame identity and structure revision `slot_revision`.
     slots: Option<wgpu::Buffer>,
@@ -34,7 +32,7 @@ pub(super) struct Instances {
     pub(super) slot_revision: Option<(u64, u64)>,
     // Joint palettes of skinned slots, one per pose buffer,
     // with room for `palette_capacity` joints.
-    pub(super) palettes: [wgpu::Buffer; 2],
+    pub(super) palettes: [Versioned<wgpu::Buffer>; 2],
     palette_capacity: usize,
     pub(super) palette_staging: Vec<engine_core::PoseRows>,
     pub(super) retained_uploads: RetainedUploads,
@@ -53,37 +51,30 @@ impl Instances {
         let record = size_of::<PoseData>().max(6 * size_of::<u32>()) as u64;
         let limit = (binding / record).min(u64::from(crate::gpu_data::MOVED_SLOT)) as usize;
         let pose_layout = crate::pipelines::layout(device, &RETAINED_POSES);
-        let buffer = create_storage_buffer(device, INITIAL_CAPACITY, size_of::<PoseData>());
-        let colors = create_storage_buffer(device, INITIAL_CAPACITY, size_of::<ColorData>());
-        let palettes = [0, 1].map(|_| create_storage_buffer(device, 1, size_of::<PoseData>()));
-        let grounds = create_storage_buffer(device, 1, size_of::<GroundData>());
-        let pose_group = pose_group(
-            device,
-            &pose_layout,
-            [&buffer, &colors, &palettes[0], &grounds],
-        );
-        Self {
+        let storage =
+            |capacity, stride| Versioned::new(create_storage_buffer(device, capacity, stride));
+        let mut instances = Self {
             limit,
             capacity: INITIAL_CAPACITY,
-            buffer,
-            colors,
+            buffer: storage(INITIAL_CAPACITY, size_of::<PoseData>()),
+            colors: storage(INITIAL_CAPACITY, size_of::<ColorData>()),
             color_staging: Vec::new(),
             pose_layout,
-            pose_group,
-            grounds,
-            alternate: None,
-            alternate_group: Cached::default(),
-            generation: 0,
+            pose_groups: Default::default(),
+            grounds: create_storage_buffer(device, 1, size_of::<GroundData>()),
+            alternate: Versioned::new(None),
             slots: None,
             slot_capacity: 0,
             slot_staging: Vec::new(),
             slot_revision: None,
-            palettes,
+            palettes: [0, 1].map(|_| storage(1, size_of::<PoseData>())),
             palette_capacity: 1,
             palette_staging: Vec::new(),
             retained_uploads: RetainedUploads::default(),
             pose_uploads: StagingRing::default(),
-        }
+        };
+        instances.prepare_pose_group(device, 0);
+        instances
     }
 
     /// Sizes storage for a frame of `payload_count` slots and `joints`
@@ -99,35 +90,45 @@ impl Instances {
         if grew {
             self.capacity = payload_count.next_power_of_two().min(self.limit);
             engine_profile::counter("render.instance_buffer_growth", 1.0);
-            self.buffer = create_storage_buffer(device, self.capacity, size_of::<PoseData>());
-            self.colors = create_storage_buffer(device, self.capacity, size_of::<ColorData>());
-            self.retained_uploads.invalidate();
-            self.alternate = None;
-        }
-        // Joint palettes grow with the frame's joints.
-        let palettes_grew = joints > self.palette_capacity;
-        if palettes_grew {
-            self.palette_capacity = joints.next_power_of_two();
-            self.palettes = [0, 1].map(|_| {
-                create_storage_buffer(device, self.palette_capacity, size_of::<PoseData>())
-            });
-        }
-        if grew || palettes_grew {
-            self.pose_group = pose_group(
-                device,
-                &self.pose_layout,
-                [&self.buffer, &self.colors, &self.palettes[0], &self.grounds],
-            );
-            self.generation += 1;
-        }
-        if temporal && self.alternate.is_none() {
-            self.alternate = Some(create_storage_buffer(
+            self.buffer.replace(create_storage_buffer(
                 device,
                 self.capacity,
                 size_of::<PoseData>(),
             ));
-            self.generation += 1;
+            self.colors.replace(create_storage_buffer(
+                device,
+                self.capacity,
+                size_of::<ColorData>(),
+            ));
+            self.retained_uploads.invalidate();
+            self.alternate.replace(None);
         }
+        // Joint palettes grow with the frame's joints.
+        if joints > self.palette_capacity {
+            self.palette_capacity = joints.next_power_of_two();
+            for palette in &mut self.palettes {
+                palette.replace(create_storage_buffer(
+                    device,
+                    self.palette_capacity,
+                    size_of::<PoseData>(),
+                ));
+            }
+        }
+        if temporal && self.alternate.is_none() {
+            self.alternate.replace(Some(create_storage_buffer(
+                device,
+                self.capacity,
+                size_of::<PoseData>(),
+            )));
+        }
+        self.prepare_pose_group(device, 0);
+    }
+
+    /// Advances whenever pose storage is replaced: either pose buffer, a
+    /// palette or the colors. Generations only grow, so their greatest
+    /// does.
+    pub(super) fn generation(&self) -> u64 {
+        self.frame_poses(0).generation()
     }
 
     /// Stages the slot IDs of a CPU-prepared retained frame drawing
@@ -170,7 +171,7 @@ impl Instances {
     /// antialiasing).
     pub(super) fn poses(&self, parity: usize) -> &wgpu::Buffer {
         if parity == 1 {
-            self.alternate.as_ref().expect("temporal frames create it")
+            Option::as_ref(&self.alternate).expect("temporal frames create it")
         } else {
             &self.buffer
         }
@@ -179,11 +180,11 @@ impl Instances {
     /// The pose storage of retained frames of temporal `parity`.
     pub(super) fn frame_poses(&self, parity: usize) -> FramePoses<'_> {
         FramePoses {
-            buffers: [Some(&self.buffer), self.alternate.as_ref()],
+            first: &self.buffer,
+            alternate: &self.alternate,
             palettes: [&self.palettes[0], &self.palettes[1]],
-            colors: self.colors(),
+            colors: &self.colors,
             parity,
-            generation: self.generation,
         }
     }
 
@@ -194,43 +195,44 @@ impl Instances {
         parity: usize,
     ) -> (&mut StagingRing, FramePoses<'_>) {
         let poses = FramePoses {
-            buffers: [Some(&self.buffer), self.alternate.as_ref()],
+            first: &self.buffer,
+            alternate: &self.alternate,
             palettes: [&self.palettes[0], &self.palettes[1]],
             colors: &self.colors,
             parity,
-            generation: self.generation,
         };
         (&mut self.pose_uploads, poses)
     }
 
-    /// Both pose buffers: the first again when there is no alternate one.
-    pub(super) fn pose_buffers(&self) -> [&wgpu::Buffer; 2] {
-        [
-            &self.buffer,
-            self.alternate.as_ref().unwrap_or(&self.buffer),
-        ]
+    /// Both pose buffers as groups bind them: the first again when there is
+    /// no alternate one.
+    pub(super) fn pose_bounds(&self) -> [Bound<'_>; 2] {
+        let poses = self.frame_poses(0);
+        let first = poses.bound(0).expect("the first pose buffer exists");
+        [first.clone(), poses.bound(1).unwrap_or(first)]
     }
 
     /// The pose buffer odd temporal frames cull into, once created.
     pub(super) fn alternate(&self) -> Option<&wgpu::Buffer> {
-        self.alternate.as_ref()
+        Option::as_ref(&self.alternate)
     }
 
     /// The alternate pose buffer's bytes, 0 without one.
     pub(super) fn alternate_bytes(&self) -> u64 {
-        self.alternate.as_ref().map_or(0, wgpu::Buffer::size)
+        self.alternate().map_or(0, wgpu::Buffer::size)
     }
 
-    /// Releases the alternate pose buffer when temporal antialiasing stops.
+    /// Releases the alternate pose buffer when temporal antialiasing stops:
+    /// culling must not keep writing it, so groups binding pose storage
+    /// rebuild.
     pub(super) fn release_alternate(&mut self) {
-        if self.alternate.take().is_some() {
-            // Culling must not keep writing the released buffer.
-            self.generation += 1;
+        if self.alternate.is_some() {
+            self.alternate.replace(None);
         }
     }
 
     /// Retained slots' colors.
-    pub(super) fn colors(&self) -> &wgpu::Buffer {
+    pub(super) fn colors(&self) -> &Versioned<wgpu::Buffer> {
         &self.colors
     }
 
@@ -245,52 +247,76 @@ impl Instances {
     }
 
     /// Group 2 of retained mesh pipelines for frames of temporal `parity`;
-    /// odd frames' after [`Self::prepare_alternate_group`].
+    /// odd frames' after [`Self::prepare_pose_group`].
     pub(super) fn pose_group(&self, parity: usize) -> &wgpu::BindGroup {
-        if parity == 1 {
-            self.alternate_group.get().expect("prepared this frame")
-        } else {
-            &self.pose_group
-        }
+        self.pose_groups[parity].get().expect("prepared this frame")
     }
 
-    /// The pose group of odd temporal frames: their poses, the colors and
-    /// the second palette.
-    pub(super) fn prepare_alternate_group(&mut self, device: &wgpu::Device) {
-        if self.alternate_group.stale(&self.generation) {
-            let group = pose_group(
-                device,
-                &self.pose_layout,
-                [
-                    self.poses(1),
-                    self.colors(),
-                    &self.palettes[1],
-                    &self.grounds,
-                ],
-            );
-            self.alternate_group.set(self.generation, group);
-        }
+    /// The pose group of frames of temporal `parity`: their poses, the
+    /// colors, their palette and grounds.
+    pub(super) fn prepare_pose_group(&mut self, device: &wgpu::Device, parity: usize) {
+        let poses = FramePoses {
+            first: &self.buffer,
+            alternate: &self.alternate,
+            palettes: [&self.palettes[0], &self.palettes[1]],
+            colors: &self.colors,
+            parity,
+        };
+        self.pose_groups[parity].bind(
+            device,
+            "engine/retained-pose-bind-group",
+            (&RETAINED_POSES, &self.pose_layout),
+            [
+                (
+                    "poses",
+                    poses.bound(parity).expect("temporal frames create it"),
+                ),
+                ("colors", self.colors.bound()),
+                ("palette", self.palettes[parity].bound()),
+                ("grounds", Bound::fixed(self.grounds.as_entire_binding())),
+            ],
+        );
     }
 }
 
 /// The pose storage of a retained frame, which GPU presentation culls into and
 /// every pass drawing or lighting slots reads: both pose buffers (the second
 /// while temporal antialiasing alternates them), the joint palette written with
-/// each, the slot colors, which buffer the frame's poses are in, and the
-/// generation that advances when any of them is replaced.
+/// each, the slot colors and which buffer the frame's poses are in.
 #[derive(Clone, Copy)]
 pub(crate) struct FramePoses<'a> {
-    pub buffers: [Option<&'a wgpu::Buffer>; 2],
-    pub palettes: [&'a wgpu::Buffer; 2],
-    pub colors: &'a wgpu::Buffer,
+    first: &'a Versioned<wgpu::Buffer>,
+    alternate: &'a Versioned<Option<wgpu::Buffer>>,
+    pub palettes: [&'a Versioned<wgpu::Buffer>; 2],
+    pub colors: &'a Versioned<wgpu::Buffer>,
     pub parity: usize,
-    pub generation: u64,
 }
 
 impl<'a> FramePoses<'a> {
+    /// Pose buffer `parity`: the second exists while temporal antialiasing
+    /// alternates them.
+    pub(crate) fn buffer(&self, parity: usize) -> Option<&'a wgpu::Buffer> {
+        if parity == 1 {
+            Option::as_ref(self.alternate)
+        } else {
+            Some(self.first)
+        }
+    }
+
+    /// Pose buffer `parity` as a group binds it.
+    pub(crate) fn bound(&self, parity: usize) -> Option<Bound<'a>> {
+        if parity == 1 {
+            Option::as_ref(self.alternate)
+                .map(|buffer| Bound::of(self.alternate, buffer.as_entire_binding()))
+        } else {
+            Some(self.first.bound())
+        }
+    }
+
     /// The frame's pose buffer.
     pub(crate) fn current(&self) -> &'a wgpu::Buffer {
-        self.buffers[self.parity].expect("temporal frames create the alternate pose buffer")
+        self.buffer(self.parity)
+            .expect("temporal frames create the alternate pose buffer")
     }
 
     /// The joint palette written with the frame's poses.
@@ -298,31 +324,26 @@ impl<'a> FramePoses<'a> {
         self.palettes[self.parity]
     }
 
+    /// Advances whenever pose storage is replaced: either pose buffer, a
+    /// palette or the colors. Generations only grow, so their greatest
+    /// does.
+    pub(crate) fn generation(&self) -> u64 {
+        [
+            self.first.generation(),
+            self.alternate.generation(),
+            self.palettes[0].generation(),
+            self.palettes[1].generation(),
+            self.colors.generation(),
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or_default()
+    }
+
     /// A key naming the frame's pose buffer: its generation and parity.
     pub(crate) fn key(&self) -> u64 {
-        self.generation * 2 + self.parity as u64
+        self.generation() * 2 + self.parity as u64
     }
-}
-
-/// Group 2 of retained mesh pipelines: slot poses, colors, the joint
-/// palettes of skinned slots and grounds.
-fn pose_group(
-    device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
-    [poses, colors, palette, grounds]: [&wgpu::Buffer; 4],
-) -> wgpu::BindGroup {
-    crate::pipelines::group(
-        device,
-        "engine/retained-pose-bind-group",
-        &RETAINED_POSES,
-        layout,
-        &[
-            ("poses", poses.as_entire_binding()),
-            ("colors", colors.as_entire_binding()),
-            ("palette", palette.as_entire_binding()),
-            ("grounds", grounds.as_entire_binding()),
-        ],
-    )
 }
 
 fn create_storage_buffer(device: &wgpu::Device, capacity: usize, stride: usize) -> wgpu::Buffer {

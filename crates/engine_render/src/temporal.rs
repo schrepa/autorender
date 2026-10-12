@@ -10,7 +10,7 @@
 use engine_core::{RenderFrame, glam::Mat4};
 
 use crate::bindings::{TAA_RESOLVE, TEMPORAL_POSES};
-use crate::cached::{Bound, Cached, GroupCache};
+use crate::cached::{Bound, GroupCache};
 use crate::gpu_data::{
     CameraUniform, ResolveUniform, TEMPORAL_SHADER, jitter_clip, jitter_offset, jittered,
 };
@@ -84,8 +84,8 @@ pub(crate) struct TemporalPass {
     // over the screen effects' targets.
     resolve_groups: [GroupCache<9>; 2],
     // Pose groups for (current, previous) buffer pairs, index 2 * current +
-    // previous, of the pose storage generation they were built for.
-    pose_groups: Cached<u64, [wgpu::BindGroup; 4]>,
+    // previous.
+    pose_groups: [GroupCache<6>; 4],
     history: Option<History>,
     frame: u32,
 }
@@ -158,7 +158,7 @@ impl TemporalPass {
             written: None,
             targets: ScreenTarget::default(),
             resolve_groups: Default::default(),
-            pose_groups: Cached::default(),
+            pose_groups: Default::default(),
             history: None,
             frame: 0,
         }
@@ -234,38 +234,31 @@ impl TemporalPass {
         }
     }
 
-    /// Builds the pose bindings over `poses`, the pair of pose storage
-    /// `generation`, `colors` and the joint palettes alternating with the
-    /// poses, unless built for that generation.
+    /// Builds the pose bindings over the pair of pose buffers `poses`,
+    /// `colors`, the joint palettes alternating with the poses and
+    /// `grounds`, unless built over them.
     pub(crate) fn prepare_pose_groups(
         &mut self,
         device: &wgpu::Device,
-        generation: u64,
-        poses: [&wgpu::Buffer; 2],
-        colors: &wgpu::Buffer,
-        palettes: [&wgpu::Buffer; 2],
-        grounds: &wgpu::Buffer,
+        poses: [Bound<'_>; 2],
+        colors: &Bound<'_>,
+        palettes: [Bound<'_>; 2],
+        grounds: &Bound<'_>,
     ) {
-        if self.pose_groups.stale(&generation) {
-            let group = |current: usize, previous: usize| {
-                crate::pipelines::group(
-                    device,
-                    "engine/temporal-pose-group",
-                    &TEMPORAL_POSES,
-                    &self.pose_layout,
-                    &[
-                        ("poses", poses[current].as_entire_binding()),
-                        ("colors", colors.as_entire_binding()),
-                        ("previous_poses", poses[previous].as_entire_binding()),
-                        ("palette", palettes[current].as_entire_binding()),
-                        ("previous_palette", palettes[previous].as_entire_binding()),
-                        ("grounds", grounds.as_entire_binding()),
-                    ],
-                )
-            };
-            self.pose_groups.set(
-                generation,
-                [group(0, 0), group(0, 1), group(1, 0), group(1, 1)],
+        for (index, group) in self.pose_groups.iter_mut().enumerate() {
+            let (current, previous) = (index / 2, index % 2);
+            group.bind(
+                device,
+                "engine/temporal-pose-group",
+                (&TEMPORAL_POSES, &self.pose_layout),
+                [
+                    ("poses", poses[current].clone()),
+                    ("colors", colors.clone()),
+                    ("previous_poses", poses[previous].clone()),
+                    ("palette", palettes[current].clone()),
+                    ("previous_palette", palettes[previous].clone()),
+                    ("grounds", grounds.clone()),
+                ],
             );
         }
     }
@@ -278,8 +271,9 @@ impl TemporalPass {
         } else {
             frame.parity
         };
-        let groups = self.pose_groups.get().expect("prepared this frame");
-        &groups[2 * frame.parity + previous]
+        self.pose_groups[2 * frame.parity + previous]
+            .get()
+            .expect("prepared this frame")
     }
 
     /// Creates the lit mesh pipeline layout unless it exists; `layouts` are

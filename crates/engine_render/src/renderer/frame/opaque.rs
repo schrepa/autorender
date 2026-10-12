@@ -308,18 +308,20 @@ impl Renderer {
         // the retest found visible in phase two; bins the visibility
         // buffer resolves draw below.
         if let Some(first_bin) = virtual_first {
-            let groups = self.virtual_draws.pose_groups.get().expect("built above");
-            let group = match temporal_pass {
+            let index = match temporal_pass {
                 Some((frame, _)) => {
                     let previous = if frame.motion_valid {
                         1 - frame.parity
                     } else {
                         frame.parity
                     };
-                    &groups[2 * frame.parity + previous]
+                    2 * frame.parity + previous
                 }
-                None => &groups[0],
+                None => 0,
             };
+            let group = self.virtual_draws.pose_groups[index]
+                .get()
+                .expect("built above");
             pass.set_bind_group(2, group, &[]);
             for (bin, (material, variant)) in self.virtual_draws.bins.iter().enumerate() {
                 if self.visibility.bins.get(bin) == Some(&true) {
@@ -347,7 +349,7 @@ impl Renderer {
         phase: usize,
     ) {
         let pipelines = self.visibility.pipelines.as_ref().expect("created above");
-        let (pass_groups, _) = self.visibility.groups.get().expect("built above");
+
         let bins = self.virtual_draws.bins.len();
         let first_bin = match phase {
             0 => 0,
@@ -367,7 +369,9 @@ impl Renderer {
             pass.set_pipeline(&pipelines[usize::from(variant.double_sided())]);
             pass.set_bind_group(
                 2,
-                &pass_groups[current],
+                self.visibility.pass_groups[current]
+                    .get()
+                    .expect("built above"),
                 &[VisibilityBuffer::draw_offset(phase, bins, bin)],
             );
             let (stream, args, offset) = self.virtual_draws.pass.bin_source(first_bin + bin);
@@ -403,7 +407,7 @@ impl Renderer {
             .as_ref()
             .zip(self.lights.as_ref());
         let visibility = self.visibility.buffer.as_ref().expect("prepared above");
-        let (_, resolve_groups) = self.visibility.groups.get().expect("built above");
+
         let bins = self.virtual_draws.bins.len();
         let (current, previous) = self.pose_parities(state);
         // The last resolve ends the opaque span.
@@ -432,7 +436,9 @@ impl Renderer {
             pass.set_bind_group(1, self.materials.binding(*material).0, &[]);
             pass.set_bind_group(
                 2,
-                &resolve_groups[2 * current + previous],
+                self.visibility.resolve_groups[2 * current + previous]
+                    .get()
+                    .expect("built above"),
                 &[VisibilityBuffer::draw_offset(phase, bins, bin)],
             );
             pass.draw_indirect(resolve_args, bin as u64 * 16);
