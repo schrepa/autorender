@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use engine::host::{HostSettings, policy};
-use engine::{Engine, Game, GameHost, GpuPreference, InputState, RenderTarget};
+use engine::{Engine, Game, GameHost, GpuPreference, RenderTarget};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::WindowEvent;
@@ -24,9 +24,6 @@ pub struct Window {
     pub title: String,
     /// Its inner size in physical pixels; 1280 × 720 logical pixels unset.
     pub size: Option<(u32, u32)>,
-    /// The game's action keys: the page's key names (`Space`, `KeyF`...)
-    /// by action index.
-    pub actions: Vec<(String, u32)>,
     pub gpu: GpuPreference,
     pub jobs: JobOptions,
     /// Frames wait for the display's refresh (the default), or show as they
@@ -73,7 +70,6 @@ impl Window {
         Self {
             title: title.into(),
             size: None,
-            actions: vec![("Space".into(), 0)],
             gpu: GpuPreference::default(),
             jobs: JobOptions::default(),
             vsync: true,
@@ -91,18 +87,12 @@ pub fn run<'a, G: Game, E: Into<engine::Error>>(
     window: Window,
     build: impl FnOnce() -> Result<(Engine, G), E> + 'a,
 ) -> engine::Result<Option<WindowReport>> {
-    let actions: Vec<(&str, u32)> = window
-        .actions
-        .iter()
-        .map(|(key, action)| (key.as_str(), *action))
-        .collect();
-    let input = Input::new(&actions)?;
     let event_loop =
         EventLoop::new().map_err(|error| host_error("Could not open a window", error))?;
     let mut app = App {
         options: window,
         build: Some(Box::new(move || build().map_err(Into::into))),
-        input,
+        input: Input::default(),
         running: None,
         outcome: Ok(None),
     };
@@ -230,18 +220,21 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                 running.pace.skip();
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if let PhysicalKey::Code(code) = event.physical_key {
-                    self.input.key(code, event.state);
+                if let PhysicalKey::Code(code) = event.physical_key
+                    && !event.repeat
+                {
+                    Input::key(&mut running.host, code, event.state);
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => self.input.button(button, state),
             WindowEvent::CursorMoved { position, .. } => {
                 let position = position.to_logical::<f64>(running.window.scale_factor());
-                self.input.cursor((position.x, position.y));
+                self.input
+                    .cursor(&mut running.host, (position.x, position.y));
             }
             WindowEvent::RedrawRequested => {
                 let start = Instant::now();
-                if let Err(error) = running.redraw(&mut self.input) {
+                if let Err(error) = running.redraw() {
                     self.outcome = Err(error);
                     event_loop.exit();
                     return;
@@ -284,7 +277,7 @@ impl<G: Game> Running<G> {
         .unwrap_or((0, 0))
     }
 
-    fn redraw(&mut self, input: &mut Input) -> engine::Result<()> {
+    fn redraw(&mut self) -> engine::Result<()> {
         let timestamp = self.now();
         let (width, height) = self.drawn();
         if let Some(preparation) = &mut self.preparation {
@@ -295,23 +288,7 @@ impl<G: Game> Running<G> {
             self.exchange_jobs();
             return Ok(());
         }
-        let look = InputState {
-            move_forward: input.forward(),
-            move_right: input.right(),
-            move_up: input.up(),
-            look_yaw: input.yaw,
-            look_pitch: input.pitch,
-        };
-        self.host.frame(
-            timestamp,
-            width,
-            height,
-            look,
-            input.held,
-            input.pressed,
-            input.released,
-        )?;
-        input.consumed();
+        self.host.frame(timestamp, width, height)?;
         self.exchange_jobs();
         self.title.frame(&self.window, timestamp, &self.host);
         // Terrain loads until shortly before the next frame is due.

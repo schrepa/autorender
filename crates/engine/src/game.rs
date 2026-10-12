@@ -9,6 +9,11 @@ use engine_scene::{SceneError, SceneFiles, SceneInstance};
 /// The engine runs frames, jobs, loading, statistics, development tools and
 /// profiling for every game.
 pub trait Game: 'static {
+    /// The game's action keys: UI Events code names
+    /// ([`crate::host::KEYS`]) by action index, which every host reads
+    /// input by.
+    const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0)];
+
     /// Runs before each frame the engine simulates or submits, development
     /// steps and renders included.
     fn before_frame(&mut self, _engine: &mut Engine) {}

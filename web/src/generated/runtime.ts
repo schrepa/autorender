@@ -16,8 +16,14 @@ export function parseJson<T>(json: Json<T>): T {
 /** The methods every game the engine exports has; those of development
  * and profiling builds are optional. */
 export interface Runtime {
-  /** Runs one frame at `timestamp` on a `width` × `height` canvas with movement axes, look deltas and action bits held, pressed and released since the last frame. */
-  frame(timestamp: number, width: number, height: number, forward: number, right: number, up: number, yaw: number, pitch: number, held: number, pressed: number, released: number): void;
+  /** Runs one frame at `timestamp` on a `width` × `height` canvas with the input gathered since the last one. */
+  frame(timestamp: number, width: number, height: number): void;
+  /** A source (a keyboard key, a finger on a touch button) pressed (`down`) or released key `code` (`KeyboardEvent.code`); whether the game uses the key, which the page then keeps from the browser. */
+  key(code: string, down: boolean): boolean;
+  /** The view turned by a drag of `dx`, `dy` CSS pixels. */
+  look(dx: number, dy: number): void;
+  /** Nothing is held: the page took input away. */
+  clear_input(): void;
   /** Loading work in place of a frame while the GPU compiles pipelines. */
   work(width: number, height: number): void;
   /** Terrain loading for `milliseconds` between frames; whether tiles remain. */

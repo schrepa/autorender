@@ -110,15 +110,7 @@ impl Preparation {
             return Ok(false);
         }
         host.suspend();
-        host.frame(
-            timestamp,
-            width,
-            height,
-            engine::InputState::default(),
-            0,
-            0,
-            0,
-        )?;
+        host.frame(timestamp, width, height)?;
         let after = host.frame_stats();
         self.quiet = if after.render.pipelines_created == 0 {
             self.quiet + 1

@@ -1,8 +1,10 @@
 //! The engine's side of a game a host runs, on a page or in a native
-//! window: its app, the game and the development tools.
+//! window: its app, the game, the input gathered for its frames and the
+//! development tools.
 use crate::app_host::{AppHost, JobMessage};
 use crate::game::Game;
-use engine_core::{ActionInput, Engine, InputState, JobId};
+use crate::host::InputGatherer;
+use engine_core::{ActionInput, Engine, ErrorCode, JobId};
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
 
@@ -10,6 +12,7 @@ use engine_scene::SceneFiles;
 pub struct GameHost<G: Game> {
     app: AppHost,
     game: G,
+    input: InputGatherer,
     #[cfg(feature = "dev")]
     development: crate::dev_host::DevHost,
 }
@@ -24,6 +27,8 @@ impl<G: Game> GameHost<G> {
         build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> crate::Result<Self> {
         engine_panic::install();
+        let input = InputGatherer::new(G::ACTIONS)
+            .map_err(|message| crate::Error::new(ErrorCode::InvalidInput, "$.actions", message))?;
         let mut game = None;
         let app = AppHost::launch(target, || {
             let (engine, built) = build().map_err(Into::into)?;
@@ -41,6 +46,7 @@ impl<G: Game> GameHost<G> {
         Ok(Self {
             app,
             game,
+            input,
             #[cfg(feature = "dev")]
             development,
         })
@@ -75,27 +81,34 @@ impl<G: Game> GameHost<G> {
     }
 
     /// Runs one frame at `timestamp` milliseconds on a `width` × `height`
-    /// view with `input` and the action bits `held`, `pressed` and
-    /// `released` since the last frame.
-    #[expect(clippy::too_many_arguments, reason = "each input axis and edge")]
-    pub fn frame(
-        &mut self,
-        timestamp: f64,
-        width: u32,
-        height: u32,
-        input: InputState,
-        held: u32,
-        pressed: u32,
-        released: u32,
-    ) -> crate::Result<()> {
+    /// view with the input gathered since the last one.
+    pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> crate::Result<()> {
+        let input = self.input.take();
         let engine = self.app.engine_mut();
         self.game.before_frame(engine);
-        engine
-            .app
-            .world_mut()
-            .resource_mut::<ActionInput>()
-            .ingest(held, pressed, released);
-        self.app.frame(timestamp, width, height, input)
+        engine.app.world_mut().resource_mut::<ActionInput>().ingest(
+            input.held,
+            input.pressed,
+            input.released,
+        );
+        self.app.frame(timestamp, width, height, input.state)
+    }
+
+    /// A source (a keyboard key, a finger on a touch button) pressed
+    /// (`down`) or released key `code`, a UI Events code name; whether the
+    /// game uses the key, which hosts then keep from anything else.
+    pub fn key(&mut self, code: &str, down: bool) -> bool {
+        self.input.key(code, down)
+    }
+
+    /// The view turned by a drag of `dx`, `dy` pixels.
+    pub fn look(&mut self, dx: f32, dy: f32) {
+        self.input.look(dx, dy);
+    }
+
+    /// Nothing is held: the host took input away.
+    pub fn clear_input(&mut self) {
+        self.input.clear();
     }
 
     pub fn work(&mut self, width: u32, height: u32) {
@@ -130,8 +143,11 @@ impl<G: Game> GameHost<G> {
         self.app.report_job_cache(hits, misses, bytes, mismatches);
     }
 
+    /// Drops suspension time and every input held or gathered before the
+    /// next frame.
     pub fn suspend(&mut self) {
         self.app.suspend();
+        self.input.clear();
         #[cfg(feature = "dev")]
         self.development.clear_input();
     }

@@ -713,6 +713,16 @@ pub(crate) const MAP: &[Rule] = &[
             Browser,
         ],
     },
+    // The input every host gathers and frames take.
+    Rule {
+        paths: &[
+            "crates/engine/src/host/input*",
+            "crates/engine/src/game_host*",
+            "crates/engine_native/src/input*",
+            "web/src/engine/input*",
+        ],
+        checks: &[Smoke("input"), Smoke("interpolation")],
+    },
     Rule {
         paths: &["web/src/engine/job*"],
         checks: &[Smoke("jobs")],

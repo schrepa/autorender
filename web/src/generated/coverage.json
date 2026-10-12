@@ -19,6 +19,7 @@
       "inspector": "Camera",
       "kind": "resource",
       "smokes": [
+        "input",
         "surfaces"
       ]
     },
@@ -298,6 +299,7 @@
         "gpu-presentation",
         "hierarchy",
         "host-parity",
+        "input",
         "interpolation",
         "jobs",
         "lod",
@@ -598,6 +600,7 @@
         "collision",
         "gpu-presentation",
         "host-parity",
+        "input",
         "interpolation",
         "jobs",
         "meshes",
@@ -614,6 +617,7 @@
         "collision",
         "gpu-presentation",
         "host-parity",
+        "input",
         "interpolation",
         "meshes",
         "native",

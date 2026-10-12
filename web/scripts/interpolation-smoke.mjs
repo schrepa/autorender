@@ -129,7 +129,8 @@ try {
       const state = () => ({ observation: request({ op: "status" }).observation,
         player: inspect("player", "GlobalTransform"), child: inspect("accessory", "GlobalTransform"),
         presentedPlayer: inspect("player", "PresentedTransform"), presentedChild: inspect("accessory", "PresentedTransform") });
-      const frame = timestamp => game.frame(timestamp, 320, 240, 1, 0, 0, 0, 0);
+      // Each frame moves forward: W held (again after a suspension drops it).
+      const frame = timestamp => { game.key("KeyW", true); game.frame(timestamp, 320, 240); };
       frame(0);
       const before = state();
       frame(1000 / 60 + 0.00001);

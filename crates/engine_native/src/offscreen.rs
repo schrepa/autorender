@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use engine::{Engine, Game, GameHost, GpuPreference, InputState, RenderTarget};
+use engine::{Engine, Game, GameHost, GpuPreference, RenderTarget};
 use serde_json::Value;
 
 use crate::files::Image;
@@ -309,8 +309,7 @@ impl<G: Game> Offscreen<G> {
     /// flight wait for their marks ([`GameHost::gpu_mark`]).
     pub fn frame_in_flight(&mut self, timestamp: f64) -> engine::Result<()> {
         let (width, height) = self.size;
-        self.host
-            .frame(timestamp, width, height, InputState::default(), 0, 0, 0)?;
+        self.host.frame(timestamp, width, height)?;
         self.exchange_jobs();
         Ok(())
     }

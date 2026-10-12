@@ -16,9 +16,17 @@ macro_rules! __game_surface {
             { $($context)* }
             always_mut {
                 /// Runs one frame at `timestamp` on a `width` × `height` canvas
-                /// with movement axes, look deltas and action bits held,
-                /// pressed and released since the last frame.
-                fn frame(timestamp: f64, width: u32, height: u32, forward: f32, right: f32, up: f32, yaw: f32, pitch: f32, held: u32, pressed: u32, released: u32) -> Result<(), $crate::__private::JsValue>;
+                /// with the input gathered since the last one.
+                fn frame(timestamp: f64, width: u32, height: u32) -> Result<(), $crate::__private::JsValue>;
+                /// A source (a keyboard key, a finger on a touch button) pressed
+                /// (`down`) or released key `code` (`KeyboardEvent.code`); whether
+                /// the game uses the key, which the page then keeps from the
+                /// browser.
+                fn key(code: &str, down: bool) -> bool;
+                /// The view turned by a drag of `dx`, `dy` CSS pixels.
+                fn look(dx: f32, dy: f32);
+                /// Nothing is held: the page took input away.
+                fn clear_input();
                 /// Loading work in place of a frame while the GPU compiles pipelines.
                 fn work(width: u32, height: u32);
                 /// Terrain loading for `milliseconds` between frames; whether tiles remain.
@@ -140,7 +148,6 @@ macro_rules! __export_game {
             host: $crate::browser::PageHost<$game>,
         }
 
-        #[expect(clippy::too_many_arguments, reason = "each input axis and edge")]
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
         impl $name {
             $( $(#[doc = $am_doc])* pub fn $am(&mut self, $($am_arg: $am_ty),*) $(-> $am_ret)? { self.host.$am($($am_arg),*) } )*

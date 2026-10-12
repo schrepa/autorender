@@ -4,7 +4,7 @@
 use crate::GameHost;
 use crate::game::Game;
 use crate::host::JobMessage;
-use engine_core::{Engine, InputState, JobId, JobShare};
+use engine_core::{Engine, JobId, JobShare};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
@@ -179,31 +179,8 @@ impl<G: Game> PageHost<G> {
         })
     }
 
-    #[expect(clippy::too_many_arguments, reason = "inputs cross Wasm as numbers")]
-    pub fn frame(
-        &mut self,
-        timestamp: f64,
-        width: u32,
-        height: u32,
-        forward: f32,
-        right: f32,
-        up: f32,
-        yaw: f32,
-        pitch: f32,
-        held: u32,
-        pressed: u32,
-        released: u32,
-    ) -> Result<(), JsValue> {
-        let input = InputState {
-            move_forward: forward,
-            move_right: right,
-            move_up: up,
-            look_yaw: yaw,
-            look_pitch: pitch,
-        };
-        Ok(self
-            .host
-            .frame(timestamp, width, height, input, held, pressed, released)?)
+    pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> Result<(), JsValue> {
+        Ok(self.host.frame(timestamp, width, height)?)
     }
 
     /// [`GameHost::take_jobs`] as the page's workers read them:

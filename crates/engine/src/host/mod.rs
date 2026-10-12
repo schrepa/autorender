@@ -1,10 +1,12 @@
 //! What hosts wire: job workers, terrain tile fetches, the clock terrain
 //! times its work by and the terrain's debug views; and what the page and
 //! the native host share instead of each keeping its own: the engine
-//! switches they take, the size views draw at, their policies' values, the
-//! spread of measured values, the GPU they name and what a panic reports.
+//! switches they take, the input they gather, the size views draw at, their
+//! policies' values, the spread of measured values, the GPU they name and
+//! what a panic reports.
 
 mod adapter;
+mod input;
 pub mod policy;
 mod resolution;
 mod settings;
@@ -17,6 +19,7 @@ pub use engine_core::{
     TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
 };
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
+pub use input::{FrameInput, InputGatherer, KEYS};
 pub use resolution::view_size;
 pub use settings::{HostSettings, SETTINGS, Setting};
 pub use statistics::{Distribution, median};

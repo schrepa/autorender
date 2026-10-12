@@ -140,9 +140,6 @@ class FrameHud {
 export interface GameOptions<T extends Runtime> {
   /** Creates the game on `canvas`. */
   create(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<T>;
-  /** The keys (`KeyboardEvent.code`) of the game's actions, by action
-   * index (Rust's `ActionId`): `{ Space: 0 }` unless given. */
-  actions?: Record<string, number>;
   /** The game's own development controls, which agents run with the
    * `game` control by name; each refreshes the image after. */
   controls?: Record<string, { description: string; run(game: T, args: Record<string, unknown>): unknown }>;
@@ -173,7 +170,7 @@ const status = element("status");
 const message = element("message");
 const pause = element<HTMLButtonElement>("pause");
 const reset = element<HTMLButtonElement>("reset");
-const input = new BrowserInput(canvas, options.actions ?? { Space: 0 });
+const input = new BrowserInput(canvas);
 let game: T | undefined;
 const instrumented = import.meta.env.MODE === "profiling" || import.meta.env.MODE === "attribution";
 const development = (import.meta.env.DEV || instrumented) && new URLSearchParams(location.search).get("engine_dev") === "1";
@@ -231,6 +228,12 @@ function setStatus(text: string, state: string) {
 
 function clearInput() { input.clear(); }
 
+/** Sends the page's input to the game while it takes input, and the
+ * module runs. */
+function connectInput() {
+  input.game = inputEnabled && !failed ? game : undefined;
+}
+
 /** Tells the game's page `reason` interrupted its timing, while the engine
  * runs: its handlers may call into the module. */
 function interrupt(reason: string) {
@@ -284,6 +287,8 @@ function stopClock() {
 function fail(error: unknown) {
   if (disposed || failed) return;
   failed = true;
+  // Nothing calls into the module again.
+  connectInput();
   stopped = fatal(error) ? panicReport(error)?.message ?? String(error) : undefined;
   // The engine's own refusal (a page parameter it does not take, a scene it
   // cannot run) says what failed; anything else is likely WebGPU's.
@@ -356,7 +361,7 @@ function prepareFrame(current: T, timestamp: number) {
     return;
   }
   current.suspend();
-  current.frame(timestamp, pixelWidth, pixelHeight, 0, 0, 0, 0, 0, 0, 0, 0);
+  current.frame(timestamp, pixelWidth, pixelHeight);
   jobs?.exchange();
   const after = readStats(current);
   quietFrames = after.pipelines_created === 0 ? quietFrames + 1 : 0;
@@ -381,9 +386,7 @@ function frame(timestamp: number) {
       return;
     }
     options.beforeFrame?.(game, timestamp);
-    game.frame(timestamp, pixelWidth, pixelHeight, inputEnabled ? input.forward : 0, inputEnabled ? input.right : 0, inputEnabled ? input.upAxis : 0,
-      inputEnabled ? input.yaw : 0, inputEnabled ? input.pitch : 0, inputEnabled ? input.held : 0, inputEnabled ? input.pressed : 0, inputEnabled ? input.released : 0);
-    input.consumed();
+    game.frame(timestamp, pixelWidth, pixelHeight);
     jobs?.exchange();
     options.afterFrame?.(game, timestamp);
     if (hud.frame(game, timestamp)) options.poll?.(game);
@@ -463,6 +466,7 @@ async function start() {
   game = created;
   // The engine switches the page's parameters name.
   created.apply_host_settings(location.search);
+  connectInput();
   // The game's jobs run on the page's workers; a module of theirs or the
   // game's that stops stops the page.
   jobs = jobPool();
@@ -480,7 +484,7 @@ async function start() {
         game.suspend();
         // Reset timing before an ordinary zero-delta frame: this also refreshes
         // the image in production while the host is paused.
-        game.frame(performance.now(), pixelWidth, pixelHeight, 0, 0, 0, 0, 0, 0, 0, 0);
+        game.frame(performance.now(), pixelWidth, pixelHeight);
         game.suspend();
         options.poll?.(game);
       } catch (error) {
@@ -492,7 +496,11 @@ async function start() {
       if (!Number.isFinite(scale) || scale < 0.25 || scale > 2) throw new Error("Resolution scale must be 0.25–2.");
       resolutionScale = scale; resize();
     },
-    setInputEnabled(enabled) { inputEnabled = enabled; clearInput(); },
+    setInputEnabled(enabled) {
+      inputEnabled = enabled; clearInput();
+      if (!failed) game?.clear_input();
+      connectInput();
+    },
     distribution: values => disposed || failed || !game ? null : readDistribution(game, values),
     size: () => [pixelWidth, pixelHeight], paused: () => paused,
     busy: () => disposed || failed || developmentBusy,
@@ -506,7 +514,7 @@ async function start() {
       isBusy: () => developmentBusy,
       size: () => [pixelWidth, pixelHeight], poll: () => options.poll?.(created),
       frame(timestamp) {
-        created.frame(timestamp, pixelWidth, pixelHeight, 0, 0, 0, 0, 0, 0, 0, 0);
+        created.frame(timestamp, pixelWidth, pixelHeight);
         jobs?.exchange();
       },
       source: options.source,
