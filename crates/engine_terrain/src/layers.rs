@@ -10,13 +10,13 @@ use engine_settings::{InvalidSetting, Rule, Setting, settings};
 use glam::{Vec2, Vec4};
 use serde::{Deserialize, Serialize};
 
-use crate::erosion::{Erosion, ErosionLayer};
-use crate::hydrology::{Hydrology, HydrologyLayer};
+use crate::bake::{ErosionBake, HydrologyBake, PathBake, Stage};
+use crate::hydrology::Hydrology;
 use crate::noise::{
     gradient_noise, gradient_noise4, gradient_value, gradient_value4, gullies, gullies4, max4,
     min4, smooth, smooth4, sqrt4,
 };
-use crate::path::{PathLayer, PathProfile, PathSample};
+use crate::path::PathSample;
 
 /// How a layer's heights combine with the heights of the layers before it,
 /// weighted by the layer's coverage: added, the higher or lower of the two,
@@ -443,25 +443,13 @@ pub enum Layer {
 }
 
 /// A path layer, and its profile once baked.
-#[derive(Clone, Debug, PartialEq)]
-pub struct PathStage {
-    pub layer: Arc<PathLayer>,
-    pub baked: Option<Arc<PathProfile>>,
-}
+pub type PathStage = Stage<PathBake>;
 
 /// An erosion layer, and what its bake did once baked.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ErosionStage {
-    pub layer: ErosionLayer,
-    pub baked: Option<Arc<Erosion>>,
-}
+pub type ErosionStage = Stage<ErosionBake>;
 
 /// A hydrology layer, and what its bake found once baked.
-#[derive(Clone, Debug, PartialEq)]
-pub struct HydrologyStage {
-    pub layer: HydrologyLayer,
-    pub baked: Option<Arc<Hydrology>>,
-}
+pub type HydrologyStage = Stage<HydrologyBake>;
 
 /// A layer's field breaking its rule: the layer's index, the field below
 /// the layer (its kind first, as authored: `noise.height`) and the rule.
