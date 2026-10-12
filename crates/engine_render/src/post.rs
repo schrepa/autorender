@@ -16,7 +16,7 @@
 use engine_core::{RenderSnapshot, glam::Mat4};
 
 use crate::bindings::{POST, SHAFTS};
-use crate::cached::Cached;
+use crate::cached::{Bound, GroupCache, Versioned};
 use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::gpu_data::{POST_SHADER, PostUniform, SHAFTS_SHADER};
 use crate::pipelines::{self, Fillers, Fullscreen, filled_group, fullscreen};
@@ -136,16 +136,14 @@ pub(crate) struct PostPass {
     uniform: wgpu::Buffer,
     written: Option<PostUniform>,
     sampler: wgpu::Sampler,
-    targets: Option<Targets>,
-    // Occlusion, filter, reflection and shaft bindings over the depth buffer
-    // and targets of those generations (and reflections', the pyramid's).
-    occlusion_group: Cached<(u64, u64), wgpu::BindGroup>,
-    effects_filter_group: Cached<(u64, u64), wgpu::BindGroup>,
-    reflections_group: Cached<(u64, u64, u64), wgpu::BindGroup>,
-    filter_group: Cached<(u64, u64), wgpu::BindGroup>,
-    shafts_group: Cached<u64, wgpu::BindGroup>,
-    // Advances when targets are replaced: the temporal resolve rebinds.
-    generation: u64,
+    targets: Option<Versioned<Targets>>,
+    // Occlusion, filter, reflection and shaft bindings over the depth
+    // buffer and targets (and reflections', the pyramid).
+    occlusion_group: GroupCache<2>,
+    effects_filter_group: GroupCache<4>,
+    reflections_group: GroupCache<8>,
+    filter_group: GroupCache<3>,
+    shafts_group: GroupCache<2>,
 }
 
 impl PostPass {
@@ -316,18 +314,19 @@ impl PostPass {
             written: None,
             sampler,
             targets: None,
-            occlusion_group: Cached::default(),
-            effects_filter_group: Cached::default(),
-            reflections_group: Cached::default(),
-            filter_group: Cached::default(),
-            shafts_group: Cached::default(),
-            generation: 0,
+            occlusion_group: GroupCache::default(),
+            effects_filter_group: GroupCache::default(),
+            reflections_group: GroupCache::default(),
+            filter_group: GroupCache::default(),
+            shafts_group: GroupCache::default(),
         }
     }
 
-    /// Advances when targets are replaced.
+    /// Advances when targets are replaced: the temporal resolve rebinds.
     pub(crate) fn generation(&self) -> u64 {
-        self.generation
+        self.targets
+            .as_ref()
+            .map_or(0, |targets| targets.generation())
     }
 
     /// Releases the targets while no frame uses an effect; the next such
@@ -355,18 +354,16 @@ impl PostPass {
     }
 
     /// Sizes the targets to `size` and writes this frame's settings: the
-    /// effects of `snapshot` over the depth buffer of `depth_generation`.
+    /// effects of `snapshot` over the depth buffer `depth`.
     /// `temporal` frames trace reflections from another pixel of each 2x2
     /// block than the frame before.
-    #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     pub(crate) fn begin(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         snapshot: &RenderSnapshot,
         size: (u32, u32),
-        depth: &wgpu::TextureView,
-        depth_generation: u64,
+        depth: &Versioned<wgpu::TextureView>,
         temporal: bool,
     ) -> Effects {
         if self
@@ -375,37 +372,35 @@ impl PostPass {
             .is_none_or(|targets| targets.size != size)
         {
             self.targets = None;
-            self.targets = Some(self.create_targets(device, size));
-            self.generation += 1;
+            self.targets = Some(Versioned::new(self.create_targets(device, size)));
         }
         let frame = Effects::of(&snapshot.environment);
-        let targets_key = (depth_generation, self.generation);
-        if (frame.occlusion || frame.contact) && self.occlusion_group.stale(&targets_key) {
-            let group = self.group(
+        let targets = self.targets.as_ref().expect("sized above");
+        let post = || Bound::fixed(self.uniform.as_entire_binding());
+        let target = |view| Bound::of(targets, pipelines::view(view));
+        let shared = (&POST, &self.layout);
+        if frame.occlusion || frame.contact {
+            self.occlusion_group.bind_filled(
                 device,
                 "engine/post-occlusion-group",
-                &[
-                    ("post", self.uniform.as_entire_binding()),
-                    ("depth_texture", pipelines::view(depth)),
-                ],
+                shared,
+                [("post", post()), ("depth_texture", depth.bound())],
+                &self.fillers,
             );
-            self.occlusion_group.set(targets_key, group);
         }
-        if (frame.occlusion || frame.shafts || frame.contact)
-            && self.effects_filter_group.stale(&targets_key)
-        {
-            let targets = self.targets.as_ref().expect("sized above");
-            let group = self.group(
+        if frame.occlusion || frame.shafts || frame.contact {
+            self.effects_filter_group.bind_filled(
                 device,
                 "engine/post-effects-filter-group",
-                &[
-                    ("post", self.uniform.as_entire_binding()),
-                    ("depth_texture", pipelines::view(depth)),
-                    texture_entry("shafts", &targets.shafts),
-                    texture_entry("raw_occlusion", &targets.raw_occlusion),
+                shared,
+                [
+                    ("post", post()),
+                    ("depth_texture", depth.bound()),
+                    ("shafts", target(&targets.shafts)),
+                    ("raw_occlusion", target(&targets.raw_occlusion)),
                 ],
+                &self.fillers,
             );
-            self.effects_filter_group.set(targets_key, group);
         }
         self.trace_index = if temporal {
             (self.trace_index + 1) % 4
@@ -413,57 +408,46 @@ impl PostPass {
             0
         };
         if frame.reflections {
-            self.nearest.prepare(device, depth, depth_generation, size);
+            self.nearest.prepare(device, depth, size);
         }
-        let nearest = self.nearest.view();
         if frame.reflections
-            && let Some((nearest, nearest_generation)) = nearest
+            && let Some(nearest) = self.nearest.view()
         {
-            let key = (depth_generation, self.generation, nearest_generation);
-            if self.reflections_group.stale(&key) {
-                let targets = self.targets.as_ref().expect("sized above");
-                let group = self.group(
-                    device,
-                    "engine/post-reflections-group",
-                    &[
-                        ("post", self.uniform.as_entire_binding()),
-                        ("depth_texture", pipelines::view(depth)),
-                        texture_entry("scene", &targets.scene),
-                        texture_entry("glow", &targets.glow),
-                        ("linear", pipelines::sampler(&self.sampler)),
-                        texture_entry("nearest_depth", nearest),
-                        texture_entry("surface_texture", &targets.surface),
-                        texture_entry("scene_levels", &targets.scene_levels),
-                    ],
-                );
-                self.reflections_group.set(key, group);
-            }
-            if self.filter_group.stale(&targets_key) {
-                let targets = self.targets.as_ref().expect("sized above");
-                let group = self.group(
-                    device,
-                    "engine/post-reflections-filter-group",
-                    &[
-                        ("post", self.uniform.as_entire_binding()),
-                        ("depth_texture", pipelines::view(depth)),
-                        texture_entry("traced", &targets.traced),
-                    ],
-                );
-                self.filter_group.set(targets_key, group);
-            }
+            self.reflections_group.bind_filled(
+                device,
+                "engine/post-reflections-group",
+                shared,
+                [
+                    ("post", post()),
+                    ("depth_texture", depth.bound()),
+                    ("scene", target(&targets.scene)),
+                    ("glow", target(&targets.glow)),
+                    ("linear", Bound::fixed(pipelines::sampler(&self.sampler))),
+                    ("nearest_depth", nearest.bound()),
+                    ("surface_texture", target(&targets.surface)),
+                    ("scene_levels", target(&targets.scene_levels)),
+                ],
+                &self.fillers,
+            );
+            self.filter_group.bind_filled(
+                device,
+                "engine/post-reflections-filter-group",
+                shared,
+                [
+                    ("post", post()),
+                    ("depth_texture", depth.bound()),
+                    ("traced", target(&targets.traced)),
+                ],
+                &self.fillers,
+            );
         }
-        if frame.shafts && self.shafts_group.stale(&depth_generation) {
-            let group = pipelines::group(
+        if frame.shafts {
+            self.shafts_group.bind(
                 device,
                 "engine/post-shafts-group",
-                &SHAFTS,
-                &self.shafts_layout,
-                &[
-                    ("post", self.uniform.as_entire_binding()),
-                    ("depth_texture", pipelines::view(depth)),
-                ],
+                (&SHAFTS, &self.shafts_layout),
+                [("post", post()), ("depth_texture", depth.bound())],
             );
-            self.shafts_group.set(depth_generation, group);
         }
         let (width, height) = (size.0 as f32, size.1 as f32);
         let view_projection = snapshot.view_projection;

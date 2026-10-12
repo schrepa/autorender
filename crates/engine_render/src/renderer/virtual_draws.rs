@@ -82,6 +82,7 @@ impl Renderer {
             .pyramid
             .as_ref()
             .and_then(DepthPyramid::view)
+            .map(|view| (&**view, view.generation()))
             .filter(|_| two_phases);
         let previous = self
             .virtual_draws

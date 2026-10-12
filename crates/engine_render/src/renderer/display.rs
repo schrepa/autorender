@@ -203,13 +203,12 @@ impl DisplayFrame {
     }
 }
 
-/// The depth buffer, and a generation that advances when it is replaced
-/// (passes that sample it rebind).
+/// The depth buffer and its view, whose generation advances when it is
+/// replaced (groups that sample it rebind).
 pub(super) struct DepthTarget {
     // Water copies it before drawing over it.
     pub(super) texture: wgpu::Texture,
-    pub(super) view: wgpu::TextureView,
-    pub(super) generation: u64,
+    pub(super) view: Versioned<wgpu::TextureView>,
 }
 
 impl DepthTarget {
@@ -228,15 +227,12 @@ impl DepthTarget {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
             texture,
-            view,
-            generation: 0,
+            view: Versioned::new(view),
         }
     }
 
-    /// Replaces the buffer with one of `size`, advancing the generation.
+    /// Replaces the buffer with one of `size`, its view of a new generation.
     fn resize(&mut self, device: &wgpu::Device, size: (u32, u32)) {
-        let generation = self.generation + 1;
         *self = Self::new(device, size);
-        self.generation = generation;
     }
 }

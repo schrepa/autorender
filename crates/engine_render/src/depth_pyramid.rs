@@ -5,7 +5,7 @@
 //! reflections walk after the opaque pass.
 
 use crate::bindings::{PYRAMID_DOWN, PYRAMID_EXTENT_BYTES, PYRAMID_FIRST};
-use crate::cached::Cached;
+use crate::cached::{Cached, Versioned};
 use crate::gpu_data::{DEPTH_PYRAMID_SHADER, mip_levels};
 use crate::gpu_layouts::constants::PYRAMID_GROUP as GROUP;
 use crate::profiling::Span;
@@ -16,7 +16,7 @@ struct Levels {
     // Keeps the texture and the levels' extents alive beside their views.
     _texture: wgpu::Texture,
     _extents: wgpu::Buffer,
-    full: wgpu::TextureView,
+    full: Versioned<wgpu::TextureView>,
     passes: Vec<Level>,
 }
 
@@ -49,8 +49,6 @@ pub(crate) struct DepthPyramid {
     down_layout: wgpu::BindGroupLayout,
     // The levels, by the depth buffer generation they reduce.
     levels: Cached<u64, Levels>,
-    // Advances with every rebuilt texture, for the groups that bind it.
-    generation: u64,
 }
 
 impl DepthPyramid {
@@ -82,7 +80,6 @@ impl DepthPyramid {
             first_layout,
             down_layout,
             levels: Cached::default(),
-            generation: 0,
         }
     }
 
@@ -91,15 +88,15 @@ impl DepthPyramid {
         self.levels.clear();
     }
 
-    /// Prepares the pyramid of the `size` depth buffer `depth` of generation
-    /// `depth_generation`; returns its level count.
+    /// Prepares the pyramid of the `size` depth buffer `depth`, rebuilt
+    /// when the buffer is replaced; returns its level count.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        depth: &wgpu::TextureView,
-        depth_generation: u64,
+        depth: &Versioned<wgpu::TextureView>,
         (width, height): (u32, u32),
     ) -> u32 {
+        let depth_generation = depth.generation();
         if !self.levels.stale(&depth_generation) {
             return self
                 .levels
@@ -211,11 +208,10 @@ impl DepthPyramid {
             Levels {
                 _texture: texture,
                 _extents: extents_buffer,
-                full,
+                full: Versioned::new(full),
                 passes,
             },
         );
-        self.generation += 1;
         count
     }
 
@@ -239,11 +235,9 @@ impl DepthPyramid {
         }
     }
 
-    /// Every level, and its generation.
-    pub(crate) fn view(&self) -> Option<(&wgpu::TextureView, u64)> {
-        self.levels
-            .get()
-            .map(|levels| (&levels.full, self.generation))
+    /// Every level, a view each pyramid rebuilt anew.
+    pub(crate) fn view(&self) -> Option<&Versioned<wgpu::TextureView>> {
+        self.levels.get().map(|levels| &levels.full)
     }
 
     pub(crate) fn capacity_bytes(&self) -> u64 {

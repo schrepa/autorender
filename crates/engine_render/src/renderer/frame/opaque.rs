@@ -164,9 +164,7 @@ impl Renderer {
         // One span from the pyramid's reduction to the test's compaction or
         // the virtual retest.
         let span = self.profiler.span("occlusion");
-        if let Some((pyramid, generation)) =
-            self.culling.pyramid.as_ref().and_then(DepthPyramid::view)
-        {
+        if let Some(pyramid) = self.culling.pyramid.as_ref().and_then(DepthPyramid::view) {
             let odd = temporal_frame
                 .as_ref()
                 .is_some_and(|frame| frame.parity == 1);
@@ -182,7 +180,7 @@ impl Renderer {
             self.gpu_presentation.encode_occlusion(
                 &self.device,
                 encoder,
-                (pyramid, generation),
+                (pyramid, pyramid.generation()),
                 poses,
                 span.filter(|_| !virtual_frame),
             );

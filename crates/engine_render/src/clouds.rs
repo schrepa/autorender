@@ -23,7 +23,7 @@ use engine_core::collections::HashMap;
 use engine_core::Clouds;
 
 use crate::bindings::{CLOUD_COMPOSITE, CLOUD_MARCH, CLOUD_NOISE, CLOUD_SKY, CLOUD_VIEW};
-use crate::cached::Cached;
+use crate::cached::{Bound, Cached, GroupCache, Versioned};
 use crate::gpu_data::LightingUniform;
 use crate::gpu_layouts::constants::{CLOUD_GROUP, NOISE_GROUP};
 
@@ -144,10 +144,9 @@ pub(crate) struct CloudPass {
     // The composite's indirect draw, which the march gives a triangle once
     // any block meets a cloud.
     composite_args: wgpu::Buffer,
-    view_targets: Option<ViewTargets>,
-    view_generation: u64,
-    view_group: Cached<(u64, u64), wgpu::BindGroup>,
-    composite_group: Cached<(u64, u64), wgpu::BindGroup>,
+    view_targets: Option<Versioned<ViewTargets>>,
+    view_group: GroupCache<8>,
+    composite_group: GroupCache<4>,
     view_pipeline: Option<wgpu::ComputePipeline>,
     composite_pipeline_layout: Option<wgpu::PipelineLayout>,
     composite_pipelines: HashMap<(wgpu::TextureFormat, bool), wgpu::RenderPipeline>,
@@ -295,9 +294,8 @@ impl CloudPass {
                 wgpu::BufferUsages::INDIRECT,
             ),
             view_targets: None,
-            view_generation: 0,
-            view_group: Cached::default(),
-            composite_group: Cached::default(),
+            view_group: GroupCache::default(),
+            composite_group: GroupCache::default(),
             view_pipeline: None,
             composite_pipeline_layout: None,
             composite_pipelines: HashMap::default(),
@@ -557,12 +555,11 @@ impl CloudPass {
             .as_ref()
             .is_none_or(|targets| targets.size != blocks)
         {
-            self.view_targets = Some(ViewTargets {
+            self.view_targets = Some(Versioned::new(ViewTargets {
                 clouds: view_texture(device, blocks, wgpu::TextureFormat::Rgba16Float),
                 front: view_texture(device, blocks, wgpu::TextureFormat::R32Float),
                 size: blocks,
-            });
-            self.view_generation += 1;
+            }));
         }
         let uniform = march_uniform(&settings, (eye, seconds), lighting);
         queue.write_buffer(&self.view_clouds, 0, bytemuck::bytes_of(&uniform));
@@ -593,13 +590,13 @@ impl CloudPass {
     }
 
     /// Records this frame's march of the view's clouds up to
-    /// what `depth` (the depth buffer of `depth_generation`) shows, timed
-    /// by `profiler` (`cloud_view`); after [`Self::encode`] made the noise.
+    /// what the depth buffer `depth` shows, timed by `profiler`
+    /// (`cloud_view`); after [`Self::encode`] made the noise.
     pub(crate) fn encode_view(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        (depth, depth_generation): (&wgpu::TextureView, u64),
+        depth: &Versioned<wgpu::TextureView>,
         profiler: &crate::profiling::GpuProfiler,
     ) {
         let (Some(blocks), Some(targets)) = (self.view_job, &self.view_targets) else {
@@ -609,35 +606,45 @@ impl CloudPass {
         let pipeline = self
             .view_pipeline
             .get_or_insert_with(|| view_pipeline(device, layout));
-        let key = (depth_generation, self.view_generation);
-        if self.view_group.stale(&key) {
-            let group = crate::pipelines::group(
-                device,
-                "engine/cloud-view",
-                &CLOUD_VIEW,
-                layout,
-                &[
-                    crate::buffers::entry("clouds", &self.view_clouds),
-                    ("noise_volume", crate::pipelines::view(&self.noise_view)),
-                    (
-                        "noise_sampler",
-                        crate::pipelines::sampler(&self.noise_sampler),
-                    ),
-                    crate::buffers::entry("cloud_view", &self.view_uniform),
-                    ("view_depth", crate::pipelines::view(depth)),
-                    ("view_out", crate::pipelines::view(&targets.clouds.1)),
-                    ("front_out", crate::pipelines::view(&targets.front.1)),
-                    crate::buffers::entry("composite_draw", &self.composite_args),
-                ],
-            );
-            self.view_group.set(key, group);
-        }
+        let group = self.view_group.bind(
+            device,
+            "engine/cloud-view",
+            (&CLOUD_VIEW, layout),
+            [
+                ("clouds", Bound::fixed(self.view_clouds.as_entire_binding())),
+                (
+                    "noise_volume",
+                    Bound::fixed(crate::pipelines::view(&self.noise_view)),
+                ),
+                (
+                    "noise_sampler",
+                    Bound::fixed(crate::pipelines::sampler(&self.noise_sampler)),
+                ),
+                (
+                    "cloud_view",
+                    Bound::fixed(self.view_uniform.as_entire_binding()),
+                ),
+                ("view_depth", depth.bound()),
+                (
+                    "view_out",
+                    Bound::of(targets, crate::pipelines::view(&targets.clouds.1)),
+                ),
+                (
+                    "front_out",
+                    Bound::of(targets, crate::pipelines::view(&targets.front.1)),
+                ),
+                (
+                    "composite_draw",
+                    Bound::fixed(self.composite_args.as_entire_binding()),
+                ),
+            ],
+        );
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/cloud-view"),
             timestamp_writes: profiler.span("cloud_view").map(|span| span.compute()),
         });
         pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, self.view_group.get().expect("built above"), &[]);
+        pass.set_bind_group(0, group, &[]);
         pass.dispatch_workgroups(
             blocks[0].div_ceil(CLOUD_GROUP),
             blocks[1].div_ceil(CLOUD_GROUP),
@@ -648,14 +655,14 @@ impl CloudPass {
     /// Builds the composite's pipeline into `format` (`canvas`: the
     /// canvas, encoded; otherwise the screen effects' scene target) from
     /// `shader` with the camera group's `camera_layout`, and its group over
-    /// `depth`, the depth buffer of `depth_generation`.
+    /// the depth buffer `depth`.
     pub(crate) fn prepare_composite(
         &mut self,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         camera_layout: &wgpu::BindGroupLayout,
         (format, canvas): (wgpu::TextureFormat, bool),
-        (depth, depth_generation): (&wgpu::TextureView, u64),
+        depth: &Versioned<wgpu::TextureView>,
     ) {
         let Some(targets) = self
             .view_targets
@@ -675,25 +682,26 @@ impl CloudPass {
         self.composite_pipelines
             .entry((format, canvas))
             .or_insert_with(|| composite_pipeline(device, shader, layout, format, canvas));
-        let key = (depth_generation, self.view_generation);
-        if self.composite_group.stale(&key) {
-            let group = crate::pipelines::group(
-                device,
-                "engine/cloud-composite",
-                &CLOUD_COMPOSITE,
-                &self.composite_layout,
-                &[
-                    ("view_clouds", crate::pipelines::view(&targets.clouds.1)),
-                    ("view_cloud_front", crate::pipelines::view(&targets.front.1)),
-                    ("view_cloud_depth", crate::pipelines::view(depth)),
-                    (
-                        "view_cloud_sampler",
-                        crate::pipelines::sampler(&self.view_sampler),
-                    ),
-                ],
-            );
-            self.composite_group.set(key, group);
-        }
+        self.composite_group.bind(
+            device,
+            "engine/cloud-composite",
+            (&CLOUD_COMPOSITE, &self.composite_layout),
+            [
+                (
+                    "view_clouds",
+                    Bound::of(targets, crate::pipelines::view(&targets.clouds.1)),
+                ),
+                (
+                    "view_cloud_front",
+                    Bound::of(targets, crate::pipelines::view(&targets.front.1)),
+                ),
+                ("view_cloud_depth", depth.bound()),
+                (
+                    "view_cloud_sampler",
+                    Bound::fixed(crate::pipelines::sampler(&self.view_sampler)),
+                ),
+            ],
+        );
     }
 
     /// Lays the view's clouds over `pass`'s target of `format` (`canvas`:

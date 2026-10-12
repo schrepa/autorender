@@ -80,12 +80,10 @@ impl Renderer {
             Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
             Pass::Decals => self.encode_decals(state, encoder, view, node),
             Pass::Water => report.draws += self.encode_water(state, encoder, view, node),
-            Pass::CloudMarch => self.clouds.encode_view(
-                &self.device,
-                encoder,
-                (&self.depth.view, self.depth.generation),
-                &self.profiler,
-            ),
+            Pass::CloudMarch => {
+                self.clouds
+                    .encode_view(&self.device, encoder, &self.depth.view, &self.profiler);
+            }
             Pass::CloudComposite => self.encode_cloud_composite(state, encoder, view, node),
             Pass::Transparent => {
                 report.draws += self.encode_transparent(state, encoder, view, node);

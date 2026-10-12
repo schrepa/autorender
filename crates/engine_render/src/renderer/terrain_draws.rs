@@ -273,7 +273,7 @@ impl Renderer {
         );
         // Terrain's visibility target, the depth target's
         // size.
-        let generation = self.depth.generation;
+        let generation = self.depth.view.generation();
         if self
             .terrain_ids
             .as_ref()

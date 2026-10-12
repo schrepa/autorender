@@ -676,12 +676,7 @@ impl Renderer {
                 .pyramid
                 .get_or_insert_with(|| DepthPyramid::new(device, Reduction::Farthest));
             let (width, height) = self.display.size();
-            let levels = pyramid.prepare(
-                device,
-                &self.depth.view,
-                self.depth.generation,
-                (width, height),
-            );
+            let levels = pyramid.prepare(device, &self.depth.view, (width, height));
             Some((width, height, levels))
         } else {
             None
@@ -1065,7 +1060,6 @@ impl Renderer {
                 snapshot,
                 self.display.size(),
                 &self.depth.view,
-                self.depth.generation,
                 temporal_frame.is_some(),
             ))
         } else {
@@ -1116,7 +1110,6 @@ impl Renderer {
                     emitters,
                     self.display.size(),
                     &self.depth.view,
-                    self.depth.generation,
                 );
                 if prepared.is_some() {
                     particles.ensure_additive(device, post_frame.is_some());
@@ -1171,11 +1164,13 @@ impl Renderer {
                 &self.queue,
                 snapshot,
                 (
-                    &self.instances.palettes[parity],
-                    (self.instances.generation, parity),
+                    Bound::counted(
+                        self.instances.generation,
+                        self.instances.palettes[parity].as_entire_binding(),
+                    ),
+                    parity,
                 ),
                 &self.depth.view,
-                self.depth.generation,
             );
             if prepared.is_some() {
                 decals.ensure_pipelines(
@@ -1373,7 +1368,7 @@ impl Renderer {
             &self.mesh_shader,
             &self.camera.layout,
             target,
-            (&self.depth.view, self.depth.generation),
+            &self.depth.view,
         );
         true
     }

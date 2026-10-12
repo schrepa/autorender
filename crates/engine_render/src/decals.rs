@@ -75,8 +75,8 @@ mod gpu {
 
     use super::*;
     use crate::bindings::DECALS;
-    use crate::buffers::{ensure_storage, storage};
-    use crate::cached::Cached;
+    use crate::buffers::storage;
+    use crate::cached::{Bound, GroupCache, Versioned};
     use crate::materials::MaterialStore;
 
     /// A frame's decals: those drawn and those beyond the GPU's binding.
@@ -95,16 +95,14 @@ mod gpu {
         pipeline_layouts: [Option<wgpu::PipelineLayout>; 2],
         pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
         surface_format: wgpu::TextureFormat,
-        records: wgpu::Buffer,
+        records: Versioned<wgpu::Buffer>,
         staging: Vec<DecalData>,
         uploaded: Vec<DecalData>,
         runs: Vec<DecalRun>,
-        // Per pose buffer parity (temporal frames alternate them), keyed by
-        // the depth buffer, record buffer and palette they bind, and the
+        // Per pose buffer parity (temporal frames alternate them), and the
         // parity this frame binds.
-        groups: [Cached<(u64, u64, u64), wgpu::BindGroup>; 2],
+        groups: [GroupCache<3>; 2],
         parity: usize,
-        buffer_generation: u64,
         // Records a storage binding holds, read once.
         room: usize,
     }
@@ -123,18 +121,17 @@ mod gpu {
                 pipeline_layouts: [None, None],
                 pipelines: HashMap::default(),
                 surface_format,
-                records: storage(
+                records: Versioned::new(storage(
                     device,
                     "engine/decal-records",
                     size_of::<DecalData>() as u64,
                     wgpu::BufferUsages::empty(),
-                ),
+                )),
                 staging: Vec::new(),
                 uploaded: Vec::new(),
                 runs: Vec::new(),
                 groups: Default::default(),
                 parity: 0,
-                buffer_generation: 0,
                 room: (binding / size_of::<DecalData>() as u64) as usize,
             }
         }
@@ -145,22 +142,20 @@ mod gpu {
 
         /// Uploads `snapshot`'s decals when they changed; `None` when the
         /// frame draws none. Decals read their displayed poses from
-        /// `palette` (the frame's joint palette and its pose generation and
-        /// parity). `depth` is the depth buffer of `depth_generation`.
+        /// `palette` (the frame's joint palette, bound, and its parity) and
+        /// sample the depth buffer `depth`.
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
             queue: &wgpu::Queue,
             snapshot: &RenderSnapshot,
-            palette: (&wgpu::Buffer, (u64, usize)),
-            depth: &wgpu::TextureView,
-            depth_generation: u64,
+            (palette, parity): (Bound<'_>, usize),
+            depth: &Versioned<wgpu::TextureView>,
         ) -> Option<DecalFrame> {
             if !snapshot.environment.decals.enabled || snapshot.decals.list.is_empty() {
                 return None;
             }
             let room = self.room;
-            let (palette, (generation, parity)) = palette;
             let dropped = pack_decals(
                 &snapshot.decals.list,
                 room,
@@ -171,36 +166,30 @@ mod gpu {
                 return None;
             }
             let bytes = (self.staging.len() * size_of::<DecalData>()) as u64;
-            if ensure_storage(
-                device,
-                &mut self.records,
-                "engine/decal-records",
-                bytes,
-                wgpu::BufferUsages::empty(),
-            ) {
+            if bytes > self.records.size() {
+                self.records.replace(storage(
+                    device,
+                    "engine/decal-records",
+                    bytes.next_power_of_two(),
+                    wgpu::BufferUsages::empty(),
+                ));
                 self.uploaded.clear();
-                self.buffer_generation += 1;
             }
             if self.staging != self.uploaded {
                 queue.write_buffer(&self.records, 0, bytemuck::cast_slice(&self.staging));
                 self.uploaded.clone_from(&self.staging);
             }
-            let key = (depth_generation, self.buffer_generation, generation);
             self.parity = parity;
-            if self.groups[parity].stale(&key) {
-                let group = crate::pipelines::group(
-                    device,
-                    "engine/decal-group",
-                    &DECALS,
-                    &self.layout,
-                    &[
-                        ("palette", palette.as_entire_binding()),
-                        ("decal_records", self.records.as_entire_binding()),
-                        ("decal_depth", crate::pipelines::view(depth)),
-                    ],
-                );
-                self.groups[parity].set(key, group);
-            }
+            self.groups[parity].bind(
+                device,
+                "engine/decal-group",
+                (&DECALS, &self.layout),
+                [
+                    ("palette", palette),
+                    ("decal_records", self.records.bound()),
+                    ("decal_depth", depth.bound()),
+                ],
+            );
             Some(DecalFrame {
                 drawn: self.staging.len() as u32,
                 dropped: dropped as u32,

@@ -114,8 +114,8 @@ mod gpu {
 
     use super::*;
     use crate::bindings::PARTICLES;
-    use crate::buffers::{ensure_storage, entry, storage};
-    use crate::cached::Cached;
+    use crate::buffers::{ensure_versioned, storage};
+    use crate::cached::{Bound, GroupCache, Versioned};
     use crate::gpu_data::PARTICLE_SHADER;
 
     /// A frame's particles: alpha instances first, then additive ones, and
@@ -138,8 +138,8 @@ mod gpu {
         depth_format: wgpu::TextureFormat,
         uniform: wgpu::Buffer,
         written: Option<ParticleUniform>,
-        emitters: wgpu::Buffer,
-        owners: wgpu::Buffer,
+        emitters: Versioned<wgpu::Buffer>,
+        owners: Versioned<wgpu::Buffer>,
         // Particles a storage binding holds, an owner entry each.
         room: u64,
         records: Vec<EmitterData>,
@@ -149,8 +149,7 @@ mod gpu {
         // from, and that packing's alpha, total and dropped particles.
         packed: Option<(u64, u64)>,
         counts: (u32, u32, u64),
-        group: Cached<(u64, u64), wgpu::BindGroup>,
-        buffers_generation: u64,
+        group: GroupCache<4>,
     }
 
     impl ParticlePass {
@@ -200,26 +199,25 @@ mod gpu {
                     size_of::<ParticleUniform>() as u64,
                 ),
                 written: None,
-                emitters: storage(
+                emitters: Versioned::new(storage(
                     device,
                     "engine/particle-emitters",
                     128,
                     wgpu::BufferUsages::empty(),
-                ),
-                owners: storage(
+                )),
+                owners: Versioned::new(storage(
                     device,
                     "engine/particle-owners",
                     4,
                     wgpu::BufferUsages::empty(),
-                ),
+                )),
                 room,
                 records: Vec::new(),
                 uploaded: Vec::new(),
                 owner_staging: Vec::new(),
                 packed: None,
                 counts: (0, 0, 0),
-                group: Cached::default(),
-                buffers_generation: 0,
+                group: GroupCache::default(),
             }
         }
 
@@ -229,9 +227,8 @@ mod gpu {
 
         /// Uploads `snapshot`'s emitters when `emitters` (the render stream
         /// identity and its emitters revision) changed; `None` when the frame
-        /// draws no particles. `depth` is the depth buffer of
-        /// `depth_generation`, sampled for soft particles.
-        #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
+        /// draws no particles. `depth` is the depth buffer, sampled for soft
+        /// particles.
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
@@ -239,8 +236,7 @@ mod gpu {
             snapshot: &RenderSnapshot,
             emitters: (u64, u64),
             size: (u32, u32),
-            depth: &wgpu::TextureView,
-            depth_generation: u64,
+            depth: &Versioned<wgpu::TextureView>,
         ) -> Option<ParticleFrame> {
             if !snapshot.environment.particles.enabled || snapshot.particles.list.is_empty() {
                 return None;
@@ -258,22 +254,17 @@ mod gpu {
                 queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
                 self.written = Some(uniform);
             }
-            let key = (depth_generation, self.buffers_generation);
-            if self.group.stale(&key) {
-                let group = crate::pipelines::group(
-                    device,
-                    "engine/particle-group",
-                    &PARTICLES,
-                    &self.layout,
-                    &[
-                        entry("particles", &self.uniform),
-                        entry("emitters", &self.emitters),
-                        entry("owners", &self.owners),
-                        ("depth_texture", crate::pipelines::view(depth)),
-                    ],
-                );
-                self.group.set(key, group);
-            }
+            self.group.bind(
+                device,
+                "engine/particle-group",
+                (&PARTICLES, &self.layout),
+                [
+                    ("particles", Bound::fixed(self.uniform.as_entire_binding())),
+                    ("emitters", self.emitters.bound()),
+                    ("owners", self.owners.bound()),
+                    ("depth_texture", depth.bound()),
+                ],
+            );
             Some(ParticleFrame {
                 alpha,
                 total,
@@ -291,7 +282,7 @@ mod gpu {
                 return;
             }
             let emitter_bytes = (self.records.len() * size_of::<EmitterData>()) as u64;
-            if ensure_storage(
+            if ensure_versioned(
                 device,
                 &mut self.emitters,
                 "engine/particle-emitters",
@@ -299,19 +290,15 @@ mod gpu {
                 wgpu::BufferUsages::empty(),
             ) {
                 self.uploaded.clear();
-                self.buffers_generation += 1;
             }
             let owner_bytes = u64::from(total) * 4;
-            let owners_replaced = ensure_storage(
+            let owners_replaced = ensure_versioned(
                 device,
                 &mut self.owners,
                 "engine/particle-owners",
                 owner_bytes,
                 wgpu::BufferUsages::empty(),
             );
-            if owners_replaced {
-                self.buffers_generation += 1;
-            }
             if owners_replaced || !same_instances(&self.records, &self.uploaded) {
                 pack_owners(&self.records, &mut self.owner_staging);
                 queue.write_buffer(&self.owners, 0, bytemuck::cast_slice(&self.owner_staging));

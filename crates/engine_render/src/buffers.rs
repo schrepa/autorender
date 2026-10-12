@@ -47,6 +47,22 @@ pub(crate) fn ensure_storage(
     true
 }
 
+/// [`ensure_storage`] of a versioned buffer, whose generation advances
+/// when it is replaced.
+pub(crate) fn ensure_versioned(
+    device: &wgpu::Device,
+    buffer: &mut crate::cached::Versioned<wgpu::Buffer>,
+    label: &str,
+    bytes: u64,
+    extra: wgpu::BufferUsages,
+) -> bool {
+    if bytes <= buffer.size() {
+        return false;
+    }
+    buffer.replace(storage(device, label, bytes.next_power_of_two(), extra));
+    true
+}
+
 /// A buffer bound whole as binding `name`.
 pub(crate) fn entry<'a>(
     name: &'a str,
