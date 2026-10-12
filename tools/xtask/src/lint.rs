@@ -169,12 +169,11 @@ pub(crate) const LINT: &[Stage] = &[
             )
         },
     },
-    // The public items' documentation, natively and in the browser façade;
-    // `cargo xtask verify --level merge` documents private items too.
+    // Every item's documentation, natively and in the browser façade.
     Stage {
         name: "docs",
         needs: &[],
-        run: |root| crate::pipeline::docs(root, false),
+        run: crate::pipeline::docs,
     },
     // The host imports generated declarations, including on a clean
     // checkout; their types do not depend on the profile. `cargo xtask

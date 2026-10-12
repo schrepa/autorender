@@ -147,13 +147,6 @@ fn execute() -> Result<(), Failure> {
     if matches!(task.as_str(), "help" | "--help" | "-h") {
         return Ok(help(&options)?);
     }
-    if task == "docs" {
-        return match options.as_slice() {
-            [] => Ok(pipeline::docs(&root, false)?),
-            [private] if private == "--private" => Ok(pipeline::docs(&root, true)?),
-            _ => Err("usage: cargo xtask docs [--private]".into()),
-        };
-    }
     if let Some(argument) = options.first() {
         return Err(
             format!("unexpected argument {argument:?}; run `cargo xtask help` for usage").into(),
@@ -162,6 +155,7 @@ fn execute() -> Result<(), Failure> {
     Ok(match task.as_str() {
         "build" => pipeline::build(&root),
         "lint" => lint::run_stages(&root, lint::LINT),
+        "docs" => pipeline::docs(&root),
         "assets" => authoring::validate_sources(&root),
         "schema" => authoring::write_generated(&root),
         "gpu" => gpu::check(&root),
@@ -210,9 +204,9 @@ fn commands() -> Vec<(String, &'static str)> {
         ("equivalence [--base REV] [--candidate REV] [--tier smoke|full] [--cells NAME,...] [--aa] [--repeat N] [--keep N] [--gpu discrete|integrated] [--browser | --both [--hosts]]".into(), "Whether a change leaves what the engine draws and does as it was: the base (the merge-base with origin/main, or --base) and the candidate (the working tree, or --candidate) each build the Stress Lab, then every cell of bench/equivalence.json's tier runs on both, settled and captured, natively (default), in headless Chrome against each side's development server (--browser) or both (--both; --hosts measures how the candidate's native and Chrome images differ); captures compare by hash then pixel, judged work counters by their rule, digests by part; an unstable capture (its reason in the matrix) passes when it matches one of the base's --repeat runs or lies no farther from them than they lie from each other; --aa runs the base against itself; each cell holds the heavy-run lock; exit 0 equal, 3 different, 1 could not check"),
         ("checks --task TASK.json --profile PROFILE.json --out REPORT.json [--formats FORMATS.json]".into(), "Run an engine-factory check task from this checkout: each check's script against a development server of its commit, every attempt kept (a failing check runs again, up to 3 attempts), as the factory's check report, checked against FORMATS when given"),
         ("selfcheck [measure] [checks]".into(), "Check the factory's tools against themselves on the working tree as a commit (made without moving any ref): an A/A measure task (both arms that commit, Field, 2 clean pairs) must complete with every run settled, the same work counted every run and the arms' median frame times within 25%; one check run with its commit's own scripts and with the same commit's scripts checked out again must hold at its first attempt both ways, and expected to fail must fail every attempt; files in target/selfcheck/; exit 3 when the sides differed"),
-        ("verify [--level quick|pr|merge] [--base REV] [--plan]".into(), "Run the checks a change calls for: the paths the working tree changed since the base (the merge-base with origin/main, or --base) select them through the path map (tools/xtask/src/verify/map.rs); quick (under 2 minutes) runs formatting, the drift checks, the shaders, Clippy over the changed packages and the selected pure corpora; pr (the default, under 10 minutes) all of lint, the selected smokes with --serve, the Wasm replay where selected, equivalence's smoke tier plus the selected cells natively and the selected self-checks of the factory's tools; merge (30-45 minutes) all of lint, the documentation of private items, every smoke, the Wasm replay, equivalence's full tier and, where selected, its browser leg and the self-checks; --plan prints the steps without running them; exit 3 when a step found a fault, 1 when one could not check"),
+        ("verify [--level quick|pr|merge] [--base REV] [--plan]".into(), "Run the checks a change calls for: the paths the working tree changed since the base (the merge-base with origin/main, or --base) select them through the path map (tools/xtask/src/verify/map.rs); quick (under 2 minutes) runs formatting, the drift checks, the shaders, Clippy over the changed packages and the selected pure corpora; pr (the default, under 10 minutes) all of lint, the selected smokes with --serve, the Wasm replay where selected, equivalence's smoke tier plus the selected cells natively and the selected self-checks of the factory's tools; merge (30-45 minutes) all of lint, every smoke, the Wasm replay, equivalence's full tier and, where selected, its browser leg and the self-checks; --plan prints the steps without running them; exit 3 when a step found a fault, 1 when one could not check"),
         ("lint".into(), "Run every GPU-free check, cheapest first and each whatever failed before it: the repository policy, formatting, the web host's text checks, scene sources, generated files, bench/, smoke coverage, feature layering, shaders against Rust, the pure checks, native and Wasm Clippy, rustdoc, the browser clients and TypeScript; ends with each stage's result and time"),
-        ("docs [--private]".into(), "Generate the documentation of the public items (with --private, of every item) of the native workspace and the browser façade, in target/doc and target/wasm32-unknown-unknown/doc; fails where a link does not resolve, public docs link a private item, or markup is malformed, every rustdoc lint denied (lint's docs stage documents public items; verify's merge level every item)"),
+        ("docs".into(), "Generate the documentation of every item, private ones included, of the native workspace and the browser façade, in target/doc and target/wasm32-unknown-unknown/doc; fails where a link does not resolve, public docs link a private item, or markup is malformed, every rustdoc lint denied (lint's docs stage)"),
         ("help [--json]".into(), "Show this message, or the commands as JSON"),
     ]
 }
