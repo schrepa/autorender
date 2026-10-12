@@ -1045,11 +1045,8 @@ impl Renderer {
         temporal_frame: &Option<TemporalFrame>,
     ) -> (Option<Effects>, bool) {
         // Screen effects; temporal frames apply them in their
-        // resolve, whose history averages the occlusion noise. Contact
-        // shadows take the effects' targets even with the sun down, where
-        // they trace nothing.
-        let effects = Effects::of(&snapshot.environment).any()
-            || snapshot.environment.contact_shadows.sanitized().traces();
+        // resolve, whose history averages the occlusion noise.
+        let effects = Effects::of(&snapshot.environment).any();
         // Glass refracts the opaque color of the scene target:
         // frames drawing it render into the target.
         let refraction = snapshot.environment.refraction.enabled()
