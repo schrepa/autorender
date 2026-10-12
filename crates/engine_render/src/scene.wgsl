@@ -217,40 +217,6 @@ fn pixel_footprint(world: vec3<f32>, normal: vec3<f32>) -> f32 {
     return depth * camera.options.y * sqrt(depth / (distance * facing));
 }
 
-// How far the wind pushes a point `height` meters up an
-// object standing at `root` that sways `sway` meters at ten meters up in
-// full wind, at time `time`, the wind blowing at `velocity` (x and z,
-// meters per second) with gusts of strength `gusts`: along the wind,
-// growing with the square of the height, its push rising and falling as
-// gusts travel with the wind, with a quicker flutter of the object's own.
-fn wind_sway(velocity: vec2<f32>, gusts: f32, root: vec3<f32>, height: f32, sway: f32,
-        time: f32) -> vec3<f32> {
-    let speed = length(velocity);
-    if speed < 1.0e-4 {
-        return vec3<f32>(0.0);
-    }
-    let toward = velocity / speed;
-    let travel = dot(root.xz, toward);
-    let gust = 1.0 + gusts * (0.6 * sin(time * 0.9 - travel * 0.05)
-        + 0.4 * sin(time * 2.3 - travel * 0.17 + root.x * 0.31));
-    let rise = max(height, 0.0) * 0.1;
-    let flutter = 1.0 + 0.12 * sin(time * 4.7 + dot(root.xz, vec2<f32>(0.83, 0.57)));
-    let bend = sway * min(speed / 12.0, 1.0) * gust * rise * rise * flutter;
-    return vec3<f32>(toward.x, 0.0, toward.y) * bend;
-}
-
-// Placed objects' sway rides in their slots' flags as a
-// float; skinned slots' joint palette offsets read as none.
-fn slot_sway(flags: u32) -> f32 {
-    let sway = bitcast<f32>(flags);
-    return select(0.0, sway, sway > 1.0e-6 && sway <= 10.0);
-}
-
-fn maximum_abs(value: vec3<f32>) -> f32 {
-    let positive = abs(value);
-    return max(positive.x, max(positive.y, positive.z));
-}
-
 fn stable_normalize(value: vec3<f32>) -> vec3<f32> {
     let scale = maximum_abs(value);
     // Interpolation between opposing vertex normals can produce a zero vector.
@@ -260,20 +226,10 @@ fn stable_normalize(value: vec3<f32>) -> vec3<f32> {
     return normalize(value / scale);
 }
 
-fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {
-    let low = color * 12.92;
-    let high = 1.055 * pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(high, low, color <= vec3<f32>(0.0031308));
-}
-
 // Graded linear color as the canvas stores it: WebGPU canvases are UNORM,
 // so shaders drawing into them encode sRGB themselves.
 fn encoded(color: vec3<f32>) -> vec3<f32> {
-    return linear_to_srgb(color);
-}
-
-fn luminance(color: vec3<f32>) -> f32 {
-    return dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    return encode_srgb(color);
 }
 
 // The sky's light in `direction` without the sun's disc: horizon to zenith

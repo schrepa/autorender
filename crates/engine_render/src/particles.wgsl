@@ -61,10 +61,6 @@ fn pcg(value: u32) -> u32 {
     return (word >> 22u) ^ word;
 }
 
-fn unit(value: u32) -> f32 {
-    return f32(value >> 8u) * (1.0 / 16777216.0);
-}
-
 // Two unit vectors perpendicular to unit `axis` and to each other.
 fn basis(axis: vec3<f32>) -> mat2x3<f32> {
     let helper = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(axis.x) > 0.9);

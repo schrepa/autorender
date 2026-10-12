@@ -4,14 +4,18 @@
 //! validates each module with naga against the GPU layouts and binding
 //! tables, and holds [`ENTRIES`] to the modules' entry points.
 
-/// Builds each module's source from its files, and [`MODULES`] from the
-/// same table.
+/// Builds each module's source from its files, and [`MODULES`] and
+/// [`FILES`] from the same table.
 macro_rules! shaders {
     ($($(#[$doc:meta])* $name:ident = [$($file:literal),+ $(,)?];)*) => {
         $($(#[$doc])* pub const $name: &str = concat!($(include_str!($file)),+);)*
 
         /// Every module by name, with its source.
         pub const MODULES: &[(&str, &str)] = &[$((stringify!($name), $name)),*];
+
+        /// Every file of every module, with its source, in the modules'
+        /// order: files several modules list repeat.
+        pub const FILES: &[(&str, &str)] = &[$($(($file, include_str!($file))),+),*];
     };
 }
 
@@ -19,6 +23,9 @@ shaders! {
     /// Meshes after the shared scene declarations.
     SHADER = [
         "scene.wgsl",
+        "color.wgsl",
+        "math.wgsl",
+        "wind.wgsl",
         "meshes/declarations.wgsl",
         "meshes/vertex.wgsl",
         "meshes/shading.wgsl",
@@ -32,16 +39,19 @@ shaders! {
         "meshes/terrain_vertex.wgsl",
         "terrain_variety.wgsl",
         "meshes/terrain.wgsl",
+        "fullscreen.wgsl",
         "meshes/cover.wgsl",
         "meshes/water.wgsl",
         "meshes/ocean.wgsl",
     ];
     /// Terrain normal maps.
     TERRAIN_NORMALS_SHADER = [
+        "terrain_tile.wgsl",
         "terrain_normals.wgsl",
     ];
     /// Terrain control values from the surface's rules.
     TERRAIN_CONTROL_SHADER = [
+        "terrain_tile.wgsl",
         "terrain_control.wgsl",
     ];
     /// Terrain horizon map builds.
@@ -54,6 +64,7 @@ shaders! {
     ];
     /// Ground cover's growth.
     COVER_GROW_SHADER = [
+        "math.wgsl",
         "terrain_variety.wgsl",
         "cover_grow.wgsl",
     ];
@@ -65,6 +76,7 @@ shaders! {
     ];
     /// The physically based sky's tables and light.
     SKY_SHADER = [
+        "color.wgsl",
         "sky_common.wgsl",
         "sky.wgsl",
     ];
@@ -85,6 +97,8 @@ shaders! {
     ];
     /// Compute passes of GPU presentation.
     PRESENTATION_SHADER = [
+        "math.wgsl",
+        "screen_cull.wgsl",
         "presentation.wgsl",
     ];
     /// The depth pyramid of occlusion culling.
@@ -93,6 +107,7 @@ shaders! {
     ];
     /// Cluster selection of virtual geometry.
     VIRTUAL_SHADER = [
+        "screen_cull.wgsl",
         "virtual_geometry.wgsl",
     ];
     /// Tile classification of the visibility buffer.
@@ -101,6 +116,8 @@ shaders! {
     ];
     /// Temporal antialiasing resolve, after the shared effects.
     TEMPORAL_SHADER = [
+        "color.wgsl",
+        "fullscreen.wgsl",
         "effects.wgsl",
         "temporal.wgsl",
     ];
@@ -115,31 +132,43 @@ shaders! {
     /// Stateless particles after the shared scene declarations.
     PARTICLE_SHADER = [
         "scene.wgsl",
+        "color.wgsl",
+        "math.wgsl",
         "particles.wgsl",
     ];
     /// The composite of weighted blended transparency.
     TRANSPARENT_SHADER = [
+        "color.wgsl",
+        "fullscreen.wgsl",
         "transparent.wgsl",
     ];
     /// Sun shafts after the scene declarations and effects.
     SHAFTS_SHADER = [
         "scene.wgsl",
+        "color.wgsl",
+        "math.wgsl",
+        "fullscreen.wgsl",
         "effects.wgsl",
         "shafts.wgsl",
     ];
     /// Shadow caster selection and depth drawing.
     SHADOW_SHADER = [
+        "wind.wgsl",
         "shadows.wgsl",
         "impostor_frames.wgsl",
     ];
     /// Ambient occlusion, bloom and their composite.
     POST_SHADER = [
+        "color.wgsl",
+        "fullscreen.wgsl",
         "effects.wgsl",
         "post.wgsl",
     ];
     /// Environment maps after the scene declarations.
     ENVIRONMENT_SHADER = [
         "scene.wgsl",
+        "color.wgsl",
+        "math.wgsl",
         "sky_common.wgsl",
         "environment.wgsl",
     ];
@@ -216,7 +245,7 @@ entry_points! {
             vs_affine_extended, vs_affine_temporal_extended, vs_affine_skinned,
             vs_affine_temporal_skinned, vs_resolve, vs_sky, vs_decal, vs_impostor_bake,
             vs_impostor_bake_extended, vs_impostor, vs_impostor_temporal, vs_terrain,
-            vs_terrain_temporal, vs_terrain_vt_bake, vs_terrain_resolve, vs_cover,
+            vs_terrain_temporal, vs_terrain_vt_bake, vs_fullscreen, vs_cover,
             vs_cover_temporal, vs_water, vs_river, vs_river_temporal, vs_water_temporal, vs_ocean,
             vs_ocean_temporal
         ],

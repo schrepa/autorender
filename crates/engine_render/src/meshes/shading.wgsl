@@ -188,10 +188,9 @@ fn material_texels(uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
     return texels;
 }
 
-// Coordinates on axis `axis`'s plane of world-mapped maps,
-// as terrain's maps lie (`meshes/terrain.wgsl`'s `terrain_project`): x
-// sees (z, -y), y sees (x, z) and z sees (x, -y), so on the sides the maps'
-// up is the world's.
+// Coordinates on axis `axis`'s plane of world-mapped maps, terrain's
+// among them: x sees (z, -y), y sees (x, z) and z sees (x, -y), so on the
+// sides the maps' up is the world's.
 fn world_plane(p: vec3<f32>, axis: u32) -> vec2<f32> {
     if axis == 0u {
         return vec2<f32>(p.z, -p.y);

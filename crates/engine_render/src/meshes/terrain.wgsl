@@ -430,18 +430,6 @@ fn terrain_mapping(entry: TerrainPaletteEntry, normal: vec3<f32>) -> TerrainMapp
     return mapping;
 }
 
-// Coordinates on axis `axis`'s plane: x sees (z, -y), y sees (x, z) and z
-// sees (x, -y), so on the sides the maps' up is the world's.
-fn terrain_project(p: vec3<f32>, axis: u32) -> vec2<f32> {
-    if axis == 0u {
-        return vec2<f32>(p.z, -p.y);
-    }
-    if axis == 2u {
-        return vec2<f32>(p.x, -p.y);
-    }
-    return p.xz;
-}
-
 // The cosine and sine of the turn of the second lattice on top.
 const TERRAIN_TURN: vec2<f32> = vec2<f32>(0.5, 0.8660254);
 // How much wider the second lattice repeats on the sides.
@@ -468,10 +456,10 @@ fn terrain_plane_texel(map: texture_2d_array<f32>, mapping: TerrainMapping, worl
         world_dx: vec3<f32>, world_dy: vec3<f32>, axis: u32, lattice: u32) -> vec4<f32> {
     let shift = vec2<f32>(0.37, 0.71) * f32(lattice);
     return textureSampleGrad(map, terrain_material_sampler,
-        terrain_lattice(terrain_project(world, axis) * mapping.scale, axis, lattice) + shift,
+        terrain_lattice(world_plane(world, axis) * mapping.scale, axis, lattice) + shift,
         mapping.layer,
-        terrain_lattice(terrain_project(world_dx, axis) * mapping.scale, axis, lattice),
-        terrain_lattice(terrain_project(world_dy, axis) * mapping.scale, axis, lattice));
+        terrain_lattice(world_plane(world_dx, axis) * mapping.scale, axis, lattice),
+        terrain_lattice(world_plane(world_dy, axis) * mapping.scale, axis, lattice));
 }
 
 // `map`'s texel at `world` (with its screen derivatives) as `mapping`
@@ -1682,14 +1670,6 @@ fn cs_terrain_vt_feedback(@builtin(global_invocation_id) id: vec3<u32>) {
 fn fs_terrain_ids(input: TerrainOutput) -> @location(0) vec2<u32> {
     terrain_holes_test(input.cell, input.holes);
     return vec2<u32>(terrain.directory.x + 1u, bitcast<u32>(input.clip_position.z));
-}
-
-// One triangle covering the viewport.
-@vertex
-fn vs_terrain_resolve(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
-    let x = f32((index << 1u) & 2u) * 2.0 - 1.0;
-    let y = f32(index & 2u) * 2.0 - 1.0;
-    return vec4<f32>(x, y, 0.0, 1.0);
 }
 
 // The eye-relative point at framebuffer position `pixel` and depth `depth`.

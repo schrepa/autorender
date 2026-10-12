@@ -259,10 +259,6 @@ fn around(azimuth: f32, elevation: f32) -> vec3<f32> {
     return vec3<f32>(cos(azimuth) * cos(elevation), sin(elevation), sin(azimuth) * cos(elevation));
 }
 
-fn luminance(color: vec3<f32>) -> f32 {
-    return dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
-}
-
 @compute @workgroup_size(1)
 fn derive_light() {
     let r = air_radius(air);

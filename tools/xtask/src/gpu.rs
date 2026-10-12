@@ -813,6 +813,224 @@ fn check_pipeline_layouts() -> Result<usize, String> {
     }
 }
 
+/// `word` spelled out where it is a vector or matrix alias: `vec3f` as
+/// `vec3<f32>`.
+fn spelled_out(word: &str) -> Option<[String; 4]> {
+    let scalar = |suffix: u8| match suffix {
+        b'f' => Some("f32"),
+        b'i' => Some("i32"),
+        b'u' => Some("u32"),
+        b'h' => Some("f16"),
+        _ => None,
+    };
+    let (generic, suffix) = match word.as_bytes() {
+        [b'v', b'e', b'c', b'2'..=b'4', suffix] => (&word[..4], *suffix),
+        [b'm', b'a', b't', b'2'..=b'4', b'x', b'2'..=b'4', suffix] => (&word[..6], *suffix),
+        _ => return None,
+    };
+    Some([
+        generic.to_string(),
+        "<".to_string(),
+        scalar(suffix)?.to_string(),
+        ">".to_string(),
+    ])
+}
+
+/// The tokens of WGSL `source`, without comments, aliases spelled out.
+fn wgsl_tokens(source: &str) -> Vec<String> {
+    const OPERATORS: [&str; 18] = [
+        "->", "<<=", ">>=", "<=", ">=", "==", "!=", "&&", "||", "<<", ">>", "+=", "-=", "*=", "/=",
+        "%=", "&=", "|=",
+    ];
+    let bytes = source.as_bytes();
+    let mut tokens = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let rest = &source[at..];
+        let byte = bytes[at];
+        if byte.is_ascii_whitespace() {
+            at += 1;
+        } else if rest.starts_with("//") {
+            at += rest.find('\n').unwrap_or(rest.len());
+        } else if rest.starts_with("/*") {
+            // Block comments nest.
+            let mut depth = 0;
+            while at < bytes.len() {
+                if source[at..].starts_with("/*") {
+                    depth += 1;
+                    at += 2;
+                } else if source[at..].starts_with("*/") {
+                    depth -= 1;
+                    at += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    at += 1;
+                }
+            }
+        } else if byte.is_ascii_alphanumeric()
+            || byte == b'_'
+            || (byte == b'.' && bytes.get(at + 1).is_some_and(u8::is_ascii_digit))
+        {
+            // A word or a number, exponent signs included.
+            let number = byte.is_ascii_digit() || byte == b'.';
+            let mut end = at + 1;
+            while let Some(&next) = bytes.get(end) {
+                let sign = number
+                    && matches!(next, b'+' | b'-')
+                    && matches!(bytes[end - 1], b'e' | b'E' | b'p' | b'P');
+                if next.is_ascii_alphanumeric() || next == b'_' || (number && next == b'.') || sign
+                {
+                    end += 1;
+                } else {
+                    break;
+                }
+            }
+            let word = &source[at..end];
+            match spelled_out(word) {
+                Some(spelled) => tokens.extend(spelled),
+                None => tokens.push(word.to_string()),
+            }
+            at = end;
+        } else {
+            let length = OPERATORS
+                .iter()
+                .find(|operator| rest.starts_with(**operator))
+                .map_or_else(
+                    || rest.chars().next().map_or(1, char::len_utf8),
+                    |operator| operator.len(),
+                );
+            tokens.push(rest[..length].to_string());
+            at += length;
+        }
+    }
+    tokens
+}
+
+/// The functions of WGSL `tokens`: each one's name, and its signature and
+/// body with its parameters and locals renamed in the order they are
+/// declared, so the same code under other names compares equal.
+fn wgsl_functions(tokens: &[String]) -> Vec<(String, Vec<String>)> {
+    let identifier = |token: &str| {
+        token
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+    };
+    let mut functions = Vec::new();
+    let mut at = 0;
+    while at + 1 < tokens.len() {
+        if tokens[at] != "fn" {
+            at += 1;
+            continue;
+        }
+        let name = tokens[at + 1].clone();
+        // The signature runs to the body's brace; the body to its match.
+        let Some(open) = tokens[at..].iter().position(|token| token == "{") else {
+            break;
+        };
+        let code_start = at + 2;
+        let open = at + open;
+        let mut depth = 0usize;
+        let mut close = tokens.len() - 1;
+        for (index, token) in tokens.iter().enumerate().skip(open) {
+            match token.as_str() {
+                "{" => depth += 1,
+                "}" => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = index;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let code = &tokens[code_start..=close];
+        let signature = open - code_start;
+        // Parameters: names before a colon directly inside the signature's
+        // parentheses. Locals: names after let, const and var (or var<..>).
+        let mut renamed: Vec<(&str, String)> = Vec::new();
+        let mut parentheses = 0usize;
+        for (index, token) in code.iter().enumerate() {
+            if index < signature {
+                match token.as_str() {
+                    "(" => parentheses += 1,
+                    ")" => parentheses = parentheses.saturating_sub(1),
+                    _ => {}
+                }
+                if parentheses == 1
+                    && code.get(index + 1).is_some_and(|next| next == ":")
+                    && identifier(token)
+                {
+                    renamed.push((token.as_str(), format!("$p{}", renamed.len())));
+                }
+            } else if matches!(token.as_str(), "let" | "var" | "const") {
+                let mut local = index + 1;
+                if code.get(local).is_some_and(|next| next == "<") {
+                    while code.get(local).is_some_and(|next| next != ">") {
+                        local += 1;
+                    }
+                    local += 1;
+                }
+                if let Some(name) = code.get(local).filter(|name| identifier(name)) {
+                    renamed.push((name.as_str(), format!("$l{}", renamed.len())));
+                }
+            }
+        }
+        let normalized = code
+            .iter()
+            .enumerate()
+            .map(|(index, token)| {
+                // Fields keep their names.
+                let field = index > 0 && code[index - 1] == ".";
+                renamed
+                    .iter()
+                    .find(|(name, _)| !field && *name == token.as_str())
+                    .map_or_else(|| token.clone(), |(_, renaming)| renaming.clone())
+            })
+            .collect();
+        functions.push((name, normalized));
+        at = close + 1;
+    }
+    functions
+}
+
+/// No WGSL function written twice: functions of the same signature and
+/// body, whatever the names of the functions, their parameters and their
+/// locals, in one file or two, are one function, which a file the modules
+/// using it list (`engine_render::shaders`) holds once. Returns how many
+/// functions there are.
+fn check_duplicate_bodies() -> Result<usize, String> {
+    let mut files: Vec<(&str, &str)> = Vec::new();
+    for &(file, source) in engine_render::shaders::FILES {
+        if !files.iter().any(|(seen, _)| *seen == file) {
+            files.push((file, source));
+        }
+    }
+    let mut functions: Vec<(&str, String, Vec<String>)> = Vec::new();
+    let mut errors = Vec::new();
+    for (file, source) in files {
+        for (name, code) in wgsl_functions(&wgsl_tokens(source)) {
+            if let Some((other_file, other, _)) = functions
+                .iter()
+                .find(|(_, _, other_code)| *other_code == code)
+            {
+                errors.push(format!(
+                    "{file}'s `{name}` is {other_file}'s `{other}` written again: keep one, in a file the modules using it list (engine_render::shaders)"
+                ));
+            }
+            functions.push((file, name, code));
+        }
+    }
+    if errors.is_empty() {
+        Ok(functions.len())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
 /// The module-scope constants of `module` with a literal value.
 fn wgsl_constants(module: &naga::Module) -> Vec<(&str, f64)> {
     module
@@ -1156,6 +1374,7 @@ pub fn check(root: &Path) -> Result<(), String> {
     let entries = check_entries(&modules);
     let ranges = check_ranges();
     let pipeline_layouts = check_pipeline_layouts();
+    let functions = check_duplicate_bodies();
     let shared = check_constants(root, &modules);
     let unused = check_unused(&modules);
     let structs = check_upload_structs(root);
@@ -1165,6 +1384,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         entries.as_ref().err(),
         ranges.as_ref().err(),
         pipeline_layouts.as_ref().err(),
+        functions.as_ref().err(),
         shared.as_ref().err(),
         unused.as_ref().err(),
         structs.as_ref().err(),
@@ -1180,7 +1400,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         ));
     }
     println!(
-        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} bindings of shared groups within their features' ranges; {} pipeline layouts within every device's limits and their budget; {} WGSL constants mirror {} Rust ones.",
+        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} bindings of shared groups within their features' ranges; {} pipeline layouts within every device's limits and their budget; {} WGSL functions, none written twice; {} WGSL constants mirror {} Rust ones.",
         modules.len(),
         mirrors?,
         layouts().len(),
@@ -1189,6 +1409,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         entries?,
         ranges?,
         pipeline_layouts?,
+        functions?,
         shared?,
         constants().count()
     );

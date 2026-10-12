@@ -229,17 +229,6 @@ const LOD_FADED: u32 = 65535u;
 const CARD_FADING: u32 = 0x80000000u;
 const CARD_FADING_OUT: u32 = 0x40000000u;
 const CARD_OVER: u32 = 0x8000u;
-// Pixels the projected bounds are widened by before looking for pixel
-// centers: covers the rasterizer's snapping of vertices to its subpixel grid
-// and rounding differences between this projection and the vertex shaders'.
-const SUBPIXEL_MARGIN: f32 = 0.0625;
-// With reversed depth nearer is larger. A box counts as
-// hidden when its nearest depth lies below the pyramid's farthest times this
-// scale: a relative margin (2^-16) well beyond float depth steps and the
-// projection's rounding at every distance, so boxes touching what is in
-// front of them (a sign on a wall) keep drawing in phase one, in the same
-// order as without occlusion culling.
-const HIDDEN_SCALE: f32 = 0.9999847412109375;
 const LINEAR_ROTATION_DOT: f32 = 0.9995;
 // Candidates per workgroup of the compaction passes. Their workgroup arrays
 // are zero-initialized before each workgroup runs; Firefox's translation
@@ -319,11 +308,6 @@ fn blend_rotation(previous: vec4<f32>, current: vec4<f32>, alpha: f32) -> vec4<f
     return normalize((p * start + c * end) * (1.0 / sin(theta)));
 }
 
-fn max_abs(value: vec3<f32>) -> f32 {
-    let positive = abs(value);
-    return max(positive.x, max(positive.y, positive.z));
-}
-
 fn finite(value: vec4<f32>) -> bool {
     // NaN fails every comparison.
     return all(abs(value) <= vec4<f32>(F32_MAX));
@@ -338,10 +322,10 @@ fn admitted(m: mat4x4<f32>) -> bool {
     let x = m[0].xyz;
     let y = m[1].xyz;
     let z = m[2].xyz;
-    let scale = max(max_abs(x), max(max_abs(y), max_abs(z)));
+    let scale = max(maximum_abs(x), max(maximum_abs(y), maximum_abs(z)));
     let determinant = dot(x, cross(y, z));
     return scale >= MIN_LINEAR_SCALE && scale <= COEFFICIENT_LIMIT
-        && max_abs(m[3].xyz) <= COEFFICIENT_LIMIT
+        && maximum_abs(m[3].xyz) <= COEFFICIENT_LIMIT
         && abs(determinant) >= COMMON_DETERMINANT_MARGIN * ((scale * scale) * scale);
 }
 
@@ -411,16 +395,16 @@ fn outside(m: mat4x4<f32>, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool
     }
     let maximum = max(abs(bounds_min), abs(bounds_max));
     let absolute = mat4x4<f32>(abs(m[0]), abs(m[1]), abs(m[2]), abs(m[3]));
-    if max_abs(maximum) > MAX_COEFFICIENT
-        || max(max_abs(absolute[0].xyz), max(max_abs(absolute[1].xyz),
-            max(max_abs(absolute[2].xyz), max_abs(absolute[3].xyz)))) > MAX_COEFFICIENT {
+    if maximum_abs(maximum) > MAX_COEFFICIENT
+        || max(maximum_abs(absolute[0].xyz), max(maximum_abs(absolute[1].xyz),
+            max(maximum_abs(absolute[2].xyz), maximum_abs(absolute[3].xyz)))) > MAX_COEFFICIENT {
         return false;
     }
     let world_bound = absolute * vec4<f32>(maximum, 1.0);
     let clip_bound = frame.absolute_view_projection * world_bound;
     if !finite(world_bound) || !finite(clip_bound)
-        || max(max_abs(world_bound.xyz), world_bound.w) > MAX_PRODUCT_BOUND
-        || max(max_abs(clip_bound.xyz), abs(clip_bound.w)) > MAX_PRODUCT_BOUND {
+        || max(maximum_abs(world_bound.xyz), world_bound.w) > MAX_PRODUCT_BOUND
+        || max(maximum_abs(clip_bound.xyz), abs(clip_bound.w)) > MAX_PRODUCT_BOUND {
         return false;
     }
     var plane_bounds = array<f32, 6>(
@@ -506,7 +490,7 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         if (visible & VISIBLE) != 0u && !skinned && frame.subpixel != 0u
                 && covers_no_pixel(frame.view_projection * model, batch.bounds_min.xyz,
-                    batch.bounds_max.xyz) {
+                    batch.bounds_max.xyz, frame.viewport.xy) {
             visible = (visible & ~VISIBLE) | SUBPIXEL;
         }
         if (visible & VISIBLE) != 0u {
@@ -666,97 +650,6 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
     scan[candidate.position] = (flags & ~(3u << LOD_SHIFT)) | (steady << LOD_SHIFT);
 }
 
-// Whether the box `bounds_min` to `bounds_max` mapped by `clip_from_local`
-// covers no pixel center: the screen rectangle of its
-// projection, widened by SUBPIXEL_MARGIN, holds no pixel center on some
-// axis, so no triangle within it can produce a fragment. Boxes reaching the
-// eye plane or far outside the viewport, and non-finite ones, cover some.
-fn covers_no_pixel(clip_from_local: mat4x4<f32>, bounds_min: vec3<f32>,
-        bounds_max: vec3<f32>) -> bool {
-    var low = vec2<f32>(F32_MAX);
-    var high = vec2<f32>(-F32_MAX);
-    for (var corner = 0u; corner < 8u; corner++) {
-        let local = vec3<f32>(
-            select(bounds_min.x, bounds_max.x, (corner & 1u) != 0u),
-            select(bounds_min.y, bounds_max.y, (corner & 2u) != 0u),
-            select(bounds_min.z, bounds_max.z, (corner & 4u) != 0u));
-        let clip = clip_from_local * vec4<f32>(local, 1.0);
-        if !(clip.w > 1.0e-6) {
-            return false;
-        }
-        let ndc = clip.xy / clip.w;
-        low = min(low, ndc);
-        high = max(high, ndc);
-    }
-    // Within a few viewports of the screen, pixel coordinates keep ample
-    // subpixel precision.
-    if !(all(low >= vec2<f32>(-4.0)) && all(high <= vec2<f32>(4.0))) {
-        return false;
-    }
-    // Pixel coordinates, rows downward; centers sit at i + 0.5.
-    let size = frame.viewport.xy;
-    let first = vec2<f32>(low.x * 0.5 + 0.5, 0.5 - high.y * 0.5) * size - SUBPIXEL_MARGIN;
-    let last = vec2<f32>(high.x * 0.5 + 0.5, 0.5 - low.y * 0.5) * size + SUBPIXEL_MARGIN;
-    let centers = floor(last - 0.5) - ceil(first - 0.5);
-    return centers.x < 0.0 || centers.y < 0.0;
-}
-
-// Whether the pyramid of phase one's depths hides the box `bounds_min` to
-// `bounds_max` posed by `pose`: its projection's nearest depth lies beyond
-// the farthest depth of every pyramid texel its screen rectangle touches.
-// Boxes reaching the eye plane, or too large for the pyramid, are not hidden.
-fn hidden(pose: Rows, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool {
-    let clip_from_local = frame.view_projection * rows_matrix(pose);
-    var low = vec2<f32>(F32_MAX);
-    // Largest x, y and (reversed) nearest depth.
-    var high = vec3<f32>(-F32_MAX);
-    for (var corner = 0u; corner < 8u; corner++) {
-        let local = vec3<f32>(
-            select(bounds_min.x, bounds_max.x, (corner & 1u) != 0u),
-            select(bounds_min.y, bounds_max.y, (corner & 2u) != 0u),
-            select(bounds_min.z, bounds_max.z, (corner & 4u) != 0u));
-        let clip = clip_from_local * vec4<f32>(local, 1.0);
-        if !(clip.w > 1.0e-6) {
-            return false;
-        }
-        let ndc = clip.xyz / clip.w;
-        low = min(low, ndc.xy);
-        high = max(high, ndc);
-    }
-    // Non-finite corners fail these comparisons and are not hidden.
-    if !(high.z >= 0.0 && high.z <= 1.0 && all(low >= vec2<f32>(-F32_MAX))
-            && all(high.xy <= vec2<f32>(F32_MAX))) {
-        return false;
-    }
-    // Pixels the rectangle touches, rows downward, within the viewport.
-    let size = frame.viewport.xy;
-    let first = clamp(floor(vec2<f32>(low.x * 0.5 + 0.5, 0.5 - high.y * 0.5) * size),
-        vec2<f32>(0.0), size - 1.0);
-    let last = clamp(floor(vec2<f32>(high.x * 0.5 + 0.5, 0.5 - low.y * 0.5) * size),
-        vec2<f32>(0.0), size - 1.0);
-    // Level-zero texels are 2x2 pixels; each level halves them again. The
-    // first level where the rectangle spans at most 2x2 texels.
-    var a = vec2<u32>(first) / 2u;
-    var b = vec2<u32>(last) / 2u;
-    let levels = u32(frame.viewport.z);
-    var mip = 0u;
-    loop {
-        if (b.x - a.x <= 1u && b.y - a.y <= 1u) || mip + 1u >= levels {
-            break;
-        }
-        a = a / 2u;
-        b = b / 2u;
-        mip += 1u;
-    }
-    if b.x - a.x > 1u || b.y - a.y > 1u {
-        return false;
-    }
-    let farthest = min(
-        min(textureLoad(depth_pyramid, a, mip).r, textureLoad(depth_pyramid, vec2<u32>(b.x, a.y), mip).r),
-        min(textureLoad(depth_pyramid, vec2<u32>(a.x, b.y), mip).r, textureLoad(depth_pyramid, b, mip).r));
-    return high.z < farthest * HIDDEN_SCALE;
-}
-
 // Occlusion culling after phase one drew and the depth
 // pyramid was built: every frustum-visible candidate that can be hidden is
 // tested. Those phase one skipped draw in phase two unless hidden (and count
@@ -776,7 +669,8 @@ fn occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
     if batch.bounds_min.w != 0.0 || batch.bounds_max.w != 0.0 {
         return;
     }
-    let is_hidden = hidden(poses[candidate.slot], batch.bounds_min.xyz, batch.bounds_max.xyz);
+    let is_hidden = hidden(frame.view_projection * rows_matrix(poses[candidate.slot]),
+        batch.bounds_min.xyz, batch.bounds_max.xyz, depth_pyramid, frame.viewport);
     flags = (flags & ~OCCLUDED) | select(0u, OCCLUDED, is_hidden);
     if (flags & PHASE1) == 0u {
         if is_hidden {
@@ -847,7 +741,7 @@ fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
         let model = rows_matrix(poses[candidate.slot]);
         if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz)
                 && !(frame.subpixel != 0u && covers_no_pixel(frame.view_projection * model,
-                    batch.bounds_min.xyz, batch.bounds_max.xyz)) {
+                    batch.bounds_min.xyz, batch.bounds_max.xyz, frame.viewport.xy)) {
             flags |= PROBE;
         }
     }
@@ -935,7 +829,8 @@ fn skin_bounds_pass(@builtin(global_invocation_id) id: vec3<u32>) {
         if outside(identity, low, high) {
             flags &= ~(VISIBLE | MOVING | PHASE1);
             scan[record.position] = flags;
-        } else if frame.subpixel != 0u && covers_no_pixel(frame.view_projection, low, high) {
+        } else if frame.subpixel != 0u
+                && covers_no_pixel(frame.view_projection, low, high, frame.viewport.xy) {
             flags = (flags & ~(VISIBLE | MOVING | PHASE1)) | SUBPIXEL;
             scan[record.position] = flags;
         }

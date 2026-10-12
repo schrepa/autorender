@@ -111,10 +111,6 @@ fn hash(value: u32) -> u32 {
     return h ^ (h >> 16u);
 }
 
-fn unit(value: u32) -> f32 {
-    return f32(value >> 8u) * (1.0 / 16777216.0);
-}
-
 // What the terrain holds at terrain-local `local`: its height, and the
 // nearest sample's control value at the finest resident level.
 struct Ground {

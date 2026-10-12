@@ -129,17 +129,3 @@ fn effect_light(color: vec3<f32>, effects: vec3<f32>, reflections: texture_2d<f3
     let lit = shafted(mirrored, effects.y, settings);
     return glowing(lit, bloom, linear, uv, settings);
 }
-
-fn encode_srgb(color: vec3<f32>) -> vec3<f32> {
-    let low = color * 12.92;
-    let high = 1.055 * pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(high, low, color <= vec3<f32>(0.0031308));
-}
-
-// One triangle covering the viewport: (-1, -1), (3, -1) and (-1, 3).
-@vertex
-fn vs_fullscreen(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
-    let x = f32((index << 1u) & 2u) * 2.0 - 1.0;
-    let y = f32(index & 2u) * 2.0 - 1.0;
-    return vec4<f32>(x, y, 0.0, 1.0);
-}

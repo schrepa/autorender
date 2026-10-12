@@ -26,8 +26,6 @@ struct Job {
 @group(0) @binding(2) var<storage, read> data: array<u32>;
 @group(0) @binding(3) var control: texture_storage_2d<r32uint, write>;
 
-// Texels along a layer's side: a tile's samples and their border.
-const TILE_STRIDE: u32 = 259u;
 const NONE: u32 = 0xffffffffu;
 const MAX_STACK: u32 = 16u;
 const MAX_MATERIALS: u32 = 64u;
@@ -397,10 +395,6 @@ fn shown(point: vec2<f32>) -> f32 {
     return 1.0 - t * t * (3.0 - 2.0 * t);
 }
 
-fn height_at(column: u32, row: u32) -> f32 {
-    return textureLoad(heights, vec2<u32>(column, row), job.layer, 0).r;
-}
-
 fn sample_inputs(column: u32, row: u32) -> Inputs {
     let last = TILE_STRIDE - 1u;
     let up = select(row - 1u, 0u, row == 0u);
@@ -408,11 +402,11 @@ fn sample_inputs(column: u32, row: u32) -> Inputs {
     let left = select(column - 1u, 0u, column == 0u);
     let right = min(column + 1u, last);
     let spacing = job.spacing;
-    let height = height_at(column, row);
-    let west = height_at(left, row);
-    let east = height_at(right, row);
-    let north = height_at(column, up);
-    let south = height_at(column, down);
+    let height = tile_height(column, row);
+    let west = tile_height(left, row);
+    let east = tile_height(right, row);
+    let north = tile_height(column, up);
+    let south = tile_height(column, down);
     let gx = (east - west) / (2.0 * spacing);
     let gz = (south - north) / (2.0 * spacing);
     var inputs: Inputs;

@@ -178,10 +178,6 @@ const BINS: u32 = 12u;
 // list; leave clusters covering no pixel center undrawn.
 const TEST_PREVIOUS: u32 = 1u;
 const TEST_SUBPIXEL: u32 = 2u;
-// Pixels the projected bounds are widened by before looking for pixel
-// centers, and the relative depth margin of a hidden box: presentation's.
-const SUBPIXEL_MARGIN: f32 = 0.0625;
-const HIDDEN_SCALE: f32 = 0.9999847412109375;
 // Exact hex literal: browsers reject decimal spellings above f32::MAX.
 const F32_MAX: f32 = 0x1.fffffep+127f;
 // Batch flags; the view follows from bit 8.
@@ -232,92 +228,6 @@ fn precise_enough(view: u32, center: vec3<f32>, radius: f32, error: f32) -> bool
         return true;
     }
     return error <= frame.views[view].lod.w && outside(0u, center, radius);
-}
-
-// The screen rectangle (normalized device x and y, lowest then highest) and
-// nearest reversed depth of the world box `low` to `high` under
-// `clip_from_world`; `valid` is false for boxes reaching the eye plane or
-// not finite.
-struct Projected {
-    low: vec2<f32>,
-    high: vec3<f32>,
-    valid: bool,
-}
-
-fn project_box(clip_from_world: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>) -> Projected {
-    var projected: Projected;
-    projected.low = vec2<f32>(F32_MAX);
-    projected.high = vec3<f32>(-F32_MAX);
-    for (var corner = 0u; corner < 8u; corner++) {
-        let world = vec3<f32>(select(low.x, high.x, (corner & 1u) != 0u),
-            select(low.y, high.y, (corner & 2u) != 0u),
-            select(low.z, high.z, (corner & 4u) != 0u));
-        let clip = clip_from_world * vec4<f32>(world, 1.0);
-        if !(clip.w > 1.0e-6) {
-            return projected;
-        }
-        let ndc = clip.xyz / clip.w;
-        projected.low = min(projected.low, ndc.xy);
-        projected.high = max(projected.high, ndc);
-    }
-    projected.valid = all(projected.low >= vec2<f32>(-F32_MAX))
-        && all(projected.high <= vec3<f32>(F32_MAX));
-    return projected;
-}
-
-// Whether the box `low` to `high` covers no pixel center:
-// its screen rectangle, widened by SUBPIXEL_MARGIN, holds none on some axis.
-// Boxes reaching the eye plane or far outside the viewport cover some.
-fn covers_no_pixel(low: vec3<f32>, high: vec3<f32>) -> bool {
-    let projected = project_box(frame.view_projection, low, high);
-    if !projected.valid || !(all(projected.low >= vec2<f32>(-4.0))
-            && all(projected.high.xy <= vec2<f32>(4.0))) {
-        return false;
-    }
-    let size = frame.viewport.xy;
-    let first = vec2<f32>(projected.low.x * 0.5 + 0.5, 0.5 - projected.high.y * 0.5) * size
-        - SUBPIXEL_MARGIN;
-    let last = vec2<f32>(projected.high.x * 0.5 + 0.5, 0.5 - projected.low.y * 0.5) * size
-        + SUBPIXEL_MARGIN;
-    let centers = floor(last - 0.5) - ceil(first - 0.5);
-    return centers.x < 0.0 || centers.y < 0.0;
-}
-
-// Whether the depth pyramid hides the box `low` to `high` projected by
-// `clip_from_world` (presentation's test): its nearest depth
-// lies beyond the farthest depth of every pyramid texel its rectangle
-// touches. Boxes reaching the eye plane, or too large, are not hidden.
-fn hidden(clip_from_world: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>) -> bool {
-    let projected = project_box(clip_from_world, low, high);
-    if !projected.valid || !(projected.high.z >= 0.0 && projected.high.z <= 1.0) {
-        return false;
-    }
-    let size = frame.viewport.xy;
-    let first = clamp(floor(vec2<f32>(projected.low.x * 0.5 + 0.5,
-        0.5 - projected.high.y * 0.5) * size), vec2<f32>(0.0), size - 1.0);
-    let last = clamp(floor(vec2<f32>(projected.high.x * 0.5 + 0.5,
-        0.5 - projected.low.y * 0.5) * size), vec2<f32>(0.0), size - 1.0);
-    var a = vec2<u32>(first) / 2u;
-    var b = vec2<u32>(last) / 2u;
-    let levels = u32(frame.viewport.z);
-    var mip = 0u;
-    loop {
-        if (b.x - a.x <= 1u && b.y - a.y <= 1u) || mip + 1u >= levels {
-            break;
-        }
-        a = a / 2u;
-        b = b / 2u;
-        mip += 1u;
-    }
-    if b.x - a.x > 1u || b.y - a.y > 1u {
-        return false;
-    }
-    let farthest = min(
-        min(textureLoad(depth_pyramid, a, mip).r,
-            textureLoad(depth_pyramid, vec2<u32>(b.x, a.y), mip).r),
-        min(textureLoad(depth_pyramid, vec2<u32>(a.x, b.y), mip).r,
-            textureLoad(depth_pyramid, b, mip).r));
-    return projected.high.z < farthest * HIDDEN_SCALE;
 }
 
 // Whether group `group` can draw: its pages and coarser groups resident.
@@ -513,13 +423,15 @@ fn select_clusters(@builtin(global_invocation_id) id: vec3<u32>) {
         if view == 0u && frame.tests.x != 0u {
             let low = center - vec3<f32>(radius);
             let high = center + vec3<f32>(radius);
-            if (frame.tests.x & TEST_SUBPIXEL) != 0u && covers_no_pixel(low, high) {
+            if (frame.tests.x & TEST_SUBPIXEL) != 0u
+                    && covers_no_pixel(frame.view_projection, low, high, frame.viewport.xy) {
                 continue;
             }
             // Hidden last frame: wait for this frame's pyramid (or, without
             // room, draw in phase one).
             if (frame.tests.x & TEST_PREVIOUS) != 0u
-                    && hidden(frame.previous_view_projection, low, high) {
+                    && hidden(frame.previous_view_projection, low, high, depth_pyramid,
+                        frame.viewport) {
                 let slot = atomicAdd(&counters[RETESTED], 1u);
                 if slot < frame.tests.z {
                     retest[slot] = vec4<u32>(item.x, cluster, frame.tests.y + item.z, 0u);
@@ -559,7 +471,8 @@ fn retest_clusters(@builtin(global_invocation_id) id: vec3<u32>) {
     let sphere = clusters[entry.y * 3u];
     let center = transformed(pose, bitcast<vec3<f32>>(sphere.xyz));
     let radius = bitcast<f32>(sphere.w) * largest_scale(pose);
-    if hidden(frame.view_projection, center - vec3<f32>(radius), center + vec3<f32>(radius)) {
+    if hidden(frame.view_projection, center - vec3<f32>(radius), center + vec3<f32>(radius),
+            depth_pyramid, frame.viewport) {
         atomicAdd(&counters[HIDDEN_CLUSTERS], 1u);
         return;
     }

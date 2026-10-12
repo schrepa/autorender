@@ -565,10 +565,6 @@ fn glow_light(uv: vec2<f32>) -> vec3<f32> {
     return color * (weight / (1.0 - weight));
 }
 
-fn luminance(color: vec3<f32>) -> f32 {
-    return dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
-}
-
 // The first bloom level, at half resolution: the scene's glowing light over
 // each 2x2 block and its diagonal neighbors, each tap weighted by
 // 1 / (1 + luminance) so single bright pixels cannot flicker as fireflies.

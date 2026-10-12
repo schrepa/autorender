@@ -14,13 +14,6 @@ struct Job {
 @group(0) @binding(1) var<uniform> job: Job;
 @group(0) @binding(2) var normals: texture_storage_2d<rgba8snorm, write>;
 
-// Texels along a layer's side: a tile's samples and their border.
-const TILE_STRIDE: u32 = 259u;
-
-fn height(x: u32, z: u32) -> f32 {
-    return textureLoad(heights, vec2<u32>(x, z), job.layer, 0).r;
-}
-
 @compute @workgroup_size(16, 16)
 fn tile_normals(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= TILE_STRIDE || id.y >= TILE_STRIDE {
@@ -31,7 +24,7 @@ fn tile_normals(@builtin(global_invocation_id) id: vec3<u32>) {
     let x = clamp(id.x, 1u, TILE_STRIDE - 2u);
     let z = clamp(id.y, 1u, TILE_STRIDE - 2u);
     let spacing = bitcast<f32>(job.spacing);
-    let normal = normalize(vec3<f32>(height(x - 1u, z) - height(x + 1u, z), 2.0 * spacing,
-        height(x, z - 1u) - height(x, z + 1u)));
+    let normal = normalize(vec3<f32>(tile_height(x - 1u, z) - tile_height(x + 1u, z), 2.0 * spacing,
+        tile_height(x, z - 1u) - tile_height(x, z + 1u)));
     textureStore(normals, id.xy, vec4<f32>(normal, 0.0));
 }

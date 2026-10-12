@@ -290,7 +290,7 @@ impl TerrainPipelines {
                 label: "engine/terrain-resolve",
                 layout: &layout,
                 module: shader,
-                vertex: meshes::vs_terrain_resolve,
+                vertex: meshes::vs_fullscreen,
                 fragment,
                 constants: &[],
                 targets: &color_targets,
