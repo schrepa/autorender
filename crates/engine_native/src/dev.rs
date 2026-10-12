@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
-use engine::{Game, GameHost};
+use engine::{ErrorCode, Game, GameHost};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
@@ -191,7 +191,7 @@ impl<G: Game> DevSession<G> {
     fn request(&mut self, line: &str) -> Value {
         if line.len() > engine::dev::MAX_REQUEST_BYTES {
             return self.error(
-                "request_too_large",
+                ErrorCode::RequestTooLarge,
                 "$.command",
                 &format!("command exceeds {} bytes", engine::dev::MAX_REQUEST_BYTES),
             );
@@ -202,7 +202,7 @@ impl<G: Game> DevSession<G> {
             }
             _ => {
                 return self.error(
-                    "invalid_request",
+                    ErrorCode::InvalidRequest,
                     "$.command",
                     "expected an object with an op string",
                 );
@@ -241,7 +241,7 @@ impl<G: Game> DevSession<G> {
                 "reload" => self.reload(&control),
                 _ => {
                     return self.error(
-                        "unsupported_command",
+                        ErrorCode::UnsupportedCommand,
                         "$.op",
                         &format!("this host cannot carry out {op}"),
                     );
@@ -278,7 +278,7 @@ impl<G: Game> DevSession<G> {
         self.invoke(&command)
     }
 
-    fn error(&mut self, code: &str, path: &str, message: &str) -> Value {
+    fn error(&mut self, code: ErrorCode, path: &str, message: &str) -> Value {
         let mut reply =
             json!({"ok": false, "error": {"code": code, "path": path, "message": message}});
         reply["observation"] = self.invoke_op("status")["observation"].clone();
@@ -350,7 +350,7 @@ impl<G: Game> DevSession<G> {
                 reply
             }
             Err(message) => {
-                json!({"ok": false, "observation": reply["observation"], "error": {"code": "capture_failed", "path": "$", "message": message}})
+                json!({"ok": false, "observation": reply["observation"], "error": {"code": ErrorCode::CaptureFailed, "path": "$", "message": message}})
             }
         }
     }
@@ -372,14 +372,14 @@ impl<G: Game> DevSession<G> {
                 names.join(", ")
             };
             return self.error(
-                "unsupported_command",
+                ErrorCode::UnsupportedCommand,
                 "$.name",
                 &format!("this game has no control {name}; it has {names}"),
             );
         };
         let result = match (game.run)(self.game.host_mut(), &args) {
             Ok(result) => result,
-            Err(message) => return self.error("game_rule", "$.args", &message),
+            Err(message) => return self.error(ErrorCode::GameRule, "$.args", &message),
         };
         let mut rendered = self.invoke_op("render");
         if rendered["ok"] == true {
@@ -393,7 +393,7 @@ impl<G: Game> DevSession<G> {
     fn reload(&mut self, control: &Map<String, Value>) -> Value {
         let Some(path) = self.source.clone() else {
             return self.error(
-                "unsupported_command",
+                ErrorCode::UnsupportedCommand,
                 "$.op",
                 "this game has no authored scene reload adapter",
             );
@@ -407,7 +407,7 @@ impl<G: Game> DevSession<G> {
             });
         let (source, files) = match loaded {
             Ok(loaded) => loaded,
-            Err(message) => return self.error("source_io", "$", &message),
+            Err(message) => return self.error(ErrorCode::SourceIo, "$", &message),
         };
         let text = |field: &str| control[field].as_str().unwrap_or_default().to_owned();
         let reply = self.game.host_mut().dev_reload(
@@ -438,7 +438,7 @@ impl<G: Game> DevSession<G> {
         let options = ["op", "duration_ms", "max_events", "cpu_samples", "vendor"];
         if command.keys().any(|key| !options.contains(&key.as_str())) {
             return self.error(
-                "invalid_request",
+                ErrorCode::InvalidRequest,
                 "$",
                 "profile accepts duration_ms, max_events, cpu_samples and vendor only",
             );
@@ -456,7 +456,7 @@ impl<G: Game> DevSession<G> {
             bounded("max_events", (256, max), max),
         ) else {
             return self.error(
-                "invalid_request",
+                ErrorCode::InvalidRequest,
                 "$",
                 &format!("duration_ms must be 100..5000 and max_events 256..{max}"),
             );
@@ -464,18 +464,18 @@ impl<G: Game> DevSession<G> {
         let pix = match command.get("vendor") {
             None => false,
             Some(vendor) if vendor == "pix" => true,
-            Some(_) => return self.error("invalid_request", "$.vendor", "vendor is pix"),
+            Some(_) => return self.error(ErrorCode::InvalidRequest, "$.vendor", "vendor is pix"),
         };
         if pix && self.pix.is_none() {
             return self.error(
-                "pix_unavailable",
+                ErrorCode::PixUnavailable,
                 "$.vendor",
                 "PIX's counters need the session started with --vendor pix, where PIX is installed",
             );
         }
         if !self.paused {
             return self.error(
-                "pause_required",
+                ErrorCode::PauseRequired,
                 "$",
                 "pause before starting a controlled profiling capture",
             );
@@ -512,7 +512,7 @@ impl<G: Game> DevSession<G> {
             self.pix.as_ref(),
         ) {
             Ok(recorded) => recorded,
-            Err(error) => return self.error("capture_failed", "$", &error.message),
+            Err(error) => return self.error(ErrorCode::CaptureFailed, "$", &error.message),
         };
         let after = self.invoke_op("status");
         let files = recorded.profile.unwrap_or_default();
@@ -542,7 +542,7 @@ impl<G: Game> DevSession<G> {
     #[cfg(not(feature = "profiling"))]
     fn profile(&mut self, _: &Map<String, Value>) -> Value {
         self.error(
-            "profiling_unavailable",
+            ErrorCode::ProfilingUnavailable,
             "$",
             "native profiling captures need a build with the profiling feature",
         )
@@ -558,22 +558,22 @@ impl<G: Game> DevSession<G> {
                 json!({"ok": true, "version": engine::dev::PROTOCOL_VERSION, "observation": observation,
                     "result": {"benchmark": benchmark, "temporary": true}})
             }
-            Err((code, message)) => self.error(&code, "$", &message),
+            Err((code, message)) => self.error(code, "$", &message),
         }
     }
 
     fn sample_benchmark(
         &mut self,
         control: &Map<String, Value>,
-    ) -> Result<Value, (String, String)> {
+    ) -> Result<Value, (ErrorCode, String)> {
         let mode = control["mode"].as_str().unwrap_or("render").to_owned();
         let warmup = control["warmup"].as_u64().unwrap_or(0);
         let samples = control["samples"].as_u64().unwrap_or(1);
         let start = Instant::now();
-        let invoke = |session: &mut Self, op: Value| -> Result<Value, (String, String)> {
+        let invoke = |session: &mut Self, op: Value| -> Result<Value, (ErrorCode, String)> {
             if start.elapsed() >= BENCHMARK_LIMIT {
                 return Err((
-                    "benchmark_timeout".into(),
+                    ErrorCode::BenchmarkTimeout,
                     "benchmark exceeded ten seconds; reduce samples or warmup; gameplay may have advanced".into(),
                 ));
             }
@@ -585,8 +585,8 @@ impl<G: Game> DevSession<G> {
                 return Err((
                     reply["error"]["code"]
                         .as_str()
-                        .unwrap_or("benchmark_failed")
-                        .to_owned(),
+                        .and_then(ErrorCode::named)
+                        .unwrap_or(ErrorCode::BenchmarkFailed),
                     reply["error"]["message"]
                         .as_str()
                         .unwrap_or("runtime rejected benchmark frame")
@@ -615,7 +615,7 @@ impl<G: Game> DevSession<G> {
             self.game
                 .host()
                 .wait_for_gpu()
-                .map_err(|error| ("benchmark_failed".to_owned(), error.to_string()))?;
+                .map_err(|error| (ErrorCode::BenchmarkFailed, error.to_string()))?;
             let now = Instant::now();
             if index >= warmup {
                 intervals.push(now.duration_since(previous).as_secs_f64() * 1000.0);
@@ -626,7 +626,7 @@ impl<G: Game> DevSession<G> {
                     .find(|(_, value)| !value.is_finite() || *value < 0.0)
                 {
                     return Err((
-                        "invalid_measurement".into(),
+                        ErrorCode::InvalidMeasurement,
                         format!("invalid {field} statistic"),
                     ));
                 }
@@ -720,12 +720,12 @@ fn numbers(value: &Value, prefix: &str, out: &mut Vec<(String, f64)>) {
 
 /// The spread of measured `values`, as the engine computes it on every
 /// host.
-fn distribution(values: &[f64]) -> Result<Value, (String, String)> {
+fn distribution(values: &[f64]) -> Result<Value, (ErrorCode, String)> {
     engine::host::Distribution::of(values)
         .map(|distribution| json!(distribution))
         .ok_or_else(|| {
             (
-                "invalid_measurement".into(),
+                ErrorCode::InvalidMeasurement,
                 "measurements must be nonempty, finite and nonnegative".into(),
             )
         })

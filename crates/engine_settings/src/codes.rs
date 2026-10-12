@@ -27,6 +27,14 @@ macro_rules! error_codes {
                 }
             }
 
+            /// The code replies name `name`, if the catalog holds it.
+            pub fn named(name: &str) -> Option<ErrorCode> {
+                Self::ALL
+                    .iter()
+                    .find(|(_, code, _)| *code == name)
+                    .map(|(code, _, _)| *code)
+            }
+
             /// What the code means.
             pub fn description(self) -> &'static str {
                 Self::ALL
