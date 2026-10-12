@@ -49,7 +49,7 @@ export async function runAb(session, values) {
   const durationMs = integer(values["profile-ms"], 2000, 100, 5000, "profile-ms");
   const run = async command => {
     const reply = await session.execute(command);
-    if (!reply.ok) throw new AgentError(reply.error?.code ?? "command_failed", `${command.op}: ${reply.error?.message ?? "failed"}`, reply.error?.path);
+    if (!reply.ok) throw new AgentError(reply.error?.code ?? "bridge_error", `${command.op}: ${reply.error?.message ?? "failed"}`, reply.error?.path);
     return reply.result;
   };
   const status = await run({ op: "status" });

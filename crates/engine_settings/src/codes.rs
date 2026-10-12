@@ -263,14 +263,23 @@ error_codes! {
     BenchmarkInterrupted => "benchmark_interrupted",
     /// The benchmark ran past its time.
     BenchmarkTimeout => "benchmark_timeout",
+    /// A benchmark frame failed without a code of its own, or the GPU did
+    /// not finish it; the message holds the cause.
+    BenchmarkFailed => "benchmark_failed",
     /// A benchmark measured no usable sample.
     InvalidMeasurement => "invalid_measurement",
     /// The build lacks the profiling instrumentation.
     ProfilingUnavailable => "profiling_unavailable",
+    /// PIX's counters need the native session started with `--vendor pix`,
+    /// where PIX is installed.
+    PixUnavailable => "pix_unavailable",
     /// The profile exceeds its size limit.
     ProfileTooLarge => "profile_too_large",
     /// The bridge did not answer.
     BridgeUnreachable => "bridge_unreachable",
+    /// The bridge, or a command run through it, failed without a code of
+    /// its own; the message holds the cause.
+    BridgeError => "bridge_error",
     /// The request came from an origin the bridge refuses.
     OriginRejected => "origin_rejected",
     /// The request's content type is not JSON.
@@ -327,6 +336,9 @@ error_codes! {
     WatchLocked => "watch_locked",
     /// The watch stopped.
     IterationStopped => "iteration_stopped",
+    /// The watch failed without a code of its own; the message holds the
+    /// cause.
+    IterationError => "iteration_error",
     /// A newer build replaced this one.
     BuildSuperseded => "build_superseded",
     /// The build worker is not available.
