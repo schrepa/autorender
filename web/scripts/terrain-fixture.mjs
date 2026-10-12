@@ -37,6 +37,8 @@ export const folder = `${workspacePath("web/public/scenes/terrain-smoke")}${sep}
 /** Terrain settings that do all tile work in one extraction, so renders
  * settle quickly: every terrain section a check sends starts from them. */
 export const fast = { samples_per_frame: 50_000_000 };
+/** How long a capture waits for pipelines to compile. */
+export const COMPILE_MS = 180_000;
 
 /**
  * Opens the fixture in a new page for the smoke `name` (its captures in
@@ -80,9 +82,11 @@ export async function openTerrain(name) {
    * capture as base64 PNG. */
   async function capture(file) {
     // Pipelines go on compiling for seconds after the frames that first
-    // need them, and a capture presents only once they have.
-    for (let frame = 0; frame < 600; frame++) {
-      if (!(await command("render")).result.rendering.pipelines_compiling) break;
+    // need them (a minute and more on a busy machine), Chrome presenting
+    // nothing meanwhile, and a capture presents only once they have.
+    const until = Date.now() + COMPILE_MS;
+    while ((await command("render")).result.rendering.pipelines_compiling) {
+      if (Date.now() > until) assert.fail(`pipelines still compiling after ${COMPILE_MS / 1000} s`);
       await new Promise(resolve => setTimeout(resolve, 50));
     }
     await command("capture");

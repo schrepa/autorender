@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { differentPixels } from "./harness.mjs";
-import { fast, openTerrain, overview } from "./terrain-fixture.mjs";
+import { COMPILE_MS, fast, openTerrain, overview } from "./terrain-fixture.mjs";
 
 const { page, errors, command, settled, output, close, settle, capture, rendersUntil, heights } = await openTerrain("terrain-surface");
 const checks = [];
@@ -196,9 +196,11 @@ try {
     // GPU-presented frames need pipelines of their own, which compile for
     // seconds on some GPUs while the browser presents nothing: the capture
     // waits for them as for the levels.
-    for (let frame = 0; frame < 600; frame++) {
+    const until = Date.now() + COMPILE_MS;
+    for (let frame = 0; ; frame++) {
       rendering = (await command("present", { alpha: 1, gpu: true })).result.rendering;
       if (frame > 8 && rendering.shadows.levels_pending === 0 && !rendering.pipelines_compiling) break;
+      if (Date.now() > until) assert.fail(`kept levels or pipelines still pending after ${COMPILE_MS / 1000} s: ${JSON.stringify(rendering.shadows)}`);
       if (rendering.pipelines_compiling) await new Promise(resolve => setTimeout(resolve, 50));
     }
     await command("capture", { alpha: 1, gpu: true });
