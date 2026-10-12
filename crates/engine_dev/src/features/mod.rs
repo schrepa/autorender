@@ -13,8 +13,11 @@ use crate::{DevError, DevTools};
 /// Every feature with a development file here, sorted: the one list of
 /// them. Each entry is the feature's name as `engine_features!` names it,
 /// which names its file. Code over these files passes a macro that receives
-/// this list (`dev_features!(callback)`) instead of writing them out: their
-/// modules, and registering their inspectors and schemas.
+/// this list (`dev_features!(callback)`) instead of writing them out:
+/// registering their inspectors and schemas. Their modules are declared
+/// below it, as rustfmt, which expands no macros, finds them: the features
+/// check fails a file this list misses, and the build a listed one without
+/// its module.
 macro_rules! dev_features {
     ($then:ident) => {
         $then! {
@@ -113,12 +116,10 @@ impl DevTools {
     }
 }
 
-/// This module's part of `dev_features!`: the files, their names, and
+/// This module's part of `dev_features!`: the files' names, and
 /// registering their inspectors and schemas.
 macro_rules! files {
     ($($name:ident,)*) => {
-        $(pub mod $name;)*
-
         /// The features with a development file, by name, as listed.
         #[cfg(not(target_arch = "wasm32"))]
         pub(crate) const NAMES: &[&str] = &[$(stringify!($name)),*];
@@ -136,5 +137,13 @@ macro_rules! files {
         }
     };
 }
+
+pub mod animation;
+pub mod collision;
+pub mod deformation;
+pub mod navigation;
+pub mod ocean;
+pub mod terrain;
+pub mod world_streaming;
 
 dev_features!(files);

@@ -12,10 +12,10 @@ use engine_scene::SceneInstance;
 use engine_settings::ErrorCode;
 use serde_json::{Value, json};
 
+use crate::DevError;
 use crate::coordinate;
 use crate::features::feature;
 use crate::protocol::bounds::MAX_EDIT_ID;
-use crate::DevError;
 
 /// A terrain edit control.
 pub(super) enum TerrainEditing {

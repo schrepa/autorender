@@ -244,13 +244,14 @@ pub fn check(root: &Path) -> Result<(), String> {
 }
 
 /// Adds to `violations` each development file of a feature that
-/// `dev_features!` (engine_dev/src/features/mod.rs) does not list, which
-/// would be no module, each query a feature answers (`impl EngineQuery
-/// for T`) or control it applies (`impl EngineControl for T`) that no
-/// `DevRequest` or `BrowserControl` variant holds, which no request would
-/// reach, and each scene component (`impl SceneComponent for T`) that
-/// `entity_components!` (engine_scene/src/components.rs) does not list,
-/// which no scene would author.
+/// `dev_features!` (engine_dev/src/features/mod.rs) does not list, whose
+/// inspectors and schemas nothing would register, each query a feature
+/// answers (`impl EngineQuery for T`) or control it applies (`impl
+/// EngineControl for T`) that no `DevRequest` or `BrowserControl` variant
+/// holds, which no request would reach, and each scene component (`impl
+/// SceneComponent for T`) that `entity_components!`
+/// (engine_scene/src/components.rs) does not list, which no scene would
+/// author.
 fn listed(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
     let folder = root.join("crates/engine_dev/src/features");
     let read = |path: &Path| {
@@ -273,7 +274,8 @@ fn listed(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
         }
         if !names.contains(&name.as_str()) {
             violations.push(format!(
-                "engine_dev/src/features/{name} is no module: list {name} in dev_features!"
+                "engine_dev/src/features/{name} is in no dev_features! entry, so nothing \
+                 registers its inspectors: list {name} there"
             ));
         }
         let mut files = vec![path];
