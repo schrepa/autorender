@@ -12,6 +12,12 @@ disallowed-methods = [
     # unwind, and a half-changed world is not safe to keep running.
     { path = "std::panic::catch_unwind", reason = "a panic stops the engine for good (engine_panic); return an error instead" },
     { path = "std::panic::set_hook", reason = "engine_panic::install is the engine's one panic hook" },
+    # The renderer makes these GPU calls through one function each, which
+    # holds every caller to the rule beside it.
+    { path = "wgpu::Device::create_pipeline_layout", reason = "use engine_render's pipelines::pipeline_layout: each layout is a pipeline_layouts! row, which lint holds to the device limits" },
+    { path = "wgpu::Device::create_bind_group", reason = "use engine_render's pipelines::group or filled_group: they bind a bindings table's entries by name" },
+    { path = "wgpu::Queue::submit", reason = "use engine_render's gpu_calls::submit, the renderer's one way to submit work" },
+    { path = "wgpu::Device::push_error_scope", reason = "use engine_render's gpu_calls::validation_scope: scopes cover creation, never a frame's work" },
 ]
 
 # Hash maps and sets iterate in the same order every run: the standard

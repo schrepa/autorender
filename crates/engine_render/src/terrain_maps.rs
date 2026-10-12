@@ -185,7 +185,7 @@ impl TerrainMaps {
             self.material_views[index] = view(&grown, Some(self.materials));
             self.arrays[index] = grown;
         }
-        queue.submit([encoder.finish()]);
+        crate::gpu_calls::submit(queue, [encoder.finish()]);
         self.sheets = sheets;
         self.bytes = self.layer_bytes(3 * self.materials + 3 * sheets);
         self.views_generation += 1;
@@ -339,7 +339,7 @@ impl TerrainMaps {
                     mips.record_layer(device, &mut encoder, array, layer);
                 }
             }
-            queue.submit([encoder.finish()]);
+            crate::gpu_calls::submit(queue, [encoder.finish()]);
         }
         self.arrays = arrays;
         self.views = views;

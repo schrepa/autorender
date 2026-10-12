@@ -328,7 +328,7 @@ impl SkyMaps {
             pass.dispatch_workgroups(maps.size.div_ceil(GROUP), band.div_ceil(GROUP), 1);
         }
         drop(pass);
-        queue.submit([encoder.finish()]);
+        crate::gpu_calls::submit(queue, [encoder.finish()]);
         for (layer, _) in groups {
             let Some((source, row)) = self.building[layer].take() else {
                 continue;

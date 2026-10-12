@@ -554,7 +554,7 @@ impl TileAtlas {
                 );
             }
         }
-        queue.submit([encoder.finish()]);
+        crate::gpu_calls::submit(queue, [encoder.finish()]);
         self.controls += self.control_jobs.len() as u32;
         self.control_jobs.clear();
     }
@@ -652,7 +652,7 @@ impl TileAtlas {
                 );
             }
         }
-        queue.submit([encoder.finish()]);
+        crate::gpu_calls::submit(queue, [encoder.finish()]);
         self.normal_jobs.clear();
     }
 
@@ -732,7 +732,7 @@ impl TileAtlas {
                 extent,
             );
             // Before this frame's tile writes, which the queue runs in order.
-            queue.submit([encoder.finish()]);
+            crate::gpu_calls::submit(queue, [encoder.finish()]);
         }
         let array_view = |texture: &wgpu::Texture| {
             texture.create_view(&wgpu::TextureViewDescriptor {

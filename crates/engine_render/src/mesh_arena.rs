@@ -223,7 +223,7 @@ mod gpu {
             label: Some("engine/mesh-arena-growth"),
         });
         encoder.copy_buffer_to_buffer(old, 0, &grown, 0, old.size().min(size));
-        queue.submit([encoder.finish()]);
+        crate::gpu_calls::submit(queue, [encoder.finish()]);
         grown
     }
 

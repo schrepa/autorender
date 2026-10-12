@@ -466,7 +466,7 @@ impl GpuPresentationPass {
             // applied gather made active.
             pass.dispatch_workgroups((self.nodes.capacity() as u32).div_ceil(GROUP), 1, 1);
         }
-        queue.submit([encoder.finish()]);
+        crate::gpu_calls::submit(queue, [encoder.finish()]);
     }
 
     /// Builds the groups this frame binds that storage replaced since, or

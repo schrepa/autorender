@@ -139,7 +139,7 @@ impl Renderer {
                 device_limits.max_texture_array_layers,
             ),
         )?;
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let scope = crate::gpu_calls::validation_scope(&device);
         display.configure(&device);
         let depth = DepthTarget::new(&device, display.size());
         let lighting_buffer = crate::buffers::uniform(

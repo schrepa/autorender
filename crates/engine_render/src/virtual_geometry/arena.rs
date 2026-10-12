@@ -401,7 +401,7 @@ impl VirtualArena {
                     self.table_words * 4,
                     slots * PAGE_WORDS as u64 * 4,
                 );
-                queue.submit([encoder.finish()]);
+                crate::gpu_calls::submit(queue, [encoder.finish()]);
             }
         }
         let restored: Vec<(u32, u32)> = kept
@@ -502,7 +502,7 @@ impl VirtualArena {
             label: Some("engine/virtual-pool-growth"),
         });
         encoder.copy_buffer_to_buffer(&arena.pages, 0, &grown, 0, arena.pages.size());
-        queue.submit([encoder.finish()]);
+        crate::gpu_calls::submit(queue, [encoder.finish()]);
         arena.pages = grown;
         self.residency.add_slots(slots - self.pool_slots);
         self.pool_slots = slots;

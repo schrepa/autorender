@@ -214,6 +214,10 @@ impl std::ops::Deref for GroupLayout {
 /// `groups`, layouts of its tables in order: the one way pipeline layouts
 /// are made, so each is one `cargo xtask lint` counted. Groups of other
 /// tables than it declares are a programming error.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the one way to make pipeline layouts"
+)]
 pub(crate) fn pipeline_layout(
     device: &wgpu::Device,
     declared: &crate::pipeline_layouts::PipelineLayout,
@@ -410,11 +414,7 @@ pub(crate) fn group(
             resource: resource.clone(),
         })
         .collect();
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some(label),
-        layout,
-        entries: &entries,
-    })
+    bind_group(device, label, layout, &entries)
 }
 
 /// [`group`] with [`Fillers`] for the bindings `resources` leave out.
@@ -451,10 +451,22 @@ pub(crate) fn filled_group(
         })
         .collect();
     debug_assert!(written <= WRITE_FILLERS, "more written fillers than ranges");
+    bind_group(device, label, layout, &entries)
+}
+
+/// The bind group of `layout` over `entries`: the one way bind groups are
+/// made, by [`group`] and [`filled_group`] from their tables.
+#[expect(clippy::disallowed_methods, reason = "the one way to make bind groups")]
+fn bind_group(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &GroupLayout,
+    entries: &[wgpu::BindGroupEntry<'_>],
+) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some(label),
         layout,
-        entries: &entries,
+        entries,
     })
 }
 
