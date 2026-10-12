@@ -227,10 +227,6 @@ pub struct Renderer {
     culling: Culling,
     // Sun shadows.
     shadows: ShadowPass,
-    // Local lights: binning and the lit mesh pipeline
-    // layouts, created with the first frame that has lights. Lit
-    // public-instance pipelines bind an empty group 2.
-    lights: Option<LightPass>,
     // The environment maps surfaces reflect, redrawn when the
     // sky changes, and the reflection probes holding their cubes after the
     // sky's.

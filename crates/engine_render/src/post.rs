@@ -1021,7 +1021,11 @@ impl RenderFeature for PostPass {
         PostPass::capacity_bytes(self)
     }
 
-    fn stats(effects: Option<&Effects>, _snapshot: &RenderSnapshot) -> EffectStats {
+    fn stats(
+        _this: Option<&Self>,
+        effects: Option<&Effects>,
+        _snapshot: &RenderSnapshot,
+    ) -> EffectStats {
         let applied = |effect: fn(&Effects) -> bool| Applied {
             active: effects.is_some_and(effect),
         };

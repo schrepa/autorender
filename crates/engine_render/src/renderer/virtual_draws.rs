@@ -309,7 +309,7 @@ impl Renderer {
     pub(super) fn ensure_virtual_pipelines(&mut self, kind: PassKind) {
         let lit = kind.lit;
         if self.virtual_draws.layouts[usize::from(lit)].is_none() {
-            let lights = self.lights.as_ref().filter(|_| lit);
+            let lights = self.features.lights.get().filter(|_| lit);
             let groups = (
                 &self.camera.layout,
                 self.materials.layout(),

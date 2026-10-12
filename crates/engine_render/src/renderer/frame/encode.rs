@@ -36,7 +36,6 @@ impl Renderer {
                     .encode_horizons(&self.device, encoder, &self.profiler);
             }
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
-            Pass::Lights => self.encode_light_binning(state, encoder),
             Pass::CloudDome => self.clouds.encode(
                 &self.device,
                 encoder,
@@ -201,13 +200,12 @@ impl Renderer {
         };
         let lights = state
             .features
-            .light_frame
-            .as_ref()
-            .and(self.lights.as_ref())
+            .light_frame()
+            .and(self.features.lights.get())
             .map(LightPass::fragment_group);
         let encode = Encode::new(
             (&views, &meshes),
-            &self.profiler,
+            (&self.device, &self.profiler),
             (self.camera.group(), &self.materials, lights),
             (state.shape.targets, &self.depth.texture),
         );
@@ -340,18 +338,6 @@ impl Renderer {
         );
     }
 
-    /// Light binning.
-    fn encode_light_binning(&mut self, state: &FrameState<'_>, encoder: &mut wgpu::CommandEncoder) {
-        if let (Some(frame), Some(lights)) = (&state.features.light_frame, self.lights.as_mut()) {
-            lights.encode(
-                &self.device,
-                encoder,
-                frame,
-                self.profiler.span("light_bins"),
-            );
-        }
-    }
-
     /// The view's clouds laid over the scene's color.
     fn encode_cloud_composite(
         &self,
@@ -394,7 +380,7 @@ impl Renderer {
     ) {
         let snapshot = state.snapshot;
         let temporal_frame = &state.packing.temporal_frame;
-        let (probe_list, light_frame) = (state.features.probe_list, &state.features.light_frame);
+        let (probe_list, light_frame) = (state.features.probe_list, state.features.light_frame());
         self.probes.slots.tick();
         if !self.gpu_presentation.stillness_settled() {
             return;
@@ -408,9 +394,7 @@ impl Renderer {
             snapshot.environment.reflection_probes.faces_per_frame,
             odd,
             snapshot.elapsed_seconds,
-            light_frame
-                .as_ref()
-                .map(|frame| (frame, &snapshot.environment.local_lights)),
+            light_frame.map(|frame| (frame, &snapshot.environment.local_lights)),
         );
         report.probe_faces = faces;
     }
@@ -434,7 +418,7 @@ impl MeshDraws for FrameMeshes<'_> {
             return 0;
         }
         let features = &state.features;
-        let lit = features.light_frame.as_ref().zip(renderer.lights.as_ref());
+        let lit = features.light_frame().zip(renderer.features.lights.get());
         // Glass reads the opaque color the pass draws over.
         let camera_group = match renderer.camera.refraction_group() {
             Some(group) if features.refraction && features.post_frame().is_some() => group,

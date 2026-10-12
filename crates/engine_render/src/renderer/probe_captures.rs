@@ -19,7 +19,7 @@ impl Renderer {
         seconds: f32,
         lights: Option<(&LightFrame, &engine_core::LocalLightSettings)>,
     ) -> u32 {
-        let lights = lights.filter(|_| self.lights.is_some());
+        let lights = lights.filter(|_| self.features.lights.get().is_some());
         let kind = PassKind::probe(lights.is_some());
         self.ensure_probe_pipelines(kind);
         self.camera.prepare_probe_groups(
@@ -73,7 +73,8 @@ impl Renderer {
                 break;
             }
             // Still lamps light the capture: lights binned for this face.
-            if let (Some((frame, settings)), Some(pass)) = (lights, self.lights.as_mut()) {
+            if let (Some((frame, settings)), Some(pass)) = (lights, self.features.lights.get_mut())
+            {
                 pass.encode_probe_face(
                     &self.device,
                     &self.queue,
@@ -123,7 +124,7 @@ impl Renderer {
                 };
                 pass.set_bind_group(2, poses_group, &[]);
                 if lights.is_some() {
-                    let lights = self.lights.as_ref().expect("checked above");
+                    let lights = self.features.lights.get().expect("checked above");
                     pass.set_bind_group(3, lights.probe_fragment_group(face), &[]);
                 }
                 let mut binds = BatchBinds::default();

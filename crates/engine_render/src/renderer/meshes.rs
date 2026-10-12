@@ -261,8 +261,9 @@ impl Renderer {
             return;
         }
         let lights = lit.then(|| {
-            self.lights
-                .as_ref()
+            self.features
+                .lights
+                .get()
                 .expect("lit frames create the light pass")
                 .fragment_layout()
         });

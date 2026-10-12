@@ -422,7 +422,11 @@ impl RenderFeature for Transparency {
 
     /// Particles drawn, invalid ones, and those left out: the snapshot's and
     /// those beyond the GPU's bindings.
-    fn stats(frame: Option<&TransparencyFrame>, snapshot: &RenderSnapshot) -> Drawn {
+    fn stats(
+        _this: Option<&Self>,
+        frame: Option<&TransparencyFrame>,
+        snapshot: &RenderSnapshot,
+    ) -> Drawn {
         let particles = frame.and_then(|frame| frame.particles.as_ref());
         Drawn {
             drawn: particles.map_or(0, |frame| frame.total),

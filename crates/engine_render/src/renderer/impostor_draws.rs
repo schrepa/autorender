@@ -173,7 +173,7 @@ impl Renderer {
             };
             let (camera, draw) = (&self.camera.layout, self.impostors.pipelines.draw_layout());
             let layout = if lit {
-                let lights = self.lights.as_ref()?.fragment_layout();
+                let lights = self.features.lights.get()?.fragment_layout();
                 let declared = if temporal {
                     &LIT_TEMPORAL_IMPOSTOR_PIPELINES
                 } else {

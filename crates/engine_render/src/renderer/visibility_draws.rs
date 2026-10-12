@@ -149,7 +149,7 @@ impl Renderer {
         }
         let lit = kind.lit;
         if self.visibility.resolve_layouts[usize::from(lit)].is_none() {
-            let lights = self.lights.as_ref().filter(|_| lit);
+            let lights = self.features.lights.get().filter(|_| lit);
             let groups = (
                 &self.camera.layout,
                 self.materials.layout(),

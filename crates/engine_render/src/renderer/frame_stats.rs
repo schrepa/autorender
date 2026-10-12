@@ -8,7 +8,7 @@ use crate::transparent::Transparency;
 use crate::water::WaterPass;
 
 use engine_core::{
-    Applied, CloudStats, CullingStats, DeformationStats, DetailStats, GroundCoverStats, LightStats,
+    Applied, CloudStats, CullingStats, DeformationStats, DetailStats, GroundCoverStats,
     OccupancyStats, ProbeStats, ShadowStats, SkyStats, TerrainRenderStats, VirtualGeometryStats,
 };
 
@@ -78,16 +78,19 @@ impl Renderer {
         let (virtual_frame, resolving) = (state.virtual_frame, state.resolving);
         let (shadow_draws, probe_faces) = (report.shadow_draws, report.probe_faces);
         let features = &state.features;
-        let (shadow_frame, light_frame, post_frame) = (
-            &features.shadow_frame,
-            &features.light_frame,
-            features.post_frame(),
+        let (shadow_frame, post_frame) = (&features.shadow_frame, features.post_frame());
+        let effects = PostPass::stats(
+            self.features.post.get(),
+            features.frames.post.as_ref().map(Ready::frame),
+            snapshot,
         );
-        let effects = PostPass::stats(features.frames.post.as_ref().map(Ready::frame), snapshot);
         let refraction = features.refraction;
         let dropped_probes = features.dropped_probes;
-        let (water, ocean) =
-            WaterPass::stats(features.frames.water.as_ref().map(Ready::frame), snapshot);
+        let (water, ocean) = WaterPass::stats(
+            Some(self.features.water.get()),
+            features.frames.water.as_ref().map(Ready::frame),
+            snapshot,
+        );
         let (mesh_upload_bytes, texture_upload_bytes) =
             (state.assets.mesh_bytes, state.assets.texture_bytes);
         let (camera_upload_bytes, instance_upload_bytes) =
@@ -112,10 +115,6 @@ impl Renderer {
             None
         };
         let shadow_casters = shadow_frame.as_ref().and(self.shadows.caster_counts());
-        let lit = light_frame.is_some();
-        let light_totals = light_frame
-            .as_ref()
-            .and(self.lights.as_ref().and_then(LightPass::totals));
         let residency = self.residency();
         let stats = RenderStats {
             draw_calls: report.draws,
@@ -206,31 +205,26 @@ impl Renderer {
             ambient_occlusion: effects.ambient_occlusion,
             contact_shadows: effects.contact_shadows,
             bloom: effects.bloom,
-            local_lights: LightStats {
-                shaded: if lit {
-                    snapshot.lights.list.len() as u32
-                } else {
-                    0
-                },
-                dropped: if lit {
-                    snapshot.lights.dropped.min(u32::MAX as usize) as u32
-                } else {
-                    0
-                },
-                invalid: snapshot.lights.invalid.min(u32::MAX as usize) as u32,
-                visible: light_totals.map(|totals| totals[0]),
-                cluster_overflow: light_totals.map(|totals| totals[1]),
-            },
+            local_lights: LightPass::stats(
+                self.features.lights.get(),
+                features.light_frame(),
+                snapshot,
+            ),
             sun_shafts: effects.sun_shafts,
             reflections: effects.reflections,
             particles: Transparency::stats(
+                Some(self.features.transparency.get()),
                 features.frames.transparency.as_ref().map(Ready::frame),
                 snapshot,
             ),
             refraction: Applied {
                 active: refraction && post_frame.is_some(),
             },
-            decals: DecalPass::stats(features.frames.decals.as_ref().map(Ready::frame), snapshot),
+            decals: DecalPass::stats(
+                self.features.decals.get(),
+                features.frames.decals.as_ref().map(Ready::frame),
+                snapshot,
+            ),
             reflection_probes: ProbeStats {
                 ready: self.probes.slots.ready(),
                 faces: probe_faces,
@@ -322,6 +316,7 @@ impl Renderer {
                 },
             },
             temporal_antialiasing: TemporalPass::stats(
+                self.features.temporal.get(),
                 features.frames.temporal.as_ref().map(Ready::frame),
                 snapshot,
             ),
@@ -428,7 +423,10 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.gpu_light_bytes",
-            self.lights.as_ref().map_or(0, LightPass::capacity_bytes) as f64,
+            self.features
+                .lights
+                .get()
+                .map_or(0, LightPass::capacity_bytes) as f64,
         );
         engine_profile::counter(
             "memory.gpu_impostor_bytes",

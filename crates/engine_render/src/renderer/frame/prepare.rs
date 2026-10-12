@@ -633,7 +633,8 @@ impl Renderer {
         let (environment, probe_list, dropped_probes) =
             self.prepare_environment(snapshot, lighting);
         prelude.environment = environment;
-        let light_frame = self.prepare_lights(frame, kind, temporal_frame);
+        let lights = self.prepare_lights(frame, kind, temporal_frame);
+        let lit = lights.is_some();
         let PostPrep {
             post,
             temporal,
@@ -646,16 +647,16 @@ impl Renderer {
             temporal_frame,
             post_frame,
         );
-        let decals = self.prepare_decals(snapshot, temporal_frame, &light_frame, post_frame);
+        let decals = self.prepare_decals(snapshot, temporal_frame, lit, post_frame);
         Features {
             occlusion,
             gpu_prepared,
             shadow_frame,
             probe_list,
             dropped_probes,
-            light_frame,
             refraction,
             frames: FeatureFrames {
+                lights,
                 decals,
                 transparency,
                 post,
@@ -1015,38 +1016,38 @@ impl Renderer {
         frame: RenderFrame<'_>,
         kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
-    ) -> Option<LightFrame> {
+    ) -> Option<Ready<LightFrame>> {
         let temporal = kind.temporal;
         let snapshot = frame.snapshot();
 
         // Local lights: binned on the GPU from this frame's
         // poses, so slot lights follow GPU-presented meshes.
-        if snapshot.environment.local_lights.active() && !snapshot.lights.list.is_empty() {
-            let device = &self.device;
-            let lights = self.lights.get_or_insert_with(|| LightPass::new(device));
-            if temporal && let Some(pass) = self.features.temporal.get_mut() {
-                pass.ensure_lit_layout(
+        let needs = snapshot.environment.local_lights.active() && !snapshot.lights.list.is_empty();
+        let (device, queue, size) = (&self.device, &self.queue, self.display.size());
+        let layouts = (&self.camera.layout, self.materials.layout());
+        let temporal_pass = &mut self.features.temporal;
+        let instances = &self.instances;
+        self.features.lights.prepare(
+            needs,
+            || LightPass::new(device),
+            |lights| {
+                if temporal && let Some(pass) = temporal_pass.get_mut() {
+                    pass.ensure_lit_layout(
+                        device,
+                        [layouts.0, layouts.1, lights.fragment_layout()],
+                    );
+                }
+                let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
+                lights.prepare(
                     device,
-                    [
-                        &self.camera.layout,
-                        self.materials.layout(),
-                        lights.fragment_layout(),
-                    ],
-                );
-            }
-            let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
-            let poses = self.instances.frame_poses(parity);
-            lights.prepare(
-                device,
-                &self.queue,
-                snapshot,
-                self.display.size(),
-                poses,
-                (frame.identity(), frame.lights_revision()),
-            )
-        } else {
-            None
-        }
+                    queue,
+                    snapshot,
+                    size,
+                    instances.frame_poses(parity),
+                    (frame.identity(), frame.lights_revision()),
+                )
+            },
+        )
     }
 
     /// Screen effects and refraction's targets;
@@ -1145,14 +1146,16 @@ impl Renderer {
         &mut self,
         snapshot: &RenderSnapshot,
         temporal_frame: &Option<TemporalFrame>,
-        light_frame: &Option<LightFrame>,
+        lit: bool,
         post_frame: Option<Effects>,
     ) -> Option<Ready<DecalFrame>> {
         // Decals cover the opaque surfaces the depth buffer
         // holds and read their displayed poses from the joint palette.
-        let decal_lights = light_frame
-            .as_ref()
-            .and(self.lights.as_ref())
+        let decal_lights = self
+            .features
+            .lights
+            .get()
+            .filter(|_| lit)
             .map(LightPass::fragment_layout);
         let (device, format) = (&self.device, self.display.format());
         self.features.decals.prepare(
@@ -1190,13 +1193,13 @@ impl Renderer {
     ) -> Passes {
         let gpu_mode = kind.gpu_mode;
         let (light_frame, post_frame, probe_list) = (
-            &features.light_frame,
+            features.light_frame(),
             features.post_frame(),
             features.probe_list,
         );
 
         // Pipelines of the material variants this frame draws.
-        let lit_frame = light_frame.is_some() && self.lights.is_some();
+        let lit_frame = light_frame.is_some() && self.features.lights.get().is_some();
         let targets = self.frame_targets(temporal_frame, post_frame);
         let opaque_kind = PassKind::opaque(targets, lit_frame);
         let transparent_kind = PassKind::transparent(lit_frame);
@@ -1337,7 +1340,7 @@ impl Renderer {
                 resolving,
                 resolving && phases == 2 && self.virtual_draws.phase_two.is_some(),
             ],
-            lights: features.light_frame.is_some() && self.lights.is_some(),
+            lights: features.light_frame().is_some(),
             clouds: false,
             refraction: features.refraction && post.is_some(),
             effects: post.unwrap_or_default(),

@@ -216,11 +216,7 @@ impl Renderer {
             .as_ref()
             .zip(self.features.temporal.get());
         // Lit frames shade with the lit pipelines and the lights' group.
-        let lit = state
-            .features
-            .light_frame
-            .as_ref()
-            .zip(self.lights.as_ref());
+        let lit = state.features.light_frame().zip(self.features.lights.get());
         pass.set_bind_group(0, self.camera.group(), &[]);
         if let Some((_, lights)) = lit {
             pass.set_bind_group(3, lights.fragment_group(), &[]);
@@ -401,11 +397,7 @@ impl Renderer {
     ) {
         let phases = usize::from(state.shape.phases);
         let opaque_kind = state.passes.opaque_kind;
-        let lit = state
-            .features
-            .light_frame
-            .as_ref()
-            .zip(self.lights.as_ref());
+        let lit = state.features.light_frame().zip(self.features.lights.get());
         let visibility = self.visibility.buffer.as_ref().expect("prepared above");
 
         let bins = self.virtual_draws.bins.len();

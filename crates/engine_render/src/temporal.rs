@@ -490,7 +490,11 @@ impl RenderFeature for TemporalPass {
         TemporalPass::capacity_bytes(self)
     }
 
-    fn stats(frame: Option<&ResolveFrame>, _snapshot: &RenderSnapshot) -> Applied {
+    fn stats(
+        _this: Option<&Self>,
+        frame: Option<&ResolveFrame>,
+        _snapshot: &RenderSnapshot,
+    ) -> Applied {
         Applied {
             active: frame.is_some(),
         }

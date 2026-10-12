@@ -227,8 +227,6 @@ pub(crate) enum Pass {
     TerrainHorizons,
     /// The shadow maps.
     ShadowMaps,
-    /// Light binning.
-    Lights,
     /// This frame's slice of the clouds' dome, and their shadows' grid.
     CloudDome,
     /// Tracks pressed into the deformation map.
@@ -315,7 +313,7 @@ passes! {
     virtual_select: VirtualSelect,
     terrain_horizons: TerrainHorizons,
     shadow_maps: ShadowMaps,
-    lights: Lights,
+    lights: Feature(FeaturePass::Lights),
     cloud_dome: CloudDome,
     deformation: Deformation,
     vt_bakes: VtBakes,
@@ -802,9 +800,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read_if(shape.scatter, Placed)
             .read_if(shape.shadow_clusters, Clusters)
             .write(ShadowMaps);
-    }
-    if shape.lights {
-        graph.add(Pass::Lights).read(Poses).write(Lights);
     }
     // What the first opaque phase draws and shades with: the clouds' dome
     // (the sky) and their shadows, tracks, the virtual texture's pages and

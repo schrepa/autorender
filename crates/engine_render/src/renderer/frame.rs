@@ -146,13 +146,17 @@ pub(super) struct Features<'s> {
     pub(super) shadow_frame: Option<ShadowFrame>,
     pub(super) probe_list: &'s [engine_core::RenderReflectionProbe],
     pub(super) dropped_probes: u64,
-    pub(super) light_frame: Option<LightFrame>,
     pub(super) refraction: bool,
     /// What the features render_features! lists prepared.
     pub(super) frames: FeatureFrames,
 }
 
 impl Features<'_> {
+    /// The local lights binned for the frame, when it shades them.
+    pub(super) fn light_frame(&self) -> Option<&LightFrame> {
+        self.frames.lights.as_ref().map(Ready::frame)
+    }
+
     /// The screen effects the frame runs, when it draws into their
     /// targets.
     pub(super) fn post_frame(&self) -> Option<Effects> {

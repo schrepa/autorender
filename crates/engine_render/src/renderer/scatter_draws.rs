@@ -563,7 +563,7 @@ impl Renderer {
             state.packing.temporal_frame.is_some() && self.features.temporal.get().is_some();
         pass.set_bind_group(0, self.camera.group(), &[]);
         if kind.lit
-            && let Some(lights) = self.lights.as_ref()
+            && let Some(lights) = self.features.lights.get()
         {
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }

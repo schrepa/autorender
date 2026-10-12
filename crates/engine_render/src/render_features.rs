@@ -8,6 +8,7 @@
 use engine_core::RenderSnapshot;
 
 use crate::decals::DecalPass;
+use crate::lights::LightPass;
 use crate::materials::MaterialStore;
 use crate::post::PostPass;
 use crate::profiling::GpuProfiler;
@@ -47,9 +48,13 @@ pub(crate) trait RenderFeature {
     /// The GPU memory the feature holds.
     fn capacity_bytes(&self) -> u64;
 
-    /// The feature's stats of a frame it prepared `frame` for, `None` when
-    /// it did not run, showing `snapshot`.
-    fn stats(frame: Option<&Self::Frame>, snapshot: &RenderSnapshot) -> Self::Stats;
+    /// The feature's stats, `this` once created, of a frame it prepared
+    /// `frame` for (`None` when it did not run), showing `snapshot`.
+    fn stats(
+        this: Option<&Self>,
+        frame: Option<&Self::Frame>,
+        snapshot: &RenderSnapshot,
+    ) -> Self::Stats;
 }
 
 /// A feature created with the first frame needing it, then kept.
@@ -186,6 +191,7 @@ pub(crate) struct Encode<'f> {
     views: &'f dyn AttachmentViews,
     /// The renderer's mesh draws features' passes take in.
     pub(crate) meshes: &'f dyn MeshDraws,
+    pub(crate) device: &'f wgpu::Device,
     pub(crate) profiler: &'f GpuProfiler,
     /// The main passes' first group.
     pub(crate) camera: &'f wgpu::BindGroup,
@@ -201,7 +207,7 @@ pub(crate) struct Encode<'f> {
 impl<'f> Encode<'f> {
     pub(crate) fn new(
         (views, meshes): (&'f dyn AttachmentViews, &'f dyn MeshDraws),
-        profiler: &'f GpuProfiler,
+        (device, profiler): (&'f wgpu::Device, &'f GpuProfiler),
         (camera, materials, lights): (
             &'f wgpu::BindGroup,
             &'f MaterialStore,
@@ -212,6 +218,7 @@ impl<'f> Encode<'f> {
         Self {
             views,
             meshes,
+            device,
             profiler,
             camera,
             materials,
@@ -384,6 +391,9 @@ macro_rules! render_features {
 }
 
 render_features! {
+    /// Local lights binned into the view's clusters, created with the first
+    /// frame that has some.
+    lights: Lazy<LightPass> => [Lights],
     /// Decals over the opaque surfaces.
     decals: Lazy<DecalPass> => [Decals],
     /// Terrains' lakes and rivers, and the sea, over the opaque scene.

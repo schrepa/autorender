@@ -97,7 +97,7 @@ impl Renderer {
             self.display.size().height as f32,
         );
         let lit = opaque_kind.lit;
-        let lights = self.lights.as_ref().map(LightPass::fragment_layout);
+        let lights = self.features.lights.get().map(LightPass::fragment_layout);
         let layouts = (
             &self.camera.layout,
             &self.mesh_pipelines.empty_layout,
@@ -191,7 +191,7 @@ impl Renderer {
         }
         self.terrain.warm(&self.device);
         let lit = opaque_kind.lit;
-        let lights = self.lights.as_ref().map(LightPass::fragment_layout);
+        let lights = self.features.lights.get().map(LightPass::fragment_layout);
         let layouts = (
             &self.camera.layout,
             &self.mesh_pipelines.empty_layout,
@@ -346,7 +346,7 @@ impl Renderer {
         pass.set_bind_group(0, self.camera.terrain_group(), &[]);
         pass.set_bind_group(2, group, &[]);
         if kind.lit {
-            let Some(lights) = self.lights.as_ref() else {
+            let Some(lights) = self.features.lights.get() else {
                 return 0;
             };
             pass.set_bind_group(3, lights.fragment_group(), &[]);
@@ -385,7 +385,7 @@ impl Renderer {
         };
         pass.set_bind_group(0, self.camera.group(), &[]);
         if kind.lit {
-            let Some(lights) = self.lights.as_ref() else {
+            let Some(lights) = self.features.lights.get() else {
                 return 0;
             };
             pass.set_bind_group(2, &self.mesh_pipelines.empty_group, &[]);
@@ -407,7 +407,7 @@ impl Renderer {
         };
         pass.set_bind_group(0, self.camera.group(), &[]);
         if kind.lit {
-            let Some(lights) = self.lights.as_ref() else {
+            let Some(lights) = self.features.lights.get() else {
                 return 0;
             };
             pass.set_bind_group(2, &self.mesh_pipelines.empty_group, &[]);

@@ -108,7 +108,7 @@ impl From<&RenderLight> for LightInput {
 mod gpu {
     use std::{cell::Cell, rc::Rc};
 
-    use engine_core::RenderSnapshot;
+    use engine_core::{LightStats, RenderSnapshot};
 
     use super::*;
     use crate::bindings::{LIGHT_BINNING, LIGHT_SHADING};
@@ -116,6 +116,8 @@ mod gpu {
     use crate::cached::Cached;
     use crate::gpu_data::LIGHT_SHADER;
     use crate::profiling::Span;
+    use crate::render_features::{Encode, FeaturePass, RenderFeature};
+    use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
     use crate::renderer::FramePoses;
 
     /// A frame's binned lights.
@@ -397,8 +399,8 @@ mod gpu {
         /// light's clusters, gives the clusters their list ranges, fills the
         /// lists and copies the totals for read-back.
         /// With `span`, the binning pass is timed.
-        pub(crate) fn encode(
-            &mut self,
+        fn encode_binning(
+            &self,
             device: &wgpu::Device,
             encoder: &mut wgpu::CommandEncoder,
             frame: &LightFrame,
@@ -547,13 +549,72 @@ mod gpu {
         pub(crate) fn probe_fragment_group(&self, face: usize) -> &wgpu::BindGroup {
             &self.probe_groups[self.probe_current].1[face].1
         }
+    }
+
+    impl RenderFeature for LightPass {
+        type Frame = LightFrame;
+        type Stats = LightStats;
+
+        /// Binning reads the poses lights ride on and writes their lists.
+        fn declare(_frame: &LightFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
+            graph
+                .add(Pass::Feature(FeaturePass::Lights))
+                .read(Resource::Poses)
+                .write(Resource::Lights);
+        }
+
+        fn encode(
+            &self,
+            frame: &LightFrame,
+            _node: &Node,
+            encode: &Encode<'_>,
+            encoder: &mut wgpu::CommandEncoder,
+        ) -> u32 {
+            self.encode_binning(
+                encode.device,
+                encoder,
+                frame,
+                encode.profiler.span("light_bins"),
+            );
+            0
+        }
 
         /// Requests maps of totals recorded in the frame just submitted.
-        pub(crate) fn after_submit(&mut self) {
+        fn after_submit(&mut self, _frame: Option<&LightFrame>) {
             let totals = Rc::clone(&self.totals_read);
             self.readbacks.after_submit(move |words, ()| {
                 totals.set(Some([words.get(0), words.get(1), words.get(2)]));
             });
+        }
+
+        fn capacity_bytes(&self) -> u64 {
+            LightPass::capacity_bytes(self)
+        }
+
+        /// Lights shaded and dropped in frames shading them, invalid ones,
+        /// and the binning's totals, read back a few frames late.
+        fn stats(
+            this: Option<&Self>,
+            frame: Option<&LightFrame>,
+            snapshot: &RenderSnapshot,
+        ) -> LightStats {
+            let lit = frame.is_some();
+            let totals = frame.and(this.and_then(LightPass::totals));
+            LightStats {
+                shaded: if lit {
+                    snapshot.lights.list.len() as u32
+                } else {
+                    0
+                },
+                dropped: if lit {
+                    snapshot.lights.dropped.min(u32::MAX as usize) as u32
+                } else {
+                    0
+                },
+                invalid: snapshot.lights.invalid.min(u32::MAX as usize) as u32,
+                visible: totals.map(|totals| totals[0]),
+                cluster_overflow: totals.map(|totals| totals[1]),
+            }
         }
     }
 }

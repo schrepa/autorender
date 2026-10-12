@@ -230,7 +230,6 @@ impl Renderer {
             gpu_presentation,
             culling: Culling { pyramid: None },
             shadows,
-            lights: None,
             environment,
             probes,
             clouds,
@@ -253,6 +252,7 @@ impl Renderer {
             occupancy,
             last_seconds: None,
             features: RenderFeatures {
+                lights: Lazy::default(),
                 decals: Lazy::default(),
                 water: Eager::new(water),
                 transparency: Eager::new(crate::transparent::Transparency::default()),

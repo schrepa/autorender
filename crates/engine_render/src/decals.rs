@@ -320,7 +320,11 @@ mod gpu {
 
         /// Decals drawn, invalid ones, and those left out: the snapshot's
         /// and those beyond the GPU's binding.
-        fn stats(frame: Option<&DecalFrame>, snapshot: &RenderSnapshot) -> Drawn {
+        fn stats(
+            _this: Option<&Self>,
+            frame: Option<&DecalFrame>,
+            snapshot: &RenderSnapshot,
+        ) -> Drawn {
             Drawn {
                 drawn: frame.map_or(0, |frame| frame.drawn),
                 invalid: snapshot.decals.invalid.min(u32::MAX as usize) as u32,

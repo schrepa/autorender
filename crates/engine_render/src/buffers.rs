@@ -2,7 +2,10 @@
 //! whole-buffer bindings, growth by powers of two, and values read back a
 //! few frames late.
 
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 /// A storage buffer the queue writes, of at least `bytes` rounded up to a
 /// multiple of 16 (and at least 16), with `extra` usages.
@@ -90,14 +93,15 @@ impl Words<'_> {
 /// Nothing waits on the GPU; frames finding every buffer in flight skip.
 pub(crate) struct ReadbackRing<T> {
     label: &'static str,
-    slots: Vec<Slot<T>>,
+    // Recorded into while a frame encodes, which borrows passes shared.
+    slots: RefCell<Vec<Slot<T>>>,
 }
 
 impl<T: Copy + 'static> ReadbackRing<T> {
     pub(crate) fn new(label: &'static str) -> Self {
         Self {
             label,
-            slots: Vec::new(),
+            slots: RefCell::new(Vec::new()),
         }
     }
 
@@ -105,21 +109,21 @@ impl<T: Copy + 'static> ReadbackRing<T> {
     /// an idle buffer, creating one of `bytes` while fewer than three exist;
     /// returns whether it did. Clear the ring when `bytes` changes.
     pub(crate) fn record(
-        &mut self,
+        &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         source: &wgpu::Buffer,
         bytes: u64,
         tag: T,
     ) -> bool {
-        let index = match self
-            .slots
+        let mut slots = self.slots.borrow_mut();
+        let index = match slots
             .iter()
             .position(|slot| slot.state.get() == State::Idle)
         {
             Some(index) => index,
-            None if self.slots.len() < READBACKS => {
-                self.slots.push(Slot {
+            None if slots.len() < READBACKS => {
+                slots.push(Slot {
                     buffer: device.create_buffer(&wgpu::BufferDescriptor {
                         label: Some(self.label),
                         size: bytes,
@@ -129,11 +133,11 @@ impl<T: Copy + 'static> ReadbackRing<T> {
                     state: Rc::new(Cell::new(State::Idle)),
                     tag,
                 });
-                self.slots.len() - 1
+                slots.len() - 1
             }
             None => return false,
         };
-        let slot = &mut self.slots[index];
+        let slot = &mut slots[index];
         encoder.copy_buffer_to_buffer(source, 0, &slot.buffer, 0, bytes);
         slot.state.set(State::Recorded);
         slot.tag = tag;
@@ -143,7 +147,7 @@ impl<T: Copy + 'static> ReadbackRing<T> {
     /// Requests maps of the read-backs recorded in the frame just submitted;
     /// `read` receives each one's words and tag once it is mapped.
     pub(crate) fn after_submit(&self, read: impl Fn(&Words<'_>, T) + Clone + 'static) {
-        for slot in &self.slots {
+        for slot in self.slots.borrow().iter() {
             if slot.state.get() != State::Recorded {
                 continue;
             }
@@ -168,6 +172,6 @@ impl<T: Copy + 'static> ReadbackRing<T> {
 
     /// Drops the buffers; maps in flight still complete.
     pub(crate) fn clear(&mut self) {
-        self.slots.clear();
+        self.slots.get_mut().clear();
     }
 }

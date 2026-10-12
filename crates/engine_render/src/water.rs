@@ -754,7 +754,11 @@ impl RenderFeature for WaterPass {
 
     /// Chunks drawn (lakes' and rivers'), and the sea's sectors drawn and
     /// their triangles.
-    fn stats(frame: Option<&WaterFrame>, _snapshot: &RenderSnapshot) -> (WaterStats, OceanStats) {
+    fn stats(
+        _this: Option<&Self>,
+        frame: Option<&WaterFrame>,
+        _snapshot: &RenderSnapshot,
+    ) -> (WaterStats, OceanStats) {
         (
             WaterStats {
                 chunks: frame.map_or(0, |frame| frame.chunks),
