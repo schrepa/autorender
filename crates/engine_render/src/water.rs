@@ -22,6 +22,7 @@
 //! shade every wave longer than a few pixels.
 
 use engine_core::collections::HashMap;
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -143,7 +144,8 @@ pub(crate) struct WaterPass {
     pub(crate) layout: wgpu::BindGroupLayout,
     depth_layout: wgpu::BindGroupLayout,
     depth: ScreenTarget<DepthCopy>,
-    terrains: HashMap<u64, TerrainWater>,
+    // Each terrain's water by terrain ID, the order it draws in.
+    terrains: BTreeMap<u64, TerrainWater>,
     instances: wgpu::Buffer,
     pipeline_layout: Option<wgpu::PipelineLayout>,
     pipelines: HashMap<Targets, wgpu::RenderPipeline>,
@@ -160,7 +162,7 @@ impl WaterPass {
             layout: crate::pipelines::layout(device, &WATER),
             depth_layout: crate::pipelines::layout(device, &WATER_DEPTH),
             depth: ScreenTarget::default(),
-            terrains: HashMap::default(),
+            terrains: BTreeMap::new(),
             instances: chunk_buffer(device, 256),
             pipeline_layout: None,
             pipelines: HashMap::default(),
