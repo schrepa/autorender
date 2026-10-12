@@ -40,7 +40,6 @@ pub(crate) fn terrain_id(world: &World, entity: engine_core::bevy_ecs::prelude::
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TerrainHeightQuery {
-    pub version: u32,
     #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = MAX_POINTS)))]
     pub points: Vec<[f64; 2]>,
 }
@@ -59,7 +58,6 @@ impl EngineQuery for TerrainHeightQuery {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TerrainSweepQuery {
-    pub version: u32,
     pub center: [f64; 2],
     #[serde(default = "default_half_extent")]
     #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::SWEEP_EXTENT)))]
@@ -72,7 +70,6 @@ pub struct TerrainSweepQuery {
 impl EngineQuery for TerrainSweepQuery {
     fn answer(&self, engine: &mut Engine, _: Option<&SceneInstance>) -> Result<Value, DevError> {
         let &Self {
-            version: _,
             center,
             half_extent,
             samples,
@@ -120,7 +117,6 @@ fn default_sweep_samples() -> u32 {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TerrainRouteQuery {
-    pub version: u32,
     pub from: [f64; 2],
     pub to: [f64; 2],
     #[serde(default)]
@@ -143,7 +139,6 @@ pub struct TerrainRouteQuery {
 impl EngineQuery for TerrainRouteQuery {
     fn answer(&self, engine: &mut Engine, _: Option<&SceneInstance>) -> Result<Value, DevError> {
         let &Self {
-            version: _,
             from,
             to,
             level,

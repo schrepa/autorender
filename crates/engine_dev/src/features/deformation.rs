@@ -58,7 +58,6 @@ pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct DeformControl {
-    pub version: u32,
     pub from: [f64; 2],
     #[serde(default)]
     pub to: Option<[f64; 2]>,
@@ -145,7 +144,6 @@ fn press_track(engine: &mut Engine, press: &DeformControl) -> Result<Value, DevE
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct DeformationQuery {
-    pub version: u32,
     #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = MAX_POINTS)))]
     pub points: Vec<[f64; 2]>,
     #[serde(default)]

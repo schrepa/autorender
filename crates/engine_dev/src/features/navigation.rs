@@ -122,7 +122,6 @@ pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct NavGoControl {
-    pub version: u32,
     pub entity: String,
     #[serde(default)]
     pub destination: Option<[f32; 2]>,
@@ -192,7 +191,6 @@ fn nav_go(
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct NavPathQuery {
-    pub version: u32,
     pub from: [f64; 2],
     pub to: [f64; 2],
     #[serde(default)]

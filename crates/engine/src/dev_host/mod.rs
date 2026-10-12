@@ -69,7 +69,7 @@ impl DevHost {
         if source.len() > engine_dev::MAX_REQUEST_BYTES {
             return false;
         }
-        let Ok(control) = serde_json::from_str::<BrowserControl>(source) else {
+        let Ok(control) = engine_dev::parse_request::<BrowserControl>(source) else {
             return false;
         };
         if control.validate().is_err() || (control.needs_pause() && !paused) {

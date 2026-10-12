@@ -35,7 +35,7 @@ pub use protocol::bounds;
 pub use protocol::bounds::{MAX_DESCRIPTION_BYTES, MAX_PAGE_SIZE};
 pub use protocol::{
     BenchmarkMode, BrowserControl, Control, DevRequest, EnvironmentControl, HostControl,
-    MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
+    MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION, parse_request,
 };
 pub use reply::{Observation, Reply, SceneObservation};
 

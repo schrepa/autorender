@@ -445,6 +445,11 @@
       "message": "invalid type: string \"three\", expected usize",
       "path": "$"
     },
+    "refusal invalid_type at $.version": {
+      "code": "invalid_type",
+      "message": "invalid type: string \"1\", expected u32",
+      "path": "$.version"
+    },
     "refusal invalid_utf8 at FILE": {
       "code": "invalid_utf8",
       "message": "invalid utf-8 sequence of 1 bytes from index 1",
@@ -464,6 +469,11 @@
       "code": "missing_field",
       "message": "missing field `origin`",
       "path": "$.origin"
+    },
+    "refusal missing_field at $.version": {
+      "code": "missing_field",
+      "message": "missing field `version`",
+      "path": "$.version"
     },
     "refusal missing_plugin at $.op": {
       "code": "missing_plugin",
@@ -542,7 +552,7 @@
     },
     "refusal unknown_field at $.sky": {
       "code": "unknown_field",
-      "message": "unknown field `sky`, expected `version`",
+      "message": "unknown field `sky`, there are no fields",
       "path": "$.sky"
     },
     "refusal unknown_inspector at $.component": {
@@ -557,7 +567,7 @@
     },
     "refusal unknown_variant at $.op": {
       "code": "unknown_variant",
-      "message": "unknown variant `weather`, expected one of `status`, `inspect`, `assets`, `digest`, `distribution`, `describe`, `raycast`, `overlap`, `shape_cast`, `terrain_height`, `nav_path`, `water_query`, `deformation_query`, `terrain_sweep`, `terrain_route`, `collision_events` at line 1 column 15",
+      "message": "unknown variant `weather`, expected one of `status`, `inspect`, `assets`, `digest`, `distribution`, `describe`, `raycast`, `overlap`, `shape_cast`, `terrain_height`, `nav_path`, `water_query`, `deformation_query`, `terrain_sweep`, `terrain_route`, `collision_events`",
       "path": "$.op"
     },
     "refusal unsupported_version at $.version": {

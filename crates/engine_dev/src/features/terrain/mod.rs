@@ -238,7 +238,6 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TerrainControl {
-    pub version: u32,
     #[serde(default)]
     #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::TerrainSettings::rule_of("pixel_error")))))]
     pub pixel_error: Option<f32>,
@@ -311,7 +310,6 @@ impl EngineControl for TerrainControl {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TerrainEditControl {
-    pub version: u32,
     #[serde(default)]
     pub terrain: Option<String>,
     #[cfg_attr(
@@ -355,7 +353,6 @@ impl EngineControl for TerrainEditControl {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TerrainUndoControl {
-    pub version: u32,
     #[serde(default)]
     pub terrain: Option<String>,
 }
@@ -376,7 +373,6 @@ impl EngineControl for TerrainUndoControl {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TerrainRedoControl {
-    pub version: u32,
     #[serde(default)]
     pub terrain: Option<String>,
 }

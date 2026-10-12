@@ -48,7 +48,7 @@ pub use files::{
     encode_mesh_buffer_with,
 };
 pub use instance::{ClipOrigin, MeshOrigin, SceneEntity, SceneInstance};
-pub use json::parse_json;
+pub use json::{parse_json, parse_value};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use material::{
     SceneAlphaMode, SceneFilter, SceneGrounding, SceneMap, SceneMaterial, SceneMipmapFilter,

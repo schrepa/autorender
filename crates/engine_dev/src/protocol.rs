@@ -1,5 +1,9 @@
 use engine_scene::{SceneAtmosphere, SceneEnvironment};
+use engine_settings::ErrorCode;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+use crate::DevError;
 
 #[cfg(not(target_arch = "wasm32"))]
 use engine_settings::stated;
@@ -72,6 +76,8 @@ use crate::features::{
 };
 
 /// The development protocol's version, independent of scene format versions.
+/// Every request carries it beside its op's fields, as `version`
+/// ([`parse_request`]).
 pub const PROTOCOL_VERSION: u32 = 1;
 /// Bytes of one request's JSON.
 pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
@@ -194,14 +200,15 @@ pub enum HostControl {
 /// Versioned, read-only requests processed synchronously between frames.
 /// Transport/session identity and execution controls belong to the host.
 #[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    derive(schemars::JsonSchema),
+    schemars(transform = with_version)
+)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DevRequest {
-    Status {
-        version: u32,
-    },
+    Status {},
     Inspect {
-        version: u32,
         #[serde(default)]
         entity: Option<String>,
         /// Select direct children by their parent's authored ID; excludes entity.
@@ -215,29 +222,23 @@ pub enum DevRequest {
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
         limit: usize,
     },
-    Assets {
-        version: u32,
-    },
+    Assets {},
     /// The world's content as hashes that depend on neither entity ids nor
     /// spawn order: per component inspector, the entities holding it and a
     /// hash of their views; per kind of asset, the count and a hash of
     /// their contents; and one hash of both. After the same ticks of the
     /// same scene, equal digests mean equal state.
-    Digest {
-        version: u32,
-    },
+    Digest {},
     /// The spread of measured `values` as every host computes it: the
     /// smallest and largest, and the median, 95th and 99th percentiles,
     /// each interpolated linearly between the two sorted values around its
     /// rank; `null` without values, or with one that is not a finite number
     /// of at least 0.
     Distribution {
-        version: u32,
         #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = bounds::MAX_VALUES)))]
         values: Vec<f64>,
     },
     Describe {
-        version: u32,
         #[serde(default)]
         name: Option<String>,
         /// With `SceneDocument`: one definition of the scene schema, which
@@ -258,6 +259,68 @@ pub enum DevRequest {
     CollisionEvents(CollisionEventsQuery),
 }
 
+/// `source`, a request, as the `T` its op names: its JSON parsed, its
+/// fields but `version` taken as `T` takes them, then the protocol version
+/// every request carries beside them, which must be [`PROTOCOL_VERSION`].
+/// No request type declares the version: this envelope takes it, and
+/// `with_version` states it in their schemas.
+pub fn parse_request<T: DeserializeOwned>(source: &str) -> Result<T, DevError> {
+    #[derive(Deserialize)]
+    struct Version {
+        version: u32,
+    }
+    let mut request: serde_json::Value = engine_scene::parse_json(source)?;
+    let version = request
+        .as_object_mut()
+        .and_then(|fields| fields.remove("version"));
+    let request = engine_scene::parse_value(request)?;
+    let Some(version) = version else {
+        return Err(DevError::new(
+            ErrorCode::MissingField,
+            "$.version",
+            "missing field `version`",
+        ));
+    };
+    let Version { version } = engine_scene::parse_value(serde_json::json!({ "version": version }))?;
+    if version != PROTOCOL_VERSION {
+        return Err(DevError::new(
+            ErrorCode::UnsupportedVersion,
+            "$.version",
+            format!("accepted protocol version: {PROTOCOL_VERSION}"),
+        ));
+    }
+    Ok(request)
+}
+
+/// States the version every request carries ([`parse_request`]) in
+/// `schema`, one of requests: on each, beside its op.
+#[cfg(not(target_arch = "wasm32"))]
+fn with_version(schema: &mut schemars::Schema) {
+    use serde_json::Value;
+    let version = serde_json::to_value(schemars::SchemaGenerator::default().subschema_for::<u32>())
+        .expect("schemas serialize");
+    let requests = schema
+        .get_mut("oneOf")
+        .and_then(Value::as_array_mut)
+        .expect("requests are one of their ops");
+    for request in requests {
+        request
+            .get_mut("properties")
+            .and_then(Value::as_object_mut)
+            .expect("requests have fields")
+            .insert("version".to_owned(), version.clone());
+        let required = request
+            .get_mut("required")
+            .and_then(Value::as_array_mut)
+            .expect("requests require their op");
+        let op = required
+            .iter()
+            .position(|name| name == "op")
+            .expect("requests require their op");
+        required.insert(op + 1, "version".into());
+    }
+}
+
 /// A page's size when a request names none.
 pub(crate) fn default_limit() -> usize {
     20
@@ -270,9 +333,8 @@ impl DevRequest {
     /// tools or fails to build.
     pub(crate) fn route(self) -> Route {
         match self {
-            Self::Status { version: _ } => Route::Tools(ToolsQuery::Status),
+            Self::Status {} => Route::Tools(ToolsQuery::Status),
             Self::Inspect {
-                version: _,
                 entity,
                 parent,
                 component,
@@ -285,16 +347,12 @@ impl DevRequest {
                 offset,
                 limit,
             }),
-            Self::Assets { version: _ } => Route::Tools(ToolsQuery::Assets),
-            Self::Digest { version: _ } => Route::Tools(ToolsQuery::Digest),
-            Self::Distribution { version: _, values } => {
-                Route::Tools(ToolsQuery::Distribution { values })
+            Self::Assets {} => Route::Tools(ToolsQuery::Assets),
+            Self::Digest {} => Route::Tools(ToolsQuery::Digest),
+            Self::Distribution { values } => Route::Tools(ToolsQuery::Distribution { values }),
+            Self::Describe { name, definition } => {
+                Route::Tools(ToolsQuery::Describe { name, definition })
             }
-            Self::Describe {
-                version: _,
-                name,
-                definition,
-            } => Route::Tools(ToolsQuery::Describe { name, definition }),
             Self::Raycast(query) => Route::Feature(Box::new(query)),
             Self::Overlap(query) => Route::Feature(Box::new(query)),
             Self::ShapeCast(query) => Route::Feature(Box::new(query)),
@@ -307,45 +365,27 @@ impl DevRequest {
             Self::TerrainRoute(query) => Route::Feature(Box::new(query)),
         }
     }
-
-    pub fn version(&self) -> u32 {
-        match self {
-            Self::Status { version }
-            | Self::Inspect { version, .. }
-            | Self::Assets { version }
-            | Self::Digest { version }
-            | Self::Distribution { version, .. }
-            | Self::Describe { version, .. }
-            | Self::Raycast(RaycastQuery { version, .. })
-            | Self::Overlap(OverlapQuery { version, .. })
-            | Self::ShapeCast(ShapeCastQuery { version, .. })
-            | Self::TerrainHeight(TerrainHeightQuery { version, .. })
-            | Self::TerrainSweep(TerrainSweepQuery { version, .. })
-            | Self::TerrainRoute(TerrainRouteQuery { version, .. })
-            | Self::WaterQuery(WaterQuery { version, .. })
-            | Self::DeformationQuery(DeformationQuery { version, .. })
-            | Self::NavPath(NavPathQuery { version, .. })
-            | Self::CollisionEvents(CollisionEventsQuery { version, .. }) => *version,
-        }
-    }
 }
 
 /// Host controls available alongside read-only [`DevRequest`] operations.
-/// The browser host enforces pause/lifecycle rules. Deserialization validates
-/// structure; the host also validates version, finite values, ranges, and u64
-/// revision parsing before changing state.
+/// The browser host enforces pause/lifecycle rules. Parsing validates
+/// structure and the protocol version; the host also validates finite values,
+/// ranges, and u64 revision parsing before changing state.
 #[expect(
     clippy::large_enum_variant,
     reason = "one short-lived request at a time: the environment variant's size does not matter, and boxing its sections would complicate the typed schema"
 )]
 #[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    derive(schemars::JsonSchema),
+    schemars(transform = with_version)
+)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BrowserControl {
     /// Preview fixed-tick poses at a chosen fraction without advancing clocks.
     /// Requires pause; ordinary step/render/capture retain authoritative poses.
     Present {
-        version: u32,
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::ALPHA)))]
         alpha: f64,
         /// Present through GPU blending/composition/culling
@@ -355,7 +395,6 @@ pub enum BrowserControl {
     },
     /// Temporarily toggle visibility culling and render without advancing clocks.
     Culling {
-        version: u32,
         enabled: bool,
     },
     /// Temporarily replace environment sections and render while paused.
@@ -375,7 +414,6 @@ pub enum BrowserControl {
     /// Its values keep the rules of scenes' cameras (`SceneCamera`), the
     /// field of view in radians.
     Camera {
-        version: u32,
         #[cfg_attr(
             not(target_arch = "wasm32"),
             schemars(transform = stated(engine_settings::rule::same(engine_core::Camera::rule_of("position"))))
@@ -406,7 +444,6 @@ pub enum BrowserControl {
     /// sample in step mode and no gameplay in render/present modes. Present mode
     /// samples existing fixed-tick history at alpha 0.5. Clears pending input.
     Benchmark {
-        version: u32,
         #[serde(default = "default_warmup")]
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::WARMUP)))]
         warmup: u32,
@@ -419,7 +456,6 @@ pub enum BrowserControl {
     /// Advance exactly `ticks` fixed ticks, then one presentation/render
     /// boundary.
     Step {
-        version: u32,
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TICKS)))]
         ticks: u32,
     },
@@ -430,7 +466,6 @@ pub enum BrowserControl {
     /// the host captures the last frame as it was drawn, without drawing
     /// again, as `capture` keeps its files.
     Frames {
-        version: u32,
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAMES)))]
         count: u32,
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAME_INTERVAL)))]
@@ -440,7 +475,6 @@ pub enum BrowserControl {
     },
     /// Replace the temporary batch applied on the next explicit step.
     Input {
-        version: u32,
         #[serde(default)]
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::AXIS)))]
         forward: f32,
@@ -464,20 +498,13 @@ pub enum BrowserControl {
         released: u32,
     },
     /// Extract and render current state without advancing gameplay.
-    Render {
-        version: u32,
-    },
-    Pause {
-        version: u32,
-    },
-    Resume {
-        version: u32,
-    },
+    Render {},
+    Pause {},
+    Resume {},
     /// Render while paused and wait for presentation before host capture.
     /// Omitted alpha renders authoritative current state; a supplied fraction
     /// previews existing fixed-tick history without advancing gameplay.
     Capture {
-        version: u32,
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
@@ -497,7 +524,6 @@ pub enum BrowserControl {
     /// registers it (a Stress Lab workload, look or view), then renders.
     /// The bridge's describe lists the game's controls.
     Game {
-        version: u32,
         #[cfg_attr(
             not(target_arch = "wasm32"),
             schemars(regex(pattern = r"^[a-z][a-z0-9_]{0,63}$"))
@@ -509,7 +535,6 @@ pub enum BrowserControl {
     },
     /// Fetch saved source and require both expected runtime and source revisions.
     Reload {
-        version: u32,
         #[cfg_attr(
             not(target_arch = "wasm32"),
             schemars(regex(pattern = r"^(0|[1-9][0-9]*)$"))
@@ -524,9 +549,7 @@ pub enum BrowserControl {
     /// Panics the engine, as a bug in it would, to check what the host does
     /// then: the engine stops for good, and every later request answers
     /// `runtime_panicked` with the panic's message and where it happened.
-    DebugPanic {
-        version: u32,
-    },
+    DebugPanic {},
 }
 
 impl BrowserControl {
@@ -535,15 +558,8 @@ impl BrowserControl {
     /// reaches the host or fails to build.
     pub fn route(self) -> Control {
         match self {
-            Self::Present {
-                version: _,
-                alpha,
-                gpu,
-            } => Control::Host(HostControl::Present { alpha, gpu }),
-            Self::Culling {
-                version: _,
-                enabled,
-            } => Control::Host(HostControl::Culling { enabled }),
+            Self::Present { alpha, gpu } => Control::Host(HostControl::Present { alpha, gpu }),
+            Self::Culling { enabled } => Control::Host(HostControl::Culling { enabled }),
             Self::Environment(control) => Control::Host(HostControl::Environment(control)),
             Self::Terrain(control) => Control::Feature(Box::new(control)),
             Self::TerrainEdit(control) => Control::Feature(Box::new(control)),
@@ -554,7 +570,6 @@ impl BrowserControl {
             Self::Animation(control) => Control::Feature(Box::new(control)),
             Self::WorldChanges(control) => Control::Feature(Box::new(control)),
             Self::Camera {
-                version: _,
                 position,
                 target,
                 vertical_fov_radians,
@@ -567,9 +582,8 @@ impl BrowserControl {
                 near,
                 far,
             }),
-            Self::Step { version: _, ticks } => Control::Host(HostControl::Step { ticks }),
+            Self::Step { ticks } => Control::Host(HostControl::Step { ticks }),
             Self::Input {
-                version: _,
                 forward,
                 right,
                 up,
@@ -588,8 +602,8 @@ impl BrowserControl {
                 pressed,
                 released,
             }),
-            Self::Render { version: _ } => Control::Host(HostControl::Render),
-            Self::DebugPanic { version: _ } => Control::Host(HostControl::DebugPanic),
+            Self::Render {} => Control::Host(HostControl::Render),
+            Self::DebugPanic {} => Control::Host(HostControl::DebugPanic),
             control @ (Self::Benchmark { .. }
             | Self::Frames { .. }
             | Self::Pause { .. }
@@ -628,47 +642,18 @@ impl BrowserControl {
             Self::Pause { .. } | Self::Resume { .. } => false,
         }
     }
-
-    pub fn version(&self) -> u32 {
-        match self {
-            Self::Present { version, .. }
-            | Self::Culling { version, .. }
-            | Self::Terrain(TerrainControl { version, .. })
-            | Self::TerrainEdit(TerrainEditControl { version, .. })
-            | Self::TerrainUndo(TerrainUndoControl { version, .. })
-            | Self::TerrainRedo(TerrainRedoControl { version, .. })
-            | Self::Deform(DeformControl { version, .. })
-            | Self::WorldChanges(WorldChangesControl { version, .. })
-            | Self::NavGo(NavGoControl { version, .. })
-            | Self::Animation(AnimationControl { version, .. })
-            | Self::Camera { version, .. }
-            | Self::Benchmark { version, .. }
-            | Self::Step { version, .. }
-            | Self::Frames { version, .. }
-            | Self::Input { version, .. }
-            | Self::Render { version }
-            | Self::Pause { version }
-            | Self::Resume { version }
-            | Self::Capture { version, .. }
-            | Self::Game { version, .. }
-            | Self::Reload { version, .. }
-            | Self::DebugPanic { version } => *version,
-            Self::Environment(control) => control.version,
-        }
-    }
 }
 
 /// engine_dev's part of [`engine_core::environment_sections`]: the
 /// environment control's request.
 macro_rules! control_sections {
     ($($key:ident: $settings:ident { opt_in: $opt_in:literal, feature: $feature:ident }),* $(,)?) => {
-        /// The environment control: the protocol version and the sections it
-        /// replaces, each in its scene environment shape.
+        /// The environment control: the sections it replaces, each in its
+        /// scene environment shape.
         #[derive(Debug, Deserialize, Serialize)]
         #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
         #[serde(deny_unknown_fields)]
         pub struct EnvironmentControl {
-            pub version: u32,
             /// Whether a named section's omitted fields keep their current
             /// values instead of taking their defaults.
             #[serde(default)]

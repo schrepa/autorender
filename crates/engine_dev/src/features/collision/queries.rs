@@ -33,7 +33,6 @@ use engine_settings::Setting;
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct RaycastQuery {
-    pub version: u32,
     pub origin: [f64; 3],
     pub direction: [f64; 3],
     #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::DISTANCE)))]
@@ -50,7 +49,6 @@ impl EngineQuery for RaycastQuery {
     ) -> Result<Value, DevError> {
         let identities = Identities::new(scene)?;
         let &Self {
-            version: _,
             origin,
             direction,
             max_distance,
@@ -81,7 +79,6 @@ impl EngineQuery for RaycastQuery {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct OverlapQuery {
-    pub version: u32,
     pub shape: CollisionShapeRequest,
     pub position: [f64; 3],
     #[serde(default = "identity_rotation")]
@@ -101,7 +98,6 @@ impl EngineQuery for OverlapQuery {
     ) -> Result<Value, DevError> {
         let identities = Identities::new(scene)?;
         let &Self {
-            version: _,
             shape: ref source,
             position,
             rotation,
@@ -141,7 +137,6 @@ impl EngineQuery for OverlapQuery {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ShapeCastQuery {
-    pub version: u32,
     pub shape: CollisionShapeRequest,
     pub position: [f64; 3],
     #[serde(default = "identity_rotation")]
@@ -161,7 +156,6 @@ impl EngineQuery for ShapeCastQuery {
     ) -> Result<Value, DevError> {
         let identities = Identities::new(scene)?;
         let &Self {
-            version: _,
             shape: ref source,
             position,
             rotation,
@@ -200,7 +194,6 @@ impl EngineQuery for ShapeCastQuery {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct CollisionEventsQuery {
-    pub version: u32,
     #[serde(default)]
     pub entity: Option<String>,
     #[serde(default)]
@@ -219,7 +212,6 @@ impl EngineQuery for CollisionEventsQuery {
     ) -> Result<Value, DevError> {
         let identities = Identities::new(scene)?;
         let &Self {
-            version: _,
             ref entity,
             offset,
             limit,

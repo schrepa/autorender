@@ -38,7 +38,6 @@ pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct WaterQuery {
-    pub version: u32,
     #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = MAX_POINTS)))]
     pub points: Vec<[f64; 2]>,
     #[serde(default)]

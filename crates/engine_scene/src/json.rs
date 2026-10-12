@@ -16,28 +16,43 @@ use crate::SceneError;
 /// `missing_field`, `invalid_type`, `unknown_variant` or `invalid_value`.
 pub fn parse_json<T: DeserializeOwned>(source: &str) -> Result<T, SceneError> {
     let mut deserializer = serde_json::Deserializer::from_str(source);
-    let value = serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
-        let mut path = String::from("$");
-        for segment in error.path() {
-            match segment {
-                Segment::Seq { index } => write!(path, "[{index}]"),
-                Segment::Map { key } => write!(path, ".{key}"),
-                Segment::Enum { variant } => write!(path, ".{variant}"),
-                Segment::Unknown => write!(path, ".?"),
-            }
-            .expect("strings write");
-        }
-        failure(error.into_inner(), path)
-    })?;
+    let value =
+        serde_path_to_error::deserialize(&mut deserializer).map_err(|error| failure_at(&error))?;
     deserializer
         .end()
         .map_err(|error| failure(error, "$".to_owned()))?;
     Ok(value)
 }
 
+/// `value`, JSON already parsed, as a `T`: a failure names the value at
+/// fault as [`parse_json`]'s do.
+pub fn parse_value<T: DeserializeOwned>(value: serde_json::Value) -> Result<T, SceneError> {
+    serde_path_to_error::deserialize(value).map_err(|error| failure_at(&error))
+}
+
+/// `error` at the JSON path serde_path_to_error tracked.
+fn failure_at(error: &serde_path_to_error::Error<serde_json::Error>) -> SceneError {
+    let mut path = String::from("$");
+    for segment in error.path() {
+        match segment {
+            Segment::Seq { index } => write!(path, "[{index}]"),
+            Segment::Map { key } => write!(path, ".{key}"),
+            Segment::Enum { variant } => write!(path, ".{variant}"),
+            Segment::Unknown => write!(path, ".?"),
+        }
+        .expect("strings write");
+    }
+    failure_of(error.inner(), path)
+}
+
 /// `error` at `path` as a scene error of the code its kind names; a field
 /// unknown or missing extends the path.
-fn failure(error: serde_json::Error, mut path: String) -> SceneError {
+fn failure(error: serde_json::Error, path: String) -> SceneError {
+    failure_of(&error, path)
+}
+
+/// [`failure`] of a borrowed error.
+fn failure_of(error: &serde_json::Error, mut path: String) -> SceneError {
     let message = error.to_string();
     // The field a message names, joined to the path unless it ends there.
     let name_field = |path: &mut String| {

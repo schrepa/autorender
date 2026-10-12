@@ -104,7 +104,6 @@ pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct WorldChangesControl {
-    pub version: u32,
     #[serde(default)]
     #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = bounds::MAX_CHANGES)))]
     pub remove: Vec<String>,

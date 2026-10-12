@@ -1,5 +1,5 @@
 use crate::protocol::bounds;
-use crate::{BrowserControl, DevError, PROTOCOL_VERSION, bounded};
+use crate::{BrowserControl, DevError, bounded};
 use engine_core::{Camera, glam::Vec3};
 use engine_settings::ErrorCode;
 
@@ -19,7 +19,7 @@ impl BrowserControl {
             }
             engine_scene::parse_json::<engine_scene::SceneEnvironment>(&request.to_string())?;
         }
-        let control: Self = engine_scene::parse_json(source)?;
+        let control: Self = crate::parse_request(source)?;
         control.validate()?;
         if control.needs_pause() && !paused {
             return Err(DevError::new(
@@ -31,19 +31,12 @@ impl BrowserControl {
         Ok(control)
     }
 
-    /// Checks what deserialization does not: the protocol version, and the
-    /// ranges and revision strings of the controls the browser host runs
-    /// (benchmark, frames, capture and reload), which it receives back
-    /// validated with their defaults. Controls the engine runs check their
-    /// values where they apply.
+    /// Checks what deserialization does not: the ranges and revision
+    /// strings of the controls the browser host runs (benchmark, frames,
+    /// capture and reload), which it receives back validated with their
+    /// defaults. Controls the engine runs check their values where they
+    /// apply.
     pub fn validate(&self) -> Result<(), DevError> {
-        if self.version() != PROTOCOL_VERSION {
-            return Err(DevError::new(
-                ErrorCode::UnsupportedVersion,
-                "$.version",
-                format!("accepted protocol version: {PROTOCOL_VERSION}"),
-            ));
-        }
         match self {
             Self::Benchmark {
                 warmup, samples, ..

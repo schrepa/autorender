@@ -404,14 +404,7 @@ impl DevTools {
                 format!("request must fit {MAX_REQUEST_BYTES} UTF-8 bytes"),
             ));
         }
-        let request: DevRequest = engine_scene::parse_json(source)?;
-        if request.version() != PROTOCOL_VERSION {
-            return Err(DevError::new(
-                ErrorCode::UnsupportedVersion,
-                "$.version",
-                format!("accepted protocol version: {PROTOCOL_VERSION}"),
-            ));
-        }
+        let request: DevRequest = crate::parse_request(source)?;
         if scene.is_some_and(|scene| !scene.belongs_to(engine.app.world())) {
             return Err(DevError::new(
                 ErrorCode::WrongWorld,

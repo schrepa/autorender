@@ -8,6 +8,8 @@
     {"rule": "invalid_value", "path": "$", "request": {"op": "inspect", "limit": -1}},
     {"rule": "request_too_large", "path": "$", "source": "OVERSIZED"},
     {"rule": "unsupported_version", "path": "$.version", "request": {"op": "status", "version": 2}},
+    {"rule": "missing_field", "path": "$.version", "source": "{\"op\": \"status\"}"},
+    {"rule": "invalid_type", "path": "$.version", "request": {"op": "status", "version": "1"}},
     {"rule": "invalid_page", "path": "$.limit", "request": {"op": "inspect", "component": "Transform", "limit": 0}},
     {"rule": "invalid_selector", "path": "$.parent", "request": {"op": "inspect", "entity": "ground", "parent": "ground"}},
     {"rule": "unknown_inspector", "path": "$.component", "request": {"op": "inspect", "component": "Weather"}},
