@@ -3,6 +3,10 @@
 //! The SDK explicitly uses Bevy ECS and Bevy's [`Plugin`] contract. Register
 //! systems in [`FixedSimulation`] or [`Presentation`], then drive [`Engine`]
 //! from the platform event loop. Bevy's default `Main` schedules are not run.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 mod antialiasing;
 mod atmosphere;

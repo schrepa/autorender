@@ -705,7 +705,7 @@ impl PresentedTransforms {
             PresentationMode::Interpolated { alpha } if alpha < 1.0 && !self.history.is_empty() => {
                 Some(alpha)
             }
-            _ => None,
+            PresentationMode::Current | PresentationMode::Interpolated { .. } => None,
         };
         world.resource_scope(|_world, hierarchy: Mut<HierarchyScratch>| {
             self.prepare_membership(&hierarchy);

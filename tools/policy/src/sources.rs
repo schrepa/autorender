@@ -20,6 +20,15 @@ const MARKERS: [&str; 4] = [
 /// Lint groups that take every workspace lint with them.
 const GROUPS: [&str; 2] = ["warnings", "clippy::all"];
 
+/// The lints every engine crate denies at its root: a match names the
+/// variants each arm takes, so a new variant fails to compile wherever it
+/// needs a decision. (Apps and tools match their content tables with
+/// wildcards.)
+const ENGINE_DENIES: [&str; 2] = [
+    "clippy::wildcard_enum_match_arm",
+    "clippy::match_wildcard_for_single_variants",
+];
+
 /// The files that may contain unsafe code, each for a reason. Every other
 /// Rust file has none (the workspace denies `unsafe_code`, and a file
 /// allowing it must be listed here), and every listed file still has some.
@@ -122,6 +131,24 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
                 }
             }
         }
+        if engine_library(path) {
+            let denied: Vec<&str> = code
+                .match_indices("#![deny(")
+                .flat_map(|(at, attribute)| {
+                    let listed = &code[at + attribute.len()..];
+                    listed[..listed.find(')').unwrap_or(listed.len())].split(',')
+                })
+                .collect();
+            for lint in ENGINE_DENIES.iter().filter(|lint| !denied.contains(lint)) {
+                problems.file(
+                    path,
+                    &format!(
+                        "an engine crate denies {lint} at its root: #![deny({})]",
+                        ENGINE_DENIES.join(", ")
+                    ),
+                );
+            }
+        }
     }
     let listed = UNSAFE_FILES.iter().any(|(file, _)| *file == path);
     let first = split
@@ -175,6 +202,13 @@ fn covers(key: &str, lint: &str) -> bool {
         || key
             .strip_suffix("all")
             .is_some_and(|tool| tool.ends_with("::") && lint.starts_with(tool))
+}
+
+/// Whether `path` is an engine crate's library root (`crates/*/src/lib.rs`).
+fn engine_library(path: &str) -> bool {
+    path.strip_prefix("crates/")
+        .and_then(|rest| rest.strip_suffix("/src/lib.rs"))
+        .is_some_and(|name| !name.contains('/'))
 }
 
 /// Whether `path` is the root file of a crate target (a library, binary,

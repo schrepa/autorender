@@ -270,7 +270,7 @@ pub(crate) fn walk_agents(
             NavStatus::Searching => navigation.stats.searching += 1,
             NavStatus::Arrived => navigation.stats.arrived += 1,
             NavStatus::Unreachable => navigation.stats.unreachable += 1,
-            _ => {}
+            NavStatus::Idle | NavStatus::Walking => {}
         }
         if walk.status != NavStatus::Walking {
             continue;

@@ -15,7 +15,12 @@ pub(super) fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
                     baked: Some(profile),
                     ..
                 }) => Some(profile.bridges()),
-                _ => None,
+                Layer::Noise(_)
+                | Layer::Heightmap(_)
+                | Layer::Stamp(_)
+                | Layer::Hydrology(_)
+                | Layer::Erosion(_)
+                | Layer::Path(_) => None,
             })
             .flatten()
             .collect::<Vec<_>>()
@@ -66,7 +71,12 @@ pub(super) fn bake_on_worker(
             Layer::Erosion(ErosionStage {
                 baked: Some(found), ..
             }) => state.erosion = Some(found.stats),
-            _ => {}
+            Layer::Noise(_)
+            | Layer::Heightmap(_)
+            | Layer::Stamp(_)
+            | Layer::Hydrology(_)
+            | Layer::Erosion(_)
+            | Layer::Path(_) => {}
         }
     }
     finish_bake(state, Arc::new(baked));
