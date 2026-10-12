@@ -3,13 +3,16 @@
 //! stage it needs did not pass; the run ends with each stage's result and
 //! time, and fails if any stage did not pass.
 
+use std::fs;
 use std::path::Path;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::{
     authoring,
     pipeline::{QUICK, build_wasm, install_web_dependencies},
     process::{DEV_FEATURES, NPM, WASM_TARGET, client_packages, run},
+    structure,
 };
 
 /// One step of a run: its name, the stages that must have passed for it to
@@ -39,7 +42,7 @@ pub(crate) const LINT: &[Stage] = &[
     Stage {
         name: "fmt",
         needs: &[],
-        run: |root| run(root, "cargo", &["fmt", "--all", "--", "--check"]),
+        run: fmt,
     },
     Stage {
         name: "web layers",
@@ -200,6 +203,84 @@ pub(crate) const LINT: &[Stage] = &[
         run: |root| run(root, NPM, &["run", "typecheck", "--prefix", "web"]),
     },
 ];
+
+/// Paths one rustfmt command line takes: a few hundred stay well within
+/// the longest command line Windows accepts.
+const RUSTFMT_BATCH: usize = 200;
+
+/// Formatting: cargo fmt's check over every crate's module tree, then
+/// rustfmt's over every Rust source git would commit, which reaches the
+/// modules a macro declares too (rustfmt expands no macros, so cargo fmt
+/// never finds them). Vendored and generated sources keep their tools'
+/// layout.
+fn fmt(root: &Path) -> Result<(), String> {
+    run(root, "cargo", &["fmt", "--all", "--", "--check"])?;
+    let edition = edition(root)?;
+    let files: Vec<String> = structure::sources(root)?
+        .into_iter()
+        .filter(|path| path.ends_with(".rs"))
+        .collect();
+    let mut unformatted = Vec::new();
+    for batch in files.chunks(RUSTFMT_BATCH) {
+        let output = Command::new("rustfmt")
+            .args([
+                "--edition",
+                edition.as_str(),
+                "--check",
+                "--files-with-diff",
+            ])
+            .args(batch)
+            .current_dir(root)
+            .output()
+            .map_err(|error| format!("cannot start rustfmt: {error}"))?;
+        let listed = String::from_utf8_lossy(&output.stdout);
+        let before = unformatted.len();
+        unformatted.extend(
+            listed
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                // Windows' verbatim prefix, which rustfmt's paths carry.
+                .map(|line| line.trim_start_matches(r"\\?\").to_owned()),
+        );
+        if !output.status.success() && unformatted.len() == before {
+            return Err(format!(
+                "rustfmt could not check its files: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+    }
+    if unformatted.is_empty() {
+        println!(
+            "rustfmt finds all {} Rust sources formatted, macro-declared modules included.",
+            files.len()
+        );
+        return Ok(());
+    }
+    Err(format!(
+        "rustfmt would reformat {} file(s) cargo fmt does not reach (modules a macro \
+         declares): run rustfmt --edition {edition} on\n{}",
+        unformatted.len(),
+        unformatted.join("\n")
+    ))
+}
+
+/// The Rust edition of the workspace's `[workspace.package]`, which every
+/// crate inherits.
+fn edition(root: &Path) -> Result<String, String> {
+    let manifest = fs::read_to_string(root.join("Cargo.toml"))
+        .map_err(|error| format!("cannot read Cargo.toml: {error}"))?;
+    manifest
+        .split_once("[workspace.package]")
+        .map(|(_, rest)| rest.split("\n[").next().unwrap_or(rest))
+        .and_then(|table| {
+            table
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("edition = "))
+        })
+        .map(|value| value.trim().trim_matches('"').to_owned())
+        .ok_or_else(|| "Cargo.toml's [workspace.package] declares no edition".to_owned())
+}
 
 /// Clippy over `selection`, every warning an error.
 fn clippy(root: &Path, selection: &[&str]) -> Result<(), String> {

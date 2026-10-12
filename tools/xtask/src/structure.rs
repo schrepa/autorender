@@ -131,7 +131,7 @@ pub fn check(root: &Path) -> Result<(), String> {
 
 /// The sources git would commit, `/`-separated: Rust, WGSL, TypeScript
 /// and scripts, but vendored and generated files.
-fn sources(root: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn sources(root: &Path) -> Result<Vec<String>, String> {
     let output = Command::new("git")
         .args([
             "ls-files",
