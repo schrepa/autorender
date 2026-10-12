@@ -55,6 +55,7 @@
       "kind": "resource",
       "smokes": [
         "agent",
+        "host-parity",
         "lod",
         "terrain",
         "virtual-geometry"
@@ -279,6 +280,7 @@
         "culling",
         "gpu-presentation",
         "hierarchy",
+        "host-parity",
         "interpolation",
         "native",
         "plugins",
@@ -293,6 +295,7 @@
         "collision",
         "gpu-presentation",
         "hierarchy",
+        "host-parity",
         "interpolation",
         "jobs",
         "lod",
@@ -313,6 +316,7 @@
         "agent",
         "culling",
         "hierarchy",
+        "host-parity",
         "interpolation",
         "texture"
       ]
@@ -323,6 +327,7 @@
         "agent",
         "collision",
         "hierarchy",
+        "host-parity",
         "interpolation",
         "lod",
         "native",
@@ -336,6 +341,7 @@
       "op": "raycast",
       "smokes": [
         "collision",
+        "host-parity",
         "plugins",
         "streaming",
         "terrain"
@@ -356,6 +362,7 @@
     {
       "op": "terrain_height",
       "smokes": [
+        "host-parity",
         "jobs",
         "plugins",
         "streaming",
@@ -403,6 +410,7 @@
       "smokes": [
         "collision",
         "gpu-presentation",
+        "host-parity",
         "interpolation",
         "lod",
         "terrain",
@@ -413,6 +421,7 @@
       "op": "culling",
       "smokes": [
         "culling",
+        "host-parity",
         "interpolation"
       ]
     },
@@ -422,6 +431,7 @@
         "agent",
         "culling",
         "gpu-presentation",
+        "host-parity",
         "lod",
         "plugins",
         "streaming",
@@ -489,6 +499,7 @@
       "smokes": [
         "culling",
         "gpu-presentation",
+        "host-parity",
         "interpolation",
         "jobs",
         "streaming",
@@ -500,6 +511,7 @@
     {
       "op": "benchmark",
       "smokes": [
+        "host-parity",
         "native",
         "surfaces"
       ]
@@ -511,6 +523,7 @@
         "collision",
         "gpu-presentation",
         "hierarchy",
+        "host-parity",
         "interpolation",
         "meshes",
         "native",
@@ -526,6 +539,7 @@
         "agent",
         "collision",
         "hierarchy",
+        "host-parity",
         "interpolation",
         "texture"
       ]
@@ -537,6 +551,7 @@
         "culling",
         "gpu-presentation",
         "hierarchy",
+        "host-parity",
         "interpolation",
         "jobs",
         "meshes",
@@ -556,6 +571,7 @@
         "agent",
         "collision",
         "gpu-presentation",
+        "host-parity",
         "interpolation",
         "jobs",
         "meshes",
@@ -571,6 +587,7 @@
         "agent",
         "collision",
         "gpu-presentation",
+        "host-parity",
         "interpolation",
         "meshes",
         "native",
@@ -586,6 +603,7 @@
         "culling",
         "gpu-presentation",
         "hierarchy",
+        "host-parity",
         "interpolation",
         "lod",
         "meshes",
@@ -601,6 +619,7 @@
     {
       "op": "game",
       "smokes": [
+        "host-parity",
         "lod",
         "native",
         "surfaces"
@@ -612,6 +631,7 @@
         "agent",
         "collision",
         "hierarchy",
+        "host-parity",
         "interpolation",
         "plugins",
         "spline",
@@ -645,7 +665,8 @@
       "inspector": "Bloom",
       "section": "bloom",
       "smokes": [
-        "agent"
+        "agent",
+        "host-parity"
       ],
       "stats": true
     },
@@ -729,6 +750,7 @@
       "section": "terrain",
       "smokes": [
         "agent",
+        "host-parity",
         "jobs",
         "native",
         "plugins",
@@ -818,6 +840,7 @@
       "inspector": "Sky",
       "section": "sky",
       "smokes": [
+        "host-parity",
         "jobs",
         "terrain"
       ],
