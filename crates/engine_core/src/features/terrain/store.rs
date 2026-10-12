@@ -150,7 +150,8 @@ impl TileStore {
             .count(|resident| phases.contains(&resident.phase))
     }
 
-    /// The resident tiles' keys, in order.
+    /// The resident tiles' keys, in order, which invariants check.
+    #[cfg(debug_assertions)]
     pub(super) fn keys(&self) -> Vec<TileKey> {
         self.tiles.keys()
     }
