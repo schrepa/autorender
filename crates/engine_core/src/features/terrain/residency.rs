@@ -78,9 +78,9 @@ pub(super) struct TerrainState {
     pub(super) dispatched: TileMap<(JobId, Generation, u32)>,
     /// Resident tiles without their objects standing far away,
     /// with their tiles' priorities, and the jobs placing those, each
-    /// with the tile it places on and that tile's arrival.
+    /// with the tile it places on, that tile's arrival and its priority.
     pub(super) far_wanted: TileMap<u32>,
-    pub(super) far_jobs: TileMap<(JobId, Arc<Tile>, u64)>,
+    pub(super) far_jobs: TileMap<(JobId, Arc<Tile>, u64, u32)>,
     pub(super) bake_job: Option<JobId>,
     pub(super) bake_inline: bool,
     pub(super) failures: JobFailures,
@@ -220,7 +220,7 @@ impl TerrainState {
             .extend(self.dispatched.iter().map(|(_, &(id, _, _))| id));
         retired
             .jobs
-            .extend(self.far_jobs.iter().map(|(_, &(id, _, _))| id));
+            .extend(self.far_jobs.iter().map(|(_, &(id, ..))| id));
         retired.jobs.extend(self.bake_job);
         retired
             .jobs
@@ -397,7 +397,7 @@ impl TerrainState {
     pub(super) fn arrive(&mut self, tile: Tile, priority: u32, jobs: Option<&mut Jobs>) {
         let key = tile.key();
         self.far_wanted.remove(&key);
-        if let Some((id, _, _)) = self.far_jobs.remove(&key)
+        if let Some((id, ..)) = self.far_jobs.remove(&key)
             && let Some(jobs) = jobs
         {
             jobs.cancel(id);
@@ -514,7 +514,7 @@ impl TerrainState {
                 self.store.phase(&key)
             );
         }
-        for (key, (_, tile, arrival)) in self.far_jobs.iter() {
+        for (key, (_, tile, arrival, _)) in self.far_jobs.iter() {
             assert!(
                 self.store.arrival(&key) == Some(*arrival) && tile.key() == key,
                 "R4: a far job places on tile {key:?} as it was resident before"

@@ -46,7 +46,7 @@ impl Executor for InPlace<'_, '_> {
             }
             state.failed.remove(&key);
         }
-        for (key, (id, _, _)) in state.far_jobs.drain() {
+        for (key, (id, ..)) in state.far_jobs.drain() {
             if let Some(slots) = self.slots.as_deref_mut() {
                 slots.jobs.cancel(id);
             }

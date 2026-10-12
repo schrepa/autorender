@@ -82,7 +82,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
             wanted
         });
         let store = &state.store;
-        state.far_jobs.retain(|key, &mut (id, _, arrival)| {
+        state.far_jobs.retain(|key, &mut (id, _, arrival, _)| {
             let wanted = keep.contains(key) && store.arrival(key) == Some(arrival);
             if !wanted {
                 slots.jobs.cancel(id);
@@ -116,13 +116,14 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
         });
     }
 
-    /// Tiles workers finished whole.
+    /// Tiles workers finished whole, most urgent first.
     fn take_tiles(&mut self, state: &mut TerrainState) {
-        let handed: Vec<(TileKey, (JobId, Generation, u32))> = state
+        let mut handed: Vec<(TileKey, (JobId, Generation, u32))> = state
             .dispatched
             .iter()
             .map(|(key, &job)| (key, job))
             .collect();
+        handed.sort_by_key(|&(_, (_, _, priority))| priority);
         for (key, (id, made, priority)) in handed {
             if !self.arrives() {
                 break;
@@ -159,11 +160,16 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
     }
 
     /// Tiles generating in bands join once every band is
-    /// done: resident at once with their materials, their objects placed by
-    /// a job after.
+    /// done, most urgent first: resident at once with their materials, their
+    /// objects placed by a job after.
     fn join_bands(&mut self, state: &mut TerrainState) {
-        let joining = state.banded.keys();
-        for key in joining {
+        let mut joining: Vec<(u32, TileKey)> = state
+            .banded
+            .iter()
+            .map(|(key, banding)| (banding.priority, key))
+            .collect();
+        joining.sort_by_key(|&(priority, _)| priority);
+        for (_, key) in joining {
             if !self.arrives() {
                 break;
             }
@@ -281,10 +287,15 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
     }
 
     /// Then the objects of tiles bands made, once every band of them is
-    /// done, joined in order.
+    /// done, joined in order, most urgent first.
     fn join_placements(&mut self, state: &mut TerrainState) {
-        let placing_keys = state.placements.keys();
-        for key in placing_keys {
+        let mut placing: Vec<(u32, TileKey)> = state
+            .placements
+            .iter()
+            .map(|(key, placements)| (placements.priority, key))
+            .collect();
+        placing.sort_by_key(|&(priority, _)| priority);
+        for (_, key) in placing {
             if self.inserted && self.work.expired() {
                 break;
             }
@@ -336,16 +347,17 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
         }
     }
 
-    /// Tiles still generating hand out their shape first: it
-    /// draws, with coarser levels' materials, and collides until the whole
-    /// tile arrives.
+    /// Tiles still generating hand out their shape first, most urgent
+    /// first: it draws, with coarser levels' materials, and collides until
+    /// the whole tile arrives.
     fn take_shapes(&mut self, state: &mut TerrainState) {
-        let shaping: Vec<(TileKey, JobId, Generation)> = state
+        let mut shaping: Vec<(u32, TileKey, JobId, Generation)> = state
             .dispatched
             .iter()
-            .map(|(key, &(id, made, _))| (key, id, made))
+            .map(|(key, &(id, made, priority))| (priority, key, id, made))
             .collect();
-        for (key, id, made) in shaping {
+        shaping.sort_by_key(|&(priority, ..)| priority);
+        for (_, key, id, made) in shaping {
             if !self.arrives() {
                 break;
             }
@@ -365,21 +377,23 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
         }
     }
 
-    /// The objects standing far away that jobs placed on resident tiles.
+    /// The objects standing far away that jobs placed on resident tiles,
+    /// most urgent first.
     fn take_far(&mut self, state: &mut TerrainState) {
-        let placing: Vec<(TileKey, JobId)> = state
+        let mut placing: Vec<(u32, TileKey, JobId)> = state
             .far_jobs
             .iter()
-            .map(|(key, &(id, _, _))| (key, id))
+            .map(|(key, &(id, _, _, priority))| (priority, key, id))
             .collect();
-        for (key, id) in placing {
+        placing.sort_by_key(|&(priority, ..)| priority);
+        for (_, key, id) in placing {
             if self.inserted && self.work.expired() {
                 break;
             }
             let Some(output) = self.slots.jobs.take(id) else {
                 continue;
             };
-            let Some((_, tile, _)) = state.far_jobs.remove(&key) else {
+            let Some((_, tile, ..)) = state.far_jobs.remove(&key) else {
                 continue;
             };
             match job_output(FAR_JOB, output, engine_terrain::jobs::far_output) {
@@ -444,7 +458,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
             .jobs
             .submit_cacheable(FAR_JOB, input, priority, job.identity());
         state.far_wanted.remove(&key);
-        state.far_jobs.insert(key, (id, tile, arrival));
+        state.far_jobs.insert(key, (id, tile, arrival, priority));
     }
 
     /// Hands workers tile `key` in `bands` bands of rows; whether every
