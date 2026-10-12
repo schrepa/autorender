@@ -11,12 +11,12 @@ use super::casters::CasterGroups;
 use super::pipelines::ShadowPipelines;
 use super::{GROUP, KEPT_LEVELS, KEPT_MAP, MAPS, Presented, SKINNED_GROUP, ShadowFrame, Source};
 use crate::bindings::{SHADOW_SELECT, SHADOW_SKINNED};
-use crate::browser::FramePoses;
 use crate::buffers::{ReadbackRing, entry};
 use crate::cached::Cached;
 use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_LEVELS};
 use crate::gpu_layouts::constants::DIRTY_WORDS;
 use crate::profiling::{GpuProfiler, Span};
+use crate::renderer::FramePoses;
 use crate::shadow_fit::TILE_WORDS;
 
 // Bindings need at least one element; exceeds every record stride.

@@ -112,11 +112,11 @@ mod gpu {
 
     use super::*;
     use crate::bindings::{LIGHT_BINNING, LIGHT_SHADING};
-    use crate::browser::FramePoses;
     use crate::buffers::{ReadbackRing, entry, storage};
     use crate::cached::Cached;
     use crate::gpu_data::LIGHT_SHADER;
     use crate::profiling::Span;
+    use crate::renderer::FramePoses;
 
     /// A frame's binned lights.
     pub(crate) struct LightFrame {

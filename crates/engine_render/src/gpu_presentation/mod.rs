@@ -24,12 +24,12 @@ mod totals;
 use engine_core::{Aabb, GpuPresentation, RenderFrame};
 
 use crate::batches::{BatchPlan, DrawBatch};
-use crate::browser::FramePoses;
 use crate::buffers::entry;
 use crate::cached::Cached;
 use crate::gpu_data::{FLAG_PHASE1, FLAG_PHASE2, FLAG_VISIBLE, PresentationFrame, frustum_uniform};
 use crate::mesh_arena::Ids;
 use crate::profiling::{GpuProfiler, Span};
+use crate::renderer::FramePoses;
 use crate::staging::Prestaged;
 
 use crate::gpu_layouts::constants::ARGS_GROUP;

@@ -30,7 +30,6 @@ mod sky;
 mod uploads;
 mod virtual_streaming;
 
-mod browser;
 mod buffers;
 mod environment;
 mod gpu_presentation;
@@ -42,6 +41,7 @@ mod occupancy;
 mod platform;
 mod post;
 mod profiling;
+mod renderer;
 mod scatter;
 mod shadows;
 mod staging;
@@ -56,9 +56,9 @@ mod transparent;
 mod virtual_geometry;
 mod visibility;
 mod water;
-#[cfg(not(target_arch = "wasm32"))]
-pub use browser::GpuMark;
-pub use browser::{Renderer, StartingRenderer};
 pub use platform::{AdapterInfo, RenderError, RenderTarget, read_range};
 #[cfg(not(target_arch = "wasm32"))]
 pub use platform::{GpuPreference, NativeWindow, start_native_instances_with};
+#[cfg(not(target_arch = "wasm32"))]
+pub use renderer::GpuMark;
+pub use renderer::{Renderer, StartingRenderer};

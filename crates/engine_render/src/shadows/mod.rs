@@ -42,12 +42,12 @@ use engine_core::{
 
 use crate::batches::BatchPlan;
 use crate::bindings::SHADOW_POSES;
-use crate::browser::FramePoses;
 use crate::buffers::entry;
 use crate::cached::Cached;
 use crate::gpu_data::{DRAW_ARGS_BYTES, MAX_CASCADES, ShadowCullUniform};
 use crate::mesh_arena::{Bindings, Ids, MeshDraw};
 use crate::profiling::GpuProfiler;
+use crate::renderer::FramePoses;
 use crate::shadow_fit::{KeptLevels, KeptMap, LevelRefresh, LightBasis, REFRESH_TILES, Refresh};
 
 pub(crate) use crate::gpu_layouts::constants::KEPT_LEVELS;

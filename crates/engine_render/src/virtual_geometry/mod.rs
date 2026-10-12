@@ -27,10 +27,10 @@ use engine_core::glam::{Mat4, Vec3};
 use engine_core::{MeshHandle, VirtualMesh};
 
 use crate::bindings::VIRTUAL_SHADOW;
-use crate::browser::FramePoses;
 use crate::buffers::entry;
 use crate::cached::Cached;
 use crate::gpu_data::VIRTUAL_SHADER;
+use crate::renderer::FramePoses;
 use crate::shadows::VIRTUAL_SHADOW_PLANES as PLANES;
 
 pub(crate) use crate::gpu_layouts::constants::MAX_VIEWS;

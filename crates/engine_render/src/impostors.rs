@@ -813,9 +813,9 @@ mod gpu {
         let constants = variant.constants();
         let extended = variant.extended();
         let (vertex, fragment) = crate::entries::impostor_bake(extended, shade);
-        let mut buffers = vec![crate::browser::vertex_layout()];
+        let mut buffers = vec![crate::renderer::vertex_layout()];
         if extended {
-            buffers.push(crate::browser::extra_layout());
+            buffers.push(crate::renderer::extra_layout());
         }
         let targets = if shade {
             Vec::new()

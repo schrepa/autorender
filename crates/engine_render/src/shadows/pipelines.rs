@@ -139,7 +139,7 @@ impl ShadowPipelines {
             7 => uv as Float32x2,
         });
         let slot_attributes = wgpu::vertex_attr_array![2 => Uint32];
-        let skin_layout = crate::browser::skin_layout();
+        let skin_layout = crate::renderer::skin_layout();
         let mesh_layout = wgpu::VertexBufferLayout {
             array_stride: size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
