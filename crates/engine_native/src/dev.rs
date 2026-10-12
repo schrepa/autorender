@@ -11,9 +11,11 @@
 //! per-draw counters replayed through PIX where the session loaded it
 //! (`--vendor pix`), written as files. Sessions draw offscreen and start
 //! paused, as the page's development sessions do; a first line says the
-//! session is ready. A panic ends the session's process (`engine_panic`'s
-//! hook writes its report on standard error), and the program driving the
-//! session answers what follows.
+//! session is ready. Each command's GPU work finishes before its reply, so
+//! frames read back what earlier frames drew in order, however fast the GPU
+//! drew. A panic ends the session's process (`engine_panic`'s hook writes
+//! its report on standard error), and the program driving the session
+//! answers what follows.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -259,7 +261,10 @@ impl<G: Game> DevSession<G> {
         self.finish(reply)
     }
 
-    /// The engine's reply to `command`.
+    /// The engine's reply to `command`, once the GPU finished what it
+    /// submitted: the read-backs a frame requests land before the next
+    /// frame, so what frames read back never depends on how fast the GPU
+    /// drew.
     fn invoke(&mut self, command: &Map<String, Value>) -> Value {
         let mut command = command.clone();
         command.insert("version".into(), json!(engine::dev::PROTOCOL_VERSION));
@@ -271,6 +276,9 @@ impl<G: Game> DevSession<G> {
             height,
             paused,
         );
+        if let Err(error) = self.game.host().wait_for_gpu() {
+            return json!({"ok": false, "error": {"code": ErrorCode::RenderFailed, "path": "$", "message": error.to_string()}});
+        }
         serde_json::from_str(&reply).expect("development replies are JSON")
     }
 
