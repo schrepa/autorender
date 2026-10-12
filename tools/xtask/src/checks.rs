@@ -2,7 +2,9 @@
 //! against a development server of one commit, with the scripts of the
 //! same or another commit, every attempt kept. The scripts build, run and
 //! write in the served commit's checkout (`ENGINE_WORKSPACE`), so another
-//! commit's checks test this one's programs and files. A check holds when its
+//! commit's checks test this one's programs and files; the checkout holds
+//! the files its pages read that git does not (`cargo xtask bench assets`),
+//! as a measured commit's does. A check holds when its
 //! first attempt does what it must (exit 0, or 3 for an assertion where it
 //! must fail); one that does not runs again, up to `ATTEMPTS` in all, so a
 //! failure followed by a pass shows as flaky. `cargo xtask checks` runs a
@@ -159,6 +161,11 @@ pub fn run(
     let (mut entries, mut incomplete) = (Vec::new(), false);
     for (sha, checks) in by_commit {
         let source = checkout(root, sha, None)?;
+        // Its pages read the files git does not hold, which a measured
+        // commit's checkout has too; without them they fail to load.
+        if let Err(error) = crate::measure::generated(root, &source, sha) {
+            eprintln!("The files {sha}'s pages read are missing: {error}");
+        }
         eprintln!("Starting the development server of {sha}.");
         let log = folder.join(format!("server-{}.log", &sha[..12]));
         let server = start_server(&source, sha, &log);

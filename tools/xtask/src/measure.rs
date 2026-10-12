@@ -326,7 +326,7 @@ fn prepare_build(
 
 /// The generated files of the commit checked out in `source`, as its own
 /// `cargo xtask bench assets` makes them: their folder and SHA-256.
-fn generated(root: &Path, source: &Path, sha: &str) -> Result<(String, String), String> {
+pub(crate) fn generated(root: &Path, source: &Path, sha: &str) -> Result<(String, String), String> {
     eprintln!("Generating the files workloads read at {sha}.");
     let target = root.join("target").join("measure").join("target");
     let made = Command::new("cargo")
