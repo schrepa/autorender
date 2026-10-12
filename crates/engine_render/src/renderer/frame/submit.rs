@@ -53,7 +53,6 @@ impl Renderer {
             self.gpu_presentation.after_submit();
         }
         self.shadows.after_submit();
-        self.ground_cover.after_submit();
         self.terrain.vt.after_submit();
         if virtual_frame {
             self.virtual_draws.pass.after_submit();

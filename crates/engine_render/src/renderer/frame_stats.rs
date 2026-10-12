@@ -4,12 +4,14 @@ use super::frame::{EncodeReport, FrameKind, FrameState};
 use super::*;
 use crate::decals::DecalPass;
 use crate::gpu_presentation::GpuPrepared;
+use crate::ground_cover::GroundCoverPass;
+use crate::occupancy::OccupancyPass;
 use crate::transparent::Transparency;
 use crate::water::WaterPass;
 
 use engine_core::{
-    Applied, CloudStats, CullingStats, DeformationStats, DetailStats, GroundCoverStats,
-    OccupancyStats, ProbeStats, ShadowStats, SkyStats, TerrainRenderStats, VirtualGeometryStats,
+    Applied, CloudStats, CullingStats, DeformationStats, DetailStats, ProbeStats, ShadowStats,
+    SkyStats, TerrainRenderStats, VirtualGeometryStats,
 };
 
 /// Records every number and flag of `stats` as the counter `render.<path>`,
@@ -273,19 +275,20 @@ impl Renderer {
                 vt_missing: self.terrain.vt.stats.missing,
                 dropped_vt_pages: self.terrain.vt.stats.dropped,
                 vt_evictions: self.terrain.vt.stats.evictions,
-                placed_objects: self.scatter.resident,
+                placed_objects: self.features.scatter.get().resident,
                 placed_far_objects: self.scatter_draws.far_objects(),
                 placed_impostors: self.impostors.placed.live(),
             },
-            ground_cover: GroundCoverStats {
-                blades: self.ground_cover.totals()[0],
-                dropped: self.ground_cover.totals()[1],
-                reach: self.ground_cover.reach().0.round() as u32,
-                tiers: self.ground_cover.reach().1,
-            },
-            occupancy: OccupancyStats {
-                redraws: self.occupancy.redraws,
-            },
+            ground_cover: GroundCoverPass::stats(
+                Some(self.features.ground_cover.get()),
+                features.frames.ground_cover.as_ref().map(Ready::frame),
+                snapshot,
+            ),
+            occupancy: OccupancyPass::stats(
+                Some(self.features.occupancy.get()),
+                features.frames.occupancy.as_ref().map(Ready::frame),
+                snapshot,
+            ),
             water,
             ocean,
             deformation: DeformationStats {
@@ -436,9 +439,9 @@ impl Renderer {
         engine_profile::counter(
             "memory.gpu_terrain_bytes",
             (self.terrain.capacity_bytes()
-                + self.ground_cover.capacity_bytes()
-                + self.scatter.capacity_bytes()
-                + self.occupancy.capacity_bytes()
+                + self.features.ground_cover.get().capacity_bytes()
+                + self.features.scatter.get().capacity_bytes()
+                + self.features.occupancy.get().capacity_bytes()
                 + self.features.water.get().capacity_bytes()) as f64,
         );
         engine_profile::counter(

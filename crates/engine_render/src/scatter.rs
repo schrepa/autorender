@@ -20,6 +20,8 @@ use engine_core::glam::{Mat4, Vec3};
 use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, TEMPORAL_POSES};
 use crate::cached::Cached;
 use crate::gpu_data::{ColorData, GroundData, PoseData};
+use crate::render_features::{Encode, FeaturePass, RenderFeature};
+use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
 use crate::shadows::KeptRefresh;
 
 use crate::gpu_layouts::constants::CARD_VERTICES;
@@ -742,7 +744,7 @@ impl ScatterPass {
     }
 
     /// Records this frame's culling, timed by `profiler` (`scatter`).
-    pub(crate) fn encode(
+    fn encode_culling(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         profiler: &crate::profiling::GpuProfiler,
@@ -852,4 +854,43 @@ fn pipeline(
         &module,
         scatter_cull::cull_scatter,
     )
+}
+
+/// A frame that draws placed objects.
+pub(crate) struct ScatterFrame;
+
+impl RenderFeature for ScatterPass {
+    type Frame = ScatterFrame;
+    type Stats = ();
+
+    /// Culling writes the placed objects' lists and draws.
+    fn declare(_frame: &ScatterFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
+        graph
+            .add(Pass::Feature(FeaturePass::Scatter))
+            .write(Resource::Placed);
+    }
+
+    /// Placed objects cull before the shadow maps and the first opaque
+    /// phase draw them.
+    fn encode(
+        &self,
+        _frame: &ScatterFrame,
+        _node: &Node,
+        encode: &Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        self.encode_culling(encoder, encode.profiler);
+        0
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        ScatterPass::capacity_bytes(self)
+    }
+
+    fn stats(
+        _this: Option<&Self>,
+        _frame: Option<&ScatterFrame>,
+        _snapshot: &engine_core::RenderSnapshot,
+    ) {
+    }
 }

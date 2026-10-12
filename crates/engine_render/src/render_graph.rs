@@ -215,10 +215,6 @@ impl Phase {
 pub(crate) enum Pass {
     /// GPU presentation's blending, composition, culling and compaction.
     Presentation,
-    /// Placed objects' culling for the camera and the shadow maps.
-    Scatter,
-    /// What placed objects cover drawn around the camera.
-    Occupancy,
     /// Shadow caster selection.
     ShadowSelect,
     /// Virtual geometry's cluster selection.
@@ -233,8 +229,6 @@ pub(crate) enum Pass {
     Deformation,
     /// The runtime virtual texture's pages baked.
     VtBakes,
-    /// Ground cover grown on the terrain.
-    GroundCover,
     /// The opaque pass of `phase`.
     Opaque {
         phase: Phase,
@@ -307,8 +301,8 @@ macro_rules! passes {
 
 passes! {
     presentation: Presentation,
-    scatter: Scatter,
-    occupancy: Occupancy,
+    scatter: Feature(FeaturePass::Scatter),
+    occupancy: Feature(FeaturePass::Occupancy),
     shadow_select: ShadowSelect,
     virtual_select: VirtualSelect,
     terrain_horizons: TerrainHorizons,
@@ -317,7 +311,7 @@ passes! {
     cloud_dome: CloudDome,
     deformation: Deformation,
     vt_bakes: VtBakes,
-    ground_cover: GroundCover,
+    ground_cover: Feature(FeaturePass::GroundCover),
     opaque: Opaque { phase: Phase::One },
     terrain_ids: TerrainIds,
     terrain_resolve: TerrainResolve,
@@ -694,14 +688,11 @@ pub(crate) struct FrameShape {
     pub(crate) cloud_dome: bool,
     pub(crate) deformation: bool,
     pub(crate) vt_bakes: bool,
-    pub(crate) cover: bool,
     /// Terrain draws deferred in the first opaque phase: its visibility
     /// target holds the pages the virtual texture's feedback looks up.
     pub(crate) deferred: bool,
-    /// Placed objects draw, and the occupancy map is drawn
-    /// again.
+    /// Placed objects draw.
     pub(crate) scatter: bool,
-    pub(crate) occupancy: bool,
     /// Virtual geometry selects clusters, the shadow maps
     /// draw some, and the visibility buffer resolves them in each phase.
     pub(crate) clusters: bool,
@@ -760,15 +751,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     if gpu {
         graph.add(Pass::Presentation).write(Poses).write(Visible);
     }
-    if shape.scatter {
-        graph.add(Pass::Scatter).write(Placed);
-    }
-    if shape.occupancy {
-        graph
-            .add(Pass::Occupancy)
-            .read_if(shape.scatter, Placed)
-            .write(Occupancy);
-    }
     // Shadow casters first: virtual geometry selects the clusters of the
     // virtual ones with the camera's, then the maps draw.
     if shape.shadows {
@@ -812,9 +794,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     }
     if shape.vt_bakes {
         graph.add(Pass::VtBakes).write(Pages);
-    }
-    if shape.cover {
-        graph.add(Pass::GroundCover).read(Tracks).write(Cover);
     }
     // The main passes' color targets, in pipeline target order.
     let targets: &[(Resource, Clear)] = match shape.targets {

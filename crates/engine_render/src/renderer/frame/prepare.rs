@@ -458,15 +458,15 @@ impl Renderer {
         // What placed objects cover around the camera: the
         // map shading reads, drawn this frame when it no longer holds the
         // camera's surroundings or the objects changed.
-        if let Some((area, far, strength)) = self.occupancy.prepare(
+        if let Some((area, far, strength)) = self.features.occupancy.get_mut().prepare(
             &self.device,
             &self.queue,
             &snapshot.environment.occupancy,
             snapshot.camera_position,
             (
                 self.scatter_draws.covers(),
-                self.scatter.objects(),
-                self.scatter.version(),
+                self.features.scatter.get().objects(),
+                self.features.scatter.get().version(),
             ),
         ) {
             lighting.occupancy = [area.center[0], area.center[1], 1.0 / area.size, strength];
@@ -1005,7 +1005,7 @@ impl Renderer {
                 environment: &self.environment,
                 probes: &self.probes,
                 horizons: &self.terrain.horizons,
-                occupancy: &self.occupancy,
+                occupancy: self.features.occupancy.get(),
             },
         );
     }
@@ -1330,10 +1330,8 @@ impl Renderer {
             cloud_dome: self.clouds.marches_dome(),
             deformation: self.terrain.deformation.pending(),
             vt_bakes: self.terrain.vt.baking(),
-            cover: terrain && self.ground_cover.growing(),
             deferred: self.terrain_deferred(terrain, passes.opaque_kind),
             scatter,
-            occupancy: self.occupancy.redrawing(),
             clusters: virtual_frame,
             shadow_clusters: virtual_frame && !self.virtual_draws.shadow_bins.is_empty(),
             resolves: [
@@ -1391,7 +1389,7 @@ impl Renderer {
                     environment: &self.environment,
                     probes: &self.probes,
                     horizons: &self.terrain.horizons,
-                    occupancy: &self.occupancy,
+                    occupancy: self.features.occupancy.get(),
                 },
             );
         }

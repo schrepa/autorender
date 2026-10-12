@@ -245,18 +245,13 @@ pub struct Renderer {
     impostors: ImpostorDraws,
     // Terrain: heights of resident tiles, patches, pipelines.
     terrain: crate::terrain::TerrainPass,
-    // Ground cover grown each frame on terrain.
-    ground_cover: crate::ground_cover::GroundCoverPass,
-    // Objects placed on terrain: their pass, their meshes
-    // and a counter advancing when that set changes, and their draw groups
-    // and slots.
-    scatter: crate::scatter::ScatterPass,
+    // Objects placed on terrain: their meshes and a counter advancing when
+    // that set changes, and their draw groups and slots (the pass is a
+    // feature's).
     scatter_meshes: (BTreeSet<MeshHandle>, u64),
     scatter_draws: scatter_draws::ScatterDraws,
     // How far switches between how objects show fade this frame.
     switch_fades: frame::SwitchFades,
-    // What placed objects cover around the camera.
-    occupancy: crate::occupancy::OccupancyPass,
     // The presentation time of the last frame written, which temporal
     // frames sway placed objects by for their motion.
     last_seconds: Option<f32>,

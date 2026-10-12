@@ -15,6 +15,8 @@ use engine_core::glam::Vec3;
 
 use crate::bindings::OCCUPANCY;
 use crate::cached::{Bound, GroupCache, Versioned};
+use crate::render_features::{Encode, FeaturePass, RenderFeature};
+use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
 
 /// The coverage target's format, and the heights target's.
 const COVERAGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
@@ -255,21 +257,16 @@ impl OccupancyPass {
         }
     }
 
-    /// Whether this frame draws a map.
-    pub(crate) fn redrawing(&self) -> bool {
-        self.pending.iter().any(Option::is_some)
-    }
-
-    /// Draws the maps this frame redraws from the placed objects' `records`
-    /// and `poses`, and how their layers thin (`thins`), into
-    /// `encoder`; timed by `profiler` (`occupancy`).
-    pub(crate) fn encode(
+    /// Readies the maps this frame redraws, from the placed objects'
+    /// `records` and `poses`, and how their layers thin (`thins`), whose
+    /// buffers `generation` counts: the slots each draws; `None` when none
+    /// redraws.
+    pub(crate) fn prepare_draws(
         &mut self,
         device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
         (records, poses, thins, generation): (&wgpu::Buffer, &wgpu::Buffer, &wgpu::Buffer, u64),
-        profiler: &crate::profiling::GpuProfiler,
-    ) {
+    ) -> Option<OccupancyFrame> {
+        let mut draws = [None; 2];
         for map in [NEAR, FAR] {
             let Some((_, slots)) = self.pending[map].take() else {
                 continue;
@@ -277,7 +274,7 @@ impl OccupancyPass {
             self.pipelines[map].get_or_insert_with(|| pipeline(device, &self.layout, map));
             // The slots' buffers are replaced together, counted by the
             // scatter pass.
-            let group = self.groups[map].bind(
+            self.groups[map].bind(
                 device,
                 "engine/occupancy",
                 (&OCCUPANCY, &self.layout),
@@ -301,7 +298,30 @@ impl OccupancyPass {
                     ),
                 ],
             );
-            let Some(pipeline) = &self.pipelines[map] else {
+            draws[map] = Some(slots);
+            self.redraws += 1;
+            self.slots = slots;
+        }
+        draws
+            .iter()
+            .any(Option::is_some)
+            .then_some(OccupancyFrame { draws })
+    }
+
+    /// Draws the maps `frame` redraws into `encoder`, timed by `profiler`
+    /// (`occupancy`).
+    fn encode_maps(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &OccupancyFrame,
+        profiler: &crate::profiling::GpuProfiler,
+    ) {
+        for map in [NEAR, FAR] {
+            let (Some(slots), Some(pipeline), Some(group)) = (
+                frame.draws[map],
+                &self.pipelines[map],
+                self.groups[map].get(),
+            ) else {
                 continue;
             };
             let attachment = |view, clear: f64| {
@@ -334,8 +354,50 @@ impl OccupancyPass {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, group, &[]);
             pass.draw(0..6, 0..slots);
-            self.redraws += 1;
-            self.slots = slots;
+        }
+    }
+}
+
+/// The maps a frame redraws: the slots each draws.
+pub(crate) struct OccupancyFrame {
+    draws: [Option<u32>; 2],
+}
+
+impl RenderFeature for OccupancyPass {
+    type Frame = OccupancyFrame;
+    type Stats = engine_core::OccupancyStats;
+
+    /// The maps draw the placed objects' covers, where they draw.
+    fn declare(_frame: &OccupancyFrame, shape: &FrameShape, graph: &mut RenderGraph) {
+        graph
+            .add(Pass::Feature(FeaturePass::Occupancy))
+            .read_if(shape.scatter, Resource::Placed)
+            .write(Resource::Occupancy);
+    }
+
+    fn encode(
+        &self,
+        frame: &OccupancyFrame,
+        _node: &Node,
+        encode: &Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        self.encode_maps(encoder, frame, encode.profiler);
+        0
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        OccupancyPass::capacity_bytes(self)
+    }
+
+    /// Times a map was drawn.
+    fn stats(
+        this: Option<&Self>,
+        _frame: Option<&OccupancyFrame>,
+        _snapshot: &engine_core::RenderSnapshot,
+    ) -> engine_core::OccupancyStats {
+        engine_core::OccupancyStats {
+            redraws: this.map_or(0, |occupancy| occupancy.redraws),
         }
     }
 }

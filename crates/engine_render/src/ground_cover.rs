@@ -22,7 +22,9 @@ use crate::bindings::{COVER_DRAW, COVER_GROW};
 use crate::buffers::ReadbackRing;
 use crate::cached::Cached;
 use crate::gpu_layouts::constants::BLADE_BYTES;
+use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::Targets;
+use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
 use crate::terrain::TerrainPass;
 
 /// Uniform offset alignment between terrains' growth.
@@ -342,8 +344,8 @@ impl GroundCoverPass {
     /// Records this frame's growth and the indirect draw's arguments, and
     /// a copy of the counts to read back, timed by `profiler`
     /// (`ground_cover`).
-    pub(crate) fn encode(
-        &mut self,
+    fn encode_growth(
+        &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         profiler: &crate::profiling::GpuProfiler,
@@ -373,16 +375,7 @@ impl GroundCoverPass {
             .record(device, encoder, &self.counts, 16, self.capacity);
     }
 
-    /// Requests the map of this frame's counts once it is submitted.
-    pub(crate) fn after_submit(&mut self) {
-        let totals = Rc::clone(&self.totals);
-        self.readbacks.after_submit(move |words, capacity| {
-            let grown = words.get(0);
-            totals.set(Some([grown.min(capacity), grown.saturating_sub(capacity)]));
-        });
-    }
-
-    /// Whether this frame grows blades: what [`Self::encode`] records.
+    /// Whether this frame grows blades: what its pass records.
     pub(crate) fn growing(&self) -> bool {
         self.compute.is_some() && self.grow_group.get().is_some() && !self.growths.is_empty()
     }
@@ -587,4 +580,61 @@ fn compute(
             cover_grow::finish_cover,
         ),
     )
+}
+
+/// A frame that grows blades.
+pub(crate) struct CoverFrame;
+
+impl RenderFeature for GroundCoverPass {
+    type Frame = CoverFrame;
+    type Stats = engine_core::GroundCoverStats;
+
+    /// Blades grow over the tracks pressed into the ground.
+    fn declare(_frame: &CoverFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
+        graph
+            .add(Pass::Feature(FeaturePass::GroundCover))
+            .read(Resource::Tracks)
+            .write(Resource::Cover);
+    }
+
+    fn encode(
+        &self,
+        _frame: &CoverFrame,
+        _node: &Node,
+        encode: &Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        self.encode_growth(encode.device, encoder, encode.profiler);
+        0
+    }
+
+    /// Requests the map of this frame's counts once it is submitted.
+    fn after_submit(&mut self, _frame: Option<&CoverFrame>) {
+        let totals = Rc::clone(&self.totals);
+        self.readbacks.after_submit(move |words, capacity| {
+            let grown = words.get(0);
+            totals.set(Some([grown.min(capacity), grown.saturating_sub(capacity)]));
+        });
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        GroundCoverPass::capacity_bytes(self)
+    }
+
+    /// Blades the last read-back frame drew and those past capacity, and how
+    /// far and in how many tiers the cover reaches.
+    fn stats(
+        this: Option<&Self>,
+        _frame: Option<&CoverFrame>,
+        _snapshot: &engine_core::RenderSnapshot,
+    ) -> engine_core::GroundCoverStats {
+        let (totals, (reach, tiers)) =
+            this.map_or(([0; 2], (0.0, 0)), |cover| (cover.totals(), cover.reach()));
+        engine_core::GroundCoverStats {
+            blades: totals[0],
+            dropped: totals[1],
+            reach: reach.round() as u32,
+            tiers,
+        }
+    }
 }

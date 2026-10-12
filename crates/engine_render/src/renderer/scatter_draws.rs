@@ -11,10 +11,10 @@ use super::scatter_pool::{ScatterPool, TileObjects};
 use super::*;
 use crate::gpu_data::{ColorData, pack_color, pack_surface};
 use crate::impostors::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord};
-use crate::occupancy::Cover;
+use crate::occupancy::{Cover, OccupancyFrame};
 use crate::scatter::{
     GroupLayout, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, RANK_MAX, RANK_SHIFT, Record,
-    STATE_FRESH, SnapSources, TERRAIN_INDEX, TerrainInfo,
+    STATE_FRESH, ScatterFrame, SnapSources, TERRAIN_INDEX, TerrainInfo,
 };
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{Tile, TileKey};
@@ -109,8 +109,7 @@ impl Renderer {
     /// slots and frees those of tiles that left, uploads what changed,
     /// creates the groups' pipelines for `kind`, and plans this frame's
     /// culling, with impostors when `impostors`, advancing how the camera
-    /// shows objects by this frame's fades. Returns whether
-    /// any object draws.
+    /// shows objects by this frame's fades. `None` when no object draws.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -120,7 +119,7 @@ impl Renderer {
         snapshot: &RenderSnapshot,
         kind: PassKind,
         impostors: bool,
-    ) -> bool {
+    ) -> Option<Ready<ScatterFrame>> {
         let terrains = &snapshot.terrain.terrains;
         let key = self.scatter_key(terrains);
         if self.scatter_draws.key.as_ref() != Some(&key) || self.scatter_draws.pool.fragmented() {
@@ -195,14 +194,17 @@ impl Renderer {
                     [share, reach(near), reach(far), 1.0];
             }
         }
-        self.scatter.set_thinning(&self.device, &self.queue, &thins);
+        self.features
+            .scatter
+            .get_mut()
+            .set_thinning(&self.device, &self.queue, &thins);
         let draws = &mut self.scatter_draws;
         let (dirty, counts_changed) = draws.pool.take_changes();
         // The kept shadow map redraws where objects came or went.
         for (min, max) in draws.pool.take_moved() {
             self.shadows.dirty_kept(min, max);
         }
-        let written = self.scatter.write_slots(
+        let written = self.features.scatter.get_mut().write_slots(
             &self.device,
             &self.queue,
             (
@@ -223,7 +225,7 @@ impl Renderer {
                 group.count = count;
                 ids += count * LEVELS;
             }
-            self.scatter.set_groups(
+            self.features.scatter.get_mut().set_groups(
                 &self.device,
                 &self.queue,
                 &draws.layouts,
@@ -237,7 +239,9 @@ impl Renderer {
             revision: sources.revision,
             terrains: &infos,
         });
-        self.scatter
+        self.features
+            .scatter
+            .get_mut()
             .prepare_snap(&self.device, &self.queue, sources);
         // Each group's pipeline variant, and the one its fading objects draw
         // with.
@@ -276,18 +280,33 @@ impl Renderer {
             .copied()
             .filter(|&(map, _)| !(keeps_still && map == crate::shadows::MOVING_MAP))
             .collect();
-        self.scatter.prepare(
-            &self.device,
-            &self.queue,
-            (snapshot.view_projection, snapshot.camera_position),
-            (pixel_error, height, impostors, fade),
-            (
-                &maps,
-                self.shadows.kept_refresh(),
-                self.shadows.level_refresh(),
-                self.shadows.map_resolution(),
-            ),
-        )
+        let (device, queue, shadows) = (&self.device, &self.queue, &self.shadows);
+        self.features.scatter.prepare(|scatter| {
+            scatter
+                .prepare(
+                    device,
+                    queue,
+                    (snapshot.view_projection, snapshot.camera_position),
+                    (pixel_error, height, impostors, fade),
+                    (
+                        &maps,
+                        shadows.kept_refresh(),
+                        shadows.level_refresh(),
+                        shadows.map_resolution(),
+                    ),
+                )
+                .then_some(ScatterFrame)
+        })
+    }
+
+    /// What placed objects cover around the camera: the maps this frame
+    /// redraws, from the placed objects' slots.
+    pub(super) fn prepare_occupancy(&mut self) -> Option<Ready<OccupancyFrame>> {
+        let device = &self.device;
+        let slots = self.features.scatter.get().slot_buffers();
+        self.features
+            .occupancy
+            .prepare(|occupancy| occupancy.prepare_draws(device, slots))
     }
 
     /// The impostors of placed draw groups on GPU-presented
@@ -555,7 +574,7 @@ impl Renderer {
         if !state.scatter {
             return 0;
         }
-        let Some(groups) = self.scatter.pose_groups() else {
+        let Some(groups) = self.features.scatter.get().pose_groups() else {
             return 0;
         };
         let kind = state.passes.opaque_kind;
@@ -583,7 +602,7 @@ impl Renderer {
         }
         // Objects fading between how the camera shows them,
         // at the levels the camera draws.
-        let fading = self.scatter.fading_view();
+        let fading = self.features.scatter.get().fading_view();
         for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
             if draw.count == 0 {
                 continue;
@@ -608,7 +627,7 @@ impl Renderer {
                 self.impostors.placed.group(),
             )
         {
-            let (cards, args, offset) = self.scatter.card_source(0);
+            let (cards, args, offset) = self.features.scatter.get().card_source(0);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
             pass.set_vertex_buffer(0, cards);
@@ -644,8 +663,10 @@ impl Renderer {
         casters: &[wgpu::RenderPipeline; 4],
         cards: Option<&wgpu::RenderPipeline>,
     ) -> u32 {
-        let (Some(view), Some(poses)) = (self.scatter.map_view(map), self.scatter.shadow_group())
-        else {
+        let (Some(view), Some(poses)) = (
+            self.features.scatter.get().map_view(map),
+            self.features.scatter.get().shadow_group(),
+        ) else {
             return 0;
         };
         pass.set_bind_group(1, poses, &[]);
@@ -668,7 +689,7 @@ impl Renderer {
             draws += self.draw_scatter_levels(pass, (index, draw), view, false);
         }
         if let (Some(pipeline), Some(group)) = (cards, self.impostors.placed.group()) {
-            let (cards, args, offset) = self.scatter.card_source(view);
+            let (cards, args, offset) = self.features.scatter.get().card_source(view);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(2, group, &[]);
             pass.set_vertex_buffer(0, cards);
@@ -699,7 +720,7 @@ impl Renderer {
                 pass.set_vertex_buffer(2, stream.slice(..));
             }
             pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
-            let (ids, args, offset) = self.scatter.draw_source(
+            let (ids, args, offset) = self.features.scatter.get().draw_source(
                 view,
                 (index, draw.ids + level as u32 * draw.count),
                 level,

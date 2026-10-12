@@ -8,11 +8,14 @@
 use engine_core::RenderSnapshot;
 
 use crate::decals::DecalPass;
+use crate::ground_cover::GroundCoverPass;
 use crate::lights::LightPass;
 use crate::materials::MaterialStore;
+use crate::occupancy::OccupancyPass;
 use crate::post::PostPass;
 use crate::profiling::GpuProfiler;
 use crate::render_graph::{Clear, FrameShape, Load, Node, Ops, RenderGraph, Resource};
+use crate::scatter::ScatterPass;
 use crate::targets::Targets;
 use crate::temporal::TemporalPass;
 use crate::transparent::Transparency;
@@ -147,6 +150,10 @@ impl<F: RenderFeature> Eager<F> {
 
     pub(crate) fn get(&self) -> &F {
         &self.feature
+    }
+
+    pub(crate) fn get_mut(&mut self) -> &mut F {
+        &mut self.feature
     }
 
     /// The feature, for work after the frame.
@@ -391,9 +398,16 @@ macro_rules! render_features {
 }
 
 render_features! {
+    /// Objects placed on terrain, culled for the camera and the shadow
+    /// maps.
+    scatter: Eager<ScatterPass> => [Scatter],
+    /// What placed objects cover around the camera, drawn as it moves.
+    occupancy: Eager<OccupancyPass> => [Occupancy],
     /// Local lights binned into the view's clusters, created with the first
     /// frame that has some.
     lights: Lazy<LightPass> => [Lights],
+    /// Ground cover grown on the terrain.
+    ground_cover: Eager<GroundCoverPass> => [GroundCover],
     /// Decals over the opaque surfaces.
     decals: Lazy<DecalPass> => [Decals],
     /// Terrains' lakes and rivers, and the sea, over the opaque scene.

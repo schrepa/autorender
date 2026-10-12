@@ -18,17 +18,6 @@ impl Renderer {
     ) {
         match node.pass() {
             Pass::Presentation => self.encode_presentation(encoder),
-            // Placed objects cull before the shadow maps and the first
-            // opaque phase draw them.
-            Pass::Scatter => self.scatter.encode(encoder, &self.profiler),
-            Pass::Occupancy => {
-                self.occupancy.encode(
-                    &self.device,
-                    encoder,
-                    self.scatter.slot_buffers(),
-                    &self.profiler,
-                );
-            }
             Pass::ShadowSelect => self.encode_shadow_selection(state, encoder),
             Pass::VirtualSelect => self.encode_cluster_selection(encoder),
             Pass::TerrainHorizons => {
@@ -53,9 +42,6 @@ impl Renderer {
                 &self.mesh_shader,
                 (&self.camera.terrain_layout, self.camera.terrain_group()),
             ),
-            Pass::GroundCover => self
-                .ground_cover
-                .encode(&self.device, encoder, &self.profiler),
             Pass::Opaque { phase } => {
                 let draws = self.encode_opaque(state, encoder, view, node, phase.index());
                 // Phase two issues phase one's draws again for

@@ -29,7 +29,7 @@ impl Renderer {
                 environment: &self.environment,
                 probes: &self.probes,
                 horizons: &self.terrain.horizons,
-                occupancy: &self.occupancy,
+                occupancy: self.features.occupancy.get(),
             },
         );
         if odd {

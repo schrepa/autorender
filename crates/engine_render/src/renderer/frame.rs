@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::gpu_presentation::{CullingView, GpuPrepared, PresentationInputs, RecordsKey, Staging};
+use crate::ground_cover::CoverFrame;
 use crate::render_graph::{self, Effects, FeaturePass, FrameShape, Node, Pass, Phase, Resource};
 use crate::shadows::{MapSources, ShadowFrame, ShadowInputs};
 
@@ -312,12 +313,23 @@ impl Renderer {
                 kind.gpu_mode,
             ),
         );
+        // Ground cover grows on the terrain drawn.
+        features.frames.ground_cover = if terrain {
+            self.features
+                .ground_cover
+                .prepare(|cover| cover.growing().then_some(CoverFrame))
+        } else {
+            None
+        };
         // Lookups loop over the horizon records the terrain now binds.
         let horizon_records = self.terrain.horizons.record_count();
         self.shadows
             .set_horizon_records(&self.queue, horizon_records);
-        let scatter =
+        features.frames.scatter =
             self.prepare_scatter(snapshot, passes.opaque_kind, passes.impostor_pass.is_some());
+        let scatter = features.frames.scatter.is_some();
+        // What placed objects cover, where the camera moved.
+        features.frames.occupancy = self.prepare_occupancy();
         // Water on terrains.
         features.frames.water = self.prepare_water(snapshot, passes.opaque_kind);
         // Terrain's horizon maps may have been replaced.

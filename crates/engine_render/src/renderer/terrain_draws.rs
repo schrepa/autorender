@@ -82,7 +82,7 @@ impl Renderer {
         }
         // Ground cover on the terrain, seen through the
         // camera's unjittered view.
-        let covered = self.ground_cover.prepare(
+        let covered = self.features.ground_cover.get_mut().prepare(
             &self.device,
             &self.queue,
             &self.terrain,
@@ -111,7 +111,7 @@ impl Renderer {
             &[false]
         };
         if let (true, Some(targets)) = (covered, opaque_kind.targets()) {
-            self.ground_cover.ensure_pipeline(
+            self.features.ground_cover.get_mut().ensure_pipeline(
                 &self.device,
                 &self.mesh_shader,
                 layouts,
@@ -232,9 +232,9 @@ impl Renderer {
                 !terrain.surroundings && terrain.surface.iter().any(|look| look.cover.is_some())
             });
         if grows {
-            self.ground_cover.warm(&self.device);
+            self.features.ground_cover.get_mut().warm(&self.device);
             if let Some(targets) = opaque_kind.targets() {
-                self.ground_cover.ensure_pipeline(
+                self.features.ground_cover.get_mut().ensure_pipeline(
                     &self.device,
                     &self.mesh_shader,
                     layouts,
@@ -245,9 +245,9 @@ impl Renderer {
             }
         }
         if terrains.iter().any(|terrain| !terrain.assets.is_empty()) {
-            self.scatter.warm(&self.device);
+            self.features.scatter.get_mut().warm(&self.device);
             if snapshot.environment.occupancy.enabled {
-                self.occupancy.warm(&self.device);
+                self.features.occupancy.get_mut().warm(&self.device);
             }
         }
     }
@@ -391,7 +391,10 @@ impl Renderer {
             pass.set_bind_group(2, &self.mesh_pipelines.empty_group, &[]);
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
-        self.ground_cover.draw(pass, targets, kind.lit)
+        self.features
+            .ground_cover
+            .get()
+            .draw(pass, targets, kind.lit)
     }
 
     /// Draws the camera's terrain patches into the opaque pass; returns the
