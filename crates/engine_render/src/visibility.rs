@@ -21,10 +21,10 @@ pub(crate) const ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
 pub(crate) const DRAW_STRIDE: u64 = 256;
 /// Storage buffers the resolve's fragment stage binds: poses, colors,
 /// previous poses, the arena's meshes, clusters and pages, the selected
-/// clusters and the camera's reflection probe grid; lit frames add the local
-/// lights' three.
-pub(crate) const RESOLVE_STORAGE_BUFFERS: u32 = 8;
-pub(crate) const RESOLVE_LIT_STORAGE_BUFFERS: u32 = 11;
+/// clusters, and the camera's reflection probe grid and cloud shadows; lit
+/// frames add the local lights' three.
+pub(crate) const RESOLVE_STORAGE_BUFFERS: u32 = 9;
+pub(crate) const RESOLVE_LIT_STORAGE_BUFFERS: u32 = 12;
 
 /// The ID target, the tile lists and each draw's uniform, sized to the
 /// viewport and the frame's bins.

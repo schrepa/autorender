@@ -63,7 +63,7 @@ impl Renderer {
             max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
             max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d.min(8_192),
             // GPU presentation's cull pass binds eight, the WebGPU default;
-            // the visibility buffer's resolve up to eleven
+            // the visibility buffer's resolve up to twelve
             // where the adapter allows them.
             max_storage_buffers_per_shader_stage: adapter_limits
                 .max_storage_buffers_per_shader_stage
