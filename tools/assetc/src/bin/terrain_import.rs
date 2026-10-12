@@ -489,6 +489,10 @@ impl TransverseMercator {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn run() -> Result<(), String> {
     let options = options()?;
     let rasters = options
@@ -939,6 +943,10 @@ const LOOKS: [Look; 9] = [
 
 /// The scene: the terrain, its alpine surface over the import's heights
 /// from `low` to `high`, and a camera facing its highest summit.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn scene(
     options: &Options,
     (samples, spacing): (usize, f64),

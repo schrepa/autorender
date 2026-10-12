@@ -185,6 +185,10 @@ const CHANGE_SAMPLES: usize = 9;
 /// Runs `editing` on the terrain `name` names in `scene` (the first terrain
 /// when `None`), taking edits undo removed from and putting them back on
 /// `redo`; its result.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub fn edit_terrain(
     engine: &mut Engine,
     scene: Option<&SceneInstance>,
@@ -371,6 +375,10 @@ fn terrain_id(world: &World, entity: engine_core::bevy_ecs::prelude::Entity) -> 
     )
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(crate) fn execute(
     engine: &mut Engine,
     _scene: Option<&SceneInstance>,

@@ -2133,6 +2133,10 @@ fn prune_components(
 }
 
 /// `meshopt_simplifyEdge` without the sparse, update and debug paths.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn simplify_edge(
     input: &SimplifyInput<'_>,
     target_index_count: usize,

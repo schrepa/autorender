@@ -290,6 +290,10 @@ impl DevTools {
     }
 
     /// Collision, the camera, meshes and the components entities carry.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn register_components(&mut self, schemas: &Value) {
         self.insert(Inspector {
             descriptor: InspectorDescriptor::generated(schemas, "Collider"),

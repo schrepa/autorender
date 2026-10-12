@@ -928,6 +928,10 @@ impl Generator {
     /// (about one per sample), returning the tile once done. A step that
     /// starts always finishes, so a budget can go slightly negative in
     /// effect; callers pass what is left.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub fn advance(&mut self, budget: &mut u64) -> Option<Tile> {
         loop {
             if *budget == 0 {

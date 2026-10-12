@@ -506,6 +506,10 @@ mod capture {
             );
         }
 
+        #[expect(
+            clippy::too_many_lines,
+            reason = "longer than the line ceiling; it may only shrink"
+        )]
         pub(crate) fn poll(&mut self) {
             // Browser GPU maps complete asynchronously. This only consumes
             // flags and mapped bytes; it makes no device.poll / queue-wait

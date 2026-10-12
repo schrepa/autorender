@@ -12,6 +12,10 @@ use gltf::{
 
 use crate::{ImportError, ImportedFile, unsupported};
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(crate) fn import(
     document: &gltf::Document,
     binary: &[u8],

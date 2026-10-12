@@ -56,6 +56,10 @@ fn stat_counters(_: &RenderStats) {}
 impl Renderer {
     /// The frame's stats, after submission (read-backs arrive a few frames
     /// late), and its profile counters while a capture runs.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn frame_stats(
         &mut self,
         state: &FrameState<'_>,

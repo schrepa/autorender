@@ -98,6 +98,10 @@ fn caster_pipeline(
 }
 
 impl ShadowPipelines {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn new(device: &wgpu::Device, material_layout: &wgpu::BindGroupLayout) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/shadows.wgsl"),

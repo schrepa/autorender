@@ -236,6 +236,10 @@ impl VirtualArena {
     /// rebased to absolute indices, and a new page pool holding the pinned
     /// pages (and, without `budget`, every page the meshes' words hold).
     /// Returns whether it rebuilt.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn upload(
         &mut self,
         device: &wgpu::Device,

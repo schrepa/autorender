@@ -475,6 +475,10 @@ impl TerrainPass {
     /// camera, reflection probe faces and the shadow maps of `views`.
     /// `max_layers` is the device's texture array layers; `mips` renders
     /// surface materials' mip levels. Returns whether any terrain draws.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -770,6 +774,10 @@ impl TerrainPass {
     }
 
     /// Uploads tiles the GPU lacks and releases those no terrain lists.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn sync_tiles(
         &mut self,
         device: &wgpu::Device,

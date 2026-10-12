@@ -376,6 +376,10 @@ impl Renderer {
 
     /// Writes the camera and lighting uniforms and the frame's changed
     /// poses, colors, palettes and slot IDs.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn write_frame_data(
         &mut self,
         frame: RenderFrame<'_>,

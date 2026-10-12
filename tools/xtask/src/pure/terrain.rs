@@ -40,6 +40,10 @@ const STEP: f32 = 1.0 / 256.0;
 /// browser worker's Wasm module.
 pub const JOBS: &str = "target/pure/terrain-jobs.json";
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let terrain = load(root)?;
     let TerrainSource::Generated(authored) = &terrain.source else {

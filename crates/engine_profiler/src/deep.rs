@@ -262,6 +262,10 @@ fn at(ms: f64) -> Timestamp {
 }
 
 /// The Firefox Profiler profile of `report` and `samples`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn firefox_profile(
     report: &Value,
     samples: Option<&Samples>,

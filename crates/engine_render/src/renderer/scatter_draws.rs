@@ -111,6 +111,10 @@ impl Renderer {
     /// culling, with impostors when `impostors`, advancing how the camera
     /// shows objects by this frame's fades. Returns whether
     /// any object draws.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn prepare_scatter(
         &mut self,
         snapshot: &RenderSnapshot,

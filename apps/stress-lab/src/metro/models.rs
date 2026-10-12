@@ -293,6 +293,10 @@ impl Model {
 
     /// The mesh and the build-space point at its origin: pivots of animated
     /// parts and light positions are given in build space.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn assemble(self) -> Result<(Mesh, Vec3), String> {
         let mut b = Builder::default();
         match self {

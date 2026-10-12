@@ -974,6 +974,10 @@ fn plateau_ring(center: [f32; 2], radius: f32, roads: &[Vec<[f32; 2]>]) -> Vec<A
 
 /// The highlands' surface: its rules over [`LOOKS`], each material textured
 /// by its maps when `files` holds them, and the objects authors stand on it.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn surface(
     world: &mut World,
     files: &HashMap<String, StressFile>,
@@ -1313,6 +1317,10 @@ const SNOW_SEARCH_EVERY: u32 = 60;
 /// nearest the plateau, once the terrain's bakes are done: the first level
 /// snow within four kilometers mostly snowy and gently sloping for twenty
 /// meters around.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn place_track_makers(world: &mut World) {
     if world.contains_resource::<Snowfield>() {
         return;
@@ -1783,6 +1791,10 @@ fn scanned(
 /// with ragged edges, dirt where slopes thin the grass, scree on steep
 /// ground below the cliffs, rock on the cliffs and snow on the peaks'
 /// gentler slopes.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn rules() -> Biomes {
     let noise = |wavelength: f32, seed: u32, octaves: u32| {
         Mask::Noise(NoiseMask {

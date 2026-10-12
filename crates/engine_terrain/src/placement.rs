@@ -629,6 +629,10 @@ pub(crate) fn layer_rows(
     (last - first + 1).max(0) as u32
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(crate) fn place_row(
     layers: &[CompiledPlacement],
     tile: &Tile,

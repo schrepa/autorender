@@ -224,6 +224,10 @@ impl Regions {
     /// stillness (`classify`). Maps drawn every frame whose virtual casters'
     /// clusters virtual geometry selects go to
     /// `virtual_views`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn selection(
         &self,
         snapshot: &engine_core::RenderSnapshot,

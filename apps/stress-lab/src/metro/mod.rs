@@ -512,6 +512,10 @@ fn tint(color: [f32; 4], shade: f32) -> [f32; 4] {
     [color[0] * shade, color[1] * shade, color[2] * shade, 1.0]
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn block(city: &mut Metro, bx: i32, bz: i32, rho: f32) {
     let mut rng = Rng::new(city.seed, bx, bz);
     let center = v(
@@ -957,6 +961,10 @@ fn tower_paint(rng: &mut Rng) -> (Mat, [f32; 4]) {
 
 /// A tower of one of the styles with its crown and rooftop parts, a lobby,
 /// neon and window washers.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn skyscraper(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, height: f32) {
     let style = rng.pick(&[
         Style::Box,
@@ -1235,6 +1243,10 @@ fn downtown(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, scale: f32) {
 
 /// A midrise lot: body, roof and rooftop clutter, shop fronts, balconies,
 /// fire escapes and ads.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn midrise(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, height: f32) {
     let style = rng.pick(&[
         Mid::Block,
@@ -1577,6 +1589,10 @@ fn residential(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
     city.spots.push((*anchor, v(0.0, LOT, 0.0)));
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn industrial(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
     for row in 0..2 {
         let z = -4.2 + row as f32 * 8.4;
@@ -1817,6 +1833,10 @@ fn fountain(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, scale:
     );
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn park_block(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
     let centerpiece = rng.below(4);
     for _ in 0..rng.below(8) + 12 {
@@ -2388,6 +2408,10 @@ fn landmark(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
 
 /// Every moving renderable: assemblies at the sites the blocks offered,
 /// then trains, boats, aircraft, rooftop parts, people, buses and cars.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn movers(city: &mut Metro, config: &StressConfig) {
     let total = city.moving_left;
     let mut rng = Rng::new(config.seed ^ 0x7a11, 0, 0);
@@ -3345,6 +3369,10 @@ pub(crate) struct Spawned {
 }
 
 /// Builds and spawns the metro of `config` into `world`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawned, String> {
     let mut city = build(config);
     let mut assets = world.resource_mut::<AssetLibrary>();

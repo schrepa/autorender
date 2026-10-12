@@ -388,6 +388,10 @@ impl SceneMaterial {
     }
 
     /// The material at authored path `path` (`$.materials[i]`).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn prepare(&self, path: &str) -> Result<PreparedMaterial, SceneError> {
         let invalid = |field: &str, message: String| {
             SceneError::new(

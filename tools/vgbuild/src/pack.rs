@@ -68,6 +68,10 @@ fn quantize(value: f32, (low, step): (f32, f32)) -> u32 {
 }
 
 /// The `EVG1` words of `dag`, built from `source`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
     let mut low = [f32::INFINITY; 3];
     let mut high = [f32::NEG_INFINITY; 3];

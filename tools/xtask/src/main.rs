@@ -24,6 +24,7 @@ mod scaffold;
 mod serve;
 mod shader_report;
 mod smoke;
+mod structure;
 
 use std::{env, process::ExitCode};
 

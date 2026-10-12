@@ -340,6 +340,10 @@ fn window_light(random: u32, cy: u32, top: u32, bottom: u32) -> [f32; 3] {
 }
 
 /// One texel of a façade: 8 × 8 cells of 64 texels, one bay by one floor.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn facade(set: Set, seed: u32, x: u32, y: u32) -> Texel {
     let (u, v) = (x as f32 / 512.0, y as f32 / 512.0);
     let (cx, cy) = (x % 64, y % 64);
@@ -546,6 +550,10 @@ fn region(color: [f32; 3], rough: f32, metal: f32, glow: [f32; 3], grain: f32) -
     Texel::new(times(color, 1.0 + grain * 0.15), rough, metal).lit(glow)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn texel(set: Set, seed: u32, x: u32, y: u32, width: u32, height: u32) -> Texel {
     let (u, v) = (
         (x as f32 + 0.5) / width as f32,

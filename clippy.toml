@@ -13,3 +13,6 @@ disallowed-methods = [
     { path = "std::panic::catch_unwind", reason = "a panic stops the engine for good (engine_panic); return an error instead" },
     { path = "std::panic::set_hook", reason = "engine_panic::install is the engine's one panic hook" },
 ]
+
+# Functions longer than this fail (Cargo.toml's too_many_lines).
+too-many-lines-threshold = 150

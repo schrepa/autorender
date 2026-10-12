@@ -153,6 +153,10 @@ impl DevHost {
 
     /// Runs the control `op` in `source` on a `size` view: its
     /// result.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn control(
         &mut self,
         app: &mut AppHost,

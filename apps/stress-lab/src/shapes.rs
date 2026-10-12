@@ -463,6 +463,10 @@ impl Shape {
         )
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn build(self) -> Result<Mesh, String> {
         use Shape::*;
         let mut b = Builder::default();

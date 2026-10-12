@@ -411,6 +411,10 @@ mod gpu {
         /// `budget` impostors (at most the device's array layers) already
         /// are.
         #[allow(clippy::too_many_arguments)]
+        #[expect(
+            clippy::too_many_lines,
+            reason = "longer than the line ceiling; it may only shrink"
+        )]
         pub(crate) fn bake(
             &mut self,
             device: &wgpu::Device,

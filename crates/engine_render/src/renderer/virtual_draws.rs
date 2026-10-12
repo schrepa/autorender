@@ -56,6 +56,10 @@ impl Renderer {
     /// bindings selection reads (this frame's poses, GPU-compacted visible
     /// IDs or CPU-prepared slots, the shadow maps' casters and the depth
     /// pyramid). Returns whether any batch draws clusters.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn prepare_virtual(
         &mut self,
         snapshot: &RenderSnapshot,

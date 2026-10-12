@@ -445,6 +445,10 @@ impl ShadowPass {
 
     /// Prepares this frame's shadow maps and lookups, or disables lookups
     /// when shadows are off.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -746,6 +750,10 @@ impl ShadowPass {
     /// `profiler` (`shadow_near` from the first cascade to the last,
     /// `shadow_moving`, `shadow_kept` and `shadow_levels`); returns the
     /// indexed draws, one per mesh group and map drawn.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn encode_maps(
         &self,
         encoder: &mut wgpu::CommandEncoder,

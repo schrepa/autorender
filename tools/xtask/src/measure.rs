@@ -1056,6 +1056,10 @@ fn spec_of(task: &Value) -> Result<(u64, &Value), String> {
     Ok((id, spec))
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
     let options = options(arguments)?;
     let task = read_json(&options.task)?;

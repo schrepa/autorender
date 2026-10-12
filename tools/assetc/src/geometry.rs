@@ -398,6 +398,10 @@ fn local_transform(node: &gltf::Node<'_>, path: &str) -> Result<SceneTransform, 
     })
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn primitive_data(
     primitive: &gltf::Primitive<'_>,
     binary: &[u8],

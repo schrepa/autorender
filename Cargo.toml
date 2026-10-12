@@ -94,6 +94,9 @@ unused_result_ok = "deny"
 # Every unsafe block and impl says why it is sound (tools/policy checks the
 # files Clippy does not build on the platform at hand).
 undocumented_unsafe_blocks = "deny"
+# A function longer than clippy.toml's threshold fails; today's longer ones
+# carry an #[expect], which fails once they shrink below it.
+too_many_lines = "deny"
 
 [workspace.lints.rustdoc]
 # Every crate opens by saying what it is.

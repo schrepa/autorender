@@ -988,6 +988,10 @@ impl Work {
 /// tile at its job priority. Returns whether a bake is still
 /// in progress, which nothing loads behind.
 #[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn load_tiles(
     state: &mut TerrainState,
     missing: &[(TileKey, u32)],
@@ -1341,6 +1345,10 @@ fn bake_on_worker(state: &mut TerrainState, jobs: &mut Jobs, layers: &Layers, py
 /// and tiles of levels with objects standing far away
 /// arrive without them: jobs of their own place those after, merged into
 /// the tile in the order one pass places them.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn generate_on_workers(
     state: &mut TerrainState,
     missing: &[(TileKey, u32)],
@@ -3261,6 +3269,10 @@ impl Terrains {
     /// Streams every terrain toward `eye` (the camera's, unless frozen)
     /// and focus points, within the settings' work and tile budgets, and
     /// selects the patches seen from `eye`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn stream(
         &mut self,
         settings: &TerrainSettings,

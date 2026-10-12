@@ -161,6 +161,10 @@ pub(crate) struct PostPass {
 impl PostPass {
     /// `camera_layout` is the first group of the main passes, which sun
     /// shafts read.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
@@ -365,6 +369,10 @@ impl PostPass {
     /// `temporal` frames trace reflections from another pixel of each 2x2
     /// block than the frame before.
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn begin(
         &mut self,
         device: &wgpu::Device,

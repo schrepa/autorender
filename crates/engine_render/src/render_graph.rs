@@ -641,6 +641,10 @@ const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 const FAR: f32 = 0.0;
 
 /// Declares the passes of a frame of `shape` into `graph`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     use Resource::*;
     graph.clear();

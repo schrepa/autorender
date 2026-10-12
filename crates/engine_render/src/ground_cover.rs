@@ -154,6 +154,10 @@ impl GroundCoverPass {
         grows
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn plan(
         &mut self,
         device: &wgpu::Device,

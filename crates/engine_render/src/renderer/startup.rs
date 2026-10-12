@@ -36,6 +36,10 @@ impl Renderer {
     /// [`Self::new`] without waiting for its startup pipelines: the browser
     /// compiles and validates them while the caller builds its world, the
     /// usual startup cost, until [`StartingRenderer::finish`].
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub async fn start(target: RenderTarget) -> Result<StartingRenderer, RenderError> {
         let instance = target.instance();
         let surface = target
