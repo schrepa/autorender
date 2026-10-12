@@ -81,8 +81,9 @@ impl Renderer {
         let (shadow_frame, light_frame, post_frame) = (
             &features.shadow_frame,
             &features.light_frame,
-            features.post_frame,
+            features.post_frame(),
         );
+        let effects = PostPass::stats(features.frames.post.as_ref().map(Ready::frame), snapshot);
         let refraction = features.refraction;
         let dropped_probes = features.dropped_probes;
         let (water, ocean) =
@@ -202,15 +203,9 @@ impl Renderer {
                     .map_or(0, crate::shadows::ShadowFrame::level_pending),
                 level_casters: shadow_casters.map(|casters| casters[3]),
             },
-            ambient_occlusion: Applied {
-                active: post_frame.is_some_and(|frame| frame.occlusion),
-            },
-            contact_shadows: Applied {
-                active: post_frame.is_some_and(|frame| frame.contact),
-            },
-            bloom: Applied {
-                active: post_frame.is_some_and(|frame| frame.bloom),
-            },
+            ambient_occlusion: effects.ambient_occlusion,
+            contact_shadows: effects.contact_shadows,
+            bloom: effects.bloom,
             local_lights: LightStats {
                 shaded: if lit {
                     snapshot.lights.list.len() as u32
@@ -226,12 +221,8 @@ impl Renderer {
                 visible: light_totals.map(|totals| totals[0]),
                 cluster_overflow: light_totals.map(|totals| totals[1]),
             },
-            sun_shafts: Applied {
-                active: post_frame.is_some_and(|frame| frame.shafts),
-            },
-            reflections: Applied {
-                active: post_frame.is_some_and(|frame| frame.reflections),
-            },
+            sun_shafts: effects.sun_shafts,
+            reflections: effects.reflections,
             particles: Transparency::stats(
                 features.frames.transparency.as_ref().map(Ready::frame),
                 snapshot,
@@ -330,9 +321,10 @@ impl Renderer {
                     None
                 },
             },
-            temporal_antialiasing: Applied {
-                active: state.packing.temporal_frame.is_some(),
-            },
+            temporal_antialiasing: TemporalPass::stats(
+                features.frames.temporal.as_ref().map(Ready::frame),
+                snapshot,
+            ),
         };
         self.profile_counters(state, &stats, gpu_visible);
         stats
@@ -416,7 +408,7 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.gpu_post_bytes",
-            self.post.as_ref().map_or(0, PostPass::capacity_bytes) as f64,
+            self.features.post.get().map_or(0, PostPass::capacity_bytes) as f64,
         );
         engine_profile::counter(
             "memory.gpu_environment_bytes",
@@ -462,8 +454,9 @@ impl Renderer {
         engine_profile::counter(
             "memory.gpu_temporal_bytes",
             (self
+                .features
                 .temporal
-                .as_ref()
+                .get()
                 .map_or(0, TemporalPass::capacity_bytes)
                 + self.instances.alternate_bytes()) as f64,
         );

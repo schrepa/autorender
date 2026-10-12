@@ -167,7 +167,7 @@ impl Renderer {
             };
             let temporal = targets == Targets::Temporal;
             let pose_layout = if temporal {
-                self.temporal.as_ref()?.pose_layout()
+                self.features.temporal.get()?.pose_layout()
             } else {
                 &self.instances.pose_layout
             };

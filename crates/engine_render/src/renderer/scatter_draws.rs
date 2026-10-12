@@ -559,7 +559,8 @@ impl Renderer {
             return 0;
         };
         let kind = state.passes.opaque_kind;
-        let temporal = state.packing.temporal_frame.is_some() && self.temporal.is_some();
+        let temporal =
+            state.packing.temporal_frame.is_some() && self.features.temporal.get().is_some();
         pass.set_bind_group(0, self.camera.group(), &[]);
         if kind.lit
             && let Some(lights) = self.lights.as_ref()

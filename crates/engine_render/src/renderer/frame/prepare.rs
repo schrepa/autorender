@@ -4,7 +4,16 @@
 
 use super::*;
 use crate::decals::{DecalFrame, DecalPass};
+use crate::temporal::ResolveFrame;
 use crate::transparent::TransparencyFrame;
+
+/// The screen effects' preparation: what they prepared, the temporal
+/// resolve's, and whether glass refracts.
+struct PostPrep {
+    post: Option<Ready<Effects>>,
+    temporal: Option<Ready<ResolveFrame>>,
+    refraction: bool,
+}
 
 /// GPU presentation's preparation: occlusion culling's viewport and depth
 /// pyramid levels, and what presentation prepared.
@@ -39,8 +48,8 @@ impl Renderer {
         }
         self.gpu_frame = gpu_mode;
         self.apply_temporal_antialiasing(snapshot.environment.temporal_antialiasing.enabled);
-        let temporal = display && gpu_mode && self.temporal.is_some();
-        if !temporal && let Some(pass) = &mut self.temporal {
+        let temporal = display && gpu_mode && self.features.temporal.get().is_some();
+        if !temporal && let Some(pass) = self.features.temporal.get_mut() {
             pass.reset();
         }
         let profile_residency = engine_profile::span("render", "validate_and_retire");
@@ -124,18 +133,17 @@ impl Renderer {
     /// their targets and pose buffer. Frame targets follow the surface size,
     /// 16 bytes per pixel.
     fn apply_temporal_antialiasing(&mut self, enabled: bool) {
-        if enabled == self.temporal.is_some() {
+        if enabled == self.features.temporal.get().is_some() {
             return;
         }
         if enabled {
-            self.temporal = Some(TemporalPass::new(
-                &self.device,
-                &self.camera.layout,
-                self.materials.layout(),
-                self.display.format(),
-            ));
+            let (device, camera) = (&self.device, &self.camera.layout);
+            let (materials, format) = (self.materials.layout(), self.display.format());
+            self.features
+                .temporal
+                .create(|| TemporalPass::new(device, camera, materials, format));
         } else {
-            self.temporal = None;
+            self.features.temporal.release();
             // Pipelines over the temporal pass's layouts go with it.
             let current =
                 |&(kind, _): &(PassKind, Variant)| kind.targets() != Some(Targets::Temporal);
@@ -334,7 +342,7 @@ impl Renderer {
             snapshot.joints.len(),
             temporal,
         );
-        let temporal_frame: Option<TemporalFrame> = match self.temporal.as_mut() {
+        let temporal_frame: Option<TemporalFrame> = match self.features.temporal.get_mut() {
             Some(pass) if temporal => Some(pass.begin(
                 &self.device,
                 &self.queue,
@@ -626,7 +634,12 @@ impl Renderer {
             self.prepare_environment(snapshot, lighting);
         prelude.environment = environment;
         let light_frame = self.prepare_lights(frame, kind, temporal_frame);
-        let (post_frame, refraction) = self.prepare_post(snapshot, temporal_frame);
+        let PostPrep {
+            post,
+            temporal,
+            refraction,
+        } = self.prepare_post(snapshot, temporal_frame);
+        let post_frame = post.as_ref().map(|post| *post.frame());
         let transparency = self.prepare_transparency(
             snapshot,
             (frame.identity(), frame.emitters_revision()),
@@ -641,11 +654,12 @@ impl Renderer {
             probe_list,
             dropped_probes,
             light_frame,
-            post_frame,
             refraction,
             frames: FeatureFrames {
                 decals,
                 transparency,
+                post,
+                temporal,
                 ..FeatureFrames::default()
             },
         }
@@ -1010,7 +1024,7 @@ impl Renderer {
         if snapshot.environment.local_lights.active() && !snapshot.lights.list.is_empty() {
             let device = &self.device;
             let lights = self.lights.get_or_insert_with(|| LightPass::new(device));
-            if temporal && let Some(pass) = self.temporal.as_mut() {
+            if temporal && let Some(pass) = self.features.temporal.get_mut() {
                 pass.ensure_lit_layout(
                     device,
                     [
@@ -1041,7 +1055,7 @@ impl Renderer {
         &mut self,
         snapshot: &RenderSnapshot,
         temporal_frame: &Option<TemporalFrame>,
-    ) -> (Option<Effects>, bool) {
+    ) -> PostPrep {
         // Screen effects; temporal frames apply them in their
         // resolve, whose history averages the occlusion noise.
         let effects = Effects::of(&snapshot.environment).any();
@@ -1051,33 +1065,40 @@ impl Renderer {
             && self.plan.batches.iter().any(|batch| {
                 batch.transparent && self.materials.binding(batch.material).1.transmission()
             });
-        let post_frame = if temporal_frame.is_some() || effects || refraction {
-            let format = self.display.format();
-            let (device, camera_layout) = (&self.device, &self.camera.layout);
-            let post = self
-                .post
-                .get_or_insert_with(|| PostPass::new(device, format, camera_layout));
-            Some(post.begin(
-                &self.device,
-                &self.queue,
-                snapshot,
-                self.display.size(),
-                &self.depth.view,
-                temporal_frame.is_some(),
-            ))
-        } else {
-            // Frames without effects release their targets.
-            if let Some(post) = self.post.as_mut() {
-                post.release_targets();
-            }
-            None
-        };
-        if let (Some(_), Some(pass), Some(post)) =
-            (&temporal_frame, self.temporal.as_mut(), self.post.as_ref())
-        {
-            pass.prepare_resolve(&self.device, post);
+        let needs = temporal_frame.is_some() || effects || refraction;
+        let (device, queue) = (&self.device, &self.queue);
+        let (format, camera_layout) = (self.display.format(), &self.camera.layout);
+        let (size, depth) = (self.display.size(), &self.depth.view);
+        let post = self.features.post.prepare(
+            needs,
+            || PostPass::new(device, format, camera_layout),
+            |post| {
+                Some(post.begin(
+                    device,
+                    queue,
+                    snapshot,
+                    size,
+                    depth,
+                    temporal_frame.is_some(),
+                ))
+            },
+        );
+        // Frames without effects release their targets.
+        if !needs && let Some(post) = self.features.post.get_mut() {
+            post.release_targets();
         }
-        (post_frame, refraction)
+        let mut temporal = None;
+        if let (Some(frame), Some(post)) = (temporal_frame, self.features.post.get()) {
+            temporal = self
+                .features
+                .temporal
+                .prepare_created(|pass| Some(pass.prepare_resolve(device, post, frame)));
+        }
+        PostPrep {
+            post,
+            temporal,
+            refraction,
+        }
     }
 
     /// Transparent surfaces and particles; `None` when nothing transparent
@@ -1170,7 +1191,7 @@ impl Renderer {
         let gpu_mode = kind.gpu_mode;
         let (light_frame, post_frame, probe_list) = (
             &features.light_frame,
-            features.post_frame,
+            features.post_frame(),
             features.probe_list,
         );
 
@@ -1271,8 +1292,8 @@ impl Renderer {
         temporal_frame: &Option<TemporalFrame>,
         post_frame: Option<Effects>,
     ) -> Targets {
-        match (temporal_frame, post_frame.filter(|_| self.post.is_some())) {
-            (Some(_), Some(_)) if self.temporal.is_some() => Targets::Temporal,
+        match (temporal_frame, post_frame) {
+            (Some(_), Some(_)) if self.features.temporal.get().is_some() => Targets::Temporal,
             (_, Some(_)) => Targets::Post,
             (_, None) => Targets::Canvas,
         }
@@ -1286,8 +1307,8 @@ impl Renderer {
         (packing, features, passes): (&Packing, &Features<'_>, &Passes),
         (virtual_frame, resolving, scatter, terrain): (bool, bool, bool, bool),
     ) -> FrameShape {
-        let post = features.post_frame.filter(|_| self.post.is_some());
-        let targets = self.frame_targets(&packing.temporal_frame, features.post_frame);
+        let post = features.post_frame();
+        let targets = self.frame_targets(&packing.temporal_frame, post);
         // Occlusion culling draws in two phases: what the
         // last test left visible, then, after the depth pyramid of those
         // depths and the test, what the test newly finds visible.
@@ -1347,7 +1368,7 @@ impl Renderer {
         let (temporal_frame, refraction) =
             (&state.packing.temporal_frame, state.features.refraction);
 
-        if let (Some(_), Some(pass)) = (&temporal_frame, self.temporal.as_mut()) {
+        if let (Some(_), Some(pass)) = (&temporal_frame, self.features.temporal.get_mut()) {
             let poses = self.instances.frame_poses(0);
             let both = [0, 1].map(|parity| poses.bound(parity).expect("temporal frames create it"));
             pass.prepare_pose_groups(
@@ -1358,7 +1379,7 @@ impl Renderer {
                 &Bound::fixed(self.instances.grounds().as_entire_binding()),
             );
         }
-        if refraction && let Some(post) = self.post.as_ref() {
+        if refraction && let Some(post) = self.features.post.get() {
             self.camera.prepare_refraction(
                 &self.device,
                 post.scene(),

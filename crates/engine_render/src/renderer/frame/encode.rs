@@ -3,7 +3,7 @@
 //! but the opaque ones (`opaque`).
 
 use super::*;
-use crate::render_features::{AttachmentViews, Encode, MeshDraws, color_operations};
+use crate::render_features::{AttachmentViews, Encode, MeshDraws};
 
 impl Renderer {
     /// Encodes `node`, a pass the frame's render graph kept,
@@ -87,9 +87,6 @@ impl Renderer {
                     .encode_view(&self.device, encoder, &self.depth.view, &self.profiler);
             }
             Pass::CloudComposite => self.encode_cloud_composite(state, encoder, view, node),
-            Pass::Effects => self.encode_screen_effects(state, encoder),
-            Pass::Composite => self.encode_composite(encoder, view, node),
-            Pass::TemporalResolve => self.encode_temporal_resolve(state, encoder, view, node),
             Pass::ProbeCaptures => self.encode_probes(state, encoder, report),
         }
     }
@@ -102,8 +99,9 @@ impl Renderer {
         canvas: &'a wgpu::TextureView,
     ) -> &'a wgpu::TextureView {
         let post = || {
-            self.post
-                .as_ref()
+            self.features
+                .post
+                .get()
                 .expect("frames drawing the effects' targets create them")
                 .targets()
         };
@@ -114,8 +112,9 @@ impl Renderer {
             Resource::Glow => post().1,
             Resource::Surface => post().2,
             Resource::Motion => self
+                .features
                 .temporal
-                .as_ref()
+                .get()
                 .expect("temporal frames create it")
                 .motion(),
             Resource::Ids => self
@@ -385,59 +384,6 @@ impl Renderer {
         }
     }
 
-    /// The screen effects: ambient occlusion, bloom,
-    /// reflections and sun shafts after the opaque and transparent passes.
-    fn encode_screen_effects(&self, state: &FrameState<'_>, encoder: &mut wgpu::CommandEncoder) {
-        let post_frame = state.features.post_frame.expect("planned with effects");
-        let post = self.post.as_ref().expect("post frames create it");
-        post.encode_effects(encoder, post_frame, self.camera.group(), &self.profiler);
-    }
-
-    /// The screen effects' composite into the canvas.
-    fn encode_composite(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        node: &Node,
-    ) {
-        let post = self.post.as_ref().expect("post frames create it");
-        let (_, canvas) = node
-            .colors()
-            .next()
-            .expect("the composite draws the canvas");
-        post.encode_composite(encoder, view, color_operations(canvas), &self.profiler);
-    }
-
-    /// Temporal antialiasing's resolve into the canvas and the next history.
-    fn encode_temporal_resolve(
-        &mut self,
-        state: &FrameState<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        node: &Node,
-    ) {
-        let frame = state
-            .packing
-            .temporal_frame
-            .as_ref()
-            .expect("temporal frames begin it");
-        let mut ops = node.colors().map(|(_, ops)| color_operations(ops));
-        let ops = [
-            ops.next().expect("the canvas"),
-            ops.next().expect("the history"),
-        ];
-        self.temporal
-            .as_ref()
-            .expect("temporal frames create it")
-            .encode_resolve(
-                encoder,
-                view,
-                frame,
-                ops,
-                self.profiler.span("taa_resolve").map(Span::render),
-            );
-    }
-
     /// Reflection probe captures after the frame's own
     /// drawing, once their slots stand still.
     fn encode_probes(
@@ -491,7 +437,7 @@ impl MeshDraws for FrameMeshes<'_> {
         let lit = features.light_frame.as_ref().zip(renderer.lights.as_ref());
         // Glass reads the opaque color the pass draws over.
         let camera_group = match renderer.camera.refraction_group() {
-            Some(group) if features.refraction && features.post_frame.is_some() => group,
+            Some(group) if features.refraction && features.post_frame().is_some() => group,
             _ => renderer.camera.group(),
         };
         pass.set_bind_group(0, camera_group, &[]);

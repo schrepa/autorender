@@ -9,9 +9,11 @@ use engine_core::RenderSnapshot;
 
 use crate::decals::DecalPass;
 use crate::materials::MaterialStore;
+use crate::post::PostPass;
 use crate::profiling::GpuProfiler;
 use crate::render_graph::{Clear, FrameShape, Load, Node, Ops, RenderGraph, Resource};
 use crate::targets::Targets;
+use crate::temporal::TemporalPass;
 use crate::transparent::Transparency;
 use crate::water::WaterPass;
 
@@ -38,8 +40,9 @@ pub(crate) trait RenderFeature {
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32;
 
-    /// Work after the frame is submitted.
-    fn after_submit(&mut self) {}
+    /// Work after a frame it prepared `frame` for (`None` when it did not
+    /// run) is submitted.
+    fn after_submit(&mut self, _frame: Option<&Self::Frame>) {}
 
     /// The GPU memory the feature holds.
     fn capacity_bytes(&self) -> u64;
@@ -77,9 +80,32 @@ impl<F: RenderFeature> Lazy<F> {
         prepare(self.feature.get_or_insert_with(create)).map(|frame| Ready { frame })
     }
 
+    /// Prepares the feature for a frame when one created it: what
+    /// `prepare` made of it, as [`Self::prepare`] hands it back.
+    pub(crate) fn prepare_created(
+        &mut self,
+        prepare: impl FnOnce(&mut F) -> Option<F::Frame>,
+    ) -> Option<Ready<F::Frame>> {
+        prepare(self.feature.as_mut()?).map(|frame| Ready { frame })
+    }
+
     /// The feature, once a frame created it.
     pub(crate) fn get(&self) -> Option<&F> {
         self.feature.as_ref()
+    }
+
+    pub(crate) fn get_mut(&mut self) -> Option<&mut F> {
+        self.feature.as_mut()
+    }
+
+    /// Creates the feature with `create` unless it exists.
+    pub(crate) fn create(&mut self, create: impl FnOnce() -> F) {
+        self.feature.get_or_insert_with(create);
+    }
+
+    /// Drops the feature until it is created again.
+    pub(crate) fn release(&mut self) {
+        self.feature = None;
     }
 
     /// The feature, once a frame created it, for work after the frame.
@@ -193,6 +219,11 @@ impl<'f> Encode<'f> {
             targets,
             depth,
         }
+    }
+
+    /// The view of attachment `resource` this frame.
+    pub(crate) fn view(&self, resource: Resource) -> &wgpu::TextureView {
+        self.views.view(resource)
     }
 
     /// Begins `node`'s render pass, labeled `label` and timed by
@@ -341,10 +372,11 @@ macro_rules! render_features {
                 }
             }
 
-            /// Each feature's work after the frame is submitted.
-            pub(crate) fn after_submit(&mut self) {
+            /// Each feature's work after the frame it prepared `frames` for
+            /// is submitted.
+            pub(crate) fn after_submit(&mut self, frames: &FeatureFrames) {
                 $(if let Some(feature) = self.$field.each_mut() {
-                    feature.after_submit();
+                    feature.after_submit(frames.$field.as_ref().map(Ready::frame));
                 })*
             }
         }
@@ -358,4 +390,10 @@ render_features! {
     water: Eager<WaterPass> => [Water],
     /// Transparent surfaces and particles, accumulated, then composited.
     transparency: Eager<Transparency> => [Transparent, TransparentComposite],
+    /// The screen effects, then their composite into the canvas, created
+    /// with the first frame drawing into their targets.
+    post: Lazy<PostPass> => [Effects, Composite],
+    /// Temporal antialiasing's resolve into the canvas, created while the
+    /// setting is on.
+    temporal: Lazy<TemporalPass> => [TemporalResolve],
 }

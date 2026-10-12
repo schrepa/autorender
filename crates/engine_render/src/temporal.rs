@@ -8,7 +8,7 @@
 //! frame's displayed poses stay readable for motion vectors without copies.
 
 use crate::shaders::entry::temporal;
-use engine_core::{RenderFrame, glam::Mat4};
+use engine_core::{Applied, RenderFrame, RenderSnapshot, glam::Mat4};
 
 use crate::bindings::{TAA_RESOLVE, TEMPORAL_POSES};
 use crate::cached::{Bound, GroupCache};
@@ -16,6 +16,9 @@ use crate::gpu_data::{
     CameraUniform, ResolveUniform, TEMPORAL_SHADER, jitter_clip, jitter_offset, jittered,
 };
 use crate::post::PostPass;
+use crate::profiling::Span;
+use crate::render_features::{Encode, FeaturePass, RenderFeature, color_operations};
+use crate::render_graph::{Access, BLACK, Clear, FrameShape, Node, Pass, RenderGraph, Resource};
 use crate::targets::{FrameSize, ScreenTarget};
 
 pub(crate) const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
@@ -314,10 +317,20 @@ impl TemporalPass {
         &self.targets.get().expect("sized in begin").motion
     }
 
-    /// Binds the resolve to the screen effects' current targets.
-    pub(crate) fn prepare_resolve(&mut self, device: &wgpu::Device, post: &PostPass) {
+    /// Binds the resolve of `frame` to the screen effects' current targets:
+    /// what the resolve and the next frame read of it.
+    pub(crate) fn prepare_resolve(
+        &mut self,
+        device: &wgpu::Device,
+        post: &PostPass,
+        frame: &TemporalFrame,
+    ) -> ResolveFrame {
+        let resolve = ResolveFrame {
+            parity: frame.parity,
+            history: frame.history,
+        };
         let Some(targets) = self.targets.get() else {
-            return;
+            return resolve;
         };
         let ([scene, occlusion, bloom, reflections], settings) = post.resolve_inputs();
         let target = |view| Bound::of(targets, crate::pipelines::view(view));
@@ -342,15 +355,16 @@ impl TemporalPass {
                 ],
             );
         }
+        resolve
     }
 
     /// Records the resolve of `frame` into `canvas` and its history texture,
     /// with operations `ops` for each.
-    pub(crate) fn encode_resolve(
+    fn encode_resolve(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         canvas: &wgpu::TextureView,
-        frame: &TemporalFrame,
+        frame: &ResolveFrame,
         [canvas_ops, history_ops]: [wgpu::Operations<wgpu::Color>; 2],
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
@@ -382,12 +396,6 @@ impl TemporalPass {
         pass.draw(0..3, 0..1);
     }
 
-    /// Records a submitted frame as the next frame's history.
-    pub(crate) fn submitted(&mut self, frame: &TemporalFrame) {
-        self.history = Some(frame.history);
-        self.frame = self.frame.wrapping_add(1);
-    }
-
     /// A frame drawn without temporal antialiasing ends the history.
     pub(crate) fn reset(&mut self) {
         self.history = None;
@@ -417,6 +425,74 @@ impl TemporalPass {
             textures,
             motion,
             history: [first, second],
+        }
+    }
+}
+
+/// What a frame's resolve writes and leaves: the history texture it writes
+/// (its parity), and the history the next frame reads.
+pub(crate) struct ResolveFrame {
+    parity: usize,
+    history: History,
+}
+
+impl RenderFeature for TemporalPass {
+    type Frame = ResolveFrame;
+    type Stats = Applied;
+
+    /// The resolve reads the scene, the motion and the history (and the
+    /// effects that run), and writes the canvas and the next history.
+    fn declare(_frame: &ResolveFrame, shape: &FrameShape, graph: &mut RenderGraph) {
+        if shape.targets != crate::render_graph::Targets::Temporal {
+            return;
+        }
+        graph
+            .add(Pass::Feature(FeaturePass::TemporalResolve))
+            .read(Resource::Scene)
+            .read(Resource::Motion)
+            .read(Resource::History)
+            .read_if(shape.effects.any(), Resource::Effects)
+            .color(Resource::Canvas, Access::Clear(Clear::Color(BLACK)))
+            .color(Resource::History, Access::Clear(Clear::Color(BLACK)));
+    }
+
+    fn encode(
+        &self,
+        frame: &ResolveFrame,
+        node: &Node,
+        encode: &Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        let mut ops = node.colors().map(|(_, ops)| color_operations(ops));
+        let ops = [
+            ops.next().expect("the canvas"),
+            ops.next().expect("the history"),
+        ];
+        self.encode_resolve(
+            encoder,
+            encode.view(Resource::Canvas),
+            frame,
+            ops,
+            encode.profiler.span("taa_resolve").map(Span::render),
+        );
+        0
+    }
+
+    /// A submitted frame's history is the next frame's.
+    fn after_submit(&mut self, frame: Option<&ResolveFrame>) {
+        if let Some(frame) = frame {
+            self.history = Some(frame.history);
+            self.frame = self.frame.wrapping_add(1);
+        }
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        TemporalPass::capacity_bytes(self)
+    }
+
+    fn stats(frame: Option<&ResolveFrame>, _snapshot: &RenderSnapshot) -> Applied {
+        Applied {
+            active: frame.is_some(),
         }
     }
 }

@@ -147,10 +147,17 @@ pub(super) struct Features<'s> {
     pub(super) probe_list: &'s [engine_core::RenderReflectionProbe],
     pub(super) dropped_probes: u64,
     pub(super) light_frame: Option<LightFrame>,
-    pub(super) post_frame: Option<Effects>,
     pub(super) refraction: bool,
     /// What the features render_features! lists prepared.
     pub(super) frames: FeatureFrames,
+}
+
+impl Features<'_> {
+    /// The screen effects the frame runs, when it draws into their
+    /// targets.
+    pub(super) fn post_frame(&self) -> Option<Effects> {
+        self.frames.post.as_ref().map(|post| *post.frame())
+    }
 }
 
 /// The mesh pass kinds a frame draws with, and its impostors' pipeline.

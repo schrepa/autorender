@@ -14,7 +14,6 @@ impl Renderer {
         let FrameKind { gpu_mode, .. } = state.kind;
         let virtual_frame = state.virtual_frame;
         let prelude = std::mem::take(&mut state.prelude);
-        let temporal_frame = &state.packing.temporal_frame;
 
         let profile_submit = engine_profile::span("render", "submit_and_present");
         // Profiling captures time each part of the prelude between marks of
@@ -62,10 +61,7 @@ impl Renderer {
         if virtual_frame {
             self.virtual_draws.pass.after_submit();
         }
-        if let (Some(frame), Some(pass)) = (&temporal_frame, &mut self.temporal) {
-            pass.submitted(frame);
-        }
-        self.features.after_submit();
+        self.features.after_submit(&state.features.frames);
         self.profiler.submitted();
         frame.present(&self.queue);
         // Native interfaces run finished work's callbacks, read-backs and

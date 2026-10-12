@@ -266,12 +266,6 @@ pub(crate) enum Pass {
     OcclusionTest,
     /// A feature's pass, which the feature declares and encodes.
     Feature(FeaturePass),
-    /// The screen effects.
-    Effects,
-    /// The screen effects' composite into the canvas.
-    Composite,
-    /// Temporal antialiasing's resolve into the canvas.
-    TemporalResolve,
     /// Reflection probe faces captured after the frame.
     ProbeCaptures,
     /// The view's clouds marched after the opaque scene and water, then
@@ -345,9 +339,9 @@ passes! {
     cloud_composite: CloudComposite,
     transparent: Feature(FeaturePass::Transparent),
     transparent_composite: Feature(FeaturePass::TransparentComposite),
-    effects: Effects,
-    composite: Composite,
-    temporal_resolve: TemporalResolve,
+    effects: Feature(FeaturePass::Effects),
+    composite: Feature(FeaturePass::Composite),
+    temporal_resolve: Feature(FeaturePass::TemporalResolve),
     probe_captures: ProbeCaptures,
 }
 
@@ -755,15 +749,12 @@ impl FrameShape {
 pub(crate) const SCENE_CLEAR: [f64; 4] = [0.009, 0.015, 0.025, 1.0];
 pub(crate) const TRANSPARENT: [f64; 4] = [0.0, 0.0, 0.0, 0.0];
 pub(crate) const WHITE: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
-const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
+pub(crate) const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 /// The far plane's depth (reversed): `gpu_data::FAR_DEPTH`.
 const FAR: f32 = 0.0;
 
-/// Declares the passes of a frame of `shape` into `graph`.
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
+/// Declares the passes of a frame of `shape` into `graph`, but for the
+/// features' (`crate::render_features`), which declare their own.
 pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     use Resource::*;
     graph.clear();
@@ -915,30 +906,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(CloudView)
             .read(Depth)
             .color(scene, Access::Load);
-    }
-    let effects = shape.effects;
-    if shape.targets != Targets::Canvas && effects.any() {
-        effects.reads(graph.add(Pass::Effects)).write(Effects);
-    }
-    match shape.targets {
-        Targets::Canvas => {}
-        Targets::Post => {
-            graph
-                .add(Pass::Composite)
-                .read(Scene)
-                .read_if(effects.any(), Effects)
-                .color(Canvas, Access::Clear(Clear::Color(BLACK)));
-        }
-        Targets::Temporal => {
-            graph
-                .add(Pass::TemporalResolve)
-                .read(Scene)
-                .read(Motion)
-                .read(History)
-                .read_if(effects.any(), Effects)
-                .color(Canvas, Access::Clear(Clear::Color(BLACK)))
-                .color(History, Access::Clear(Clear::Color(BLACK)));
-        }
     }
     if shape.probes {
         graph

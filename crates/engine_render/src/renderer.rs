@@ -264,10 +264,6 @@ pub struct Renderer {
     // The presentation time of the last frame written, which temporal
     // frames sway placed objects by for their motion.
     last_seconds: Option<f32>,
-    // The screen effects, created with the first frame that has one.
-    post: Option<PostPass>,
-    // Temporal antialiasing of GPU-presented display frames.
-    temporal: Option<TemporalPass>,
     // The features render_features! lists, each created with the first
     // frame needing it.
     features: RenderFeatures,

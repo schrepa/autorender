@@ -289,7 +289,11 @@ impl Renderer {
     pub(super) fn create_variant(&self, kind: PassKind, variant: Variant) -> wgpu::RenderPipeline {
         let canvas = self.display.format();
         let layout = if kind.slots() == Slots::Temporal {
-            let temporal = self.temporal.as_ref().expect("temporal frames create it");
+            let temporal = self
+                .features
+                .temporal
+                .get()
+                .expect("temporal frames create it");
             temporal.mesh_layout(kind.lit)
         } else {
             self.mesh_pipelines.layouts[usize::from(kind.lit)]

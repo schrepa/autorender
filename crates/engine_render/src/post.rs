@@ -14,7 +14,7 @@
 //! that writes the canvas.
 
 use crate::shaders::entry::{post, shafts};
-use engine_core::{RenderSnapshot, glam::Mat4};
+use engine_core::{Applied, RenderSnapshot, glam::Mat4};
 
 use crate::bindings::{POST, SHAFTS};
 use crate::cached::{Bound, GroupCache, Versioned};
@@ -22,6 +22,8 @@ use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::gpu_data::{POST_SHADER, PostUniform, SHAFTS_SHADER};
 use crate::pipelines::{self, Fillers, Fullscreen, filled_group, fullscreen};
 use crate::profiling::{GpuProfiler, Span};
+use crate::render_features::{Encode, FeaturePass, RenderFeature, color_operations};
+use crate::render_graph::{Access, BLACK, Clear, FrameShape, Node, Pass, RenderGraph, Resource};
 use crate::screen_effects::{Effects, UniformFrame};
 use crate::targets::{FrameSize, ScreenTarget};
 
@@ -530,7 +532,7 @@ impl PostPass {
     /// (`ambient_occlusion`), bloom with those scene levels (`bloom`),
     /// reflections from their depth pyramid to their filter (`reflections`),
     /// shafts (`sun_shafts`) and the filter (`effects_filter`).
-    pub(crate) fn encode_effects(
+    fn encode_effects(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         frame: Effects,
@@ -730,7 +732,7 @@ impl PostPass {
     /// Records the composite of a frame without temporal antialiasing into
     /// `canvas` with operations `ops`, timed by `profiler`
     /// (`post_composite`).
-    pub(crate) fn encode_composite(
+    fn encode_composite(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         canvas: &wgpu::TextureView,
@@ -955,4 +957,80 @@ fn fullscreen_pass<'e>(
         occlusion_query_set: None,
         multiview_mask: None,
     })
+}
+
+/// Which screen effects a frame applied.
+pub(crate) struct EffectStats {
+    pub(crate) ambient_occlusion: Applied,
+    pub(crate) contact_shadows: Applied,
+    pub(crate) bloom: Applied,
+    pub(crate) sun_shafts: Applied,
+    pub(crate) reflections: Applied,
+}
+
+impl RenderFeature for PostPass {
+    type Frame = Effects;
+    type Stats = EffectStats;
+
+    /// The effects that run read what they need into their results, which
+    /// the composite (frames drawing into the effects' targets without
+    /// temporal antialiasing) lays with the scene over the canvas.
+    fn declare(effects: &Effects, shape: &FrameShape, graph: &mut RenderGraph) {
+        let targets = shape.targets;
+        if targets != crate::render_graph::Targets::Canvas && effects.any() {
+            effects
+                .reads(graph.add(Pass::Feature(FeaturePass::Effects)))
+                .write(Resource::Effects);
+        }
+        if targets == crate::render_graph::Targets::Post {
+            graph
+                .add(Pass::Feature(FeaturePass::Composite))
+                .read(Resource::Scene)
+                .read_if(effects.any(), Resource::Effects)
+                .color(Resource::Canvas, Access::Clear(Clear::Color(BLACK)));
+        }
+    }
+
+    fn encode(
+        &self,
+        effects: &Effects,
+        node: &Node,
+        encode: &Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        if node.pass() == Pass::Feature(FeaturePass::Composite) {
+            let (_, canvas) = node
+                .colors()
+                .next()
+                .expect("the composite draws the canvas");
+            self.encode_composite(
+                encoder,
+                encode.view(Resource::Canvas),
+                color_operations(canvas),
+                encode.profiler,
+            );
+        } else {
+            // Ambient occlusion, bloom, reflections and sun shafts, after the
+            // opaque and transparent passes.
+            self.encode_effects(encoder, *effects, encode.camera, encode.profiler);
+        }
+        0
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        PostPass::capacity_bytes(self)
+    }
+
+    fn stats(effects: Option<&Effects>, _snapshot: &RenderSnapshot) -> EffectStats {
+        let applied = |effect: fn(&Effects) -> bool| Applied {
+            active: effects.is_some_and(effect),
+        };
+        EffectStats {
+            ambient_occlusion: applied(|effects| effects.occlusion),
+            contact_shadows: applied(|effects| effects.contact),
+            bloom: applied(|effects| effects.bloom),
+            sun_shafts: applied(|effects| effects.shafts),
+            reflections: applied(|effects| effects.reflections),
+        }
+    }
 }

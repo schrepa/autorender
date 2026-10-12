@@ -20,7 +20,7 @@ impl Renderer {
             .packing
             .temporal_frame
             .as_ref()
-            .zip(self.temporal.as_ref())
+            .zip(self.features.temporal.get())
         {
             Some((frame, _)) if frame.motion_valid => (frame.parity, 1 - frame.parity),
             Some((frame, _)) => (frame.parity, frame.parity),
@@ -214,7 +214,7 @@ impl Renderer {
             .packing
             .temporal_frame
             .as_ref()
-            .zip(self.temporal.as_ref());
+            .zip(self.features.temporal.get());
         // Lit frames shade with the lit pipelines and the lights' group.
         let lit = state
             .features
