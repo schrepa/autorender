@@ -7,6 +7,7 @@
 //! next history. Culling alternates between two pose buffers, so the previous
 //! frame's displayed poses stay readable for motion vectors without copies.
 
+use crate::shaders::entry::temporal;
 use engine_core::{RenderFrame, glam::Mat4};
 
 use crate::bindings::{TAA_RESOLVE, TEMPORAL_POSES};
@@ -127,8 +128,8 @@ impl TemporalPass {
                 label: "engine/taa-resolve",
                 layout: &resolve_pipeline_layout,
                 module: &module,
-                vertex: "vs_fullscreen",
-                fragment: "fs_resolve",
+                vertex: temporal::vs_fullscreen,
+                fragment: temporal::fs_resolve,
                 constants: &[],
                 targets: &[Some(surface_format.into()), Some(HISTORY_FORMAT.into())],
                 depth: None,

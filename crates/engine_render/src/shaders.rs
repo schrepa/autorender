@@ -1,6 +1,8 @@
 //! Every shader module the renderer creates, as the WGSL files each
-//! concatenates. Native builds read them too: `cargo xtask lint` validates
-//! each module with naga against the GPU layouts and binding tables.
+//! concatenates, and every entry point of each, which pipelines name
+//! through [`entry`]. Native builds read them too: `cargo xtask lint`
+//! validates each module with naga against the GPU layouts and binding
+//! tables, and holds [`ENTRIES`] to the modules' entry points.
 
 /// Builds each module's source from its files, and [`MODULES`] from the
 /// same table.
@@ -141,4 +143,200 @@ shaders! {
         "sky_common.wgsl",
         "environment.wgsl",
     ];
+}
+
+/// The stage an entry point runs in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage {
+    Vertex,
+    Fragment,
+    Compute,
+}
+
+/// An entry point of a shader module: the module (a constant of this
+/// module, as [`MODULES`] names it), its function and the stage it runs in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub module: &'static str,
+    pub name: &'static str,
+    pub stage: Stage,
+}
+
+/// A stage's keyword in `entry_points!` as a [`Stage`].
+macro_rules! stage {
+    (vertex) => {
+        Stage::Vertex
+    };
+    (fragment) => {
+        Stage::Fragment
+    };
+    (compute) => {
+        Stage::Compute
+    };
+}
+
+/// Declares each module's entry points as constants of a module of
+/// [`entry`] named for it (`entry::meshes::vs_affine`), and [`ENTRIES`],
+/// from one list: pipelines name entry points by these alone.
+macro_rules! entry_points {
+    ($($rust:ident = $module:ident {
+        $($stage:ident: [$($name:ident),* $(,)?]),* $(,)?
+    })*) => {
+        /// Every module's entry points, as constants named for their
+        /// functions.
+        pub mod entry {
+            $(
+                #[doc = concat!("The entry points of [`", stringify!($module), "`](super::", stringify!($module), ").")]
+                #[expect(non_upper_case_globals, reason = "named as their WGSL functions")]
+                pub mod $rust {
+                    use super::super::{Entry, Stage};
+                    $($(
+                        #[doc = concat!("`", stringify!($name), "`, a ", stringify!($stage), " stage.")]
+                        pub const $name: Entry = Entry {
+                            module: stringify!($module),
+                            name: stringify!($name),
+                            stage: stage!($stage),
+                        };
+                    )*)*
+                }
+            )*
+        }
+
+        /// Every entry point of every module, which `cargo xtask lint` holds
+        /// to their WGSL: each is its module's entry point of that stage, and
+        /// each of a module's entry points is here.
+        pub const ENTRIES: &[Entry] = &[$($($(entry::$rust::$name,)*)*)*];
+    };
+}
+
+entry_points! {
+    meshes = SHADER {
+        vertex: [
+            vs_virtual, vs_virtual_temporal, vs_visibility, vs_affine, vs_affine_temporal,
+            vs_affine_extended, vs_affine_temporal_extended, vs_affine_skinned,
+            vs_affine_temporal_skinned, vs_resolve, vs_sky, vs_decal, vs_impostor_bake,
+            vs_impostor_bake_extended, vs_impostor, vs_impostor_temporal, vs_terrain,
+            vs_terrain_temporal, vs_terrain_vt_bake, vs_terrain_resolve, vs_cover,
+            vs_cover_temporal, vs_water, vs_river, vs_river_temporal, vs_water_temporal, vs_ocean,
+            vs_ocean_temporal
+        ],
+        fragment: [
+            fs_visibility, fs_main, fs_main_lit, fs_post, fs_post_lit, fs_temporal, fs_temporal_lit,
+            fs_transparent, fs_transparent_lit, fs_probe, fs_probe_lit, fs_main_extended,
+            fs_main_lit_extended, fs_probe_extended, fs_probe_lit_extended, fs_post_extended,
+            fs_post_lit_extended, fs_temporal_extended, fs_temporal_lit_extended,
+            fs_transparent_extended, fs_transparent_lit_extended, fs_resolve, fs_resolve_lit,
+            fs_resolve_post, fs_resolve_post_lit, fs_resolve_temporal, fs_resolve_temporal_lit,
+            fs_sky, fs_probe_sky, fs_view_clouds, fs_view_clouds_post, fs_sky_post, fs_sky_temporal,
+            fs_decal, fs_decal_lit, fs_impostor_shade, fs_impostor_shade_extended, fs_impostor_bake,
+            fs_impostor_bake_extended, fs_impostor, fs_impostor_lit, fs_impostor_post,
+            fs_impostor_post_lit, fs_impostor_temporal, fs_impostor_temporal_lit,
+            fs_terrain_vt_bake, fs_terrain_ids, fs_terrain_resolve_post,
+            fs_terrain_resolve_post_lit, fs_terrain_resolve_temporal,
+            fs_terrain_resolve_temporal_lit, fs_terrain, fs_terrain_lit, fs_terrain_post,
+            fs_terrain_post_lit, fs_terrain_temporal, fs_terrain_temporal_lit, fs_terrain_probe,
+            fs_terrain_probe_lit, fs_cover, fs_cover_lit, fs_cover_post, fs_cover_post_lit,
+            fs_cover_temporal, fs_cover_temporal_lit, fs_water, fs_water_post, fs_water_temporal,
+            fs_ocean, fs_ocean_post, fs_ocean_temporal
+        ],
+        compute: [cs_terrain_vt_feedback],
+    }
+    terrain_normals = TERRAIN_NORMALS_SHADER {
+        compute: [tile_normals],
+    }
+    terrain_control = TERRAIN_CONTROL_SHADER {
+        compute: [tile_control],
+    }
+    terrain_horizon = TERRAIN_HORIZON_SHADER {
+        compute: [build_horizon],
+    }
+    terrain_sky = TERRAIN_SKY_SHADER {
+        compute: [build_sky],
+    }
+    cover_grow = COVER_GROW_SHADER {
+        compute: [grow_cover, finish_cover],
+    }
+    deformation = DEFORMATION_SHADER {
+        compute: [press, slopes, scroll, wipe, rebase],
+    }
+    clouds = CLOUDS_SHADER {
+        compute: [make_noise, shadow_clouds, march_clouds, march_view],
+    }
+    sky = SKY_SHADER {
+        compute: [build_transmittance, build_multiple, build_sky_view, derive_light],
+    }
+    scatter_cull = SCATTER_CULL_SHADER {
+        compute: [cull_scatter],
+    }
+    scatter_snap = SCATTER_SNAP_SHADER {
+        compute: [snap_scatter],
+    }
+    occupancy = OCCUPANCY_SHADER {
+        vertex: [vs_splat],
+        fragment: [fs_splat],
+    }
+    terrain_shadow = TERRAIN_SHADOW_SHADER {
+        vertex: [vs_terrain_shadow],
+    }
+    presentation = PRESENTATION_SHADER {
+        compute: [
+            shift_previous, compose_parents, cull, fade_levels, occlusion_test, count_still,
+            probe_cull, skin_palette, skin_bounds_pass, sum_groups, scan_groups, batch_args, scatter
+        ],
+    }
+    depth_pyramid = DEPTH_PYRAMID_SHADER {
+        compute: [pyramid_first, pyramid_down, pyramid_first_nearest, pyramid_down_nearest],
+    }
+    virtual_geometry = VIRTUAL_SHADER {
+        vertex: [vs_shadow],
+        compute: [
+            seed, level_args_even, level_args_odd, traverse_even, traverse_odd, work_args,
+            select_clusters, retest_args, retest_clusters, bin_args
+        ],
+    }
+    visibility = VISIBILITY_SHADER {
+        compute: [classify_tiles, resolve_args],
+    }
+    temporal = TEMPORAL_SHADER {
+        vertex: [vs_fullscreen],
+        fragment: [fs_resolve],
+    }
+    mipmaps = MIPMAP_SHADER {
+        vertex: [vs_mip],
+        fragment: [fs_mip],
+    }
+    lights = LIGHT_SHADER {
+        compute: [count_lights, bin_lights, scan_clusters],
+    }
+    particles = PARTICLE_SHADER {
+        vertex: [vs_particle],
+        fragment: [fs_particle, fs_particle_add, fs_particle_add_post],
+    }
+    transparent = TRANSPARENT_SHADER {
+        vertex: [vs_fullscreen],
+        fragment: [fs_composite],
+    }
+    shafts = SHAFTS_SHADER {
+        vertex: [vs_fullscreen],
+        fragment: [fs_shafts],
+    }
+    shadow = SHADOW_SHADER {
+        vertex: [
+            vs_affine, vs_clear, vs_affine_masked, vs_affine_skinned, vs_affine_masked_skinned,
+            vs_impostor_card
+        ],
+        fragment: [fs_impostor_card, fs_masked],
+        compute: [select_skinned, select_casters, count_casters],
+    }
+    post = POST_SHADER {
+        vertex: [vs_fullscreen],
+        fragment: [
+            fs_occlusion, fs_effects_filter, fs_reflections, fs_reflections_filter, fs_bloom_first,
+            fs_bloom_down, fs_levels_first, fs_levels_down, fs_bloom_up, fs_composite
+        ],
+    }
+    environment = ENVIRONMENT_SHADER {
+        vertex: [vs_environment],
+        fragment: [fs_environment_sky, fs_environment_down, fs_environment_prefilter],
+    }
 }

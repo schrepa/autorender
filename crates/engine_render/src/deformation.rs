@@ -8,6 +8,7 @@
 //! units, which shading scales by what is left of a track since the
 //! reference time, and which a rebase scales once that falls below half.
 
+use crate::shaders::entry::deformation;
 use engine_core::math::{max, min};
 use engine_core::{DeformationMap, RIM_REACH, RenderDeformation};
 
@@ -442,6 +443,12 @@ fn pipelines(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> [wgpu::Co
         immediate_size: 0,
     });
     // In `Entry`'s order.
-    ["wipe", "scroll", "rebase", "press", "slopes"]
-        .map(|entry| crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry))
+    [
+        deformation::wipe,
+        deformation::scroll,
+        deformation::rebase,
+        deformation::press,
+        deformation::slopes,
+    ]
+    .map(|entry| crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry))
 }

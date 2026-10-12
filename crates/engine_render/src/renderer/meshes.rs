@@ -397,7 +397,7 @@ fn sky_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     (camera_layout, clouds_layout): (&wgpu::BindGroupLayout, &wgpu::BindGroupLayout),
-    fragment: &str,
+    fragment: crate::shaders::Entry,
     targets: &[Option<wgpu::ColorTargetState>],
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -469,7 +469,9 @@ fn mesh_pipeline(
     };
     // Entry points and variant bits name the pipeline in captures.
     let label = format!(
-        "engine/mesh {vertex_entry} {fragment_entry} {:#06x}",
+        "engine/mesh {} {} {:#06x}",
+        vertex_entry.name,
+        fragment_entry.name,
         variant.bits()
     );
     crate::pipelines::geometry(

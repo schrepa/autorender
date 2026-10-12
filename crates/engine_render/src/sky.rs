@@ -8,6 +8,7 @@
 //! pass reads them. The sky's passes and the environment maps sample the
 //! sky-view and transmittance tables.
 
+use crate::shaders::entry::sky;
 use engine_core::Sky;
 use glam::Vec3;
 
@@ -382,8 +383,9 @@ fn passes(
         bind_group_layouts: &[Some(layout)],
         immediate_size: 0,
     });
-    let pipeline =
-        |entry: &str| crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry);
+    let pipeline = |entry: crate::shaders::Entry| {
+        crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry)
+    };
     let group = |reads: [&Table; 3], out: &Table| {
         crate::pipelines::group(
             device,
@@ -405,10 +407,10 @@ fn passes(
         )
     };
     Passes {
-        transmittance: pipeline("build_transmittance"),
-        multiple: pipeline("build_multiple"),
-        view: pipeline("build_sky_view"),
-        derive: pipeline("derive_light"),
+        transmittance: pipeline(sky::build_transmittance),
+        multiple: pipeline(sky::build_multiple),
+        view: pipeline(sky::build_sky_view),
+        derive: pipeline(sky::derive_light),
         // A pass never reads the table it writes.
         groups: [
             group([blank, blank, blank], transmittance),

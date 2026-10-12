@@ -3,6 +3,7 @@
 //! the eight storage buffers per stage WebGPU guarantees, and passes skipping
 //! some bind fillers there.
 
+use crate::shaders::entry::presentation;
 use std::cell::OnceCell;
 
 use crate::bindings::{
@@ -68,19 +69,19 @@ impl Shaders {
             fades: Family::new(device, &PRESENTATION_FADES, &[]),
             skin_bounds: OnceCell::new(),
         };
-        let pipeline = |entry: &str, family: &Family| {
+        let pipeline = |entry: crate::shaders::Entry, family: &Family| {
             crate::pipelines::compute_entry(device, &family.pipeline, &module, entry)
         };
         let pipelines = Pipelines {
-            shift_previous: pipeline("shift_previous", &families.tests),
-            compose_parents: pipeline("compose_parents", &families.compose),
-            cull: pipeline("cull", &families.cull),
-            sum_groups: pipeline("sum_groups", &families.compact),
-            scan_groups: pipeline("scan_groups", &families.compact),
-            batch_args: pipeline("batch_args", &families.compact),
-            scatter: pipeline("scatter", &families.compact),
-            occlusion_test: pipeline("occlusion_test", &families.tests),
-            fade_levels: pipeline("fade_levels", &families.fades),
+            shift_previous: pipeline(presentation::shift_previous, &families.tests),
+            compose_parents: pipeline(presentation::compose_parents, &families.compose),
+            cull: pipeline(presentation::cull, &families.cull),
+            sum_groups: pipeline(presentation::sum_groups, &families.compact),
+            scan_groups: pipeline(presentation::scan_groups, &families.compact),
+            batch_args: pipeline(presentation::batch_args, &families.compact),
+            scatter: pipeline(presentation::scatter, &families.compact),
+            occlusion_test: pipeline(presentation::occlusion_test, &families.tests),
+            fade_levels: pipeline(presentation::fade_levels, &families.fades),
             skin_palette: OnceCell::new(),
             skin_bounds: OnceCell::new(),
             count_still: OnceCell::new(),
@@ -107,7 +108,7 @@ impl Shaders {
         device: &wgpu::Device,
         cell: &'a OnceCell<wgpu::ComputePipeline>,
         family: &Family,
-        entry: &str,
+        entry: crate::shaders::Entry,
     ) -> &'a wgpu::ComputePipeline {
         cell.get_or_init(|| {
             crate::pipelines::compute_entry(device, &family.pipeline, &self.module, entry)
@@ -117,7 +118,12 @@ impl Shaders {
     /// Skinned slots' palettes.
     pub(super) fn skin_palette(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         let family = &self.families.compose;
-        self.lazy(device, &self.pipelines.skin_palette, family, "skin_palette")
+        self.lazy(
+            device,
+            &self.pipelines.skin_palette,
+            family,
+            presentation::skin_palette,
+        )
     }
 
     /// Skinned slots' bounds from their palettes.
@@ -127,20 +133,30 @@ impl Shaders {
             device,
             &self.pipelines.skin_bounds,
             family,
-            "skin_bounds_pass",
+            presentation::skin_bounds_pass,
         )
     }
 
     /// Reflection probes' count of slots' still frames.
     pub(super) fn count_still(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         let family = &self.families.tests;
-        self.lazy(device, &self.pipelines.count_still, family, "count_still")
+        self.lazy(
+            device,
+            &self.pipelines.count_still,
+            family,
+            presentation::count_still,
+        )
     }
 
     /// The culling of reflection probe faces.
     pub(super) fn probe_cull(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         let family = &self.families.tests;
-        self.lazy(device, &self.pipelines.probe_cull, family, "probe_cull")
+        self.lazy(
+            device,
+            &self.pipelines.probe_cull,
+            family,
+            presentation::probe_cull,
+        )
     }
 
     /// A group of `family`'s layout binding `resources` by name, filled

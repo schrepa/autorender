@@ -4,6 +4,7 @@
 //! composite pass. Everything here is created with the first frame that has
 //! emitters.
 
+use crate::shaders::entry::particles;
 use engine_core::{ParticleBlend, RenderEmitter};
 
 pub(crate) use crate::gpu_layouts::particles::EmitterData;
@@ -180,7 +181,7 @@ mod gpu {
                 device,
                 &pipeline_layout,
                 &module,
-                "fs_particle",
+                particles::fs_particle,
                 transparent_targets,
                 depth_format,
                 &[],
@@ -348,7 +349,7 @@ mod gpu {
                     device,
                     &self.pipeline_layout,
                     &self.module,
-                    "fs_particle_add_post",
+                    particles::fs_particle_add_post,
                     &[
                         target(crate::post::SCENE_FORMAT, add),
                         target(crate::post::GLOW_FORMAT, brightest),
@@ -361,7 +362,7 @@ mod gpu {
                     device,
                     &self.pipeline_layout,
                     &self.module,
-                    "fs_particle_add",
+                    particles::fs_particle_add,
                     &[target(self.surface_format, add)],
                     self.depth_format,
                     &[],
@@ -409,7 +410,7 @@ mod gpu {
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
         module: &wgpu::ShaderModule,
-        fragment: &str,
+        fragment: crate::shaders::Entry,
         targets: &[Option<wgpu::ColorTargetState>],
         depth_format: wgpu::TextureFormat,
         constants: &[(&str, f64)],
@@ -421,7 +422,7 @@ mod gpu {
                 layout,
                 module,
                 vertex_constants: &[],
-                vertex: "vs_particle",
+                vertex: particles::vs_particle,
                 buffers: &[],
                 // One four-vertex strip per instance.
                 primitive: wgpu::PrimitiveState {

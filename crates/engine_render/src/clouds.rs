@@ -18,6 +18,7 @@
 //! while the camera is in or above the layer, and the view's sky shows no
 //! dome then; under it, the dome shows the sky's clouds as before.
 
+use crate::shaders::entry::{clouds, meshes};
 use engine_core::collections::HashMap;
 
 use engine_core::Clouds;
@@ -933,7 +934,7 @@ fn view_pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu:
         bind_group_layouts: &[Some(layout)],
         immediate_size: 0,
     });
-    crate::pipelines::compute_entry(device, &layout, &module, "march_view")
+    crate::pipelines::compute_entry(device, &layout, &module, clouds::march_view)
 }
 
 /// The composite of the view's clouds into `format`, the
@@ -959,9 +960,9 @@ fn composite_pipeline(
             depth: None,
             fragment: Some(crate::pipelines::Fragment {
                 entry: if canvas {
-                    "fs_view_clouds"
+                    meshes::fs_view_clouds
                 } else {
-                    "fs_view_clouds_post"
+                    meshes::fs_view_clouds_post
                 },
                 constants: &[],
                 targets: &[Some(wgpu::ColorTargetState {
@@ -1068,8 +1069,8 @@ fn pipelines(
     };
     let march = layout(march_layout);
     [
-        crate::pipelines::compute_entry(device, &layout(noise_layout), &module, "make_noise"),
-        crate::pipelines::compute_entry(device, &march, &module, "march_clouds"),
-        crate::pipelines::compute_entry(device, &march, &module, "shadow_clouds"),
+        crate::pipelines::compute_entry(device, &layout(noise_layout), &module, clouds::make_noise),
+        crate::pipelines::compute_entry(device, &march, &module, clouds::march_clouds),
+        crate::pipelines::compute_entry(device, &march, &module, clouds::shadow_clouds),
     ]
 }

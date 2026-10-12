@@ -8,6 +8,7 @@ use crate::bindings::{
     VIRTUAL_BIN, VIRTUAL_SEED, VIRTUAL_SELECT, VIRTUAL_SHADOW, VIRTUAL_TRAVERSE,
 };
 use crate::pipelines::{Family, Fillers, layout};
+use crate::shaders::entry::virtual_geometry;
 use crate::shadows::SHADOW_FORMAT;
 
 pub(super) struct Pipelines {
@@ -32,24 +33,24 @@ impl Pipelines {
         let traverse_family = Family::new(device, &VIRTUAL_TRAVERSE, &[]);
         let select_family = Family::new(device, &VIRTUAL_SELECT, &[]);
         let bin_family = Family::new(device, &VIRTUAL_BIN, &[]);
-        let pipeline = |entry: &str, family: &Family| {
+        let pipeline = |entry: crate::shaders::Entry, family: &Family| {
             crate::pipelines::compute_entry(device, &family.pipeline, module, entry)
         };
         Self {
-            seed: pipeline("seed", &seed_family),
+            seed: pipeline(virtual_geometry::seed, &seed_family),
             level_args: [
-                pipeline("level_args_even", &seed_family),
-                pipeline("level_args_odd", &seed_family),
+                pipeline(virtual_geometry::level_args_even, &seed_family),
+                pipeline(virtual_geometry::level_args_odd, &seed_family),
             ],
             traverse: [
-                pipeline("traverse_even", &traverse_family),
-                pipeline("traverse_odd", &traverse_family),
+                pipeline(virtual_geometry::traverse_even, &traverse_family),
+                pipeline(virtual_geometry::traverse_odd, &traverse_family),
             ],
-            work_args: pipeline("work_args", &seed_family),
-            select: pipeline("select_clusters", &select_family),
-            bin_args: pipeline("bin_args", &bin_family),
-            retest_args: pipeline("retest_args", &seed_family),
-            retest: pipeline("retest_clusters", &select_family),
+            work_args: pipeline(virtual_geometry::work_args, &seed_family),
+            select: pipeline(virtual_geometry::select_clusters, &select_family),
+            bin_args: pipeline(virtual_geometry::bin_args, &bin_family),
+            retest_args: pipeline(virtual_geometry::retest_args, &seed_family),
+            retest: pipeline(virtual_geometry::retest_clusters, &select_family),
             seed_family,
             traverse_family,
             select_family,
@@ -93,7 +94,7 @@ impl ShadowDrawing {
                 layout: &pipeline_layout,
                 module,
                 vertex_constants: &[],
-                vertex: "vs_shadow",
+                vertex: virtual_geometry::vs_shadow,
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: VISIBLE_BYTES,
                     step_mode: wgpu::VertexStepMode::Instance,

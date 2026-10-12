@@ -426,8 +426,8 @@ impl Renderer {
 
 /// A virtual geometry pipeline's entry points, color targets and constants.
 pub(super) struct VirtualStages {
-    pub(super) vertex: &'static str,
-    pub(super) fragment: &'static str,
+    pub(super) vertex: crate::shaders::Entry,
+    pub(super) fragment: crate::shaders::Entry,
     pub(super) targets: Vec<Option<wgpu::ColorTargetState>>,
     pub(super) constants: Vec<(&'static str, f64)>,
 }

@@ -7,6 +7,7 @@ use super::atlas::TileAtlas;
 use super::patches::{PatchDraws, patch_layout};
 use super::tables::TerrainTables;
 use super::*;
+use crate::shaders::entry::meshes;
 
 /// The generations of what the terrain group binds: the atlas, uniforms,
 /// hole bits, directory, material maps, sky maps and deformation map.
@@ -245,7 +246,7 @@ impl TerrainPipelines {
                 device,
                 shader,
                 &layout,
-                ("vs_terrain", "fs_terrain_ids", holes),
+                (meshes::vs_terrain, meshes::fs_terrain_ids, holes),
                 &ids,
                 depth,
                 wgpu::FrontFace::Ccw,
@@ -253,10 +254,10 @@ impl TerrainPipelines {
             self.deferred_ids.insert(holes, pipeline);
         }
         let fragment = match (targets, lit) {
-            (Targets::Post, false) => "fs_terrain_resolve_post",
-            (Targets::Post, true) => "fs_terrain_resolve_post_lit",
-            (Targets::Temporal, false) => "fs_terrain_resolve_temporal",
-            (Targets::Temporal, true) => "fs_terrain_resolve_temporal_lit",
+            (Targets::Post, false) => meshes::fs_terrain_resolve_post,
+            (Targets::Post, true) => meshes::fs_terrain_resolve_post_lit,
+            (Targets::Temporal, false) => meshes::fs_terrain_resolve_temporal,
+            (Targets::Temporal, true) => meshes::fs_terrain_resolve_temporal_lit,
             (Targets::Canvas, _) => return,
         };
         if self.resolves.contains_key(&(targets, lit)) {
@@ -285,7 +286,7 @@ impl TerrainPipelines {
                 label: "engine/terrain-resolve",
                 layout: &layout,
                 module: shader,
-                vertex: "vs_terrain_resolve",
+                vertex: meshes::vs_terrain_resolve,
                 fragment,
                 constants: &[],
                 targets: &color_targets,
@@ -404,7 +405,7 @@ fn geometry(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
-    (vertex, fragment, holes): (&str, &str, bool),
+    (vertex, fragment, holes): (crate::shaders::Entry, crate::shaders::Entry, bool),
     targets: &[Option<wgpu::ColorTargetState>],
     depth: wgpu::TextureFormat,
     front_face: wgpu::FrontFace,

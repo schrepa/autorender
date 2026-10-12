@@ -12,6 +12,7 @@
 use crate::gpu_layouts::constants::GROUP_LIGHTS as LIGHTS;
 pub(crate) use crate::gpu_layouts::constants::LIGHT_BYTES;
 use crate::gpu_layouts::constants::NO_SLOT;
+use crate::shaders::entry::lights;
 use engine_core::{RenderLight, glam::Mat4};
 
 /// Screen tiles across and down, and exponential depth slices.
@@ -187,13 +188,14 @@ mod gpu {
                 bind_group_layouts: &[Some(&compute_layout)],
                 immediate_size: 0,
             });
-            let pipeline =
-                |entry: &str| crate::pipelines::compute_entry(device, &layout, &module, entry);
+            let pipeline = |entry: crate::shaders::Entry| {
+                crate::pipelines::compute_entry(device, &layout, &module, entry)
+            };
             let none = wgpu::BufferUsages::empty();
             Self {
-                count: pipeline("count_lights"),
-                scan: pipeline("scan_clusters"),
-                fill: pipeline("bin_lights"),
+                count: pipeline(lights::count_lights),
+                scan: pipeline(lights::scan_clusters),
+                fill: pipeline(lights::bin_lights),
                 compute_layout,
                 fragment_layout,
                 uniform: crate::buffers::uniform(

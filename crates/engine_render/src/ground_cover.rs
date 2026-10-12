@@ -10,6 +10,7 @@
 //! farthest tend to drop first. Nothing here exists until a frame has cover
 //! to grow.
 
+use crate::shaders::entry::cover_grow;
 use engine_core::collections::HashMap;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -575,7 +576,12 @@ fn compute(
         immediate_size: 0,
     });
     (
-        crate::pipelines::compute_entry(device, &pipeline_layout, &module, "grow_cover"),
-        crate::pipelines::compute_entry(device, &pipeline_layout, &module, "finish_cover"),
+        crate::pipelines::compute_entry(device, &pipeline_layout, &module, cover_grow::grow_cover),
+        crate::pipelines::compute_entry(
+            device,
+            &pipeline_layout,
+            &module,
+            cover_grow::finish_cover,
+        ),
     )
 }

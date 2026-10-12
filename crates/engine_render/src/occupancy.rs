@@ -9,6 +9,7 @@
 //! when it no longer holds the camera's surroundings or the objects
 //! changed.
 
+use crate::shaders::entry::occupancy;
 use engine_core::Occupancy;
 use engine_core::glam::Vec3;
 
@@ -439,13 +440,13 @@ fn pipeline(
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &module,
-                entry_point: Some("vs_splat"),
+                entry_point: Some(occupancy::vs_splat.name),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &module,
-                entry_point: Some("fs_splat"),
+                entry_point: Some(occupancy::fs_splat.name),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[
                     Some(wgpu::ColorTargetState {

@@ -4,6 +4,7 @@
 //! control values of tiles uploaded each frame.
 
 use super::*;
+use crate::shaders::entry::{terrain_control, terrain_normals};
 use std::collections::BTreeMap;
 
 /// The arrays: heights, control values and normals, a layer per tile.
@@ -441,8 +442,12 @@ impl TileAtlas {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-            let pipeline =
-                crate::pipelines::compute_entry(device, &pipeline_layout, &module, "tile_control");
+            let pipeline = crate::pipelines::compute_entry(
+                device,
+                &pipeline_layout,
+                &module,
+                terrain_control::tile_control,
+            );
             (layout, pipeline)
         });
     }
@@ -568,8 +573,12 @@ impl TileAtlas {
                 bind_group_layouts: &[Some(&layout)],
                 immediate_size: 0,
             });
-            let pipeline =
-                crate::pipelines::compute_entry(device, &pipeline_layout, &module, "tile_normals");
+            let pipeline = crate::pipelines::compute_entry(
+                device,
+                &pipeline_layout,
+                &module,
+                terrain_normals::tile_normals,
+            );
             (layout, pipeline)
         });
     }

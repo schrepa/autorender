@@ -14,6 +14,7 @@
 //! the camera sees them, cards cast facing the sun, and the
 //! moving map without the camera's cards. They are never occlusion culled.
 
+use crate::shaders::entry::{scatter_cull, scatter_snap};
 use engine_core::glam::{Mat4, Vec3};
 
 use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, TEMPORAL_POSES};
@@ -821,7 +822,12 @@ fn snap_pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu:
         bind_group_layouts: &[Some(layout)],
         immediate_size: 0,
     });
-    crate::pipelines::compute_entry(device, &pipeline_layout, &module, "snap_scatter")
+    crate::pipelines::compute_entry(
+        device,
+        &pipeline_layout,
+        &module,
+        scatter_snap::snap_scatter,
+    )
 }
 
 fn pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {
@@ -834,5 +840,10 @@ fn pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::Comp
         bind_group_layouts: &[Some(layout)],
         immediate_size: 0,
     });
-    crate::pipelines::compute_entry(device, &pipeline_layout, &module, "cull_scatter")
+    crate::pipelines::compute_entry(
+        device,
+        &pipeline_layout,
+        &module,
+        scatter_cull::cull_scatter,
+    )
 }

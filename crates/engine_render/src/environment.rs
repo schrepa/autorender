@@ -10,6 +10,7 @@ use crate::bindings::{ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY};
 use crate::cached::{Bound, Versioned};
 use crate::gpu_data::{ENVIRONMENT_SHADER, LightingUniform, mip_levels};
 use crate::probes::FACES;
+use crate::shaders::entry::environment;
 
 /// Linear radiance: the sky and what reflects it exceed 1.
 pub(crate) const ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -95,19 +96,19 @@ impl Environment {
         };
         let targets: [Option<wgpu::ColorTargetState>; FACES_PER_PASS] =
             std::array::from_fn(|_| Some(ENVIRONMENT_FORMAT.into()));
-        let pipeline = |entry: &str, group: &wgpu::BindGroupLayout| {
+        let pipeline = |entry: crate::shaders::Entry, group: &wgpu::BindGroupLayout| {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(entry),
+                label: Some(entry.name),
                 bind_group_layouts: &[Some(group)],
                 immediate_size: 0,
             });
             crate::pipelines::fullscreen(
                 device,
                 &crate::pipelines::Fullscreen {
-                    label: entry,
+                    label: entry.name,
                     layout: &layout,
                     module: &module,
-                    vertex: "vs_environment",
+                    vertex: environment::vs_environment,
                     fragment: entry,
                     constants: &[],
                     targets: &targets,
@@ -115,9 +116,9 @@ impl Environment {
                 },
             )
         };
-        let sky = pipeline("fs_environment_sky", &layouts.sky);
-        let down = pipeline("fs_environment_down", &layouts.down);
-        let prefilter = pipeline("fs_environment_prefilter", &layouts.prefilter);
+        let sky = pipeline(environment::fs_environment_sky, &layouts.sky);
+        let down = pipeline(environment::fs_environment_down, &layouts.down);
+        let prefilter = pipeline(environment::fs_environment_prefilter, &layouts.prefilter);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/environment-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,

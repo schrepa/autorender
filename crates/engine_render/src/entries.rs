@@ -1,8 +1,10 @@
-//! The mesh shader's entry points (`gpu_data::SHADER`) as typed keys: what
-//! a pipeline draws names its vertex and fragment stages here, by
-//! exhaustive matches over string literals.
+//! The mesh shader's entry points (`gpu_data::SHADER`) by what they draw:
+//! a pipeline names its vertex and fragment stages here, by exhaustive
+//! matches over the entry points `crate::shaders::entry` declares.
 
 use crate::render_graph::Targets;
+use crate::shaders::Entry;
+use crate::shaders::entry::{meshes, terrain_shadow};
 
 /// A mesh pass: opaque into the frame's targets, transparent surfaces
 /// accumulated, or a reflection probe face (
@@ -79,181 +81,195 @@ impl PassKind {
     }
 
     /// The vertex stage drawing meshes of `streams` in this pass.
-    pub(crate) fn vertex_entry(self, streams: Streams) -> &'static str {
+    pub(crate) fn vertex_entry(self, streams: Streams) -> Entry {
         match (self.slots(), streams) {
-            (Slots::Retained, Streams::Basic) => "vs_affine",
-            (Slots::Retained, Streams::Extended) => "vs_affine_extended",
-            (Slots::Retained, Streams::Skinned) => "vs_affine_skinned",
-            (Slots::Temporal, Streams::Basic) => "vs_affine_temporal",
-            (Slots::Temporal, Streams::Extended) => "vs_affine_temporal_extended",
-            (Slots::Temporal, Streams::Skinned) => "vs_affine_temporal_skinned",
+            (Slots::Retained, Streams::Basic) => meshes::vs_affine,
+            (Slots::Retained, Streams::Extended) => meshes::vs_affine_extended,
+            (Slots::Retained, Streams::Skinned) => meshes::vs_affine_skinned,
+            (Slots::Temporal, Streams::Basic) => meshes::vs_affine_temporal,
+            (Slots::Temporal, Streams::Extended) => meshes::vs_affine_temporal_extended,
+            (Slots::Temporal, Streams::Skinned) => meshes::vs_affine_temporal_skinned,
         }
     }
 
     /// The fragment stage of this pass for meshes with a second vertex
     /// stream (`extended`) or without.
-    pub(crate) fn fragment_entry(self, extended: bool) -> &'static str {
+    pub(crate) fn fragment_entry(self, extended: bool) -> Entry {
         match (self.pass, self.lit, extended) {
-            (MeshPass::Opaque(Targets::Canvas), false, false) => "fs_main",
-            (MeshPass::Opaque(Targets::Canvas), true, false) => "fs_main_lit",
-            (MeshPass::Opaque(Targets::Canvas), false, true) => "fs_main_extended",
-            (MeshPass::Opaque(Targets::Canvas), true, true) => "fs_main_lit_extended",
-            (MeshPass::Opaque(Targets::Post), false, false) => "fs_post",
-            (MeshPass::Opaque(Targets::Post), true, false) => "fs_post_lit",
-            (MeshPass::Opaque(Targets::Post), false, true) => "fs_post_extended",
-            (MeshPass::Opaque(Targets::Post), true, true) => "fs_post_lit_extended",
-            (MeshPass::Opaque(Targets::Temporal), false, false) => "fs_temporal",
-            (MeshPass::Opaque(Targets::Temporal), true, false) => "fs_temporal_lit",
-            (MeshPass::Opaque(Targets::Temporal), false, true) => "fs_temporal_extended",
-            (MeshPass::Opaque(Targets::Temporal), true, true) => "fs_temporal_lit_extended",
-            (MeshPass::Transparent, false, false) => "fs_transparent",
-            (MeshPass::Transparent, true, false) => "fs_transparent_lit",
-            (MeshPass::Transparent, false, true) => "fs_transparent_extended",
-            (MeshPass::Transparent, true, true) => "fs_transparent_lit_extended",
-            (MeshPass::Probe, false, false) => "fs_probe",
-            (MeshPass::Probe, true, false) => "fs_probe_lit",
-            (MeshPass::Probe, false, true) => "fs_probe_extended",
-            (MeshPass::Probe, true, true) => "fs_probe_lit_extended",
+            (MeshPass::Opaque(Targets::Canvas), false, false) => meshes::fs_main,
+            (MeshPass::Opaque(Targets::Canvas), true, false) => meshes::fs_main_lit,
+            (MeshPass::Opaque(Targets::Canvas), false, true) => meshes::fs_main_extended,
+            (MeshPass::Opaque(Targets::Canvas), true, true) => meshes::fs_main_lit_extended,
+            (MeshPass::Opaque(Targets::Post), false, false) => meshes::fs_post,
+            (MeshPass::Opaque(Targets::Post), true, false) => meshes::fs_post_lit,
+            (MeshPass::Opaque(Targets::Post), false, true) => meshes::fs_post_extended,
+            (MeshPass::Opaque(Targets::Post), true, true) => meshes::fs_post_lit_extended,
+            (MeshPass::Opaque(Targets::Temporal), false, false) => meshes::fs_temporal,
+            (MeshPass::Opaque(Targets::Temporal), true, false) => meshes::fs_temporal_lit,
+            (MeshPass::Opaque(Targets::Temporal), false, true) => meshes::fs_temporal_extended,
+            (MeshPass::Opaque(Targets::Temporal), true, true) => meshes::fs_temporal_lit_extended,
+            (MeshPass::Transparent, false, false) => meshes::fs_transparent,
+            (MeshPass::Transparent, true, false) => meshes::fs_transparent_lit,
+            (MeshPass::Transparent, false, true) => meshes::fs_transparent_extended,
+            (MeshPass::Transparent, true, true) => meshes::fs_transparent_lit_extended,
+            (MeshPass::Probe, false, false) => meshes::fs_probe,
+            (MeshPass::Probe, true, false) => meshes::fs_probe_lit,
+            (MeshPass::Probe, false, true) => meshes::fs_probe_extended,
+            (MeshPass::Probe, true, true) => meshes::fs_probe_lit_extended,
         }
     }
 }
 
 /// The sky: one triangle at the far plane (`meshes/sky.wgsl`).
-pub(crate) const SKY_VERTEX: &str = "vs_sky";
+pub(crate) const SKY_VERTEX: Entry = meshes::vs_sky;
 
 /// The sky's fragment stage into `targets`, or a reflection probe face's
 /// (`None`).
-pub(crate) fn sky_fragment(targets: Option<Targets>) -> &'static str {
+pub(crate) fn sky_fragment(targets: Option<Targets>) -> Entry {
     match targets {
-        Some(Targets::Canvas) => "fs_sky",
-        Some(Targets::Post) => "fs_sky_post",
-        Some(Targets::Temporal) => "fs_sky_temporal",
-        None => "fs_probe_sky",
+        Some(Targets::Canvas) => meshes::fs_sky,
+        Some(Targets::Post) => meshes::fs_sky_post,
+        Some(Targets::Temporal) => meshes::fs_sky_temporal,
+        None => meshes::fs_probe_sky,
     }
 }
 
 /// The vertex stage of virtual geometry's clusters drawn
 /// into `targets`; their fragments are the opaque passes'.
-pub(crate) fn virtual_vertex(targets: Targets) -> &'static str {
+pub(crate) fn virtual_vertex(targets: Targets) -> Entry {
     match targets {
-        Targets::Canvas | Targets::Post => "vs_virtual",
-        Targets::Temporal => "vs_virtual_temporal",
+        Targets::Canvas | Targets::Post => meshes::vs_virtual,
+        Targets::Temporal => meshes::vs_virtual_temporal,
     }
 }
 
 /// The visibility pass's stages.
-pub(crate) const VISIBILITY_VERTEX: &str = "vs_visibility";
-pub(crate) const VISIBILITY_FRAGMENT: &str = "fs_visibility";
+pub(crate) const VISIBILITY_VERTEX: Entry = meshes::vs_visibility;
+pub(crate) const VISIBILITY_FRAGMENT: Entry = meshes::fs_visibility;
 /// The vertex stage of the visibility buffer's resolve, over each bin's
 /// tiles.
-pub(crate) const RESOLVE_VERTEX: &str = "vs_resolve";
+pub(crate) const RESOLVE_VERTEX: Entry = meshes::vs_resolve;
 
 /// The resolve's fragment stage into `targets`, `lit` or not.
-pub(crate) fn resolve_fragment(targets: Targets, lit: bool) -> &'static str {
+pub(crate) fn resolve_fragment(targets: Targets, lit: bool) -> Entry {
     match (targets, lit) {
-        (Targets::Canvas, false) => "fs_resolve",
-        (Targets::Canvas, true) => "fs_resolve_lit",
-        (Targets::Post, false) => "fs_resolve_post",
-        (Targets::Post, true) => "fs_resolve_post_lit",
-        (Targets::Temporal, false) => "fs_resolve_temporal",
-        (Targets::Temporal, true) => "fs_resolve_temporal_lit",
+        (Targets::Canvas, false) => meshes::fs_resolve,
+        (Targets::Canvas, true) => meshes::fs_resolve_lit,
+        (Targets::Post, false) => meshes::fs_resolve_post,
+        (Targets::Post, true) => meshes::fs_resolve_post_lit,
+        (Targets::Temporal, false) => meshes::fs_resolve_temporal,
+        (Targets::Temporal, true) => meshes::fs_resolve_temporal_lit,
     }
 }
 
 /// The vertex stage of impostor cards drawn into `targets`.
-pub(crate) fn impostor_vertex(targets: Targets) -> &'static str {
+pub(crate) fn impostor_vertex(targets: Targets) -> Entry {
     match targets {
-        Targets::Canvas | Targets::Post => "vs_impostor",
-        Targets::Temporal => "vs_impostor_temporal",
+        Targets::Canvas | Targets::Post => meshes::vs_impostor,
+        Targets::Temporal => meshes::vs_impostor_temporal,
     }
 }
 
 /// The fragment stage of impostor cards into `targets`, `lit` or not.
-pub(crate) fn impostor_fragment(targets: Targets, lit: bool) -> &'static str {
+pub(crate) fn impostor_fragment(targets: Targets, lit: bool) -> Entry {
     match (targets, lit) {
-        (Targets::Canvas, false) => "fs_impostor",
-        (Targets::Canvas, true) => "fs_impostor_lit",
-        (Targets::Post, false) => "fs_impostor_post",
-        (Targets::Post, true) => "fs_impostor_post_lit",
-        (Targets::Temporal, false) => "fs_impostor_temporal",
-        (Targets::Temporal, true) => "fs_impostor_temporal_lit",
+        (Targets::Canvas, false) => meshes::fs_impostor,
+        (Targets::Canvas, true) => meshes::fs_impostor_lit,
+        (Targets::Post, false) => meshes::fs_impostor_post,
+        (Targets::Post, true) => meshes::fs_impostor_post_lit,
+        (Targets::Temporal, false) => meshes::fs_impostor_temporal,
+        (Targets::Temporal, true) => meshes::fs_impostor_temporal_lit,
     }
 }
 
 /// The vertex and fragment stages baking impostors of meshes with a second
 /// vertex stream (`extended`) or without: their colors, or with `shade`
 /// their frames' nearest depths.
-pub(crate) fn impostor_bake(extended: bool, shade: bool) -> (&'static str, &'static str) {
+pub(crate) fn impostor_bake(extended: bool, shade: bool) -> (Entry, Entry) {
     match (extended, shade) {
-        (false, false) => ("vs_impostor_bake", "fs_impostor_bake"),
-        (true, false) => ("vs_impostor_bake_extended", "fs_impostor_bake_extended"),
-        (false, true) => ("vs_impostor_bake", "fs_impostor_shade"),
-        (true, true) => ("vs_impostor_bake_extended", "fs_impostor_shade_extended"),
+        (false, false) => (meshes::vs_impostor_bake, meshes::fs_impostor_bake),
+        (true, false) => (
+            meshes::vs_impostor_bake_extended,
+            meshes::fs_impostor_bake_extended,
+        ),
+        (false, true) => (meshes::vs_impostor_bake, meshes::fs_impostor_shade),
+        (true, true) => (
+            meshes::vs_impostor_bake_extended,
+            meshes::fs_impostor_shade_extended,
+        ),
     }
 }
 
 /// Terrain's vertex and fragment stages into `targets`, or
 /// a reflection probe face's (`None`), `lit` or not.
-pub(crate) fn terrain(targets: Option<Targets>, lit: bool) -> (&'static str, &'static str) {
+pub(crate) fn terrain(targets: Option<Targets>, lit: bool) -> (Entry, Entry) {
     match (targets, lit) {
-        (Some(Targets::Canvas), false) => ("vs_terrain", "fs_terrain"),
-        (Some(Targets::Canvas), true) => ("vs_terrain", "fs_terrain_lit"),
-        (Some(Targets::Post), false) => ("vs_terrain", "fs_terrain_post"),
-        (Some(Targets::Post), true) => ("vs_terrain", "fs_terrain_post_lit"),
-        (Some(Targets::Temporal), false) => ("vs_terrain_temporal", "fs_terrain_temporal"),
-        (Some(Targets::Temporal), true) => ("vs_terrain_temporal", "fs_terrain_temporal_lit"),
-        (None, false) => ("vs_terrain", "fs_terrain_probe"),
-        (None, true) => ("vs_terrain", "fs_terrain_probe_lit"),
+        (Some(Targets::Canvas), false) => (meshes::vs_terrain, meshes::fs_terrain),
+        (Some(Targets::Canvas), true) => (meshes::vs_terrain, meshes::fs_terrain_lit),
+        (Some(Targets::Post), false) => (meshes::vs_terrain, meshes::fs_terrain_post),
+        (Some(Targets::Post), true) => (meshes::vs_terrain, meshes::fs_terrain_post_lit),
+        (Some(Targets::Temporal), false) => {
+            (meshes::vs_terrain_temporal, meshes::fs_terrain_temporal)
+        }
+        (Some(Targets::Temporal), true) => {
+            (meshes::vs_terrain_temporal, meshes::fs_terrain_temporal_lit)
+        }
+        (None, false) => (meshes::vs_terrain, meshes::fs_terrain_probe),
+        (None, true) => (meshes::vs_terrain, meshes::fs_terrain_probe_lit),
     }
 }
 
 /// Water's vertex and fragment stages into `targets`.
-pub(crate) fn water(targets: Targets) -> (&'static str, &'static str) {
+pub(crate) fn water(targets: Targets) -> (Entry, Entry) {
     match targets {
-        Targets::Canvas => ("vs_water", "fs_water"),
-        Targets::Post => ("vs_water", "fs_water_post"),
-        Targets::Temporal => ("vs_water_temporal", "fs_water_temporal"),
+        Targets::Canvas => (meshes::vs_water, meshes::fs_water),
+        Targets::Post => (meshes::vs_water, meshes::fs_water_post),
+        Targets::Temporal => (meshes::vs_water_temporal, meshes::fs_water_temporal),
     }
 }
 
 /// Rivers' vertex and fragment stages into `targets`.
-pub(crate) fn river(targets: Targets) -> (&'static str, &'static str) {
+pub(crate) fn river(targets: Targets) -> (Entry, Entry) {
     match targets {
-        Targets::Canvas => ("vs_river", "fs_water"),
-        Targets::Post => ("vs_river", "fs_water_post"),
-        Targets::Temporal => ("vs_river_temporal", "fs_water_temporal"),
+        Targets::Canvas => (meshes::vs_river, meshes::fs_water),
+        Targets::Post => (meshes::vs_river, meshes::fs_water_post),
+        Targets::Temporal => (meshes::vs_river_temporal, meshes::fs_water_temporal),
     }
 }
 
 /// The sea's vertex and fragment stages into `targets`.
-pub(crate) fn ocean(targets: Targets) -> (&'static str, &'static str) {
+pub(crate) fn ocean(targets: Targets) -> (Entry, Entry) {
     match targets {
-        Targets::Canvas => ("vs_ocean", "fs_ocean"),
-        Targets::Post => ("vs_ocean", "fs_ocean_post"),
-        Targets::Temporal => ("vs_ocean_temporal", "fs_ocean_temporal"),
+        Targets::Canvas => (meshes::vs_ocean, meshes::fs_ocean),
+        Targets::Post => (meshes::vs_ocean, meshes::fs_ocean_post),
+        Targets::Temporal => (meshes::vs_ocean_temporal, meshes::fs_ocean_temporal),
     }
 }
 
 /// Ground cover's vertex and fragment stages into
 /// `targets`, `lit` or not.
-pub(crate) fn cover(targets: Targets, lit: bool) -> (&'static str, &'static str) {
+pub(crate) fn cover(targets: Targets, lit: bool) -> (Entry, Entry) {
     match (targets, lit) {
-        (Targets::Canvas, false) => ("vs_cover", "fs_cover"),
-        (Targets::Canvas, true) => ("vs_cover", "fs_cover_lit"),
-        (Targets::Post, false) => ("vs_cover", "fs_cover_post"),
-        (Targets::Post, true) => ("vs_cover", "fs_cover_post_lit"),
-        (Targets::Temporal, false) => ("vs_cover_temporal", "fs_cover_temporal"),
-        (Targets::Temporal, true) => ("vs_cover_temporal", "fs_cover_temporal_lit"),
+        (Targets::Canvas, false) => (meshes::vs_cover, meshes::fs_cover),
+        (Targets::Canvas, true) => (meshes::vs_cover, meshes::fs_cover_lit),
+        (Targets::Post, false) => (meshes::vs_cover, meshes::fs_cover_post),
+        (Targets::Post, true) => (meshes::vs_cover, meshes::fs_cover_post_lit),
+        (Targets::Temporal, false) => (meshes::vs_cover_temporal, meshes::fs_cover_temporal),
+        (Targets::Temporal, true) => (meshes::vs_cover_temporal, meshes::fs_cover_temporal_lit),
     }
 }
 
 /// Terrain's depth stage in shadow maps (`terrain_shadow.wgsl`).
-pub(crate) const TERRAIN_SHADOW_VERTEX: &str = "vs_terrain_shadow";
+pub(crate) const TERRAIN_SHADOW_VERTEX: Entry = terrain_shadow::vs_terrain_shadow;
 
 /// Decals' boxes.
-pub(crate) const DECAL_VERTEX: &str = "vs_decal";
+pub(crate) const DECAL_VERTEX: Entry = meshes::vs_decal;
 
 /// Decals' fragment stage, `lit` or not.
-pub(crate) fn decal_fragment(lit: bool) -> &'static str {
-    if lit { "fs_decal_lit" } else { "fs_decal" }
+pub(crate) fn decal_fragment(lit: bool) -> Entry {
+    if lit {
+        meshes::fs_decal_lit
+    } else {
+        meshes::fs_decal
+    }
 }

@@ -11,6 +11,7 @@ use crate::cached::{Bound, GroupCache, Versioned};
 use crate::gpu_data::VISIBILITY_SHADER;
 use crate::gpu_layouts::constants::RESOLVE_ARGS_GROUP;
 use crate::gpu_layouts::constants::VISIBILITY_TILE as TILE;
+use crate::shaders::entry::visibility;
 use crate::targets::{FrameSize, ScreenTarget};
 
 /// Each pixel's visible entry plus one (0: none) and its triangle | bin << 7.
@@ -72,12 +73,13 @@ impl VisibilityBuffer {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline =
-            |entry: &str| crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry);
+        let pipeline = |entry: crate::shaders::Entry| {
+            crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry)
+        };
         let none = wgpu::BufferUsages::empty();
         Self {
-            classify: pipeline("classify_tiles"),
-            args: pipeline("resolve_args"),
+            classify: pipeline(visibility::classify_tiles),
+            args: pipeline(visibility::resolve_args),
             layout,
             ids: ScreenTarget::default(),
             tiles: (0, 0),

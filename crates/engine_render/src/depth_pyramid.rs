@@ -9,6 +9,7 @@ use crate::cached::{Cached, Versioned};
 use crate::gpu_data::{DEPTH_PYRAMID_SHADER, mip_levels};
 use crate::gpu_layouts::constants::PYRAMID_GROUP as GROUP;
 use crate::profiling::Span;
+use crate::shaders::entry::depth_pyramid;
 use crate::targets::FrameSize;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
@@ -63,17 +64,20 @@ impl DepthPyramid {
         // 12.
         let first_layout = crate::pipelines::layout(device, &PYRAMID_FIRST);
         let down_layout = crate::pipelines::layout(device, &PYRAMID_DOWN);
-        let pipeline = |entry: &str, group: &wgpu::BindGroupLayout| {
+        let pipeline = |entry: crate::shaders::Entry, group: &wgpu::BindGroupLayout| {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(entry),
+                label: Some(entry.name),
                 bind_group_layouts: &[Some(group)],
                 immediate_size: 0,
             });
             crate::pipelines::compute_entry(device, &layout, &module, entry)
         };
         let (first, down) = match reduction {
-            Reduction::Farthest => ("pyramid_first", "pyramid_down"),
-            Reduction::Nearest => ("pyramid_first_nearest", "pyramid_down_nearest"),
+            Reduction::Farthest => (depth_pyramid::pyramid_first, depth_pyramid::pyramid_down),
+            Reduction::Nearest => (
+                depth_pyramid::pyramid_first_nearest,
+                depth_pyramid::pyramid_down_nearest,
+            ),
         };
         Self {
             first: pipeline(first, &first_layout),

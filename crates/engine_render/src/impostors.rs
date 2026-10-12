@@ -835,7 +835,7 @@ mod gpu {
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: shader,
-                    entry_point: Some(vertex),
+                    entry_point: Some(vertex.name),
                     compilation_options: Default::default(),
                     buffers: &buffers,
                 },
@@ -858,7 +858,7 @@ mod gpu {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: shader,
-                    entry_point: Some(fragment),
+                    entry_point: Some(fragment.name),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &constants,
                         ..Default::default()

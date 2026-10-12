@@ -8,6 +8,7 @@ use engine_render::bindings::{
     Binding, Format, Kind, Sample, Sampling, Stages, TABLES, Table, View,
 };
 use engine_render::gpu_layouts::{Layout, constants, layouts};
+use engine_render::shaders::{ENTRIES, Stage};
 use naga::valid::{Capabilities, ValidationFlags, Validator};
 
 /// A module naga parsed and validated, and what its functions use.
@@ -456,6 +457,75 @@ fn check_bindings(modules: &[Checked]) -> Result<usize, String> {
     }
 }
 
+/// Every entry point `engine_render::shaders::ENTRIES` declares against its
+/// module: an entry point of the module, of the stage declared, declared
+/// once; and every entry point of every module declared there, so a stage
+/// no pipeline names does not linger. Returns how many there are.
+fn check_entries(modules: &[Checked]) -> Result<usize, String> {
+    let mut errors = Vec::new();
+    for (index, entry) in ENTRIES.iter().enumerate() {
+        if ENTRIES[..index]
+            .iter()
+            .any(|earlier| earlier.module == entry.module && earlier.name == entry.name)
+        {
+            errors.push(format!(
+                "{} `{}` is declared twice in entry_points!",
+                entry.module, entry.name
+            ));
+        }
+        let Some(checked) = modules.iter().find(|checked| checked.name == entry.module) else {
+            errors.push(format!(
+                "entry point `{}`: {} is not a shader module",
+                entry.name, entry.module
+            ));
+            continue;
+        };
+        match checked
+            .module
+            .entry_points
+            .iter()
+            .find(|point| point.name == entry.name)
+        {
+            None => errors.push(format!(
+                "{} has no entry point `{}` (entry_points! declares one)",
+                entry.module, entry.name
+            )),
+            Some(point) => {
+                let declared = match entry.stage {
+                    Stage::Vertex => Stages::VERTEX,
+                    Stage::Fragment => Stages::FRAGMENT,
+                    Stage::Compute => Stages::COMPUTE,
+                };
+                if stage_of(point.stage) != declared {
+                    errors.push(format!(
+                        "{} `{}` is a {:?} stage, declared {:?} in entry_points!",
+                        entry.module, entry.name, point.stage, entry.stage
+                    ));
+                }
+            }
+        }
+    }
+    for checked in modules {
+        for point in &checked.module.entry_points {
+            if !ENTRIES
+                .iter()
+                .any(|entry| entry.module == checked.name && entry.name == point.name)
+            {
+                errors.push(format!(
+                    "{} `{}` is in no entry_points! list (crates/engine_render/src/shaders.rs)",
+                    checked.name, point.name
+                ));
+            }
+        }
+    }
+    if errors.is_empty() {
+        Ok(ENTRIES.len())
+    } else {
+        Err(errors.join("
+"))
+    }
+}
+
 /// The module-scope constants of `module` with a literal value.
 fn wgsl_constants(module: &naga::Module) -> Vec<(&str, f64)> {
     module
@@ -796,12 +866,14 @@ pub fn check(root: &Path) -> Result<(), String> {
     let modules = modules()?;
     let mirrors = check_layouts(&modules);
     let entry_points = check_bindings(&modules);
+    let entries = check_entries(&modules);
     let shared = check_constants(root, &modules);
     let unused = check_unused(&modules);
     let structs = check_upload_structs(root);
     let errors: Vec<String> = [
         mirrors.as_ref().err(),
         entry_points.as_ref().err(),
+        entries.as_ref().err(),
         shared.as_ref().err(),
         unused.as_ref().err(),
         structs.as_ref().err(),
@@ -817,12 +889,13 @@ pub fn check(root: &Path) -> Result<(), String> {
         ));
     }
     println!(
-        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points; {} WGSL constants mirror {} Rust ones.",
+        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} WGSL constants mirror {} Rust ones.",
         modules.len(),
         mirrors?,
         layouts().len(),
         TABLES.len(),
         entry_points?,
+        entries?,
         shared?,
         constants().count()
     );

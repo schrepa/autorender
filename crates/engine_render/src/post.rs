@@ -13,6 +13,7 @@
 //! apply them in their resolve, other frames in a composite
 //! that writes the canvas.
 
+use crate::shaders::entry::{post, shafts};
 use engine_core::{RenderSnapshot, glam::Mat4};
 
 use crate::bindings::{POST, SHAFTS};
@@ -170,14 +171,14 @@ impl PostPass {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = |label, entry: &str, format: wgpu::TextureFormat, blend| {
+        let pipeline = |label, entry: crate::shaders::Entry, format: wgpu::TextureFormat, blend| {
             fullscreen(
                 device,
                 &Fullscreen {
                     label,
                     layout: &pipeline_layout,
                     module: &module,
-                    vertex: "vs_fullscreen",
+                    vertex: post::vs_fullscreen,
                     fragment: entry,
                     constants: &[],
                     targets: &[Some(wgpu::ColorTargetState {
@@ -189,14 +190,14 @@ impl PostPass {
                 },
             )
         };
-        let levels_pipeline = |label, entry: &str| {
+        let levels_pipeline = |label, entry: crate::shaders::Entry| {
             fullscreen(
                 device,
                 &Fullscreen {
                     label,
                     layout: &pipeline_layout,
                     module: &module,
-                    vertex: "vs_fullscreen",
+                    vertex: post::vs_fullscreen,
                     fragment: entry,
                     constants: &[],
                     targets: &[Some(SCENE_LEVEL_FORMAT.into()), Some(bloom_format.into())],
@@ -244,8 +245,8 @@ impl PostPass {
                 label: "engine/post-shafts",
                 layout: &shafts_pipeline_layout,
                 module: &shafts_module,
-                vertex: "vs_fullscreen",
-                fragment: "fs_shafts",
+                vertex: shafts::vs_fullscreen,
+                fragment: shafts::fs_shafts,
                 constants: &[],
                 targets: &[Some(SHAFT_FORMAT.into())],
                 depth: None,
@@ -256,25 +257,25 @@ impl PostPass {
             fillers: Fillers::new(device),
             occlusion: pipeline(
                 "engine/post-occlusion",
-                "fs_occlusion",
+                post::fs_occlusion,
                 RAW_OCCLUSION_FORMAT,
                 None,
             ),
             effects_filter: pipeline(
                 "engine/post-effects-filter",
-                "fs_effects_filter",
+                post::fs_effects_filter,
                 OCCLUSION_FORMAT,
                 None,
             ),
             reflections: pipeline(
                 "engine/post-reflections",
-                "fs_reflections",
+                post::fs_reflections,
                 REFLECTION_FORMAT,
                 None,
             ),
             reflections_filter: pipeline(
                 "engine/post-reflections-filter",
-                "fs_reflections_filter",
+                post::fs_reflections_filter,
                 REFLECTION_FORMAT,
                 None,
             ),
@@ -284,29 +285,29 @@ impl PostPass {
             shafts_layout,
             bloom_first: pipeline(
                 "engine/post-bloom-first",
-                "fs_bloom_first",
+                post::fs_bloom_first,
                 bloom_format,
                 None,
             ),
             bloom_down: pipeline(
                 "engine/post-bloom-down",
-                "fs_bloom_down",
+                post::fs_bloom_down,
                 bloom_format,
                 None,
             ),
-            bloom_up: pipeline("engine/post-bloom-up", "fs_bloom_up", bloom_format, add),
+            bloom_up: pipeline("engine/post-bloom-up", post::fs_bloom_up, bloom_format, add),
             scene_down: pipeline(
                 "engine/post-scene-down",
-                "fs_bloom_down",
+                post::fs_bloom_down,
                 SCENE_LEVEL_FORMAT,
                 None,
             ),
             bloom_format,
-            levels_first: levels_pipeline("engine/post-levels-first", "fs_levels_first"),
-            levels_down: levels_pipeline("engine/post-levels-down", "fs_levels_down"),
+            levels_first: levels_pipeline("engine/post-levels-first", post::fs_levels_first),
+            levels_down: levels_pipeline("engine/post-levels-down", post::fs_levels_down),
             composite: pipeline(
                 "engine/post-composite",
-                "fs_composite",
+                post::fs_composite,
                 surface_format,
                 None,
             ),

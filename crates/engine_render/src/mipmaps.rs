@@ -7,6 +7,7 @@
 
 use crate::bindings::MIPMAPS;
 use crate::gpu_data::MIPMAP_SHADER;
+use crate::shaders::entry::mipmaps;
 
 pub(crate) struct MipGenerator {
     // sRGB color and linear data targets.
@@ -38,8 +39,8 @@ impl MipGenerator {
                     label: "engine/texture-mips",
                     layout: &pipeline_layout,
                     module: &module,
-                    vertex: "vs_mip",
-                    fragment: "fs_mip",
+                    vertex: mipmaps::vs_mip,
+                    fragment: mipmaps::fs_mip,
                     constants: &[],
                     targets: &[Some(format.into())],
                     depth: None,

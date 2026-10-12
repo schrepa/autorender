@@ -10,6 +10,7 @@
 //! size change; until its first build completes, a terrain's ground sees
 //! the whole sky.
 
+use crate::shaders::entry::terrain_sky;
 use engine_core::collections::HashMap;
 
 use engine_core::{RenderTerrain, RenderTerrains, TerrainSettings, TileKey};
@@ -409,5 +410,5 @@ fn pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::Comp
         bind_group_layouts: &[Some(layout)],
         immediate_size: 0,
     });
-    crate::pipelines::compute_entry(device, &pipeline_layout, &module, "build_sky")
+    crate::pipelines::compute_entry(device, &pipeline_layout, &module, terrain_sky::build_sky)
 }

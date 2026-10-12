@@ -39,6 +39,7 @@
 //! path takes from each point's distance to the eye they bake from) the
 //! eye has turned by more than [`STALE_SHADING`] of a level.
 
+use crate::shaders::entry::meshes;
 use engine_core::collections::HashMap;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -875,8 +876,8 @@ impl VirtualTexture {
                     label: "engine/terrain-vt-bake",
                     layout: &layout,
                     module: shader,
-                    vertex: "vs_terrain_vt_bake",
-                    fragment: "fs_terrain_vt_bake",
+                    vertex: meshes::vs_terrain_vt_bake,
+                    fragment: meshes::fs_terrain_vt_bake,
                     constants: &[],
                     targets: &targets,
                     depth: None,
@@ -980,7 +981,7 @@ impl VirtualTexture {
                 bind_group_layouts: &[Some(&layouts[0]), Some(&layouts[1]), Some(&layouts[2])],
                 immediate_size: 0,
             });
-            crate::pipelines::compute_entry(device, &layout, shader, "cs_terrain_vt_feedback")
+            crate::pipelines::compute_entry(device, &layout, shader, meshes::cs_terrain_vt_feedback)
         });
         let camera_group = crate::pipelines::group(
             device,

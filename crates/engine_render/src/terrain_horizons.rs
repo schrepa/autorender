@@ -8,6 +8,7 @@
 //! lying on it, softening with that distance (`scene.wgsl`). Two texels per
 //! terrain place its map for those lookups.
 
+use crate::shaders::entry::terrain_horizon;
 use engine_core::collections::HashMap;
 
 use engine_core::glam::{Vec2, Vec3};
@@ -522,5 +523,10 @@ fn pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::Comp
         bind_group_layouts: &[Some(layout)],
         immediate_size: 0,
     });
-    crate::pipelines::compute_entry(device, &pipeline_layout, &module, "build_horizon")
+    crate::pipelines::compute_entry(
+        device,
+        &pipeline_layout,
+        &module,
+        terrain_horizon::build_horizon,
+    )
 }

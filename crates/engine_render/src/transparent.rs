@@ -8,6 +8,7 @@
 
 use crate::bindings::TRANSPARENT_COMPOSITE;
 use crate::gpu_data::TRANSPARENT_SHADER;
+use crate::shaders::entry::transparent;
 use crate::targets::{FrameSize, ScreenTarget};
 
 /// Weighted premultiplied color and coverage, added.
@@ -207,8 +208,8 @@ impl TransparentPass {
                 label: "engine/transparent-composite",
                 layout: &self.pipeline_layout,
                 module: &self.module,
-                vertex: "vs_fullscreen",
-                fragment: "fs_composite",
+                vertex: transparent::vs_fullscreen,
+                fragment: transparent::fs_composite,
                 constants: &constants,
                 targets: &targets,
                 depth: Some(wgpu::DepthStencilState {

@@ -3,6 +3,7 @@
 //! frames report when compiling ends: a frame that creates none compiles
 //! nothing, and hosts reveal the canvas once frames stop creating them.
 
+use crate::shaders::Entry;
 use std::{
     cell::Cell,
     sync::{
@@ -415,15 +416,15 @@ pub(crate) fn compute_entry(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     module: &wgpu::ShaderModule,
-    entry: &str,
+    entry: Entry,
 ) -> wgpu::ComputePipeline {
     compute(
         device,
         &wgpu::ComputePipelineDescriptor {
-            label: Some(entry),
+            label: Some(entry.name),
             layout: Some(layout),
             module,
-            entry_point: Some(entry),
+            entry_point: Some(entry.name),
             compilation_options: Default::default(),
             cache: None,
         },
@@ -437,7 +438,7 @@ pub(crate) struct Geometry<'a> {
     pub label: &'a str,
     pub layout: &'a wgpu::PipelineLayout,
     pub module: &'a wgpu::ShaderModule,
-    pub vertex: &'a str,
+    pub vertex: Entry,
     pub vertex_constants: &'a [(&'a str, f64)],
     pub buffers: &'a [Option<wgpu::VertexBufferLayout<'a>>],
     pub primitive: wgpu::PrimitiveState,
@@ -447,7 +448,7 @@ pub(crate) struct Geometry<'a> {
 
 /// A fragment stage: its entry point, pipeline constants and color targets.
 pub(crate) struct Fragment<'a> {
-    pub entry: &'a str,
+    pub entry: Entry,
     pub constants: &'a [(&'a str, f64)],
     pub targets: &'a [Option<wgpu::ColorTargetState>],
 }
@@ -461,7 +462,7 @@ pub(crate) fn geometry(device: &wgpu::Device, geometry: &Geometry<'_>) -> wgpu::
             layout: Some(geometry.layout),
             vertex: wgpu::VertexState {
                 module: geometry.module,
-                entry_point: Some(geometry.vertex),
+                entry_point: Some(geometry.vertex.name),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: geometry.vertex_constants,
                     ..Default::default()
@@ -476,7 +477,7 @@ pub(crate) fn geometry(device: &wgpu::Device, geometry: &Geometry<'_>) -> wgpu::
                 .as_ref()
                 .map(|fragment| wgpu::FragmentState {
                     module: geometry.module,
-                    entry_point: Some(fragment.entry),
+                    entry_point: Some(fragment.entry.name),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: fragment.constants,
                         ..Default::default()
@@ -496,8 +497,8 @@ pub(crate) struct Fullscreen<'a> {
     pub label: &'a str,
     pub layout: &'a wgpu::PipelineLayout,
     pub module: &'a wgpu::ShaderModule,
-    pub vertex: &'a str,
-    pub fragment: &'a str,
+    pub vertex: Entry,
+    pub fragment: Entry,
     pub constants: &'a [(&'a str, f64)],
     pub targets: &'a [Option<wgpu::ColorTargetState>],
     pub depth: Option<wgpu::DepthStencilState>,
