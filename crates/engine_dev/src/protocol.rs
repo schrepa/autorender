@@ -104,15 +104,98 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("debug_panic", "status"),
 ];
 
-/// Where a query runs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Handler {
-    /// Status, inspection, assets and descriptions.
-    Tools,
+/// A query, as the handler it runs in takes it: [`DevRequest::route`].
+pub(crate) enum Route {
+    /// Status, inspection, assets, the digest and descriptions.
+    Tools(ToolsQuery),
     /// The collision world's queries.
-    Collision,
+    Collision(CollisionQuery),
     /// Terrain, water, deformation and navigation queries.
-    Terrain,
+    Terrain(TerrainQuery),
+}
+
+/// The development tools' own queries ([`DevRequest`]'s, which document
+/// them).
+pub(crate) enum ToolsQuery {
+    Status,
+    Inspect {
+        entity: Option<String>,
+        parent: Option<String>,
+        component: Option<String>,
+        offset: usize,
+        limit: usize,
+    },
+    Assets,
+    Digest,
+    Describe {
+        name: Option<String>,
+        definition: Option<String>,
+    },
+}
+
+/// The collision world's queries ([`DevRequest`]'s, which document them).
+pub(crate) enum CollisionQuery {
+    Raycast {
+        origin: [f64; 3],
+        direction: [f64; 3],
+        max_distance: f64,
+        filter: CollisionFilterRequest,
+    },
+    Overlap {
+        shape: CollisionShapeRequest,
+        position: [f64; 3],
+        rotation: [f64; 4],
+        filter: CollisionFilterRequest,
+        limit: usize,
+    },
+    ShapeCast {
+        shape: CollisionShapeRequest,
+        position: [f64; 3],
+        rotation: [f64; 4],
+        direction: [f64; 3],
+        max_distance: f64,
+        filter: CollisionFilterRequest,
+    },
+    CollisionEvents {
+        entity: Option<String>,
+        offset: usize,
+        limit: usize,
+    },
+}
+
+/// Terrain, water, deformation and navigation queries ([`DevRequest`]'s,
+/// which document them).
+pub(crate) enum TerrainQuery {
+    TerrainHeight {
+        points: Vec<[f64; 2]>,
+    },
+    NavPath {
+        from: [f64; 2],
+        to: [f64; 2],
+        options: Option<engine_core::terrain_data::NavOptions>,
+    },
+    WaterQuery {
+        points: Vec<[f64; 2]>,
+        seconds: Option<f64>,
+    },
+    DeformationQuery {
+        points: Vec<[f64; 2]>,
+        seconds: Option<f64>,
+    },
+    TerrainSweep {
+        center: [f64; 2],
+        half_extent: f64,
+        samples: u32,
+    },
+    TerrainRoute {
+        from: [f64; 2],
+        to: [f64; 2],
+        level: Option<u32>,
+        max_grade: Option<f64>,
+        grade_cost: Option<f64>,
+        water_cost: Option<f64>,
+        turn_cost: Option<f64>,
+    },
 }
 
 /// Versioned, read-only requests processed synchronously between frames.
@@ -382,24 +465,132 @@ fn default_limit() -> usize {
 }
 
 impl DevRequest {
-    /// Where the query runs: the one routing table of queries.
-    pub fn handler(&self) -> Handler {
+    /// The query as the handler it runs in takes it: the one routing table
+    /// of queries. Every field is named, so a field added to a request
+    /// reaches its handler or fails to build.
+    pub(crate) fn route(self) -> Route {
         match self {
-            Self::Status { .. }
-            | Self::Inspect { .. }
-            | Self::Assets { .. }
-            | Self::Digest { .. }
-            | Self::Describe { .. } => Handler::Tools,
-            Self::Raycast { .. }
-            | Self::Overlap { .. }
-            | Self::ShapeCast { .. }
-            | Self::CollisionEvents { .. } => Handler::Collision,
-            Self::TerrainHeight { .. }
-            | Self::TerrainSweep { .. }
-            | Self::TerrainRoute { .. }
-            | Self::WaterQuery { .. }
-            | Self::DeformationQuery { .. }
-            | Self::NavPath { .. } => Handler::Terrain,
+            Self::Status { version: _ } => Route::Tools(ToolsQuery::Status),
+            Self::Inspect {
+                version: _,
+                entity,
+                parent,
+                component,
+                offset,
+                limit,
+            } => Route::Tools(ToolsQuery::Inspect {
+                entity,
+                parent,
+                component,
+                offset,
+                limit,
+            }),
+            Self::Assets { version: _ } => Route::Tools(ToolsQuery::Assets),
+            Self::Digest { version: _ } => Route::Tools(ToolsQuery::Digest),
+            Self::Describe {
+                version: _,
+                name,
+                definition,
+            } => Route::Tools(ToolsQuery::Describe { name, definition }),
+            Self::Raycast {
+                version: _,
+                origin,
+                direction,
+                max_distance,
+                filter,
+            } => Route::Collision(CollisionQuery::Raycast {
+                origin,
+                direction,
+                max_distance,
+                filter,
+            }),
+            Self::Overlap {
+                version: _,
+                shape,
+                position,
+                rotation,
+                filter,
+                limit,
+            } => Route::Collision(CollisionQuery::Overlap {
+                shape,
+                position,
+                rotation,
+                filter,
+                limit,
+            }),
+            Self::ShapeCast {
+                version: _,
+                shape,
+                position,
+                rotation,
+                direction,
+                max_distance,
+                filter,
+            } => Route::Collision(CollisionQuery::ShapeCast {
+                shape,
+                position,
+                rotation,
+                direction,
+                max_distance,
+                filter,
+            }),
+            Self::CollisionEvents {
+                version: _,
+                entity,
+                offset,
+                limit,
+            } => Route::Collision(CollisionQuery::CollisionEvents {
+                entity,
+                offset,
+                limit,
+            }),
+            Self::TerrainHeight { version: _, points } => {
+                Route::Terrain(TerrainQuery::TerrainHeight { points })
+            }
+            Self::NavPath {
+                version: _,
+                from,
+                to,
+                options,
+            } => Route::Terrain(TerrainQuery::NavPath { from, to, options }),
+            Self::WaterQuery {
+                version: _,
+                points,
+                seconds,
+            } => Route::Terrain(TerrainQuery::WaterQuery { points, seconds }),
+            Self::DeformationQuery {
+                version: _,
+                points,
+                seconds,
+            } => Route::Terrain(TerrainQuery::DeformationQuery { points, seconds }),
+            Self::TerrainSweep {
+                version: _,
+                center,
+                half_extent,
+                samples,
+            } => Route::Terrain(TerrainQuery::TerrainSweep {
+                center,
+                half_extent,
+                samples,
+            }),
+            Self::TerrainRoute {
+                version: _,
+                from,
+                to,
+                level,
+                max_grade,
+                grade_cost,
+                water_cost,
+                turn_cost,
+            } => Route::Terrain(TerrainQuery::TerrainRoute {
+                from,
+                to,
+                level,
+                max_grade,
+                grade_cost,
+                water_cost,
+                turn_cost,
+            }),
         }
     }
 

@@ -17,25 +17,27 @@ use serde_json::{Value, json};
 
 use crate::protocol::bounds;
 use crate::{
-    DevError, DevRequest, MAX_SCAN_ENTITIES, bounded,
-    protocol::{CollisionFilterRequest, CollisionSensorFilter, CollisionShapeRequest},
+    DevError, MAX_SCAN_ENTITIES, bounded,
+    protocol::{
+        CollisionFilterRequest, CollisionQuery, CollisionSensorFilter, CollisionShapeRequest,
+    },
     views::{ColliderShapeView, ColliderView, CollisionLimitsView, CollisionWorldView},
 };
 use engine_settings::Setting;
 
+/// Runs collision query `query`: its result.
 pub(crate) fn execute(
     engine: &mut Engine,
     scene: Option<&SceneInstance>,
-    request: DevRequest,
+    query: CollisionQuery,
 ) -> Result<Value, DevError> {
     let identities = Identities::new(scene)?;
-    match request {
-        DevRequest::Raycast {
+    match query {
+        CollisionQuery::Raycast {
             origin,
             direction,
             max_distance,
             filter,
-            ..
         } => {
             let ray = ray(origin, direction, max_distance)?;
             let filter = query_filter(engine.app.world(), scene, filter)?;
@@ -55,13 +57,12 @@ pub(crate) fn execute(
                     "placed":hit.placed.map(placed_json)})),
             }))
         }
-        DevRequest::Overlap {
+        CollisionQuery::Overlap {
             shape: source,
             position,
             rotation,
             filter,
             limit,
-            ..
         } => {
             page(limit)?;
             let shape = shape(source)?;
@@ -90,14 +91,13 @@ pub(crate) fn execute(
                 "complete":true,"total":hits.len(),"hits":hits}),
             )
         }
-        DevRequest::ShapeCast {
+        CollisionQuery::ShapeCast {
             shape: source,
             position,
             rotation,
             direction,
             max_distance,
             filter,
-            ..
         } => {
             let shape = shape(source)?;
             let matrix = pose(position, rotation)?;
@@ -123,11 +123,10 @@ pub(crate) fn execute(
                     "placed":hit.placed.map(placed_json)})),
             }))
         }
-        DevRequest::CollisionEvents {
+        CollisionQuery::CollisionEvents {
             entity,
             offset,
             limit,
-            ..
         } => {
             page(limit)?;
             bounded(
@@ -162,11 +161,6 @@ pub(crate) fn execute(
                 "total":total,"events":rows,"next_offset":(next < total).then_some(next)}),
             )
         }
-        _ => Err(DevError::new(
-            ErrorCode::InvalidRequest,
-            "$.op",
-            "expected a collision query",
-        )),
     }
 }
 

@@ -17,6 +17,7 @@ use engine_scene::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::protocol::{Route, ToolsQuery};
 use crate::{
     DevError, DevRequest, MAX_DESCRIPTION_BYTES, MAX_INSPECTOR_BYTES, MAX_INSPECTORS,
     MAX_PAGE_SIZE, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
@@ -1269,19 +1270,18 @@ impl DevTools {
                 "scene instance belongs to a different engine world",
             ));
         }
-        match request.handler() {
-            crate::Handler::Collision => return crate::collision::execute(engine, scene, request),
-            crate::Handler::Terrain => return crate::terrain::execute(engine, scene, request),
-            crate::Handler::Tools => {}
-        }
-        if let DevRequest::Inspect {
+        let query = match request.route() {
+            Route::Collision(query) => return crate::collision::execute(engine, scene, query),
+            Route::Terrain(query) => return crate::terrain::execute(engine, query),
+            Route::Tools(query) => query,
+        };
+        if let ToolsQuery::Inspect {
             component: Some(component),
             entity,
             parent,
             offset,
             limit,
-            ..
-        } = &request
+        } = &query
             && matches!(component.as_str(), "Collider" | "CollisionWorld")
         {
             // Validate selectors and pagination before refreshing any derived cache.
@@ -1301,10 +1301,7 @@ impl DevTools {
                     .map_err(crate::collision::native_error)?;
             }
         }
-        if matches!(
-            request,
-            DevRequest::Inspect { .. } | DevRequest::Digest { .. }
-        ) {
+        if matches!(query, ToolsQuery::Inspect { .. } | ToolsQuery::Digest) {
             // Materialize a GPU-presented frame before a refresh changes its inputs.
             engine.prepare_presented_transforms();
             engine.refresh_transforms();
@@ -1316,8 +1313,8 @@ impl DevTools {
             ..context
         };
         let world = engine.app.world();
-        match request {
-            DevRequest::Status { .. } => Ok(json!({
+        match query {
+            ToolsQuery::Status => Ok(json!({
                 "world_entities": world.entities().len(),
                 "authored_entities": scene.map(SceneInstance::entity_count),
                 "inspectors": self.inspectors.len(),
@@ -1329,7 +1326,7 @@ impl DevTools {
                 "fixed_delta_seconds": world.get_resource::<FixedTime>().map(|time| time.delta_seconds),
                 "limits": {"request_bytes": MAX_REQUEST_BYTES, "response_bytes": MAX_RESPONSE_BYTES, "page_size": MAX_PAGE_SIZE, "scan_entities": MAX_SCAN_ENTITIES},
             })),
-            DevRequest::Assets { .. } => {
+            ToolsQuery::Assets => {
                 let assets = world.get_resource::<AssetLibrary>().ok_or_else(|| {
                     DevError::new(
                         ErrorCode::MissingResource,
@@ -1353,7 +1350,7 @@ impl DevTools {
             }
             // The world's own state: neither what a renderer made of it nor
             // the slots it draws in.
-            DevRequest::Digest { .. } => Ok(self.digest(
+            ToolsQuery::Digest => Ok(self.digest(
                 world,
                 Context {
                     scene,
@@ -1361,16 +1358,15 @@ impl DevTools {
                     render_slot: None,
                 },
             )),
-            DevRequest::Describe {
-                name, definition, ..
-            } => self.describe(name.as_deref(), definition.as_deref()),
-            DevRequest::Inspect {
+            ToolsQuery::Describe { name, definition } => {
+                self.describe(name.as_deref(), definition.as_deref())
+            }
+            ToolsQuery::Inspect {
                 entity,
                 parent,
                 component,
                 offset,
                 limit,
-                ..
             } => self.inspect(
                 world,
                 context,
@@ -1382,16 +1378,6 @@ impl DevTools {
                     limit,
                 },
             ),
-            DevRequest::Raycast { .. }
-            | DevRequest::Overlap { .. }
-            | DevRequest::ShapeCast { .. }
-            | DevRequest::CollisionEvents { .. }
-            | DevRequest::TerrainHeight { .. }
-            | DevRequest::TerrainSweep { .. }
-            | DevRequest::TerrainRoute { .. }
-            | DevRequest::WaterQuery { .. }
-            | DevRequest::DeformationQuery { .. }
-            | DevRequest::NavPath { .. } => unreachable!("only tools queries reach the tools"),
         }
     }
 
