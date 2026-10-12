@@ -307,6 +307,53 @@
     "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, shaped_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141572, restored_tiles: 12, idle_tiles: 0, banded_tiles: 0, unplaced_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, loading: false } | terrain tiles 854854a0fbb2ae0d patches 3c83553fdfed650c | surroundings tiles a2eadb7ccd455bc5 patches 36dbb04c85cad6bc",
     "terrain trace": "a24d4531a4c1f472"
   },
+  "gltf": {
+    "gltf prefab": {
+      "entities": 0,
+      "files": 3,
+      "ignored extensions": [],
+      "materials": 2,
+      "meshes": 2,
+      "textures": 1
+    },
+    "gltf prefab document": "3c085dd0b3859d8b",
+    "gltf prefab file garden/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
+    "gltf prefab file garden/node1.p0.688c131c1624.bin": "688c131c16243f7d",
+    "gltf prefab file garden/node1.p1.3d257417825e.bin": "3d257417825e1393",
+    "gltf scene": {
+      "entities": 2,
+      "files": 3,
+      "ignored extensions": [],
+      "materials": 2,
+      "meshes": 2,
+      "textures": 1
+    },
+    "gltf scene document": "f88c964fad3b6da8",
+    "gltf scene file garden/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
+    "gltf scene file garden/node1.p0.688c131c1624.bin": "688c131c16243f7d",
+    "gltf scene file garden/node1.p1.3d257417825e.bin": "3d257417825e1393",
+    "gltf virtual": {
+      "entities": 2,
+      "files": 3,
+      "ignored extensions": [],
+      "materials": 2,
+      "meshes": 2,
+      "textures": 1
+    },
+    "gltf virtual document": "6a35239b4522f40d",
+    "gltf virtual file garden/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
+    "gltf virtual file garden/node1.p0.7dd7b84a9fce.evg": "7dd7b84a9fce1001",
+    "gltf virtual file garden/node1.p1.221cd3983587.evg": "221cd39835875159"
+  },
+  "import": {
+    "import": {
+      "filled gaps": 258944,
+      "highest": 200.0,
+      "lowest": 0.0,
+      "samples": 513
+    },
+    "import height.r16": "ea49f25042d80991"
+  },
   "simplify": {
     "simplify garden prop 0": {
       "hash": "e2ad00bebbde88bf",

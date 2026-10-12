@@ -3713,6 +3713,7 @@ dependencies = [
  "engine_assets",
  "engine_core",
  "engine_dev",
+ "engine_native",
  "engine_profiler",
  "engine_render",
  "engine_scene",
@@ -3721,9 +3722,11 @@ dependencies = [
  "glam 0.30.9",
  "gltf",
  "naga",
+ "png",
  "policy",
  "serde_json",
  "sha2",
+ "tiff",
 ]
 
 [[package]]
