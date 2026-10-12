@@ -3697,10 +3697,13 @@ version = "0.1.0"
 dependencies = [
  "engine",
  "engine_assetc",
+ "engine_core",
  "engine_dev",
  "engine_profiler",
  "engine_render",
  "engine_scene",
+ "engine_terrain",
+ "glam 0.30.9",
  "naga",
  "policy",
  "serde_json",

@@ -1,0 +1,74 @@
+{
+  "terrain": {
+    "bake 1": {
+      "deepest": 1.4122734069824219,
+      "highest": 20.89196014404297,
+      "rounds": 6,
+      "samples": 263169
+    },
+    "bake 2": {
+      "channel samples": 1552,
+      "falls": 0,
+      "lake samples": 0,
+      "max area": 500536.0,
+      "rivers": 23,
+      "samples": 263169
+    },
+    "bake 4": {
+      "bridges": 2,
+      "deepest cut": 6.177009582519531,
+      "highest fill": 0.9034919738769531,
+      "length": 444.20880126953125,
+      "samples": 113,
+      "steepest": 0.16754312813282013,
+      "tunnels": 0
+    },
+    "bake 6": {
+      "bridges": 2,
+      "deepest cut": 2.5924453735351562,
+      "highest fill": 0.0,
+      "length": 300.0,
+      "samples": 76,
+      "steepest": 0.016986846923828125,
+      "tunnels": 1
+    },
+    "bakes": "eb6186cf9a5001e7",
+    "etr1": "12b75cc93ca7c8fa",
+    "far 2/0/0": "5788c8c6bde61422",
+    "far objects 2/0/0": 2564,
+    "surroundings 2/0/0": "d4fec868d3636939",
+    "surroundings 2/0/1": "a74b05bc63f53540",
+    "surroundings 2/1/0": "58eded51bec75d61",
+    "surroundings 2/1/1": "9f31cd2a6e095780",
+    "surroundings 3/0/0": "8840a6078668b7bc",
+    "surroundings tiles": 8,
+    "tile 0/0/0": "28014371e82b0486",
+    "tile 0/0/1": "c63a159828d9d806",
+    "tile 0/0/2": "aea60eb3d3dec3b3",
+    "tile 0/0/3": "837008fd584baaa1",
+    "tile 0/1/0": "90437d966728a003",
+    "tile 0/1/1": "7d42637e888b6d3d",
+    "tile 0/1/2": "0058f76b767dda73",
+    "tile 0/1/3": "1b9a311373828e71",
+    "tile 0/2/0": "3da1804f6eef0d3a",
+    "tile 0/2/1": "c273b2d5f9b5cffe",
+    "tile 0/2/2": "9ad6dae6459a2da1",
+    "tile 0/2/3": "9d54d7bfa5fa4f12",
+    "tile 0/3/0": "fd405af296153bbd",
+    "tile 0/3/1": "e449be093aa716ff",
+    "tile 0/3/2": "17c9c3af686e69ea",
+    "tile 0/3/3": "77cfe8905dcde04e",
+    "tile 1/0/0": "4557ada1dd7ef952",
+    "tile 1/0/1": "c3f2d70f56da7442",
+    "tile 1/1/0": "01a51d1b046f9406",
+    "tile 1/1/1": "f6a7b7feef495b54",
+    "tile 2/0/0": "dba859d289f52097",
+    "tile objects": 12693,
+    "tiles": 21,
+    "walk": {
+      "length": 209.10984802246094,
+      "level": 0,
+      "points": 54
+    }
+  }
+}

@@ -17,6 +17,7 @@ mod measure;
 mod pipeline;
 mod process;
 mod profiling;
+mod pure;
 mod scaffold;
 mod serve;
 mod shader_report;
@@ -90,6 +91,9 @@ fn execute() -> Result<(), Failure> {
     }
     if task == "smoke" {
         return smoke::smoke(&root, &options);
+    }
+    if task == "pure" {
+        return pure::pure(&root, &options);
     }
     if task == "bench" {
         return Ok(bench::bench(&root, &options)?);
@@ -171,13 +175,14 @@ fn commands() -> Vec<(String, &'static str)> {
         ("schema".into(), "Write the generated protocol summary, client list, stats and game surface types, and each app's own"),
         ("new app NAME".into(), "Start a game in apps/NAME with its page web/NAME.html, from the engine's app template"),
         ("smoke --list | [--serve] [--keep-going] (--all | NAME...)".into(), "List or run the browser smoke checks: against the development server DEMO_URL names, or with --serve one of this checkout started on a free port (never 5173-5175) and stopped after; holding the machine's heavy-run lock; stopping at the first failure, or with --keep-going running every one and listing each result; exit 3 when an assertion failed"),
+        ("pure [--bless] [CORPUS...]".into(), "Run the deterministic checks of engine code over tracked fixtures, without a GPU or browser (corpora: terrain): each checks what the code promises and that its outputs equal the goldens in tools/xtask/pure/goldens.json; --bless rewrites them from a run whose promises hold, for review; exit 3 when a promise broke or an output changed"),
         ("gpu".into(), "Check the renderer's shaders against its Rust GPU layouts and bindings"),
         ("gpu --report DIR [--no-rga]".into(), "Report every shader entry point's cost offline, on any machine: naga's counts and SPIR-V, and with Radeon GPU Analyzer (downloaded once, Windows and Linux) its AMD machine code, registers and memory on RDNA 2, 3 and 4"),
         ("bench check".into(), "Check bench/ against the code: the metric catalog names what measurements report, the scene and settings files known options, the shader paths every shader"),
         ("bench assets".into(), "Build the files workloads read that git does not hold into target/bench-assets/<inputs hash>/ (reused while the generators are unchanged) and write them into web/public/stress for the page; prints the folder and its generated_hash"),
         ("measure --task TASK.json --profile PROFILE.json --out REPORT.json [--extend REPORT.json] [--formats FORMATS.json]".into(), "Run an engine-factory measure task on the native host from this checkout (the task's tools commit): build each commit it names, run each workload's two arms (each its commit's program from that commit's tree, with its own switches, scene, settings and generated files) in alternating rounds until its clean pairs, profile each arm and report the shaders where the task wants them, run the task's checks, and write the factory's measure report, checked against FORMATS (the factory's /api/formats) when given"),
         ("checks --task TASK.json --profile PROFILE.json --out REPORT.json [--formats FORMATS.json]".into(), "Run an engine-factory check task from this checkout: each check's script against a development server of its commit, every attempt kept (a failing check runs again, up to 3 attempts), as the factory's check report, checked against FORMATS when given"),
-        ("lint".into(), "Run every GPU-free check, cheapest first and each whatever failed before it: the repository policy, formatting, the web host's text checks, scene sources, generated files, bench/, smoke coverage, feature layering, shaders against Rust, native and Wasm Clippy, the browser clients and TypeScript; ends with each stage's result and time"),
+        ("lint".into(), "Run every GPU-free check, cheapest first and each whatever failed before it: the repository policy, formatting, the web host's text checks, scene sources, generated files, bench/, smoke coverage, feature layering, shaders against Rust, the pure checks, native and Wasm Clippy, the browser clients and TypeScript; ends with each stage's result and time"),
         ("docs".into(), "Generate native workspace and browser API documentation"),
         ("help [--json]".into(), "Show this message, or the commands as JSON"),
     ]

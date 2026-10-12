@@ -15,7 +15,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { sep } from "node:path";
 import { artifacts, cargoBinaries, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
 import { workspacePath } from "./workspace.mjs";
@@ -27,134 +27,25 @@ const output = await artifacts("terrain-smoke");
 const scenes = `${workspacePath("web/public/scenes")}${sep}`;
 const folder = `${workspacePath("web/public/scenes/terrain-smoke")}${sep}`;
 const source = workspacePath("web/public/scenes/terrain-smoke.scene.json");
-// Terrain-local plateau at (512, 512), a hole 48 m east of it, and an
-// imported dome 200 m high centered at (764, 764).
-const terrain = {
-  origin: [-512, 0, -512], tiles: [4, 4], spacing: 1,
-  layers: [
-    { noise: { seed: 3, height: 140, wavelength: 600 } },
-    // Rivers wear valleys into the hills for a few rounds,
-    // baked over the two-meter tiles before any tile loads.
-    { erosion: { level: 1, rounds: 6, incision: 0.001953125, creep: 2 } },
-    // Water drains off the hills, carving channels, baked
-    // over the same tiles.
-    { hydrology: { level: 1, channel_area: 20000, depth: 1, width: 4, max_depth: 3, max_width: 20 } },
-    // A trench across the road's last stretch, twelve meters deep.
-    { stamp: { center: [430, 96], radius: 10, falloff: 10, op: { lower: 12 } } },
-    // A road through the south-western hills, leveled to its
-    // own smoothed profile, which gravel covers; it bridges the trench.
-    { path: { points: [[100, 300], [250, 260], [400, 150], [450, 60]], width: 6, shoulder: 6, smoothing: 60, bridge_fill: 4, tunnel_cut: 25 } },
-    // A mound forty meters high, and a straight road through it on a long
-    // grade, which tunnels.
-    { stamp: { center: [750, 200], radius: 30, falloff: 40, op: { raise: 40 } } },
-    { path: { points: [[600, 200], [900, 200]], width: 6, shoulder: 6, smoothing: 400, bridge_fill: 4, tunnel_cut: 15 } },
-    { stamp: { center: [512, 512], radius: 40, falloff: 60, op: { flatten: 30 } } },
-    { stamp: { center: [560, 512], radius: 4, op: "hole" } },
-    { heightmap: { uri: "terrain-smoke/dome.r16", width: 65, height: 65, min: [700, 700], size: [128, 128], low: 0, high: 200, blend: "max" } },
-  ],
-  // Meadow below, rock on steep ground; a summit biome of
-  // snow above 120 m. The meadow grows grass. Tracks sink
-  // snow deepest and rock never.
-  surface: {
-    materials: [
-      { id: "meadow", color: [0.12, 0.2, 0.06], cover: { density: 60 }, deform: 0.05 },
-      { id: "rock", color: [0.3, 0.28, 0.26], roughness: 0.8 },
-      { id: "snow", color: [0.85, 0.87, 0.9], roughness: 0.5, deform: 0.3 },
-      // Gravel's grain is the first map, which sets the maps' size: two
-      // pages of the runtime virtual texture along a side.
-      { id: "gravel", material: "grain", color: [0.36, 0.33, 0.28], roughness: 0.9, relief: 0.1, deform: 0.04 },
-    ],
-    biomes: [
-      { id: "lowland", layers: [{ material: "meadow" }, { material: "rock", mask: { slope: [25, 35] } }, { material: "gravel", mask: { path: [1, 0] } }] },
-      { id: "summit", fitness: { height: [110, 130] }, layers: [{ material: "snow" }] },
-    ],
-    // Crates stand on the meadow, a coarser box far away,
-    // with balls, whose impostors far away cast cards.
-    assets: [
-      // Both collide near the camera: the crate as its
-      // box, the ball as a sphere around it.
-      { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5, collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] } } },
-      { id: "ball", mesh: "ball", material: "plain", collider: { shape: { kind: "sphere", radius: 1 } } },
-    ],
-    // A quarter of them also stand on the pinned level-2 tiles, hidden where
-    // level-0 tiles hold them.
-    placements: [{ id: "crates", assets: [{ asset: "crate" }, { asset: "ball" }], density: 100, footprint: 4, materials: ["meadow"], scale: [0.5, 1], far: { level: 2, share: 0.25 } }],
-    // An author stands a big crate on the plateau, and a ball
-    // on the level-1 tiles, which stay resident farther away.
-    placed: [{ asset: "crate", position: [530, 500], yaw: 30, scale: 3 }, { asset: "ball", position: [500, 530], scale: 2, level: 1 }],
-  },
-  // Ground generated past its edges to the horizon, its bakes
-  // eased out over 128 m.
-  surroundings: { reach: 3000, blend: 128 },
-};
-/** A unit icosphere subdivided once: 80 triangles, enough for an impostor. */
-function ball() {
-  const t = (1 + Math.sqrt(5)) / 2;
-  const corners = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
-    [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]];
-  const faces = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2],
-    [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11],
-    [6, 2, 10], [8, 6, 7], [9, 8, 1]];
-  const unit = ([x, y, z]) => { const l = Math.hypot(x, y, z); return [x / l, y / l, z / l]; };
-  const points = corners.map(unit);
-  const middles = new Map();
-  const middle = (a, b) => {
-    const key = a < b ? `${a},${b}` : `${b},${a}`;
-    if (!middles.has(key)) {
-      middles.set(key, points.length);
-      points.push(unit(points[a].map((value, axis) => value + points[b][axis])));
-    }
-    return middles.get(key);
-  };
-  const indices = faces.flatMap(([a, b, c]) => {
-    const [ab, bc, ca] = [middle(a, b), middle(b, c), middle(c, a)];
-    return [a, ab, ca, b, bc, ab, c, ca, bc, ab, bc, ca];
-  });
-  return { vertices: points.map(point => ({ position: point, normal: point })), indices };
-}
-/** A 65 by 65 dome of little-endian 16-bit samples, highest at its center. */
-function dome() {
-  const bytes = Buffer.alloc(65 * 65 * 2);
-  for (let z = 0; z < 65; z++) {
-    for (let x = 0; x < 65; x++) {
-      const r2 = ((x - 32) ** 2 + (z - 32) ** 2) / 32 ** 2;
-      bytes.writeUInt16LE(Math.round(65535 * Math.max(0, 1 - r2)), (z * 65 + x) * 2);
-    }
-  }
-  return bytes;
-}
-/** A 288-texel square of gray grain, base64 RGBA8. */
-function grain() {
-  const size = 288;
-  const bytes = Buffer.alloc(size * size * 4);
-  for (let texel = 0; texel < size * size; texel++) {
-    const hash = Math.imul(texel ^ (texel >>> 7), 0x9e3779b1) >>> 0;
-    const value = 150 + (hash >>> 26) * 1.5;
-    bytes.set([value, value * 0.95, value * 0.9, 255], texel * 4);
-  }
-  return bytes.toString("base64");
-}
-const fixture = {
-  version: 9, id: "terrain-fixture", revision: 1,
-  camera: { position: [0, 80, 140], target: [0, 30, 0], fov_degrees: 60, near: 0.5, far: 4000 },
-  textures: [{ id: "grain", width: 288, height: 288, rgba8: grain() }],
-  materials: [{ id: "plain", color: [0.8, 0.3, 0.2, 1] }, { id: "grain", color: [1, 1, 1, 1], texture: "grain" }],
-  meshes: [{ id: "box", source: { kind: "cube" } }, { id: "ball", source: { kind: "inline", ...ball() } }],
-  entities: [
-    { id: "player", mesh: "box", material: "plain", tags: ["player"], collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] }, memberships: 2, filter: 1, sensor: false }, transform: { translation: [0, 31, 0] } },
-    { id: "ground", terrain },
-    // Probes capture terrain on GPU-presented frames.
-    { id: "probe", reflection_probe: { extent: [60, 40, 60] }, transform: { translation: [0, 45, 0] } },
-    // Rides the sea once one stands.
-    { id: "buoy", mesh: "box", material: "plain", floating: { draft: 0.25, tilt: 1 }, transform: { translation: [400, 5, -400] } },
-    // An interior's box lets in a tenth of the sky and sun.
-    { id: "hall", reflection_probe: { extent: [20, 200, 20], blend: 0.5, interior: { sky: 0.1, sun: 0.1 } }, transform: { translation: [-300, 40, 300] } },
-    // Walks where it is sent.
-    { id: "hiker", mesh: "box", material: "plain", nav_agent: { speed: 6, offset: 0.5 }, transform: { translation: [20, 31, 20] } },
-    // Presses a dimple into the plateau's meadow each tick.
-    { id: "roller", deformer: { radius: 0.5, depth: 0.2, contact: 0.5, flatness: 0.2 }, transform: { translation: [10, 30.2, 10] } },
-  ],
-};
+// The terrain fixture (fixtures/terrain.scene.json, its heightmap and
+// texture in fixtures/terrain-smoke/, which the page and the tools read
+// beside the scene in the served scenes' terrain-smoke/): a generated
+// terrain of 4 by 4 one-meter tiles at (-512, 0, -512). Its layers, in
+// order: noise hills; six rounds of erosion and the hydrology channels,
+// both baked over the two-meter tiles; a twelve-meter trench across the
+// last stretch of a gravel road through the south-western hills, which
+// bridges it; a forty-meter mound a straight road tunnels through; a
+// plateau flattened at (512, 512), terrain-local; a hole 48 m east of it;
+// and an imported dome 200 m high centered at (764, 764). Meadow below,
+// rock on steep ground and summit snow above 120 m; crates and balls
+// placed on the meadow, a quarter of them also on the pinned level-2
+// tiles; an author's big crate on the plateau and a ball on the level-1
+// tiles; surroundings to the horizon, their bakes eased out over 128 m.
+// Beside it: the player, a reflection probe, a buoy, an interior's probe,
+// a hiker and a roller.
+const fixture = JSON.parse(await readFile(new URL("fixtures/terrain.scene.json", import.meta.url), "utf8"));
+const fixtureFiles = new URL("fixtures/terrain-smoke/", import.meta.url);
+const terrain = fixture.entities.find(entity => entity.id === "ground").terrain;
 const overview = { position: [0, 80, 140], target: [0, 30, 0], vertical_fov_radians: Math.PI / 3, near: 0.5, far: 4000 };
 const { browser, page, errors } = await launch();
 const command = commander(page);
@@ -230,7 +121,7 @@ async function heights(points) {
 
 try {
   await mkdir(folder, { recursive: true });
-  await writeFile(`${folder}dome.r16`, dome());
+  await cp(fixtureFiles, folder, { recursive: true });
   await scene.route();
   await openPaused(page, url);
   // All tile work in one extraction, so renders settle quickly.

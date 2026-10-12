@@ -23,7 +23,7 @@ pub(crate) struct Stage {
 /// What `cargo xtask lint` runs, in order: the repository policy,
 /// formatting, the web host's text checks, the drift checks (scene sources,
 /// generated files, bench/, smoke coverage, feature layering), shaders
-/// against their Rust layouts, Clippy (the workspace, the native host's
+/// against their Rust layouts, the pure checks' corpora, Clippy (the workspace, the native host's
 /// tools, the browser clients, the app template), the browser clients the
 /// web host imports, and TypeScript.
 pub(crate) const LINT: &[Stage] = &[
@@ -81,6 +81,11 @@ pub(crate) const LINT: &[Stage] = &[
         name: "gpu",
         needs: &[],
         run: crate::gpu::check,
+    },
+    Stage {
+        name: "pure",
+        needs: &[],
+        run: |root| crate::pure::pure(root, &[]).map_err(|failure| failure.message),
     },
     Stage {
         name: "clippy",
