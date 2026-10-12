@@ -92,6 +92,12 @@ impl Renderer {
         Some(self.impostors.atlas.contains((mesh, Some(material))))
     }
 
+    /// Why the latest failed virtual geometry page read did, if any failed
+    /// (frame statistics' `virtual_geometry.failed_pages` counts them).
+    pub fn latest_page_failure(&self) -> Option<&str> {
+        self.virtual_draws.pass.page_failure()
+    }
+
     /// Whether pipelines created by earlier frames may still be compiling:
     /// the GPU has not yet completed the last frame that created some.
     pub fn pipelines_compiling(&self) -> bool {

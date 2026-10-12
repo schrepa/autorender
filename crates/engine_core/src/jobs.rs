@@ -198,6 +198,8 @@ pub struct Jobs {
     // What is shared now, by key: its size.
     shared: HashMap<String, u64>,
     stats: JobStats,
+    // The latest failed job's message.
+    last_failure: Option<String>,
 }
 
 impl Default for Jobs {
@@ -214,6 +216,7 @@ impl Default for Jobs {
             held: 0,
             shared: HashMap::default(),
             stats: JobStats::default(),
+            last_failure: None,
         }
     }
 }
@@ -386,9 +389,17 @@ impl Jobs {
         self.parts.remove(&id);
         match &output {
             Ok(_) => self.stats.completed += 1,
-            Err(_) => self.stats.failed += 1,
+            Err(message) => {
+                self.stats.failed += 1;
+                self.last_failure = Some(message.clone());
+            }
         }
         self.done.insert(id, output);
+    }
+
+    /// The latest failed job's message, if any job failed.
+    pub fn last_failure(&self) -> Option<&str> {
+        self.last_failure.as_deref()
     }
 
     pub fn stats(&self) -> JobStats {

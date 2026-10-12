@@ -609,6 +609,18 @@ pub struct Terrains {
     pub(super) restored: u64,
     pub(super) upload_left: u64,
     pub(super) between: u64,
+    pub(super) degraded: Degraded,
+}
+
+/// What terrains went without, each counted since they started with the
+/// latest one's reason: tile reads that failed (read again later), and
+/// falls whose white water the asset library refused (drawn without it).
+#[derive(Default)]
+pub(super) struct Degraded {
+    pub(super) failed_reads: u64,
+    pub(super) latest_read: Option<String>,
+    pub(super) refused_falls: u64,
+    pub(super) latest_fall: Option<String>,
 }
 
 /// The workers' jobs and recipes of terrains gone.

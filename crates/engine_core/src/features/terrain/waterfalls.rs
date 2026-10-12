@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_assets::{
-    AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Surface, Texture,
-    TextureRef,
+    AssetError, AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Surface,
+    Texture, TextureRef,
 };
 use glam::Vec3;
 
@@ -97,8 +97,9 @@ fn foam_texture() -> Texture {
 
 /// Every fall's ribbon in one mesh, terrain-local: a strip the river's
 /// width along the curve through its course, just over the ground and
-/// facing up, its texture repeating every [`RIBBON_SECTION`] meters.
-fn ribbons(set: &[Fall]) -> Option<Mesh> {
+/// facing up, its texture repeating every [`RIBBON_SECTION`] meters. None
+/// where no fall has a course; an error where the mesh is refused.
+fn ribbons(set: &[Fall]) -> Result<Option<Mesh>, AssetError> {
     let (mut vertices, mut indices) = (Vec::new(), Vec::new());
     for fall in set.iter().filter(|fall| fall.path.len() >= 2) {
         let points: Vec<Vec3> = fall
@@ -137,7 +138,25 @@ fn ribbons(set: &[Fall]) -> Option<Mesh> {
             }
         }
     }
-    Mesh::new(vertices, indices).ok()
+    if vertices.is_empty() {
+        return Ok(None);
+    }
+    Mesh::new(vertices, indices).map(Some)
+}
+
+/// The white water's material, added to `assets` with its foam texture:
+/// translucent, streaked and rippling.
+fn white_water(assets: &mut AssetLibrary) -> Result<MaterialHandle, AssetError> {
+    let foam = assets.insert_texture(foam_texture())?;
+    let material = Material::new([0.95, 0.97, 1.0, 1.0])?
+        .with_opacity(0.9)?
+        .with_surface(Surface {
+            roughness: 0.45,
+            ripples: 1.0,
+            ..Surface::MATTE
+        })?
+        .with_base_color_texture(TextureRef::new(foam))?;
+    assets.insert_material(material)
 }
 
 /// Meters above a fall's ground its spray runs, and the seconds a spray
@@ -236,6 +255,8 @@ pub(crate) fn sync(world: &mut World) {
     for mesh in meshes {
         world.resource_mut::<AssetLibrary>().remove_mesh(mesh);
     }
+    // What the asset library refused, counted once the falls are spawned.
+    let mut refused = Vec::new();
     for (terrain, set, origin) in wanted {
         if set.is_empty() || falls.spawned.contains_key(&terrain) {
             continue;
@@ -244,30 +265,18 @@ pub(crate) fn sync(world: &mut World) {
         // White water: translucent, streaked and rippling, its edges fading.
         let mut assets = world.resource_mut::<AssetLibrary>();
         let white = match falls.white {
-            Some(white) => Some(white),
-            None => assets
-                .insert_texture(foam_texture())
-                .ok()
-                .and_then(|foam| {
-                    Material::new([0.95, 0.97, 1.0, 1.0])
-                        .and_then(|material| material.with_opacity(0.9))
-                        .and_then(|material| {
-                            material.with_surface(Surface {
-                                roughness: 0.45,
-                                ripples: 1.0,
-                                ..Surface::MATTE
-                            })
-                        })
-                        .and_then(|material| {
-                            material.with_base_color_texture(TextureRef::new(foam))
-                        })
-                        .ok()
-                })
-                .and_then(|material| assets.insert_material(material).ok()),
+            Some(white) => Ok(white),
+            None => white_water(&mut assets),
         };
-        falls.white = white;
-        let mesh = ribbons(&set).and_then(|mesh| assets.insert_mesh(mesh).ok());
-        if let (Some(mesh), Some(material)) = (mesh, white) {
+        falls.white = white.as_ref().ok().copied();
+        let mesh =
+            ribbons(&set).and_then(|mesh| mesh.map(|mesh| assets.insert_mesh(mesh)).transpose());
+        if let Err(error) = mesh.as_ref().map(|_| ()).and(white.as_ref().map(|_| ())) {
+            // Drawn without its white water.
+            refused.push(error.to_string());
+        }
+        let mesh = mesh.ok().flatten();
+        if let (Some(mesh), Ok(material)) = (mesh, white) {
             let transform = Transform {
                 translation: origin,
                 ..Transform::default()
@@ -289,4 +298,9 @@ pub(crate) fn sync(world: &mut World) {
         );
     }
     world.insert_resource(falls);
+    if let Some(mut terrains) = world.get_resource_mut::<Terrains>() {
+        for reason in refused {
+            terrains.refuse_falls(reason);
+        }
+    }
 }

@@ -810,6 +810,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "failed_pages": {
+          "description": "Page reads that failed or held no valid page since streaming\nstarted, each read again later; the renderer's\n`latest_page_failure` says why the latest did.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "loading_pages": {
           "description": "Streamed pages still loading.",
           "format": "uint32",
@@ -868,6 +874,7 @@
         "loading_pages",
         "missing_pages",
         "dropped_pages",
+        "failed_pages",
         "visibility_buffer"
       ],
       "type": "object"

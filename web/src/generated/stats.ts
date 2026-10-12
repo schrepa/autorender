@@ -530,6 +530,12 @@ export interface VirtualGeometryStats {
    * budget or the device's limits.
    */
   dropped_pages: number;
+  /**
+   * Page reads that failed or held no valid page since streaming
+   * started, each read again later; the renderer's
+   * `latest_page_failure` says why the latest did.
+   */
+  failed_pages: number;
   /** Streamed pages still loading. */
   loading_pages: number;
   /**

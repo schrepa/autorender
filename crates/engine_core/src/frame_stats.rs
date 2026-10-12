@@ -340,6 +340,10 @@ pub struct VirtualGeometryStats {
     /// Wanted pages (with arrivals since) that found no room under the
     /// budget or the device's limits.
     pub dropped_pages: u32,
+    /// Page reads that failed or held no valid page since streaming
+    /// started, each read again later; the renderer's
+    /// `latest_page_failure` says why the latest did.
+    pub failed_pages: u32,
     /// Whether the visibility buffer resolved the camera's virtual geometry
     /// rather than drawing it forward.
     pub visibility_buffer: bool,

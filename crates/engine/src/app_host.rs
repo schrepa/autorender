@@ -53,12 +53,12 @@ struct TerrainFetches {
 #[cfg(not(target_arch = "wasm32"))]
 type TileAsked = (engine_core::bevy_ecs::entity::Entity, engine_core::TileKey);
 
-/// A read tile: its terrain, key and bytes, `None` when the read failed.
+/// A read tile: its terrain, key and bytes, or why the read failed.
 #[cfg(target_arch = "wasm32")]
 type TerrainArrival = (
     engine_core::bevy_ecs::entity::Entity,
     engine_core::TileKey,
-    Option<Vec<u8>>,
+    Result<Vec<u8>, String>,
 );
 
 impl TerrainFetches {
@@ -97,7 +97,7 @@ impl TerrainFetches {
                 engine_render::read_range(&request.url, range, move |bytes| {
                     inbox
                         .borrow_mut()
-                        .push((request.terrain, request.key, bytes.ok()));
+                        .push((request.terrain, request.key, bytes));
                 });
             }
             #[cfg(not(target_arch = "wasm32"))]

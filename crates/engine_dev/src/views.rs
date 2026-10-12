@@ -214,6 +214,8 @@ pub struct JobsView {
     pub submitted: u64,
     pub completed: u64,
     pub failed: u64,
+    /// The latest failed job's message, if any failed.
+    pub last_failure: Option<String>,
     pub cancelled: u64,
     /// Parts of outputs handed back before the rest, as
     /// tiles' shapes.
@@ -318,6 +320,14 @@ pub struct TerrainsView {
     /// Of the resident tiles and patches, those of terrains' surroundings.
     pub surroundings_tiles: u32,
     pub surroundings_patches: u32,
+    /// Tile reads that failed since terrains started (read again later),
+    /// and why the latest did.
+    pub failed_reads: u64,
+    pub latest_read_failure: Option<String>,
+    /// Falls drawn without their white water since terrains started,
+    /// which the asset library refused, and why the latest was.
+    pub refused_falls: u64,
+    pub latest_fall_refusal: Option<String>,
 }
 
 /// An animation player as a scene's `animation` field with its clip

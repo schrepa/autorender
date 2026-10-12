@@ -87,6 +87,7 @@ impl DevTools {
                     submitted: stats.submitted,
                     completed: stats.completed,
                     failed: stats.failed,
+                    last_failure: jobs.last_failure().map(str::to_owned),
                     cancelled: stats.cancelled,
                     parts: stats.parts,
                     shares: stats.shares,

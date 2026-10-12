@@ -361,13 +361,13 @@ pub(crate) fn poll(device: &wgpu::Device) {
     }
 }
 
-/// Reads bytes `range` of the file `url` names and hands them, or the
-/// failure, to `arrive` once read: the browser fetches them, native
+/// Reads bytes `range` of the file `url` names and hands them, or why the
+/// read failed, to `arrive` once read: the browser fetches them, native
 /// hosts read the file at that path.
 pub fn read_range(
     url: &str,
     range: std::ops::Range<u64>,
-    arrive: impl FnOnce(Result<Vec<u8>, ()>) + 'static,
+    arrive: impl FnOnce(Result<Vec<u8>, String>) + 'static,
 ) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -385,30 +385,46 @@ pub fn read_range(
         let promise = request
             .zip(web_sys::window())
             .map(|(request, window)| window.fetch_with_request(&request));
+        let url = url.to_owned();
         wasm_bindgen_futures::spawn_local(async move {
+            // A JavaScript failure as text.
+            let reason = |what: &str, error: wasm_bindgen::JsValue| {
+                format!(
+                    "{what} {url}: {}",
+                    error.as_string().unwrap_or_else(|| format!("{error:?}"))
+                )
+            };
             let bytes = async {
-                let response: web_sys::Response =
-                    wasm_bindgen_futures::JsFuture::from(promise.ok_or(())?)
-                        .await
-                        .map_err(|_| ())?
-                        .dyn_into()
-                        .map_err(|_| ())?;
+                let promise = promise.ok_or_else(|| format!("cannot request {url}"))?;
+                let response: web_sys::Response = wasm_bindgen_futures::JsFuture::from(promise)
+                    .await
+                    .map_err(|error| reason("cannot fetch", error))?
+                    .dyn_into()
+                    .map_err(|_| format!("fetching {url} answered no response"))?;
                 if !response.ok() {
-                    return Err(());
+                    return Err(format!("{url} answered HTTP {}", response.status()));
                 }
                 // A server ignoring ranges sends the whole file, which is cut
                 // to the range.
                 let whole = response.status() == 200;
-                let buffer =
-                    wasm_bindgen_futures::JsFuture::from(response.array_buffer().map_err(|_| ())?)
-                        .await
-                        .map_err(|_| ())?;
+                let buffer = response
+                    .array_buffer()
+                    .map_err(|error| reason("cannot read", error))?;
+                let buffer = wasm_bindgen_futures::JsFuture::from(buffer)
+                    .await
+                    .map_err(|error| reason("cannot read", error))?;
                 let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
                 if whole {
+                    let length = bytes.len();
                     bytes
                         .get(range.start as usize..range.end as usize)
                         .map(<[u8]>::to_vec)
-                        .ok_or(())
+                        .ok_or_else(|| {
+                            format!(
+                                "{url} holds {length} bytes, not bytes {}..{}",
+                                range.start, range.end
+                            )
+                        })
                 } else {
                     Ok(bytes)
                 }
@@ -421,12 +437,17 @@ pub fn read_range(
     {
         use std::io::{Read, Seek, SeekFrom};
         let bytes = (|| {
-            let mut file = std::fs::File::open(url).map_err(|_| ())?;
-            file.seek(SeekFrom::Start(range.start)).map_err(|_| ())?;
+            let mut file = std::fs::File::open(url)?;
+            file.seek(SeekFrom::Start(range.start))?;
             let mut bytes = vec![0; (range.end - range.start) as usize];
-            file.read_exact(&mut bytes).map_err(|_| ())?;
-            Ok(bytes)
+            file.read_exact(&mut bytes)?;
+            Ok::<_, std::io::Error>(bytes)
         })();
-        arrive(bytes);
+        arrive(bytes.map_err(|error| {
+            format!(
+                "cannot read bytes {}..{} of {url}: {error}",
+                range.start, range.end
+            )
+        }));
     }
 }

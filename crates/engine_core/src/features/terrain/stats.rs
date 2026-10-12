@@ -49,6 +49,12 @@ pub struct TerrainStats {
     /// Of the resident tiles and patches, those of terrains' surroundings.
     pub surroundings_tiles: u32,
     pub surroundings_patches: u32,
+    /// Tile reads that failed since terrains started (read again later),
+    /// and falls drawn without their white water, which the asset library
+    /// refused; [`Terrains::latest_read_failure`] and
+    /// [`Terrains::latest_fall_refusal`] say why the latest did.
+    pub failed_reads: u64,
+    pub refused_falls: u64,
     /// Whether the camera's view has yet to load whole since terrains
     /// arrived or [`Terrains::begin_loading`]: frames work
     /// on terrain for the settings' `loading_work_ms`, then `work_ms`.

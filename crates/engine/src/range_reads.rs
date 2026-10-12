@@ -8,10 +8,11 @@ use std::io::{Read, Seek, SeekFrom};
 use std::ops::Range;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 
-/// Reads asked of the reading thread, each for a `T`, and their bytes.
+/// Reads asked of the reading thread, each for a `T`, and their bytes or
+/// why they could not be read.
 pub(crate) struct RangeReads<T> {
     asks: Sender<(String, Range<u64>)>,
-    results: Receiver<Option<Vec<u8>>>,
+    results: Receiver<Result<Vec<u8>, String>>,
     // What each read asked and not yet handed back is for, in order.
     waiting: VecDeque<T>,
 }
@@ -48,17 +49,18 @@ impl<T> RangeReads<T> {
     }
 
     /// Hands `arrive` the reads finished since, each with what it was for
-    /// and its bytes (none where the read failed), in the order asked; with
+    /// and its bytes (or why the read failed), in the order asked; with
     /// `all`, every read asked so far, waiting for those still reading.
-    pub(crate) fn take(&mut self, all: bool, mut arrive: impl FnMut(T, Option<Vec<u8>>)) {
+    pub(crate) fn take(&mut self, all: bool, mut arrive: impl FnMut(T, Result<Vec<u8>, String>)) {
+        let stopped = || Err("the reading thread stopped".to_owned());
         while !self.waiting.is_empty() {
             let bytes = if all {
-                self.results.recv().ok().flatten()
+                self.results.recv().unwrap_or_else(|_| stopped())
             } else {
                 match self.results.try_recv() {
                     Ok(bytes) => bytes,
                     Err(TryRecvError::Empty) => return,
-                    Err(TryRecvError::Disconnected) => None,
+                    Err(TryRecvError::Disconnected) => stopped(),
                 }
             };
             if let Some(what) = self.waiting.pop_front() {
@@ -68,11 +70,20 @@ impl<T> RangeReads<T> {
     }
 }
 
-/// Bytes `range` of the file at `path`; none where it cannot be read.
-fn read(path: &str, range: Range<u64>) -> Option<Vec<u8>> {
-    let mut file = std::fs::File::open(path).ok()?;
-    file.seek(SeekFrom::Start(range.start)).ok()?;
-    let mut bytes = vec![0; usize::try_from(range.end - range.start).ok()?];
-    file.read_exact(&mut bytes).ok()?;
-    Some(bytes)
+/// Bytes `range` of the file at `path`, or why they cannot be read.
+fn read(path: &str, range: Range<u64>) -> Result<Vec<u8>, String> {
+    let failed = |error: &dyn std::fmt::Display| {
+        format!(
+            "cannot read bytes {}..{} of {path}: {error}",
+            range.start, range.end
+        )
+    };
+    let mut file = std::fs::File::open(path).map_err(|error| failed(&error))?;
+    file.seek(SeekFrom::Start(range.start))
+        .map_err(|error| failed(&error))?;
+    let length = usize::try_from(range.end - range.start).map_err(|error| failed(&error))?;
+    let mut bytes = vec![0; length];
+    file.read_exact(&mut bytes)
+        .map_err(|error| failed(&error))?;
+    Ok(bytes)
 }

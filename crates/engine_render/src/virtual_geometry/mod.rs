@@ -112,6 +112,7 @@ pub(crate) struct VirtualStats {
     pub loading_pages: u32,
     pub missing_pages: u32,
     pub dropped_pages: u32,
+    pub failed_pages: u32,
 }
 
 /// The camera's cluster tests of a frame: the
@@ -615,16 +616,28 @@ impl VirtualGeometryPass {
         true
     }
 
+    /// Why the latest failed page read did, if any failed.
+    pub(crate) fn page_failure(&self) -> Option<&str> {
+        self.arena.page_failure()
+    }
+
     /// Counts the last read-back frame selected (none before the first
     /// read-back), and this frame's pages.
     pub(crate) fn stats(&self) -> Option<VirtualStats> {
         self.arena.buffers().map(|_| {
-            let [resident_pages, loading_pages, missing_pages, dropped_pages] = self.arena.pages();
+            let [
+                resident_pages,
+                loading_pages,
+                missing_pages,
+                dropped_pages,
+                failed_pages,
+            ] = self.arena.pages();
             VirtualStats {
                 resident_pages,
                 loading_pages,
                 missing_pages,
                 dropped_pages,
+                failed_pages,
                 ..self.readbacks.last().unwrap_or_default()
             }
         })

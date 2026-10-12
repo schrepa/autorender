@@ -26,7 +26,7 @@ struct Arrival {
     first: u32,
     count: u32,
     start: u64,
-    bytes: Result<Vec<u8>, ()>,
+    bytes: Result<Vec<u8>, String>,
 }
 
 struct Resident {
@@ -73,6 +73,10 @@ pub(super) struct VirtualArena {
     // (with arrivals since) that found no room.
     missing_pages: u32,
     dropped_pages: u32,
+    // Page reads that failed or held no valid page since streaming started,
+    // and why the latest did.
+    failed_pages: u32,
+    page_failure: Option<String>,
     // Nodes on the longest root-to-leaf path of any resident mesh.
     depth: u32,
 }
@@ -139,6 +143,8 @@ impl VirtualArena {
             layout_frame: 0,
             missing_pages: 0,
             dropped_pages: 0,
+            failed_pages: 0,
+            page_failure: None,
             depth: 0,
         }
     }
@@ -176,15 +182,22 @@ impl VirtualArena {
         (self.frame, self.layout_frame)
     }
 
-    /// This frame's resident and loading pages, and the pages the last
-    /// read-back frame wanted and lacked and those that found no room.
-    pub(super) fn pages(&self) -> [u32; 4] {
+    /// This frame's resident and loading pages, the pages the last
+    /// read-back frame wanted and lacked and those that found no room, and
+    /// the page reads that failed since streaming started.
+    pub(super) fn pages(&self) -> [u32; 5] {
         [
             self.residency.resident_pages() as u32,
             self.residency.loading_pages() as u32,
             self.missing_pages,
             self.dropped_pages,
+            self.failed_pages,
         ]
+    }
+
+    /// Why the latest failed page read did, if any failed.
+    pub(super) fn page_failure(&self) -> Option<&str> {
+        self.page_failure.as_deref()
     }
 
     pub(super) fn capacity_bytes(&self) -> u64 {
@@ -583,7 +596,7 @@ impl VirtualArena {
                         first,
                         count,
                         start: start.start,
-                        bytes: Err(()),
+                        bytes: Ok(Vec::new()),
                     },
                     Rc::clone(&self.inbox),
                 );
@@ -601,26 +614,39 @@ impl VirtualArena {
                 if self.residency.state(page) != PageState::Loading {
                     continue;
                 }
-                let words = arrival.bytes.as_ref().ok().and_then(|bytes| {
-                    let range = geometry.page_bytes(local as usize)?;
-                    let bytes = bytes.get(
-                        (range.start - arrival.start) as usize
-                            ..(range.end - arrival.start) as usize,
-                    )?;
-                    let words: Vec<u32> = bytes
-                        .as_chunks::<4>()
-                        .0
-                        .iter()
-                        .map(|chunk| u32::from_le_bytes(*chunk))
-                        .collect();
-                    geometry
-                        .validate_page(local as usize, &words)
-                        .is_ok()
-                        .then_some(words)
-                });
+                let words = arrival
+                    .bytes
+                    .as_ref()
+                    .map_err(String::clone)
+                    .and_then(|bytes| {
+                        let range = geometry
+                            .page_bytes(local as usize)
+                            .ok_or_else(|| format!("page {local} lies outside its file"))?;
+                        let bytes = bytes
+                            .get(
+                                (range.start - arrival.start) as usize
+                                    ..(range.end - arrival.start) as usize,
+                            )
+                            .ok_or_else(|| format!("page {local} was read short"))?;
+                        let words: Vec<u32> = bytes
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .map(|chunk| u32::from_le_bytes(*chunk))
+                            .collect();
+                        geometry
+                            .validate_page(local as usize, &words)
+                            .map_err(|error| format!("page {local}: {error}"))?;
+                        Ok(words)
+                    });
                 match words {
-                    Some(words) => self.place(device, queue, page, &words, limit),
-                    None => self.residency.fail(page, self.frame, 0),
+                    Ok(words) => self.place(device, queue, page, &words, limit),
+                    Err(reason) => {
+                        // Read again later; the reason stays.
+                        self.failed_pages += 1;
+                        self.page_failure = Some(reason);
+                        self.residency.fail(page, self.frame, 0);
+                    }
                 }
             }
         }

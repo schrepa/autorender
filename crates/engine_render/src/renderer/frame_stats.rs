@@ -241,6 +241,7 @@ impl Renderer {
                 loading_pages: virtual_stats.map_or(0, |stats| stats.loading_pages),
                 missing_pages: virtual_stats.map_or(0, |stats| stats.missing_pages),
                 dropped_pages: virtual_stats.map_or(0, |stats| stats.dropped_pages),
+                failed_pages: virtual_stats.map_or(0, |stats| stats.failed_pages),
                 visibility_buffer: resolving,
             },
             level_of_detail: DetailStats {

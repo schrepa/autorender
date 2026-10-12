@@ -81,6 +81,10 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
                     falls: stats.falls,
                     surroundings_tiles: stats.surroundings_tiles,
                     surroundings_patches: stats.surroundings_patches,
+                    failed_reads: stats.failed_reads,
+                    latest_read_failure: terrains.latest_read_failure().map(str::to_owned),
+                    refused_falls: stats.refused_falls,
+                    latest_fall_refusal: terrains.latest_fall_refusal().map(str::to_owned),
                 })
             },
         )

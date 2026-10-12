@@ -1477,6 +1477,17 @@
       "direction": "lower"
     },
     {
+      "name": "virtual_geometry.failed_pages",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "virtual_geometry.loading_pages",
       "kind": "work",
       "rule": "shown",
