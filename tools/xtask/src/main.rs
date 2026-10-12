@@ -16,6 +16,7 @@ mod heavy;
 mod importing;
 mod iteration_build;
 mod lint;
+mod locality;
 mod measure;
 mod pipeline;
 mod process;

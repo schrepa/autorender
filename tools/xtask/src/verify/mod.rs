@@ -52,6 +52,7 @@ const QUICK_STAGES: &[&str] = &[
     "features",
     "exports",
     "structure",
+    "content locality",
 ];
 
 /// How much a run checks.

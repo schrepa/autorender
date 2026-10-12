@@ -29,7 +29,7 @@ pub(crate) struct Stage {
 /// smoke's opening description, the path map `cargo xtask verify` selects
 /// checks by, feature layering, the
 /// facade's exports), the structure ratchet (file
-/// lengths, struct widths), shaders against their Rust layouts, the pure
+/// lengths, struct widths), the Stress Lab's content locality, shaders against their Rust layouts, the pure
 /// checks' corpora, Clippy (the workspace, the native host's tools, the
 /// browser clients, the app template), rustdoc, the browser clients the web
 /// host imports, and TypeScript.
@@ -108,6 +108,11 @@ pub(crate) const LINT: &[Stage] = &[
         name: "structure",
         needs: &[],
         run: crate::structure::check,
+    },
+    Stage {
+        name: "content locality",
+        needs: &[],
+        run: crate::locality::check,
     },
     Stage {
         name: "gpu",
