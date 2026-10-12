@@ -77,6 +77,14 @@ export interface AssetsResult {
   textures: number;
 }
 
+/** What `camera` answers once it rendered. */
+export interface CameraResult {
+  /** Always true: the camera is the one asked for. */
+  camera_changed: boolean;
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
+}
+
 /** Where a cast shape hit. */
 export interface CastHit {
   /** How far it travelled. */
@@ -154,6 +162,14 @@ export interface CollisionWorldView {
   /** Cache revision and source clocks are decimal strings, not runtime handles. */
   revision: string;
   tick: string;
+}
+
+/** What `culling` answers once it rendered. */
+export interface CullingResult {
+  /** Whether frames cull now. */
+  culling_enabled: boolean;
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
 }
 
 /** What `deform` answers: the track pressed and the log after. */
@@ -299,6 +315,18 @@ export interface EntityRow {
   tags?: string[] | null;
 }
 
+/** What `environment` answers: the sections it named, before and after. */
+export interface EnvironmentResult {
+  /** Each after. */
+  after: Record<string, unknown>;
+  /** Each before, by section, as the environment's inspectors show it. */
+  before: Record<string, unknown>;
+  /** The sections it replaced. */
+  environment_changed: string[];
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
+}
+
 /** An entity a hit or event names, by its authored identity. */
 export interface HitEntity {
   /** Whether it still exists. */
@@ -335,6 +363,14 @@ export interface HostContext {
   user_agent: string;
   /** The view's width, in physical pixels. */
   width: number;
+}
+
+/** What `input` answers: the batch waits for the next step. */
+export interface InputResult {
+  /** When the batch applies: `next_step`. */
+  applies_on: string;
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
 }
 
 /**
@@ -424,19 +460,26 @@ export interface OceanWave {
 export interface OpResults {
   animation: AnimationResult;
   assets: AssetsResult;
+  camera: CameraResult;
   collision_events: CollisionEventsResult;
+  culling: CullingResult;
   deform: DeformResult;
   deformation_query: DeformationQueryResult;
   describe: DescribeResult;
   digest: DigestResult;
   distribution: DistributionResult;
+  environment: EnvironmentResult;
+  input: InputResult;
   inspect: InspectResult;
   nav_go: NavGoResult;
   nav_path: NavPathResult;
   overlap: OverlapResult;
+  present: PresentResult;
   raycast: RaycastResult;
+  render: RenderResult;
   shape_cast: ShapeCastResult;
   status: StatusResult;
+  step: StepResult;
   terrain: TerrainControlResult;
   water_query: WaterQueryResult;
   world_changes: WorldChangesResult;
@@ -491,6 +534,14 @@ export interface PlayerValues {
   speed: number;
   /** Seconds into the clip. */
   time: number;
+}
+
+/** What `present` answers once the preview rendered. */
+export interface PresentResult {
+  /** Always true: the preview rendered. */
+  rendered: boolean;
+  /** Previews change no clock or gameplay state. */
+  temporary: boolean;
 }
 
 export type PresentationModeView = "current" | "interpolated";
@@ -555,6 +606,12 @@ export interface RaycastResult {
   hit?: RayHit | null;
   /** The collision world queried. */
   snapshot: CollisionWorldView;
+}
+
+/** What `render` answers. */
+export interface RenderResult {
+  /** Always true: the frame rendered. */
+  rendered: boolean;
 }
 
 /** The authored scene a reply observed. */
@@ -647,6 +704,14 @@ export interface StatusResult {
  * source and the last frame's statistics), or what the host does next.
  */
 export type Step = { reply: Reply } | { effect: Effect };
+
+/** What `step` answers once the ticks ran and presented. */
+export interface StepResult {
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
+  /** Fixed ticks advanced. */
+  ticks: number;
+}
 
 /** What `terrain` answers: terrain's view and level of detail after. */
 export interface TerrainControlResult {

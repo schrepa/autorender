@@ -15,20 +15,13 @@ use crate::{InspectorDescriptor, InspectorKind};
 /// shrinks: a new op's result is typed, in `results!` below.
 pub const UNTYPED_RESULTS: &[&str] = &[
     "benchmark",
-    "camera",
     "capture",
-    "culling",
     "debug_panic",
-    "environment",
     "frames",
     "game",
-    "input",
     "pause",
-    "present",
     "reload",
-    "render",
     "resume",
-    "step",
     "terrain_edit",
     "terrain_height",
     "terrain_redo",
@@ -81,6 +74,13 @@ results! {
     animation: crate::features::animation::AnimationResult,
     world_changes: crate::features::world_streaming::WorldChangesResult,
     terrain: crate::features::terrain::TerrainControlResult,
+    present: crate::results::PresentResult,
+    culling: crate::results::CullingResult,
+    camera: crate::results::CameraResult,
+    render: crate::results::RenderResult,
+    input: crate::results::InputResult,
+    step: crate::results::StepResult,
+    environment: crate::results::EnvironmentResult,
 }
 
 /// The engine as a session finds it: the world's size, the inspectors,
@@ -388,6 +388,78 @@ impl From<InspectorKind> for TypeKind {
             InspectorKind::Resource => Self::Resource,
         }
     }
+}
+
+/// What `present` answers once the preview rendered.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct PresentResult {
+    /// Previews change no clock or gameplay state.
+    pub temporary: bool,
+    /// Always true: the preview rendered.
+    pub rendered: bool,
+}
+
+/// What `culling` answers once it rendered.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct CullingResult {
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+    /// Whether frames cull now.
+    pub culling_enabled: bool,
+}
+
+/// What `camera` answers once it rendered.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct CameraResult {
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+    /// Always true: the camera is the one asked for.
+    pub camera_changed: bool,
+}
+
+/// What `render` answers.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct RenderResult {
+    /// Always true: the frame rendered.
+    pub rendered: bool,
+}
+
+/// What `input` answers: the batch waits for the next step.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct InputResult {
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+    /// When the batch applies: `next_step`.
+    pub applies_on: &'static str,
+}
+
+/// What `step` answers once the ticks ran and presented.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct StepResult {
+    /// Fixed ticks advanced.
+    pub ticks: u32,
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+}
+
+/// What `environment` answers: the sections it named, before and after.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct EnvironmentResult {
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+    /// The sections it replaced.
+    pub environment_changed: Vec<&'static str>,
+    /// Each before, by section, as the environment's inspectors show it.
+    pub before: serde_json::Map<String, Value>,
+    /// Each after.
+    pub after: serde_json::Map<String, Value>,
 }
 
 /// The spread of the values a `distribution` request named.

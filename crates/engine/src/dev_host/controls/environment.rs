@@ -2,10 +2,11 @@
 //! replacing their resources, merged over their current values with
 //! `merge`.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::rendered;
 use crate::app_host::AppHost;
+use engine_dev::results::{EnvironmentResult, result};
 use engine_dev::{DevError, EnvironmentControl};
 
 /// Applies `control`, sent as `source`, then renders: the sections before
@@ -55,11 +56,11 @@ pub(super) fn set(
             .map(|&key| (key.to_owned(), all[key].clone()))
             .collect::<serde_json::Map<_, _>>()
     };
-    Ok(json!({
-        "temporary": true,
-        "environment_changed": named,
-        "before": pick(&before),
-        "after": pick(&after),
+    Ok(result::environment(EnvironmentResult {
+        temporary: true,
+        environment_changed: named.clone(),
+        before: pick(&before),
+        after: pick(&after),
     }))
 }
 

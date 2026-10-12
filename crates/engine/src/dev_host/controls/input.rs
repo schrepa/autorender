@@ -1,11 +1,12 @@
 //! Input and stepping: a temporary batch of input, applied by the next
 //! explicit step of fixed ticks.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::super::{DevHost, InputBatch};
 use crate::app_host::AppHost;
 use engine_core::{ActionInput, DevStepError, ErrorCode, InputState};
+use engine_dev::results::{InputResult, StepResult, result};
 use engine_dev::{DevError, bounds};
 use engine_settings::Setting;
 
@@ -27,7 +28,10 @@ pub(super) fn batch(host: &mut DevHost, input: InputBatch) -> Result<Value, DevE
         }
     }
     host.input = input;
-    Ok(json!({"temporary":true,"applies_on":"next_step"}))
+    Ok(result::input(InputResult {
+        temporary: true,
+        applies_on: "next_step",
+    }))
 }
 
 /// Steps `ticks` fixed ticks with the batch, then presents.
@@ -63,5 +67,8 @@ pub(super) fn step(
             format!("simulation may have advanced: {error}"),
         )
     })?;
-    Ok(json!({"ticks":ticks,"temporary":true}))
+    Ok(result::step(StepResult {
+        ticks,
+        temporary: true,
+    }))
 }

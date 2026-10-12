@@ -1,12 +1,13 @@
 //! Controls of the view: presentation previews, culling, the camera and
 //! plain renders.
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::{rendered, then_render};
 use crate::app_host::AppHost;
 use engine_core::ErrorCode;
 use engine_dev::DevError;
+use engine_dev::results::{CameraResult, CullingResult, PresentResult, RenderResult, result};
 
 /// Presents fixed-tick poses at `alpha`, through the GPU path with `gpu`.
 pub(super) fn present(
@@ -20,7 +21,10 @@ pub(super) fn present(
         app.dev_present(alpha, width, height, gpu),
         "presentation prepared",
     )?;
-    Ok(json!({"temporary":true,"rendered":true}))
+    Ok(result::present(PresentResult {
+        temporary: true,
+        rendered: true,
+    }))
 }
 
 /// Turns visibility culling on or off, then renders.
@@ -34,7 +38,10 @@ pub(super) fn culling(
         app,
         size,
         "culling changed",
-        json!({"temporary":true,"culling_enabled":enabled}),
+        result::culling(CullingResult {
+            temporary: true,
+            culling_enabled: enabled,
+        }),
     )
 }
 
@@ -56,7 +63,10 @@ pub(super) fn camera(
         app,
         size,
         "camera changed",
-        json!({"temporary":true,"camera_changed":true}),
+        result::camera(CameraResult {
+            temporary: true,
+            camera_changed: true,
+        }),
     )
 }
 
@@ -64,5 +74,5 @@ pub(super) fn camera(
 pub(super) fn render(app: &mut AppHost, (width, height): (u32, u32)) -> Result<Value, DevError> {
     app.dev_render(width, height)
         .map_err(|error| DevError::new(ErrorCode::RenderFailed, "$", error.to_string()))?;
-    Ok(json!({"rendered":true}))
+    Ok(result::render(RenderResult { rendered: true }))
 }
