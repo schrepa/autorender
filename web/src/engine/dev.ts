@@ -25,6 +25,9 @@ interface Host {
   /** Runs one ordinary frame at `timestamp` without input, then hands its
    * jobs to the workers. */
   frame(timestamp: number): void;
+  /** Resolves once the GPU has done the work submitted so far, pipeline
+   * compiles among it; undefined without a WebGPU canvas. */
+  gpuWorkDone?(): Promise<void> | undefined;
   /** Stops the page for good: the engine's module stopped. */
   fail(error: unknown): void;
   /** Why the engine's module stopped (its panic's message), once it did. */
@@ -47,6 +50,10 @@ declare global {
     __engineDev?: {
       version: number; instance: string; build: string | null; controls: Record<string, string>; parameters: Record<string, string>;
       request(command: Command): Promise<Reply>;
+      /** Whether a request waits on the GPU before presenting: browsers
+       * present nothing while their GPU process compiles pipelines or
+       * catches up with queued frames, for tens of seconds at times. */
+      waitingOnGpu(): boolean;
     };
   }
 }
@@ -61,6 +68,22 @@ export function connectDevelopment(host: Host): () => void {
   const runtime = host.game;
   if (!runtime.dev_request) throw new Error("Development Wasm is missing; run cargo xtask dev.");
   const closed = () => disposed || host.signal.aborted;
+  /** Presentation waits on the GPU in progress. */
+  let gpuWaits = 0;
+  /** Resolves within the `count`th animation frame from now, as
+   * animationFrames: its timeout runs once the GPU has done the work
+   * submitted so far. */
+  async function presented(count: number): Promise<void> {
+    const done = host.gpuWorkDone?.();
+    if (!done) {
+      await animationFrames(count, host.signal);
+      return;
+    }
+    gpuWaits++;
+    const gpu = within(done, GPU_WORK_LIMIT_MS, "the GPU did not finish its work", host.signal)
+      .finally(() => { gpuWaits--; });
+    await animationFrames(count, host.signal, undefined, gpu);
+  }
   /** The page's side of each call to the bridge. */
   function context(): string {
     const [width, height] = host.size();
@@ -92,12 +115,12 @@ export function connectDevelopment(host: Host): () => void {
         return resumed(globalThis.document?.hidden ? { interrupted: true } : { now });
       }
       case "frame":
-        await animationFrames(1, host.signal);
+        await presented(1);
         if (closed()) throw new Error("session closed");
         host.frame(effect.timestamp);
         return resumed({});
       case "show":
-        await animationFrames(2, host.signal);
+        await presented(2);
         return resumed({});
       case "game": {
         const control = host.controls?.[effect.name];
@@ -123,6 +146,7 @@ export function connectDevelopment(host: Host): () => void {
     /** The game's controls by name, with what each does. */
     controls: Object.fromEntries(Object.entries(host.controls ?? {}).map(([name, control]) => [name, control.description])),
     parameters: host.parameters ?? {},
+    waitingOnGpu: () => gpuWaits > 0,
     async request(command: Command): Promise<Reply> {
       if (closed()) return refuse("session_closed", "$", "the browser runtime was disposed");
       const stopped = host.stopped();
@@ -180,15 +204,53 @@ async function nameAdapters(reply: Reply) {
   }
 }
 
+/** Milliseconds a presentation may take once the GPU has done the work
+ * submitted before it. */
+const PRESENTATION_TIMEOUT_MS = 5000;
+/** Milliseconds the GPU may take over the work submitted before a
+ * presentation: pipeline compiles and queued frames, which take tens of
+ * seconds on a busy integrated GPU. */
+const GPU_WORK_LIMIT_MS = 180_000;
+
+/** `promise`, failing with `message` after `limit` milliseconds or once
+ * `signal` aborts. */
+function within<T>(promise: Promise<T>, limit: number, message: string, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => finish(() => reject(new Error(`${message} within ${limit / 1000} s`))), limit);
+    function finish(settle: () => void) {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", aborted);
+      settle();
+    }
+    function aborted() { finish(() => reject(new Error("session closed"))); }
+    signal.addEventListener("abort", aborted, { once: true });
+    if (signal.aborted) { aborted(); return; }
+    promise.then(value => finish(() => resolve(value)), cause => finish(() => reject(cause)));
+  });
+}
+
 /** The timestamp of the `count`th animation frame from now (two show what
  * was drawn before); none within `within` milliseconds resolves with the
- * time then, and without `within` none within five seconds rejects. */
-function animationFrames(count: number, signal: AbortSignal, within?: number): Promise<number> {
+ * time then, and without `within` none within PRESENTATION_TIMEOUT_MS
+ * rejects, a time that starts once `gpu` resolved (now without it). */
+function animationFrames(count: number, signal: AbortSignal, within?: number, gpu?: Promise<void>): Promise<number> {
   return new Promise((resolve, reject) => {
     let request = 0;
     let left = count;
-    const timeout = setTimeout(() => (within === undefined ? finish(new Error("browser presentation timed out")) : finish(undefined, performance.now())), within ?? 5000);
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    // Once the GPU has done the work submitted before the frames: browsers
+    // present nothing while their GPU process compiles pipelines or
+    // catches up with queued frames.
+    const arm = () => {
+      if (settled) return;
+      timeout = within === undefined
+        ? setTimeout(() => finish(new Error("browser presentation timed out")), PRESENTATION_TIMEOUT_MS)
+        : setTimeout(() => finish(undefined, performance.now()), within);
+    };
     function finish(error?: Error, timestamp = 0) {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
       cancelAnimationFrame(request);
       signal.removeEventListener("abort", aborted);
@@ -201,6 +263,8 @@ function animationFrames(count: number, signal: AbortSignal, within?: number): P
     }
     signal.addEventListener("abort", aborted, { once: true });
     if (signal.aborted) { aborted(); return; }
+    if (gpu) gpu.then(arm, (cause: unknown) => finish(cause instanceof Error ? cause : new Error(String(cause))));
+    else arm();
     request = requestAnimationFrame(next);
   });
 }

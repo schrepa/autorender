@@ -486,6 +486,9 @@ async function start() {
         jobs?.exchange();
       },
       source: options.source,
+      // The engine's canvas context, whose device the engine draws with.
+      gpuWorkDone: () => (canvas.getContext("webgpu") as GPUCanvasContext | null)
+        ?.getConfiguration()?.device.queue.onSubmittedWorkDone(),
       fail, stopped: () => stopped,
       controls: Object.fromEntries(Object.entries(options.controls ?? {}).map(([name, control]) => [name, {
         description: control.description, run: (args: Record<string, unknown>) => control.run(created, args),

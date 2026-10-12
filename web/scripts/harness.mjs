@@ -119,21 +119,31 @@ export async function launch({ width = 1200, height = 900, timeout = 30_000, arg
 }
 
 /** Sends development commands to `page`, each answering within `deadline`
- * milliseconds with `ok` equal to `expectedOk`. Only a `command_busy` reply
- * is retried, until the deadline: it rejects a command before it runs, so
- * no command is ever repeated after it ran. */
+ * milliseconds with `ok` equal to `expectedOk`, time the page spends
+ * waiting on its GPU before presenting not counted (browsers present
+ * nothing while their GPU process compiles pipelines or catches up). Only
+ * a `command_busy` reply is retried, until the deadline: it rejects a
+ * command before it runs, so no command is ever repeated after it ran. */
 export function commander(page, { deadline = 30_000 } = {}) {
   return async function command(op, fields = {}, expectedOk = true) {
     recordSent({ op, ...fields });
-    const until = Date.now() + deadline;
+    let until = Date.now() + deadline;
     for (;;) {
       let timer;
+      let answered = false;
       const reply = await Promise.race([
         page.evaluate(request => window.__engineDev.request(request), { op, ...fields }),
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`${op} timed out; it was not retried`)), Math.max(1, until - Date.now()));
+          const expire = async () => {
+            const waiting = await page.evaluate(() => window.__engineDev?.waitingOnGpu?.() ?? false).catch(() => false);
+            if (answered) return;
+            if (waiting) until = Date.now() + deadline;
+            if (Date.now() >= until) reject(new Error(`${op} timed out; it was not retried`));
+            else timer = setTimeout(expire, until - Date.now());
+          };
+          timer = setTimeout(expire, Math.max(1, until - Date.now()));
         }),
-      ]).finally(() => clearTimeout(timer));
+      ]).finally(() => { answered = true; clearTimeout(timer); });
       if (reply?.error?.code === "command_busy" && Date.now() < until) { await delay(25); continue; }
       assert.equal(reply.ok, expectedOk, `${op}: ${JSON.stringify(reply).slice(0, 4000)}`);
       if (reply.result?.rendering) reply.result.rendering = strictStats(reply.result.rendering);
