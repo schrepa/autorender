@@ -586,6 +586,12 @@ impl CloudPass {
         self.view_job.is_some()
     }
 
+    /// Whether this frame marches a slice of the dome: what
+    /// [`Self::encode`] records.
+    pub(crate) fn marches_dome(&self) -> bool {
+        self.job.is_some() && self.domes.is_some()
+    }
+
     /// Records this frame's march of the view's clouds up to
     /// what `depth` (the depth buffer of `depth_generation`) shows, timed
     /// by `profiler` (`cloud_view`); after [`Self::encode`] made the noise.

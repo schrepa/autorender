@@ -80,6 +80,22 @@ resources! {
     Probes: Kept,
     /// The view's marched clouds.
     CloudView: Frame,
+    /// Terrain's horizon maps, which its long sun shadows read.
+    Horizons: Kept,
+    /// The clouds' dome, which the sky and its environment map show, and
+    /// the grid of their shadows.
+    CloudDome: Kept,
+    /// Runtime deformation's map of tracks.
+    Tracks: Kept,
+    /// The runtime virtual texture's baked pages.
+    Pages: Kept,
+    /// Ground cover's blades and their counts, read back later.
+    Cover: Kept,
+    /// Terrain's visibility target: each pixel's terrain and depth.
+    TerrainIds: Frame,
+    /// The pages terrain's resolves wanted of the virtual texture, read back
+    /// later.
+    Feedback: Kept,
 }
 
 // A set holds every resource as a bit of a u64.
@@ -203,14 +219,27 @@ pub(crate) enum Pass {
     ShadowSelect,
     /// Virtual geometry's cluster selection.
     VirtualSelect,
+    /// Terrain's horizon maps where the sun or terrain changed.
+    TerrainHorizons,
     /// The shadow maps.
     ShadowMaps,
     /// Light binning.
     Lights,
+    /// This frame's slice of the clouds' dome, and their shadows' grid.
+    CloudDome,
+    /// Tracks pressed into the deformation map.
+    Deformation,
+    /// The runtime virtual texture's pages baked.
+    VtBakes,
+    /// Ground cover grown on the terrain.
+    GroundCover,
     /// The opaque pass of `phase`.
     Opaque {
         phase: Phase,
     },
+    /// The pages the first phase's terrain resolves wanted of the runtime
+    /// virtual texture.
+    VtFeedback,
     /// The visibility buffer's triangle IDs, tile lists and resolve of
     /// `phase`.
     VisibilityIds {
@@ -284,9 +313,15 @@ passes! {
     occupancy: Occupancy,
     shadow_select: ShadowSelect,
     virtual_select: VirtualSelect,
+    terrain_horizons: TerrainHorizons,
     shadow_maps: ShadowMaps,
     lights: Lights,
+    cloud_dome: CloudDome,
+    deformation: Deformation,
+    vt_bakes: VtBakes,
+    ground_cover: GroundCover,
     opaque: Opaque { phase: Phase::One },
+    vt_feedback: VtFeedback,
     visibility: VisibilityIds { phase: Phase::One },
     visibility_tiles: Classify { phase: Phase::One },
     visibility_resolve: Resolve { phase: Phase::One },
@@ -667,6 +702,18 @@ pub(crate) struct FrameShape {
     /// Opaque phases: two around the occlusion test.
     pub(crate) phases: u8,
     pub(crate) shadows: bool,
+    /// Work before the passes reading it: terrain's horizon maps build
+    /// (shadowed frames only), the clouds' dome marches, tracks press into
+    /// the deformation map, the virtual texture bakes pages and ground cover
+    /// grows.
+    pub(crate) horizons: bool,
+    pub(crate) cloud_dome: bool,
+    pub(crate) deformation: bool,
+    pub(crate) vt_bakes: bool,
+    pub(crate) cover: bool,
+    /// Terrain draws deferred in the first opaque phase: its visibility
+    /// target holds the pages the virtual texture's feedback looks up.
+    pub(crate) deferred: bool,
     /// Placed objects draw, and the occupancy map is drawn
     /// again.
     pub(crate) scatter: bool,
@@ -739,6 +786,11 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(Pyramid)
             .write(Clusters);
     }
+    // Terrain's horizon maps, which shadowed frames build as the sun or
+    // terrain changes, before the passes shading with them.
+    if shape.shadows && shape.horizons {
+        graph.add(Pass::TerrainHorizons).write(Horizons);
+    }
     if shape.shadows {
         graph
             .add(Pass::ShadowMaps)
@@ -750,6 +802,21 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     }
     if shape.lights {
         graph.add(Pass::Lights).read(Poses).write(Lights);
+    }
+    // What the first opaque phase draws and shades with: the clouds' dome
+    // (the sky) and their shadows, tracks, the virtual texture's pages and
+    // ground cover, grown over the tracks.
+    if shape.cloud_dome {
+        graph.add(Pass::CloudDome).write(CloudDome);
+    }
+    if shape.deformation {
+        graph.add(Pass::Deformation).write(Tracks);
+    }
+    if shape.vt_bakes {
+        graph.add(Pass::VtBakes).write(Pages);
+    }
+    if shape.cover {
+        graph.add(Pass::GroundCover).read(Tracks).write(Cover);
     }
     // The main passes' color targets, in pipeline target order.
     let targets: &[(Resource, Clear)] = match shape.targets {
@@ -782,20 +849,31 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
                 .write(Visible)
                 .write_if(shape.clusters, Clusters);
         }
+        // Terrain, its cover and placed objects draw in the first phase.
+        let first = phase == Phase::One;
         let mut opaque = graph
             .add(Pass::Opaque { phase })
             .read(Poses)
             .read_if(gpu, Visible)
-            .read_if(shape.scatter && phase == Phase::One, Placed)
+            .read_if(shape.scatter && first, Placed)
             .read(Occupancy)
             .read_if(shape.shadows, ShadowMaps)
             .read_if(shape.lights, Lights)
             .read_if(shape.clusters, Clusters)
-            .read(Probes);
+            .read(Probes)
+            .read(Horizons)
+            .read(CloudDome)
+            .read_if(first, Tracks)
+            .read_if(first, Pages)
+            .read_if(first, Cover)
+            .write_if(shape.deferred && first, TerrainIds);
         for &(target, clear) in targets {
             opaque = opaque.color(target, Access::Draw(clear));
         }
         opaque.depth(Depth, Access::Draw(Clear::Depth(FAR)));
+        if shape.deferred && first {
+            graph.add(Pass::VtFeedback).read(TerrainIds).write(Feedback);
+        }
         if shape.resolves[phase.index()] {
             graph
                 .add(Pass::VisibilityIds { phase })

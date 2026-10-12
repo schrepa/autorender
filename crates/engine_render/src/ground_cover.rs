@@ -381,6 +381,11 @@ impl GroundCoverPass {
         });
     }
 
+    /// Whether this frame grows blades: what [`Self::encode`] records.
+    pub(crate) fn growing(&self) -> bool {
+        self.compute.is_some() && self.grow_group.get().is_some() && !self.growths.is_empty()
+    }
+
     /// Creates the growth's pipelines unless they exist.
     pub(crate) fn warm(&mut self, device: &wgpu::Device) {
         self.compute

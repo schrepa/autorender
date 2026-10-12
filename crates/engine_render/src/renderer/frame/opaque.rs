@@ -53,7 +53,7 @@ impl Renderer {
         // Terrain, the main occluder, draws in the first phase
         // so occlusion culling's pyramid holds it; shaded deferred
         // where it can be.
-        if phase == 0 && self.terrain_deferred(state) {
+        if phase == 0 && state.shape.deferred {
             return self.encode_opaque_deferred(
                 state,
                 encoder,

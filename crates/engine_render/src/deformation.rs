@@ -126,6 +126,11 @@ impl DeformationPass {
         self.map.size()
     }
 
+    /// Whether jobs wait for the next encoding, which runs or drops them.
+    pub(crate) fn pending(&self) -> bool {
+        !self.jobs.is_empty() || !self.records.is_empty()
+    }
+
     /// Records this frame's jobs: emptying, moving or rebasing the map as
     /// `frame` lays it at simulation time `now`, then its stamps.
     pub(crate) fn prepare(&mut self, device: &wgpu::Device, frame: &RenderDeformation, now: f64) {

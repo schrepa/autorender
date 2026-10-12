@@ -145,6 +145,11 @@ impl Horizons {
         self.records.width() / 2
     }
 
+    /// Whether this frame builds maps.
+    pub(crate) fn pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
     /// Terrains casting long shadows.
     pub(crate) fn count(&self) -> u32 {
         self.maps

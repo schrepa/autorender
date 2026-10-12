@@ -1322,9 +1322,8 @@ impl Renderer {
     pub(super) fn frame_shape(
         &self,
         kind: FrameKind,
-        packing: &Packing,
-        features: &Features<'_>,
-        (virtual_frame, resolving, scatter): (bool, bool, bool),
+        (packing, features, passes): (&Packing, &Features<'_>, &Passes),
+        (virtual_frame, resolving, scatter, terrain): (bool, bool, bool, bool),
     ) -> FrameShape {
         let post = features.post_frame.filter(|_| self.post.is_some());
         let targets = self.frame_targets(&packing.temporal_frame, features.post_frame);
@@ -1342,6 +1341,12 @@ impl Renderer {
             canvas_clear: canvas_clear(),
             phases,
             shadows: features.shadow_frame.is_some(),
+            horizons: self.terrain.horizons.pending(),
+            cloud_dome: self.clouds.marches_dome(),
+            deformation: self.terrain.deformation.pending(),
+            vt_bakes: self.terrain.vt.baking(),
+            cover: terrain && self.ground_cover.growing(),
+            deferred: self.terrain_deferred(terrain, passes.opaque_kind),
             scatter,
             occupancy: self.occupancy.redrawing(),
             clusters: virtual_frame,

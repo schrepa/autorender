@@ -320,9 +320,8 @@ impl Renderer {
         self.refresh_camera_group();
         let mut shape = self.frame_shape(
             kind,
-            &packing,
-            &features,
-            (virtual_frame, resolving, scatter),
+            (&packing, &features, &passes),
+            (virtual_frame, resolving, scatter, terrain),
         );
         shape.water = water;
         shape.clouds = self.prepare_cloud_composite(shape.targets);

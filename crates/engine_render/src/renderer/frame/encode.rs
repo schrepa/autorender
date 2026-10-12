@@ -30,60 +30,41 @@ impl Renderer {
             }
             Pass::ShadowSelect => self.encode_shadow_selection(state, encoder),
             Pass::VirtualSelect => self.encode_cluster_selection(encoder),
+            Pass::TerrainHorizons => {
+                self.terrain
+                    .encode_horizons(&self.device, encoder, &self.profiler);
+            }
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
             Pass::Lights => self.encode_light_binning(state, encoder),
+            Pass::CloudDome => self.clouds.encode(
+                &self.device,
+                encoder,
+                &self.camera.cloud_shadows,
+                &self.profiler,
+            ),
+            Pass::Deformation => {
+                self.terrain
+                    .deformation
+                    .encode(&self.device, &self.queue, encoder, &self.profiler)
+            }
+            Pass::VtBakes => self.terrain.encode_vt_bakes(
+                &self.device,
+                encoder,
+                &self.mesh_shader,
+                (&self.camera.terrain_layout, &self.camera.terrain_group),
+            ),
+            Pass::GroundCover => self
+                .ground_cover
+                .encode(&self.device, encoder, &self.profiler),
             Pass::Opaque { phase } => {
-                // Tracks press into the deformation map, and
-                // ground cover grows on the terrain, before the first phase
-                // draws them.
-                if phase == Phase::One {
-                    self.clouds.encode(
-                        &self.device,
-                        encoder,
-                        &self.camera.cloud_shadows,
-                        &self.profiler,
-                    );
-                    self.terrain.deformation.encode(
-                        &self.device,
-                        &self.queue,
-                        encoder,
-                        &self.profiler,
-                    );
-                    // The runtime virtual texture's pages bake before the
-                    // resolves read them.
-                    self.terrain.encode_vt_bakes(
-                        &self.device,
-                        encoder,
-                        &self.mesh_shader,
-                        (&self.camera.terrain_layout, &self.camera.terrain_group),
-                    );
-                }
-                if phase == Phase::One && state.terrain {
-                    self.ground_cover
-                        .encode(&self.device, encoder, &self.profiler);
-                }
                 let draws = self.encode_opaque(state, encoder, view, node, phase.index());
-                // The pages the first phase's terrain resolves wanted of the
-                // runtime virtual texture.
-                if phase == Phase::One
-                    && self.terrain_deferred(state)
-                    && let Some(ids) = &self.terrain_ids
-                {
-                    let size = self.depth.texture.size();
-                    self.terrain.encode_vt_feedback(
-                        &self.device,
-                        encoder,
-                        &self.mesh_shader,
-                        &self.camera.buffer,
-                        (&ids.view, (size.width, size.height)),
-                    );
-                }
                 // Phase two issues phase one's draws again for
                 // the instances its test revealed: count each once.
                 if phase == Phase::One {
                     report.draws += draws;
                 }
             }
+            Pass::VtFeedback => self.encode_vt_feedback(encoder),
             Pass::VisibilityIds { phase } => {
                 self.encode_visibility_ids(state, encoder, view, node, phase.index());
             }
@@ -169,7 +150,14 @@ impl Renderer {
             | Resource::Pyramid
             | Resource::Effects
             | Resource::Probes
-            | Resource::CloudView => {
+            | Resource::CloudView
+            | Resource::Horizons
+            | Resource::CloudDome
+            | Resource::Tracks
+            | Resource::Pages
+            | Resource::Cover
+            | Resource::TerrainIds
+            | Resource::Feedback => {
                 unreachable!("{resource:?} is no attachment of the renderer's passes")
             }
         }
@@ -252,10 +240,6 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         report: &mut EncodeReport,
     ) {
-        // Terrain's horizon maps where the sun or terrain
-        // changed, before the passes that read them.
-        self.terrain
-            .encode_horizons(&self.device, encoder, &self.profiler);
         let virtual_frame = state.virtual_frame;
         let shadow_frame = state
             .features
@@ -316,6 +300,22 @@ impl Renderer {
                 },
             },
             &self.profiler,
+        );
+    }
+
+    /// The pages the first phase's terrain resolves wanted of the runtime
+    /// virtual texture, read from terrain's visibility target.
+    fn encode_vt_feedback(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let Some(ids) = &self.terrain_ids else {
+            return;
+        };
+        let size = self.depth.texture.size();
+        self.terrain.encode_vt_feedback(
+            &self.device,
+            encoder,
+            &self.mesh_shader,
+            &self.camera.buffer,
+            (&ids.view, (size.width, size.height)),
         );
     }
 

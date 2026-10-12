@@ -306,12 +306,12 @@ impl Renderer {
         true
     }
 
-    /// Whether this frame's terrain draws deferred: shaded
-    /// (its development views read what only its patches hold) into the
-    /// effects' targets, its pipelines and target ready.
-    pub(super) fn terrain_deferred(&self, state: &FrameState<'_>) -> bool {
-        let kind = state.passes.opaque_kind;
-        state.terrain
+    /// Whether this frame's terrain draws deferred, given whether it draws
+    /// and the opaque passes' `kind`: shaded (its development views read what
+    /// only its patches hold) into the effects' targets, its pipelines and
+    /// target ready.
+    pub(super) fn terrain_deferred(&self, terrain: bool, kind: PassKind) -> bool {
+        terrain
             && self.terrain.frame.shaded
             && self.terrain_ids.is_some()
             && kind
