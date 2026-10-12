@@ -237,6 +237,13 @@ pub(crate) enum Pass {
     Opaque {
         phase: Phase,
     },
+    /// Terrain shaded deferred in the first phase, after the meshes: its
+    /// visibility, writing each pixel's terrain and depth; each terrain's
+    /// resolve, shading its pixels once; then its cover, placed objects and
+    /// the sky.
+    TerrainIds,
+    TerrainResolve,
+    OpaqueLate,
     /// The pages the first phase's terrain resolves wanted of the runtime
     /// virtual texture.
     VtFeedback,
@@ -321,6 +328,9 @@ passes! {
     vt_bakes: VtBakes,
     ground_cover: GroundCover,
     opaque: Opaque { phase: Phase::One },
+    terrain_ids: TerrainIds,
+    terrain_resolve: TerrainResolve,
+    opaque_late: OpaqueLate,
     vt_feedback: VtFeedback,
     visibility: VisibilityIds { phase: Phase::One },
     visibility_tiles: Classify { phase: Phase::One },
@@ -849,13 +859,15 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
                 .write(Visible)
                 .write_if(shape.clusters, Clusters);
         }
-        // Terrain, its cover and placed objects draw in the first phase.
+        // Terrain, its cover and placed objects draw in the first phase,
+        // after the meshes where terrain shades deferred.
         let first = phase == Phase::One;
+        let forward = first && !shape.deferred;
         let mut opaque = graph
             .add(Pass::Opaque { phase })
             .read(Poses)
             .read_if(gpu, Visible)
-            .read_if(shape.scatter && first, Placed)
+            .read_if(shape.scatter && forward, Placed)
             .read(Occupancy)
             .read_if(shape.shadows, ShadowMaps)
             .read_if(shape.lights, Lights)
@@ -863,16 +875,15 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(Probes)
             .read(Horizons)
             .read(CloudDome)
-            .read_if(first, Tracks)
-            .read_if(first, Pages)
-            .read_if(first, Cover)
-            .write_if(shape.deferred && first, TerrainIds);
+            .read_if(forward, Tracks)
+            .read_if(forward, Pages)
+            .read_if(forward, Cover);
         for &(target, clear) in targets {
             opaque = opaque.color(target, Access::Draw(clear));
         }
         opaque.depth(Depth, Access::Draw(Clear::Depth(FAR)));
-        if shape.deferred && first {
-            graph.add(Pass::VtFeedback).read(TerrainIds).write(Feedback);
+        if first && shape.deferred {
+            deferred_terrain(graph, shape, targets);
         }
         if shape.resolves[phase.index()] {
             graph
@@ -991,4 +1002,48 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(Visible)
             .write(Probes);
     }
+}
+
+/// Declares terrain shaded deferred after the first phase's meshes, drawing
+/// into the frame's `targets`: its visibility over their depth, each
+/// terrain's resolve of the pixels it holds, its cover, placed objects and
+/// the sky over them, and the pages its resolves wanted of the virtual
+/// texture.
+fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Resource, Clear)]) {
+    use Resource::*;
+    graph
+        .add(Pass::TerrainIds)
+        .read(Tracks)
+        .color(TerrainIds, Access::Clear(Clear::Color(TRANSPARENT)))
+        .depth(Depth, Access::Load);
+    let mut resolve = graph
+        .add(Pass::TerrainResolve)
+        .read(TerrainIds)
+        .read(Occupancy)
+        .read_if(shape.shadows, ShadowMaps)
+        .read_if(shape.lights, Lights)
+        .read(Probes)
+        .read(Horizons)
+        .read(CloudDome)
+        .read(Tracks)
+        .read(Pages);
+    for &(target, _) in targets {
+        resolve = resolve.color(target, Access::Load);
+    }
+    let mut late = graph
+        .add(Pass::OpaqueLate)
+        .read_if(shape.scatter, Placed)
+        .read(Occupancy)
+        .read_if(shape.shadows, ShadowMaps)
+        .read_if(shape.lights, Lights)
+        .read(Probes)
+        .read(Horizons)
+        .read(CloudDome)
+        .read(Tracks)
+        .read(Cover);
+    for &(target, _) in targets {
+        late = late.color(target, Access::Load);
+    }
+    late.depth(Depth, Access::Load);
+    graph.add(Pass::VtFeedback).read(TerrainIds).write(Feedback);
 }

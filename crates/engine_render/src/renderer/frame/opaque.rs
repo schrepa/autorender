@@ -30,7 +30,9 @@ impl Renderer {
 
     /// The opaque pass of `phase` (two around the occlusion test), with the sky
     /// after the last one unless the visibility buffer resolves it; returns its
-    /// draws, the sky's aside.
+    /// draws, the sky's aside. Where terrain shades deferred, the first
+    /// phase draws the meshes alone and the deferred terrain's passes the
+    /// rest.
     pub(super) fn encode_opaque(
         &self,
         state: &FrameState<'_>,
@@ -47,43 +49,33 @@ impl Renderer {
             _ => self.virtual_draws.phase_two,
         }
         .filter(|_| state.virtual_frame);
-        // Profiled frames time both phases as one opaque span, which the
-        // visibility buffer's last resolve ends when it resolves this phase.
-        let (begins, ends) = (phase == 0, phase + 1 == phases && !resolve_phase);
         // Terrain, the main occluder, draws in the first phase
         // so occlusion culling's pyramid holds it; shaded deferred
         // where it can be.
-        if phase == 0 && state.shape.deferred {
-            return self.encode_opaque_deferred(
-                state,
-                encoder,
-                view,
-                node,
-                (phase, phases),
-                (begins, ends),
-                virtual_first,
-            );
-        }
+        let forward = phase > 0 || !state.shape.deferred;
+        // Profiled frames time both phases as one opaque span, which the
+        // visibility buffer's last resolve ends when it resolves this phase,
+        // or the passes after deferred terrain do.
+        let (begins, ends) = (phase == 0, forward && phase + 1 == phases && !resolve_phase);
         let timestamp_writes = (begins || ends)
             .then(|| self.profiler.span("opaque_meshes"))
             .flatten()
             .map(|span| span.render_part(begins, ends));
-        let (colors, count) = self.color_attachments(node, view);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/opaque-meshes"),
-            color_attachments: &colors[..count],
-            depth_stencil_attachment: self.depth_attachment(node),
+        let mut pass = self.render_pass(
+            encoder,
+            node,
+            view,
+            "engine/opaque-meshes",
             timestamp_writes,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        );
         let mut draws = if state.kind.instance_count > 0 {
             self.draw_opaque(state, &mut pass, phase, virtual_first)
         } else {
             0
         };
-        // Terrain, the main occluder: in the first phase, so
-        // occlusion culling's pyramid holds it.
+        if !forward {
+            return draws;
+        }
         if phase == 0 {
             draws += self.draw_terrain(state, &mut pass);
             draws += self.draw_scatter(state, &mut pass);
@@ -95,116 +87,56 @@ impl Renderer {
         draws
     }
 
-    /// The first opaque phase with terrain shaded deferred:
-    /// the meshes; terrain's visibility, writing each pixel's terrain and
-    /// depth; each terrain's resolve, shading its pixels once each; then
-    /// its cover, placed objects and the sky; each in a pass of its own.
-    #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
-    fn encode_opaque_deferred(
+    /// Deferred terrain's visibility over the first phase's meshes, writing
+    /// each pixel's terrain and depth; returns the draws.
+    pub(super) fn encode_terrain_ids(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        node: &Node,
+    ) -> u32 {
+        let mut pass = self.render_pass(encoder, node, view, "engine/terrain-ids", None);
+        self.draw_terrain_ids(&mut pass)
+    }
+
+    /// Each terrain's resolve, shading the pixels it holds once each;
+    /// returns the draws.
+    pub(super) fn encode_terrain_resolve(
         &self,
         state: &FrameState<'_>,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         node: &Node,
-        (phase, phases): (usize, usize),
-        (begins, ends): (bool, bool),
-        virtual_first: Option<usize>,
     ) -> u32 {
-        let resolve_phase = state.shape.resolves[phase];
-        let loaded = wgpu::Operations {
-            load: wgpu::LoadOp::Load,
-            store: wgpu::StoreOp::Store,
-        };
-        let loaded_depth = wgpu::Operations {
-            load: wgpu::LoadOp::Load,
-            store: wgpu::StoreOp::Store,
-        };
-        // The meshes, as the opaque pass's start. Terrain's visibility loads
-        // their depth: it is stored, whatever passes after the opaque phase
-        // read.
-        let mut draws = 0;
-        {
-            let timestamp_writes = begins
-                .then(|| self.profiler.span("opaque_meshes"))
-                .flatten()
-                .map(|span| span.render_part(true, false));
-            let (colors, count) = self.color_attachments(node, view);
-            let depth = self.depth_attachment(node).map(|mut depth| {
-                depth.depth_ops = depth.depth_ops.map(|ops| wgpu::Operations {
-                    store: wgpu::StoreOp::Store,
-                    ..ops
-                });
-                depth
-            });
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("engine/opaque-meshes"),
-                color_attachments: &colors[..count],
-                depth_stencil_attachment: depth,
-                timestamp_writes,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            if state.kind.instance_count > 0 {
-                draws += self.draw_opaque(state, &mut pass, phase, virtual_first);
-            }
-        }
-        let Some(ids) = &self.terrain_ids else {
-            return draws;
-        };
-        let depth = wgpu::RenderPassDepthStencilAttachment {
-            view: &self.depth.view,
-            depth_ops: Some(loaded_depth),
-            stencil_ops: None,
-        };
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("engine/terrain-ids"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &ids.view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(depth.clone()),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            draws += self.draw_terrain_ids(&mut pass);
-        }
-        let (mut colors, count) = self.color_attachments(node, view);
-        for color in colors.iter_mut().flatten() {
-            color.ops = loaded;
-        }
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("engine/terrain-resolve"),
-                color_attachments: &colors[..count],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            draws += self.draw_terrain_resolve(state, &mut pass);
-        }
+        let mut pass = self.render_pass(encoder, node, view, "engine/terrain-resolve", None);
+        self.draw_terrain_resolve(state, &mut pass)
+    }
+
+    /// The first phase's rest after deferred terrain: its cover, placed
+    /// objects and, when no other phase or resolve follows, the sky, ending
+    /// the opaque span; returns the draws.
+    pub(super) fn encode_opaque_late(
+        &self,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        node: &Node,
+    ) -> u32 {
+        let ends = state.shape.phases == 1 && !state.shape.resolves[0];
         let timestamp_writes = ends
             .then(|| self.profiler.span("opaque_meshes"))
             .flatten()
             .map(|span| span.render_part(false, true));
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/opaque-meshes"),
-            color_attachments: &colors[..count],
-            depth_stencil_attachment: Some(depth),
+        let mut pass = self.render_pass(
+            encoder,
+            node,
+            view,
+            "engine/opaque-meshes",
             timestamp_writes,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        draws += self.draw_terrain_cover(state, &mut pass);
+        );
+        let mut draws = self.draw_terrain_cover(state, &mut pass);
         draws += self.draw_scatter(state, &mut pass);
-        if phase + 1 == phases && !resolve_phase {
+        if ends {
             self.draw_sky(state, &mut pass);
         }
         draws
@@ -427,15 +359,7 @@ impl Renderer {
                 .expect("phase two resolves its bins' twins"),
         };
         let (current, _) = self.pose_parities(state);
-        let (colors, count) = self.color_attachments(node, view);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/visibility"),
-            color_attachments: &colors[..count],
-            depth_stencil_attachment: self.depth_attachment(node),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        let mut pass = self.render_pass(encoder, node, view, "engine/visibility", None);
         pass.set_bind_group(0, &self.camera.group, &[]);
         pass.set_bind_group(1, &self.mesh_pipelines.empty_group, &[]);
         for (bin, (_, variant)) in self.virtual_draws.bins.iter().enumerate() {
@@ -489,16 +413,14 @@ impl Renderer {
             .then(|| self.profiler.span("opaque_meshes"))
             .flatten()
             .map(|span| span.render_part(false, true));
-        let (colors, count) = self.color_attachments(node, view);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/visibility-resolve"),
-            color_attachments: &colors[..count],
-            // Read-only: the resolves test no depth and the sky tests it.
-            depth_stencil_attachment: self.depth_attachment(node),
+        // Read-only depth: the resolves test none and the sky tests it.
+        let mut pass = self.render_pass(
+            encoder,
+            node,
+            view,
+            "engine/visibility-resolve",
             timestamp_writes,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        );
         pass.set_bind_group(0, &self.camera.group, &[]);
         if let Some((_, lights)) = lit {
             pass.set_bind_group(3, lights.fragment_group(), &[]);

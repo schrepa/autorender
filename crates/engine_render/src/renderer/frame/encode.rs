@@ -64,6 +64,11 @@ impl Renderer {
                     report.draws += draws;
                 }
             }
+            Pass::TerrainIds => report.draws += self.encode_terrain_ids(encoder, view, node),
+            Pass::TerrainResolve => {
+                report.draws += self.encode_terrain_resolve(state, encoder, view, node);
+            }
+            Pass::OpaqueLate => report.draws += self.encode_opaque_late(state, encoder, view, node),
             Pass::VtFeedback => self.encode_vt_feedback(encoder),
             Pass::VisibilityIds { phase } => {
                 self.encode_visibility_ids(state, encoder, view, node, phase.index());
@@ -125,6 +130,13 @@ impl Renderer {
                 .as_ref()
                 .expect("resolving frames create it")
                 .ids_view(),
+            Resource::TerrainIds => {
+                &self
+                    .terrain_ids
+                    .as_ref()
+                    .expect("deferred terrain's frames create it")
+                    .view
+            }
             Resource::Accumulated | Resource::Revealed => {
                 let [accumulated, revealed] = self
                     .transparent
@@ -156,16 +168,39 @@ impl Renderer {
             | Resource::Tracks
             | Resource::Pages
             | Resource::Cover
-            | Resource::TerrainIds
             | Resource::Feedback => {
                 unreachable!("{resource:?} is no attachment of the renderer's passes")
             }
         }
     }
 
+    /// Begins `node`'s render pass, labeled `label`, over its attachments
+    /// with the operations the render graph derived for them (`canvas` is
+    /// the canvas's view), timed by `timestamp_writes`: how every pass
+    /// drawing into the graph's attachments begins, so none writes
+    /// operations of its own.
+    pub(super) fn render_pass<'e>(
+        &self,
+        encoder: &'e mut wgpu::CommandEncoder,
+        node: &Node,
+        canvas: &wgpu::TextureView,
+        label: &'static str,
+        timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
+    ) -> wgpu::RenderPass<'e> {
+        let (colors, count) = self.color_attachments(node, canvas);
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &colors[..count],
+            depth_stencil_attachment: self.depth_attachment(node),
+            timestamp_writes,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        })
+    }
+
     /// `node`'s color attachments in target order with the operations the
     /// graph derived, and how many there are; `canvas` is the canvas's view.
-    pub(super) fn color_attachments<'a>(
+    fn color_attachments<'a>(
         &'a self,
         node: &Node,
         canvas: &'a wgpu::TextureView,
@@ -186,10 +221,7 @@ impl Renderer {
 
     /// `node`'s depth attachment with the operations the graph derived,
     /// read-only without them.
-    pub(super) fn depth_attachment(
-        &self,
-        node: &Node,
-    ) -> Option<wgpu::RenderPassDepthStencilAttachment<'_>> {
+    fn depth_attachment(&self, node: &Node) -> Option<wgpu::RenderPassDepthStencilAttachment<'_>> {
         node.depth()
             .map(|(_, ops)| wgpu::RenderPassDepthStencilAttachment {
                 view: &self.depth.view,
@@ -341,15 +373,13 @@ impl Renderer {
     ) {
         let features = &state.features;
         let decals = self.decals.as_ref().expect("planned with decals");
-        let (colors, count) = self.color_attachments(node, view);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/decals"),
-            color_attachments: &colors[..count],
-            depth_stencil_attachment: None,
-            timestamp_writes: self.profiler.span("decals").map(Span::render),
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        let mut pass = self.render_pass(
+            encoder,
+            node,
+            view,
+            "engine/decals",
+            self.profiler.span("decals").map(Span::render),
+        );
         decals.draw(
             &mut pass,
             &self.camera.group,
@@ -374,15 +404,13 @@ impl Renderer {
     ) -> u32 {
         // The ground behind the water, before it draws.
         self.water.copy_depth(encoder, &self.depth.texture);
-        let (colors, count) = self.color_attachments(node, view);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/water"),
-            color_attachments: &colors[..count],
-            depth_stencil_attachment: self.depth_attachment(node),
-            timestamp_writes: self.profiler.span("water").map(Span::render),
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        let mut pass = self.render_pass(
+            encoder,
+            node,
+            view,
+            "engine/water",
+            self.profiler.span("water").map(Span::render),
+        );
         self.water
             .draw(&mut pass, &self.camera.group, state.shape.targets)
     }
@@ -395,15 +423,13 @@ impl Renderer {
         view: &wgpu::TextureView,
         node: &Node,
     ) {
-        let (colors, count) = self.color_attachments(node, view);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/cloud-composite"),
-            color_attachments: &colors[..count],
-            depth_stencil_attachment: None,
-            timestamp_writes: self.profiler.span("cloud_composite").map(Span::render),
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        let mut pass = self.render_pass(
+            encoder,
+            node,
+            view,
+            "engine/cloud-composite",
+            self.profiler.span("cloud_composite").map(Span::render),
+        );
         self.clouds.draw_composite(
             &mut pass,
             &self.camera.group,
@@ -447,15 +473,13 @@ impl Renderer {
         let lit = light_frame.as_ref().zip(self.lights.as_ref());
         // Read-only depth: surfaces behind the opaque ones stay hidden, and
         // particles sample it.
-        let (colors, count) = self.color_attachments(node, view);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/transparent-accumulation"),
-            color_attachments: &colors[..count],
-            depth_stencil_attachment: self.depth_attachment(node),
-            timestamp_writes: self.profiler.span("transparent").map(Span::render),
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        let mut pass = self.render_pass(
+            encoder,
+            node,
+            view,
+            "engine/transparent-accumulation",
+            self.profiler.span("transparent").map(Span::render),
+        );
         let mut draws = 0;
         if transparent_draws && instance_count > 0 {
             // Glass reads the opaque color the pass draws over.
@@ -513,18 +537,15 @@ impl Renderer {
             .as_ref()
             .expect("planned with transparency");
         let post = state.shape.targets != Targets::Canvas;
-        let (colors, count) = self.color_attachments(node, view);
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/transparent-composite"),
-            color_attachments: &colors[..count],
-            depth_stencil_attachment: self.depth_attachment(node),
-            timestamp_writes: self
-                .profiler
+        let mut pass = self.render_pass(
+            encoder,
+            node,
+            view,
+            "engine/transparent-composite",
+            self.profiler
                 .span("transparent_composite")
                 .map(Span::render),
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        );
         transparent.composite(&mut pass, post);
         if let (Some(frame), Some(particles)) =
             (&state.features.particle_frame, self.particles.as_ref())
