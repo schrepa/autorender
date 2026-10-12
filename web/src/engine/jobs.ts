@@ -480,16 +480,25 @@ function readTranscoded(bytes: Uint8Array): TranscodedImage | undefined {
 let pool: JobPool | null | undefined;
 
 /** The page's worker pool, started on first use; none with ?workers=off or
- * without Web Workers. By default half the logical processors, at most 8,
- * work beside the page. */
+ * without Web Workers. A ?workers or ?jobcache the native host would refuse
+ * fails the page. */
 export function jobPool(): JobPool | undefined {
   if (pool === undefined) {
-    const requested = new URLSearchParams(location.search).get("workers");
-    const cores = navigator.hardwareConcurrency || 4;
-    const count = requested === "off" ? 0
-      : requested && /^\d{1,2}$/.test(requested) ? Math.min(Number(requested), MAX_WORKERS)
-      : Math.max(1, Math.min(MAX_DEFAULT_WORKERS, Math.floor(cores / CORES_PER_DEFAULT_WORKER)));
+    const count = workerCount(new URLSearchParams(location.search).get("workers"));
+    jobCacheSettings();
     pool = count > 0 && typeof Worker !== "undefined" ? new JobPool(count) : null;
   }
   return pool ?? undefined;
+}
+
+/** The job workers `requested` (the page's ?workers) runs: none for `off`,
+ * 0 to MAX_WORKERS as given, and by default one per CORES_PER_DEFAULT_WORKER
+ * logical processors, at most MAX_DEFAULT_WORKERS. */
+function workerCount(requested: string | null): number {
+  if (requested === null) {
+    return Math.max(1, Math.min(MAX_DEFAULT_WORKERS, Math.floor((navigator.hardwareConcurrency || 4) / CORES_PER_DEFAULT_WORKER)));
+  }
+  if (requested === "off") return 0;
+  if (/^\d+$/.test(requested) && Number(requested) <= MAX_WORKERS) return Number(requested);
+  throw new Error(`?workers is off or 0 to ${MAX_WORKERS}, not ${requested}.`);
 }

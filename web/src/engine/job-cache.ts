@@ -28,12 +28,16 @@ interface JobCacheStats {
   mismatches: number;
 }
 
-/** The cache's settings from the page's URL: `undefined` when off. */
+/** The cache's settings from the page's URL: `undefined` when off. A
+ * value the native host's --jobcache refuses fails. */
 export function jobCacheSettings(): { budget: number; verify: boolean } | undefined {
   const requested = new URLSearchParams(location.search).get("jobcache");
+  const mebibytes = requested !== null && /^\d+$/.test(requested) ? Number(requested) : undefined;
+  if (requested !== null && requested !== "off" && requested !== "verify" && !(mebibytes !== undefined && mebibytes <= MAX_JOB_CACHE_MIB)) {
+    throw new Error(`?jobcache is off, verify or 0 to ${MAX_JOB_CACHE_MIB} MiB, not ${requested}.`);
+  }
   if (requested === "off" || typeof navigator === "undefined" || !navigator.storage?.getDirectory) return undefined;
-  if (requested && /^\d+$/.test(requested) && Number(requested) <= MAX_JOB_CACHE_MIB) return { budget: Number(requested) * MIB, verify: false };
-  return { budget: JOB_CACHE_MIB * MIB, verify: requested === "verify" };
+  return { budget: (mebibytes ?? JOB_CACHE_MIB) * MIB, verify: requested === "verify" };
 }
 
 function hex(buffer: ArrayBuffer): string {
