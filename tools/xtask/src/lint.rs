@@ -22,10 +22,11 @@ pub(crate) struct Stage {
 
 /// What `cargo xtask lint` runs, in order: the repository policy,
 /// formatting, the web host's text checks, the drift checks (scene sources,
-/// generated files, bench/, smoke coverage, feature layering, the facade's
-/// exports), shaders against their Rust layouts, the pure checks' corpora,
-/// Clippy (the workspace, the native host's tools, the browser clients, the
-/// app template), the browser clients the web host imports, and TypeScript.
+/// generated files, bench/ and its equivalence matrix, smoke coverage,
+/// feature layering, the facade's exports), shaders against their Rust
+/// layouts, the pure checks' corpora, Clippy (the workspace, the native
+/// host's tools, the browser clients, the app template), the browser clients
+/// the web host imports, and TypeScript.
 pub(crate) const LINT: &[Stage] = &[
     Stage {
         name: "policy",
@@ -66,6 +67,11 @@ pub(crate) const LINT: &[Stage] = &[
         name: "bench",
         needs: &[],
         run: crate::bench::check,
+    },
+    Stage {
+        name: "equivalence matrix",
+        needs: &[],
+        run: crate::equivalence::check,
     },
     Stage {
         name: "coverage",

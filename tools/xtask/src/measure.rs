@@ -206,13 +206,13 @@ struct Build {
     generated_hash: String,
 }
 
-fn program_name() -> String {
+pub(crate) fn program_name() -> String {
     format!("{PROGRAM}{}", std::env::consts::EXE_SUFFIX)
 }
 
 /// Makes `sha` available, fetching it from `origin` where it is missing
 /// (through its pull request's ref, when the task names one).
-fn ensure_commit(root: &Path, sha: &str, pull: Option<u64>) -> Result<(), String> {
+pub(crate) fn ensure_commit(root: &Path, sha: &str, pull: Option<u64>) -> Result<(), String> {
     let commit = format!("{sha}^{{commit}}");
     if git(root, &["cat-file", "-e", &commit]).is_ok() {
         return Ok(());
@@ -236,7 +236,7 @@ pub fn commit_id<'a>(text: Option<&'a str>, what: &str) -> Result<&'a str, Strin
 
 /// DXC's library (Windows): `DXC_PATH`, else `dxcompiler.dll` on the path,
 /// else the one Firefox or the newest Chrome ships.
-fn dxc() -> Option<PathBuf> {
+pub(crate) fn dxc() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("DXC_PATH").map(PathBuf::from) {
         return path.is_file().then_some(path);
     }
@@ -587,7 +587,7 @@ fn timer_resolution_us() -> f64 {
 
 /// The frame statistics as work counters: dotted paths to numbers and
 /// booleans, lists as their lengths, what has no value left out.
-fn work_counters(stats: &Value) -> Map<String, Value> {
+pub(crate) fn work_counters(stats: &Value) -> Map<String, Value> {
     fn flatten(value: &Value, path: String, out: &mut Map<String, Value>) {
         match value {
             Value::Object(fields) => {

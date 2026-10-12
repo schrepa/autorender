@@ -621,6 +621,12 @@ fn option_file_problems(root: &Path) -> Result<Vec<String>, String> {
 
 /// The Stress Lab's presets, from its generated catalog.
 fn engine_presets(root: &Path) -> Result<Vec<String>, String> {
+    stress_choices(root, "presets")
+}
+
+/// The values of the Stress Lab's choices `list` (`presets`, `views`...),
+/// from its generated catalog (`web/src/generated/stress.ts`).
+pub fn stress_choices(root: &Path, list: &str) -> Result<Vec<String>, String> {
     let page = fs::read_to_string(root.join("web/src/generated/stress.ts"))
         .map_err(|error| format!("cannot read web/src/generated/stress.ts: {error}"))?;
     let start = page
@@ -632,11 +638,11 @@ fn engine_presets(root: &Path) -> Result<Vec<String>, String> {
         .ok_or("STRESS_CATALOG does not end")?;
     let catalog: Value = serde_json::from_str(&page[start..start + end])
         .map_err(|error| format!("STRESS_CATALOG: {error}"))?;
-    Ok(catalog["presets"]
+    Ok(catalog[list]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|preset| preset["value"].as_str().map(str::to_owned))
+        .filter_map(|choice| choice["value"].as_str().map(str::to_owned))
         .collect())
 }
 

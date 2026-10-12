@@ -1,0 +1,116 @@
+{
+  "note": "The cells `cargo xtask equivalence` runs on a base and a candidate natively, one after the other: each a workload (scene: bench/scenes/NAME.json) or an authored scene (source: a file under web/scripts/fixtures/ or bench/) with its switches (options, as bench/options.json names them), environment sections merged over the scene's, the ticks it steps, its views (scene: as launched; a Stress Lab view; or {name, camera} with the camera control's fields) and its captures (exact; cpu:ALPHA and gpu:ALPHA, a fraction of the last tick presented on the CPU or the GPU; display:FRAMES, the last of that many ordinary frames). Every cell runs with bench/settings/default.json, job workers off and each side's own generated files. tolerance is the largest channel difference a pixel may show and count as equal (0 unless given). unstable lists the captures (VIEW CAPTURE) that vary from run to run, each with why: they pass when a candidate run matches one of the base's over --repeat runs. The smoke tier runs by default; --tier full adds the rest. cargo xtask lint holds this file to the bench files and the Stress Lab.",
+  "cells": [
+    {
+      "name": "field",
+      "tier": "smoke",
+      "note": "90k shapes on the open field with every effect: instancing, culling, shadows and the default look, still.",
+      "scene": "field-90k",
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "overview exact": "Another image in 2 of 18 A/A runs (2026-10-12): a few pixels one level apart. Suspected: hash maps seeded at random per process.",
+        "overview gpu:0.5": "Two images in every six-run A/A (2026-10-12): a couple of pixels one level apart. Suspected: hash maps seeded at random per process."
+      }
+    },
+    {
+      "name": "motion",
+      "tier": "smoke",
+      "note": "50k shapes all moving: hierarchy, interpolation between ticks and GPU presentation of the moving ones.",
+      "scene": "motion",
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5", "cpu:0.5"]
+    },
+    {
+      "name": "city",
+      "tier": "smoke",
+      "note": "The generated city: its meshes, materials, lights and moving traffic.",
+      "scene": "city",
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "overview exact": "One to three images per six-run A/A (2026-10-12): building faces 1 to 4 levels apart, once up to 28 over 221k pixels. Suspected: hash maps seeded at random per process.",
+        "overview gpu:0.5": "One to three images per six-run A/A (2026-10-12), as the exact capture: building faces a few levels apart. Suspected: hash maps seeded at random per process."
+      }
+    },
+    {
+      "name": "metro",
+      "tier": "smoke",
+      "note": "The city with every engine feature (glTF maps, BC7, glass, foliage, skinned people, lights, particles, probes) from above and up close: the views the 2026-10-03 refactors were proven identical by.",
+      "scene": "metro",
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "overview exact": "One of 18 A/A runs (2026-10-12) lit every surface slightly differently: up to 70% of pixels, mostly 1 to 3 levels apart. Suspected: hash maps seeded at random per process.",
+        "overview gpu:0.5": "One of 18 A/A runs (2026-10-12) lit every surface slightly differently: up to 70% of pixels, mostly 1 to 3 levels apart. Suspected: hash maps seeded at random per process.",
+        "close exact": "One of 18 A/A runs (2026-10-12) lit every surface slightly differently: up to 70% of pixels, mostly 1 to 3 levels apart. Suspected: hash maps seeded at random per process.",
+        "close gpu:0.5": "One of 18 A/A runs (2026-10-12) lit every surface slightly differently: up to 70% of pixels, mostly 1 to 3 levels apart. Suspected: hash maps seeded at random per process."
+      }
+    },
+    {
+      "name": "metro-effects-none",
+      "tier": "smoke",
+      "note": "Metro with every effect switched off: the opaque, transparent and presentation passes alone.",
+      "scene": "metro",
+      "options": { "effects": "none" },
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "overview exact": "Two images, alternating between runs, in two of three six-run A/As (2026-10-12): 88k pixels of building faces up to 31 levels apart. Suspected: hash maps seeded at random per process.",
+        "overview gpu:0.5": "Two images, alternating between runs, in two of three six-run A/As (2026-10-12), as the exact capture. Suspected: hash maps seeded at random per process."
+      }
+    },
+    {
+      "name": "dense",
+      "tier": "smoke",
+      "note": "Virtual-geometry boulders and columns: cluster selection, page streaming and drawing, from above and up close.",
+      "scene": "dense",
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "overview exact": "Two or three images in every six-run A/A (2026-10-12), 8k to 15k pixels apart: virtual geometry selects clusters and streams pages from GPU feedback read back a few frames late, so what is resident depends on GPU timing.",
+        "overview gpu:0.5": "Two or three images in every six-run A/A (2026-10-12), 8k to 15k pixels apart: virtual geometry selects clusters and streams pages from GPU feedback read back a few frames late, so what is resident depends on GPU timing.",
+        "close exact": "Two or three images in every six-run A/A (2026-10-12), 8k to 15k pixels apart: virtual geometry selects clusters and streams pages from GPU feedback read back a few frames late, so what is resident depends on GPU timing.",
+        "close gpu:0.5": "Two or three images in every six-run A/A (2026-10-12), 8k to 15k pixels apart: virtual geometry selects clusters and streams pages from GPU feedback read back a few frames late, so what is resident depends on GPU timing."
+      }
+    },
+    {
+      "name": "highlands",
+      "tier": "full",
+      "note": "The 8 km generated terrain: tile streaming in place, placement, far objects, water, clouds and the navigation agent. In the full tier only: every run gives its own image until terrain streams by a frame clock instead of the host's wall clock.",
+      "scene": "highlands",
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "overview exact": "A different image every A/A run (2026-10-12): terrain streams under the host's wall-clock budget (Terrains::set_clock(now_ms)), and tile hysteresis and virtual texture feedback keep the history it loaded in.",
+        "overview gpu:0.5": "A different image every A/A run (2026-10-12), as the exact capture: wall-clock terrain streaming and virtual texture feedback."
+      }
+    },
+    {
+      "name": "garden",
+      "tier": "smoke",
+      "note": "The garden fixture, an authored scene: a player, solids, pickups, a textured prefab and parents, from its own camera.",
+      "source": "web/scripts/fixtures/garden.scene.json",
+      "ticks": 30,
+      "views": ["scene"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "metro-taa",
+      "tier": "smoke",
+      "note": "Metro up close with temporal antialiasing: ordinary display frames, each resolving the last.",
+      "scene": "metro",
+      "environment": { "temporal_antialiasing": { "enabled": true } },
+      "ticks": 30,
+      "views": ["close"],
+      "captures": ["display:16"]
+    }
+  ]
+}
