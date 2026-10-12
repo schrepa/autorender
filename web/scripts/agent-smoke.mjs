@@ -102,11 +102,21 @@ try {
   const before = await inspectPlayer();
   const invalid = await cli("inspect", { limit: 101 }, false);
   assert.equal(invalid.observation.tick, before.observation.tick);
+  // Digests: the world's content as hashes of its components and assets.
+  const still = (await cli("digest")).result;
+  assert.ok(still.entities > 0 && still.components.Transform.count > 0 && still.assets.meshes.count > 0,
+    `a digest counts the world's entities, components and assets: ${JSON.stringify(still).slice(0, 300)}`);
   await cli("input", { forward: 1 });
   const stepped = await cli("step", { ticks: 30 });
   assert.equal(BigInt(stepped.observation.tick) - BigInt(before.observation.tick), 30n);
   const after = await inspectPlayer();
   assert.ok(after.result.entity.components.Transform.translation[2] < before.result.entity.components.Transform.translation[2]);
+  // The player's walk changes the digest; asking again changes nothing.
+  const walked = (await cli("digest")).result;
+  assert.notEqual(walked.hash, still.hash, "the player's walk changes the digest");
+  assert.notEqual(walked.components.Transform.hash, still.components.Transform.hash);
+  assert.deepEqual(walked.assets, still.assets, "walking changes no asset");
+  assert.equal((await cli("digest")).result.hash, walked.hash, "a digest changes nothing");
   await cli("input", { forward: 0 });
   const badStep = await cli("step", { ticks: 0 }, false);
   assert.equal(badStep.observation.tick, after.observation.tick);
@@ -241,7 +251,7 @@ try {
   await cli("pause");
   const diagnostics = await cli("diagnostics");
   assert.deepEqual(diagnostics.result.entries.filter(entry => entry.kind === "pageerror" || entry.kind === "error"), []);
-  console.log(JSON.stringify({ ok: true, session, artifact: capture.result.artifact.path, checks: ["discovery", "description", "inspection", "precise_step", "input", "capture", "environment_inspection", "environment_control", "failed_reload", "source_validation", "guarded_save", "reload_revision", "saved_environment", "version_six_lights_particles_glass", "resume_pause", "diagnostics"] }));
+  console.log(JSON.stringify({ ok: true, session, artifact: capture.result.artifact.path, checks: ["discovery", "description", "inspection", "digest", "precise_step", "input", "capture", "environment_inspection", "environment_control", "failed_reload", "source_validation", "guarded_save", "reload_revision", "saved_environment", "version_six_lights_particles_glass", "resume_pause", "diagnostics"] }));
 } finally {
   lines.close();
   try {

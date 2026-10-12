@@ -1120,6 +1120,29 @@ fn summary(doc: &str) -> String {
 }
 
 impl DevTools {
+    /// Every component inspector's views of every entity holding its
+    /// component, by inspector name, each view as compact JSON: what
+    /// digests hash.
+    pub(crate) fn component_views(
+        &self,
+        world: &World,
+        context: Context<'_>,
+    ) -> BTreeMap<String, Vec<String>> {
+        let entities: Vec<Entity> = world.iter_entities().map(|entity| entity.id()).collect();
+        self.inspectors
+            .iter()
+            .filter(|(_, inspector)| inspector.kind == InspectorKind::Component)
+            .map(|(name, inspector)| {
+                let views = entities
+                    .iter()
+                    .filter_map(|&entity| (inspector.read)(world, Some(entity), &context))
+                    .map(|view| view.to_string())
+                    .collect();
+                (name.clone(), views)
+            })
+            .collect()
+    }
+
     /// Registers a typed, read-only component projection without reflection.
     pub fn register_component<T: Component>(
         &mut self,
@@ -1275,7 +1298,10 @@ impl DevTools {
                     .map_err(crate::collision::native_error)?;
             }
         }
-        if matches!(request, DevRequest::Inspect { .. }) {
+        if matches!(
+            request,
+            DevRequest::Inspect { .. } | DevRequest::Digest { .. }
+        ) {
             // Materialize a GPU-presented frame before a refresh changes its inputs.
             engine.prepare_presented_transforms();
             engine.refresh_transforms();
@@ -1322,6 +1348,16 @@ impl DevTools {
                     "readiness": "synchronous", "ownership": "library payload excludes retained snapshots and allocator metadata"}),
                 )
             }
+            // The world's own state: neither what a renderer made of it nor
+            // the slots it draws in.
+            DevRequest::Digest { .. } => Ok(self.digest(
+                world,
+                Context {
+                    scene,
+                    renderer: None,
+                    render_slot: None,
+                },
+            )),
             DevRequest::Describe {
                 name, definition, ..
             } => self.describe(name.as_deref(), definition.as_deref()),

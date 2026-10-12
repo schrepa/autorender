@@ -7,6 +7,7 @@
 mod animation;
 mod collision;
 mod controls;
+mod digest;
 mod error;
 mod inspect;
 mod protocol;

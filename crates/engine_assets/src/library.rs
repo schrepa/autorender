@@ -138,6 +138,14 @@ impl<T> Storage<T> {
         slot.value.as_ref()
     }
 
+    /// Every value held, with its slot, in slot order.
+    fn values(&self) -> impl Iterator<Item = (usize, &T)> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, entry)| entry.value.as_ref().map(|value| (slot, value)))
+    }
+
     fn get_mut(&mut self, library: u64, id: Id) -> Option<&mut T> {
         if id.library != library {
             return None;
@@ -389,6 +397,29 @@ impl AssetLibrary {
 
     pub fn texture_count(&self) -> usize {
         self.textures.count
+    }
+
+    /// Every mesh held, by slot ([`MeshHandle::slot`]), in slot order.
+    pub fn meshes(&self) -> impl Iterator<Item = (usize, &Arc<Mesh>)> {
+        self.meshes.values()
+    }
+
+    /// Every material held, by slot ([`MaterialHandle::slot`]), in slot
+    /// order.
+    pub fn materials(&self) -> impl Iterator<Item = (usize, &Material)> {
+        self.materials
+            .values()
+            .map(|(slot, (material, _))| (slot, material))
+    }
+
+    /// Every texture held, by slot, in slot order.
+    pub fn textures(&self) -> impl Iterator<Item = (usize, &Arc<Texture>)> {
+        self.textures.values()
+    }
+
+    /// Every animation clip held, by slot, in slot order.
+    pub fn clips(&self) -> impl Iterator<Item = (usize, &Arc<AnimationClip>)> {
+        self.clips.values()
     }
 
     /// Resident texture pixel bytes, also included in [`Self::resident_bytes`].

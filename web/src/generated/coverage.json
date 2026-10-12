@@ -322,6 +322,13 @@
       ]
     },
     {
+      "op": "digest",
+      "smokes": [
+        "agent",
+        "native"
+      ]
+    },
+    {
       "op": "describe",
       "smokes": [
         "agent",

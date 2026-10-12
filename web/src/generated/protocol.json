@@ -227,6 +227,7 @@
     "status",
     "inspect",
     "assets",
+    "digest",
     "describe",
     "raycast",
     "overlap",

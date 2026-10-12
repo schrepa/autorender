@@ -142,6 +142,14 @@ pub enum DevRequest {
     Assets {
         version: u32,
     },
+    /// The world's content as hashes that depend on neither entity ids nor
+    /// spawn order: per component inspector, the entities holding it and a
+    /// hash of their views; per kind of asset, the count and a hash of
+    /// their contents; and one hash of both. After the same ticks of the
+    /// same scene, equal digests mean equal state.
+    Digest {
+        version: u32,
+    },
     Describe {
         version: u32,
         #[serde(default)]
@@ -380,6 +388,7 @@ impl DevRequest {
             Self::Status { .. }
             | Self::Inspect { .. }
             | Self::Assets { .. }
+            | Self::Digest { .. }
             | Self::Describe { .. } => Handler::Tools,
             Self::Raycast { .. }
             | Self::Overlap { .. }
@@ -399,6 +408,7 @@ impl DevRequest {
             Self::Status { version }
             | Self::Inspect { version, .. }
             | Self::Assets { version }
+            | Self::Digest { version }
             | Self::Describe { version, .. }
             | Self::Raycast { version, .. }
             | Self::Overlap { version, .. }

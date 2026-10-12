@@ -1,8 +1,9 @@
 /** The native host: the Stress Lab built natively serves the development
  * protocol over standard input and output, drawing offscreen (status names
  * its GPU, captures write PNGs, the game's controls, benchmarks and
- * profiling captures with per-draw GPU times run, and the agent's A/B
- * harness measures in it), and its job workers' outputs match those its
+ * profiling captures with per-draw GPU times run, the agent's A/B
+ * harness measures in it, and digests of the same ticks of a workload
+ * agree), and its job workers' outputs match those its
  * job cache kept. Builds `stress-lab` with `--release --features
  * dev,profiling` (the cargo on PATH); needs no development server. */
 import "./exit-codes.mjs";
@@ -94,6 +95,20 @@ try {
   });
   assert.equal(ab.order, "abba");
   assert.ok(ab.compared.cpu_ms.a > 0 && ab.compared.cpu_ms.b > 0, JSON.stringify(ab.compared));
+
+  // Digests: the world's content as hashes of its components and assets,
+  // the same after the same ticks of the same workload, and changed as its
+  // renderables move on.
+  const digestAfter = async ticks => {
+    await run({ op: "game", name: "workload", args: { preset: "city" } });
+    await run({ op: "step", ticks });
+    return run({ op: "digest" });
+  };
+  const digest = await digestAfter(12);
+  assert.ok(digest.entities > 0 && digest.components.Transform.count > 0 && digest.assets.meshes.count > 0,
+    `a digest counts the world's entities, components and assets: ${JSON.stringify(digest).slice(0, 300)}`);
+  assert.equal((await digestAfter(12)).hash, digest.hash, "the same ticks of the same workload digest the same");
+  assert.notEqual((await digestAfter(24)).hash, digest.hash, "moving renderables change the digest");
 
   // Resuming runs frames in real time until paused again.
   await run({ op: "resume" });
