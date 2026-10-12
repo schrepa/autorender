@@ -10,11 +10,6 @@
 //! farthest tend to drop first. Nothing here exists until a frame has cover
 //! to grow.
 
-#![expect(
-    clippy::expect_used,
-    reason = "growth reads the sources checked before it"
-)]
-
 use crate::shaders::entry::cover_grow;
 use engine_core::collections::HashMap;
 use std::cell::Cell;
@@ -176,16 +171,16 @@ impl GroundCoverPass {
         (culling, eye, time, previous, height): (Mat4, Vec3, f32, f32, f32),
     ) -> bool {
         let settings = settings.sanitized();
-        if !settings.enabled || settings.density <= 0.0 || terrain.cover_sources().is_none() {
+        let Some(sources) = terrain.cover_sources() else {
+            return false;
+        };
+        if !settings.enabled || settings.density <= 0.0 {
             return false;
         }
         let planes = planes(culling);
         let radius = settings.radius;
         let pixels_per_meter = pixels_per_meter(culling, height);
-        let shading = terrain
-            .cover_sources()
-            .map(|sources| sources.shading)
-            .unwrap_or_default();
+        let shading = sources.shading;
         let mut uniforms = Vec::new();
         let mut most = 0.0;
         for (index, render) in terrains.terrains.iter().enumerate() {
@@ -293,7 +288,6 @@ impl GroundCoverPass {
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
         self.compute
             .get_or_insert_with(|| compute(device, &self.grow_layout));
-        let sources = terrain.cover_sources().expect("checked above");
         let key = (
             sources.generation.0,
             sources.generation.1,

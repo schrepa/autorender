@@ -23,13 +23,9 @@
 //! vertices move by the waves longer than a few of their cells, and pixels
 //! shade every wave longer than a few pixels.
 
-#![expect(
-    clippy::expect_used,
-    reason = "a terrain's water is inserted before it is read"
-)]
-
 use engine_core::collections::HashMap;
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -422,15 +418,14 @@ impl WaterPass {
                 self.terrains.remove(&terrain.id);
                 continue;
             };
-            let stale = self
-                .terrains
-                .get(&terrain.id)
-                .is_none_or(|water| !Arc::ptr_eq(&water.grid, grid));
-            if stale {
-                let water = upload(device, queue, &self.layout, grid);
-                self.terrains.insert(terrain.id, water);
-            }
-            let water = self.terrains.get_mut(&terrain.id).expect("inserted above");
+            let water = match self.terrains.entry(terrain.id) {
+                Entry::Occupied(water) if Arc::ptr_eq(&water.get().grid, grid) => water.into_mut(),
+                Entry::Occupied(mut water) => {
+                    water.insert(upload(device, queue, &self.layout, grid));
+                    water.into_mut()
+                }
+                Entry::Vacant(water) => water.insert(upload(device, queue, &self.layout, grid)),
+            };
             let relative_origin = terrain.origin - eye;
             // Rivers' ribbons: built when the rivers change,
             // their chunks culled.

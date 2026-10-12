@@ -5,11 +5,6 @@
 //! [`GroupCache`] keys its group by the generations of exactly what it
 //! binds, so no key leaves a bound resource out.
 
-#![expect(
-    clippy::expect_used,
-    reason = "a cached value is built before it is read"
-)]
-
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The next generation of any resource: unique among every resource the
@@ -132,12 +127,10 @@ impl<const N: usize> GroupCache<N> {
         entries: [(&str, Bound<'_>); N],
     ) -> &wgpu::BindGroup {
         let key = entries.each_ref().map(|(_, bound)| bound.generation);
-        if self.cached.stale(&key) {
+        self.cached.get_or_insert_with(key, || {
             let resources = entries.map(|(name, bound)| (name, bound.resource));
-            let group = crate::pipelines::group(device, label, table, layout, &resources);
-            self.cached.set(key, group);
-        }
-        self.cached.get().expect("built above")
+            crate::pipelines::group(device, label, table, layout, &resources)
+        })
     }
 
     /// [`Self::bind`] of a shared layout, `fillers` standing in for the
@@ -151,13 +144,10 @@ impl<const N: usize> GroupCache<N> {
         fillers: &crate::pipelines::Fillers,
     ) -> &wgpu::BindGroup {
         let key = entries.each_ref().map(|(_, bound)| bound.generation);
-        if self.cached.stale(&key) {
+        self.cached.get_or_insert_with(key, || {
             let resources = entries.map(|(name, bound)| (name, bound.resource));
-            let group =
-                crate::pipelines::filled_group(device, label, table, layout, &resources, fillers);
-            self.cached.set(key, group);
-        }
-        self.cached.get().expect("built above")
+            crate::pipelines::filled_group(device, label, table, layout, &resources, fillers)
+        })
     }
 
     /// The group last built.
@@ -196,10 +186,16 @@ impl<K: PartialEq, V> Cached<K, V> {
 
     /// The value for `key`, built by `build` unless it already was.
     pub(crate) fn get_or_insert_with(&mut self, key: K, build: impl FnOnce() -> V) -> &V {
-        if self.stale(&key) {
-            self.entry = Some((key, build()));
-        }
-        &self.entry.as_ref().expect("built above").1
+        let entry = match self.entry.take() {
+            Some(entry) if entry.0 == key => entry,
+            // Built before the stale value goes, as replacing it would.
+            stale => {
+                let built = (key, build());
+                drop(stale);
+                built
+            }
+        };
+        &self.entry.insert(entry).1
     }
 }
 

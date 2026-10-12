@@ -3,11 +3,6 @@
 //! after frames draw and blurred like the sky's; a grid over the ground plane
 //! lists which probes surfaces in each of its cells read.
 
-#![expect(
-    clippy::expect_used,
-    reason = "the depth target is created before it is read"
-)]
-
 use engine_core::{
     RenderReflectionProbe,
     glam::{Mat4, Vec3, Vec4},
@@ -285,7 +280,7 @@ impl ProbePass {
         size: u32,
         format: wgpu::TextureFormat,
     ) -> &wgpu::TextureView {
-        if self.depth.stale(&size) {
+        self.depth.get_or_insert_with(size, || {
             let texture = crate::targets::texture_2d(
                 device,
                 "engine/probe-depth",
@@ -295,10 +290,8 @@ impl ProbePass {
                 format,
                 wgpu::TextureUsages::RENDER_ATTACHMENT,
             );
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.depth.set(size, view);
-        }
-        self.depth.get().expect("created above")
+            texture.create_view(&wgpu::TextureViewDescriptor::default())
+        })
     }
 
     /// Uploads the grid of the ready probes when they changed.
