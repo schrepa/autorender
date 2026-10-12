@@ -13,7 +13,11 @@
 //! work completes its rounds, then captures it as the cell says: the exact
 //! state, a CPU or GPU-presented fraction of a tick, or ordinary display
 //! frames, with each frame's work counters and the engine's state digest
-//! where the host answers it.
+//! where the host answers it. `--browser` runs the same cells in headless
+//! Chrome against each side's development server instead, `--both` runs
+//! both legs, and `--hosts` then measures how the candidate's native and
+//! Chrome images differ (reported, not judged). Each cell holds the
+//! machine's heavy-run lock while it runs.
 //!
 //! Captures compare by SHA-256, then pixel by pixel within the cell's
 //! tolerance (0 unless it says). Work counters whose rule in
@@ -25,6 +29,7 @@
 //! them.
 //! Exit 0: equal; 3: different; 1: could not check.
 
+mod browser;
 mod judge;
 mod matrix;
 mod session;
@@ -58,7 +63,7 @@ const REPEAT: usize = 3;
 /// Builds of commits kept, unless `--keep`.
 const KEEP: usize = 4;
 
-const USAGE: &str = "usage: cargo xtask equivalence [--base REV] [--candidate REV] [--tier smoke|full] [--cells NAME,...] [--aa] [--repeat N] [--keep N] [--gpu discrete|integrated]";
+const USAGE: &str = "usage: cargo xtask equivalence [--base REV] [--candidate REV] [--tier smoke|full] [--cells NAME,...] [--aa] [--repeat N] [--keep N] [--gpu discrete|integrated] [--browser | --both [--hosts]]";
 
 /// What the command line asks for.
 struct Options {
@@ -72,6 +77,12 @@ struct Options {
     repeat: Option<usize>,
     keep: usize,
     gpu: String,
+    /// The legs to run: the native host's, Chrome's, or both.
+    native: bool,
+    browser: bool,
+    /// With both legs, measure how the candidate's native and Chrome images
+    /// differ.
+    hosts: bool,
 }
 
 fn options(arguments: &[String]) -> Result<Options, String> {
@@ -84,12 +95,30 @@ fn options(arguments: &[String]) -> Result<Options, String> {
         repeat: None,
         keep: KEEP,
         gpu: "discrete".into(),
+        native: true,
+        browser: false,
+        hosts: false,
     };
     let mut given = arguments.iter();
     while let Some(name) = given.next() {
-        if name == "--aa" {
-            options.aa = true;
-            continue;
+        match name.as_str() {
+            "--aa" => {
+                options.aa = true;
+                continue;
+            }
+            "--browser" => {
+                (options.native, options.browser) = (false, true);
+                continue;
+            }
+            "--both" => {
+                (options.native, options.browser) = (true, true);
+                continue;
+            }
+            "--hosts" => {
+                options.hosts = true;
+                continue;
+            }
+            _ => {}
         }
         let value = given
             .next()
@@ -121,6 +150,11 @@ fn options(arguments: &[String]) -> Result<Options, String> {
     if options.aa && options.candidate.is_some() {
         return Err(format!(
             "--aa runs the base against itself: no --candidate\n{USAGE}"
+        ));
+    }
+    if options.hosts && !(options.native && options.browser) {
+        return Err(format!(
+            "--hosts compares the native and browser legs: with --both\n{USAGE}"
         ));
     }
     Ok(options)
@@ -172,30 +206,155 @@ pub fn equivalence(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         cells.len()
     );
     let started = Instant::now();
-    let heavy = HeavyRun::hold(&format!("cargo xtask equivalence ({} cells)", cells.len()))?;
-    let results: Vec<Judged> = cells
-        .iter()
-        .map(|cell| judged(cell, &base, &second, &options, &catalog, &folder))
-        .collect();
-    drop(heavy);
+    let mut legs = Vec::new();
+    if options.native {
+        let judged = cells
+            .iter()
+            .map(|cell| {
+                judged(
+                    cell,
+                    &base,
+                    &second,
+                    &options,
+                    &catalog,
+                    &folder,
+                    &Leg::Native,
+                )
+            })
+            .collect();
+        legs.push(("native", judged));
+    }
+    if options.browser {
+        let base_page = browser::serve(root, &base, "tree", &folder)?;
+        let second_page = match &candidate {
+            None => None,
+            Some(side) => Some(browser::serve(root, side, "tree-candidate", &folder)?),
+        };
+        let leg = Leg::Browser {
+            root,
+            base: &base_page,
+            second: second_page.as_ref().unwrap_or(&base_page),
+            size: browser::size(root)?,
+        };
+        let judged = cells
+            .iter()
+            .map(|cell| judged(cell, &base, &second, &options, &catalog, &folder, &leg))
+            .collect();
+        legs.push(("browser", judged));
+    }
     let took = started.elapsed();
-    let report = report(&options, &base, second.side, &results, took);
+    let hosts = if options.hosts {
+        hosts(&legs)
+    } else {
+        Vec::new()
+    };
+    let report = report(&options, &base, second.side, &legs, &hosts, took);
     fs::write(
         folder.join("report.json"),
         serde_json::to_string_pretty(&report).expect("reports serialize") + "\n",
     )
     .map_err(|error| error.to_string())?;
-    print_summary(&options, &results);
+    for (leg, results) in &legs {
+        if legs.len() > 1 {
+            println!(
+                "\n{} leg:",
+                if *leg == "native" {
+                    "Native"
+                } else {
+                    "Browser"
+                }
+            );
+        }
+        print_summary(&options, results);
+    }
+    print_hosts(&hosts);
     println!(
         "{} cells in {:.0} s; report and captures in {}.",
-        results.len(),
+        cells.len(),
         took.as_secs_f64(),
         folder.display()
     );
+    let all: Vec<&Judged> = legs.iter().flat_map(|(_, results)| results).collect();
     if options.aa {
-        return aa_outcome(&results);
+        return aa_outcome(&all);
     }
-    outcome(&results)
+    outcome(&all)
+}
+
+/// How a leg runs a cell: the native host's sessions, or Chrome's pages
+/// of each side served from `root`'s trees at `size`.
+enum Leg<'a> {
+    Native,
+    Browser {
+        root: &'a Path,
+        base: &'a browser::Page,
+        second: &'a browser::Page,
+        size: [u32; 2],
+    },
+}
+
+/// The candidate's native image and its Chrome image of each capture both
+/// legs took, and how they differ: measurements, not verdicts.
+fn hosts(legs: &[(&str, Vec<Judged>)]) -> Vec<Value> {
+    let leg = |name: &str| {
+        legs.iter()
+            .find(|(leg, _)| *leg == name)
+            .map(|(_, judged)| judged)
+    };
+    let (Some(native), Some(browser)) = (leg("native"), leg("browser")) else {
+        return Vec::new();
+    };
+    let mut measured = Vec::new();
+    for (ours, theirs) in native.iter().zip(browser) {
+        for key in ours.cell.keys() {
+            let image = |runs: &[session::Run]| {
+                runs.iter().find_map(|run| match run.shots.get(&key) {
+                    Some(session::Shot::Taken { path, .. }) => Some(path.clone()),
+                    _ => None,
+                })
+            };
+            let (Some(a), Some(b)) = (image(&ours.candidate), image(&theirs.candidate)) else {
+                continue;
+            };
+            let found = judge::pixel_difference(&a, &b);
+            measured.push(json!({
+                "cell": ours.cell.name,
+                "capture": key,
+                "native": a.display().to_string(),
+                "browser": b.display().to_string(),
+                "pixels": found.as_ref().map(|found| found.0).ok(),
+                "total": found.as_ref().map(|found| found.1).ok(),
+                "largest": found.as_ref().map(|found| found.2).ok(),
+                "error": found.err(),
+            }));
+        }
+    }
+    measured
+}
+
+/// Prints how the candidate's native and Chrome images differ.
+fn print_hosts(hosts: &[Value]) {
+    if hosts.is_empty() {
+        return;
+    }
+    println!("\nNative against Chrome, the candidate's images (measurements, not judged):");
+    for entry in hosts {
+        match entry["error"].as_str() {
+            Some(error) => println!(
+                "  {:22} {:24} {error}",
+                entry["cell"].as_str().unwrap_or_default(),
+                entry["capture"].as_str().unwrap_or_default()
+            ),
+            None => println!(
+                "  {:22} {:24} {} of {} pixels differ (largest {})",
+                entry["cell"].as_str().unwrap_or_default(),
+                entry["capture"].as_str().unwrap_or_default(),
+                entry["pixels"],
+                entry["total"],
+                entry["largest"]
+            ),
+        }
+    }
 }
 
 /// The cells the options select, from a valid matrix: those `--cells`
@@ -245,7 +404,14 @@ fn judged<'a>(
     options: &Options,
     catalog: &[Value],
     folder: &Path,
+    leg: &Leg,
 ) -> Judged<'a> {
+    // Each cell holds the machine's heavy-run lock while it runs: other
+    // runs wait for a cell, not for the whole matrix.
+    let _heavy = match HeavyRun::hold(&format!("cargo xtask equivalence: {}", cell.name)) {
+        Ok(held) => held,
+        Err(error) => return Judged::failed(cell, error),
+    };
     let rounds = if options.aa {
         options.repeat.unwrap_or(1)
     } else if cell.unstable.is_empty() {
@@ -258,12 +424,30 @@ fn judged<'a>(
     let run_rounds = |base_runs: &mut Vec<_>, second_runs: &mut Vec<_>| {
         for _ in 0..rounds {
             let index = base_runs.len() + 1;
-            eprintln!("{}: base run {index}.", cell.name);
-            let at = folder.join(format!("base-{index}"));
-            base_runs.push(run_cell(cell, base, &at, &options.gpu));
-            eprintln!("{}: {} run {index}.", cell.name, second.role);
-            let at = folder.join(format!("{}-{index}", second.role));
-            second_runs.push(run_cell(cell, second.side, &at, &options.gpu));
+            match leg {
+                Leg::Native => {
+                    eprintln!("{}: base run {index}.", cell.name);
+                    let at = folder.join(format!("base-{index}"));
+                    base_runs.push(run_cell(cell, base, &at, &options.gpu));
+                    eprintln!("{}: {} run {index}.", cell.name, second.role);
+                    let at = folder.join(format!("{}-{index}", second.role));
+                    second_runs.push(run_cell(cell, second.side, &at, &options.gpu));
+                }
+                Leg::Browser {
+                    root,
+                    base: base_page,
+                    second: second_page,
+                    size,
+                } => {
+                    let runs = [
+                        (base, *base_page, "base", index),
+                        (second.side, *second_page, second.role, index),
+                    ];
+                    let mut both = browser::round(root, cell, &runs, *size, &folder).into_iter();
+                    base_runs.extend(both.next());
+                    second_runs.extend(both.next());
+                }
+            }
         }
     };
     run_rounds(&mut base_runs, &mut second_runs);
@@ -298,10 +482,17 @@ fn report(
     options: &Options,
     base: &Side,
     second: &Side,
-    results: &[Judged],
+    legs: &[(&str, Vec<Judged>)],
+    hosts: &[Value],
     took: Duration,
 ) -> Value {
-    let cells: Vec<Value> = results.iter().map(cell_report).collect();
+    let legs: serde_json::Map<String, Value> = legs
+        .iter()
+        .map(|(leg, results)| {
+            let cells: Vec<Value> = results.iter().map(cell_report).collect();
+            ((*leg).to_owned(), json!({ "cells": cells }))
+        })
+        .collect();
     let side = |side: &Side| {
         json!({
             "label": side.label,
@@ -316,7 +507,8 @@ fn report(
         "tier": options.tier,
         "gpu": options.gpu,
         "seconds": took.as_secs_f64(),
-        "cells": cells,
+        "legs": legs,
+        "hosts": hosts,
     })
 }
 
@@ -463,14 +655,14 @@ fn print_summary(options: &Options, results: &[Judged]) {
 
 /// The comparison's exit: 0 when every capture, judged counter and digest
 /// is equal; 3 when one differs; 1 when one could not be checked.
-fn outcome(results: &[Judged]) -> Result<(), Failure> {
+fn outcome(results: &[&Judged]) -> Result<(), Failure> {
     let (mut different, mut unchecked) = (0, 0);
     for Judged {
         verdicts,
         changed,
         digests,
         ..
-    } in results
+    } in results.iter().copied()
     {
         for (_, verdict) in verdicts {
             match verdict {
@@ -500,7 +692,7 @@ fn outcome(results: &[Judged]) -> Result<(), Failure> {
 /// The A/A run's exit: 0 when every capture the matrix calls stable gave
 /// the same image each run; 3 naming those that varied, which need a fix
 /// or a reason in the matrix.
-fn aa_outcome(results: &[Judged]) -> Result<(), Failure> {
+fn aa_outcome(results: &[&Judged]) -> Result<(), Failure> {
     let mut varied = Vec::new();
     let mut steady = Vec::new();
     let mut unchecked = 0;
@@ -510,7 +702,7 @@ fn aa_outcome(results: &[Judged]) -> Result<(), Failure> {
         base,
         candidate,
         ..
-    } in results
+    } in results.iter().copied()
     {
         for (key, verdict) in verdicts {
             let declared = cell.unstable.contains_key(key);

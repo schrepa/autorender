@@ -143,17 +143,7 @@ pub(super) fn commit_side(root: &Path, role: &str, rev: &str) -> Result<Side, St
             sha: Some(sha),
         });
     }
-    measure::ensure_commit(root, &sha, None)?;
-    let tree = root.join(FOLDER).join("tree");
-    if !tree.join(".git").exists() {
-        let path = tree.display().to_string();
-        git(
-            root,
-            &["worktree", "add", "--detach", "--force", &path, &sha],
-        )?;
-    } else {
-        git(&tree, &["checkout", "--detach", "--force", &sha])?;
-    }
+    let tree = checkout_tree(root, "tree", &sha)?;
     eprintln!("Building {label} ({role}).");
     let program = build_program(
         &tree,
@@ -190,6 +180,23 @@ pub(super) fn commit_side(root: &Path, role: &str, rev: &str) -> Result<Side, St
         tree: kept_tree,
         assets,
     })
+}
+
+/// The reused checkout `target/equivalence/NAME` at commit `sha`, made the
+/// first time.
+pub(super) fn checkout_tree(root: &Path, name: &str, sha: &str) -> Result<PathBuf, String> {
+    measure::ensure_commit(root, sha, None)?;
+    let tree = root.join(FOLDER).join(name);
+    if !tree.join(".git").exists() {
+        let path = tree.display().to_string();
+        git(
+            root,
+            &["worktree", "add", "--detach", "--force", &path, sha],
+        )?;
+    } else if git(&tree, &["rev-parse", "HEAD"])? != sha {
+        git(&tree, &["checkout", "--detach", "--force", sha])?;
+    }
+    Ok(tree)
 }
 
 /// Copies the folder `from` into `into`, every file under it.

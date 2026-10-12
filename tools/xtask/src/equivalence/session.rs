@@ -13,11 +13,11 @@ use serde_json::{Map, Value, json};
 
 use super::matrix::{Capture, Cell, Workload};
 use super::sides::Side;
-use crate::measure;
+use crate::measure::{self, read_json};
 
 /// The settings bundle every cell runs with: the size, the switches at
 /// their defaults, no scanned rocks, no job cache.
-const SETTINGS: &str = "bench/settings/default.json";
+pub(super) const SETTINGS: &str = "bench/settings/default.json";
 
 /// How long one command of a session may take: launching a workload and
 /// compiling its pipelines take seconds.
@@ -172,7 +172,12 @@ pub(super) struct Run {
 }
 
 /// The program's options for `cell` on `side`, its captures into `folder`.
-fn launch_arguments(cell: &Cell, side: &Side, folder: &Path, gpu: &str) -> Vec<String> {
+fn launch_arguments(
+    cell: &Cell,
+    side: &Side,
+    folder: &Path,
+    gpu: &str,
+) -> Result<Vec<String>, String> {
     let path = |relative: &str| side.tree.join(relative).display().to_string();
     let mut arguments = vec!["--settings".to_owned(), path(SETTINGS)];
     match &cell.workload {
@@ -185,7 +190,12 @@ fn launch_arguments(cell: &Cell, side: &Side, folder: &Path, gpu: &str) -> Vec<S
         Workload::Source(source) => arguments.extend(["--source".into(), path(source)]),
     }
     for (option, value) in &cell.options {
-        arguments.extend([format!("--{option}"), value.clone()]);
+        let value = if option == "config" {
+            scene_options(cell, &side.tree)?["config"].to_string()
+        } else {
+            value.clone()
+        };
+        arguments.extend([format!("--{option}"), value]);
     }
     arguments.extend([
         // Jobs run in the engine: no worker's timing decides when their
@@ -200,7 +210,31 @@ fn launch_arguments(cell: &Cell, side: &Side, folder: &Path, gpu: &str) -> Vec<S
         "--dev-artifacts".into(),
         folder.display().to_string(),
     ]);
-    arguments
+    Ok(arguments)
+}
+
+/// The scene options `cell` runs with from `tree`: its bench scene's
+/// preset, configuration and view, the cell's configuration fields over the
+/// scene's.
+pub(super) fn scene_options(cell: &Cell, tree: &Path) -> Result<Map<String, Value>, String> {
+    let Workload::Scene(scene) = &cell.workload else {
+        return Ok(Map::new());
+    };
+    let mut options = read_json(&tree.join(format!("bench/scenes/{scene}.json")))?["options"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    if let Some((_, fields)) = cell.options.iter().find(|(option, _)| option == "config") {
+        let fields: Value = serde_json::from_str(fields)
+            .map_err(|error| format!("{}: config: {error}", cell.name))?;
+        if let (Some(config), Some(fields)) = (
+            options.get_mut("config").and_then(Value::as_object_mut),
+            fields.as_object(),
+        ) {
+            config.extend(fields.clone());
+        }
+    }
+    Ok(options)
 }
 
 /// Runs `cell` once on `side`, its files into `folder`.
@@ -211,8 +245,9 @@ pub(super) fn run_cell(cell: &Cell, side: &Side, folder: &Path, gpu: &str) -> Ru
         return run;
     }
     let log = folder.join("program.log");
-    let arguments = launch_arguments(cell, side, folder, gpu);
-    let mut session = match Session::launch(side, &arguments, &log) {
+    let launched = launch_arguments(cell, side, folder, gpu)
+        .and_then(|arguments| Session::launch(side, &arguments, &log));
+    let mut session = match launched {
         Ok(session) => session,
         Err(error) => {
             run.error = Some(error);

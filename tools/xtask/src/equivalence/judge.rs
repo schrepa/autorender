@@ -32,7 +32,7 @@ impl Difference {
     }
 }
 
-/// Decodes an 8-bit RGBA PNG: its width, height and pixels.
+/// Decodes an 8-bit RGB or RGBA PNG: its width, height and RGBA pixels.
 fn decode(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
     let file =
         fs::File::open(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
@@ -45,11 +45,24 @@ fn decode(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
     let info = reader
         .next_frame(&mut pixels)
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
-        return Err(format!("{} is not 8-bit RGBA", path.display()));
-    }
     pixels.truncate(info.buffer_size());
-    Ok((info.width, info.height, pixels))
+    if info.bit_depth != png::BitDepth::Eight {
+        return Err(format!("{} is not 8 bits a channel", path.display()));
+    }
+    match info.color_type {
+        png::ColorType::Rgba => Ok((info.width, info.height, pixels)),
+        // Browsers' screenshots have no alpha: opaque.
+        png::ColorType::Rgb => {
+            let opaque = pixels
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .flat_map(|&[r, g, b]| [r, g, b, 255])
+                .collect();
+            Ok((info.width, info.height, opaque))
+        }
+        other => Err(format!("{} is {other:?}, not RGB or RGBA", path.display())),
+    }
 }
 
 /// How `base` and `candidate` differ beyond `tolerance`, with an image of
@@ -101,6 +114,12 @@ fn difference(
         total: (width as usize) * (height as usize),
         largest,
     })
+}
+
+/// How two images differ: the pixels differing in any channel, of how
+/// many, and the largest channel difference.
+pub(super) fn pixel_difference(a: &Path, b: &Path) -> Result<(usize, usize, u8), String> {
+    difference(a, b, 0, None).map(|found| (found.pixels, found.total, found.largest))
 }
 
 /// The verdict on one capture of a cell.
@@ -468,4 +487,22 @@ pub(super) struct Judged<'a> {
     pub(super) digests: Vec<(String, String)>,
     pub(super) base: Vec<Run>,
     pub(super) candidate: Vec<Run>,
+}
+
+impl<'a> Judged<'a> {
+    /// `cell` not run, every capture unchecked for `why`.
+    pub(super) fn failed(cell: &'a Cell, why: String) -> Self {
+        Self {
+            cell,
+            verdicts: cell
+                .keys()
+                .into_iter()
+                .map(|key| (key, Verdict::Unchecked(why.clone())))
+                .collect(),
+            changed: Vec::new(),
+            digests: Vec::new(),
+            base: Vec::new(),
+            candidate: Vec::new(),
+        }
+    }
 }

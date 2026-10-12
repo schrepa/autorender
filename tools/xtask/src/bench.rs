@@ -86,10 +86,8 @@ pub fn bench(root: &Path, options: &[String]) -> Result<(), String> {
         ["check"] => check(root),
         ["assets"] => {
             let assets = assets(root)?;
-            for set in &assets.sets {
-                let page = root.join("web/public").join(set);
-                let replaced = copy_changed(&assets.folder.join(set), &page)?;
-                println!("{set}: {replaced} file(s) written to {}", page.display());
+            for (set, replaced) in install(root, &assets.folder)? {
+                println!("{set}: {replaced} file(s) written to web/public/{set}");
             }
             println!(
                 "{}",
@@ -108,7 +106,6 @@ pub fn bench(root: &Path, options: &[String]) -> Result<(), String> {
 pub struct Assets {
     /// The folder holding them, as `--assets` takes it.
     pub folder: PathBuf,
-    pub sets: Vec<&'static str>,
     /// SHA-256 over every file's path (from `folder`, with `/`) and bytes.
     pub generated_hash: String,
 }
@@ -118,9 +115,8 @@ pub struct Assets {
 /// toolchain) is reused.
 pub fn assets(root: &Path) -> Result<Assets, String> {
     let folder = build_sets(root, "bench-assets", GENERATED)?;
-    let sets: Vec<&'static str> = GENERATED.iter().map(|(set, _)| *set).collect();
     let mut files = Vec::new();
-    for set in &sets {
+    for (set, _) in GENERATED {
         files.extend(files_under(&folder, &folder.join(set))?);
     }
     files.sort();
@@ -135,7 +131,6 @@ pub fn assets(root: &Path) -> Result<Assets, String> {
     }
     Ok(Assets {
         folder,
-        sets,
         generated_hash: hex(&hash.finalize()),
     })
 }
@@ -355,6 +350,20 @@ fn files_under(base: &Path, folder: &Path) -> Result<Vec<String>, String> {
         }
     }
     Ok(files)
+}
+
+/// Writes the generated sets held in `folder` (as [`assets`] builds them)
+/// into `root`'s `web/public`, where the page reads them: each set and how
+/// many of its files differed.
+pub fn install(root: &Path, folder: &Path) -> Result<Vec<(&'static str, usize)>, String> {
+    let mut installed = Vec::new();
+    for (set, _) in GENERATED {
+        installed.push((
+            *set,
+            copy_changed(&folder.join(set), &root.join("web/public").join(set))?,
+        ));
+    }
+    Ok(installed)
 }
 
 /// Copies the files of `from` into `into` where they differ: how many.
