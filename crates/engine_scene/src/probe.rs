@@ -4,12 +4,8 @@
 //! field for field, so inspected values paste back into scenes.
 
 use engine_core::{Interior, ReflectionProbe, glam::Vec3};
-use engine_settings::ErrorCode;
 use engine_settings::settings;
 use serde::{Deserialize, Serialize};
-
-use crate::SceneError;
-use crate::error::broken_rule;
 
 settings! {
     /// A reflection probe on this entity.
@@ -51,15 +47,13 @@ impl SceneReflectionProbe {
         }
     }
 
-    /// The component at authored path `path`, validated.
-    pub fn runtime(&self, path: &str) -> Result<ReflectionProbe, SceneError> {
-        self.validate()
-            .map_err(|invalid| broken_rule(ErrorCode::InvalidReflectionProbe, path, invalid))?;
+    /// The component; its rules are checked with the entity's.
+    pub(crate) fn runtime(&self) -> ReflectionProbe {
         let mut probe = ReflectionProbe::new(Vec3::from_array(self.extent)).with_blend(self.blend);
         if let Some(interior) = self.interior {
             probe = probe.with_interior(interior);
         }
-        Ok(probe)
+        probe
     }
 }
 

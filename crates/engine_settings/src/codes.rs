@@ -196,8 +196,6 @@ error_codes! {
     InvalidAnimation => "invalid_animation",
     /// A skin is invalid.
     InvalidSkin => "invalid_skin",
-    /// A tint is invalid.
-    InvalidTint => "invalid_tint",
     /// A renderable is invalid.
     InvalidRenderable => "invalid_renderable",
     /// A collider is invalid.
@@ -206,16 +204,6 @@ error_codes! {
     InvalidColliderTransform => "invalid_collider_transform",
     /// A world transform is not finite or degenerate.
     InvalidWorldTransform => "invalid_world_transform",
-    /// A local transform is not finite or its rotation not a unit quaternion.
-    InvalidTransform => "invalid_transform",
-    /// A local light is invalid.
-    InvalidLight => "invalid_light",
-    /// A particle emitter is invalid.
-    InvalidParticles => "invalid_particles",
-    /// A reflection probe is invalid.
-    InvalidReflectionProbe => "invalid_reflection_probe",
-    /// A decal is invalid.
-    InvalidDecal => "invalid_decal",
     /// A spline mesh is invalid.
     InvalidSpline => "invalid_spline",
     /// A terrain is invalid.

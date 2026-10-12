@@ -3,12 +3,10 @@
 //! box. Angles are in degrees.
 
 use engine_core::{Decal, DecalBlend, MaterialHandle};
-use engine_settings::ErrorCode;
 use engine_settings::{Setting, settings};
 use serde::{Deserialize, Serialize};
 
-use crate::error::broken_rule;
-use crate::{SceneError, SceneMaterial};
+use crate::SceneMaterial;
 
 impl Setting for SceneDecalBlend {}
 
@@ -107,27 +105,14 @@ impl SceneDecal {
         }
     }
 
-    /// Validates the decal at authored path `path` against the document's
-    /// `materials`; its material reference is checked with the entity.
-    pub(crate) fn prepare(
-        &self,
-        path: &str,
-        materials: &[SceneMaterial],
-    ) -> Result<PreparedDecal, SceneError> {
-        self.validate()
-            .map_err(|invalid| broken_rule(ErrorCode::InvalidDecal, path, invalid))?;
-        let invalid = |field: &str, rule: &str| {
-            SceneError::new(
-                ErrorCode::InvalidDecal,
-                format!("{path}.{field}"),
-                rule.to_owned(),
-            )
-        };
+    /// The decal with its material's index in the document's `materials`;
+    /// its rules and material reference are checked with the entity's.
+    pub(crate) fn prepare(&self, materials: &[SceneMaterial]) -> PreparedDecal {
         let material = materials
             .iter()
             .position(|material| material.id == self.material)
-            .ok_or_else(|| invalid("material", "must name a material of this document"))?;
-        Ok(PreparedDecal {
+            .expect("the entity's checks found the decal's material");
+        PreparedDecal {
             material,
             blend: match self.blend {
                 SceneDecalBlend::Alpha => DecalBlend::Alpha,
@@ -139,6 +124,6 @@ impl SceneDecal {
                 self.fade_degrees.to_radians(),
                 Decal::MAX_FADE_DEGREES.to_radians(),
             ),
-        })
+        }
     }
 }

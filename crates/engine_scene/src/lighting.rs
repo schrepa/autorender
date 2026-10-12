@@ -6,12 +6,8 @@ use engine_core::{
     LocalLight, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MIN_SPOT_DEGREES, ParticleBlend,
     ParticleEmitter, Spot, glam::Vec3,
 };
-use engine_settings::ErrorCode;
 use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
 use serde::{Deserialize, Serialize};
-
-use crate::SceneError;
-use crate::error::broken_rule;
 
 settings! {
     /// A point or spot light on this entity.
@@ -76,18 +72,16 @@ impl SceneSpot {
 }
 
 impl SceneLight {
-    /// The component at authored path `path`, validated.
-    pub fn runtime(&self, path: &str) -> Result<LocalLight, SceneError> {
-        self.validate()
-            .map_err(|invalid| broken_rule(ErrorCode::InvalidLight, path, invalid))?;
+    /// The component; its rules are checked with the entity's.
+    pub(crate) fn runtime(&self) -> LocalLight {
         let spot = self.spot.map(|spot| spot.spot());
-        Ok(LocalLight {
+        LocalLight {
             color: Vec3::from_array(self.color),
             intensity: self.intensity,
             range: self.range,
             offset: Vec3::from_array(self.offset),
             spot,
-        })
+        }
     }
 }
 
@@ -181,7 +175,7 @@ settings! {
 impl ExtraRules for SceneEmitter {
     /// The runtime emitter's extra rules.
     fn check_extra(&self) -> Result<(), InvalidSetting> {
-        self.emitter().check_extra()
+        self.runtime().check_extra()
     }
 }
 
@@ -210,15 +204,8 @@ impl From<&ParticleEmitter> for SceneEmitter {
 }
 
 impl SceneEmitter {
-    /// The component at authored path `path`, validated.
-    pub fn runtime(&self, path: &str) -> Result<ParticleEmitter, SceneError> {
-        self.validate()
-            .map_err(|invalid| broken_rule(ErrorCode::InvalidParticles, path, invalid))?;
-        Ok(self.emitter())
-    }
-
-    /// The runtime emitter, unchecked.
-    fn emitter(&self) -> ParticleEmitter {
+    /// The component; its rules are checked with the entity's.
+    pub(crate) fn runtime(&self) -> ParticleEmitter {
         let direction = Vec3::from_array(self.direction);
         ParticleEmitter {
             rate: self.rate,

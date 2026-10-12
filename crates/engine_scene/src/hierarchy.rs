@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::{MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix};
 
-use crate::validation::{identifier, reference, transform, unique_ids};
+use crate::validation::{identifier, reference, unique_ids};
 use crate::{SceneDocument, SceneError, SceneObject, ScenePrefab};
 
 pub(crate) struct ExpandedObject {
@@ -286,7 +286,8 @@ fn validate_object(
             ));
         }
     }
-    transform(&entity.transform, &format!("{path}.transform"))
+    // Its transform's rules are checked with its own.
+    Ok(entity.transform.transform())
 }
 
 fn validate_graph<'a>(

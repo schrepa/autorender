@@ -9,7 +9,7 @@ use engine_core::{
 
 use crate::error::broken_rule;
 use crate::{
-    MeshSource, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles, SceneTransform,
+    MeshSource, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles,
     animation::{PreparedPlayer, PreparedSkin},
     decal::PreparedDecal,
     hierarchy::{ExpandedObject, ExpandedScene},
@@ -579,17 +579,7 @@ impl SceneDocument {
         rigs: &Rigs<'_>,
     ) -> Result<PreparedEntity, SceneError> {
         let (source, path) = (&entity.source, &entity.path);
-        let tint = |tint: [f32; 4]| {
-            if tint.iter().all(|factor| (0.0..=1.0).contains(factor)) {
-                Ok(Tint(tint))
-            } else {
-                Err(SceneError::new(
-                    ErrorCode::InvalidTint,
-                    format!("{path}.tint"),
-                    "tint factors must be finite and in [0, 1]",
-                ))
-            }
-        };
+        // The components' rules are checked with the entity's.
         Ok(PreparedEntity {
             player: self.prepare_player(entity, resolve, &rigs.animation_ids)?,
             skin: self.prepare_skin(entity, resolve, &rigs.skin_ids)?,
@@ -597,24 +587,14 @@ impl SceneDocument {
                 .collider
                 .map(|collider| collider.runtime(&format!("{path}.collider")))
                 .transpose()?,
-            light: source
-                .light
-                .map(|light| light.runtime(&format!("{path}.light")))
-                .transpose()?,
-            emitter: source
-                .particles
-                .map(|emitter| emitter.runtime(&format!("{path}.particles")))
-                .transpose()?,
-            tint: source.tint.map(tint).transpose()?,
+            light: source.light.map(|light| light.runtime()),
+            emitter: source.particles.map(|emitter| emitter.runtime()),
+            tint: source.tint.map(Tint),
             decal: source
                 .decal
                 .as_ref()
-                .map(|decal| decal.prepare(&format!("{path}.decal"), &self.materials))
-                .transpose()?,
-            probe: source
-                .reflection_probe
-                .map(|probe| probe.runtime(&format!("{path}.reflection_probe")))
-                .transpose()?,
+                .map(|decal| decal.prepare(&self.materials)),
+            probe: source.reflection_probe.map(|probe| probe.runtime()),
             terrain: None,
         })
     }
@@ -802,11 +782,4 @@ fn bounded_vector(value: [f32; 3], path: &str, maximum: f32) -> Result<(), Scene
         }
     }
     Ok(())
-}
-
-pub(crate) fn transform(source: &SceneTransform, path: &str) -> Result<Transform, SceneError> {
-    source
-        .validate()
-        .map_err(|invalid| broken_rule(ErrorCode::InvalidTransform, path, invalid))?;
-    Ok(source.transform())
 }

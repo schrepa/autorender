@@ -21,29 +21,9 @@ use super::Observations;
 /// The corpus's own documents and refusals.
 const FIXTURES: &str = "tools/xtask/pure/scenes.json";
 
-/// Error codes engine_scene names that no document reaches, with why: an
-/// entity's own field rules (`invalid_value`) cover its components' and
-/// transform's, and run first. Sorted; a code a refusal reaches leaves it.
-const UNREACHED: &[(&str, &str)] = &[
-    (
-        "invalid_decal",
-        "the entity's rules check the decal's, and its material reference is checked first",
-    ),
-    ("invalid_light", "the entity's rules check the light's"),
-    (
-        "invalid_particles",
-        "the entity's rules check the emitter's",
-    ),
-    (
-        "invalid_reflection_probe",
-        "the entity's rules check the probe's",
-    ),
-    ("invalid_tint", "the entity's rules check the tint's range"),
-    (
-        "invalid_transform",
-        "the entity's rules check its transform's",
-    ),
-];
+/// Error codes engine_scene names that no document reaches, with why.
+/// Sorted; a code a refusal reaches leaves it.
+const UNREACHED: &[(&str, &str)] = &[];
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let fixtures: Value = serde_json::from_str(&read(root, FIXTURES)?)
