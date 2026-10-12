@@ -40,6 +40,8 @@
 //! The [`TerrainSettings`] are inserted by default; without them, or when
 //! disabled, terrains neither stream nor draw.
 
+mod identity;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -556,31 +558,6 @@ pub struct TerrainEdit {
 }
 
 impl Terrain {
-    /// Whether `other` describes the same terrain: equal fields and the
-    /// same shared source, so streaming keeps its tiles; edits apply over
-    /// it tile by tile.
-    fn same(&self, other: &Self) -> bool {
-        let source = match (&self.source, &other.source) {
-            (TerrainSource::Generated(a), TerrainSource::Generated(b)) => Arc::ptr_eq(a, b),
-            (
-                TerrainSource::File {
-                    header: a, url: u, ..
-                },
-                TerrainSource::File {
-                    header: b, url: v, ..
-                },
-            ) => Arc::ptr_eq(a, b) && u == v,
-            _ => false,
-        };
-        source
-            && self.origin == other.origin
-            && self.pyramid == other.pyramid
-            && (Arc::ptr_eq(&self.surface.rules, &other.surface.rules)
-                || self.surface.rules == other.surface.rules)
-            && self.surface.materials == other.surface.materials
-            && self.collision == other.collision
-    }
-
     /// A terrain generated from `layers`.
     pub fn generated(origin: Vec3, pyramid: Pyramid, layers: Layers) -> Self {
         Self {
