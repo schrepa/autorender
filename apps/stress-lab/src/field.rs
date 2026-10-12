@@ -5,9 +5,9 @@ use engine::collections::HashMap;
 
 use engine::prelude::*;
 
-use crate::scene::{Animation, SPACING, animate, field};
-use crate::world::StressWorld;
-use crate::{StressConfig, StressFile};
+use crate::kit::field::{SPACING, animate, field};
+use crate::kit::motion::Animation;
+use crate::kit::{StressConfig, StressFile, StressWorld};
 
 pub(crate) struct FieldWorld;
 

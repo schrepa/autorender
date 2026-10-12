@@ -8,6 +8,8 @@
 
 use engine::prelude::*;
 
+use crate::kit::random::noise;
+
 /// Meters between the rings along the centerline, and points around each.
 const RING_STEP: f32 = 1.5;
 const RING_POINTS: u32 = 28;
@@ -155,34 +157,4 @@ fn centerline(points: &[Vec3]) -> (Vec<Vec3>, Vec<Vec3>) {
 fn smooth(value: f32) -> f32 {
     let t = math::clamp(value, 0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
-}
-
-fn hash(value: u32) -> u32 {
-    let mut h = value.wrapping_mul(0x9e37_79b1);
-    h = (h ^ (h >> 16)).wrapping_mul(0x7feb_352d);
-    h = (h ^ (h >> 15)).wrapping_mul(0x846c_a68b);
-    h ^ (h >> 16)
-}
-
-fn unit(value: u32) -> f32 {
-    (value >> 8) as f32 / 16_777_216.0
-}
-
-/// Value noise from 0 to 1 at `point`, smooth between lattice points.
-fn noise(point: Vec3) -> f32 {
-    let cell = point.floor();
-    let f = point - cell;
-    let u = f * f * (Vec3::splat(3.0) - 2.0 * f);
-    let corner = |dx: i32, dy: i32, dz: i32| {
-        let key = (cell.x as i32 + dx) as u32
-            ^ ((cell.y as i32 + dy) as u32).wrapping_mul(0x8da6_b343)
-            ^ ((cell.z as i32 + dz) as u32).wrapping_mul(0xd816_3841);
-        unit(hash(key))
-    };
-    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
-    let x00 = lerp(corner(0, 0, 0), corner(1, 0, 0), u.x);
-    let x10 = lerp(corner(0, 1, 0), corner(1, 1, 0), u.x);
-    let x01 = lerp(corner(0, 0, 1), corner(1, 0, 1), u.x);
-    let x11 = lerp(corner(0, 1, 1), corner(1, 1, 1), u.x);
-    lerp(lerp(x00, x10, u.y), lerp(x01, x11, u.y), u.z)
 }

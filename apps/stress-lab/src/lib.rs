@@ -9,6 +9,7 @@ mod dense;
 mod field;
 mod game;
 mod highlands;
+mod kit;
 mod metrics;
 mod metro;
 #[cfg(not(target_arch = "wasm32"))]
@@ -16,7 +17,6 @@ pub mod native;
 mod observation;
 mod presets;
 mod scene;
-mod shapes;
 mod world;
 
 pub use authored::{AuthoredScene, PlayerWalk};

@@ -15,9 +15,10 @@ use engine::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use engine_native::files;
 
-use crate::scene::{Animation, Motion, Workload, animate, hash};
-use crate::world::StressWorld;
-use crate::{StressConfig, StressFile};
+use crate::kit::field::{Motion, animate};
+use crate::kit::motion::Animation;
+use crate::kit::random::hash;
+use crate::kit::{StressConfig, StressFile, StressWorld, Workload};
 
 /// The files the page fetches for this scene, from `stress/dense/`: the ones
 /// `tools/vgbuild`'s `dense_assets` writes (it lists them again, with their

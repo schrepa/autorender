@@ -16,9 +16,9 @@ use engine_native::files;
 #[cfg(not(target_arch = "wasm32"))]
 use super::{FILES, ROCK_FILES};
 use super::{Plateau, add_systems, populate};
-use crate::scene::{Animation, animate, field};
-use crate::world::StressWorld;
-use crate::{StressConfig, StressFile};
+use crate::kit::field::{SPACING, animate, field};
+use crate::kit::motion::Animation;
+use crate::kit::{StressConfig, StressFile, StressWorld};
 
 pub(crate) struct HighlandsWorld;
 
@@ -201,7 +201,7 @@ impl StressWorld for HighlandsWorld {
 /// The plateau's radius for the hamlet of `config`'s renderables, the tower
 /// field's grid with a margin.
 fn hamlet_radius(config: &StressConfig) -> f32 {
-    let side = (config.renderables as f32).sqrt().ceil() * crate::scene::SPACING;
+    let side = (config.renderables as f32).sqrt().ceil() * SPACING;
     side * 0.75 + 30.0
 }
 

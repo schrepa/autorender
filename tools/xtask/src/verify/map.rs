@@ -500,15 +500,22 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &["apps/stress-lab/src/dense*"],
         checks: &[Cells(&["dense-views", "dense-visibility"])],
     },
-    // The city, and the shapes it builds (the metro builds with their
-    // polygon helpers).
     Rule {
-        paths: &[
-            "apps/stress-lab/src/city/**",
-            "apps/stress-lab/src/shapes*",
-            "apps/stress-lab/src/shapes/**",
-        ],
-        checks: &[Cells(&["city-views", "metro-views"])],
+        paths: &["apps/stress-lab/src/city/**"],
+        checks: &[Cells(&["city-views"])],
+    },
+    // The content kit every world builds with.
+    Rule {
+        paths: &["apps/stress-lab/src/kit/**"],
+        checks: &[Cells(&[
+            "field-views",
+            "motion-views",
+            "city-views",
+            "metro-views",
+            "dense-views",
+            "highlands",
+            "highlands-views",
+        ])],
     },
     Rule {
         paths: &[

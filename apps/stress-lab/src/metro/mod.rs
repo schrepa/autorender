@@ -19,7 +19,6 @@
 //! people) always keep their own node trees, as imported glTF models do.
 
 mod bc7;
-mod builder;
 mod materials;
 mod models;
 mod people;
@@ -32,19 +31,15 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use engine::prelude::*;
 
-use crate::StressConfig;
-use crate::city::{
-    Motion, Orbit, Rng, Spin, Travel, Wheel, budget, compose, part_at, river_row, street_loop,
-};
-use crate::scene::{Animation, hash, position_for_index};
+use crate::kit::StressConfig;
+use crate::kit::field::position_for_index;
+use crate::kit::motion::{Animation, Motion, Orbit, Spin, Travel, Wheel};
+use crate::kit::plan::{HALF_BLOCK, PERIOD, budget, compose, part_at, river_row, street_loop};
+use crate::kit::random::{Rng, hash};
 use materials::{AD_SLOTS, Clip, Library, Mat, NEON_COLORS};
 use models::{Car, MID_FLOORS, Mid, Model, Style, TOWER_FLOORS};
 pub(crate) use world::MetroWorld;
 
-/// Street grid: 20-unit blocks between 4-unit streets, centered on multiples
-/// of `PERIOD`.
-const PERIOD: f32 = 24.0;
-const HALF_BLOCK: f32 = 10.0;
 const ROAD_TOP: f32 = 0.15;
 /// Top of sidewalks and lots.
 const LOT: f32 = 0.3;
@@ -3335,7 +3330,7 @@ fn rotate_ads(time: Res<FixedTime>, mut ads: ResMut<Adverts>, mut assets: ResMut
 
 /// Registers the metro's motion and advertising systems.
 pub(crate) fn add_systems(app: &mut App) {
-    crate::city::add_systems(app);
+    crate::kit::motion::add_systems(app);
     app.add_systems(FixedSimulation, rotate_ads.after(Animation));
 }
 

@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 
 use engine::prelude::*;
 
-use crate::scene::hash;
+use crate::kit::random::{hash, unit};
 
 /// Pixels of one generated map.
 #[derive(Clone)]
@@ -254,10 +254,6 @@ fn fbm(u: f32, v: f32, period: i32, octaves: u32, seed: u32) -> f32 {
 
 fn cell(a: u32, b: u32, seed: u32) -> u32 {
     hash(seed ^ hash(a.wrapping_mul(0x27d4_eb2d) ^ b.wrapping_mul(0x1656_67b1)))
-}
-
-fn unit(value: u32) -> f32 {
-    (value >> 8) as f32 / 16_777_216.0
 }
 
 fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {

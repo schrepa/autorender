@@ -9,8 +9,8 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
 use engine::prelude::*;
 
-use super::builder::{Builder, Map, Uv1};
 use super::people;
+use crate::kit::model_builder::{Builder, Map, Uv1};
 
 mod buildings;
 mod details;

@@ -25,7 +25,7 @@ use std::sync::Arc;
 use engine::prelude::*;
 use engine::terrain::*;
 
-use crate::{StressConfig, StressFile};
+use crate::kit::{StressConfig, StressFile};
 pub(crate) use world::HighlandsWorld;
 
 /// The images the page fetches for this scene, from `stress/terrain/`:

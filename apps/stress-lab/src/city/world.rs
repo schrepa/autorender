@@ -5,10 +5,10 @@ use engine::collections::HashMap;
 
 use engine::prelude::*;
 
-use super::{PER_BLOCK, PERIOD, add_systems, budget, populate, river_row};
-use crate::scene::Workload;
-use crate::world::StressWorld;
-use crate::{StressConfig, StressFile};
+use super::{PER_BLOCK, populate};
+use crate::kit::motion::add_systems;
+use crate::kit::plan::{PERIOD, budget, river_row};
+use crate::kit::{StressConfig, StressFile, StressWorld, Workload};
 
 pub(crate) struct CityWorld;
 

@@ -7,7 +7,7 @@ use std::f32::consts::TAU;
 
 use engine::prelude::*;
 
-use super::builder::{Builder, Map};
+use crate::kit::model_builder::{Builder, Map};
 
 /// Outfits the city draws people in.
 pub(crate) const VARIANTS: u8 = 8;

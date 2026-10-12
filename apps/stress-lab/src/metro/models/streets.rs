@@ -182,7 +182,7 @@ pub(super) fn flowers(b: &mut Builder) {
         Map::Rect(0.0, 0.0, 1.0, 1.0),
     );
     for index in 0..14 {
-        let random = crate::scene::hash(index * 977 + 13);
+        let random = crate::kit::random::hash(index * 977 + 13);
         let (x, z) = (
             (random % 150) as f32 / 100.0 - 0.75,
             ((random >> 8) % 150) as f32 / 100.0 - 0.75,

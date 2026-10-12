@@ -7,7 +7,7 @@ use std::f32::consts::TAU;
 
 use engine::prelude::*;
 
-use crate::shapes::{fan, polygon_normal};
+use super::shape_builder::{fan, polygon_normal};
 
 /// How a face's texture coordinates follow its size.
 #[derive(Clone, Copy, Debug)]

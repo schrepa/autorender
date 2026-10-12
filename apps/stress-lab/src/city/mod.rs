@@ -13,28 +13,26 @@
 //! nodes; without it, every part is a root whose motion reproduces the same
 //! poses. Both layouts display the same city.
 
+mod shapes;
 mod world;
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
-use std::ops::DerefMut;
 
 use engine::prelude::*;
 
-use crate::scene::{Animation, hash, position_for_index};
-use crate::shapes::{Library, Paint, Shape, Tex};
-use crate::{FrameMetrics, StressConfig, metrics};
+use crate::kit::StressConfig;
+use crate::kit::field::position_for_index;
+use crate::kit::motion::{Motion, Orbit, Slide, Spin, Travel, Wheel};
+use crate::kit::plan::{HALF_BLOCK, PERIOD, budget, compose, part_at, river_row, street_loop};
+use crate::kit::random::{Rng, hash};
+use shapes::{Library, Paint, Shape, Tex};
 pub(crate) use world::CityWorld;
 
-/// Street grid: 20-unit blocks between 4-unit streets, centered on multiples
-/// of `PERIOD`.
-const PERIOD: f32 = 24.0;
-const HALF_BLOCK: f32 = 10.0;
 const ROAD_TOP: f32 = 0.15;
 /// Static renderables of an average block, for sizing districts.
 const PER_BLOCK: f32 = 80.0;
 const RAIL_HEIGHT: f32 = 9.5;
 const WATER_TOP: f32 = -0.2;
-const INV_TAU: f32 = 1.0 / TAU;
 
 const NEON: [[f32; 3]; 8] = [
     [0.09, 0.88, 0.78],
@@ -96,310 +94,6 @@ const ASPHALT: [f32; 3] = [0.6, 0.6, 0.66];
 const CRANE: [f32; 3] = [1.0, 0.72, 0.1];
 const DIRT: [f32; 3] = [0.55, 0.42, 0.3];
 
-/// Deterministic draws from a seed.
-pub(crate) struct Rng(u32);
-
-impl Rng {
-    pub(crate) fn new(seed: u32, a: i32, b: i32) -> Self {
-        Self(hash(
-            seed ^ hash((a as u32).wrapping_mul(73_856_093) ^ (b as u32).wrapping_mul(19_349_663)),
-        ))
-    }
-    pub(crate) fn next(&mut self) -> u32 {
-        self.0 = hash(self.0.wrapping_add(0x9e37_79b9));
-        self.0
-    }
-    pub(crate) fn unit(&mut self) -> f32 {
-        (self.next() >> 8) as f32 / 16_777_216.0
-    }
-    pub(crate) fn range(&mut self, low: f32, high: f32) -> f32 {
-        low + (high - low) * self.unit()
-    }
-    pub(crate) fn below(&mut self, count: u32) -> u32 {
-        self.next() % count
-    }
-    pub(crate) fn chance(&mut self, percent: u32) -> bool {
-        self.below(100) < percent
-    }
-    pub(crate) fn pick<T: Copy>(&mut self, items: &[T]) -> T {
-        items[self.below(items.len() as u32) as usize]
-    }
-    pub(crate) fn sign(&mut self) -> f32 {
-        if self.chance(50) { 1.0 } else { -1.0 }
-    }
-}
-
-// Motions: pure functions of simulated time, so both layouts agree.
-
-/// Around a rectangle in the XZ plane: counterclockwise seen from above for
-/// a positive speed (units per second), clockwise for a negative one.
-#[derive(Component, Clone, Copy, Debug)]
-pub(crate) struct Travel {
-    pub(crate) center: Vec3,
-    pub(crate) half: Vec2,
-    pub(crate) speed: f32,
-    pub(crate) phase: f32,
-}
-
-/// Around a horizontal circle (angle `a`: `center + radius (cos a, 0, -sin a)`,
-/// as `Quat::from_rotation_y(a)` moves +X), bobbing by `bob sin 2a`, turned
-/// by its own facing angle about Y.
-#[derive(Component, Clone, Copy, Debug)]
-pub(crate) struct Orbit {
-    pub(crate) center: Vec3,
-    pub(crate) radius: f32,
-    pub(crate) speed: f32,
-    pub(crate) phase: f32,
-    pub(crate) bob: f32,
-    pub(crate) facing_speed: f32,
-    pub(crate) facing_phase: f32,
-}
-
-/// Around the circle `center + u cos a + v sin a`, keeping its rotation.
-#[derive(Component, Clone, Copy, Debug)]
-pub(crate) struct Wheel {
-    pub(crate) center: Vec3,
-    pub(crate) u: Vec3,
-    pub(crate) v: Vec3,
-    pub(crate) speed: f32,
-    pub(crate) phase: f32,
-}
-
-/// `base` then a turn about local Y (or Z), in place.
-#[derive(Component, Clone, Copy, Debug)]
-pub(crate) struct Spin {
-    pub(crate) base: Quat,
-    pub(crate) axis_z: bool,
-    pub(crate) speed: f32,
-    pub(crate) phase: f32,
-}
-
-/// Along `axis` from `anchor` by `amplitude sin a`.
-#[derive(Component, Clone, Copy, Debug)]
-pub(crate) struct Slide {
-    pub(crate) anchor: Vec3,
-    pub(crate) axis: Vec3,
-    pub(crate) amplitude: f32,
-    pub(crate) speed: f32,
-    pub(crate) phase: f32,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Motion {
-    Travel(Travel),
-    Orbit(Orbit),
-    Wheel(Wheel),
-    Spin(Spin),
-    Slide(Slide),
-}
-
-/// `x` reduced to `[0, TAU)`, keeping trigonometry on its fast path.
-fn wrap(x: f32) -> f32 {
-    x - (x * INV_TAU).floor() * TAU
-}
-
-fn wrap4(x: Vec4) -> Vec4 {
-    x - (x * INV_TAU).floor() * TAU
-}
-
-fn yaws() -> [Quat; 8] {
-    [
-        0.0, -FRAC_PI_2, PI, FRAC_PI_2, PI, FRAC_PI_2, 0.0, -FRAC_PI_2,
-    ]
-    .map(Quat::from_rotation_y)
-}
-
-impl Travel {
-    fn at(&self, t: f32, yaws: &[Quat; 8]) -> (Vec3, Quat) {
-        let (hx, hz) = (self.half.x, self.half.y);
-        let perimeter = 4.0 * (hx + hz);
-        let run = t * self.speed.abs() + self.phase;
-        let mut distance = run - (run / perimeter).floor() * perimeter;
-        let forward = self.speed >= 0.0;
-        if !forward {
-            distance = perimeter - distance;
-        }
-        let (a, b) = (2.0 * hx, 2.0 * hz);
-        let (x, z, segment) = if distance < a {
-            (-hx + distance, -hz, 0)
-        } else if distance < a + b {
-            (hx, -hz + distance - a, 1)
-        } else if distance < 2.0 * a + b {
-            (hx - (distance - a - b), hz, 2)
-        } else {
-            (-hx, hz - (distance - 2.0 * a - b), 3)
-        };
-        let rotation = yaws[segment + if forward { 0 } else { 4 }];
-        (self.center + Vec3::new(x, 0.0, z), rotation)
-    }
-}
-
-impl Orbit {
-    fn at(&self, t: f32) -> (Vec3, Quat) {
-        let (sin, cos) = math::sin_cos(wrap(self.speed * t + self.phase));
-        let (facing_sin, facing_cos) =
-            math::sin_cos(wrap(self.facing_speed * t + self.facing_phase) * 0.5);
-        (
-            self.center
-                + Vec3::new(
-                    self.radius * cos,
-                    self.bob * 2.0 * sin * cos,
-                    -self.radius * sin,
-                ),
-            Quat::from_xyzw(0.0, facing_sin, 0.0, facing_cos),
-        )
-    }
-}
-
-impl Wheel {
-    fn at(&self, t: f32) -> Vec3 {
-        let (sin, cos) = math::sin_cos(wrap(self.speed * t + self.phase));
-        self.center + self.u * cos + self.v * sin
-    }
-}
-
-impl Spin {
-    fn at(&self, t: f32) -> Quat {
-        let (sin, cos) = math::sin_cos(wrap(self.speed * t + self.phase) * 0.5);
-        self.base * self.turn(sin, cos)
-    }
-    fn turn(&self, sin: f32, cos: f32) -> Quat {
-        if self.axis_z {
-            Quat::from_xyzw(0.0, 0.0, sin, cos)
-        } else {
-            Quat::from_xyzw(0.0, sin, 0.0, cos)
-        }
-    }
-}
-
-impl Slide {
-    fn at(&self, t: f32) -> Vec3 {
-        self.anchor + self.axis * (self.amplitude * math::sin(wrap(self.speed * t + self.phase)))
-    }
-}
-
-impl Motion {
-    /// The transform this motion gives `rest` at time `t`.
-    pub(crate) fn apply(&self, rest: Transform, t: f32) -> Transform {
-        let mut transform = rest;
-        match self {
-            Motion::Travel(travel) => {
-                (transform.translation, transform.rotation) = travel.at(t, &yaws())
-            }
-            Motion::Orbit(orbit) => (transform.translation, transform.rotation) = orbit.at(t),
-            Motion::Wheel(wheel) => transform.translation = wheel.at(t),
-            Motion::Spin(spin) => transform.rotation = spin.at(t),
-            Motion::Slide(slide) => transform.translation = slide.at(t),
-        }
-        transform
-    }
-}
-
-fn simulated(time: &FixedTime) -> f32 {
-    (time.elapsed_seconds % 10_000.0) as f32
-}
-
-// Four movers at a time: the scalar functions above, lane by lane, with the
-// same bits (`sin_cos4` matches `sin_cos`).
-
-fn orbit_lanes<'a, T: DerefMut<Target = Transform>>(
-    t: f32,
-    movers: impl Iterator<Item = (&'a Orbit, T)>,
-) {
-    math::for_each4(movers, |lanes| {
-        let angle =
-            wrap4(lanes.load(|(orbit, _)| orbit.speed) * t + lanes.load(|(orbit, _)| orbit.phase));
-        let (sin, cos) = math::sin_cos4(angle);
-        let facing = wrap4(
-            lanes.load(|(orbit, _)| orbit.facing_speed) * t
-                + lanes.load(|(orbit, _)| orbit.facing_phase),
-        );
-        let (facing_sin, facing_cos) = math::sin_cos4(facing * 0.5);
-        lanes.for_each(|lane, (orbit, transform)| {
-            let (sin, cos) = (sin[lane], cos[lane]);
-            transform.translation = orbit.center
-                + Vec3::new(
-                    orbit.radius * cos,
-                    orbit.bob * 2.0 * sin * cos,
-                    -orbit.radius * sin,
-                );
-            transform.rotation = Quat::from_xyzw(0.0, facing_sin[lane], 0.0, facing_cos[lane]);
-        });
-    });
-}
-
-fn wheel_lanes<'a, T: DerefMut<Target = Transform>>(
-    t: f32,
-    movers: impl Iterator<Item = (&'a Wheel, T)>,
-) {
-    math::for_each4(movers, |lanes| {
-        let angle =
-            wrap4(lanes.load(|(wheel, _)| wheel.speed) * t + lanes.load(|(wheel, _)| wheel.phase));
-        let (sin, cos) = math::sin_cos4(angle);
-        lanes.for_each(|lane, (wheel, transform)| {
-            transform.translation = wheel.center + wheel.u * cos[lane] + wheel.v * sin[lane];
-        });
-    });
-}
-
-fn spin_lanes<'a, T: DerefMut<Target = Transform>>(
-    t: f32,
-    movers: impl Iterator<Item = (&'a Spin, T)>,
-) {
-    math::for_each4(movers, |lanes| {
-        let angle =
-            wrap4(lanes.load(|(spin, _)| spin.speed) * t + lanes.load(|(spin, _)| spin.phase));
-        let (sin, cos) = math::sin_cos4(angle * 0.5);
-        lanes.for_each(|lane, (spin, transform)| {
-            transform.rotation = spin.base * spin.turn(sin[lane], cos[lane]);
-        });
-    });
-}
-
-fn slide_lanes<'a, T: DerefMut<Target = Transform>>(
-    t: f32,
-    movers: impl Iterator<Item = (&'a Slide, T)>,
-) {
-    math::for_each4(movers, |lanes| {
-        let angle =
-            wrap4(lanes.load(|(slide, _)| slide.speed) * t + lanes.load(|(slide, _)| slide.phase));
-        let (sin, _) = math::sin_cos4(angle);
-        lanes.for_each(|lane, (slide, transform)| {
-            transform.translation = slide.anchor + slide.axis * (slide.amplitude * sin[lane]);
-        });
-    });
-}
-
-/// Moves every mover to its pose at the tick's simulated time.
-#[expect(clippy::type_complexity, reason = "a query per mover kind")]
-fn animate(
-    time: Res<FixedTime>,
-    mut movers: ParamSet<(
-        Query<(&Travel, &mut Transform)>,
-        Query<(&Orbit, &mut Transform)>,
-        Query<(&Wheel, &mut Transform)>,
-        Query<(&Spin, &mut Transform)>,
-        Query<(&Slide, &mut Transform)>,
-    )>,
-    mut metrics: ResMut<FrameMetrics>,
-) {
-    let start = metrics::now_ms();
-    let (t, yaws) = (simulated(&time), yaws());
-    for (travel, mut transform) in &mut movers.p0() {
-        (transform.translation, transform.rotation) = travel.at(t, &yaws);
-    }
-    orbit_lanes(t, movers.p1().iter_mut());
-    wheel_lanes(t, movers.p2().iter_mut());
-    spin_lanes(t, movers.p3().iter_mut());
-    slide_lanes(t, movers.p4().iter_mut());
-    metrics.animation_ms += metrics::now_ms() - start;
-}
-
-/// Registers the city's motion system.
-pub(crate) fn add_systems(app: &mut App) {
-    app.add_systems(FixedSimulation, animate.in_set(Animation));
-}
-
 /// A renderable's shape and material.
 #[derive(Clone, Copy, Debug)]
 struct Look {
@@ -429,23 +123,6 @@ struct Node {
 struct Anchor {
     node: Option<u32>,
     frame: Transform,
-}
-
-/// `frame` then `local`, for an unscaled `frame`.
-pub(crate) fn compose(frame: &Transform, local: &Transform) -> Transform {
-    Transform {
-        translation: frame.translation + frame.rotation * local.translation,
-        rotation: frame.rotation * local.rotation,
-        scale: local.scale,
-    }
-}
-
-pub(crate) fn part_at(translation: Vec3, scale: Vec3) -> Transform {
-    Transform {
-        translation,
-        rotation: Quat::IDENTITY,
-        scale,
-    }
 }
 
 pub(crate) fn turned(translation: Vec3, yaw: f32, scale: Vec3) -> Transform {
@@ -598,29 +275,6 @@ impl City {
 /// Transform nodes the city may add beyond its renderables.
 fn node_room(renderables: u32) -> u32 {
     (engine::MAX_TRANSFORM_NODES as u32).saturating_sub(renderables)
-}
-
-/// Moving and static renderables of `config`'s city, and its radius in
-/// blocks of `per_block` static renderables each.
-pub(crate) fn budget(config: &StressConfig, per_block: f32) -> (u32, u32, f32) {
-    let moving = config.renderables / 100 * config.moving_percent
-        + (config.renderables % 100).min(config.moving_percent);
-    let dense = if config.dense_colliders {
-        config.colliders
-    } else {
-        0
-    };
-    let static_total = config.renderables - moving - dense.min(config.renderables - moving);
-    let radius = math::max(
-        (math::max(static_total as f32, moving as f32 * 0.5) / per_block / PI).sqrt(),
-        1.0,
-    );
-    (moving, static_total, radius)
-}
-
-/// The block row the river runs along, for cities wide enough to have one.
-pub(crate) fn river_row(radius: f32) -> Option<i32> {
-    (radius >= 4.0).then(|| (radius * 0.45).round() as i32)
 }
 
 fn plan(config: &StressConfig) -> City {
@@ -1585,31 +1239,6 @@ fn traffic(city: &mut City, config: &StressConfig) {
     for index in 0..buses + cars {
         vehicle(city, &mut rng, index < buses);
     }
-}
-
-/// A random street loop around one or two of `blocks` (any block within
-/// `radius` when there are none): its center and half extents.
-pub(crate) fn street_loop(blocks: &[(i32, i32, f32)], radius: f32, rng: &mut Rng) -> (Vec3, Vec2) {
-    let (bx, bz) = if blocks.is_empty() {
-        let reach = radius.ceil() as i32;
-        (
-            rng.below(2 * reach as u32 + 1) as i32 - reach,
-            rng.below(2 * reach as u32 + 1) as i32 - reach,
-        )
-    } else {
-        let (bx, bz, _) = blocks[rng.below(blocks.len() as u32) as usize];
-        (bx, bz)
-    };
-    let (wide, deep) = (1 + rng.below(2), 1 + rng.below(2));
-    let center = Vec3::new(
-        bx as f32 * PERIOD + wide as f32 * PERIOD * 0.5,
-        0.0,
-        bz as f32 * PERIOD + deep as f32 * PERIOD * 0.5,
-    );
-    (
-        center,
-        Vec2::new(wide as f32 * PERIOD * 0.5, deep as f32 * PERIOD * 0.5),
-    )
 }
 
 fn vehicle(city: &mut City, rng: &mut Rng, bus: bool) {
