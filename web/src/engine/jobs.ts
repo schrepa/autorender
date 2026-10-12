@@ -20,7 +20,7 @@
 // (job-cache.ts).
 
 import workerWasmUrl from "../../pkg/engine_worker_bg.wasm?url";
-import { PANIC_PREFIX } from "../generated/host";
+import { CORES_PER_DEFAULT_WORKER, MAX_DEFAULT_WORKERS, MAX_WORKERS, PANIC_PREFIX } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 import { engineWorkerModule } from "./bindings";
 import { JobCache, jobCacheSettings } from "./job-cache";
@@ -487,8 +487,8 @@ export function jobPool(): JobPool | undefined {
     const requested = new URLSearchParams(location.search).get("workers");
     const cores = navigator.hardwareConcurrency || 4;
     const count = requested === "off" ? 0
-      : requested && /^\d{1,2}$/.test(requested) ? Math.min(Number(requested), 32)
-      : Math.max(1, Math.min(8, Math.floor(cores / 2)));
+      : requested && /^\d{1,2}$/.test(requested) ? Math.min(Number(requested), MAX_WORKERS)
+      : Math.max(1, Math.min(MAX_DEFAULT_WORKERS, Math.floor(cores / CORES_PER_DEFAULT_WORKER)));
     pool = count > 0 && typeof Worker !== "undefined" ? new JobPool(count) : null;
   }
   return pool ?? undefined;

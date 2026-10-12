@@ -1,4 +1,6 @@
-import type { Distribution } from "../generated/host";
+import {
+  BETWEEN_MARGIN_MS, type Distribution, FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING, PREPARE_LIMIT_MS, QUIET_FRAMES,
+} from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
 import { BrowserInput } from "./input";
@@ -210,8 +212,6 @@ let preparing = !development || preparedDevelopment;
 if (preparing) canvas.style.visibility = "hidden";
 let preparedSince: number | undefined;
 let quietFrames = 0;
-const QUIET_FRAMES = 3;
-const PREPARE_LIMIT_MS = 60000;
 let developmentBusy = false;
 let disposeDevelopment: (() => void) | undefined;
 // Once the engine failed, nothing calls into its module again; `stopped`
@@ -228,12 +228,11 @@ let working = 0;
 // the GPU leave that time free; frames waiting on the CPU leave none.
 let between = 0;
 let lastFrameAt = 0;
-let frameInterval = 1000 / 60;
+let frameInterval = FRAME_INTERVAL_MS;
 // Milliseconds the last task between frames loaded terrain: frames'
 // intervals are measured without them, so loading never takes the time it
 // made itself.
 let betweenSpent = 0;
-const BETWEEN_MARGIN_MS = 4;
 // ?between=off loads terrain within frames alone, for comparisons.
 const betweenFrames = new URLSearchParams(location.search).get("between") !== "off";
 const hud = new FrameHud(canvas);
@@ -344,7 +343,7 @@ function workBetweenFrames(due: number) {
 function scheduleBetweenFrames(timestamp: number) {
   const interval = timestamp - lastFrameAt - betweenSpent;
   betweenSpent = 0;
-  if (lastFrameAt > 0 && interval > 0 && interval < 100) frameInterval += (interval - frameInterval) * 0.1;
+  if (lastFrameAt > 0 && interval > 0 && interval < PACE_INTERVAL_LIMIT_MS) frameInterval += (interval - frameInterval) * PACE_SMOOTHING;
   lastFrameAt = timestamp;
   if (between || !betweenFrames || !game) return;
   const due = timestamp + frameInterval;

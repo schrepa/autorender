@@ -87,10 +87,6 @@ pub(crate) struct Preparation {
     quiet: u32,
 }
 
-// Frames without new pipelines before play starts.
-const QUIET_FRAMES: u32 = 3;
-const PREPARE_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
-
 impl Preparation {
     pub(crate) fn new() -> Self {
         Self {
@@ -107,7 +103,8 @@ impl Preparation {
         timestamp: f64,
         (width, height): (u32, u32),
     ) -> engine::Result<bool> {
-        let late = self.since.elapsed() > PREPARE_LIMIT;
+        let late = self.since.elapsed()
+            > std::time::Duration::from_millis(engine::host::policy::PREPARE_LIMIT_MS);
         if host.frame_stats().pipelines_compiling && !late {
             host.work(width, height);
             return Ok(false);
@@ -128,7 +125,7 @@ impl Preparation {
         } else {
             0
         };
-        if (self.quiet < QUIET_FRAMES || after.loading) && !late {
+        if (self.quiet < engine::host::policy::QUIET_FRAMES || after.loading) && !late {
             return Ok(false);
         }
         host.suspend();

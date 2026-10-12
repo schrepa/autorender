@@ -13,8 +13,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sha2::{Digest, Sha256};
 
 const INDEX: &str = "index.json";
-/// 1 GiB, as the page's.
-pub const DEFAULT_BUDGET: u64 = 1024 * 1024 * 1024;
+/// The hosts' default budget in bytes.
+pub const DEFAULT_BUDGET: u64 = engine::host::policy::JOB_CACHE_MIB * 1024 * 1024;
 
 struct Entry {
     bytes: u64,

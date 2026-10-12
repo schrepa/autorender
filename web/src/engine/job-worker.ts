@@ -12,6 +12,7 @@
 // A worker that breaks otherwise says so, and the pool replaces it.
 
 import type { JobWorker } from "../../pkg/engine_worker";
+import { JOB_SLICE_MS, JOB_STEP_UNITS } from "../generated/host";
 import { decodeImagePixels } from "./decode";
 import { type TranscodedImage, transcodeWith, workerTranscoder } from "./ktx2";
 import { fatal, panicReport } from "./panic";
@@ -33,11 +34,6 @@ interface Job {
   priority: number;
   started: boolean;
 }
-
-/** Milliseconds a job runs between looks at messages and more urgent jobs,
- * and the work units each step takes (about one per sample). */
-const SLICE_MS = 8;
-const STEP_UNITS = 4096;
 
 const scope = self as unknown as {
   postMessage(message: unknown, transfer?: Transferable[]): void;
@@ -112,8 +108,8 @@ async function work() {
         }
         const start = performance.now();
         let output: Uint8Array | undefined;
-        do output = worker.step(job.id, STEP_UNITS);
-        while (output === undefined && performance.now() - start < SLICE_MS);
+        do output = worker.step(job.id, JOB_STEP_UNITS);
+        while (output === undefined && performance.now() - start < JOB_SLICE_MS);
         if (output !== undefined) {
           drop(job);
           scope.postMessage({ type: "done", id: job.id, output }, [output.buffer as ArrayBuffer]);

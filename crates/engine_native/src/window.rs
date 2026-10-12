@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use engine::host::policy;
 use engine::{Engine, Game, GameHost, GpuPreference, InputState, RenderTarget};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -331,14 +332,11 @@ impl Default for Pace {
     fn default() -> Self {
         Self {
             last: None,
-            interval: 1000.0 / 60.0,
+            interval: policy::FRAME_INTERVAL_MS,
             spent: 0.0,
         }
     }
 }
-
-// What loading between frames leaves before the next one is due.
-const MARGIN_MS: f64 = 4.0;
 
 impl Pace {
     /// Milliseconds to load in before the frame after the one that
@@ -346,13 +344,13 @@ impl Pace {
     fn spare(&mut self, timestamp: f64, now: f64) -> f64 {
         if let Some(last) = self.last {
             let interval = timestamp - last - self.spent;
-            if interval > 0.0 && interval < 100.0 {
-                self.interval += (interval - self.interval) * 0.1;
+            if interval > 0.0 && interval < policy::PACE_INTERVAL_LIMIT_MS {
+                self.interval += (interval - self.interval) * policy::PACE_SMOOTHING;
             }
         }
         self.last = Some(timestamp);
         self.spent = 0.0;
-        timestamp + self.interval - now - MARGIN_MS
+        timestamp + self.interval - now - policy::BETWEEN_MARGIN_MS
     }
 
     fn spent(&mut self, milliseconds: f64) {

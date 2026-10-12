@@ -1,7 +1,7 @@
+import { LOOK_LIMIT, MAX_ACTIONS } from "../generated/host";
+
 const movement = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
 const MAX_TOUCH_POINTERS = 32;
-// Rust's `ActionId` holds 32 actions.
-const MAX_ACTIONS = 32;
 
 /** Bounded input accumulation. One batch per frame; no growing event queue. */
 export class BrowserInput {
@@ -52,8 +52,8 @@ export class BrowserInput {
     }, options);
     canvas.addEventListener("pointermove", event => {
       if (this.dragging !== event.pointerId) return;
-      this.yaw = Math.max(-1000, Math.min(1000, this.yaw + event.clientX - this.x));
-      this.pitch = Math.max(-1000, Math.min(1000, this.pitch + event.clientY - this.y));
+      this.yaw = Math.max(-LOOK_LIMIT, Math.min(LOOK_LIMIT, this.yaw + event.clientX - this.x));
+      this.pitch = Math.max(-LOOK_LIMIT, Math.min(LOOK_LIMIT, this.pitch + event.clientY - this.y));
       this.x = event.clientX; this.y = event.clientY;
     }, options);
     for (const name of ["pointerup", "pointercancel", "lostpointercapture"] as const) {

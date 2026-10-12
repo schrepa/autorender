@@ -9,9 +9,15 @@ pub struct ActionId(u8);
 
 impl ActionId {
     pub const JUMP: Self = Self(0);
+    /// Actions by index: a bit each of the hosts' action words.
+    pub const COUNT: u32 = u32::BITS;
 
     pub const fn new(index: u8) -> Option<Self> {
-        if index < 32 { Some(Self(index)) } else { None }
+        if (index as u32) < Self::COUNT {
+            Some(Self(index))
+        } else {
+            None
+        }
     }
 
     pub const fn mask(self) -> u32 {

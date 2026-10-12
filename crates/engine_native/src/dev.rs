@@ -32,7 +32,7 @@ use crate::{Offscreen, Pix};
 // The interval of frames while the session runs.
 const FRAME: Duration = Duration::from_micros(16_667);
 // The longest a benchmark samples.
-const BENCHMARK_LIMIT: Duration = Duration::from_secs(10);
+const BENCHMARK_LIMIT: Duration = Duration::from_millis(engine::host::policy::BENCHMARK_LIMIT_MS);
 
 /// A control a game registers for the `game` command: what it does, and
 /// how, on the host and the command's `args`.

@@ -35,3 +35,64 @@ export const PANIC_PREFIX = "engine-panic ";
 
 /** Rust's `engine_panic::PANIC_GLOBAL`. */
 export const PANIC_GLOBAL = "__enginePanic";
+
+/**
+ * Frames in a row that create no pipeline before play starts, once
+ * the terrains loaded the view: the GPU has compiled what the first
+ * frames need.
+ */
+export const QUIET_FRAMES = 3;
+
+/** Milliseconds after which play starts however preparation stands. */
+export const PREPARE_LIMIT_MS = 60000;
+
+/** The interval between frames pacing assumes before it measured one. */
+export const FRAME_INTERVAL_MS = 16.666666666666668;
+
+/** The share of each new interval pacing's running interval takes. */
+export const PACE_SMOOTHING = 0.1;
+
+/**
+ * Intervals this long or longer (a pause, a hidden page) leave pacing
+ * alone.
+ */
+export const PACE_INTERVAL_LIMIT_MS = 100.0;
+
+/** Milliseconds loading between frames leaves before the next is due. */
+export const BETWEEN_MARGIN_MS = 4.0;
+
+/**
+ * Milliseconds a job worker runs a job before it looks at its messages
+ * and more urgent jobs again.
+ */
+export const JOB_SLICE_MS = 8;
+
+/**
+ * Work units a job worker asks a job to do at a time, about one a
+ * sample.
+ */
+export const JOB_STEP_UNITS = 4096;
+
+/** Logical processors per job worker a host runs by default. */
+export const CORES_PER_DEFAULT_WORKER = 2;
+
+/** The most job workers a host runs by default. */
+export const MAX_DEFAULT_WORKERS = 8;
+
+/** The most job workers a host runs. */
+export const MAX_WORKERS = 32;
+
+/** MiB of job outputs a host keeps by default. */
+export const JOB_CACHE_MIB = 1024;
+
+/** The most MiB of job outputs a host keeps. */
+export const MAX_JOB_CACHE_MIB = 9999999;
+
+/** Actions a game binds keys to, by index. */
+export const MAX_ACTIONS = 32;
+
+/** The largest look delta a frame takes, either way, in pixels. */
+export const LOOK_LIMIT = 1000.0;
+
+/** Milliseconds a development benchmark may take. */
+export const BENCHMARK_LIMIT_MS = 10000;

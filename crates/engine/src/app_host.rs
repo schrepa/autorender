@@ -578,8 +578,8 @@ impl AppHost {
             move_forward: bounded(input.move_forward, 1.0),
             move_right: bounded(input.move_right, 1.0),
             move_up: bounded(input.move_up, 1.0),
-            look_yaw: bounded(input.look_yaw, 1000.0),
-            look_pitch: bounded(input.look_pitch, 1000.0),
+            look_yaw: bounded(input.look_yaw, crate::host::policy::LOOK_LIMIT),
+            look_pitch: bounded(input.look_pitch, crate::host::policy::LOOK_LIMIT),
         };
     }
 

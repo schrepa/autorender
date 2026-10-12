@@ -16,7 +16,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use engine::host::{JobId, JobMessage, JobRequest, JobShare};
+use engine::host::{JobId, JobMessage, JobRequest, JobShare, policy};
 use engine::{Game, GameHost};
 
 use crate::job_cache::{DEFAULT_BUDGET, JobCache};
@@ -43,12 +43,12 @@ pub enum CacheOptions {
 }
 
 impl Default for JobOptions {
-    /// Half the logical processors, at most 8, as the page runs, and 1 GiB
-    /// of kept outputs.
+    /// The hosts' default workers for the logical processors, and kept
+    /// outputs ([`engine::host::policy`]).
     fn default() -> Self {
         let cores = std::thread::available_parallelism().map_or(4, usize::from);
         Self {
-            workers: (cores / 2).clamp(1, 8),
+            workers: policy::default_workers(u32::try_from(cores).unwrap_or(u32::MAX)) as usize,
             cache: CacheOptions::Keep {
                 budget: DEFAULT_BUDGET,
             },
@@ -69,8 +69,7 @@ impl JobOptions {
 }
 
 // A slice of work between a worker's looks at its messages.
-const SLICE: Duration = Duration::from_millis(8);
-const STEP_UNITS: u64 = 4096;
+const SLICE: Duration = Duration::from_millis(policy::JOB_SLICE_MS);
 
 /// What the pool tells a worker, in order.
 enum Order {
@@ -436,7 +435,7 @@ fn slice(worker: &mut engine_worker::Worker, job: &mut Held) -> Result<Option<Ve
     }
     let start = Instant::now();
     loop {
-        if let Some(output) = worker.step(job.id, STEP_UNITS)? {
+        if let Some(output) = worker.step(job.id, policy::JOB_STEP_UNITS)? {
             return Ok(Some(output));
         }
         if start.elapsed() >= SLICE {

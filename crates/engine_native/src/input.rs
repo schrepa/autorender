@@ -4,11 +4,9 @@
 
 use std::collections::HashMap;
 
+use engine::host::policy::{LOOK_LIMIT, MAX_ACTIONS};
 use winit::event::{ElementState, MouseButton};
 use winit::keyboard::KeyCode;
-
-// Rust's `ActionId` holds 32 actions.
-const MAX_ACTIONS: u32 = 32;
 
 /// Input gathered between frames: held keys, action edges and look deltas.
 pub(crate) struct Input {
@@ -88,7 +86,7 @@ impl Input {
         if let Some((x, y)) = self.cursor
             && self.dragging
         {
-            let turn = |value: f32| engine::math::clamp(value, -1000.0, 1000.0);
+            let turn = |value: f32| engine::math::clamp(value, -LOOK_LIMIT, LOOK_LIMIT);
             self.yaw = turn(self.yaw + (position.0 - x) as f32);
             self.pitch = turn(self.pitch + (position.1 - y) as f32);
         }

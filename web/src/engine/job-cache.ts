@@ -8,11 +8,13 @@
 // anyway and compares, and ?jobcache=N sets the budget in MiB: 1 GiB by
 // default, at most half of what storage the browser offers is free.
 
+import { JOB_CACHE_MIB, MAX_JOB_CACHE_MIB } from "../generated/host";
+
 const DIRECTORY = "engine-job-cache";
 const INDEX = "index.json";
 /** Milliseconds the index waits for more changes before it is written. */
 const SAVE_DELAY = 2000;
-const DEFAULT_BUDGET = 1024 * 1024 * 1024;
+const MIB = 1024 * 1024;
 
 interface Entry {
   bytes: number;
@@ -30,8 +32,8 @@ interface JobCacheStats {
 export function jobCacheSettings(): { budget: number; verify: boolean } | undefined {
   const requested = new URLSearchParams(location.search).get("jobcache");
   if (requested === "off" || typeof navigator === "undefined" || !navigator.storage?.getDirectory) return undefined;
-  if (requested && /^\d{1,7}$/.test(requested)) return { budget: Number(requested) * 1024 * 1024, verify: false };
-  return { budget: DEFAULT_BUDGET, verify: requested === "verify" };
+  if (requested && /^\d+$/.test(requested) && Number(requested) <= MAX_JOB_CACHE_MIB) return { budget: Number(requested) * MIB, verify: false };
+  return { budget: JOB_CACHE_MIB * MIB, verify: requested === "verify" };
 }
 
 function hex(buffer: ArrayBuffer): string {

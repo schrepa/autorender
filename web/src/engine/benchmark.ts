@@ -1,4 +1,5 @@
 /** Bounded sampling for the opt-in development host. No ordinary-frame work. */
+import { BENCHMARK_LIMIT_MS } from "../generated/host";
 import type { Distribution, FrameStats } from "./host";
 
 /** A benchmark control as the engine validated it, with its defaults. */
@@ -41,7 +42,7 @@ export async function sampleBenchmark(context: Context, options: BenchmarkOption
     return spread;
   }
   const startTime = performance.now();
-  const deadline = startTime + 10_000;
+  const deadline = startTime + BENCHMARK_LIMIT_MS;
   const initialSize = context.size();
   if (initialSize.some(size => size <= 0) || context.interrupted()) {
     throw new BenchmarkError("benchmark_interrupted", "benchmark needs a visible, nonzero paused canvas");

@@ -1,8 +1,9 @@
 //! What hosts wire: job workers, terrain tile fetches and the terrain's
 //! debug views; and what the page and the native host share instead of
-//! each keeping its own: the spread of measured values and what a panic
-//! reports.
+//! each keeping its own: their policies' values, the spread of measured
+//! values and what a panic reports.
 
+pub mod policy;
 mod statistics;
 
 pub use crate::app_host::{JobMessage, now_ms};
@@ -41,6 +42,9 @@ pub fn typescript() -> String {
             &format!("Rust's `engine_panic::{name}`."),
             &value.into(),
         ));
+    }
+    for (name, doc, value) in policy::constants() {
+        output.push_str(&constant(name, &doc, &value));
     }
     output
 }

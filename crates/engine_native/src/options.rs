@@ -12,6 +12,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use engine::host::policy;
 use engine::{Engine, Game, GpuPreference};
 use serde_json::json;
 
@@ -349,8 +350,13 @@ impl HostOptions {
                     count => count
                         .parse()
                         .ok()
-                        .filter(|&count: &usize| count <= 32)
-                        .ok_or_else(|| format!("--workers is off or 0 to 32, not {workers}"))?,
+                        .filter(|&count: &u32| count <= policy::MAX_WORKERS)
+                        .ok_or_else(|| {
+                            format!(
+                                "--workers is off or 0 to {}, not {workers}",
+                                policy::MAX_WORKERS
+                            )
+                        })? as usize,
                 };
             }
             "--jobcache" => {
@@ -362,7 +368,7 @@ impl HostOptions {
                         budget: mebibytes
                             .parse::<u64>()
                             .ok()
-                            .filter(|&mebibytes| mebibytes < 10_000_000)
+                            .filter(|&mebibytes| mebibytes <= policy::MAX_JOB_CACHE_MIB)
                             .ok_or_else(|| {
                                 format!("--jobcache is off, verify or MiB, not {cache}")
                             })?
