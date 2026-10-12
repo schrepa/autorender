@@ -4,12 +4,13 @@
 use std::sync::Arc;
 
 use bevy_ecs::{
-    change_detection::{Ref, Tick},
+    change_detection::Ref,
     prelude::{Component, Entity, World},
     query::QueryState,
 };
 use glam::Mat4;
 
+use crate::ticks::ScanClock;
 use crate::{MeshHandle, TransformIndex};
 
 /// Deforms this entity's mesh by the displayed world poses of `joints`, as
@@ -60,11 +61,11 @@ pub(crate) struct SkinExtraction {
     pub(crate) scratch: Vec<(usize, u32)>,
     // What the last GPU-presented extraction read (each skinned entity's
     // slot and mesh, in query order; the asset, topology and validity
-    // revisions) and the change tick it saw: while all match and no skin
-    // changed, its joints stand.
+    // revisions) and when it scanned the skins: while all match and no
+    // skin changed, its joints stand.
     pub(crate) inputs: Vec<(Entity, usize, Option<MeshHandle>)>,
     pub(crate) key: Option<((u64, u64), u64, u64)>,
-    pub(crate) tick: Tick,
+    pub(crate) scans: ScanClock,
 }
 
 impl SkinExtraction {
@@ -77,7 +78,7 @@ impl SkinExtraction {
             scratch: Vec::new(),
             inputs: Vec::new(),
             key: None,
-            tick: Tick::new(0),
+            scans: ScanClock::default(),
         }
     }
 }

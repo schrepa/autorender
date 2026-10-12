@@ -1,7 +1,8 @@
 use crate::collections::HashMap;
 use crate::interpolation::{InterpolateTransform, InterpolationState, Observer};
+use crate::ticks::{ChangeWindow, STAMP_BLOCK, ScanClock, consume_through};
 use crate::{NodePose, Transform, entity_indices::EntityIndices};
-use bevy_ecs::change_detection::{ContiguousRef, MAX_CHANGE_AGE, Tick};
+use bevy_ecs::change_detection::ContiguousRef;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
 use glam::{Mat4, Vec4};
@@ -315,54 +316,6 @@ type TransformQuery = QueryState<(
 // Unfiltered: scans read each table's stamp slice through `contiguous_iter`.
 type ChangedTransforms = SystemState<Query<'static, 'static, (Entity, Ref<'static, Transform>)>>;
 
-/// Stamps classified per block before any payload or source record is read.
-const STAMP_BLOCK: usize = 16;
-
-/// Bevy's `Tick::is_newer_than` for one fixed scan window. With wrapping u32
-/// subtraction and `since = min(this_run - last_run, MAX_CHANGE_AGE)`, a stamp
-/// `t` changed exactly when `min(this_run - t, MAX_CHANGE_AGE) < since`. Because
-/// `since <= MAX_CHANGE_AGE`, that is `this_run - t < since`.
-#[derive(Clone, Copy)]
-pub(crate) struct ChangeWindow {
-    this_run: u32,
-    since: u32,
-}
-
-impl ChangeWindow {
-    pub(crate) fn new(last_run: Tick, this_run: Tick) -> Self {
-        Self {
-            this_run: this_run.get(),
-            since: this_run
-                .get()
-                .wrapping_sub(last_run.get())
-                .min(MAX_CHANGE_AGE),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn contains(self, tick: Tick) -> bool {
-        self.this_run.wrapping_sub(tick.get()) < self.since
-    }
-
-    /// Whether any stamp of a block of at most [`STAMP_BLOCK`] changed.
-    /// Branch-free over the whole block so it can compile to vector compares.
-    #[cfg_attr(not(feature = "attribution"), inline)]
-    #[cfg_attr(feature = "attribution", inline(never))]
-    pub(crate) fn any_in_block(self, ticks: &[Tick]) -> bool {
-        ticks
-            .iter()
-            .fold(false, |any, &tick| any | self.contains(tick))
-    }
-
-    /// Whether any stamp changed. Fixed-size blocks compile to unrolled vector
-    /// compares, and the test stops at the first changed block.
-    #[inline]
-    pub(crate) fn any(self, ticks: &[Tick]) -> bool {
-        let (blocks, rest) = ticks.as_chunks::<STAMP_BLOCK>();
-        blocks.iter().any(|block| self.any_in_block(block)) || self.any_in_block(rest)
-    }
-}
-
 /// Validated cache hint into a published transform store.
 ///
 /// A hint never identifies an entity on its own. Every read checks the complete
@@ -569,7 +522,7 @@ pub struct GlobalTransforms {
     // Nodes whose local or output revision changed since GPU presentation
     // last gathered: its gather visits only these.
     changes: ChangeLog,
-    last_scan: Option<Tick>,
+    scans: ScanClock,
     incomplete: bool,
     // Transformed entities admitted ([`TransformNodeLimit`]).
     limit: usize,
@@ -602,7 +555,7 @@ impl FromWorld for GlobalTransforms {
             path: Vec::new(),
             dirty: Dirty::default(),
             changes: ChangeLog::default(),
-            last_scan: None,
+            scans: ScanClock::default(),
             incomplete: true,
             limit: node_limit(world),
             report: HierarchyReport::default(),
@@ -1690,9 +1643,7 @@ impl GlobalTransforms {
         }
         let interrupted = std::mem::replace(&mut self.incomplete, true);
         let scan_tick = world.read_change_tick();
-        let aged = self
-            .last_scan
-            .is_none_or(|last| scan_tick.get().wrapping_sub(last.get()) >= MAX_CHANGE_AGE);
+        let aged = self.scans.aged(scan_tick);
         let structural =
             std::mem::take(&mut world.resource_mut::<tracking::Invalidation>().full_scan);
         let force = interrupted || aged || structural || self.report.transforms >= self.limit;
@@ -1724,12 +1675,13 @@ impl GlobalTransforms {
         // Only the local input scan touches ECS timestamps. A completed boundary
         // owns its window independently of external clear_trackers calls.
         let completed_tick = world.read_change_tick();
-        self.last_scan = Some(completed_tick);
-        self.changed_query
-            .as_mut()
-            .expect("change scan state is restored after scanning")
-            .meta_mut()
-            .set_last_run(completed_tick);
+        self.scans.scanned(completed_tick);
+        consume_through(
+            self.changed_query
+                .as_mut()
+                .expect("change scan state is restored after scanning"),
+            completed_tick,
+        );
         // The next ordinary mutable borrow must be newer than the window just
         // consumed, even without a schedule run or clear_trackers in between.
         world.increment_change_tick();

@@ -7,7 +7,7 @@ use std::sync::{
 };
 
 use bevy_ecs::{
-    change_detection::{ContiguousRef, MAX_CHANGE_AGE, Tick},
+    change_detection::{ContiguousRef, Tick},
     entity::{Entity, EntityHashMap},
     prelude::*,
     system::SystemState,
@@ -25,8 +25,8 @@ use crate::{
     TransformIndex,
     culling::{Classification, Frustum},
     decals::DecalExtraction,
-    hierarchy::ChangeWindow,
     probes::ProbeExtraction,
+    ticks::{ChangeWindow, ScanClock, consume_through},
 };
 
 // Change stamps of render sources, read in contiguous table slices. GPU-presented
@@ -701,7 +701,7 @@ pub(crate) struct RetainedRender {
     asset_revision: Option<(u64, u64)>,
     material_revision: Option<u64>,
     sources: Sources,
-    last_scan: Option<Tick>,
+    scans: ScanClock,
     view: Option<([u32; 16], bool)>,
     frustum: Option<Frustum>,
     culling: bool,
@@ -777,7 +777,7 @@ impl RetainedRender {
             asset_revision: None,
             material_revision: None,
             sources: Sources::default(),
-            last_scan: None,
+            scans: ScanClock::default(),
             view: None,
             frustum: None,
             culling,
@@ -958,7 +958,7 @@ impl RetainedRender {
             let mut changed = skins.key != Some(key);
             let mut count = 0;
             for (entity, skin) in skins.query.iter(world) {
-                changed |= skin.last_changed().is_newer_than(skins.tick, this_run);
+                changed |= skins.scans.changed(skin.last_changed(), this_run);
                 let input = match self.entities.get(&entity) {
                     Some(&slot) => (entity, slot, Some(self.snapshot.instances[slot].mesh)),
                     None => (entity, usize::MAX, None),
@@ -975,7 +975,7 @@ impl RetainedRender {
             changed |= count != previous;
             inputs.truncate(count);
             skins.inputs = inputs;
-            skins.tick = this_run;
+            skins.scans.scanned(this_run);
             if !changed {
                 // Last frame's decals follow the skins' joints: they list
                 // theirs again.
@@ -1131,7 +1131,7 @@ impl RetainedRender {
             || changed_in_window(&meshes)
             || changed_in_window(&cubes);
         self.tint_count = Some(tint_count);
-        stamps.meta_mut().set_last_run(world.read_change_tick());
+        consume_through(stamps, world.read_change_tick());
         changed
     }
 
@@ -1174,10 +1174,8 @@ impl RetainedRender {
         let globals = world.resource::<GlobalTransforms>();
         let stamps_changed = gpu && self.sources_changed(world);
         let scan_tick = world.read_change_tick();
-        let aged = self
-            .last_scan
-            .is_none_or(|last| scan_tick.get().wrapping_sub(last.get()) > MAX_CHANGE_AGE);
-        self.last_scan = Some(scan_tick);
+        let aged = self.scans.aged(scan_tick);
+        self.scans.scanned(scan_tick);
         let assets = world.resource::<AssetLibrary>();
         let revision = assets.revision();
         let assets_changed = self.asset_revision != Some(revision) || revision.1 == u64::MAX;

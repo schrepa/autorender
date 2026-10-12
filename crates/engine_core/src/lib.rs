@@ -42,6 +42,7 @@ mod scene;
 mod sky;
 mod spline_mesh;
 mod statistics;
+mod ticks;
 mod transform_edits;
 mod virtual_geometry;
 

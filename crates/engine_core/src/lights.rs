@@ -15,7 +15,7 @@
 //! of `distance`.
 
 use bevy_ecs::{
-    change_detection::{DetectChanges, Tick},
+    change_detection::DetectChanges,
     prelude::{Component, Entity, Ref, Resource, World},
     query::QueryState,
 };
@@ -23,6 +23,7 @@ use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::extraction::{Nearest, Poses};
+use crate::ticks::ScanClock;
 use crate::{GlobalTransforms, RenderSnapshot};
 use engine_settings::{ExtraRules, InvalidSetting, settings};
 
@@ -248,7 +249,7 @@ pub(crate) struct LightExtraction {
     query: QueryState<(Entity, Ref<'static, LocalLight>)>,
     // Scan tick of the last rebuild, the lights it saw and the slot source
     // revision it resolved slots against.
-    last_scan: Option<Tick>,
+    scans: ScanClock,
     count: usize,
     source_revision: Option<u64>,
     settings: Option<LocalLightSettings>,
@@ -271,7 +272,7 @@ impl LightExtraction {
     pub(crate) fn new(world: &mut World) -> Self {
         Self {
             query: world.query::<(Entity, Ref<LocalLight>)>(),
-            last_scan: None,
+            scans: ScanClock::default(),
             count: 0,
             source_revision: None,
             settings: None,
@@ -301,22 +302,18 @@ impl LightExtraction {
         snapshot.lights.invalid = 0;
         if !settings.active() {
             snapshot.lights.list.clear();
-            self.last_scan = None;
+            self.scans.forget();
             self.revision += 1;
             return;
         }
         let this_run = world.read_change_tick();
         let mut count = 0;
-        let mut changed = self.last_scan.is_none()
+        let mut changed = self.scans.aged(this_run)
             || self.source_revision != Some(source_revision)
             || self.settings != Some(settings);
         for (_, light) in self.query.iter(world) {
             count += 1;
-            if let Some(last) = self.last_scan
-                && light.last_changed().is_newer_than(last, this_run)
-            {
-                changed = true;
-            }
+            changed |= self.scans.changed(light.last_changed(), this_run);
         }
         changed |= count != self.count;
         if changed {
@@ -337,7 +334,7 @@ impl LightExtraction {
             self.count = count;
             self.source_revision = Some(source_revision);
             self.settings = Some(settings);
-            self.last_scan = Some(this_run);
+            self.scans.scanned(this_run);
         } else if self.world_lights.is_empty()
             && settings
                 .max_lights
