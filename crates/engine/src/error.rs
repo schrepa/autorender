@@ -20,6 +20,11 @@ pub struct Error {
 /// A result whose error is the engine's.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// The name of the JavaScript `Error`s the engine throws on a page, which
+/// carry its `code` and `path` (the page's generated `engineError` tells
+/// them apart).
+pub const JS_ERROR_NAME: &str = "EngineError";
+
 impl Error {
     pub fn new(code: ErrorCode, path: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
@@ -153,10 +158,19 @@ impl From<InterpolationError> for Error {
     }
 }
 
-/// What the page receives of a failure.
+/// What the page receives of a failure: an `Error` named
+/// [`JS_ERROR_NAME`], whose `code` and `path` say what failed and where,
+/// and whose message says both and what is wrong.
 #[cfg(target_arch = "wasm32")]
 impl From<Error> for wasm_bindgen::JsValue {
     fn from(error: Error) -> Self {
-        wasm_bindgen::JsValue::from_str(&error.to_string())
+        let thrown = js_sys::Error::new(&error.to_string());
+        thrown.set_name(JS_ERROR_NAME);
+        let object: &js_sys::Object = thrown.as_ref();
+        for (field, value) in [("code", error.code.as_str()), ("path", error.path.as_str())] {
+            // Setting a field of a new error object cannot fail.
+            let _ = js_sys::Reflect::set(object, &field.into(), &value.into());
+        }
+        thrown.into()
     }
 }

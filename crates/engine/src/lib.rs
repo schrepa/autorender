@@ -20,7 +20,7 @@ pub mod camera;
 mod error;
 pub mod game;
 mod plugins;
-pub use error::{Error, Result};
+pub use error::{Error, JS_ERROR_NAME, Result};
 #[doc(hidden)]
 pub mod surface;
 pub use game::{Game, Inspectors};

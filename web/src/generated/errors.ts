@@ -152,3 +152,15 @@ export type ErrorCode =
   | "source_budget"
   | "source_symlink"
   | "source_type";
+
+/** An error the engine threw on the page: its code and where (a JSON path, or
+ * `?NAME` for a page parameter), its message saying both and what is wrong. */
+export interface EngineError extends Error {
+  code: ErrorCode;
+  path: string;
+}
+
+/** `thrown` as an error the engine threw, where it is one. */
+export function engineError(thrown: unknown): EngineError | undefined {
+  return thrown instanceof Error && thrown.name === "EngineError" ? thrown as EngineError : undefined;
+}

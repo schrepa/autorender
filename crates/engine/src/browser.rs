@@ -41,12 +41,20 @@ impl SceneFileSet {
         data: Vec<u8>,
         levels: Vec<u32>,
     ) -> Result<(), JsValue> {
+        let invalid = |path: &str, message: &str| {
+            JsValue::from(crate::Error::new(
+                engine_core::ErrorCode::InvalidTexture,
+                path,
+                format!("{uri}: {message}"),
+            ))
+        };
         let format = match format {
             "bc7" => engine_core::TextureFormat::Bc7,
             "etc2" => engine_core::TextureFormat::Etc2Rgba8,
             "astc" => engine_core::TextureFormat::Astc4x4,
             _ => {
-                return Err(JsValue::from_str(
+                return Err(invalid(
+                    "$.format",
                     "compressed formats are bc7, etc2 and astc",
                 ));
             }
@@ -55,13 +63,13 @@ impl SceneFileSet {
         let mut split = Vec::with_capacity(levels.len());
         for length in levels {
             let Some((level, tail)) = rest.split_at_checked(length as usize) else {
-                return Err(JsValue::from_str("level lengths exceed the data"));
+                return Err(invalid("$.levels", "level lengths exceed the data"));
             };
             split.push(level.to_vec());
             rest = tail;
         }
         if !rest.is_empty() {
-            return Err(JsValue::from_str("data exceeds the level lengths"));
+            return Err(invalid("$.levels", "data exceeds the level lengths"));
         }
         self.files
             .add_compressed_image(uri, format, width, height, split);
@@ -292,9 +300,13 @@ impl<G: Game> PageHost<G> {
         let mut settings = crate::host::HostSettings::default();
         for setting in crate::host::SETTINGS {
             if let Some(value) = parameters.get(setting.name) {
-                settings
-                    .set(setting.name, &value)
-                    .map_err(|error| JsValue::from_str(&format!("?{error}.")))?;
+                settings.set(setting.name, &value).map_err(|message| {
+                    crate::Error::new(
+                        engine_core::ErrorCode::InvalidValue,
+                        format!("?{}", setting.name),
+                        message,
+                    )
+                })?;
             }
         }
         settings.apply(&mut self.host);
@@ -337,14 +349,14 @@ impl<G: Game> PageHost<G> {
     pub fn profiling_start(&mut self, max_events: u32) -> Result<(), JsValue> {
         self.host
             .profiling_start(max_events as usize)
-            .map_err(JsValue::from_str)
+            .map_err(capture_failed)
     }
 
     pub fn profiling_stop(&mut self) -> Result<String, JsValue> {
         self.host
             .profiling_stop()
             .map(|report| report.to_string())
-            .map_err(JsValue::from_str)
+            .map_err(capture_failed)
     }
 
     pub fn profiling_report(&mut self) -> String {
@@ -359,4 +371,10 @@ impl<G: Game> PageHost<G> {
 /// The job the page's `id` names: none unless finite and at least 1.
 fn job_id(id: f64) -> Option<JobId> {
     (id.is_finite() && id >= 1.0).then_some(JobId(id as u64))
+}
+
+/// A profiling capture's refusal, as the engine's error.
+#[cfg(feature = "profiling")]
+fn capture_failed(message: &str) -> JsValue {
+    crate::Error::new(engine_core::ErrorCode::CaptureFailed, "$", message).into()
 }

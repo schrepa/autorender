@@ -3,7 +3,7 @@ import { readDistribution, readStats, type Runtime } from "./host";
 import { adapterInfo } from "./adapter";
 import { BenchmarkError, type BenchmarkOptions, sampleBenchmark } from "./benchmark.ts";
 import { fatal } from "./panic";
-import type { ErrorCode } from "../generated/errors";
+import { engineError, type ErrorCode } from "../generated/errors";
 import type { AdapterStatus } from "../generated/host";
 import type { Reply } from "../generated/reply";
 import { parseJson } from "../generated/runtime";
@@ -201,6 +201,9 @@ export function connectDevelopment(host: Host): () => void {
           host.fail(cause);
           return panicked(host.stopped() ?? String(cause));
         }
+        // The engine's own errors keep their code and path.
+        const thrown = engineError(cause);
+        if (thrown) return error(thrown.code, thrown.path, thrown.message);
         return error("browser_command_failed", "$", String(cause));
       } finally {
         busy = false;

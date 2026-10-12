@@ -1,6 +1,7 @@
 import {
   BETWEEN_MARGIN_MS, type Distribution, FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING, PREPARE_LIMIT_MS, QUIET_FRAMES,
 } from "../generated/host";
+import { engineError } from "../generated/errors";
 import { parseJson, type Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
 import { BrowserInput } from "./input";
@@ -284,9 +285,13 @@ function fail(error: unknown) {
   if (disposed || failed) return;
   failed = true;
   stopped = fatal(error) ? panicReport(error)?.message ?? String(error) : undefined;
-  setStatus(stopped ? "Engine stopped" : "Renderer unavailable", "error");
+  // The engine's own refusal (a page parameter it does not take, a scene it
+  // cannot run) says what failed; anything else is likely WebGPU's.
+  const refused = engineError(error);
+  setStatus(stopped ? "Engine stopped" : refused ? "Engine error" : "Renderer unavailable", "error");
   message.hidden = false;
   message.textContent = stopped ? `The engine stopped.\n${stopped}`
+    : refused ? `The engine could not start or continue.\n${refused.message}`
     : `Unable to start or continue the engine.\n${String(error)}\nWebGPU requires a supported browser on localhost or HTTPS.`;
   pause.disabled = true;
   reset.disabled = true;
