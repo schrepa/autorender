@@ -8,10 +8,13 @@ publish.workspace = true
 [dependencies]
 engine_scene = { workspace = true, features = ["schema"] }
 engine_dev.workspace = true
-# The pure checks' corpora run engine code directly.
+# The pure checks' corpora run engine code directly, and meshoptimizer.
+engine_assets.workspace = true
 engine_core.workspace = true
 engine_terrain.workspace = true
+engine_vgbuild.workspace = true
 glam.workspace = true
+gltf.workspace = true
 engine_render.workspace = true
 naga = { workspace = true, features = ["wgsl-in", "spv-out"] }
 # The shader report checks the analyzer it downloads.

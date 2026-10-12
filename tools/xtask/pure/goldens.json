@@ -307,6 +307,44 @@
     "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, shaped_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141572, restored_tiles: 12, idle_tiles: 0, banded_tiles: 0, unplaced_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, loading: false } | terrain tiles 854854a0fbb2ae0d patches 3c83553fdfed650c | surroundings tiles a2eadb7ccd455bc5 patches 36dbb04c85cad6bc",
     "terrain trace": "a24d4531a4c1f472"
   },
+  "simplify": {
+    "simplify garden prop 0": {
+      "hash": "e2ad00bebbde88bf",
+      "kept indices": 205230,
+      "runs": 1536,
+      "triangles": 52
+    },
+    "simplify garden prop 1": {
+      "hash": "5ccc31bd0782ac3f",
+      "kept indices": 80256,
+      "runs": 1536,
+      "triangles": 24
+    },
+    "simplify grid 24x24": {
+      "hash": "4d912471a5f29446",
+      "kept indices": 2411376,
+      "runs": 1536,
+      "triangles": 1058
+    },
+    "simplify seamed grid 16x16": {
+      "hash": "c1f11904328ebe38",
+      "kept indices": 1068912,
+      "runs": 1536,
+      "triangles": 450
+    },
+    "simplify sphere 20x12": {
+      "hash": "37f7718b54e95ab6",
+      "kept indices": 1303068,
+      "runs": 1536,
+      "triangles": 480
+    },
+    "simplify torus 28x12": {
+      "hash": "76f3de094a068f9c",
+      "kept indices": 1813632,
+      "runs": 1536,
+      "triangles": 672
+    }
+  },
   "terrain": {
     "bake 1": {
       "deepest": 1.4122734069824219,

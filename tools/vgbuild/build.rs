@@ -20,6 +20,11 @@ fn main() {
         .include(root.join("demo"))
         // Hierarchies of large meshes take seconds even optimized.
         .opt_level(2)
+        // No fused multiply-adds: the Rust port of its simplifier
+        // (`engine_assets::simplify`) never fuses, and must give the same
+        // bits wherever both run (MSVC never contracts; Clang and GCC do on
+        // targets with FMA, such as Apple's aarch64).
+        .flag_if_supported("-ffp-contract=off")
         .warnings(false);
     build.compile("meshoptimizer");
     for source in &sources {

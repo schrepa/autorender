@@ -135,6 +135,35 @@ unsafe extern "C" {
         vertex_count: usize,
         vertex_positions_stride: usize,
     ) -> MeshoptBounds;
+    fn meshopt_simplify(
+        destination: *mut c_uint,
+        indices: *const c_uint,
+        index_count: usize,
+        vertex_positions: *const f32,
+        vertex_count: usize,
+        vertex_positions_stride: usize,
+        target_index_count: usize,
+        target_error: f32,
+        options: c_uint,
+        result_error: *mut f32,
+    ) -> usize;
+    fn meshopt_simplifyWithAttributes(
+        destination: *mut c_uint,
+        indices: *const c_uint,
+        index_count: usize,
+        vertex_positions: *const f32,
+        vertex_count: usize,
+        vertex_positions_stride: usize,
+        vertex_attributes: *const f32,
+        vertex_attributes_stride: usize,
+        attribute_weights: *const f32,
+        attribute_count: usize,
+        vertex_lock: *const u8,
+        target_index_count: usize,
+        target_error: f32,
+        options: c_uint,
+        result_error: *mut f32,
+    ) -> usize;
 }
 
 /// `clodDefaultConfig`: clusters of up to `max_triangles` (4 to 256).
@@ -325,4 +354,103 @@ pub(crate) fn build_hierarchy(
     };
     nodes.truncate(written);
     nodes
+}
+
+/// What `meshopt_simplify` and `meshopt_simplifyWithAttributes` read: positions,
+/// triangle indices, and optionally per-vertex attributes of
+/// `attribute_stride` floats (the first `weights.len()` weighted) and
+/// `meshopt_SimplifyVertex_*` flags per vertex.
+pub struct SimplifyInput<'a> {
+    pub positions: &'a [[f32; 3]],
+    pub indices: &'a [u32],
+    pub attributes: Option<(&'a [f32], usize, &'a [f32])>,
+    pub locks: Option<&'a [u8]>,
+}
+
+/// meshoptimizer's own simplification of `input` toward `target_index_count`
+/// indices within `target_error`, with `meshopt_Simplify*` `options`:
+/// `meshopt_simplify` without attributes and flags, otherwise
+/// `meshopt_simplifyWithAttributes`. Its indices and result error.
+///
+/// # Panics
+///
+/// Where `input` is not whole triangles of its vertices or its attributes
+/// or flags do not cover every vertex, which the C++ would only assert.
+pub fn simplify(
+    input: &SimplifyInput<'_>,
+    target_index_count: usize,
+    target_error: f32,
+    options: u32,
+) -> (Vec<u32>, f32) {
+    assert!(input.indices.len().is_multiple_of(3));
+    assert!(
+        input
+            .indices
+            .iter()
+            .all(|&index| (index as usize) < input.positions.len())
+    );
+    if let Some((values, stride, weights)) = input.attributes {
+        assert_eq!(values.len(), input.positions.len() * stride);
+        assert!(weights.len() <= stride);
+    }
+    if let Some(locks) = input.locks {
+        assert_eq!(locks.len(), input.positions.len());
+    }
+    let mut destination = vec![0u32; input.indices.len()];
+    let mut error = 0.0f32;
+    let written = if input.attributes.is_none() && input.locks.is_none() {
+        // SAFETY: `destination` holds as many indices as the input, the most
+        // simplification writes; the indices were checked above and address
+        // tightly packed positions.
+        #[allow(unsafe_code)]
+        unsafe {
+            meshopt_simplify(
+                destination.as_mut_ptr(),
+                input.indices.as_ptr(),
+                input.indices.len(),
+                input.positions.as_ptr().cast(),
+                input.positions.len(),
+                12,
+                target_index_count,
+                target_error,
+                options,
+                &raw mut error,
+            )
+        }
+    } else {
+        let (values, stride, weights) = input.attributes.unwrap_or((&[], 0, &[]));
+        // SAFETY: as above, and the attributes and flags, checked above,
+        // cover every vertex (null pointers for none, as the library takes
+        // them).
+        #[allow(unsafe_code)]
+        unsafe {
+            meshopt_simplifyWithAttributes(
+                destination.as_mut_ptr(),
+                input.indices.as_ptr(),
+                input.indices.len(),
+                input.positions.as_ptr().cast(),
+                input.positions.len(),
+                12,
+                if stride == 0 {
+                    std::ptr::null()
+                } else {
+                    values.as_ptr()
+                },
+                stride * 4,
+                if weights.is_empty() {
+                    std::ptr::null()
+                } else {
+                    weights.as_ptr()
+                },
+                weights.len(),
+                input.locks.map_or(std::ptr::null(), <[u8]>::as_ptr),
+                target_index_count,
+                target_error,
+                options,
+                &raw mut error,
+            )
+        }
+    };
+    destination.truncate(written);
+    (destination, error)
 }

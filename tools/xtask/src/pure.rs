@@ -9,6 +9,7 @@
 //! hold.
 
 mod caches;
+mod simplify;
 mod terrain;
 
 use std::collections::BTreeMap;
@@ -35,6 +36,10 @@ pub(crate) const CORPORA: &[Corpus] = &[
     Corpus {
         name: "terrain",
         run: terrain::run,
+    },
+    Corpus {
+        name: "simplify",
+        run: simplify::run,
     },
     Corpus {
         name: "caches",
