@@ -117,28 +117,7 @@ pub struct Assets {
 /// where a build of the same inputs (the generators' code and the
 /// toolchain) is reused.
 pub fn assets(root: &Path) -> Result<Assets, String> {
-    let inputs = inputs_hash(root)?;
-    let folder = root.join("target").join("bench-assets").join(&inputs[..16]);
-    let complete = folder.join("complete");
-    if !complete.is_file() {
-        if folder.exists() {
-            fs::remove_dir_all(&folder)
-                .map_err(|error| format!("cannot clear {}: {error}", folder.display()))?;
-        }
-        for (set, command) in GENERATED {
-            let into = folder.join(set);
-            fs::create_dir_all(&into)
-                .map_err(|error| format!("cannot create {}: {error}", into.display()))?;
-            let into = into.display().to_string();
-            let mut arguments = vec!["run"];
-            arguments.extend(*command);
-            arguments.push(&into);
-            crate::process::run(root, "cargo", &arguments)?;
-        }
-        fs::write(&complete, &inputs)
-            .map_err(|error| format!("cannot write {}: {error}", complete.display()))?;
-        prune_assets(&folder)?;
-    }
+    let folder = build_sets(root, "bench-assets", GENERATED)?;
     let sets: Vec<&'static str> = GENERATED.iter().map(|(set, _)| *set).collect();
     let mut files = Vec::new();
     for set in &sets {
@@ -159,6 +138,47 @@ pub fn assets(root: &Path) -> Result<Assets, String> {
         sets,
         generated_hash: hex(&hash.finalize()),
     })
+}
+
+/// The dense scene's generated files alone, in
+/// `target/dense-assets/<inputs hash>/stress/dense/`: what the core smoke
+/// reads, rebuilt only when their generator's own code changes, not with
+/// every engine change as the whole set is.
+pub fn dense_assets(root: &Path) -> Result<PathBuf, String> {
+    build_sets(root, "dense-assets", &GENERATED[..1])
+}
+
+/// Builds `sets` (of [`GENERATED`]) into `target/<cache>/<inputs hash>/`,
+/// where a build of the same inputs (the generators' code and the
+/// toolchain) is reused; the folder.
+fn build_sets(
+    root: &Path,
+    cache: &str,
+    sets: &[(&'static str, &'static [&'static str])],
+) -> Result<PathBuf, String> {
+    let inputs = inputs_hash(root, sets)?;
+    let folder = root.join("target").join(cache).join(&inputs[..16]);
+    let complete = folder.join("complete");
+    if !complete.is_file() {
+        if folder.exists() {
+            fs::remove_dir_all(&folder)
+                .map_err(|error| format!("cannot clear {}: {error}", folder.display()))?;
+        }
+        for (set, command) in sets {
+            let into = folder.join(set);
+            fs::create_dir_all(&into)
+                .map_err(|error| format!("cannot create {}: {error}", into.display()))?;
+            let into = into.display().to_string();
+            let mut arguments = vec!["run"];
+            arguments.extend(*command);
+            arguments.push(&into);
+            crate::process::run(root, "cargo", &arguments)?;
+        }
+        fs::write(&complete, &inputs)
+            .map_err(|error| format!("cannot write {}: {error}", complete.display()))?;
+        prune_assets(&folder)?;
+    }
+    Ok(folder)
 }
 
 /// Builds of other inputs kept beside the newest, which engine changes
@@ -192,10 +212,20 @@ fn prune_assets(newest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// SHA-256 over what the generators make their files from: the source
-/// files of every package they build from this repository, the lockfile
-/// and the compiler's version.
-fn inputs_hash(root: &Path) -> Result<String, String> {
+/// SHA-256 over what the generators of `sets` make their files from: the
+/// source files of every package they build from this repository, the
+/// lockfile and the compiler's version.
+fn inputs_hash(root: &Path, sets: &[(&str, &[&str])]) -> Result<String, String> {
+    // The packages the sets' commands run (`-p PACKAGE`).
+    let generators: Vec<&str> = sets
+        .iter()
+        .filter_map(|(_, command)| {
+            command
+                .windows(2)
+                .find(|pair| pair[0] == "-p")
+                .map(|pair| pair[1])
+        })
+        .collect();
     let output = Command::new("cargo")
         .args(["metadata", "--format-version", "1", "--locked"])
         .current_dir(root)
@@ -220,9 +250,7 @@ fn inputs_hash(root: &Path) -> Result<String, String> {
         .collect();
     let mut queue: VecDeque<&str> = packages
         .iter()
-        .filter(|(_, package)| {
-            ["engine_vgbuild", "engine_assetc"].contains(&package["name"].as_str().unwrap_or(""))
-        })
+        .filter(|(_, package)| generators.contains(&package["name"].as_str().unwrap_or("")))
         .map(|(id, _)| *id)
         .collect();
     let mut seen = BTreeSet::new();
@@ -288,7 +316,7 @@ fn inputs_hash(root: &Path) -> Result<String, String> {
         .output()
         .map_err(|error| format!("cannot run rustc: {error}"))?;
     hash.update(&rustc.stdout);
-    for (set, command) in GENERATED {
+    for (set, command) in sets {
         hash.update(set.as_bytes());
         hash.update(command.join(" ").as_bytes());
     }

@@ -10,9 +10,9 @@
 //! cargo run -p coresmoke -- [--seed N] [--assets FOLDER] [--trace FILE]
 //! ```
 //!
-//! `--assets` names the folder of the generated files the dense and
-//! highlands scenes read (`cargo xtask bench assets` prints it); without
-//! it they are left out. Prints one JSON object:
+//! `--assets` names the folder holding the generated meshes the dense scene
+//! reads (`stress/dense/`, as `cargo xtask bench assets` builds them);
+//! without it the dense scene is left out. Prints one JSON object:
 //! `{"observations": {...}, "broken": [...]}`. Exits 3 when a cache
 //! disagreed with a fresh engine's (its entry names the seed and the
 //! operations since the caches last agreed), 1 when it could not run.

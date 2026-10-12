@@ -170,16 +170,16 @@
           "hash": "0000000000000000"
         },
         "materials": {
-          "count": 25,
-          "hash": "965a91f58f23bb1c"
+          "count": 14,
+          "hash": "f38a0e5fc604380e"
         },
         "meshes": {
           "count": 50,
           "hash": "63c8efc32852066e"
         },
         "textures": {
-          "count": 27,
-          "hash": "c8ed4e72cd1431b0"
+          "count": 9,
+          "hash": "a13c48e49ed711ae"
         }
       },
       "components": {
@@ -225,7 +225,7 @@
         }
       },
       "entities": 10378,
-      "hash": "1bc8bd2ace14a8d5"
+      "hash": "c58f55e3f0d4f956"
     },
     "content metro": {
       "assets": {

@@ -1,7 +1,8 @@
 //! The caches corpus: the core smoke (tools/coresmoke), built in the dev
-//! profile so the engine's debug assertions run, over the generated files
-//! `cargo xtask bench assets` builds (the dense and highlands scenes read
-//! them). Its incremental caches must agree with fresh engines', and its
+//! profile so the engine's debug assertions run, over the generated meshes
+//! the dense scene reads (built as `cargo xtask bench assets` builds them,
+//! rebuilt only when their generator changes). Its incremental caches must
+//! agree with fresh engines', and its
 //! terrain streaming trace and Stress Lab content digests are observations
 //! held to goldens. `cargo xtask core-smoke` runs it alone.
 
@@ -17,8 +18,7 @@ use super::Observations;
 pub const TRACE: &str = "target/coresmoke/terrain-trace.txt";
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
-    let assets = crate::bench::assets(root)?;
-    let folder = assets.folder.display().to_string();
+    let folder = crate::bench::dense_assets(root)?.display().to_string();
     let trace = root.join(TRACE).display().to_string();
     println!("Running the core smoke (cargo run -p coresmoke)");
     let output = Command::new("cargo")
