@@ -11,6 +11,7 @@
 mod caches;
 mod gltf;
 mod import;
+mod scenes;
 mod simplify;
 mod terrain;
 
@@ -38,6 +39,10 @@ pub(crate) const CORPORA: &[Corpus] = &[
     Corpus {
         name: "terrain",
         run: terrain::run,
+    },
+    Corpus {
+        name: "scenes",
+        run: scenes::run,
     },
     Corpus {
         name: "simplify",

@@ -354,6 +354,243 @@
     },
     "import height.r16": "ea49f25042d80991"
   },
+  "scenes": {
+    "document components": "d3e2ecb342288c8f",
+    "document components counts": {
+      "bytes": 12459,
+      "entities": 12,
+      "materials": 4,
+      "meshes": 3,
+      "prefabs": 1,
+      "streamed": 2,
+      "textures": 1
+    },
+    "document garden": "86f341fff14e03ae",
+    "document garden counts": {
+      "bytes": 95392,
+      "entities": 30,
+      "materials": 9,
+      "meshes": 6,
+      "prefabs": 1,
+      "streamed": 0,
+      "textures": 1
+    },
+    "document minimal": "508776c4ee5977f1",
+    "document minimal counts": {
+      "bytes": 285,
+      "entities": 0,
+      "materials": 0,
+      "meshes": 0,
+      "prefabs": 0,
+      "streamed": 0,
+      "textures": 0
+    },
+    "document terrain": "2f2c7cd8c3c829d9",
+    "document terrain counts": {
+      "bytes": 26326,
+      "entities": 7,
+      "materials": 2,
+      "meshes": 2,
+      "prefabs": 0,
+      "streamed": 0,
+      "textures": 1
+    },
+    "refusal asset_budget_exceeded at $.meshes[0]": {
+      "code": "asset_budget_exceeded",
+      "message": "mesh capacity of 0 reached",
+      "path": "$.meshes[0]"
+    },
+    "refusal duplicate_id at $.materials[1].id": {
+      "code": "duplicate_id",
+      "message": "authored ID 'm' is already used in this collection",
+      "path": "$.materials[1].id"
+    },
+    "refusal duplicate_tag at $.entities[0].tags[1]": {
+      "code": "duplicate_tag",
+      "message": "tag 't' is repeated",
+      "path": "$.entities[0].tags[1]"
+    },
+    "refusal hierarchy_cycle at $.entities[0].parent": {
+      "code": "hierarchy_cycle",
+      "message": "parent references form a cycle",
+      "path": "$.entities[0].parent"
+    },
+    "refusal hierarchy_depth at $.entities[65].parent": {
+      "code": "hierarchy_depth",
+      "message": "hierarchies allow at most 64 parent edges",
+      "path": "$.entities[65].parent"
+    },
+    "refusal hierarchy_install_failed at $.entities": {
+      "code": "hierarchy_install_failed",
+      "message": "world exceeds its transform-node limit (TransformNodeLimit)",
+      "path": "$.entities"
+    },
+    "refusal invalid_animation at $.entities[0].animation.speed": {
+      "code": "invalid_animation",
+      "message": "speed must be finite and within ±1000",
+      "path": "$.entities[0].animation.speed"
+    },
+    "refusal invalid_camera at $.camera.near": {
+      "code": "invalid_camera",
+      "message": "must be in [0.001, 1000000]",
+      "path": "$.camera.near"
+    },
+    "refusal invalid_collider at $.entities[0].collider.shape": {
+      "code": "invalid_collider",
+      "message": "collider dimensions must be finite and within [1e-4,1e4]",
+      "path": "$.entities[0].collider.shape"
+    },
+    "refusal invalid_collider_transform at $.entities[0].collider": {
+      "code": "invalid_collider_transform",
+      "message": "collider requires valid affine world transform, center within +/-1e6, effective basis lengths [1e-4,1e4], and normalized inverse infinity norm <=1000",
+      "path": "$.entities[0].collider"
+    },
+    "refusal invalid_environment at $.environment.bloom.intensity": {
+      "code": "invalid_environment",
+      "message": "must be in [0, 4]",
+      "path": "$.environment.bloom.intensity"
+    },
+    "refusal invalid_grounded at $.entities[1].grounded": {
+      "code": "invalid_grounded",
+      "message": "only roots stand on the ground; ground the placement or root instead",
+      "path": "$.entities[1].grounded"
+    },
+    "refusal invalid_id at $.id": {
+      "code": "invalid_id",
+      "message": "IDs must contain 1 to 64 ASCII letters, digits, underscores, hyphens or periods",
+      "path": "$.id"
+    },
+    "refusal invalid_json at $": {
+      "code": "invalid_json",
+      "message": "EOF while parsing a value at line 1 column 16",
+      "path": "$"
+    },
+    "refusal invalid_material at $.materials[0].opacity": {
+      "code": "invalid_material",
+      "message": "material opacity must be finite and in (0, 1]",
+      "path": "$.materials[0].opacity"
+    },
+    "refusal invalid_mesh at $.meshes[0].source": {
+      "code": "invalid_mesh",
+      "message": "mesh index 2 is 1, outside 1 vertices",
+      "path": "$.meshes[0].source"
+    },
+    "refusal invalid_name at $.entities[0].name": {
+      "code": "invalid_name",
+      "message": "names must be at most 128 UTF-8 bytes without control characters",
+      "path": "$.entities[0].name"
+    },
+    "refusal invalid_nav_agent at $.entities[1].nav_agent": {
+      "code": "invalid_nav_agent",
+      "message": "only roots walk; give the placement or root the agent instead",
+      "path": "$.entities[1].nav_agent"
+    },
+    "refusal invalid_number at $.meshes[0].source.vertices[0].position[0]": {
+      "code": "invalid_number",
+      "message": "value must be finite and within ±1000000",
+      "path": "$.meshes[0].source.vertices[0].position[0]"
+    },
+    "refusal invalid_renderable at $.entities[0]": {
+      "code": "invalid_renderable",
+      "message": "an entity requires both mesh and material, or neither; prefab instance roots cannot also render",
+      "path": "$.entities[0]"
+    },
+    "refusal invalid_skin at $.entities[0].skin": {
+      "code": "invalid_skin",
+      "message": "a skin deforms its entity's mesh; give the entity a mesh and material",
+      "path": "$.entities[0].skin"
+    },
+    "refusal invalid_spline at $.entities[0].spline.points": {
+      "code": "invalid_spline",
+      "message": "a curve names 2 to 4096 points",
+      "path": "$.entities[0].spline.points"
+    },
+    "refusal invalid_streamed at $.streamed[0].terrain": {
+      "code": "invalid_streamed",
+      "message": "terrains stream their own tiles; author them in entities",
+      "path": "$.streamed[0].terrain"
+    },
+    "refusal invalid_terrain at $.entities[0].terrain.layers": {
+      "code": "invalid_terrain",
+      "message": "a terrain needs layers or a file",
+      "path": "$.entities[0].terrain.layers"
+    },
+    "refusal invalid_texture at $.textures[0].rgba8": {
+      "code": "invalid_texture",
+      "message": "Invalid symbol 33, offset 0.",
+      "path": "$.textures[0].rgba8"
+    },
+    "refusal invalid_type at $.revision": {
+      "code": "invalid_type",
+      "message": "invalid type: string \"one\", expected u64 at line 1 column 67",
+      "path": "$.revision"
+    },
+    "refusal invalid_uri at $.textures[0].uri": {
+      "code": "invalid_uri",
+      "message": "must be a relative path of letters, digits, '_', '.', '-' and '/' inside the scene's folder",
+      "path": "$.textures[0].uri"
+    },
+    "refusal invalid_value at $.entities[0].tint": {
+      "code": "invalid_value",
+      "message": "each value must be in [0, 1]",
+      "path": "$.entities[0].tint"
+    },
+    "refusal invalid_world_transform at $.entities[1].transform": {
+      "code": "invalid_world_transform",
+      "message": "composed transform for 'c' must be finite and invertible, with finite normal data and normalized normal-matrix inverse infinity norm <= 10000; reduce extreme anisotropy or shear",
+      "path": "$.entities[1].transform"
+    },
+    "refusal missing_asset_library at $": {
+      "code": "missing_asset_library",
+      "message": "install AssetLibrary in the world before instantiating a scene",
+      "path": "$"
+    },
+    "refusal missing_field at $.revision": {
+      "code": "missing_field",
+      "message": "missing field `revision` at line 1 column 51",
+      "path": "$.revision"
+    },
+    "refusal missing_file at $.textures[0].uri": {
+      "code": "missing_file",
+      "message": "the scene references absent.png, which was not supplied",
+      "path": "$.textures[0].uri"
+    },
+    "refusal missing_plugin at $.entities[0].floating": {
+      "code": "missing_plugin",
+      "message": "OceanPlugin is not added: add it, or EnginePlugins, to the engine",
+      "path": "$.entities[0].floating"
+    },
+    "refusal nested_prefab at $.prefabs[1].entities[0].prefab": {
+      "code": "nested_prefab",
+      "message": "prefab definitions cannot reference another prefab",
+      "path": "$.prefabs[1].entities[0].prefab"
+    },
+    "refusal source_too_large at $": {
+      "code": "source_too_large",
+      "message": "scene source must be at most 67108864 bytes",
+      "path": "$"
+    },
+    "refusal unknown_field at $.version": {
+      "code": "unknown_field",
+      "message": "unknown field `version`, expected one of `id`, `revision`, `camera`, `environment`, `textures`, `materials`, `meshes`, `prefabs`, `animations`, `skins`, `entities`, `streamed` at line 1 column 73",
+      "path": "$.version"
+    },
+    "refusal unknown_parent at $.entities[0].parent": {
+      "code": "unknown_parent",
+      "message": "no entity in this scope has ID 'nobody'",
+      "path": "$.entities[0].parent"
+    },
+    "refusal unknown_reference at $.entities[0].material": {
+      "code": "unknown_reference",
+      "message": "no authored object in this collection has ID 'missing'",
+      "path": "$.entities[0].material"
+    },
+    "refusal unknown_variant at $.meshes[0].source.kind": {
+      "code": "unknown_variant",
+      "message": "unknown variant `teapot`, expected one of `cube`, `plane`, `octahedron`, `inline`, `buffer`, `virtual` at line 1 column 84",
+      "path": "$.meshes[0].source.kind"
+    }
+  },
   "simplify": {
     "simplify garden prop 0": {
       "hash": "e2ad00bebbde88bf",
