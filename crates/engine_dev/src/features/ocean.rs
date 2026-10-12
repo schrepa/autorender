@@ -25,7 +25,7 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
 /// Adds the schemas of the sea's inspectors.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
-    schemas.insert("Floating".into(), json!(schemars::schema_for!(Floating)));
+    schemas.insert("Floating".into(), super::schema::<Floating>());
 }
 
 /// The sea's surface over world points `[x, z]` at simulation time `seconds` (by default the time the last frame

@@ -1,13 +1,12 @@
 use engine_settings::ErrorCode;
 use std::{collections::BTreeMap, io::Write};
 
-use engine_collision::{Collider, CollisionWorld, refresh_collision_world};
+use engine_collision::{CollisionWorld, refresh_collision_world};
 use engine_core::{
-    ActionId, ActionInput, AnimationPlayer, AssetLibrary, Atmosphere, Camera, Decal, Engine,
-    Feature, FixedTime, FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight,
-    MaterialHandle, Mesh3d, MeshHandle, Parent, ParticleEmitter, PresentationMode,
-    PresentationState, PresentedTransforms, ReflectionProbe, Skin, TerrainDebug, TextureHandle,
-    Tint, Transform,
+    ActionId, ActionInput, AssetLibrary, Atmosphere, Camera, Decal, Engine, Feature, FixedTime,
+    FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle,
+    Mesh3d, MeshHandle, Parent, ParticleEmitter, PresentationMode, PresentationState,
+    PresentedTransforms, ReflectionProbe, TextureHandle, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
@@ -22,11 +21,10 @@ use crate::{
     DevError, DevRequest, MAX_DESCRIPTION_BYTES, MAX_INSPECTOR_BYTES, MAX_INSPECTORS,
     MAX_PAGE_SIZE, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
-        AnimationPlayerView, CameraView, ClipView, DecalView, GlobalTransformView, HierarchyView,
-        InputView, InterpolateTransformView, LodLevelView, Mesh3dView, MeshBoundsView,
-        MeshRenderView, MeshView, PresentationModeView, PresentationStateView,
-        PresentedTransformView, SkinView, SplineMeshView, TerrainDebugView, TextureView,
-        TransformView, VirtualMeshView,
+        CameraView, DecalView, GlobalTransformView, HierarchyView, InputView,
+        InterpolateTransformView, LodLevelView, Mesh3dView, MeshBoundsView, MeshRenderView,
+        MeshView, PresentationModeView, PresentationStateView, PresentedTransformView,
+        SplineMeshView, TextureView, TransformView, VirtualMeshView,
     },
 };
 
@@ -125,10 +123,10 @@ pub struct Context<'a> {
 type HasInspector = Box<dyn Fn(&World, Option<Entity>) -> bool + Send + Sync>;
 
 pub(crate) struct Inspector {
-    descriptor: InspectorDescriptor,
-    kind: InspectorKind,
-    read: ReadInspector,
-    has: HasInspector,
+    pub(crate) descriptor: InspectorDescriptor,
+    pub(crate) kind: InspectorKind,
+    pub(crate) read: ReadInspector,
+    pub(crate) has: HasInspector,
 }
 
 struct InspectSelector<'a> {
@@ -151,28 +149,6 @@ pub struct DevTools {
     pub(crate) features: BTreeMap<String, Feature>,
 }
 
-/// The feature of each engine inspector of a feature's component or
-/// resource (environment sections name their own, and the inspectors a
-/// feature's development file registers are its own): inspecting them
-/// answers `missing_plugin` without the feature's plugin.
-pub(crate) const INSPECTOR_FEATURES: &[(&str, Feature)] = &[
-    ("Terrain", Feature::Terrain),
-    ("Terrains", Feature::Terrain),
-    ("TerrainDebug", Feature::Terrain),
-    ("TerrainPrefetch", Feature::Terrain),
-    ("WorldCells", Feature::WorldStreaming),
-    ("WorldChanges", Feature::WorldStreaming),
-    ("StreamedId", Feature::WorldStreaming),
-    ("NavAgent", Feature::Navigation),
-    ("NavAgents", Feature::Navigation),
-    ("AnimationPlayer", Feature::Animation),
-    ("Skin", Feature::Animation),
-    ("Tracks", Feature::Deformation),
-    ("Deformer", Feature::Deformation),
-    ("Collider", Feature::Collision),
-    ("CollisionWorld", Feature::Collision),
-];
-
 impl Default for DevTools {
     fn default() -> Self {
         let schemas: Value = serde_json::from_str(include_str!("generated/inspectors.json"))
@@ -180,14 +156,10 @@ impl Default for DevTools {
         let mut tools = Self {
             inspectors: BTreeMap::new(),
             builtins: None,
-            features: INSPECTOR_FEATURES
-                .iter()
-                .map(|&(name, feature)| (name.to_owned(), feature))
-                .collect(),
+            features: BTreeMap::new(),
         };
         tools.register_poses(&schemas);
         tools.register_components(&schemas);
-        tools.register_animation(&schemas);
         tools.register_environment(&schemas);
         crate::features::register(&mut tools, &schemas);
         tools.builtins = Some(tools.inspectors.len());
@@ -297,22 +269,6 @@ impl DevTools {
         reason = "longer than the line ceiling; it may only shrink"
     )]
     fn register_components(&mut self, schemas: &Value) {
-        self.insert(Inspector {
-            descriptor: InspectorDescriptor::generated(schemas, "Collider"),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| world.get::<Collider>(entity).is_some())
-            }),
-            read: Box::new(|world, entity, _context| {
-                crate::collision::collider_value(world, entity?)
-            }),
-        })
-        .expect("built-in descriptor is bounded");
-        self.register_resource::<CollisionWorld>(
-            InspectorDescriptor::generated(schemas, "CollisionWorld"),
-            crate::collision::world_value,
-        )
-        .expect("built-in descriptor is bounded");
         self.register_resource::<Camera>(
             InspectorDescriptor::generated(schemas, "Camera")
                 .with_default(camera_value(&Camera::default())),
@@ -336,170 +292,6 @@ impl DevTools {
             InspectorDescriptor::generated(schemas, "LocalLight")
                 .with_default(json!(SceneLight::default())),
             |light| json!(SceneLight::from(light)),
-        )
-        .expect("built-in descriptor is bounded");
-        self.register_component::<engine_core::TerrainPrefetch>(
-            InspectorDescriptor::generated(schemas, "TerrainPrefetch")
-                .with_default(json!(engine_core::TerrainPrefetch::default())),
-            |prefetch| json!(prefetch),
-        )
-        .expect("built-in descriptor is bounded");
-        self.register_component::<engine_core::Deformer>(
-            InspectorDescriptor::generated(schemas, "Deformer")
-                .with_default(json!(engine_core::Deformer::default())),
-            |deformer| json!(deformer),
-        )
-        .expect("built-in descriptor is bounded");
-        self.register_resource::<engine_core::Tracks>(
-            InspectorDescriptor::generated(schemas, "Tracks"),
-            |tracks| {
-                json!(crate::views::TracksView {
-                    stamps: tracks.len(),
-                    pressed: tracks.pressed(),
-                    dropped: tracks.dropped(),
-                    latest: tracks.latest().copied(),
-                })
-            },
-        )
-        .expect("built-in descriptor is bounded");
-        self.register_resource::<engine_core::WorldCells>(
-            InspectorDescriptor::generated(schemas, "WorldCells"),
-            |cells| {
-                let stats = cells.stats();
-                let grids = cells.grids();
-                json!(crate::views::WorldCellsView {
-                    cells: stats.cells,
-                    loaded: stats.loaded,
-                    pending: stats.pending,
-                    items: stats.items,
-                    entities: stats.entities,
-                    spawned: stats.spawned,
-                    despawned: stats.despawned,
-                    velocity: cells.velocity().to_array(),
-                    grids: engine_core::STREAMING_GRIDS
-                        .iter()
-                        .zip(grids)
-                        .map(|(grid, [count, loaded])| crate::views::StreamingGridView {
-                            cell: grid.cell,
-                            range: grid.range,
-                            reach: grid.reach.is_finite().then_some(grid.reach),
-                            cells: count,
-                            loaded,
-                        })
-                        .collect(),
-                    nearest: cells
-                        .nearest(32)
-                        .into_iter()
-                        .map(|cell| crate::views::StreamedCellView {
-                            grid: cell.grid,
-                            key: cell.key,
-                            items: cell.items,
-                            entities: cell.entities,
-                            loaded: cell.loaded,
-                            distance: cell.distance,
-                        })
-                        .collect(),
-                })
-            },
-        )
-        .expect("built-in descriptor is bounded");
-        self.register_resource::<engine_core::WorldChanges>(
-            InspectorDescriptor::generated(schemas, "WorldChanges"),
-            |changes| {
-                json!(crate::views::WorldChangesView {
-                    removed: changes.removed().len(),
-                    ids: changes.removed().take(64).map(str::to_owned).collect(),
-                })
-            },
-        )
-        .expect("built-in descriptor is bounded");
-        self.insert(Inspector {
-            descriptor: InspectorDescriptor::generated(schemas, "NavAgent"),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| world.get::<engine_core::NavAgent>(entity).is_some())
-            }),
-            read: Box::new(|world, entity, _context| {
-                let entity = entity?;
-                let agent = *world.get::<engine_core::NavAgent>(entity)?;
-                let walk = world.get::<engine_core::NavWalk>(entity)?;
-                let position = world
-                    .get::<Transform>(entity)
-                    .map(|transform| transform.translation);
-                let left = position.map_or(0.0, |position| {
-                    let mut from = position;
-                    let mut left = 0.0;
-                    for point in walk.points.iter().skip(walk.next) {
-                        left += from.distance(*point);
-                        from = *point;
-                    }
-                    left
-                });
-                Some(json!(crate::views::NavAgentView {
-                    agent,
-                    status: walk.status,
-                    searched_for: walk.destination,
-                    length: walk.length,
-                    points: walk.points.len(),
-                    next: walk.next,
-                    left,
-                    searched: walk.searched,
-                }))
-            }),
-        })
-        .expect("built-in descriptor is bounded");
-        self.insert(Inspector {
-            descriptor: InspectorDescriptor::generated(schemas, "NavAgents"),
-            kind: InspectorKind::Resource,
-            has: Box::new(|world, _| world.get_resource::<engine_core::NavAgents>().is_some()),
-            read: Box::new(|world, _, _| {
-                let stats = world.get_resource::<engine_core::NavAgents>()?.stats();
-                let mut query = world.try_query::<(
-                    Entity,
-                    &engine_core::NavAgent,
-                    &engine_core::NavWalk,
-                    &Transform,
-                )>()?;
-                let first = query
-                    .iter(world)
-                    .take(16)
-                    .map(|(entity, agent, walk, transform)| {
-                        let mut from = transform.translation;
-                        let mut left = 0.0;
-                        for point in walk.points.iter().skip(walk.next) {
-                            left += from.distance(*point);
-                            from = *point;
-                        }
-                        crate::views::NavAgentRow {
-                            id: world
-                                .get::<SceneEntity>(entity)
-                                .map(|metadata| metadata.authored_id.clone()),
-                            status: walk.status,
-                            position: transform.translation.to_array(),
-                            destination: agent.destination,
-                            left,
-                        }
-                    })
-                    .collect();
-                Some(json!(crate::views::NavAgentsView {
-                    agents: stats.agents,
-                    searching: stats.searching,
-                    walking: stats.walking,
-                    arrived: stats.arrived,
-                    unreachable: stats.unreachable,
-                    work: stats.work,
-                    first,
-                }))
-            }),
-        })
-        .expect("built-in descriptor is bounded");
-        self.register_component::<engine_core::StreamedId>(
-            InspectorDescriptor::generated(schemas, "StreamedId"),
-            |id| {
-                json!(crate::views::StreamedIdView {
-                    id: id.0.to_string()
-                })
-            },
         )
         .expect("built-in descriptor is bounded");
         self.insert(Inspector {
@@ -595,136 +387,6 @@ impl DevTools {
         )
         .expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::generated(schemas, "Terrain"),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| world.get::<engine_core::Terrain>(entity).is_some())
-            }),
-            read: Box::new(|world, entity, context| {
-                let scene = context.scene;
-                let entity = entity?;
-                let terrain = world.get::<engine_core::Terrain>(entity)?;
-                let mut levels = vec![0_u32; terrain.pyramid.levels() as usize];
-                let (mut level_errors, mut level_ranges) = (Vec::new(), Vec::new());
-                let (mut hydrology, mut erosion, mut paths) = (None, None, Vec::new());
-                if let Some(terrains) = world.get_resource::<engine_core::Terrains>() {
-                    for tile in terrains.tiles(entity) {
-                        levels[usize::from(tile.key().level)] += 1;
-                    }
-                    if let Some((errors, ranges)) = terrains.level_detail(entity) {
-                        level_errors = errors.to_vec();
-                        level_ranges = ranges.to_vec();
-                    }
-                    let holds = |wanted: fn(&engine_core::Layer) -> bool| {
-                        matches!(&terrain.source, engine_core::TerrainSource::Generated(layers)
-                            if layers.layers().iter().any(wanted))
-                    };
-                    let bakes = terrains.bakes(entity);
-                    if holds(|layer| matches!(layer, engine_core::Layer::Hydrology(_))) {
-                        let stats = bakes.hydrology;
-                        hydrology = Some(crate::views::HydrologyView {
-                            baking: bakes.baking,
-                            samples: stats.map(|stats| stats.samples),
-                            channel_samples: stats.map(|stats| stats.channel_samples),
-                            lake_samples: stats.map(|stats| stats.lake_samples),
-                            max_area: stats.map(|stats| stats.max_area),
-                            falls: stats.map(|stats| stats.falls),
-                        });
-                    }
-                    // Each path layer's profile, once baked.
-                    if let Some(layers) = terrains.layers(entity) {
-                        for (index, layer) in layers.layers().iter().enumerate() {
-                            if let engine_core::Layer::Path(stage) = layer {
-                                let stats = stage.baked.as_ref().map(|profile| profile.stats);
-                                paths.push(crate::views::PathView {
-                                    layer: index,
-                                    baked: stats.is_some(),
-                                    length: stats.map(|stats| stats.length),
-                                    samples: stats.map(|stats| stats.samples),
-                                    steepest: stats.map(|stats| stats.steepest),
-                                    deepest_cut: stats.map(|stats| stats.deepest_cut),
-                                    highest_fill: stats.map(|stats| stats.highest_fill),
-                                    bridges: stats.map(|stats| stats.bridges),
-                                    bridged: stats.map(|stats| stats.bridged),
-                                    tunnels: stats.map(|stats| stats.tunnels),
-                                    tunneled: stats.map(|stats| stats.tunneled),
-                                });
-                            }
-                        }
-                    }
-                    if holds(|layer| matches!(layer, engine_core::Layer::Erosion(_))) {
-                        let stats = bakes.erosion;
-                        erosion = Some(crate::views::ErosionView {
-                            baking: bakes.baking,
-                            samples: stats.map(|stats| stats.samples),
-                            rounds: stats.map(|stats| stats.rounds),
-                            deepest: stats.map(|stats| stats.deepest),
-                            highest: stats.map(|stats| stats.highest),
-                        });
-                    }
-                }
-                Some(json!(crate::views::TerrainView {
-                    terrain: engine_scene::SceneTerrain::from_runtime(
-                        terrain,
-                        None,
-                        |handle| {
-                            scene.and_then(|scene| {
-                                scene
-                                    .materials()
-                                    .find(|(_, candidate)| *candidate == handle)
-                                    .map(|(id, _)| id.to_owned())
-                            })
-                        },
-                        |handle| {
-                            scene.and_then(|scene| {
-                                scene
-                                    .meshes()
-                                    .find(|(_, candidate)| *candidate == handle)
-                                    .map(|(id, _)| id.to_owned())
-                            })
-                        }
-                    ),
-                    levels: terrain.pyramid.levels(),
-                    extent: terrain.pyramid.extent().to_array(),
-                    resident_tiles_by_level: levels,
-                    level_errors,
-                    level_ranges,
-                    hydrology,
-                    erosion,
-                    paths,
-                    edits: terrain
-                        .edits
-                        .iter()
-                        .map(|edit| crate::views::TerrainEditView {
-                            id: edit.id.to_string(),
-                            stamp: edit.stamp,
-                        })
-                        .collect(),
-                    surroundings: world
-                        .get_resource::<engine_core::Terrains>()
-                        .and_then(|terrains| terrains.surroundings(entity))
-                        .map(|status| crate::views::SurroundingsView {
-                            reach: status.reach,
-                            tiles: status.tiles,
-                            spacing: status.spacing,
-                            resident_tiles: status.resident_tiles,
-                            patches: status.patches,
-                        }),
-                }))
-            }),
-        })
-        .expect("built-in descriptor is bounded");
-        self.register_resource::<TerrainDebug>(
-            InspectorDescriptor::generated(schemas, "TerrainDebug"),
-            |debug| {
-                json!(TerrainDebugView {
-                    freeze: debug.freeze.map(|point| point.to_array()),
-                    view: debug.view,
-                })
-            },
-        )
-        .expect("built-in descriptor is bounded");
-        self.insert(Inspector {
             descriptor: InspectorDescriptor::generated(schemas, "Input"),
             kind: InspectorKind::Resource,
             has: Box::new(|world, _| world.get_resource::<InputState>().is_some()),
@@ -747,35 +409,6 @@ impl DevTools {
                 }))
             }),
         })
-        .expect("built-in descriptor is bounded");
-        self.register_resource::<engine_core::Terrains>(
-            InspectorDescriptor::generated(schemas, "Terrains"),
-            |terrains| {
-                let stats = terrains.stats();
-                json!(crate::views::TerrainsView {
-                    terrains: stats.terrains,
-                    resident_tiles: stats.resident_tiles,
-                    loading_tiles: stats.loading_tiles,
-                    shaped_tiles: stats.shaped_tiles,
-                    waiting_tiles: stats.waiting_tiles,
-                    cached_tiles: stats.cached_tiles,
-                    cached_bytes: stats.cached_bytes,
-                    restored_tiles: stats.restored_tiles,
-                    idle_tiles: stats.idle_tiles,
-                    banded_tiles: stats.banded_tiles,
-                    unplaced_tiles: stats.unplaced_tiles,
-                    dropped_tiles: stats.dropped_tiles,
-                    patches: stats.patches,
-                    fallback_patches: stats.fallback_patches,
-                    baking: stats.baking,
-                    bridges: stats.bridges,
-                    tunnels: stats.tunnels,
-                    falls: stats.falls,
-                    surroundings_tiles: stats.surroundings_tiles,
-                    surroundings_patches: stats.surroundings_patches,
-                })
-            },
-        )
         .expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Jobs>(
             InspectorDescriptor::generated(schemas, "Jobs"),
@@ -804,80 +437,6 @@ impl DevTools {
                 .with_default(json!(SceneEmitter::default())),
             |emitter| json!(SceneEmitter::from(emitter)),
         )
-        .expect("built-in descriptor is bounded");
-    }
-
-    /// Animation players and skins, naming clips and
-    /// entities by their authored IDs.
-    fn register_animation(&mut self, schemas: &Value) {
-        // Animation: players and skins name clips
-        // and entities by their authored IDs.
-        let authored = |world: &World, entity: Option<Entity>| {
-            entity
-                .and_then(|entity| world.get::<SceneEntity>(entity))
-                .map(|source| source.authored_id.clone())
-        };
-        self.insert(Inspector {
-            descriptor: InspectorDescriptor::generated(schemas, "AnimationPlayer"),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| world.get::<AnimationPlayer>(entity).is_some())
-            }),
-            read: Box::new(move |world, entity, context| {
-                let scene = context.scene;
-                let player = world.get::<AnimationPlayer>(entity?)?;
-                let clip = world
-                    .get_resource::<AssetLibrary>()
-                    .and_then(|assets| assets.clip(player.clip))
-                    .map(|clip| {
-                        let origin = scene.and_then(|scene| scene.clip_origin(player.clip));
-                        ClipView {
-                            id: origin.map(|(id, _)| id.to_owned()),
-                            name: origin.map(|(_, origin)| origin.name.clone()),
-                            targets: origin
-                                .map(|(_, origin)| origin.targets.clone())
-                                .unwrap_or_default(),
-                            channels: clip.channels().len(),
-                            uri: origin.and_then(|(_, origin)| origin.uri.clone()),
-                            duration: clip.duration(),
-                        }
-                    });
-                Some(json!(AnimationPlayerView {
-                    clip,
-                    time: player.time,
-                    speed: player.speed,
-                    looping: player.looping,
-                    targets: player
-                        .targets
-                        .iter()
-                        .map(|&target| authored(world, target))
-                        .collect(),
-                }))
-            }),
-        })
-        .expect("built-in descriptor is bounded");
-        self.insert(Inspector {
-            descriptor: InspectorDescriptor::generated(schemas, "Skin"),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| world.get::<Skin>(entity).is_some())
-            }),
-            read: Box::new(move |world, entity, context| {
-                let skin = world.get::<Skin>(entity?)?;
-                Some(json!(SkinView {
-                    skin: context
-                        .scene
-                        .and_then(|scene| scene.skin_id(skin))
-                        .map(str::to_owned),
-                    joints: skin
-                        .joints
-                        .iter()
-                        .map(|&joint| authored(world, Some(joint)))
-                        .collect(),
-                    inverse_binds: skin.inverse_binds.len(),
-                }))
-            }),
-        })
         .expect("built-in descriptor is bounded");
     }
 
@@ -1172,7 +731,7 @@ impl DevTools {
         })
     }
 
-    fn insert(&mut self, inspector: Inspector) -> Result<(), DevError> {
+    pub(crate) fn insert(&mut self, inspector: Inspector) -> Result<(), DevError> {
         let name = &inspector.descriptor.name;
         validate_name(name, "$.name")?;
         if ["SceneDocument", "protocol", "BrowserControl"].contains(&name.as_str())

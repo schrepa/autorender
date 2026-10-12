@@ -24,10 +24,6 @@ pub struct Generated {
 }
 
 /// The generated files and values, or every rule the types break.
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
 pub fn generated() -> Result<Generated, String> {
     let mut problems = Vec::new();
     let mut schemas = json!({
@@ -39,31 +35,16 @@ pub fn generated() -> Result<Generated, String> {
         "Hierarchy": schemars::schema_for!(views::HierarchyView),
         "Camera": schemars::schema_for!(views::CameraView),
         "Mesh3d": schemars::schema_for!(views::Mesh3dView),
-        "Collider": schemars::schema_for!(views::ColliderView),
-        "CollisionWorld": schemars::schema_for!(views::CollisionWorldView),
         "Atmosphere": schemars::schema_for!(engine_scene::SceneAtmosphere),
         "Decal": schemars::schema_for!(views::DecalView),
         "SplineMesh": schemars::schema_for!(views::SplineMeshView),
         "ReflectionProbe": schemars::schema_for!(engine_scene::SceneReflectionProbe),
-        "Terrain": schemars::schema_for!(views::TerrainView),
-        "Terrains": schemars::schema_for!(views::TerrainsView),
-        "TerrainDebug": schemars::schema_for!(views::TerrainDebugView),
         "Input": schemars::schema_for!(views::InputView),
         "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
         "Tint": schemars::schema_for!(views::TintView),
-        "Deformer": schemars::schema_for!(engine_core::Deformer),
-        "Tracks": schemars::schema_for!(views::TracksView),
-        "WorldCells": schemars::schema_for!(views::WorldCellsView),
         "Grounded": schemars::schema_for!(views::GroundedView),
-        "TerrainPrefetch": schemars::schema_for!(engine_core::TerrainPrefetch),
-        "WorldChanges": schemars::schema_for!(views::WorldChangesView),
-        "StreamedId": schemars::schema_for!(views::StreamedIdView),
-        "NavAgent": schemars::schema_for!(views::NavAgentView),
-        "NavAgents": schemars::schema_for!(views::NavAgentsView),
         "Jobs": schemars::schema_for!(views::JobsView),
-        "AnimationPlayer": schemars::schema_for!(views::AnimationPlayerView),
-        "Skin": schemars::schema_for!(views::SkinView),
         "protocol": schemars::schema_for!(protocol::DevRequest),
         "BrowserControl": schemars::schema_for!(protocol::BrowserControl),
         "FrameStats": frame_stats(&mut problems),
@@ -119,14 +100,6 @@ pub fn generated() -> Result<Generated, String> {
     }
     if let Some(all) = schemas.as_object_mut() {
         all.extend(sections.schemas);
-    }
-    // Every inspector a feature owns exists.
-    for (name, _) in crate::inspect::INSPECTOR_FEATURES {
-        if schemas.get(*name).is_none() {
-            problems.push(format!(
-                "INSPECTOR_FEATURES names {name}, which is no inspector"
-            ));
-        }
     }
     let scene_schema = engine_scene::SceneDocument::schema_json();
     // The ops of queries and controls, from their schemas: no list to keep.

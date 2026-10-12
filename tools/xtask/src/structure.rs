@@ -22,7 +22,6 @@ const LONG_FILES: &[(&str, usize)] = &[
     ("crates/engine_assets/src/simplify.rs", 2383),
     ("crates/engine_core/src/hierarchy.rs", 1714),
     ("crates/engine_core/src/retained_render.rs", 1705),
-    ("crates/engine_dev/src/inspect.rs", 1738),
     ("crates/engine_render/src/meshes/terrain.wgsl", 1843),
     ("crates/engine_render/src/terrain.rs", 2338),
     ("crates/engine_terrain/src/layers.rs", 1617),

@@ -16,7 +16,13 @@ use crate::{DevError, DevTools};
 macro_rules! dev_features {
     ($then:ident) => {
         $then! {
+            animation,
+            collision,
+            deformation,
+            navigation,
             ocean,
+            terrain,
+            world_streaming,
         }
     };
 }
@@ -28,6 +34,12 @@ pub trait EngineQuery {
     /// The query's answer from `engine`'s world, beside the active `scene`.
     fn answer(&self, engine: &mut Engine, scene: Option<&SceneInstance>)
     -> Result<Value, DevError>;
+}
+
+/// The JSON schema of `T`, an inspector's view.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn schema<T: schemars::JsonSchema>() -> Value {
+    serde_json::json!(schemars::schema_for!(T))
 }
 
 impl DevTools {
