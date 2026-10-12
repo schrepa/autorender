@@ -193,7 +193,16 @@ impl JobPool {
                         let _ = slot.orders.send(Order::Cancel(id.0));
                     }
                 }
-                JobMessage::Share(JobShare::Clear) => self.broadcast(|| Order::Clear),
+                JobMessage::Share(JobShare::Clear) => {
+                    // A new engine's first message: workers drop the earlier
+                    // engine's jobs, and so do their slots and keys here.
+                    for slot in &mut self.slots {
+                        slot.jobs.clear();
+                    }
+                    self.keys.clear();
+                    self.verifying.clear();
+                    self.broadcast(|| Order::Clear);
+                }
                 JobMessage::Share(JobShare::Set { key, bytes }) => {
                     let bytes: std::sync::Arc<[u8]> = bytes.into();
                     self.broadcast(|| Order::Share(key.clone(), bytes.clone()));

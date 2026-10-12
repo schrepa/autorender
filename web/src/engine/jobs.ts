@@ -178,6 +178,12 @@ export class JobPool {
         slot.jobs.delete(message.cancel);
         this.post(slot, { type: "cancel", id: message.cancel });
       } else if ("clear" in message) {
+        // A new engine's first message: workers drop the earlier engine's
+        // jobs, and so do their slots, keys and lookups here.
+        for (const slot of this.slots) slot.jobs.clear();
+        this.keys.clear();
+        this.verifying.clear();
+        for (const id of this.looking) this.dropped.add(id);
         this.shares.clear();
         this.broadcast({ type: "clear" });
       } else if ("share" in message) {
