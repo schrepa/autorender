@@ -1,7 +1,7 @@
 //! Upload structs of `crate::terrain`.
 
-use bytemuck::{Pod, Zeroable};
 pub(crate) use super::constants::PALETTE_ENTRIES;
+use bytemuck::{Pod, Zeroable};
 
 /// Bytes of the palette.
 pub(crate) const PALETTE_BYTES: usize = PALETTE_ENTRIES * size_of::<PaletteEntry>();
