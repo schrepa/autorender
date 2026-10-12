@@ -137,6 +137,7 @@ pub fn assets(root: &Path) -> Result<Assets, String> {
         }
         fs::write(&complete, &inputs)
             .map_err(|error| format!("cannot write {}: {error}", complete.display()))?;
+        prune_assets(&folder)?;
     }
     let sets: Vec<&'static str> = GENERATED.iter().map(|(set, _)| *set).collect();
     let mut files = Vec::new();
@@ -158,6 +159,37 @@ pub fn assets(root: &Path) -> Result<Assets, String> {
         sets,
         generated_hash: hex(&hash.finalize()),
     })
+}
+
+/// Builds of other inputs kept beside the newest, which engine changes
+/// make one by one (about 50 MB each).
+const KEPT_ASSETS: usize = 3;
+
+/// Removes all but the [`KEPT_ASSETS`] most recently built folders beside
+/// `newest`, which stays.
+fn prune_assets(newest: &Path) -> Result<(), String> {
+    let Some(parent) = newest.parent() else {
+        return Ok(());
+    };
+    let mut others: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(parent)
+        .map_err(|error| format!("cannot list {}: {error}", parent.display()))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && path != newest)
+        .map(|path| {
+            let built = fs::metadata(path.join("complete"))
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            (built, path)
+        })
+        .collect();
+    // Newest first.
+    others.sort_by_key(|(built, _)| std::cmp::Reverse(*built));
+    for (_, path) in others.into_iter().skip(KEPT_ASSETS) {
+        fs::remove_dir_all(&path)
+            .map_err(|error| format!("cannot remove {}: {error}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// SHA-256 over what the generators make their files from: the source
