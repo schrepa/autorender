@@ -9,7 +9,7 @@ use engine::scene::{SceneError, SceneFiles};
 
 use crate::scene::EFFECTS;
 use crate::{
-    AuthoredScene, FrameMetrics, PlayerWalk, StressConfig, StressFile, StressMetrics, StressScene,
+    AuthoredScene, FrameMetrics, PlayerWalk, StressConfig, StressFile, StressMetrics,
     create_workload_with, look, set_view, stress_reflections, stress_shafts,
 };
 
@@ -159,8 +159,7 @@ impl StressLab {
             local.intensity = lamps;
         }
         world.resource_mut::<ParticleSettings>().enabled = particles;
-        // Only the metro has glass that refracts.
-        if refraction && scene == StressScene::Metro {
+        if refraction && scene.world().refracts() {
             world.insert_resource(Refraction::default());
         } else {
             world.remove_resource::<Refraction>();

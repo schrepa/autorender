@@ -25,6 +25,7 @@ mod models;
 mod people;
 mod props;
 mod textures;
+mod world;
 
 use engine::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
@@ -38,6 +39,7 @@ use crate::city::{
 use crate::scene::{Animation, hash, position_for_index};
 use materials::{AD_SLOTS, Clip, Library, Mat, NEON_COLORS};
 use models::{Car, MID_FLOORS, Mid, Model, Style, TOWER_FLOORS};
+pub(crate) use world::MetroWorld;
 
 /// Street grid: 20-unit blocks between 4-unit streets, centered on multiples
 /// of `PERIOD`.
@@ -381,28 +383,6 @@ impl Metro {
     fn offset(&mut self, model: Model, point: Vec3) -> Vec3 {
         point - self.shape(model).1
     }
-}
-
-/// A street-level view across the river toward the core.
-pub(crate) fn close_view(config: &StressConfig) -> (Vec3, Vec3) {
-    let (_, _, radius) = budget(config, PER_BLOCK);
-    match river_row(radius) {
-        Some(row) => (
-            Vec3::new(-PERIOD * 0.3, 9.0, row as f32 * PERIOD + PERIOD * 0.62),
-            Vec3::new(PERIOD * 0.8, 40.0, 0.0),
-        ),
-        None => (Vec3::new(0.0, 12.0, 80.0), Vec3::new(0.0, 25.0, 0.0)),
-    }
-}
-
-/// An aerial view of the whole metro.
-pub(crate) fn overview(config: &StressConfig) -> (Vec3, Vec3) {
-    let (_, _, radius) = budget(config, PER_BLOCK);
-    let reach = (radius + 2.0) * PERIOD;
-    (
-        Vec3::new(reach * 0.55, reach * 0.62, reach * 1.05),
-        Vec3::new(0.0, 10.0, 0.0),
-    )
 }
 
 fn plan(config: &StressConfig) -> Metro {

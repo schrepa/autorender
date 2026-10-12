@@ -13,7 +13,7 @@ use std::process::ExitCode;
 use engine::{Engine, Error, ErrorCode, Feature};
 use engine_native::{Arguments, HostOptions, files};
 
-use crate::{DENSE_FILES, HIGHLANDS_FILES, ROCK_FILES, StressConfig, StressFile, StressLab};
+use crate::{StressConfig, StressFile, StressLab};
 use crate::{StressScene, preset, presets, set_view};
 
 const USAGE: &str = "\
@@ -334,98 +334,12 @@ impl Options {
 }
 
 /// The files workload `scene` reads from the folder `assets`, as the page
-/// fetches them: the dense scene's virtual mesh prefixes, streamed from
-/// their files, and the highlands' terrain material maps, without which
-/// its ground shows plain colors, and with `rocks` its optional scanned
-/// rock maps.
+/// fetches them (its world's), with `rocks` the highlands' optional
+/// scanned rock maps.
 pub fn stress_files(
     assets: &Path,
     scene: StressScene,
     rocks: bool,
 ) -> engine::Result<HashMap<String, StressFile>> {
-    let mut found = HashMap::default();
-    match scene {
-        StressScene::Dense => {
-            for name in DENSE_FILES {
-                let path = assets.join("stress/dense").join(name);
-                let bytes = files::read_prefix(&path, 128, engine::VirtualMesh::prefix_bytes)
-                    .map_err(|error| {
-                        Error::new(
-                            error.code,
-                            error.path,
-                            format!(
-                                "{} Build the files with `cargo run -p engine_vgbuild --release --bin dense_assets`.",
-                                error.message
-                            ),
-                        )
-                    })?;
-                let url = Some(path.to_string_lossy().into_owned());
-                found.insert(
-                    name.to_owned(),
-                    StressFile {
-                        bytes,
-                        url,
-                        size: None,
-                    },
-                );
-            }
-        }
-        StressScene::Highlands => {
-            let image = |path: &Path| -> engine::Result<Option<files::Image>> {
-                let bytes = std::fs::read(path).map_err(|error| {
-                    Error::new(
-                        ErrorCode::MissingFile,
-                        "$",
-                        format!("cannot read {}: {error}", path.display()),
-                    )
-                })?;
-                if files::image_format(&bytes).map(|format| format.name) != Some("ktx2-rgba8") {
-                    return Ok(None);
-                }
-                files::decode_image(&path.display().to_string(), &bytes)
-                    .map(Some)
-                    .map_err(|message| Error::new(ErrorCode::InvalidTexture, "$", message))
-            };
-            let mut add = |key: String, image: files::Image| {
-                found.insert(
-                    key,
-                    StressFile {
-                        bytes: image.pixels,
-                        url: None,
-                        size: Some([image.width, image.height]),
-                    },
-                );
-            };
-            let materials = HIGHLANDS_FILES.iter().try_for_each(|name| {
-                let path = assets.join("stress/terrain").join(name);
-                let decoded = image(&path)?.ok_or_else(|| {
-                    Error::new(
-                        ErrorCode::InvalidTexture,
-                        "$",
-                        format!("{} is not an uncompressed RGBA8 KTX2 image", path.display()),
-                    )
-                })?;
-                add((*name).to_owned(), decoded);
-                Ok::<_, Error>(())
-            });
-            if let Err(error) = materials {
-                eprintln!(
-                    "The ground shows plain colors: {}. Build its materials with \
-                     `cargo run -p engine_assetc --release --bin terrain_materials`.",
-                    error.message
-                );
-                return Ok(HashMap::default());
-            }
-            // Scanned rock maps, kept locally and optional: without them
-            // rocks wear the terrain rock's maps.
-            for name in ROCK_FILES.iter().filter(|_| rocks) {
-                if let Ok(Some(decoded)) = image(&assets.join("stress/rocks").join(name)) {
-                    add(format!("rocks/{name}"), decoded);
-                }
-            }
-        }
-        // The other worlds' content is built in code.
-        StressScene::Field | StressScene::City | StressScene::Metro => {}
-    }
-    Ok(found)
+    scene.world().files(assets, rocks)
 }

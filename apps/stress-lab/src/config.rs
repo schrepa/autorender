@@ -37,25 +37,13 @@ impl StressScene {
     ];
 
     /// The scene's name in configurations.
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Field => "field",
-            Self::City => "city",
-            Self::Metro => "metro",
-            Self::Dense => "dense",
-            Self::Highlands => "highlands",
-        }
+    pub fn name(self) -> &'static str {
+        self.world().name()
     }
 
     /// The scene's name in menus.
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Field => "Tower field",
-            Self::City => "Wild city",
-            Self::Metro => "Metro",
-            Self::Dense => "Dense geometry",
-            Self::Highlands => "Highlands",
-        }
+    pub fn label(self) -> &'static str {
+        self.world().label()
     }
 }
 

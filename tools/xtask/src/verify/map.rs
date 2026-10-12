@@ -513,6 +513,8 @@ pub(crate) const MAP: &[Rule] = &[
     Rule {
         paths: &[
             "apps/stress-lab/src/scene*",
+            "apps/stress-lab/src/world*",
+            "apps/stress-lab/src/field*",
             "apps/stress-lab/src/game*",
             "apps/stress-lab/src/config*",
             "apps/stress-lab/src/catalog*",

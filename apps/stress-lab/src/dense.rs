@@ -4,12 +4,19 @@
 //! dense_assets`) and fetched by the page.
 
 use engine::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
 use std::sync::Arc;
 
+#[cfg(not(target_arch = "wasm32"))]
+use engine::Error;
 use engine::VirtualMesh;
 use engine::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
+use engine_native::files;
 
-use crate::scene::{Motion, Workload, hash};
+use crate::scene::{Animation, Motion, Workload, animate, hash};
+use crate::world::StressWorld;
 use crate::{StressConfig, StressFile};
 
 /// The files the page fetches for this scene, from `stress/dense/`: the ones
@@ -162,4 +169,67 @@ pub(crate) fn populate(
     });
     let bounds = (Vec3::new(-half, -2.0, -half), Vec3::new(half, 12.0, half));
     Ok((moving_nodes, bounds))
+}
+
+pub(crate) struct DenseWorld;
+
+impl StressWorld for DenseWorld {
+    fn name(&self) -> &'static str {
+        "dense"
+    }
+
+    fn label(&self) -> &'static str {
+        "Dense geometry"
+    }
+
+    fn look(&self) -> &'static str {
+        "day"
+    }
+
+    fn populate(
+        &self,
+        world: &mut World,
+        config: &StressConfig,
+        files: &HashMap<String, StressFile>,
+    ) -> Result<(u32, (Vec3, Vec3)), String> {
+        populate(world, config, files)
+    }
+
+    fn add_systems(&self, app: &mut App, moving_nodes: u32) {
+        // Its moving objects bob and turn as the tower field's do.
+        if moving_nodes > 0 {
+            app.add_systems(FixedSimulation, animate.in_set(Animation));
+        }
+    }
+
+    /// Its virtual meshes' prefixes, streamed from their files.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn files(&self, assets: &Path, _rocks: bool) -> engine::Result<HashMap<String, StressFile>> {
+        let mut found = HashMap::default();
+        for name in FILES {
+            let path = assets.join("stress/dense").join(name);
+            let bytes = files::read_prefix(&path, 128, engine::VirtualMesh::prefix_bytes).map_err(
+                |error| {
+                    Error::new(
+                        error.code,
+                        error.path,
+                        format!(
+                            "{} Build the files with `cargo run -p engine_vgbuild --release --bin dense_assets`.",
+                            error.message
+                        ),
+                    )
+                },
+            )?;
+            let url = Some(path.to_string_lossy().into_owned());
+            found.insert(
+                name.to_owned(),
+                StressFile {
+                    bytes,
+                    url,
+                    size: None,
+                },
+            );
+        }
+        Ok(found)
+    }
 }

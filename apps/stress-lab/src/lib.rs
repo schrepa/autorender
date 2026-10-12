@@ -6,6 +6,7 @@ mod catalog;
 mod city;
 mod config;
 mod dense;
+mod field;
 mod game;
 mod highlands;
 mod metrics;
@@ -16,6 +17,7 @@ mod observation;
 mod presets;
 mod scene;
 mod shapes;
+mod world;
 
 pub use authored::{AuthoredScene, PlayerWalk};
 pub use catalog::{Catalog, Choice, Switch, catalog, switches};

@@ -13,6 +13,8 @@
 //! nodes; without it, every part is a root whose motion reproduces the same
 //! poses. Both layouts display the same city.
 
+mod world;
+
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::ops::DerefMut;
 
@@ -21,6 +23,7 @@ use engine::prelude::*;
 use crate::scene::{Animation, hash, position_for_index};
 use crate::shapes::{Library, Paint, Shape, Tex};
 use crate::{FrameMetrics, StressConfig, metrics};
+pub(crate) use world::CityWorld;
 
 /// Street grid: 20-unit blocks between 4-unit streets, centered on multiples
 /// of `PERIOD`.
@@ -618,19 +621,6 @@ pub(crate) fn budget(config: &StressConfig, per_block: f32) -> (u32, u32, f32) {
 /// The block row the river runs along, for cities wide enough to have one.
 pub(crate) fn river_row(radius: f32) -> Option<i32> {
     (radius >= 4.0).then(|| (radius * 0.45).round() as i32)
-}
-
-/// A street-level view across the river toward the core, or from an
-/// avenue when the city has no river.
-pub(crate) fn close_view(config: &StressConfig) -> (Vec3, Vec3) {
-    let (_, _, radius) = budget(config, PER_BLOCK);
-    match river_row(radius) {
-        Some(row) => (
-            Vec3::new(-PERIOD * 0.5, 14.0, row as f32 * PERIOD + PERIOD * 0.5),
-            Vec3::new(PERIOD * 0.5, 55.0, 0.0),
-        ),
-        None => (Vec3::new(0.0, 16.0, 110.0), Vec3::new(0.0, 30.0, 0.0)),
-    }
 }
 
 fn plan(config: &StressConfig) -> City {
