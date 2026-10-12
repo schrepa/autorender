@@ -106,7 +106,8 @@ pub(super) fn bake_on_worker(
         // Hosts may keep the baked layers, by the input's
         // hash.
         let identity = content_hash(&input).to_le_bytes().to_vec();
-        state.bake_job = Some(jobs.submit_cacheable(BAKE_JOB, input, priority, identity));
+        state.bake_job =
+            Some(jobs.submit_cacheable(BakeJob::KIND.name(), input, priority, identity));
         return;
     };
     let Some(output) = jobs.take(id) else {

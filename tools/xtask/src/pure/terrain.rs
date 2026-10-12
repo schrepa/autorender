@@ -14,8 +14,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::{Terrain, TerrainSource};
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use engine_terrain::jobs::{
-    self, BAKE_JOB, BAND_JOB, BakeJob, BandJob, FAR_JOB, FarJob, PLACE_JOB, PlaceJob, StackView,
-    TILE_JOB, TerrainRecipe, TerrainWorker, TileJob, WALK_JOB, WalkJob,
+    self, BakeJob, BandJob, FarJob, PlaceJob, StackView, TerrainRecipe, TerrainWorker, TileJob,
+    WalkJob,
 };
 use engine_terrain::{
     BiomeRules, FileHeader, Generator, Layer, Layers, NavOptions, Obstacle, Placing, Pyramid,
@@ -63,7 +63,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     );
     observed.check(
         worker.run(
-            BAKE_JOB,
+            BakeJob::KIND.name(),
             &BakeJob {
                 layers: Layers::clone(authored),
                 pyramid,
@@ -117,7 +117,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 recipe: "recipe".into(),
                 key,
             };
-            let far = jobs::far_output(&worker.run(FAR_JOB, &job.input(&near))?)
+            let far = jobs::far_output(&worker.run(FarJob::KIND.name(), &job.input(&near))?)
                 .map_err(|error| error.to_string())?;
             observed.hash(format!("far {}", name(key)), &codec::encode(&far));
             observed.record(format!("far objects {}", name(key)), far.len());
@@ -211,7 +211,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         obstacles: obstacles.to_vec(),
         options,
     };
-    let job = worker.run(WALK_JOB, &walked.input())?;
+    let job = worker.run(WalkJob::KIND.name(), &walked.input())?;
     let found = walk(&baked, &pyramid, route.0, route.1, &obstacles, &options);
     observed.check(job == codec::encode(&found), || {
         "the walk job differs from the walk in place".into()
@@ -388,7 +388,7 @@ impl Recipe {
             placing,
         };
         let input = job.input(false);
-        let whole = worker.run(TILE_JOB, &input)?;
+        let whole = worker.run(TileJob::KIND.name(), &input)?;
         let what = format!("{} tile {} placing {placing:?}", self.key, name(key));
         let mut generator = Generator::new(self.layers.clone(), &self.pyramid, key)
             .with_surface(self.rules.clone())
@@ -401,9 +401,10 @@ impl Recipe {
         observed.check(codec::encode(&in_place) == whole, || {
             format!("{what}: the job differs from the tile generated in place")
         });
-        observed.check(worker.sliced(TILE_JOB, &input)? == whole, || {
-            format!("{what}: the job run a slice at a time differs from the job run whole")
-        });
+        observed.check(
+            worker.sliced(TileJob::KIND.name(), &input)? == whole,
+            || format!("{what}: the job run a slice at a time differs from the job run whole"),
+        );
         let (shape, staged) = worker.staged(&job.input(true))?;
         observed.check(staged == whole, || {
             format!("{what}: the staged job differs from the job")
@@ -441,7 +442,7 @@ impl Recipe {
                 first: (band * size) as u32,
                 end: ((band + 1) * size).min(TILE_STRIDE as usize) as u32,
             };
-            let output = worker.run(BAND_JOB, &job.input())?;
+            let output = worker.run(BandJob::KIND.name(), &job.input())?;
             parts.push(jobs::band_output(&output).map_err(|error| error.to_string())?);
         }
         let spacing = self.pyramid.spacing(u32::from(key.level));
@@ -472,7 +473,7 @@ impl Recipe {
                 from: start,
                 end,
             };
-            let output = worker.run(PLACE_JOB, &job.input(&tile))?;
+            let output = worker.run(PlaceJob::KIND.name(), &job.input(&tile))?;
             objects.extend(jobs::far_output(&output).map_err(|error| error.to_string())?);
         }
         Ok(tile.with_placed(objects, placing))
@@ -528,7 +529,7 @@ impl Worker {
     /// hands out first, if any, and its output.
     fn staged(&mut self, input: &[u8]) -> Result<(Option<Vec<u8>>, Vec<u8>), String> {
         self.next += 1;
-        self.worker.start(self.next, TILE_JOB, input)?;
+        self.worker.start(self.next, TileJob::KIND.name(), input)?;
         let mut part = None;
         loop {
             let output = self.worker.step(self.next, SLICE)?;
@@ -537,7 +538,7 @@ impl Worker {
             }
             if let Some(output) = output {
                 self.log.push(json!({
-                    "job": TILE_JOB,
+                    "job": TileJob::KIND.name(),
                     "input": STANDARD.encode(input),
                     "slice": SLICE,
                     "part": part.as_deref().map(hash),

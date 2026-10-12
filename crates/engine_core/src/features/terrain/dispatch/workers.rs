@@ -132,7 +132,11 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                 continue;
             };
             state.dispatched.remove(&key);
-            match job_output(TILE_JOB, output, engine_terrain::jobs::tile_output) {
+            match job_output(
+                TileJob::KIND.name(),
+                output,
+                engine_terrain::jobs::tile_output,
+            ) {
                 Ok(tile)
                     if made == self.generation
                         && self.target.contains(&key)
@@ -181,7 +185,11 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                 if band.is_none()
                     && let Some(output) = self.slots.jobs.take(*id)
                 {
-                    match job_output(BAND_JOB, output, engine_terrain::jobs::band_output) {
+                    match job_output(
+                        BandJob::KIND.name(),
+                        output,
+                        engine_terrain::jobs::band_output,
+                    ) {
                         Ok(done) => *band = Some(done),
                         Err(error) => failed = Some(error),
                     }
@@ -203,8 +211,9 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
             let spacing = state.terrain.pyramid.spacing(u32::from(key.level));
             let tile = match failed {
                 Some(error) => Err(error),
-                None => engine_terrain::merge_bands(key, spacing, &bands)
-                    .ok_or_else(|| format!("{BAND_JOB}: the bands of {key:?} do not join")),
+                None => engine_terrain::merge_bands(key, spacing, &bands).ok_or_else(|| {
+                    format!("{}: the bands of {key:?} do not join", BandJob::KIND.name())
+                }),
             };
             let tile = match tile {
                 Ok(tile) => tile,
@@ -267,7 +276,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                 end,
             };
             let id = self.slots.jobs.submit_cacheable(
-                PLACE_JOB,
+                PlaceJob::KIND.name(),
                 job.input(&tile),
                 priority,
                 job.identity(),
@@ -307,7 +316,11 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                 if objects.is_none()
                     && let Some(output) = self.slots.jobs.take(*id)
                 {
-                    match job_output(PLACE_JOB, output, engine_terrain::jobs::far_output) {
+                    match job_output(
+                        PlaceJob::KIND.name(),
+                        output,
+                        engine_terrain::jobs::far_output,
+                    ) {
                         Ok(placed) => *objects = Some(placed),
                         Err(error) => failed = Some(error),
                     }
@@ -396,7 +409,11 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
             let Some((_, tile, ..)) = state.far_jobs.remove(&key) else {
                 continue;
             };
-            match job_output(FAR_JOB, output, engine_terrain::jobs::far_output) {
+            match job_output(
+                FarJob::KIND.name(),
+                output,
+                engine_terrain::jobs::far_output,
+            ) {
                 Ok(far) => {
                     let placed = merge_placed(tile.placed(), &far);
                     state.store.complete(Arc::new(
@@ -453,10 +470,10 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
             key,
         };
         let input = job.input(&tile);
-        let id = self
-            .slots
-            .jobs
-            .submit_cacheable(FAR_JOB, input, priority, job.identity());
+        let id =
+            self.slots
+                .jobs
+                .submit_cacheable(FarJob::KIND.name(), input, priority, job.identity());
         state.far_wanted.remove(&key);
         state.far_jobs.insert(key, (id, tile, arrival, priority));
     }
@@ -483,10 +500,12 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                 first: (band * size) as u32,
                 end: end as u32,
             };
-            let id =
-                self.slots
-                    .jobs
-                    .submit_cacheable(BAND_JOB, job.input(), priority, job.identity());
+            let id = self.slots.jobs.submit_cacheable(
+                BandJob::KIND.name(),
+                job.input(),
+                priority,
+                job.identity(),
+            );
             jobs.push((id, None));
         }
         let covered = jobs.len() * size;
@@ -591,7 +610,7 @@ impl Executor for OnWorkers<'_, '_> {
             placing,
         };
         let id = self.slots.jobs.submit_cacheable(
-            TILE_JOB,
+            TileJob::KIND.name(),
             job.input(!resident),
             priority,
             job.identity(),
@@ -633,7 +652,7 @@ impl Executor for OnWorkers<'_, '_> {
                 placing: Placing::All,
             };
             let id = self.slots.jobs.submit_cacheable(
-                TILE_JOB,
+                TileJob::KIND.name(),
                 job.input(false),
                 priority,
                 job.identity(),

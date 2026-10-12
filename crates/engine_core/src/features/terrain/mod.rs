@@ -96,8 +96,7 @@ use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::jobs::{
-    BAKE_JOB, BAND_JOB, BakeJob, BandJob, FAR_JOB, FarJob, PLACE_JOB, PlaceJob, StackView,
-    TILE_JOB, TerrainRecipe, TileJob, WalkJob,
+    BakeJob, BandJob, FarJob, PlaceJob, StackView, TerrainRecipe, TileJob, WalkJob,
 };
 use engine_terrain::{
     Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats,

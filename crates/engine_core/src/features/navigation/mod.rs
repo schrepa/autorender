@@ -12,7 +12,7 @@
 //! agents start walking once a worker hands its walk back.
 
 use bevy_ecs::prelude::*;
-use engine_terrain::jobs::WALK_JOB;
+use engine_terrain::jobs::WalkJob;
 use engine_terrain::{NavOptions, NavPath, WalkSearch};
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
@@ -242,7 +242,7 @@ pub(crate) fn walk_agents(
                 let identity = input.clone();
                 Some((
                     origin,
-                    jobs.submit_cacheable(WALK_JOB, input, priority, identity),
+                    jobs.submit_cacheable(WalkJob::KIND.name(), input, priority, identity),
                 ))
             });
         if let Some((origin, id)) = handed {

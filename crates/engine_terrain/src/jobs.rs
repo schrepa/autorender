@@ -27,16 +27,49 @@ use crate::{
     Tile, TileBand, TileKey, WalkSearch,
 };
 
-/// The kinds of terrain jobs: a tile of a shared recipe, the objects
-/// standing far away on one, a walk over one, and a stack's bakes.
-pub const TILE_JOB: &str = "terrain_tile";
-pub const FAR_JOB: &str = "terrain_far";
-/// A band of a tile's rows, and the objects placed on a tile its bands
-/// made.
-pub const BAND_JOB: &str = "terrain_band";
-pub const PLACE_JOB: &str = "terrain_place";
-pub const WALK_JOB: &str = "terrain_walk";
-pub const BAKE_JOB: &str = "terrain_bake";
+/// The kinds of terrain jobs, which hosts carry by name: a tile of a
+/// shared recipe, the objects standing far away on one, a band of a tile's
+/// rows, the objects placed on a tile its bands made, a walk over one, and
+/// a stack's bakes. Workers match every kind, so a kind added without its
+/// work fails to build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobKind {
+    Tile,
+    Far,
+    Band,
+    Place,
+    Walk,
+    Bake,
+}
+
+impl JobKind {
+    /// Every kind.
+    pub const ALL: [Self; 6] = [
+        Self::Tile,
+        Self::Far,
+        Self::Band,
+        Self::Place,
+        Self::Walk,
+        Self::Bake,
+    ];
+
+    /// Its name, as hosts carry it and key the outputs they keep by.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Tile => "terrain_tile",
+            Self::Far => "terrain_far",
+            Self::Band => "terrain_band",
+            Self::Place => "terrain_place",
+            Self::Walk => "terrain_walk",
+            Self::Bake => "terrain_bake",
+        }
+    }
+
+    /// The kind named `name`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.name() == name)
+    }
+}
 
 codec::tagged!(Placing, "invalid placing" {
     0 => All,
@@ -100,7 +133,7 @@ pub fn share_recipe(recipe: &TerrainRecipe) -> Vec<u8> {
     writer.into_bytes()
 }
 
-/// A [`TILE_JOB`]: tile `key` of the recipe shared as `recipe`, with
+/// A [`JobKind::Tile`]: tile `key` of the recipe shared as `recipe`, with
 /// `placing`'s objects. Like every terrain job, it is its own identity:
 /// each field is something its output depends on, and hosts keep the
 /// output by the job encoded.
@@ -118,6 +151,8 @@ record!(TileJob {
 });
 
 impl TileJob {
+    pub const KIND: JobKind = JobKind::Tile;
+
     /// What hosts keep its output by: the job.
     pub fn identity(&self) -> Vec<u8> {
         codec::encode(self)
@@ -132,12 +167,12 @@ impl TileJob {
     }
 }
 
-/// A [`TILE_JOB`]'s output, and its part: the tile, or its shape alone.
+/// A [`JobKind::Tile`]'s output, and its part: the tile, or its shape alone.
 pub fn tile_output(bytes: &[u8]) -> Result<Tile, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`FAR_JOB`]: the objects of the recipe shared as `recipe` standing
+/// A [`JobKind::Far`]: the objects of the recipe shared as `recipe` standing
 /// far away on its tile `key`, which that recipe generates.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FarJob {
@@ -148,6 +183,8 @@ pub struct FarJob {
 record!(FarJob { recipe, key });
 
 impl FarJob {
+    pub const KIND: JobKind = JobKind::Far;
+
     /// What hosts keep its output by: the job.
     pub fn identity(&self) -> Vec<u8> {
         codec::encode(self)
@@ -161,7 +198,7 @@ impl FarJob {
     }
 }
 
-/// A [`BAND_JOB`]: stored rows `first` up to `end` (0 to 259) of tile
+/// A [`JobKind::Band`]: stored rows `first` up to `end` (0 to 259) of tile
 /// `key` of the recipe shared as `recipe`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BandJob {
@@ -179,6 +216,8 @@ record!(BandJob {
 });
 
 impl BandJob {
+    pub const KIND: JobKind = JobKind::Band;
+
     /// What hosts keep its output by: the job.
     pub fn identity(&self) -> Vec<u8> {
         codec::encode(self)
@@ -190,16 +229,16 @@ impl BandJob {
     }
 }
 
-/// A [`BAND_JOB`]'s output: the band's rows, which
+/// A [`JobKind::Band`]'s output: the band's rows, which
 /// [`crate::merge_bands`] joins with the tile's other bands.
 pub fn band_output(bytes: &[u8]) -> Result<TileBand, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`PLACE_JOB`]: `placing`'s objects of the recipe shared as `recipe`
+/// A [`JobKind::Place`]: `placing`'s objects of the recipe shared as `recipe`
 /// on its tile `key`, from layer and row `from` up to `end` (none for
 /// the rest, with what authors stand on it). Its output is the objects, as
-/// a [`FAR_JOB`]'s ([`far_output`]).
+/// a [`JobKind::Far`]'s ([`far_output`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaceJob {
     pub recipe: String,
@@ -218,6 +257,8 @@ record!(PlaceJob {
 });
 
 impl PlaceJob {
+    pub const KIND: JobKind = JobKind::Place;
+
     /// What hosts keep its output by: the job.
     pub fn identity(&self) -> Vec<u8> {
         codec::encode(self)
@@ -237,13 +278,13 @@ impl PlaceJob {
     }
 }
 
-/// A [`FAR_JOB`]'s output: the objects, which [`crate::merge_placed`] adds
+/// A [`JobKind::Far`]'s output: the objects, which [`crate::merge_placed`] adds
 /// to the tile's own.
 pub fn far_output(bytes: &[u8]) -> Result<Vec<Placed>, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`WALK_JOB`]: the shortest walk over the recipe shared as `recipe`
+/// A [`JobKind::Walk`]: the shortest walk over the recipe shared as `recipe`
 /// from terrain-local `from` to `to` among `obstacles`, as `options`
 /// walk.
 #[derive(Clone, Debug, PartialEq)]
@@ -264,6 +305,8 @@ record!(WalkJob {
 });
 
 impl WalkJob {
+    pub const KIND: JobKind = JobKind::Walk;
+
     /// What hosts keep its output by: the job.
     pub fn identity(&self) -> Vec<u8> {
         codec::encode(self)
@@ -275,12 +318,12 @@ impl WalkJob {
     }
 }
 
-/// A [`WALK_JOB`]'s output: the walk, `None` where none reaches.
+/// A [`JobKind::Walk`]'s output: the walk, `None` where none reaches.
 pub fn walk_output(bytes: &[u8]) -> Result<Option<NavPath>, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`BAKE_JOB`]: every bake of `layers` over `pyramid`. Its input is the
+/// A [`JobKind::Bake`]: every bake of `layers` over `pyramid`. Its input is the
 /// job; as its layers can hold whole heightmaps, hosts keep its output by
 /// that input's content hash, which engines compute.
 #[derive(Clone, Debug, PartialEq)]
@@ -292,13 +335,15 @@ pub struct BakeJob {
 record!(BakeJob { layers, pyramid });
 
 impl BakeJob {
+    pub const KIND: JobKind = JobKind::Bake;
+
     /// Its input: the job.
     pub fn input(&self) -> Vec<u8> {
         codec::encode(self)
     }
 }
 
-/// A [`BAKE_JOB`]'s output: the layers with every bake done.
+/// A [`JobKind::Bake`]'s output: the layers with every bake done.
 pub fn bake_output(bytes: &[u8]) -> Result<Layers, CodecError> {
     codec::decode(bytes)
 }
@@ -396,9 +441,10 @@ impl TerrainWorker {
     /// [`Self::step`] until done; another of the same id stops.
     pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
         let invalid = |error: CodecError| error.to_string();
+        let kind = JobKind::from_name(kind).ok_or_else(|| format!("unknown job kind {kind}"))?;
         let mut reader = Reader::new(input);
         let running = match kind {
-            TILE_JOB => {
+            JobKind::Tile => {
                 let TileJob {
                     recipe,
                     key,
@@ -418,7 +464,7 @@ impl TerrainWorker {
                         .with_materials(recipe.materials),
                 )
             }
-            FAR_JOB => {
+            JobKind::Far => {
                 let recipe: String = reader.get().map_err(invalid)?;
                 let tile: Tile = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
@@ -432,7 +478,7 @@ impl TerrainWorker {
                     recipe.rules.clone(),
                 ))
             }
-            PLACE_JOB => {
+            JobKind::Place => {
                 let recipe: String = reader.get().map_err(invalid)?;
                 let tile: Tile = reader.get().map_err(invalid)?;
                 let placing: Placing = reader.get().map_err(invalid)?;
@@ -454,7 +500,7 @@ impl TerrainWorker {
                     ),
                 ))
             }
-            BAND_JOB => {
+            JobKind::Band => {
                 let BandJob {
                     recipe,
                     key,
@@ -479,7 +525,7 @@ impl TerrainWorker {
                         .with_materials(recipe.materials),
                 )
             }
-            WALK_JOB => {
+            JobKind::Walk => {
                 let WalkJob {
                     recipe,
                     from,
@@ -498,12 +544,11 @@ impl TerrainWorker {
                     &options,
                 )))
             }
-            BAKE_JOB => {
+            JobKind::Bake => {
                 let BakeJob { layers, pyramid } = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
                 Running::Bake(Box::new((layers, pyramid)))
             }
-            _ => return Err(format!("unknown job kind {kind}")),
         };
         self.running.insert(id, running);
         Ok(())
