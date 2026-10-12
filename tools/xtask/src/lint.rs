@@ -26,8 +26,8 @@ pub(crate) struct Stage {
 /// feature layering, the facade's exports), the structure ratchet (file
 /// lengths, struct widths), shaders against their Rust layouts, the pure
 /// checks' corpora, Clippy (the workspace, the native host's tools, the
-/// browser clients, the app template), the browser clients the web host
-/// imports, and TypeScript.
+/// browser clients, the app template), rustdoc, the browser clients the web
+/// host imports, and TypeScript.
 pub(crate) const LINT: &[Stage] = &[
     Stage {
         name: "policy",
@@ -156,6 +156,12 @@ pub(crate) const LINT: &[Stage] = &[
                 ],
             )
         },
+    },
+    // Every item's documentation, natively and in the browser façade.
+    Stage {
+        name: "docs",
+        needs: &[],
+        run: crate::pipeline::docs,
     },
     // The host imports generated declarations, including on a clean
     // checkout; their types do not depend on the profile. `cargo xtask

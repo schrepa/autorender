@@ -110,7 +110,7 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
                 let listed = &code[at + attribute.len()..];
                 let listed = &listed[..listed.find(')').unwrap_or(listed.len())];
                 for lint in listed.split(',').filter(|item| !item.contains('=')) {
-                    if lints.iter().any(|key| key == lint) || GROUPS.contains(&lint) {
+                    if lints.iter().any(|key| covers(key, lint)) || GROUPS.contains(&lint) {
                         problems.file(
                             path,
                             &format!(
@@ -166,6 +166,15 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
             }
         }
     }
+}
+
+/// Whether the workspace lint `key` is `lint`, or a tool's whole group
+/// (`rustdoc::all`) that holds it.
+fn covers(key: &str, lint: &str) -> bool {
+    key == lint
+        || key
+            .strip_suffix("all")
+            .is_some_and(|tool| tool.ends_with("::") && lint.starts_with(tool))
 }
 
 /// Whether `path` is the root file of a crate target (a library, binary,

@@ -51,6 +51,10 @@ pub fn dev(root: &Path, port: u16) -> Result<(), String> {
     )
 }
 
+/// The documentation of every item, private ones included, of the native
+/// workspace and of the browser façade, which fails where the workspace's
+/// rustdoc lints find a link that does not resolve, public docs linking a
+/// private item, or malformed markup.
 pub fn docs(root: &Path) -> Result<(), String> {
     run(
         root,
@@ -60,6 +64,7 @@ pub fn docs(root: &Path) -> Result<(), String> {
             "--workspace",
             "--all-features",
             "--no-deps",
+            "--document-private-items",
             "--locked",
         ],
     )?;
@@ -78,6 +83,7 @@ pub fn docs(root: &Path) -> Result<(), String> {
             "--target",
             WASM_TARGET,
             "--no-deps",
+            "--document-private-items",
             "--locked",
         ],
     )

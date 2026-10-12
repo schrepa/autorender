@@ -105,8 +105,9 @@ allow_attributes_without_reason = "deny"
 missing_assert_message = "deny"
 
 [workspace.lints.rustdoc]
-# Every crate opens by saying what it is.
-missing_crate_level_docs = "deny"
+# Every rustdoc lint: every crate opens by saying what it is, every link
+# resolves, public docs link public items alone, and markup is well formed.
+all = "deny"
 
 [profile.release]
 lto = "thin"
