@@ -142,7 +142,7 @@ export const MAX_VIEW_WIDTH = 2560;
 export const MAX_VIEW_HEIGHT = 1440;
 
 /** What an animation frame did (Rust's `engine::host::FramePhase`), by name. */
-export const FRAME_PHASES = {"compiling":0,"playing":3,"preparing":1,"started":2};
+export const FRAME_PHASES = {"compiling":0,"idle":4,"playing":3,"preparing":1,"started":2};
 
 /**
  * The engine switches every host takes (Rust's `engine::host::SETTINGS`),

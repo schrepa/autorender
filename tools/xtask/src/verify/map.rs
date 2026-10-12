@@ -713,6 +713,15 @@ pub(crate) const MAP: &[Rule] = &[
             Browser,
         ],
     },
+    // The frame loop every host runs.
+    Rule {
+        paths: &[
+            "crates/engine/src/host/frame_loop*",
+            "crates/engine_native/src/window*",
+            "web/src/engine/host.ts",
+        ],
+        checks: &[Smoke("frame-loop"), Smoke("streaming"), Smoke("terrain")],
+    },
     // The input every host gathers and frames take.
     Rule {
         paths: &[

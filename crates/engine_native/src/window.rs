@@ -206,7 +206,14 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
         };
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => running.size = (size.width, size.height),
+            WindowEvent::Resized(size) => {
+                // A view that regains area asks for frames again.
+                let idle = running.drawn().0 == 0 || running.drawn().1 == 0;
+                running.size = (size.width, size.height);
+                if idle {
+                    running.window.request_redraw();
+                }
+            }
             WindowEvent::Focused(false) => {
                 self.input.clear();
                 running.host.suspend();
@@ -226,9 +233,16 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
             }
             WindowEvent::RedrawRequested => {
                 let start = Instant::now();
-                if let Err(error) = running.redraw() {
-                    self.outcome = Err(error);
-                    event_loop.exit();
+                let phase = match running.redraw() {
+                    Ok(phase) => phase,
+                    Err(error) => {
+                        self.outcome = Err(error);
+                        event_loop.exit();
+                        return;
+                    }
+                };
+                // An idle view asks for no frames until it has area again.
+                if phase == FramePhase::Idle {
                     return;
                 }
                 if let Some(measure) = self.options.measure
@@ -264,7 +278,8 @@ impl<G: Game> Running<G> {
         .unwrap_or((0, 0))
     }
 
-    fn redraw(&mut self) -> engine::Result<()> {
+    /// The window's animation frame: what it did.
+    fn redraw(&mut self) -> engine::Result<FramePhase> {
         let timestamp = engine::host::now_ms();
         let (width, height) = self.drawn();
         let phase = self.host.animation_frame(timestamp, width, height)?;
@@ -276,7 +291,7 @@ impl<G: Game> Running<G> {
                 self.exchange_jobs();
             }
         }
-        Ok(())
+        Ok(phase)
     }
 
     fn exchange_jobs(&mut self) {

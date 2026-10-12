@@ -239,9 +239,12 @@ function resize() {
   if (disposed || failed || !game) return;
   const bounds = canvas.getBoundingClientRect();
   const [width = 0, height = 0] = game.view_size(bounds.width, bounds.height, window.devicePixelRatio, resolutionScale);
+  const idle = pixelWidth === 0 || pixelHeight === 0;
   if (width !== pixelWidth || height !== pixelHeight) interrupt("resize");
   pixelWidth = width;
   pixelHeight = height;
+  // A view that regains area asks for frames again.
+  if (idle && width > 0 && height > 0) resume();
 }
 const observer = new ResizeObserver(resize);
 observer.observe(canvas);
@@ -351,6 +354,10 @@ function frame(timestamp: number) {
       if (hud.frame(game, timestamp)) options.poll?.(game);
       options.afterHostFrame?.(game, timestamp);
       if (!between) between = window.setTimeout(workBetweenFrames, 0);
+    } else if (phase === FRAME_PHASES.idle) {
+      // A view without area asks for no frames until it has area again.
+      hud.skipInterval();
+      return;
     }
     if (!disposed) request = requestAnimationFrame(frame);
   } catch (error) { fail(error); }

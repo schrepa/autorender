@@ -3,8 +3,10 @@
 //! time until frames stop creating pipelines and terrains have loaded the
 //! view (or [`PREPARE_LIMIT_MS`] passed), loading meanwhile while the GPU
 //! compiles; then ordinary frames of play, paced by the recent interval
-//! between them, so terrain loads in the time frames leave free. Hosts keep
-//! their transports: animation frames and tasks, or redraws.
+//! between them, so terrain loads in the time frames leave free. A view
+//! without area goes idle: no frame runs and time stands still until it has
+//! area again. Hosts keep their transports: animation frames and tasks, or
+//! redraws.
 
 use super::now_ms;
 use super::policy::{
@@ -28,15 +30,20 @@ pub enum FramePhase {
     Started = 2,
     /// An ordinary frame of play.
     Playing = 3,
+    /// The view has no area, as a minimized window's: no frame ran, and
+    /// time stands still until it has area again. Hosts ask for no frames
+    /// meanwhile, and the next once the view has area.
+    Idle = 4,
 }
 
 impl FramePhase {
     /// Every phase with its name, as the page's constants name them.
-    pub const ALL: [(Self, &'static str); 4] = [
+    pub const ALL: [(Self, &'static str); 5] = [
         (Self::Compiling, "compiling"),
         (Self::Preparing, "preparing"),
         (Self::Started, "started"),
         (Self::Playing, "playing"),
+        (Self::Idle, "idle"),
     ];
 }
 
@@ -64,6 +71,8 @@ pub struct FrameLoop {
     pace: Pace,
     // Whether terrain loads between frames.
     between: bool,
+    // Whether the view had no area at the last frame.
+    idle: bool,
 }
 
 impl Default for FrameLoop {
@@ -79,6 +88,7 @@ impl Default for FrameLoop {
                 spent: 0.0,
             },
             between: true,
+            idle: false,
         }
     }
 }
@@ -119,6 +129,15 @@ impl FrameLoop {
         timestamp: f64,
         (width, height): (u32, u32),
     ) -> crate::Result<FramePhase> {
+        if width == 0 || height == 0 {
+            // Time stands still from the last frame on.
+            if !self.idle {
+                host.suspend();
+                self.idle = true;
+            }
+            return Ok(FramePhase::Idle);
+        }
+        self.idle = false;
         let Some(preparing) = &mut self.preparing else {
             host.frame(timestamp, width, height)?;
             self.paced(timestamp);
