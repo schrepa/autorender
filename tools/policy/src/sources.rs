@@ -65,7 +65,7 @@ pub const UNSAFE_FILES: &[(&str, &str)] = &[
         "queries the calling thread's stack limits and committed pages",
     ),
     (
-        "crates/engine_render/src/renderer.rs",
+        "crates/engine_render/src/renderer/native.rs",
         "starts and stops a graphics debugger's capture",
     ),
     (
