@@ -25,7 +25,7 @@ impl Terrain {
         let TerrainSurface {
             rules,
             materials,
-            // Not compared.
+            // Taken in place: tiles place objects by the rules alone.
             assets: _,
             bridge: _,
         } = surface;

@@ -43,15 +43,23 @@ const TUBE_WALL: f32 = 4.0;
 const TUBE_SHELL: f32 = 0.7;
 const VAULT_SEGMENTS: usize = 10;
 
-/// The bridge entities spawned for each terrain, the bridges they draw, and
-/// the meshes and material they share.
+/// The bridge entities spawned for each terrain, and the meshes and
+/// material they share.
 #[derive(Resource, Default)]
 pub(crate) struct TerrainBridges {
-    spawned: HashMap<Entity, (Arc<[Bridge]>, Vec<Entity>)>,
+    spawned: HashMap<Entity, Spawned>,
     decks: Vec<(f32, MeshHandle)>,
     tubes: Vec<(f32, MeshHandle)>,
     pier: Option<MeshHandle>,
     stone: Option<MaterialHandle>,
+}
+
+/// A terrain's bridge entities: the bridges they draw, the terrain's bridge
+/// material they were made with, and the entities.
+struct Spawned {
+    bridges: Arc<[Bridge]>,
+    material: Option<MaterialHandle>,
+    entities: Vec<Entity>,
 }
 
 /// A box from `min` to `max` into `vertices` and `indices`, its faces
@@ -270,14 +278,16 @@ pub(crate) fn sync(world: &mut World) {
     let mut bridges = world
         .remove_resource::<TerrainBridges>()
         .unwrap_or_default();
-    // Terrains gone, or whose bridges changed.
+    // Terrains gone, or whose bridges or bridge material changed.
     let mut stale = Vec::new();
-    bridges.spawned.retain(|terrain, (set, entities)| {
-        let keep = wanted
-            .iter()
-            .any(|(entity, wanted, ..)| entity == terrain && Arc::ptr_eq(wanted, set));
+    bridges.spawned.retain(|terrain, spawned| {
+        let keep = wanted.iter().any(|(entity, wanted, _, material)| {
+            entity == terrain
+                && Arc::ptr_eq(wanted, &spawned.bridges)
+                && *material == spawned.material
+        });
         if !keep {
-            stale.append(entities);
+            stale.append(&mut spawned.entities);
         }
         keep
     });
@@ -292,6 +302,7 @@ pub(crate) fn sync(world: &mut World) {
         }
         let mut entities = Vec::new();
         let mut assets = world.resource_mut::<AssetLibrary>();
+        let chosen = material;
         let material = match material.or(bridges.stone) {
             Some(material) => material,
             None => {
@@ -379,7 +390,14 @@ pub(crate) fn sync(world: &mut World) {
             }
             entities.push(entity.id());
         }
-        bridges.spawned.insert(terrain, (set, entities));
+        bridges.spawned.insert(
+            terrain,
+            Spawned {
+                bridges: set,
+                material: chosen,
+                entities,
+            },
+        );
     }
     world.insert_resource(bridges);
 }

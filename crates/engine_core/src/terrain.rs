@@ -1945,7 +1945,8 @@ struct TerrainState {
     selection: Selection,
     /// Level-0 tiles collision wants.
     collision: Vec<TileKey>,
-    /// Advances whenever the resident tiles change.
+    /// Advances whenever the resident tiles, or the placement assets and
+    /// bridge material standing on them, change.
     revision: u64,
     /// The largest height difference measured between each level and the
     /// next coarser one ([`Tile::morph_error`]), what its patches morph by;
@@ -3033,7 +3034,6 @@ impl Terrains {
             })
     }
 
-    /// Advances whenever any terrain's resident tiles change.
     /// The bridges of `entity`'s roads, terrain-local, once
     /// its bakes are done.
     pub fn bridges(&self, entity: Entity) -> &[Bridge] {
@@ -3079,6 +3079,8 @@ impl Terrains {
             .map(|state| (state.entity, state.terrain.origin, &*state.bridges))
     }
 
+    /// Advances whenever any terrain's resident tiles, or what stands on
+    /// them, change.
     pub fn revision(&self) -> u64 {
         self.entries
             .iter()
@@ -4216,6 +4218,17 @@ impl TerrainStreaming {
                         }
                         // Surroundings follow on their own.
                         state.terrain.surroundings = terrain.surroundings;
+                        // What placement layers stand and the bridges'
+                        // material change in place: the objects tiles placed
+                        // stay where they are, and what reads the terrain
+                        // (drawing, collision, walks, bridges) takes the new.
+                        if terrain.surface.assets != state.terrain.surface.assets
+                            || terrain.surface.bridge != state.terrain.surface.bridge
+                        {
+                            state.terrain.surface.assets = terrain.surface.assets;
+                            state.terrain.surface.bridge = terrain.surface.bridge;
+                            state.revision += 1;
+                        }
                     }
                 }
                 None => {
