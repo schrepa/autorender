@@ -21,7 +21,8 @@ use crate::SceneError;
 /// What a referenced file holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SceneFileKind {
-    /// An image (PNG, JPEG or WebP), supplied decoded to RGBA8.
+    /// An image (PNG, JPEG or KTX2: `engine::host::IMAGE_FORMATS`),
+    /// supplied decoded to RGBA8 or transcoded.
     Image,
     /// An engine buffer, supplied as bytes: a mesh (`EMB1`, `EMB2`) or an
     /// animation (`EAN1`).

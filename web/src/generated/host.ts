@@ -137,7 +137,7 @@ export const FRAME_PHASES = {"compiling":0,"idle":4,"playing":3,"preparing":1,"s
  * page and natively (Rust's `engine::host::IMAGE_FORMATS`): the engine's
  * decoder, the browser's, the page's Basis transcoder, or none.
  */
-export const IMAGE_FORMATS = {"jpeg":{"native":"engine","page":"browser","what":"JPEG, to RGBA with opaque alpha"},"ktx2-basis":{"native":null,"page":"transcoder","what":"Basis Universal KTX2"},"ktx2-rgba8":{"native":"engine","page":"engine","what":"uncompressed RGBA8 KTX2 (VK_FORMAT_R8G8B8A8_UNORM or _SRGB), its base level as stored"},"png":{"native":"engine","page":"browser","what":"PNG: palettes, low bit depths and transparency expand to 8-bit RGBA, 16-bit channels drop to 8"},"webp":{"native":null,"page":"browser","what":"WebP"}};
+export const IMAGE_FORMATS = {"jpeg":{"native":"engine","page":"engine","what":"JPEG, to RGBA with opaque alpha"},"ktx2-basis":{"native":null,"page":"transcoder","what":"Basis Universal KTX2"},"ktx2-rgba8":{"native":"engine","page":"engine","what":"uncompressed RGBA8 KTX2 (VK_FORMAT_R8G8B8A8_UNORM or _SRGB), its base level as stored"},"png":{"native":"engine","page":"engine","what":"PNG: palettes, low bit depths and transparency expand to 8-bit RGBA, 16-bit channels drop to 8"}};
 
 /**
  * The engine switches every host takes (Rust's `engine::host::SETTINGS`),

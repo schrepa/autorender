@@ -9,8 +9,6 @@ pub enum ImageDecoder {
     /// The engine's decoder ([`decode_image`]): on the page's job workers,
     /// in place without them, and natively in place.
     Engine,
-    /// The browser's own decoder, on the page's job workers.
-    Browser,
     /// The page's vendored Basis Universal transcoder, to the block-
     /// compressed format the GPU samples.
     Transcoder,
@@ -21,7 +19,6 @@ impl ImageDecoder {
     pub fn name(self) -> &'static str {
         match self {
             Self::Engine => "engine",
-            Self::Browser => "browser",
             Self::Transcoder => "transcoder",
         }
     }
@@ -45,20 +42,14 @@ pub const IMAGE_FORMATS: &[ImageFormat] = &[
     ImageFormat {
         name: "png",
         what: "PNG: palettes, low bit depths and transparency expand to 8-bit RGBA, 16-bit channels drop to 8",
-        page: Some(ImageDecoder::Browser),
+        page: Some(ImageDecoder::Engine),
         native: Some(ImageDecoder::Engine),
     },
     ImageFormat {
         name: "jpeg",
         what: "JPEG, to RGBA with opaque alpha",
-        page: Some(ImageDecoder::Browser),
+        page: Some(ImageDecoder::Engine),
         native: Some(ImageDecoder::Engine),
-    },
-    ImageFormat {
-        name: "webp",
-        what: "WebP",
-        page: Some(ImageDecoder::Browser),
-        native: None,
     },
     ImageFormat {
         name: "ktx2-rgba8",
@@ -93,8 +84,6 @@ pub fn image_format(bytes: &[u8]) -> Option<&'static ImageFormat> {
         "png"
     } else if bytes.starts_with(&[0xff, 0xd8]) {
         "jpeg"
-    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        "webp"
     } else {
         return None;
     };
@@ -112,7 +101,7 @@ pub fn decode_image(uri: &str, bytes: &[u8]) -> Result<Image, String> {
         Some(name) => Err(format!(
             "{uri} is a {name} image, which the engine's decoder does not read (IMAGE_FORMATS)"
         )),
-        None => Err(format!("{uri} is not a PNG, JPEG, WebP or KTX2 image")),
+        None => Err(format!("{uri} is not a PNG, JPEG or KTX2 image")),
     }
 }
 

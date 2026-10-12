@@ -1,7 +1,8 @@
 // A job worker: runs in a Web Worker the page's pool starts,
 // holds what the engine shares with its workers and runs the jobs it hands
 // out with the engine's own code (the engine_worker module); and decodes
-// images and KTX2 textures at load boundaries off the page's thread.
+// images (with the engine's decoder) and KTX2 textures at load boundaries
+// off the page's thread.
 // Messages take effect in the order they came, so shares come before the
 // jobs reading them. The module runs its most urgent job a slice at a
 // time; between slices the worker reads its messages, and a job the engine
@@ -12,7 +13,6 @@
 // so, and the pool replaces it.
 
 import type { JobWorker } from "../../pkg/engine_worker";
-import { decodeImagePixels } from "./decode";
 import { type TranscodedImage, transcodeWith, workerTranscoder } from "./ktx2";
 import { fatal, panicReport } from "./panic";
 
@@ -24,7 +24,7 @@ type Request =
   | { type: "run"; id: number; kind: string; input: Uint8Array; priority: number }
   | { type: "cancel"; id: number }
   | { type: "ktx2"; task: number; uri: string; bytes: Uint8Array; format: TranscodedImage["format"]; basis: string }
-  | { type: "image"; task: number; uri: string; blob: Blob };
+  | { type: "image"; task: number; uri: string; bytes: Uint8Array };
 
 /** What a slice came to (`engine_worker::Report`), as the pool reads it. */
 type Report = { type: "done" | "part"; id: number; output: Uint8Array } | { type: "failed"; id: number; error: string };
@@ -142,7 +142,8 @@ async function handle(request: Request) {
       return;
     case "image":
       try {
-        const image = await decodeImagePixels(request.uri, request.blob);
+        if (!worker) throw new Error("worker unavailable");
+        const image = worker.decode_image(request.uri, request.bytes) as { width: number; height: number; pixels: Uint8Array };
         scope.postMessage({ type: "task", task: request.task, result: image }, [image.pixels.buffer as ArrayBuffer]);
       } catch (error) {
         scope.postMessage({ type: "task_failed", task: request.task, error: String(error) });

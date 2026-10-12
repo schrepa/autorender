@@ -4,8 +4,8 @@
 // and which a fresh run verifies); the pool carries its orders to the
 // workers and the cache (job-cache.ts), and hands back what workers report
 // and the cache reads. Workers run their most urgent job a slice at a
-// time, in the module. Images and KTX2 textures decode on them at load
-// boundaries too. Workers hold their own memory: shares travel as Blobs,
+// time, in the module. Images (with the engine's decoder) and KTX2
+// textures decode on them at load boundaries too. Workers hold their own memory: shares travel as Blobs,
 // which every worker reads without the page copying them again.
 // ?workers=N runs N workers and ?workers=off none, so the engine does the
 // work itself; a worker that breaks is replaced once, and the engine takes
@@ -229,9 +229,10 @@ export class JobPool {
     return fresh;
   }
 
-  /** Image `uri`'s RGBA8 pixels, decoded on a worker. */
-  decodeImage(uri: string, blob: Blob): Promise<Pixels> {
-    return this.task({ type: "image", uri, blob }, []) as Promise<Pixels>;
+  /** Image `uri`'s RGBA8 pixels, decoded from its file's `bytes` on a
+   * worker with the engine's decoder. */
+  decodeImage(uri: string, bytes: Uint8Array): Promise<Pixels> {
+    return this.task({ type: "image", uri, bytes }, [bytes.buffer as ArrayBuffer]) as Promise<Pixels>;
   }
 
   /** Runs the page's own task on the worker the engine says it waits least

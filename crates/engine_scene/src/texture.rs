@@ -37,7 +37,7 @@ pub struct SceneTexture {
     /// equal 255.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rgba8: Option<String>,
-    /// An image file (PNG, JPEG or WebP) as a path relative to the scene,
+    /// An image file (PNG, JPEG or KTX2) as a path relative to the scene,
     /// instead of inline pixels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(

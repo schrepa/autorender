@@ -294,6 +294,22 @@ mod browser {
         pub fn cancel(&mut self, id: f64) {
             self.worker.cancel(id as u64);
         }
+
+        /// Image `uri`'s `bytes` decoded ([`crate::decode_image`]) as
+        /// `{width, height, pixels}`.
+        pub fn decode_image(&self, uri: &str, bytes: &[u8]) -> Result<JsValue, JsValue> {
+            let image =
+                crate::decode_image(uri, bytes).map_err(|error| JsValue::from_str(&error))?;
+            let object = js_sys::Object::new();
+            let set = |field: &str, value: &JsValue| {
+                // Setting a field of a plain new object cannot fail.
+                let _ = js_sys::Reflect::set(&object, &JsValue::from_str(field), value);
+            };
+            set("width", &JsValue::from(image.width));
+            set("height", &JsValue::from(image.height));
+            set("pixels", &js_sys::Uint8Array::from(image.pixels.as_slice()));
+            Ok(object.into())
+        }
     }
 
     impl Default for JobWorker {

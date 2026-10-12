@@ -333,6 +333,7 @@
       "op": "digest",
       "smokes": [
         "agent",
+        "host-parity",
         "native"
       ]
     },

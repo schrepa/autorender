@@ -5048,7 +5048,7 @@
           ]
         },
         "uri": {
-          "description": "An image file (PNG, JPEG or WebP) as a path relative to the scene,\ninstead of inline pixels.",
+          "description": "An image file (PNG, JPEG or KTX2) as a path relative to the scene,\ninstead of inline pixels.",
           "type": [
             "string",
             "null"

@@ -2,6 +2,8 @@
  * commands sent to the Stress Lab on the development server's page and
  * natively give replies with the same fields, the same error codes and
  * paths, and describe lists the same page parameters and game controls,
+ * and an authored scene's partially transparent PNG decodes to a texture
+ * of the same content hash on both,
  * but for the known divergences listed here, each tagged with the hosts
  * step that removes it (`host`: a difference of the transports, which
  * stays). A divergence that no longer shows fails the check until its entry
@@ -13,9 +15,12 @@
 // @ts-check
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { crc32, deflateSync } from "node:zlib";
 import { launchBrowserSession } from "./agent-browser.mjs";
 import { launchNativeSession } from "./agent-native.mjs";
 import { cargoBinaries, devUrl, protocol } from "./harness.mjs";
+import { workspacePath } from "./workspace.mjs";
 
 // The native Stress Lab with its development tools, built in the background
 // while the page starts: nothing here is timed.
@@ -198,3 +203,55 @@ try {
   await web?.close();
   await native.close();
 }
+
+/** An RGBA8 PNG `width` pixels wide of `pixels`, rows from the top. */
+function png(width, pixels) {
+  const chunk = (type, data) => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(data.length, 0);
+    head.write(type, 4, "latin1");
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), data])), 0);
+    return Buffer.concat([head, data, crc]);
+  };
+  const height = pixels.length / 4 / width;
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header.set([8, 6, 0, 0, 0], 8);
+  // Each row after its filter byte, none.
+  const rows = Buffer.concat(Array.from({ length: height }, (_, row) =>
+    Buffer.from([0, ...pixels.slice(row * width * 4, (row + 1) * width * 4)])));
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header), chunk("IDAT", deflateSync(rows)), chunk("IEND", Buffer.alloc(0))]);
+}
+
+// A scene whose texture is a PNG with partial alpha: a decoder that
+// premultiplies changes its colors (the faintest pixel's most).
+const folder = workspacePath("web/public/scenes/host-parity");
+const scenePath = workspacePath("web/public/scenes/host-parity.scene.json");
+await mkdir(folder, { recursive: true });
+await writeFile(`${folder}/alpha.png`, png(2, [201, 77, 13, 3, 10, 250, 128, 128, 255, 255, 255, 0, 33, 66, 99, 254]));
+await writeFile(scenePath, JSON.stringify({
+  id: "host-parity", revision: 1,
+  camera: { position: [0, 2, 4], target: [0, 0, 0], fov_degrees: 60, near: 0.1, far: 100 },
+  textures: [{ id: "alpha", uri: "host-parity/alpha.png" }],
+  materials: [{ id: "alpha", color: [1, 1, 1, 1], texture: "alpha" }],
+  meshes: [{ id: "box", source: { kind: "cube" } }],
+  entities: [{ id: "box", mesh: "box", material: "alpha", transform: { translation: [0, 0, 0] } }],
+}));
+let imagesWeb, imagesNative;
+try {
+  imagesNative = await launchNativeSession({ program: (await binaries)["stress-lab-native"], args: ["--source", scenePath, "--size=320x200"] });
+  imagesWeb = await launchBrowserSession({ url: devUrl("stress.html", { source: "/scenes/host-parity.scene.json" }).href });
+  const [web, native] = [await imagesWeb.execute({ op: "digest" }), await imagesNative.execute({ op: "digest" })];
+  assert.ok(web.ok && native.ok, JSON.stringify({ web: web.error, native: native.error }));
+  assert.equal(web.result.assets.textures.count, 1, JSON.stringify(web.result.assets));
+  assert.deepEqual(web.result.assets.textures, native.result.assets.textures, "the PNG decodes to the same texture on both hosts");
+} finally {
+  await imagesWeb?.close();
+  await imagesNative?.close();
+  await rm(folder, { recursive: true, force: true });
+  await rm(scenePath, { force: true });
+}
+console.log("host parity smoke passed: a partially transparent PNG decodes to the same texture on both hosts");

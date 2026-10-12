@@ -2,8 +2,8 @@
 //! ([`SceneLoad`]): the host reads what the load asks (files whole, and
 //! streamed files' prefixes, whose headers say how long they are) and has
 //! each image decoded as the load says ([`IMAGE_FORMATS`]: the engine's
-//! decoder, the page's on its job workers too; the browser's; the page's
-//! Basis transcoder), and the load holds them as the scene's files. Hosts
+//! decoder, the page's on its job workers; the page's Basis transcoder),
+//! and the load holds them as the scene's files. Hosts
 //! keep their transports: fetches relative to the scene's URL, or reads
 //! beside its file.
 
@@ -125,7 +125,7 @@ impl SceneLoad {
             }
             SceneFileKind::Image => {
                 let format = engine_worker::image_format(&bytes).ok_or_else(|| {
-                    invalid_texture(format!("{uri} is not a PNG, JPEG, WebP or KTX2 image"))
+                    invalid_texture(format!("{uri} is not a PNG, JPEG or KTX2 image"))
                 })?;
                 let decoder = match self.host {
                     LoadingHost::Page => format.page,
@@ -196,7 +196,7 @@ impl SceneLoad {
         }
     }
 
-    /// Image `uri` decoded, as [`decode_image`] or the browser decodes it.
+    /// Image `uri` decoded, as [`decode_image`] decodes it.
     pub fn image(&mut self, uri: &str, image: Image) {
         self.files
             .add_image(uri, image.width, image.height, image.pixels);

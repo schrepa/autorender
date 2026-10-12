@@ -111,8 +111,8 @@ impl PageSceneLoad {
     }
 
     /// The page read `bytes` of file `uri`, which streams from `url` where
-    /// it is a streamed file: for an image, who decodes it here
-    /// (`engine`, `browser` or `transcoder`, as `IMAGE_FORMATS` says).
+    /// it is a streamed file: for an image, who decodes it here (`engine`
+    /// or `transcoder`, as `IMAGE_FORMATS` says).
     pub fn read(
         &mut self,
         uri: &str,
