@@ -54,6 +54,12 @@ impl EntityIndices {
         previous
     }
 
+    /// Entities indexed since the last clear, which invariants check.
+    #[cfg(debug_assertions)]
+    pub(crate) fn len(&self) -> usize {
+        self.occupied.len()
+    }
+
     pub(crate) fn clear(&mut self) {
         for slot in self.occupied.drain(..) {
             self.entries[slot as usize] = EMPTY;
