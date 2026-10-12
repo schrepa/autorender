@@ -1,6 +1,6 @@
 //! Decals: one record per decal and the pass drawing their
-//! boxes after the opaque meshes. Everything here is created with the first
-//! frame that has decals.
+//! boxes after the opaque meshes, a feature of the renderer
+//! (`crate::render_features`) created with the first frame that has decals.
 
 use std::ops::Range;
 
@@ -71,13 +71,17 @@ pub(crate) fn pack_decals(
 mod gpu {
     use engine_core::collections::HashMap;
 
-    use engine_core::RenderSnapshot;
+    use engine_core::{Drawn, RenderSnapshot};
 
     use super::*;
     use crate::bindings::DECALS;
     use crate::buffers::storage;
     use crate::cached::{Bound, GroupCache, Versioned};
     use crate::materials::MaterialStore;
+    use crate::profiling::Span;
+    use crate::render_features::{Encode, FeaturePass, RenderFeature};
+    use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource};
+    use crate::targets::Targets;
 
     /// A frame's decals: those drawn and those beyond the GPU's binding.
     pub(crate) struct DecalFrame {
@@ -136,8 +140,9 @@ mod gpu {
             }
         }
 
-        pub(crate) fn capacity_bytes(&self) -> u64 {
-            self.records.size()
+        /// Whether `snapshot`'s frame draws decals.
+        pub(crate) fn wanted(snapshot: &RenderSnapshot) -> bool {
+            snapshot.environment.decals.enabled && !snapshot.decals.list.is_empty()
         }
 
         /// Uploads `snapshot`'s decals when they changed; `None` when the
@@ -152,9 +157,6 @@ mod gpu {
             (palette, parity): (Bound<'_>, usize),
             depth: &Versioned<wgpu::TextureView>,
         ) -> Option<DecalFrame> {
-            if !snapshot.environment.decals.enabled || snapshot.decals.list.is_empty() {
-                return None;
-            }
             let room = self.room;
             let dropped = pack_decals(
                 &snapshot.decals.list,
@@ -240,7 +242,7 @@ mod gpu {
         /// Draws the prepared decals over the opaque pass's color; call
         /// [`Self::ensure_pipelines`] first. `lights` is the local lights'
         /// group of lit frames.
-        pub(crate) fn draw(
+        fn draw(
             &self,
             pass: &mut wgpu::RenderPass<'_>,
             camera: &wgpu::BindGroup,
@@ -270,6 +272,59 @@ mod gpu {
                 }
                 pass.set_bind_group(1, materials.binding(run.material).0, &[]);
                 pass.draw(0..36, run.records.clone());
+            }
+        }
+    }
+
+    impl RenderFeature for DecalPass {
+        type Frame = DecalFrame;
+        type Stats = Drawn;
+
+        /// Decals draw over the opaque surfaces whose depth they sample,
+        /// shading local lights in frames binning them.
+        fn declare(_frame: &DecalFrame, shape: &FrameShape, graph: &mut RenderGraph) {
+            graph
+                .add(Pass::Feature(FeaturePass::Decals))
+                .read(Resource::Depth)
+                .read_if(shape.lights, Resource::Lights)
+                .color(shape.scene(), Access::Load);
+        }
+
+        fn encode(
+            &self,
+            _frame: &DecalFrame,
+            node: &Node,
+            encode: &Encode<'_>,
+            encoder: &mut wgpu::CommandEncoder,
+        ) {
+            let mut pass = encode.render_pass(
+                encoder,
+                node,
+                "engine/decals",
+                encode.profiler.span("decals").map(Span::render),
+            );
+            self.draw(
+                &mut pass,
+                encode.camera,
+                encode.materials,
+                encode.lights,
+                encode.targets != Targets::Canvas,
+            );
+        }
+
+        fn capacity_bytes(&self) -> u64 {
+            self.records.size()
+        }
+
+        /// Decals drawn, invalid ones, and those left out: the snapshot's
+        /// and those beyond the GPU's binding.
+        fn stats(frame: Option<&DecalFrame>, snapshot: &RenderSnapshot) -> Drawn {
+            Drawn {
+                drawn: frame.map_or(0, |frame| frame.drawn),
+                invalid: snapshot.decals.invalid.min(u32::MAX as usize) as u32,
+                dropped: (snapshot.decals.dropped as u64
+                    + frame.map_or(0, |frame| u64::from(frame.dropped)))
+                .min(u64::from(u32::MAX)) as u32,
             }
         }
     }

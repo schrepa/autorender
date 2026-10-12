@@ -28,6 +28,7 @@ mod lights;
 mod particles;
 mod pipelines;
 mod probes;
+mod render_features;
 mod render_graph;
 mod retained_uploads;
 pub mod shaders;

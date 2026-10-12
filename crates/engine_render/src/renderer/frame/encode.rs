@@ -3,6 +3,7 @@
 //! but the opaque ones (`opaque`).
 
 use super::*;
+use crate::render_features::{AttachmentViews, Encode, color_operations};
 
 impl Renderer {
     /// Encodes `node`, a pass the frame's render graph kept,
@@ -78,7 +79,7 @@ impl Renderer {
                 self.encode_visibility_resolve(state, encoder, view, node, phase.index());
             }
             Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
-            Pass::Decals => self.encode_decals(state, encoder, view, node),
+            Pass::Feature(pass) => self.encode_feature(pass, state, encoder, view, node),
             Pass::Water => report.draws += self.encode_water(state, encoder, view, node),
             Pass::CloudMarch => {
                 self.clouds
@@ -173,10 +174,8 @@ impl Renderer {
     }
 
     /// Begins `node`'s render pass, labeled `label`, over its attachments
-    /// with the operations the render graph derived for them (`canvas` is
-    /// the canvas's view), timed by `timestamp_writes`: how every pass
-    /// drawing into the graph's attachments begins, so none writes
-    /// operations of its own.
+    /// (`canvas` is the canvas's view), timed by `timestamp_writes`: as
+    /// features' passes begin (`render_features::render_pass`).
     pub(super) fn render_pass<'e>(
         &self,
         encoder: &'e mut wgpu::CommandEncoder,
@@ -185,47 +184,40 @@ impl Renderer {
         label: &'static str,
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) -> wgpu::RenderPass<'e> {
-        let (colors, count) = self.color_attachments(node, canvas);
-        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(label),
-            color_attachments: &colors[..count],
-            depth_stencil_attachment: self.depth_attachment(node),
-            timestamp_writes,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        })
+        let views = FrameViews {
+            renderer: self,
+            canvas,
+        };
+        crate::render_features::render_pass(encoder, node, &views, label, timestamp_writes)
     }
 
-    /// `node`'s color attachments in target order with the operations the
-    /// graph derived, and how many there are; `canvas` is the canvas's view.
-    fn color_attachments<'a>(
-        &'a self,
+    /// `node`, a feature's pass `pass`, encoded by its feature.
+    fn encode_feature(
+        &self,
+        pass: FeaturePass,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
         node: &Node,
-        canvas: &'a wgpu::TextureView,
-    ) -> ([Option<wgpu::RenderPassColorAttachment<'a>>; 4], usize) {
-        let mut attachments = [None, None, None, None];
-        let mut count = 0;
-        for (resource, ops) in node.colors() {
-            attachments[count] = Some(wgpu::RenderPassColorAttachment {
-                view: self.attachment_view(resource, canvas),
-                depth_slice: None,
-                resolve_target: None,
-                ops: color_operations(ops),
-            });
-            count += 1;
-        }
-        (attachments, count)
-    }
-
-    /// `node`'s depth attachment with the operations the graph derived,
-    /// read-only without them.
-    fn depth_attachment(&self, node: &Node) -> Option<wgpu::RenderPassDepthStencilAttachment<'_>> {
-        node.depth()
-            .map(|(_, ops)| wgpu::RenderPassDepthStencilAttachment {
-                view: &self.depth.view,
-                depth_ops: ops.map(depth_operations),
-                stencil_ops: None,
-            })
+    ) {
+        let views = FrameViews {
+            renderer: self,
+            canvas: view,
+        };
+        let lights = state
+            .features
+            .light_frame
+            .as_ref()
+            .and(self.lights.as_ref())
+            .map(LightPass::fragment_group);
+        let encode = Encode::new(
+            &views,
+            &self.profiler,
+            (self.camera.group(), &self.materials, lights),
+            state.shape.targets,
+        );
+        self.features
+            .encode(pass, &state.features.frames, node, &encode, encoder);
     }
 
     /// GPU presentation's blending, composition, culling and compaction.
@@ -363,36 +355,6 @@ impl Renderer {
                 self.profiler.span("light_bins"),
             );
         }
-    }
-
-    /// Decals into the frame's color target.
-    fn encode_decals(
-        &self,
-        state: &FrameState<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        node: &Node,
-    ) {
-        let features = &state.features;
-        let decals = self.decals.as_ref().expect("planned with decals");
-        let mut pass = self.render_pass(
-            encoder,
-            node,
-            view,
-            "engine/decals",
-            self.profiler.span("decals").map(Span::render),
-        );
-        decals.draw(
-            &mut pass,
-            self.camera.group(),
-            &self.materials,
-            features
-                .light_frame
-                .as_ref()
-                .and(self.lights.as_ref())
-                .map(LightPass::fragment_group),
-            state.shape.targets != Targets::Canvas,
-        );
     }
 
     /// Water over the opaque scene, writing its depth;
@@ -641,36 +603,15 @@ impl Renderer {
     }
 }
 
-/// A color attachment's operations as the render graph derived them.
-fn color_operations(ops: Ops) -> wgpu::Operations<wgpu::Color> {
-    wgpu::Operations {
-        load: match ops.load {
-            Load::Clear(Clear::Color([r, g, b, a])) => {
-                wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a })
-            }
-            Load::Clear(Clear::Depth(_)) => unreachable!("color attachments clear to colors"),
-            Load::Load => wgpu::LoadOp::Load,
-        },
-        store: store_operation(ops),
-    }
+/// A frame's attachments: the renderer's targets, and the canvas's view
+/// `canvas`.
+struct FrameViews<'a> {
+    renderer: &'a Renderer,
+    canvas: &'a wgpu::TextureView,
 }
 
-/// A depth attachment's operations as the render graph derived them.
-fn depth_operations(ops: Ops) -> wgpu::Operations<f32> {
-    wgpu::Operations {
-        load: match ops.load {
-            Load::Clear(Clear::Depth(depth)) => wgpu::LoadOp::Clear(depth),
-            Load::Clear(Clear::Color(_)) => unreachable!("depth attachments clear to depths"),
-            Load::Load => wgpu::LoadOp::Load,
-        },
-        store: store_operation(ops),
-    }
-}
-
-fn store_operation(ops: Ops) -> wgpu::StoreOp {
-    if ops.store {
-        wgpu::StoreOp::Store
-    } else {
-        wgpu::StoreOp::Discard
+impl AttachmentViews for FrameViews<'_> {
+    fn view(&self, resource: Resource) -> &wgpu::TextureView {
+        self.renderer.attachment_view(resource, self.canvas)
     }
 }

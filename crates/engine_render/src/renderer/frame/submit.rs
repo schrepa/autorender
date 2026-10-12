@@ -65,6 +65,7 @@ impl Renderer {
         if let (Some(frame), Some(pass)) = (&temporal_frame, &mut self.temporal) {
             pass.submitted(frame);
         }
+        self.features.after_submit();
         self.profiler.submitted();
         frame.present(&self.queue);
         // Native interfaces run finished work's callbacks, read-backs and

@@ -10,8 +10,10 @@
 //! the frame order of the passes' table, whatever order they were declared
 //! in, and the renderer encodes each kept pass by its [`Pass`] with the
 //! derived operations. [`plan`] declares the renderer's frame from its
-//! [`FrameShape`].
+//! [`FrameShape`], and each feature (`crate::render_features`) its own
+//! passes.
 
+pub(crate) use crate::render_features::FeaturePass;
 pub(crate) use crate::screen_effects::Effects;
 
 /// Builds [`Resource`], the list of every resource and each one's
@@ -262,8 +264,8 @@ pub(crate) enum Pass {
     },
     /// The depth pyramid and occlusion test between the opaque phases.
     OcclusionTest,
-    /// Decals over the opaque surfaces.
-    Decals,
+    /// A feature's pass, which the feature declares and encodes.
+    Feature(FeaturePass),
     /// Transparent surfaces and particles accumulated, then composited.
     Transparent,
     TransparentComposite,
@@ -284,13 +286,13 @@ pub(crate) enum Pass {
 }
 
 /// Builds the frame order from one table: every pass, in the order frames
-/// run them, under the name reports give it. Each row gives its pass's
-/// [`Pass::index`], its place in the order and its bit in the masks frames
-/// report, and the span profiling captures time it whole as,
-/// `stage_<name>`. A pass without a row, two rows of one pass or two of one
-/// name do not compile.
+/// run them, under the name reports give it, a feature's passes as
+/// `Feature(FeaturePass::..)`. Each row gives its pass's [`Pass::index`],
+/// its place in the order and its bit in the masks frames report, and the
+/// span profiling captures time it whole as, `stage_<name>`. A pass without
+/// a row, two rows of one pass or two of one name do not compile.
 macro_rules! passes {
-    ($($name:ident: $variant:ident $({ phase: $phase:path })?,)*) => {
+    ($($name:ident: $variant:ident $({ phase: $phase:path })? $(($feature:path))?,)*) => {
         /// Every pass's row in the frame order, named as reports name it.
         #[expect(non_camel_case_types, reason = "rows go by their passes' report names")]
         #[derive(Clone, Copy)]
@@ -309,7 +311,7 @@ macro_rules! passes {
             /// the masks frames report.
             pub(crate) const fn index(self) -> usize {
                 match self {
-                    $(Pass::$variant $({ phase: $phase })? => Row::$name as usize,)*
+                    $(Pass::$variant $({ phase: $phase })? $(($feature))? => Row::$name as usize,)*
                 }
             }
         }
@@ -342,7 +344,7 @@ passes! {
     visibility_phase_two: VisibilityIds { phase: Phase::Two },
     visibility_tiles_phase_two: Classify { phase: Phase::Two },
     visibility_resolve_phase_two: Resolve { phase: Phase::Two },
-    decals: Decals,
+    decals: Feature(FeaturePass::Decals),
     water: Water,
     cloud_march: CloudMarch,
     cloud_composite: CloudComposite,
@@ -719,7 +721,6 @@ pub(crate) struct FrameShape {
     pub(crate) shadow_clusters: bool,
     pub(crate) resolves: [bool; 2],
     pub(crate) lights: bool,
-    pub(crate) decals: bool,
     /// Water draws over the opaque scene.
     pub(crate) water: bool,
     /// The view's clouds march and cover the scene.
@@ -731,6 +732,17 @@ pub(crate) struct FrameShape {
     pub(crate) effects: Effects,
     /// Reflection probes capture faces after the frame.
     pub(crate) probes: bool,
+}
+
+impl FrameShape {
+    /// The main passes' color: the canvas, or the effects' scene target.
+    pub(crate) fn scene(&self) -> Resource {
+        if self.targets == Targets::Canvas {
+            Resource::Canvas
+        } else {
+            Resource::Scene
+        }
+    }
 }
 
 /// The opaque scene's clear color in the effects' linear targets: the
@@ -828,11 +840,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             (Surface, Clear::Color(TRANSPARENT)),
         ],
     };
-    let scene = if shape.targets == Targets::Canvas {
-        Canvas
-    } else {
-        Scene
-    };
+    let scene = shape.scene();
     for phase in Phase::first(shape.phases) {
         if phase == Phase::Two {
             graph
@@ -892,13 +900,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             }
             resolve.depth(Depth, Access::ReadOnly);
         }
-    }
-    if shape.decals {
-        graph
-            .add(Pass::Decals)
-            .read(Depth)
-            .read_if(shape.lights, Lights)
-            .color(scene, Access::Load);
     }
     // Water blends over the opaque scene and writes its
     // depth, which transparent surfaces and screen effects then see.

@@ -5,12 +5,9 @@
 //! submits it, and `frame_stats` reports it.
 
 use super::*;
-use crate::decals::DecalFrame;
 use crate::gpu_presentation::{CullingView, GpuPrepared, PresentationInputs, RecordsKey, Staging};
 use crate::particles::ParticleFrame;
-use crate::render_graph::{
-    self, Clear, Effects, FrameShape, Load, Node, Ops, Pass, Phase, Resource,
-};
+use crate::render_graph::{self, Effects, FeaturePass, FrameShape, Node, Pass, Phase, Resource};
 use crate::shadows::{MapSources, ShadowFrame, ShadowInputs};
 
 mod encode;
@@ -156,7 +153,8 @@ pub(super) struct Features<'s> {
     pub(super) transparent_draws: bool,
     pub(super) particle_frame: Option<ParticleFrame>,
     pub(super) transparency: bool,
-    pub(super) decal_frame: Option<DecalFrame>,
+    /// What the features render_features! lists prepared.
+    pub(super) frames: FeatureFrames,
 }
 
 /// The mesh pass kinds a frame draws with, and its impostors' pipeline.
@@ -345,6 +343,7 @@ impl Renderer {
         // compiled into attachment operations, then encoded in order.
         let mut graph = std::mem::take(&mut self.graph);
         render_graph::plan(&mut graph, &state.shape);
+        RenderFeatures::declare(&state.features.frames, &state.shape, &mut graph);
         if let Err(invalid) = graph.compile() {
             self.graph = graph;
             return Err(RenderError(invalid.to_string()));

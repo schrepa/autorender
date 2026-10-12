@@ -3,6 +3,7 @@
 //! preparation, the pipelines it draws with, and its render graph's shape.
 
 use super::*;
+use crate::decals::{DecalFrame, DecalPass};
 
 /// GPU presentation's preparation: occlusion culling's viewport and depth
 /// pyramid levels, and what presentation prepared.
@@ -631,7 +632,7 @@ impl Renderer {
             temporal_frame,
             post_frame,
         );
-        let decal_frame = self.prepare_decals(snapshot, temporal_frame, &light_frame, post_frame);
+        let decals = self.prepare_decals(snapshot, temporal_frame, &light_frame, post_frame);
         Features {
             occlusion,
             gpu_prepared,
@@ -644,7 +645,7 @@ impl Renderer {
             transparent_draws,
             particle_frame,
             transparency,
-            decal_frame,
+            frames: FeatureFrames { decals },
         }
     }
 
@@ -1146,27 +1147,26 @@ impl Renderer {
         temporal_frame: &Option<TemporalFrame>,
         light_frame: &Option<LightFrame>,
         post_frame: Option<Effects>,
-    ) -> Option<DecalFrame> {
+    ) -> Option<Ready<DecalFrame>> {
         // Decals cover the opaque surfaces the depth buffer
         // holds and read their displayed poses from the joint palette.
         let decal_lights = light_frame
             .as_ref()
             .and(self.lights.as_ref())
             .map(LightPass::fragment_layout);
-        if snapshot.environment.decals.enabled && !snapshot.decals.list.is_empty() {
-            let (device, format) = (&self.device, self.display.format());
-            let decals = self
-                .decals
-                .get_or_insert_with(|| DecalPass::new(device, format));
-            let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
-            let prepared = decals.prepare(
-                device,
-                &self.queue,
-                snapshot,
-                (self.instances.palettes[parity].bound(), parity),
-                &self.depth.view,
-            );
-            if prepared.is_some() {
+        let (device, format) = (&self.device, self.display.format());
+        self.features.decals.prepare(
+            DecalPass::wanted(snapshot),
+            || DecalPass::new(device, format),
+            |decals| {
+                let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
+                let prepared = decals.prepare(
+                    device,
+                    &self.queue,
+                    snapshot,
+                    (self.instances.palettes[parity].bound(), parity),
+                    &self.depth.view,
+                )?;
                 decals.ensure_pipelines(
                     device,
                     &self.mesh_shader,
@@ -1174,11 +1174,9 @@ impl Renderer {
                     decal_lights,
                     post_frame.is_some(),
                 );
-            }
-            prepared
-        } else {
-            None
-        }
+                Some(prepared)
+            },
+        )
     }
 
     /// The pipelines of the material variants the frame's
@@ -1340,7 +1338,6 @@ impl Renderer {
                 resolving && phases == 2 && self.virtual_draws.phase_two.is_some(),
             ],
             lights: features.light_frame.is_some() && self.lights.is_some(),
-            decals: features.decal_frame.is_some() && self.decals.is_some(),
             water: false,
             clouds: false,
             transparency: features.transparency && self.transparent.is_some(),

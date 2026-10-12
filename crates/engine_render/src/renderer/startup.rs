@@ -257,7 +257,7 @@ impl Renderer {
             temporal: None,
             transparent: None,
             particles: None,
-            decals: None,
+            features: RenderFeatures::default(),
             graph: Default::default(),
             gpu_frame: false,
             failure,

@@ -12,7 +12,6 @@ use crate::platform::{RenderError, RenderTarget, render_error};
 use crate::RenderStats;
 use crate::batches::{BatchPlan, DrawBatch};
 use crate::cached::{Bound, Versioned};
-use crate::decals::DecalPass;
 use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::entries::{MeshPass, PassKind, Streams};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment};
@@ -34,6 +33,7 @@ use crate::pipelines::PipelineCounts;
 use crate::post::PostPass;
 use crate::probes::{FACES, ProbePass, face_view_projection};
 use crate::profiling::{GpuProfiler, Span};
+use crate::render_features::{FeatureFrames, Ready, RenderFeature, RenderFeatures};
 use crate::retained_uploads::RetainedUploads;
 use crate::shadows::{CasterDraw, ShadowPass};
 use crate::staging::{self, StagingRing};
@@ -276,9 +276,9 @@ pub struct Renderer {
     // draws them.
     transparent: Option<TransparentPass>,
     particles: Option<ParticlePass>,
-    // Decals: records and pipelines, created with the first
-    // frame that draws them.
-    decals: Option<DecalPass>,
+    // The features render_features! lists, each created with the first
+    // frame needing it.
+    features: RenderFeatures,
     // The frame's passes, declared anew each frame.
     graph: crate::render_graph::RenderGraph,
     // Whether the previous frame was GPU-presented; its poses were GPU-written.

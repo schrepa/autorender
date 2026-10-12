@@ -2,6 +2,7 @@
 
 use super::frame::{EncodeReport, FrameKind, FrameState};
 use super::*;
+use crate::decals::DecalPass;
 use crate::gpu_presentation::GpuPrepared;
 
 use engine_core::{
@@ -81,11 +82,7 @@ impl Renderer {
             &features.light_frame,
             features.post_frame,
         );
-        let (particle_frame, decal_frame, refraction) = (
-            &features.particle_frame,
-            &features.decal_frame,
-            features.refraction,
-        );
+        let (particle_frame, refraction) = (&features.particle_frame, features.refraction);
         let dropped_probes = features.dropped_probes;
         let (mesh_upload_bytes, texture_upload_bytes) =
             (state.assets.mesh_bytes, state.assets.texture_bytes);
@@ -242,15 +239,7 @@ impl Renderer {
             refraction: Applied {
                 active: refraction && post_frame.is_some(),
             },
-            decals: Drawn {
-                drawn: decal_frame.as_ref().map_or(0, |frame| frame.drawn),
-                invalid: snapshot.decals.invalid.min(u32::MAX as usize) as u32,
-                dropped: (snapshot.decals.dropped as u64
-                    + decal_frame
-                        .as_ref()
-                        .map_or(0, |frame| u64::from(frame.dropped)))
-                .min(u64::from(u32::MAX)) as u32,
-            },
+            decals: DecalPass::stats(features.frames.decals.as_ref().map(Ready::frame), snapshot),
             reflection_probes: ProbeStats {
                 ready: self.probes.slots.ready(),
                 faces: probe_faces,
@@ -488,7 +477,11 @@ impl Renderer {
                     .particles
                     .as_ref()
                     .map_or(0, ParticlePass::capacity_bytes)
-                + self.decals.as_ref().map_or(0, DecalPass::capacity_bytes)) as f64,
+                + self
+                    .features
+                    .decals
+                    .get()
+                    .map_or(0, DecalPass::capacity_bytes)) as f64,
         );
         engine_profile::counter(
             "memory.gpu_temporal_bytes",
