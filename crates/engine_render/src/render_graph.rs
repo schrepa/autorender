@@ -6,9 +6,11 @@
 //! frame started with.
 //!
 //! WebGPU orders and synchronizes passes itself and has no memory aliasing,
-//! so the graph keeps the declared order and holds no GPU objects: the
-//! renderer encodes each kept pass by its [`Pass`] with the derived
-//! operations. [`plan`] declares the renderer's frame from its [`FrameShape`].
+//! so the graph holds no GPU objects: compiling puts the declared passes in
+//! the frame order of the passes' table, whatever order they were declared
+//! in, and the renderer encodes each kept pass by its [`Pass`] with the
+//! derived operations. [`plan`] declares the renderer's frame from its
+//! [`FrameShape`].
 
 /// Builds [`Resource`], the list of every resource and each one's
 /// [`Lifetime`] from one table: `Name: Lifetime`.
@@ -80,11 +82,11 @@ resources! {
     CloudView: Frame,
 }
 
-// A set holds every resource as a bit of a u32.
-const _: () = assert!(RESOURCES.len() <= 32, "a resource set is a u32");
+// A set holds every resource as a bit of a u64.
+const _: () = assert!(RESOURCES.len() <= 64, "a resource set is a u64");
 
 impl Resource {
-    fn bit(self) -> u32 {
+    fn bit(self) -> u64 {
         1 << self as u32
     }
 }
@@ -105,7 +107,7 @@ pub(crate) enum Lifetime {
 
 /// A set of resources.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Set(u32);
+struct Set(u64);
 
 impl Set {
     fn contains(self, resource: Resource) -> bool {
@@ -164,6 +166,29 @@ pub(crate) struct Ops {
     pub(crate) store: bool,
 }
 
+/// An opaque phase: frames with occlusion culling draw a second, of what
+/// the test after the first finds visible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Phase {
+    One,
+    Two,
+}
+
+impl Phase {
+    /// The first `count` phases (one or two), in order.
+    fn first(count: u8) -> impl Iterator<Item = Self> {
+        [Self::One, Self::Two].into_iter().take(usize::from(count))
+    }
+
+    /// Its place among the phases: 0, then 1.
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Self::One => 0,
+            Self::Two => 1,
+        }
+    }
+}
+
 /// The renderer's passes, each encoded by the renderer's method of the same
 /// purpose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -182,20 +207,20 @@ pub(crate) enum Pass {
     ShadowMaps,
     /// Light binning.
     Lights,
-    /// The opaque pass of `phase` (two around the occlusion test).
+    /// The opaque pass of `phase`.
     Opaque {
-        phase: u8,
+        phase: Phase,
     },
     /// The visibility buffer's triangle IDs, tile lists and resolve of
     /// `phase`.
     VisibilityIds {
-        phase: u8,
+        phase: Phase,
     },
     Classify {
-        phase: u8,
+        phase: Phase,
     },
     Resolve {
-        phase: u8,
+        phase: Phase,
     },
     /// The depth pyramid and occlusion test between the opaque phases.
     OcclusionTest,
@@ -220,80 +245,90 @@ pub(crate) enum Pass {
     CloudComposite,
 }
 
-/// Builds [`PASSES`] from one table: each pass in frame order with its name
-/// in reports, and the span profiling captures time it whole as,
-/// `stage_<name>`.
+/// Builds the frame order from one table: every pass, in the order frames
+/// run them, under the name reports give it. Each row gives its pass's
+/// [`Pass::index`], its place in the order and its bit in the masks frames
+/// report, and the span profiling captures time it whole as,
+/// `stage_<name>`. A pass without a row, two rows of one pass or two of one
+/// name do not compile.
 macro_rules! passes {
-    ($($pass:expr => $name:literal,)*) => {
-        /// Every pass in frame order, by its bit in the masks frames report:
-        /// the pass, its name and its stage span.
-        const PASSES: &[(Pass, &str, &str)] = &[$(($pass, $name, concat!("stage_", $name)),)*];
-        /// Every pass's name, by its bit.
-        const PASS_NAMES: &[&str] = &[$($name,)*];
+    ($($name:ident: $variant:ident $({ phase: $phase:path })?,)*) => {
+        /// Every pass's row in the frame order, named as reports name it.
+        #[expect(non_camel_case_types, reason = "rows go by their passes' report names")]
+        #[derive(Clone, Copy)]
+        enum Row {
+            $($name,)*
+        }
+
+        /// Every pass's name in reports, by its row.
+        const PASS_NAMES: &[&str] = &[$(stringify!($name),)*];
+
+        /// The span profiling captures time each pass whole as, by its row.
+        const PASS_STAGES: &[&str] = &[$(concat!("stage_", stringify!($name)),)*];
+
+        impl Pass {
+            /// The pass's row: its place in the frame order, and its bit in
+            /// the masks frames report.
+            pub(crate) const fn index(self) -> usize {
+                match self {
+                    $(Pass::$variant $({ phase: $phase })? => Row::$name as usize,)*
+                }
+            }
+        }
     };
 }
 
 passes! {
-    Pass::Presentation => "presentation",
-    Pass::Scatter => "scatter",
-    Pass::Occupancy => "occupancy",
-    Pass::ShadowSelect => "shadow_select",
-    Pass::VirtualSelect => "virtual_select",
-    Pass::ShadowMaps => "shadow_maps",
-    Pass::Lights => "lights",
-    Pass::Opaque { phase: 0 } => "opaque",
-    Pass::VisibilityIds { phase: 0 } => "visibility",
-    Pass::Classify { phase: 0 } => "visibility_tiles",
-    Pass::Resolve { phase: 0 } => "visibility_resolve",
-    Pass::OcclusionTest => "occlusion_test",
-    Pass::Opaque { phase: 1 } => "opaque_phase_two",
-    Pass::VisibilityIds { phase: 1 } => "visibility_phase_two",
-    Pass::Classify { phase: 1 } => "visibility_tiles_phase_two",
-    Pass::Resolve { phase: 1 } => "visibility_resolve_phase_two",
-    Pass::Decals => "decals",
-    Pass::Water => "water",
-    Pass::CloudMarch => "cloud_march",
-    Pass::CloudComposite => "cloud_composite",
-    Pass::Transparent => "transparent",
-    Pass::TransparentComposite => "transparent_composite",
-    Pass::Effects => "effects",
-    Pass::Composite => "composite",
-    Pass::TemporalResolve => "temporal_resolve",
-    Pass::ProbeCaptures => "probe_captures",
+    presentation: Presentation,
+    scatter: Scatter,
+    occupancy: Occupancy,
+    shadow_select: ShadowSelect,
+    virtual_select: VirtualSelect,
+    shadow_maps: ShadowMaps,
+    lights: Lights,
+    opaque: Opaque { phase: Phase::One },
+    visibility: VisibilityIds { phase: Phase::One },
+    visibility_tiles: Classify { phase: Phase::One },
+    visibility_resolve: Resolve { phase: Phase::One },
+    occlusion_test: OcclusionTest,
+    opaque_phase_two: Opaque { phase: Phase::Two },
+    visibility_phase_two: VisibilityIds { phase: Phase::Two },
+    visibility_tiles_phase_two: Classify { phase: Phase::Two },
+    visibility_resolve_phase_two: Resolve { phase: Phase::Two },
+    decals: Decals,
+    water: Water,
+    cloud_march: CloudMarch,
+    cloud_composite: CloudComposite,
+    transparent: Transparent,
+    transparent_composite: TransparentComposite,
+    effects: Effects,
+    composite: Composite,
+    temporal_resolve: TemporalResolve,
+    probe_captures: ProbeCaptures,
 }
 
-// A mask holds every pass as a bit of a u32.
-const _: () = assert!(PASSES.len() <= 32, "a pass mask is a u32");
+// A mask holds every pass as a bit of a u64.
+const _: () = assert!(PASS_NAMES.len() <= 64, "a pass mask is a u64");
 
 impl Pass {
-    /// The pass's entry in [`PASSES`]: every pass the renderer declares has
-    /// one.
-    fn entry(self) -> (usize, &'static str, &'static str) {
-        PASSES
-            .iter()
-            .position(|&(pass, _, _)| pass == self)
-            .map(|index| (index, PASSES[index].1, PASSES[index].2))
-            .unwrap_or_else(|| panic!("{self:?} has no entry in PASSES"))
-    }
-
     /// The pass's name in reports.
     pub(crate) fn name(self) -> &'static str {
-        self.entry().1
+        PASS_NAMES[self.index()]
     }
 
     /// The span profiling captures time the whole pass as.
     pub(crate) fn stage(self) -> &'static str {
-        self.entry().2
+        PASS_STAGES[self.index()]
     }
 
-    fn bit(self) -> u32 {
-        1 << self.entry().0
+    fn bit(self) -> u64 {
+        1 << self.index()
     }
 }
 
 /// The passes in `mask`, such as a frame's [`RenderGraph::kept`], as the
 /// stats report them: by name, in frame order.
-pub(crate) fn render_passes(mask: u32) -> engine_core::RenderPasses {
+pub(crate) fn render_passes(mask: u64) -> engine_core::RenderPasses {
     engine_core::RenderPasses {
         bits: mask,
         names: PASS_NAMES,
@@ -426,11 +461,30 @@ impl NodeBuilder<'_> {
     }
 }
 
-/// What compiling found wrong: a pass reading what no earlier pass wrote.
+/// What compiling found wrong.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Unwritten {
-    pub(crate) pass: Pass,
-    pub(crate) resource: Resource,
+pub(crate) enum Invalid {
+    /// A pass declared twice.
+    Twice(Pass),
+    /// A pass reading what no earlier pass wrote.
+    Unwritten { pass: Pass, resource: Resource },
+}
+
+impl std::fmt::Display for Invalid {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Twice(pass) => write!(
+                formatter,
+                "The render graph's {} pass is declared twice.",
+                pass.name()
+            ),
+            Self::Unwritten { pass, resource } => write!(
+                formatter,
+                "The render graph's {} pass reads {resource:?} before any pass writes it.",
+                pass.name()
+            ),
+        }
+    }
 }
 
 /// A frame's passes. The renderer keeps one and declares each frame into it.
@@ -445,7 +499,8 @@ impl RenderGraph {
         self.nodes.clear();
     }
 
-    /// Declares `pass`, after those declared before it.
+    /// Declares `pass`, which runs in its place in the frame order whatever
+    /// was declared before it.
     pub(crate) fn add(&mut self, pass: Pass) -> NodeBuilder<'_> {
         self.nodes.push(Node {
             pass,
@@ -462,11 +517,22 @@ impl RenderGraph {
         }
     }
 
-    /// Culls passes whose results no later pass uses (passes writing kept
-    /// or output resources always run), derives the kept passes'
-    /// attachment operations and checks their reads. Attachments clear
-    /// where nothing was drawn before and store what a later pass reads.
-    pub(crate) fn compile(&mut self) -> Result<(), Unwritten> {
+    /// Puts the declared passes in frame order, culls those whose results
+    /// no later pass uses (passes writing kept or output resources always
+    /// run), derives the kept passes' attachment operations and checks
+    /// their reads. Attachments clear where nothing was drawn before and
+    /// store what a later pass reads. A pass declared twice fails.
+    pub(crate) fn compile(&mut self) -> Result<(), Invalid> {
+        // In place: rows are unique, so the order is the same every frame
+        // however the passes were declared.
+        self.nodes.sort_unstable_by_key(|node| node.pass.index());
+        if let Some(twice) = self
+            .nodes
+            .windows(2)
+            .find(|pair| pair[0].pass == pair[1].pass)
+        {
+            return Err(Invalid::Twice(twice[0].pass));
+        }
         // Backwards: what later kept passes read of each resource.
         let mut needed = Set::default();
         for &resource in RESOURCES {
@@ -511,7 +577,7 @@ impl RenderGraph {
                 .iter()
                 .find(|resource| !written.contains(*resource))
             {
-                return Err(Unwritten {
+                return Err(Invalid::Unwritten {
                     pass: node.pass,
                     resource,
                 });
@@ -536,14 +602,8 @@ impl RenderGraph {
     }
 
     /// The passes that run, as a mask [`render_passes`] reads.
-    pub(crate) fn kept(&self) -> u32 {
-        self.mask(true)
-    }
-
-    fn mask(&self, kept: bool) -> u32 {
-        self.nodes
-            .iter()
-            .filter(|node| node.kept == kept)
+    pub(crate) fn kept(&self) -> u64 {
+        self.kept_passes()
             .fold(0, |mask, node| mask | node.pass.bit())
     }
 }
@@ -711,8 +771,8 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     } else {
         Scene
     };
-    for phase in 0..shape.phases {
-        if phase == 1 {
+    for phase in Phase::first(shape.phases) {
+        if phase == Phase::Two {
             graph
                 .add(Pass::OcclusionTest)
                 .read(Depth)
@@ -726,7 +786,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .add(Pass::Opaque { phase })
             .read(Poses)
             .read_if(gpu, Visible)
-            .read_if(shape.scatter && phase == 0, Placed)
+            .read_if(shape.scatter && phase == Phase::One, Placed)
             .read(Occupancy)
             .read_if(shape.shadows, ShadowMaps)
             .read_if(shape.lights, Lights)
@@ -736,7 +796,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             opaque = opaque.color(target, Access::Draw(clear));
         }
         opaque.depth(Depth, Access::Draw(Clear::Depth(FAR)));
-        if shape.resolves[usize::from(phase)] {
+        if shape.resolves[phase.index()] {
             graph
                 .add(Pass::VisibilityIds { phase })
                 .read(Poses)

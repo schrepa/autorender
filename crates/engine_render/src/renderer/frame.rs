@@ -9,7 +9,9 @@ use crate::decals::DecalFrame;
 use crate::gpu_presentation::{CullingView, GpuPrepared, PresentationInputs, RecordsKey, Staging};
 use crate::particles::ParticleFrame;
 use crate::post::PostFrame;
-use crate::render_graph::{self, Clear, Effects, FrameShape, Load, Node, Ops, Pass, Resource};
+use crate::render_graph::{
+    self, Clear, Effects, FrameShape, Load, Node, Ops, Pass, Phase, Resource,
+};
 use crate::shadows::{MapSources, ShadowFrame, ShadowInputs};
 
 mod encode;
@@ -60,13 +62,61 @@ pub(super) struct FrameKind {
     pub(super) instance_count: usize,
 }
 
-/// A frame's asset uploads, and the encoder of new textures' mip levels and
-/// impostor bakes, submitted first.
+/// The work a frame submits before its own command buffer, in submission
+/// order: the physically based sky's light, which everything after reads;
+/// new textures' mip levels and impostor bakes; staged pose copies; GPU
+/// presentation's input copies; environment maps' and reflection probes'
+/// work. Profiling captures time each but the sky's, which times its own
+/// passes, between marks of its own.
+#[derive(Default)]
+pub(super) struct Prelude {
+    pub(super) sky: Option<wgpu::CommandEncoder>,
+    pub(super) mips: Option<wgpu::CommandEncoder>,
+    pub(super) poses: Option<wgpu::CommandBuffer>,
+    pub(super) inputs: Option<wgpu::CommandEncoder>,
+    pub(super) environment: Option<wgpu::CommandEncoder>,
+}
+
+impl Prelude {
+    /// The span profiling captures time each part as, in submission order.
+    const SPANS: [Option<&'static str>; 5] = [
+        None,
+        Some("pre_mips"),
+        Some("pre_poses"),
+        Some("pre_inputs"),
+        Some("pre_environment"),
+    ];
+
+    /// Whether each part holds work, in submission order.
+    fn held(&self) -> [bool; 5] {
+        [
+            self.sky.is_some(),
+            self.mips.is_some(),
+            self.poses.is_some(),
+            self.inputs.is_some(),
+            self.environment.is_some(),
+        ]
+    }
+
+    /// Each part's command buffer, in submission order.
+    fn finish(self) -> [Option<wgpu::CommandBuffer>; 5] {
+        let finish =
+            |encoder: Option<wgpu::CommandEncoder>| encoder.map(|encoder| encoder.finish());
+        [
+            finish(self.sky),
+            finish(self.mips),
+            self.poses,
+            finish(self.inputs),
+            finish(self.environment),
+        ]
+    }
+}
+
+/// A frame's asset uploads.
 pub(super) struct AssetUploads {
     pub(super) mesh_bytes: u64,
     pub(super) texture_bytes: u64,
     pub(super) mip_levels: u32,
-    pub(super) encoder: Option<wgpu::CommandEncoder>,
 }
 
 /// How a frame packed its instance storage.
@@ -82,8 +132,7 @@ pub(super) struct Packing {
     pub(super) fallback: bool,
 }
 
-/// A frame's uniform and instance writes, and the staged pose copies
-/// submitted before it.
+/// A frame's uniform and instance writes.
 pub(super) struct Writes {
     pub(super) lighting: LightingUniform,
     pub(super) camera_bytes: u64,
@@ -92,23 +141,14 @@ pub(super) struct Writes {
     pub(super) color_bytes: u64,
     pub(super) slot_bytes: u64,
     pub(super) ranges: usize,
-    pub(super) staged_poses: Option<wgpu::CommandBuffer>,
 }
 
 /// What each feature prepared for a frame.
 pub(super) struct Features<'s> {
-    /// GPU presentation's input copies, submitted before the frame.
-    pub(super) input_copies: Option<wgpu::CommandEncoder>,
     /// The viewport and depth pyramid levels of occlusion culling.
     pub(super) occlusion: Option<(u32, u32, u32)>,
     pub(super) gpu_prepared: Option<GpuPrepared>,
     pub(super) shadow_frame: Option<ShadowFrame>,
-    /// The physically based sky's work, submitted first:
-    /// what reads the light it gives follows it.
-    pub(super) sky_encoder: Option<wgpu::CommandEncoder>,
-    /// Environment maps' and reflection probes' work,
-    /// submitted before the frame.
-    pub(super) environment_encoder: Option<wgpu::CommandEncoder>,
     pub(super) probe_list: &'s [engine_core::RenderReflectionProbe],
     pub(super) dropped_probes: u64,
     pub(super) light_frame: Option<LightFrame>,
@@ -133,6 +173,7 @@ pub(super) struct FrameState<'s> {
     pub(super) snapshot: &'s RenderSnapshot,
     pub(super) frame: RenderFrame<'s>,
     pub(super) kind: FrameKind,
+    pub(super) prelude: Prelude,
     pub(super) assets: AssetUploads,
     pub(super) packing: Packing,
     pub(super) writes: Writes,
@@ -157,7 +198,7 @@ pub(super) struct EncodeReport {
     pub(super) draws: u32,
     pub(super) shadow_draws: u32,
     pub(super) probe_faces: u32,
-    pub(super) passes: u32,
+    pub(super) passes: u64,
 }
 
 impl Renderer {
@@ -226,18 +267,19 @@ impl Renderer {
         let Some(surface) = self.display.acquire(&self.device, &mut self.depth)? else {
             return Ok(self.residency_stats());
         };
-        let assets = self.upload_assets(snapshot, kind);
+        let mut prelude = Prelude::default();
+        let assets = self.upload_assets(snapshot, kind, &mut prelude.mips);
         let packing = self.pack_instances(frame, kind);
         let profile_writes = engine_profile::span("render", "queue_writes");
-        let writes = self.write_frame_data(frame, kind, &packing);
+        let writes = self.write_frame_data(frame, kind, &packing, &mut prelude.poses);
         // Profiling captures time this frame's passes from here.
         self.profiler.begin_frame(&self.device);
         let features = self.prepare_features(
             frame,
             gpu.as_ref(),
             kind,
-            &packing.temporal_frame,
-            &writes.lighting,
+            (&packing.temporal_frame, &writes.lighting),
+            &mut prelude,
         );
         drop(profile_writes);
         let profile_encoding = engine_profile::span("render", "command_encoding");
@@ -288,6 +330,7 @@ impl Renderer {
             snapshot,
             frame,
             kind,
+            prelude,
             assets,
             packing,
             writes,
@@ -304,13 +347,9 @@ impl Renderer {
         // compiled into attachment operations, then encoded in order.
         let mut graph = std::mem::take(&mut self.graph);
         render_graph::plan(&mut graph, &state.shape);
-        if let Err(unwritten) = graph.compile() {
+        if let Err(invalid) = graph.compile() {
             self.graph = graph;
-            return Err(RenderError(format!(
-                "The render graph's {} pass reads {:?} before any pass writes it.",
-                unwritten.pass.name(),
-                unwritten.resource,
-            )));
+            return Err(RenderError(invalid.to_string()));
         }
         let mut report = EncodeReport {
             passes: graph.kept(),
@@ -335,18 +374,10 @@ impl Renderer {
             }
         }
         self.graph = graph;
-        // ...and the command buffers submitted before the frame's, whose
-        // spans must exist before the frame resolves its queries.
-        for (span, present) in [
-            ("pre_mips", state.assets.encoder.is_some()),
-            ("pre_poses", state.writes.staged_poses.is_some()),
-            ("pre_inputs", state.features.input_copies.is_some()),
-            (
-                "pre_environment",
-                state.features.environment_encoder.is_some(),
-            ),
-        ] {
-            if present {
+        // ...and the prelude's command buffers, whose spans must exist before
+        // the frame resolves its queries.
+        for (span, held) in Prelude::SPANS.into_iter().zip(state.prelude.held()) {
+            if let (Some(span), true) = (span, held) {
                 let _ = self.profiler.span(span);
             }
         }

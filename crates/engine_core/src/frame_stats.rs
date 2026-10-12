@@ -191,7 +191,7 @@ pub struct RenderStats {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RenderPasses {
     /// One bit per pass, by its index in `names`.
-    pub bits: u32,
+    pub bits: u64,
     /// Every pass's name, in order.
     pub names: &'static [&'static str],
 }

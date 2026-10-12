@@ -4,11 +4,9 @@
 
 use super::*;
 
-/// GPU presentation's preparation: the input copies submitted before the
-/// frame, occlusion culling's viewport and depth pyramid levels, and what
-/// presentation prepared.
+/// GPU presentation's preparation: occlusion culling's viewport and depth
+/// pyramid levels, and what presentation prepared.
 struct PresentationPrep {
-    input_copies: Option<wgpu::CommandEncoder>,
     occlusion: Option<(u32, u32, u32)>,
     gpu_prepared: Option<GpuPrepared>,
 }
@@ -153,11 +151,13 @@ impl Renderer {
 
     /// Uploads the frame's new meshes (with their levels of detail and
     /// virtual geometry) and textures, bakes new impostors, and orders the
-    /// opaque draws.
+    /// opaque draws. New textures' mip levels and impostor bakes record into
+    /// `mips`, the prelude's.
     pub(super) fn upload_assets(
         &mut self,
         snapshot: &RenderSnapshot,
         kind: FrameKind,
+        mips: &mut Option<wgpu::CommandEncoder>,
     ) -> AssetUploads {
         let gpu_mode = kind.gpu_mode;
 
@@ -286,34 +286,32 @@ impl Renderer {
             &self.queue,
             snapshot.environment.virtual_geometry.max_resident_pages,
         );
-        // New textures' mip levels render from their uploaded base level in
-        // a command buffer submitted ahead of this frame's.
-        let mut mip_encoder = None;
         // Masked shadow casters bind their materials even when culled.
         let shadow_materials = self
             .shadows
             .groups()
             .iter()
             .filter_map(|group| group.material);
+        // New textures' mip levels render from their uploaded base level in
+        // the prelude, submitted ahead of this frame's command buffer.
         let (texture_upload_bytes, mip_levels) = self.materials.upload(
             &self.device,
             &self.queue,
             snapshot,
             &self.plan,
             shadow_materials,
-            &mut mip_encoder,
+            mips,
         );
         // Impostors bake after their materials' levels, the
         // plan's and then placed objects'.
-        self.prepare_impostors(snapshot, gpu_mode, &mut mip_encoder);
-        self.prepare_scatter_impostors(snapshot, gpu_mode, &mut mip_encoder);
+        self.prepare_impostors(snapshot, gpu_mode, mips);
+        self.prepare_scatter_impostors(snapshot, gpu_mode, mips);
         drop(profile_upload);
         self.order_draws(snapshot);
         AssetUploads {
             mesh_bytes: mesh_upload_bytes,
             texture_bytes: texture_upload_bytes,
             mip_levels,
-            encoder: mip_encoder,
         }
     }
 
@@ -375,7 +373,8 @@ impl Renderer {
     }
 
     /// Writes the camera and lighting uniforms and the frame's changed
-    /// poses, colors, palettes and slot IDs.
+    /// poses, colors, palettes and slot IDs; large pose uploads stage their
+    /// copies into `poses`, the prelude's.
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -385,6 +384,7 @@ impl Renderer {
         frame: RenderFrame<'_>,
         kind: FrameKind,
         packing: &Packing,
+        poses: &mut Option<wgpu::CommandBuffer>,
     ) -> Writes {
         let snapshot = frame.snapshot();
         let gpu_mode = kind.gpu_mode;
@@ -474,9 +474,6 @@ impl Renderer {
         camera_upload_bytes += self.camera.write_lighting(&self.queue, lighting);
         let mut color_upload_bytes = 0_u64;
         let mut slot_upload_bytes = 0_u64;
-        // Large pose uploads copy into a persistently mapped staging buffer
-        // and a GPU copy submitted before this frame's draws.
-        let mut staged_poses = None;
         // GPU-presented frames write poses on the GPU.
         let pose_ranges = if gpu_mode {
             &[][..]
@@ -493,6 +490,8 @@ impl Renderer {
             .iter()
             .map(|range| ((range.end - range.start) * stride) as u64)
             .sum();
+        // Large pose uploads copy into a persistently mapped staging buffer
+        // and a GPU copy submitted before this frame's draws.
         let mut staged = false;
         if pose_upload_bytes as usize >= staging::MIN_STAGED_BYTES {
             let mut encoder = self
@@ -514,7 +513,7 @@ impl Renderer {
                 "render.pose_staging_unavailable",
                 f64::from(u8::from(!staged)),
             );
-            staged_poses = staged.then(|| encoder.finish());
+            *poses = staged.then(|| encoder.finish());
         }
         if !staged {
             for range in pose_ranges {
@@ -567,28 +566,27 @@ impl Renderer {
             color_bytes: color_upload_bytes,
             slot_bytes: slot_upload_bytes,
             ranges: instance_write_ranges,
-            staged_poses,
         }
     }
 
     /// Prepares every feature the frame runs, in order: GPU presentation
-    /// with occlusion culling, shadows, environment maps and reflection
-    /// probes, local lights, screen effects, transparency and particles,
-    /// and decals.
+    /// with occlusion culling, shadows, clouds, the physically based sky,
+    /// environment maps and reflection probes, local lights, screen effects,
+    /// transparency and particles, and decals. Presentation's input copies,
+    /// the sky's light and the environment's work go in `prelude`.
     pub(super) fn prepare_features<'s>(
         &mut self,
         frame: RenderFrame<'s>,
         gpu: Option<&engine_core::GpuPresentation<'_>>,
         kind: FrameKind,
-        temporal_frame: &Option<TemporalFrame>,
-        lighting: &LightingUniform,
+        (temporal_frame, lighting): (&Option<TemporalFrame>, &LightingUniform),
+        prelude: &mut Prelude,
     ) -> Features<'s> {
         let snapshot = frame.snapshot();
         let PresentationPrep {
-            input_copies,
             occlusion,
             gpu_prepared,
-        } = self.prepare_presentation(frame, gpu, kind, temporal_frame);
+        } = self.prepare_presentation(frame, gpu, kind, temporal_frame, &mut prelude.inputs);
         let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
         // Clouds: this frame's march of their dome, which the
         // sky and its environment map show; exact frames march all of it.
@@ -621,9 +619,10 @@ impl Renderer {
             .prepare_sky_group(&self.device, self.sky.bindings());
         self.environment
             .set_clouds(&self.device, self.clouds.dome());
-        let sky_encoder = self.prepare_sky(snapshot);
-        let (environment_encoder, probe_list, dropped_probes) =
+        prelude.sky = self.prepare_sky(snapshot);
+        let (environment, probe_list, dropped_probes) =
             self.prepare_environment(snapshot, lighting);
+        prelude.environment = environment;
         let light_frame = self.prepare_lights(frame, kind, temporal_frame);
         let (post_frame, refraction) = self.prepare_post(snapshot, temporal_frame);
         let (transparent_draws, particle_frame, transparency) = self.prepare_transparency(
@@ -634,12 +633,9 @@ impl Renderer {
         );
         let decal_frame = self.prepare_decals(snapshot, temporal_frame, &light_frame, post_frame);
         Features {
-            input_copies,
             occlusion,
             gpu_prepared,
             shadow_frame,
-            sky_encoder,
-            environment_encoder,
             probe_list,
             dropped_probes,
             light_frame,
@@ -652,8 +648,8 @@ impl Renderer {
         }
     }
 
-    /// Occlusion culling's depth pyramid and GPU presentation's inputs;
-    /// returns the input copies to submit first, the
+    /// Occlusion culling's depth pyramid and GPU presentation's inputs, whose
+    /// copies record into `input_copies`, the prelude's; returns the
     /// occlusion viewport and levels, and what presentation prepared.
     fn prepare_presentation(
         &mut self,
@@ -661,11 +657,11 @@ impl Renderer {
         gpu: Option<&engine_core::GpuPresentation<'_>>,
         kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
+        input_copies: &mut Option<wgpu::CommandEncoder>,
     ) -> PresentationPrep {
         let gpu_mode = kind.gpu_mode;
         let snapshot = frame.snapshot();
 
-        let mut input_copies = None;
         // Occlusion culling: the depth pyramid of this frame's
         // depth buffer, sized before presentation plans two phases; turning
         // it off releases the pyramid.
@@ -774,7 +770,7 @@ impl Renderer {
                 &self.queue,
                 Staging {
                     ring,
-                    copies: &mut input_copies,
+                    copies: input_copies,
                 },
                 &PresentationInputs {
                     frame: &frame,
@@ -791,7 +787,6 @@ impl Renderer {
             None
         };
         PresentationPrep {
-            input_copies,
             occlusion,
             gpu_prepared,
         }

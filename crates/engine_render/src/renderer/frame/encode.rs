@@ -36,7 +36,7 @@ impl Renderer {
                 // Tracks press into the deformation map, and
                 // ground cover grows on the terrain, before the first phase
                 // draws them.
-                if phase == 0 {
+                if phase == Phase::One {
                     self.clouds.encode(
                         &self.device,
                         encoder,
@@ -58,14 +58,14 @@ impl Renderer {
                         (&self.camera.terrain_layout, &self.camera.terrain_group),
                     );
                 }
-                if phase == 0 && state.terrain {
+                if phase == Phase::One && state.terrain {
                     self.ground_cover
                         .encode(&self.device, encoder, &self.profiler);
                 }
-                let draws = self.encode_opaque(state, encoder, view, node, usize::from(phase));
+                let draws = self.encode_opaque(state, encoder, view, node, phase.index());
                 // The pages the first phase's terrain resolves wanted of the
                 // runtime virtual texture.
-                if phase == 0
+                if phase == Phase::One
                     && self.terrain_deferred(state)
                     && let Some(ids) = &self.terrain_ids
                 {
@@ -80,16 +80,16 @@ impl Renderer {
                 }
                 // Phase two issues phase one's draws again for
                 // the instances its test revealed: count each once.
-                if phase == 0 {
+                if phase == Phase::One {
                     report.draws += draws;
                 }
             }
             Pass::VisibilityIds { phase } => {
-                self.encode_visibility_ids(state, encoder, view, node, usize::from(phase));
+                self.encode_visibility_ids(state, encoder, view, node, phase.index());
             }
             Pass::Classify { .. } => self.encode_visibility_tiles(encoder),
             Pass::Resolve { phase } => {
-                self.encode_visibility_resolve(state, encoder, view, node, usize::from(phase));
+                self.encode_visibility_resolve(state, encoder, view, node, phase.index());
             }
             Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
             Pass::Decals => self.encode_decals(state, encoder, view, node),
