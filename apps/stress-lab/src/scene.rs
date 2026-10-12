@@ -613,14 +613,16 @@ pub fn look(scene: StressScene, name: &str) -> Result<(Atmosphere, f32), String>
         })
 }
 
-/// Look `name` of `scene`, `scene` resolved to the scene's own.
+/// Look `name` of `scene`, `scene` resolved to the scene's own: each
+/// world names its own, so a new world must.
 fn resolve(scene: StressScene, name: &str) -> &str {
-    match (name, scene) {
-        ("scene", StressScene::Field) => "night",
-        ("scene", StressScene::City | StressScene::Metro) => "golden",
-        ("scene", StressScene::Dense) => "day",
-        ("scene", StressScene::Highlands) => "golden",
-        _ => name,
+    if name != SCENE_LOOK.0 {
+        return name;
+    }
+    match scene {
+        StressScene::Field => "night",
+        StressScene::City | StressScene::Metro | StressScene::Highlands => "golden",
+        StressScene::Dense => "day",
     }
 }
 

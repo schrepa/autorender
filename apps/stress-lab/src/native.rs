@@ -419,7 +419,8 @@ pub fn stress_files(
                 }
             }
         }
-        _ => {}
+        // The other worlds' content is built in code.
+        StressScene::Field | StressScene::City | StressScene::Metro => {}
     }
     Ok(found)
 }
