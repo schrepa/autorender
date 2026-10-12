@@ -3,6 +3,7 @@ import { readDistribution, readStats, type Runtime } from "./host";
 import { adapterInfo } from "./adapter";
 import { BenchmarkError, type BenchmarkOptions, type Reply, sampleBenchmark } from "./benchmark.ts";
 import { fatal } from "./panic";
+import type { ErrorCode } from "../generated/errors";
 // The protocol's version, request limit and ops, generated from the engine
 // (`cargo xtask schema`).
 import protocol from "../generated/protocol.json";
@@ -59,7 +60,7 @@ export function connectDevelopment(host: Host): () => void {
   function panicked(message: string): Reply {
     return { ok: false, error: { code: "runtime_panicked", path: "$", message } };
   }
-  function error(code: string, path: string, message: string): Reply {
+  function error(code: ErrorCode, path: string, message: string): Reply {
     const reply: Reply = { ok: false, error: { code, path, message } };
     if (!disposed && !host.signal.aborted && !host.stopped()) {
       try { reply.observation = invoke({ op: "status" }).observation; } catch { /* Preserve the original runtime failure. */ }

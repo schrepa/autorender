@@ -1,4 +1,5 @@
 /** Bounded sampling for the opt-in development host. No ordinary-frame work. */
+import type { ErrorCode } from "../generated/errors";
 import { BENCHMARK_LIMIT_MS } from "../generated/host";
 import type { Distribution, FrameStats } from "./host";
 
@@ -8,11 +9,11 @@ type Observation = { frame: string; tick: string; scene: { id: string; revision:
 export type Reply = {
   version?: number; ok: boolean; observation?: Observation;
   result?: Record<string, unknown>;
-  error?: { code: string; path: string; message: string };
+  error?: { code: ErrorCode; path: string; message: string };
 };
 export class BenchmarkError extends Error {
-  code: string;
-  constructor(code: string, message: string) { super(message); this.code = code; }
+  code: ErrorCode;
+  constructor(code: ErrorCode, message: string) { super(message); this.code = code; }
 }
 
 /** Every number in `stats` by its path, such as `terrain.patches`. */
