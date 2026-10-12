@@ -3372,14 +3372,17 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawn
             .collect::<Result<Vec<_>, _>>()?;
         pictures.push((handle, ads));
     }
-    let clips: HashMap<Clip, ClipHandle> = city
-        .extras
-        .iter()
-        .filter_map(|(_, extra)| match extra {
-            Extra::Player { clip, .. } => Some(*clip),
-            _ => None,
-        })
-        .collect::<std::collections::HashSet<_>>()
+    // Each clip once, in the order the city's players first name them, so
+    // the library holds them in the same slots every run.
+    let mut named: Vec<Clip> = Vec::new();
+    for (_, extra) in &city.extras {
+        if let Extra::Player { clip, .. } = extra
+            && !named.contains(clip)
+        {
+            named.push(*clip);
+        }
+    }
+    let clips: HashMap<Clip, ClipHandle> = named
         .into_iter()
         .map(|clip| library.clip(&mut assets, clip).map(|handle| (clip, handle)))
         .collect::<Result<_, _>>()?;
