@@ -24,12 +24,12 @@ use crate::{
     Aabb, AlphaMode, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation,
     MAX_TRANSFORM_NODES, Material, MaterialBinding, MaterialHandle, Mesh3d, MeshHandle,
     PresentedTransforms, RenderInstance, RenderJoint, RenderMaterial, RenderMesh, RenderQuery,
-    RenderSnapshot, RenderTexture, Surface, TextureHandle, Tint, Transform, TransformIndex,
+    RenderSnapshot, RenderTexture, SkinExtraction, Surface, TextureHandle, Tint, Transform,
+    TransformIndex,
     culling::{Classification, Frustum},
     decals::DecalExtraction,
     hierarchy::ChangeWindow,
     probes::ProbeExtraction,
-    skin::SkinExtraction,
 };
 
 // Change stamps of render sources, read in contiguous table slices. GPU-presented
@@ -1146,7 +1146,7 @@ impl RetainedRender {
 
     /// Lays the frame's deformation map and lists its stamps.
     pub(crate) fn extract_deformation(&mut self, world: &World) {
-        match world.get_resource::<crate::deformation::DeformationFrame>() {
+        match world.get_resource::<crate::DeformationFrame>() {
             Some(frame) => self.snapshot.deformation.copy_from(&frame.out),
             None => self.snapshot.deformation = crate::RenderDeformation::default(),
         }
@@ -1154,7 +1154,7 @@ impl RetainedRender {
 
     /// Lists the frame's terrains.
     pub(crate) fn extract_terrain(&mut self, world: &World, aspect: f32) {
-        crate::terrain::extract_terrains(world, aspect, &mut self.snapshot);
+        crate::extract_terrains(world, aspect, &mut self.snapshot);
     }
 
     /// Creates the source stamp window used by GPU-presented frames.

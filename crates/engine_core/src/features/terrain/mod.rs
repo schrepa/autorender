@@ -40,7 +40,19 @@
 //! The [`TerrainSettings`] are inserted by default; without them, or when
 //! disabled, terrains neither stream nor draw.
 
+mod bridges;
+mod ground_cover;
 mod identity;
+mod occupancy;
+mod water;
+mod waterfalls;
+mod wind;
+
+pub use bridges::*;
+pub use ground_cover::*;
+pub use occupancy::*;
+pub use water::*;
+pub use wind::*;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -3044,7 +3056,7 @@ impl Terrains {
     }
 
     /// Every terrain's bridges, its origin and its bridge material.
-    pub(crate) fn bridge_sets(&self) -> impl Iterator<Item = crate::bridges::BridgeSet> + '_ {
+    pub(crate) fn bridge_sets(&self) -> impl Iterator<Item = bridges::BridgeSet> + '_ {
         self.entries.iter().map(|state| {
             (
                 state.entity,
@@ -4409,8 +4421,8 @@ impl bevy_app::Plugin for TerrainPlugin {
             .add_systems(
                 crate::WorldSync,
                 (
-                    crate::bridges::sync.in_set(crate::WorldSyncSystems::Bridges),
-                    crate::waterfalls::sync.in_set(crate::WorldSyncSystems::Waterfalls),
+                    bridges::sync.in_set(crate::WorldSyncSystems::Bridges),
+                    waterfalls::sync.in_set(crate::WorldSyncSystems::Waterfalls),
                 ),
             );
     }

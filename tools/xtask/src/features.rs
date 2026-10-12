@@ -1,9 +1,10 @@
-//! The engine's features stay composable: each feature's modules in
-//! engine_core use the core and the features they declare needing, never
-//! another feature's types; the core uses none, but for extraction, which
-//! hands the renderer what each feature drew, and the crate root, which
-//! exports them. A feature's folder (engine_core/src/features/NAME) is its
-//! module, named as `engine_features!` names the feature.
+//! The engine's features stay composable: each feature's folder in
+//! engine_core (engine_core/src/features/NAME, named as `engine_features!`
+//! names the feature) uses the core and the features it declares needing,
+//! never another feature's types; the core uses none, but for extraction,
+//! which hands the renderer what each feature drew, and the crate root,
+//! which exports them. Folders and features match one to one, but for the
+//! features in crates of their own.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -11,28 +12,18 @@ use std::path::{Path, PathBuf};
 
 use engine::Feature;
 
-/// The modules (files and directories of engine_core/src) of `feature`
-/// when it has no folder of its own; its name and the features it may use
-/// come from the engine's one list of features (`engine_features!`).
-/// Collision lives in engine_collision, the sea in its folder.
-fn modules(feature: Feature) -> &'static [&'static str] {
+/// The crate of `feature` when it is not engine_core, whose features each
+/// have a folder.
+fn own_crate(feature: Feature) -> Option<&'static str> {
     match feature {
-        Feature::Terrain => &[
-            "terrain",
-            "bridges",
-            "waterfalls",
-            "water",
-            "ground_cover",
-            "wind",
-            "occupancy",
-        ],
-        Feature::WorldStreaming => &["streaming"],
-        Feature::Navigation => &["navigation"],
-        Feature::Ocean => &[],
-        Feature::Animation => &["animation", "skin"],
-        Feature::TimeOfDay => &["time_of_day"],
-        Feature::Deformation => &["deformation"],
-        Feature::Collision => &[],
+        Feature::Collision => Some("engine_collision"),
+        Feature::Terrain
+        | Feature::WorldStreaming
+        | Feature::Navigation
+        | Feature::Ocean
+        | Feature::Animation
+        | Feature::TimeOfDay
+        | Feature::Deformation => None,
     }
 }
 
@@ -174,33 +165,39 @@ fn declared(code: &str) -> BTreeSet<String> {
 }
 
 /// Fails at the first module using a feature it may not, at a folder of
-/// features/ that names no feature or one whose modules are listed too, and
-/// at what [`listed`] finds outside its list.
+/// features/ that names no feature, at a feature of engine_core without a
+/// folder, and at what [`listed`] finds outside its list.
 pub fn check(root: &Path) -> Result<(), String> {
     let sources = sources(root)?;
-    let owner = |module: &str| match module.strip_prefix("features/") {
-        Some(name) => Feature::ALL
-            .into_iter()
-            .find(|feature| feature.name() == name),
-        None => Feature::ALL
-            .into_iter()
-            .find(|&feature| modules(feature).contains(&module)),
+    let owner = |module: &str| {
+        module.strip_prefix("features/").and_then(|name| {
+            Feature::ALL
+                .into_iter()
+                .find(|feature| feature.name() == name)
+        })
     };
     let mut violations = Vec::new();
     listed(root, &mut violations)?;
     for module in sources.keys() {
-        let Some(name) = module.strip_prefix("features/") else {
-            continue;
-        };
-        match owner(module) {
-            None => violations.push(format!(
+        if module.starts_with("features/") && owner(module).is_none() {
+            violations.push(format!(
                 "{module} is no feature's folder: name it as engine_features! names one"
+            ));
+        }
+    }
+    for feature in Feature::ALL {
+        let folder = sources.contains_key(&format!("features/{}", feature.name()));
+        match own_crate(feature) {
+            None if !folder => violations.push(format!(
+                "{} has no folder: its code is engine_core/src/features/{}",
+                feature.name(),
+                feature.name()
             )),
-            Some(feature) if !modules(feature).is_empty() => violations.push(format!(
-                "{name} has a folder and modules listed in tools/xtask/src/features.rs: \
-                 list none"
+            Some(home) if folder => violations.push(format!(
+                "{} lives in {home} and has a folder in engine_core too",
+                feature.name()
             )),
-            Some(_) => {}
+            None | Some(_) => {}
         }
     }
     let mut types: BTreeMap<String, Feature> = BTreeMap::new();
@@ -240,8 +237,8 @@ pub fn check(root: &Path) -> Result<(), String> {
     Err(format!(
         "engine features must stay composable and listed: a feature uses the core and the \
          features it needs (engine_features! in engine_core/src/features/mod.rs; its code is \
-         its folder there, or the modules tools/xtask/src/features.rs lists), the core no \
-         feature, and each feature's development file and queries are in their lists:\n{}",
+         its folder there), the core no feature, and each feature's development file and \
+         queries are in their lists:\n{}",
         violations.join("\n")
     ))
 }

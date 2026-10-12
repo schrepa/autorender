@@ -20,9 +20,9 @@ const LONG_FILES: &[(&str, usize)] = &[
     ("apps/stress-lab/src/metro/models.rs", 2305),
     ("apps/stress-lab/src/shapes.rs", 1571),
     ("crates/engine_assets/src/simplify.rs", 2383),
+    ("crates/engine_core/src/features/terrain/mod.rs", 4442),
     ("crates/engine_core/src/hierarchy.rs", 1714),
     ("crates/engine_core/src/retained_render.rs", 1705),
-    ("crates/engine_core/src/terrain.rs", 4441),
     ("crates/engine_dev/src/inspect.rs", 1738),
     ("crates/engine_render/src/meshes/terrain.wgsl", 1843),
     ("crates/engine_render/src/terrain.rs", 2338),
@@ -33,6 +33,11 @@ const LONG_FILES: &[(&str, usize)] = &[
 /// The structs with more than [`MAX_STRUCT_FIELDS`] fields, by file and
 /// name: each one's most fields.
 const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
+    (
+        "crates/engine_core/src/features/terrain/mod.rs",
+        "TerrainState",
+        42,
+    ),
     ("crates/engine_core/src/frame_stats.rs", "RenderStats", 42),
     (
         "crates/engine_core/src/interpolation/gpu.rs",
@@ -45,7 +50,6 @@ const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
         37,
     ),
     ("crates/engine_core/src/scene.rs", "RenderSnapshot", 32),
-    ("crates/engine_core/src/terrain.rs", "TerrainState", 42),
     ("crates/engine_render/src/clouds.rs", "CloudPass", 48),
     ("crates/engine_render/src/renderer.rs", "Renderer", 50),
     ("crates/engine_render/src/scatter.rs", "ScatterPass", 40),

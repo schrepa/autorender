@@ -17,7 +17,7 @@ use engine_assets::{
 };
 use glam::Vec3;
 
-use crate::terrain::Terrains;
+use super::Terrains;
 use crate::terrain_data::Bridge;
 use crate::{Mesh3d, SplineMesh, Transform};
 

@@ -4,17 +4,14 @@
 //! systems in [`FixedSimulation`] or [`Presentation`], then drive [`Engine`]
 //! from the platform event loop. Bevy's default `Main` schedules are not run.
 
-mod animation;
 mod antialiasing;
 mod atmosphere;
-mod bridges;
 mod clock;
 mod clouds;
 mod commands;
 mod contact_shadows;
 mod culling;
 mod decals;
-mod deformation;
 mod effects;
 mod entity_indices;
 mod environment;
@@ -22,7 +19,6 @@ mod extraction;
 mod features;
 mod frame_stats;
 mod gpu_culling;
-mod ground_cover;
 mod grounded;
 mod hierarchy;
 mod input;
@@ -31,38 +27,26 @@ mod jobs;
 mod level_of_detail;
 mod lights;
 pub mod math;
-mod navigation;
-mod occupancy;
 mod packed;
 mod particles;
 pub mod presentation_bounds;
 mod probes;
 mod retained_render;
 mod scene;
-mod skin;
 mod sky;
 mod spline_mesh;
-mod streaming;
-mod terrain;
-mod time_of_day;
 mod transform_edits;
 mod virtual_geometry;
-mod water;
-mod waterfalls;
-mod wind;
 
-pub use animation::*;
 pub use antialiasing::*;
 pub use atmosphere::*;
 pub use bevy_app::{App, Plugin, PluginGroup, PluginGroupBuilder};
 pub use bevy_ecs;
-pub use bridges::*;
 pub use clock::*;
 pub use clouds::*;
 pub use commands::*;
 pub use contact_shadows::*;
 pub use decals::*;
-pub use deformation::*;
 pub use effects::*;
 pub use engine_assets::{
     Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding, LodLevel,
@@ -95,7 +79,6 @@ pub use features::*;
 pub use frame_stats::*;
 pub use glam;
 pub use gpu_culling::*;
-pub use ground_cover::*;
 pub use grounded::*;
 pub use hierarchy::*;
 pub use input::*;
@@ -103,22 +86,14 @@ pub use interpolation::*;
 pub use jobs::*;
 pub use level_of_detail::*;
 pub use lights::*;
-pub use navigation::*;
-pub use occupancy::*;
 pub use particles::*;
 pub use probes::*;
 pub use retained_render::*;
 pub use scene::*;
-pub use skin::*;
 pub use sky::*;
 pub use spline_mesh::*;
-pub use streaming::*;
-pub use terrain::*;
-pub use time_of_day::*;
 pub use transform_edits::*;
 pub use virtual_geometry::*;
-pub use water::*;
-pub use wind::*;
 
 use bevy_app::PluginsState;
 use bevy_ecs::{
@@ -276,7 +251,7 @@ pub struct Engine {
     // each extraction.
     lights: lights::LightExtraction,
     particles: particles::ParticleExtraction,
-    skins: skin::SkinExtraction,
+    skins: SkinExtraction,
     decals: decals::DecalExtraction,
     probes: probes::ProbeExtraction,
     plugins_finalized: bool,
@@ -434,7 +409,7 @@ impl Engine {
         ), Or<(With<Cube>, With<Mesh3d>)>>();
         let lights = lights::LightExtraction::new(app.world_mut());
         let particles = particles::ParticleExtraction::new(app.world_mut());
-        let skins = skin::SkinExtraction::new(app.world_mut());
+        let skins = SkinExtraction::new(app.world_mut());
         let decals = decals::DecalExtraction::new(app.world_mut());
         let probes = probes::ProbeExtraction::new(app.world_mut());
         let mut retained = retained_render::RetainedRender::new(
@@ -747,7 +722,7 @@ impl Engine {
     pub fn stream_terrain(&mut self) {
         self.app
             .world_mut()
-            .run_system_cached(terrain::stream_terrains)
+            .run_system_cached(stream_terrains)
             .expect("terrain streaming takes no input");
     }
 
@@ -755,7 +730,7 @@ impl Engine {
     /// between frames, where frames leave time free while the
     /// GPU draws them; whether tiles are still to load.
     pub fn work_terrain(&mut self, milliseconds: f64) -> bool {
-        terrain::work_between_frames(self.app.world_mut(), milliseconds)
+        work_between_frames(self.app.world_mut(), milliseconds)
     }
 
     /// Refreshes world matrices without advancing simulation or frame counters.

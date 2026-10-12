@@ -4,9 +4,21 @@
 //! it read. A feature's folder here holds the feature: its settings,
 //! components, systems and plugin.
 
+mod animation;
+mod deformation;
+mod navigation;
 mod ocean;
+mod terrain;
+mod time_of_day;
+mod world_streaming;
 
+pub use animation::*;
+pub use deformation::*;
+pub use navigation::*;
 pub use ocean::*;
+pub use terrain::*;
+pub use time_of_day::*;
+pub use world_streaming::*;
 
 use bevy_app::App;
 use bevy_ecs::prelude::{Component, Resource, World};

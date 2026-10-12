@@ -17,9 +17,9 @@ use engine_assets::{
 };
 use glam::Vec3;
 
+use super::Terrains;
 use crate::math::{clamp, max};
 use crate::spline_mesh::{curve, point_at};
-use crate::terrain::Terrains;
 use crate::terrain_data::Fall;
 use crate::{Mesh3d, ParticleBlend, ParticleEmitter, Transform, Water};
 

@@ -2,6 +2,10 @@
 //! and write their targets' local transforms, which interpolation then
 //! presents smoothly between ticks.
 
+mod skin;
+
+pub use skin::*;
+
 use bevy_ecs::prelude::{Component, Entity, Local, Query, Res, SystemSet};
 use bevy_ecs::schedule::IntoScheduleConfigs;
 
