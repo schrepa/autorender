@@ -169,7 +169,10 @@ unsafe extern "C" {
 
 /// `clodDefaultConfig`: clusters of up to `max_triangles` (4 to 256).
 pub(crate) fn default_config(max_triangles: usize) -> ClodConfig {
-    assert!((4..=256).contains(&max_triangles));
+    assert!(
+        (4..=256).contains(&max_triangles),
+        "clusters hold 4 to 256 triangles"
+    );
     // SAFETY: a plain constructor over a checked argument.
     unsafe { clodDefaultConfig(max_triangles) }
 }
@@ -248,17 +251,29 @@ pub(crate) fn build(
 ) -> bool {
     assert_eq!(
         input.attributes.len(),
-        input.positions.len() * input.attribute_stride
+        input.positions.len() * input.attribute_stride,
+        "attributes cover every vertex"
     );
-    assert!(input.weights.len() <= input.attribute_stride);
-    assert!(input.indices.len().is_multiple_of(3));
+    assert!(
+        input.weights.len() <= input.attribute_stride,
+        "at most a weight per attribute"
+    );
+    assert!(
+        input.indices.len().is_multiple_of(3),
+        "indices are whole triangles"
+    );
     assert!(
         input
             .indices
             .iter()
-            .all(|&index| (index as usize) < input.positions.len())
+            .all(|&index| (index as usize) < input.positions.len()),
+        "indices address the vertices"
     );
-    assert_eq!(input.locks.len(), input.positions.len());
+    assert_eq!(
+        input.locks.len(),
+        input.positions.len(),
+        "a lock flag per vertex"
+    );
     let mesh = ClodMesh {
         indices: input.indices.as_ptr(),
         index_count: input.indices.len(),
@@ -308,7 +323,8 @@ pub(crate) fn cluster_bounds(indices: &[u32], positions: &[[f32; 3]]) -> Meshopt
     assert!(
         indices
             .iter()
-            .all(|&index| (index as usize) < positions.len())
+            .all(|&index| (index as usize) < positions.len()),
+        "indices address the vertices"
     );
     // SAFETY: indices checked above address tightly packed positions.
     unsafe {
@@ -329,7 +345,10 @@ pub(crate) fn build_hierarchy(
     node_width: usize,
     levels: usize,
 ) -> Vec<ClodNode> {
-    assert!(groups.iter().all(|group| (group.depth as usize) < levels));
+    assert!(
+        groups.iter().all(|group| (group.depth as usize) < levels),
+        "every group lies within the levels"
+    );
     // SAFETY: plain arithmetic.
     let bound = unsafe { clodBuildHierarchyBound(groups.len(), node_width, levels) };
     let mut nodes = vec![ClodNode::default(); bound];
@@ -373,19 +392,27 @@ pub fn simplify(
     target_error: f32,
     options: u32,
 ) -> (Vec<u32>, f32) {
-    assert!(input.indices.len().is_multiple_of(3));
+    assert!(
+        input.indices.len().is_multiple_of(3),
+        "indices are whole triangles"
+    );
     assert!(
         input
             .indices
             .iter()
-            .all(|&index| (index as usize) < input.positions.len())
+            .all(|&index| (index as usize) < input.positions.len()),
+        "indices address the vertices"
     );
     if let Some((values, stride, weights)) = input.attributes {
-        assert_eq!(values.len(), input.positions.len() * stride);
-        assert!(weights.len() <= stride);
+        assert_eq!(
+            values.len(),
+            input.positions.len() * stride,
+            "attributes cover every vertex"
+        );
+        assert!(weights.len() <= stride, "at most a weight per attribute");
     }
     if let Some(locks) = input.locks {
-        assert_eq!(locks.len(), input.positions.len());
+        assert_eq!(locks.len(), input.positions.len(), "a lock flag per vertex");
     }
     let mut destination = vec![0u32; input.indices.len()];
     let mut error = 0.0f32;

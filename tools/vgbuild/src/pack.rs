@@ -219,7 +219,11 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
             NodeKind::Children { first, count } => [VIRTUAL_NONE, first, count],
         });
     }
-    debug_assert_eq!(words.len(), HEADER_WORDS + dag.nodes.len() * NODE_WORDS);
+    debug_assert_eq!(
+        words.len(),
+        HEADER_WORDS + dag.nodes.len() * NODE_WORDS,
+        "the nodes follow the header"
+    );
     for group in &dag.groups {
         words.extend(sphere(
             group.simplified.center,
@@ -232,7 +236,11 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
             group.depth,
         ]);
     }
-    debug_assert_eq!(words.len() % GROUP_WORDS, 0);
+    debug_assert_eq!(
+        words.len() % GROUP_WORDS,
+        0,
+        "the groups end on a whole group"
+    );
     for (index, cluster) in dag.clusters.iter().enumerate() {
         let (page, vertex_offset, triangle_offset) = placement[index];
         let cone = u32::from_le_bytes(cluster.cone.map(|value| value as u8));
@@ -251,8 +259,8 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
             0,
         ]);
     }
-    debug_assert_eq!(words.len() % 4, 0);
-    debug_assert_eq!(CLUSTER_WORDS, 12);
+    debug_assert_eq!(words.len() % 4, 0, "the clusters end on 16 bytes");
+    debug_assert_eq!(CLUSTER_WORDS, 12, "a cluster is the 12 words written above");
     let mut offset = 0u32;
     for page in &pages {
         words.extend([offset, page.len() as u32]);

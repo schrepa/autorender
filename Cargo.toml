@@ -101,6 +101,8 @@ too_many_lines = "deny"
 # no longer holds fails, so a stale one goes.
 allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
+# An assertion says what it guards when it fails.
+missing_assert_message = "deny"
 
 [workspace.lints.rustdoc]
 # Every crate opens by saying what it is.

@@ -63,7 +63,7 @@ pub(crate) fn listed_ranges(
     }
     for &node in nodes {
         let node = node as usize;
-        debug_assert!(node < len);
+        debug_assert!(node < len, "changed nodes lie in the array");
         bits[node / 64] |= 1 << (node % 64);
     }
     let gap = WRITE_CALL_BYTES.div_ceil(stride);

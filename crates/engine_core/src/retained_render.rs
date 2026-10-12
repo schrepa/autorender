@@ -874,7 +874,7 @@ impl RetainedRender {
         if let Some(Some((cached_entity, index))) = self.query_slots.get(row)
             && *cached_entity == entity
         {
-            debug_assert_eq!(self.owners[*index], Some(entity));
+            debug_assert_eq!(self.owners[*index], Some(entity), "an entity owns its slot");
             return Some(*index);
         }
         let index = if let Some(&index) = self.entities.get(&entity) {

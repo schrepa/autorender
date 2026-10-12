@@ -81,7 +81,7 @@ resources! {
 }
 
 // A set holds every resource as a bit of a u32.
-const _: () = assert!(RESOURCES.len() <= 32);
+const _: () = assert!(RESOURCES.len() <= 32, "a resource set is a u32");
 
 impl Resource {
     fn bit(self) -> u32 {
@@ -263,7 +263,7 @@ passes! {
 }
 
 // A mask holds every pass as a bit of a u32.
-const _: () = assert!(PASSES.len() <= 32);
+const _: () = assert!(PASSES.len() <= 32, "a pass mask is a u32");
 
 impl Pass {
     /// The pass's entry in [`PASSES`]: every pass the renderer declares has

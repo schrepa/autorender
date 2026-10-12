@@ -3415,7 +3415,7 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawn
         .map(|clip| library.clip(&mut assets, clip).map(|handle| (clip, handle)))
         .collect::<Result<_, _>>()?;
     let renderables = drawn.iter().filter(|mesh| mesh.is_some()).count() as u32;
-    debug_assert_eq!(renderables, config.renderables);
+    debug_assert_eq!(renderables, config.renderables, "renderables as configured");
     let dense = if config.dense_colliders {
         config.colliders
     } else {

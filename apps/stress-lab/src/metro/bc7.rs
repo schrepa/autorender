@@ -30,7 +30,10 @@ const FIRST_REACHING: [usize; 65] = {
 /// BC7 blocks of an RGBA8 level whose dimensions are multiples of 4. Blocks
 /// of one color encode once per level.
 pub(crate) fn encode(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
-    debug_assert!(width.is_multiple_of(4) && height.is_multiple_of(4));
+    debug_assert!(
+        width.is_multiple_of(4) && height.is_multiple_of(4),
+        "a level is whole 4 by 4 blocks"
+    );
     let mut blocks = Vec::with_capacity((width * height) as usize);
     let mut uniform: HashMap<[u8; 4], [u8; 16]> = HashMap::new();
     for by in 0..height / 4 {

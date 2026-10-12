@@ -651,7 +651,8 @@ impl Walk<'_> {
                 let interval = &self.intervals[record];
                 debug_assert_eq!(
                     interval.scales_compatible,
-                    compatible_scales(&self.record_previous[record], current)
+                    compatible_scales(&self.record_previous[record], current),
+                    "an interval's cached scale compatibility is current"
                 );
                 let blends = interval.blends(pass.epoch, pass.active_tick);
                 (!blends, blends)

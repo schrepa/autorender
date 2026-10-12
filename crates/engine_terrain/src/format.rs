@@ -209,7 +209,7 @@ struct BitWriter {
 
 impl BitWriter {
     fn push(&mut self, value: u32, count: u32) {
-        debug_assert!(count <= 32);
+        debug_assert!(count <= 32, "a push writes at most 32 bits");
         if count == 0 {
             return;
         }

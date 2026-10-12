@@ -140,8 +140,16 @@ impl Residency {
         self.pages.clear();
         self.groups.clear();
         for (mesh_index, (mesh, &(group_base, page_base))) in meshes.iter().zip(bases).enumerate() {
-            debug_assert_eq!(self.pages.len(), page_base as usize);
-            debug_assert_eq!(self.groups.len(), group_base as usize);
+            debug_assert_eq!(
+                self.pages.len(),
+                page_base as usize,
+                "a mesh's pages start at its base"
+            );
+            debug_assert_eq!(
+                self.groups.len(),
+                group_base as usize,
+                "a mesh's groups start at its base"
+            );
             self.pages.extend((0..mesh.pages).map(|local| Page {
                 mesh: mesh_index as u32,
                 local,

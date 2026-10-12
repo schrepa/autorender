@@ -200,7 +200,8 @@ impl InterpolationState {
             let interval = &self.intervals[record];
             debug_assert_eq!(
                 interval.scales_compatible,
-                compatible_scales(&self.previous[record], pose)
+                compatible_scales(&self.previous[record], pose),
+                "an interval's cached scale compatibility is current"
             );
             let blends = interval.blends(self.epoch, self.active);
             let snap_branch = !blends;
@@ -270,7 +271,8 @@ impl InterpolationState {
                 let interval = &self.intervals[record];
                 debug_assert_eq!(
                     interval.scales_compatible,
-                    compatible_scales(&self.previous[record], pose)
+                    compatible_scales(&self.previous[record], pose),
+                    "an interval's cached scale compatibility is current"
                 );
                 let blends = interval.blends(self.epoch, self.active);
                 own_snap[lane] = !blends;

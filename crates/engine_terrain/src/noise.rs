@@ -69,8 +69,14 @@ const _: () = {
     while i < 16 {
         let x = MAGNITUDES[magnitude_x(i) as usize].to_bits() ^ (sign_x(i) << 31);
         let z = MAGNITUDES[magnitude_z(i) as usize].to_bits() ^ (sign_z(i) << 31);
-        assert!(GRADIENTS[i as usize][0].to_bits() == x);
-        assert!(GRADIENTS[i as usize][1].to_bits() == z);
+        assert!(
+            GRADIENTS[i as usize][0].to_bits() == x,
+            "the rules give every gradient's x"
+        );
+        assert!(
+            GRADIENTS[i as usize][1].to_bits() == z,
+            "the rules give every gradient's z"
+        );
         i += 1;
     }
 };

@@ -1450,7 +1450,7 @@ fn ktx2(size: u32, pixels: &[u8], srgb: bool) -> Vec<u8> {
         out.extend_from_slice(&0_u32.to_le_bytes());
         out.extend_from_slice(&255_u32.to_le_bytes());
     }
-    debug_assert_eq!(out.len() as u64, DATA);
+    debug_assert_eq!(out.len() as u64, DATA, "the pixels start at DATA");
     out.extend_from_slice(pixels);
     out
 }

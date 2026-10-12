@@ -376,8 +376,8 @@ impl Default for TransformIndex {
 }
 
 // Node indices and depths are stored compactly in `Link`.
-const _: () = assert!(MAX_TRANSFORM_NODES < u32::MAX as usize);
-const _: () = assert!(MAX_HIERARCHY_DEPTH < u8::MAX as usize);
+const _: () = assert!(MAX_TRANSFORM_NODES < u32::MAX as usize, "indices fit a u32");
+const _: () = assert!(MAX_HIERARCHY_DEPTH < u8::MAX as usize, "depths fit a u8");
 const NO_NODE: u32 = u32::MAX;
 
 /// Source identity and change keys. Every per-node array (`sources`, `locals`,
@@ -765,7 +765,7 @@ fn find_index(indices: &EntityIndices, entity: Entity) -> Option<usize> {
 #[cfg_attr(feature = "attribution", inline(never))]
 fn deferred_global(links: &[Link], globals: &[Mat4], locals: &[NodePose], index: usize) -> Mat4 {
     let parent = links[index].parent().map_or(Mat4::IDENTITY, |parent| {
-        debug_assert!(links[parent].global == Global::Stored);
+        debug_assert!(links[parent].global == Global::Stored, "parents are stored");
         globals[parent]
     });
     parent * Transform::from_pose(&locals[index]).matrix()
@@ -1672,7 +1672,7 @@ fn local_matrix(local: &Transform) -> Option<Mat4> {
 /// also distinguishes the two zeros. Four vector compares and sign masks.
 #[inline(always)]
 pub(crate) fn same_finite_matrix_bits(left: Mat4, right: Mat4) -> bool {
-    debug_assert!(left.is_finite() && right.is_finite());
+    debug_assert!(left.is_finite() && right.is_finite(), "matrices are finite");
     let equal = left.x_axis.cmpeq(right.x_axis)
         & left.y_axis.cmpeq(right.y_axis)
         & left.z_axis.cmpeq(right.z_axis)
