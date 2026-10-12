@@ -814,6 +814,7 @@ dependencies = [
  "engine_render",
  "engine_scene",
  "engine_settings",
+ "engine_worker",
  "js-sys",
  "schemars",
  "serde",
@@ -914,7 +915,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "winit",
- "zune-jpeg",
 ]
 
 [[package]]
@@ -1020,9 +1020,11 @@ dependencies = [
  "engine_panic",
  "engine_terrain",
  "js-sys",
+ "png",
  "serde_json",
  "sha2",
  "wasm-bindgen",
+ "zune-jpeg",
 ]
 
 [[package]]

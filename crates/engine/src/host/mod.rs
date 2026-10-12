@@ -12,6 +12,7 @@ mod input;
 mod jobs;
 pub mod policy;
 mod resolution;
+mod scene_load;
 mod settings;
 
 pub use crate::app_host::{TerrainClock, now_ms};
@@ -28,6 +29,10 @@ pub use input::{FrameInput, InputGatherer, KEYS};
 pub use jobs::JobOrder;
 pub(crate) use jobs::{Finished, JobScheduler};
 pub use resolution::view_size;
+pub use scene_load::{
+    FileRead, IMAGE_FORMATS, Image, ImageDecoder, ImageFormat, ImageRead, LoadingHost, SceneLoad,
+    decode_image, image_format,
+};
 pub use settings::{HostSettings, SETTINGS, Setting};
 
 /// The types and values the web host shares with the engine, in
@@ -74,6 +79,23 @@ pub fn typescript() -> String {
         "FRAME_PHASES",
         "What an animation frame did (Rust's `engine::host::FramePhase`), by name.",
         &phases.into(),
+    ));
+    let formats: serde_json::Map<String, serde_json::Value> = IMAGE_FORMATS
+        .iter()
+        .map(|format| {
+            let decoder = |decoder: Option<ImageDecoder>| decoder.map(ImageDecoder::name);
+            let described = serde_json::json!({
+                "what": format.what,
+                "page": decoder(format.page),
+                "native": decoder(format.native),
+            });
+            (format.name.to_owned(), described)
+        })
+        .collect();
+    output.push_str(&constant(
+        "IMAGE_FORMATS",
+        "The image formats a scene's files may hold, and who decodes each on the\npage and natively (Rust's `engine::host::IMAGE_FORMATS`): the engine's\ndecoder, the browser's, the page's Basis transcoder, or none.",
+        &formats.into(),
     ));
     let settings: serde_json::Map<String, serde_json::Value> = SETTINGS
         .iter()

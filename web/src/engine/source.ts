@@ -1,7 +1,6 @@
 import { decodeImagePixels } from "./decode.ts";
 import { jobPool } from "./jobs.ts";
-import { basisBase, isKtx2, targetFormat, transcodeKtx2 } from "./ktx2.ts";
-import { fetchPrefix, fetchVirtualPrefix } from "./virtual-mesh.ts";
+import { basisBase, targetFormat, transcodeKtx2 } from "./ktx2.ts";
 
 /** Read a UTF-8 authoring source with a hard transport budget, including chunked replies. */
 export async function loadSceneSource(url: string, signal: AbortSignal): Promise<string> {
@@ -37,77 +36,73 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
   } finally { reader.releaseLock(); }
 }
 
-/** The generated bindings a scene's file loader needs. */
-interface SceneFileBindings {
-  scene_file_list(source: string): string;
-  virtual_prefix_bytes(header: Uint8Array): number | undefined;
-  terrain_prefix_bytes(header: Uint8Array): number | undefined;
-  SceneFileSet: new () => {
-    add_image(uri: string, width: number, height: number, pixels: Uint8Array): void;
-    add_compressed_image(uri: string, format: string, width: number, height: number, data: Uint8Array, levels: Uint32Array): void;
-    add_buffer(uri: string, bytes: Uint8Array): void;
-    add_virtual_mesh(uri: string, bytes: Uint8Array, url: string | undefined): void;
-    add_terrain(uri: string, bytes: Uint8Array, url: string | undefined): void;
-    free(): void;
-  };
+/** A scene's files loading (the engine's `SceneLoad`), as the game's
+ * bindings make it, ending in the game's `Files`. */
+interface SceneLoad<Files> {
+  take_reads(): { uri: string; prefix?: number }[];
+  /** For an image, who decodes it here (`IMAGE_FORMATS`): `engine`,
+   * `browser` or `transcoder`. */
+  read(uri: string, bytes: Uint8Array, url: string): string | undefined;
+  image(uri: string, width: number, height: number, pixels: Uint8Array): void;
+  decode(uri: string, bytes: Uint8Array): void;
+  compressed_image(uri: string, format: string, width: number, height: number, data: Uint8Array, levels: Uint32Array): void;
+  finish(): Files;
+  free(): void;
 }
 
+/** The generated bindings a scene's file loader needs. */
+interface SceneFileBindings<Files> {
+  SceneLoad: new (source: string) => SceneLoad<Files>;
+}
 
 /**
- * Fetch the image and buffer files a scene references, relative to its URL,
- * decode images with the browser's own decoder into RGBA8 pixels, and
- * transcode KTX2 images to a block-compressed format the GPU samples.
- * Runs at load boundaries only, never per frame: on the
- * page's job workers where it runs them, several at once,
- * else on the page.
+ * The files a scene references, as the engine loads them: the page
+ * fetches what it asks, relative to the scene's URL (files whole, and
+ * streamed files' prefixes by byte range), and decodes each image as
+ * `IMAGE_FORMATS` says: with the engine's decoder, the browser's on the
+ * page's job workers where it runs them, or its Basis transcoder. Runs at
+ * load boundaries only, never per frame; files load several at once.
  */
-export async function loadSceneFiles(sceneUrl: string, source: string, bindings: SceneFileBindings, signal: AbortSignal) {
-  const list = JSON.parse(bindings.scene_file_list(source)) as { uri: string; kind: "image" | "buffer" | "virtual_mesh" | "terrain" }[];
-  const files = new bindings.SceneFileSet();
+export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bindings: SceneFileBindings<Files>, signal: AbortSignal): Promise<Files> {
+  const load = new bindings.SceneLoad(source);
   const base = new URL(sceneUrl, location.href);
   const pool = jobPool();
-  try {
-    await Promise.all(list.map(async ({ uri, kind }) => {
-      // Virtual meshes load their prefix; the renderer
-      // streams their other pages from the same URL as views need them.
-      if (kind === "virtual_mesh") {
-        const url = new URL(uri, base).href;
-        files.add_virtual_mesh(uri, await fetchVirtualPrefix(url, bindings.virtual_prefix_bytes, signal), url);
-        return;
-      }
-      // Terrain files load their header and directory; the
-      // engine fetches tiles by byte range as the camera needs them.
-      if (kind === "terrain") {
-        const url = new URL(uri, base).href;
-        files.add_terrain(uri, await fetchPrefix(url, 64, bindings.terrain_prefix_bytes, "terrain", signal), url);
-        return;
-      }
-      const response = await fetch(new URL(uri, base), { cache: "no-store", signal });
-      if (!response.ok) {
-        await response.body?.cancel().catch(() => {});
-        throw new Error(`Scene file ${uri} fetch failed: HTTP ${response.status}`);
-      }
-      const blob = await response.blob();
-      if (kind === "buffer") {
-        files.add_buffer(uri, new Uint8Array(await blob.arrayBuffer()));
-        return;
-      }
-      const head = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
-      if (isKtx2(head)) {
-        const bytes = new Uint8Array(await blob.arrayBuffer());
-        // A worker that fails leaves the image to the page.
-        const image = (pool && await pool.transcodeKtx2(uri, bytes.slice(), await targetFormat(), basisBase()).catch(() => undefined))
-          || await transcodeKtx2(uri, bytes);
-        if (image.format === "rgba8") files.add_image(uri, image.width, image.height, image.pixels);
-        else files.add_compressed_image(uri, image.format, image.width, image.height, image.data, image.levels);
-        return;
-      }
+  const file = async ({ uri, prefix }: { uri: string; prefix?: number }) => {
+    const url = new URL(uri, base).href;
+    const bytes = await fetchBytes(url, prefix, signal);
+    const decoder = load.read(uri, bytes, url);
+    if (decoder === "engine") {
+      load.decode(uri, bytes);
+    } else if (decoder === "browser") {
+      // A worker that fails leaves the image to the page.
+      const blob = new Blob([bytes as Uint8Array<ArrayBuffer>]);
       const image = (pool && await pool.decodeImage(uri, blob).catch(() => undefined)) || await decodeImagePixels(uri, blob);
-      files.add_image(uri, image.width, image.height, image.pixels);
-    }));
-    return files;
-  } catch (error) {
-    files.free();
-    throw error;
+      load.image(uri, image.width, image.height, image.pixels);
+    } else if (decoder === "transcoder") {
+      const image = (pool && await pool.transcodeKtx2(uri, bytes.slice(), await targetFormat(), basisBase()).catch(() => undefined))
+        || await transcodeKtx2(uri, bytes);
+      if (image.format === "rgba8") load.image(uri, image.width, image.height, image.pixels);
+      else load.compressed_image(uri, image.format, image.width, image.height, image.data, image.levels);
+    }
+  };
+  try {
+    for (let reads = load.take_reads(); reads.length > 0; reads = load.take_reads()) {
+      await Promise.all(reads.map(file));
+    }
+    return load.finish();
+  } finally {
+    load.free();
   }
+}
+
+/** File `url`'s first `prefix` bytes by a range request, or the whole
+ * file: a server ignoring ranges sends the whole file, which serves too. */
+export async function fetchBytes(url: string, prefix: number | undefined, signal?: AbortSignal): Promise<Uint8Array> {
+  const headers: HeadersInit = prefix === undefined ? {} : { Range: `bytes=0-${prefix - 1}` };
+  const response = await fetch(url, { headers, cache: "no-store", signal });
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`Scene file ${url} fetch failed: HTTP ${response.status}`);
+  }
+  return new Uint8Array(await response.arrayBuffer());
 }

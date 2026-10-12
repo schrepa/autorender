@@ -79,8 +79,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 .map(|kind| kind.kind)
             {
                 Some(SceneFileKind::Image) => {
-                    let image = engine_native::files::decode_image(&file.uri, &file.bytes)
-                        .map_err(|error| error.message)?;
+                    let image = engine_native::files::decode_image(&file.uri, &file.bytes)?;
                     files.add_image(&file.uri, image.width, image.height, image.pixels);
                 }
                 Some(SceneFileKind::VirtualMesh) => {

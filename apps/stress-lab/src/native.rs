@@ -379,7 +379,12 @@ pub fn stress_files(
                         format!("cannot read {}: {error}", path.display()),
                     )
                 })?;
-                files::read_rgba8_ktx2(&path.display().to_string(), &bytes)
+                if files::image_format(&bytes).map(|format| format.name) != Some("ktx2-rgba8") {
+                    return Ok(None);
+                }
+                files::decode_image(&path.display().to_string(), &bytes)
+                    .map(Some)
+                    .map_err(|message| Error::new(ErrorCode::InvalidTexture, "$", message))
             };
             let mut add = |key: String, image: files::Image| {
                 found.insert(

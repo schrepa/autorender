@@ -23,6 +23,8 @@ engine_dev = { workspace = true, optional = true }
 engine_settings.workspace = true
 engine_render.workspace = true
 engine_panic.workspace = true
+# What every host's scenes load with: the engine's image decoders.
+engine_worker.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = { workspace = true, optional = true }

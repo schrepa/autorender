@@ -15,8 +15,10 @@
 use engine_terrain::jobs::TerrainWorker;
 
 mod cache;
+mod image;
 
 pub use cache::JobCache;
+pub use image::{IMAGE_FORMATS, Image, ImageDecoder, ImageFormat, decode_image, image_format};
 
 /// Milliseconds a worker runs a job before it looks at its messages and
 /// more urgent jobs again.

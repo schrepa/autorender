@@ -4,7 +4,6 @@ import { Recorder, type RecordingReport } from "../engine/recording";
 import type { DetailedProfiler, DetailedProfileReport } from "../engine/profiling";
 import type { StressFiles, StressGame } from "../../pkg/stress_lab";
 import { fetchVirtualPrefix } from "../engine/virtual-mesh";
-import { isKtx2, readRgba8Ktx2 } from "../engine/ktx2";
 import { adapterFeatures } from "../engine/adapter";
 import { jobPool } from "../engine/jobs";
 import {
@@ -86,12 +85,10 @@ async function highlandsFiles(): Promise<StressFiles | undefined> {
     const names = JSON.parse(filesClass.highlands_names()) as string[];
     const images = await Promise.all(names.map(async name => {
       const response = await fetch(new URL(`${import.meta.env.BASE_URL}stress/terrain/${name}`, location.href));
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      const image = response.ok && isKtx2(bytes) ? readRgba8Ktx2(name, bytes) : undefined;
-      if (!image) throw new Error(`stress/terrain/${name} is missing or not an uncompressed RGBA8 KTX2 image.`);
-      return image;
+      if (!response.ok) throw new Error(`stress/terrain/${name} is missing.`);
+      return new Uint8Array(await response.arrayBuffer());
     }));
-    names.forEach((name, index) => files.add_image(name, images[index].width, images[index].height, images[index].pixels));
+    names.forEach((name, index) => files.add_encoded_image(name, images[index]));
   } catch (error) {
     files.free();
     notice(`The ground shows plain colors: ${String(error)} Build its materials with \`cargo run -p engine_assetc --release --bin terrain_materials\`.`);
@@ -103,9 +100,7 @@ async function highlandsFiles(): Promise<StressFiles | undefined> {
   await Promise.all(rocks.map(async name => {
     try {
       const response = await fetch(new URL(`${import.meta.env.BASE_URL}stress/rocks/${name}`, location.href));
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      const image = response.ok && isKtx2(bytes) ? readRgba8Ktx2(name, bytes) : undefined;
-      if (image) files.add_image(`rocks/${name}`, image.width, image.height, image.pixels);
+      if (response.ok) files.add_encoded_image(`rocks/${name}`, new Uint8Array(await response.arrayBuffer()));
     } catch { /* Absent or unreadable: the terrain rock's maps stand in. */ }
   }));
   highlandsSupplied = true;

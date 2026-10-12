@@ -41,38 +41,9 @@ impl SceneFileSet {
         data: Vec<u8>,
         levels: Vec<u32>,
     ) -> Result<(), JsValue> {
-        let invalid = |path: &str, message: &str| {
-            JsValue::from(crate::Error::new(
-                engine_core::ErrorCode::InvalidTexture,
-                path,
-                format!("{uri}: {message}"),
-            ))
-        };
-        let format = match format {
-            "bc7" => engine_core::TextureFormat::Bc7,
-            "etc2" => engine_core::TextureFormat::Etc2Rgba8,
-            "astc" => engine_core::TextureFormat::Astc4x4,
-            _ => {
-                return Err(invalid(
-                    "$.format",
-                    "compressed formats are bc7, etc2 and astc",
-                ));
-            }
-        };
-        let mut rest = &data[..];
-        let mut split = Vec::with_capacity(levels.len());
-        for length in levels {
-            let Some((level, tail)) = rest.split_at_checked(length as usize) else {
-                return Err(invalid("$.levels", "level lengths exceed the data"));
-            };
-            split.push(level.to_vec());
-            rest = tail;
-        }
-        if !rest.is_empty() {
-            return Err(invalid("$.levels", "data exceeds the level lengths"));
-        }
+        let (format, levels) = compressed_levels(uri, format, &data, &levels)?;
         self.files
-            .add_compressed_image(uri, format, width, height, split);
+            .add_compressed_image(uri, format, width, height, levels);
         Ok(())
     }
 
@@ -89,7 +60,8 @@ impl SceneFileSet {
     }
 
     /// Adds terrain file `uri`: its prefix
-    /// ([`terrain_prefix_bytes`] long) and the URL its tiles stream from.
+    /// (`engine::host::FileHeader::prefix_bytes` long) and the URL its tiles
+    /// stream from.
     pub fn add_terrain(&mut self, uri: &str, bytes: Vec<u8>, url: Option<String>) {
         self.files.add_terrain(uri, bytes, url.as_deref());
     }
@@ -101,28 +73,162 @@ impl SceneFileSet {
     }
 }
 
-/// The files scene `source` references, as JSON `[{"uri", "kind"}]` with
-/// kind `image`, `buffer`, `virtual_mesh` or `terrain`, for the page to
-/// fetch; an unparsable source references none (loading reports its error).
-#[wasm_bindgen]
-pub fn scene_file_list(source: &str) -> String {
-    let files = engine_scene::SceneDocument::from_json(source)
-        .map(|document| document.files())
-        .unwrap_or_default();
-    // Validated URIs hold only letters, digits and `_./-`: no escaping.
-    let entries: Vec<String> = files
-        .iter()
-        .map(|file| {
-            let kind = match file.kind {
-                engine_scene::SceneFileKind::Image => "image",
-                engine_scene::SceneFileKind::Buffer => "buffer",
-                engine_scene::SceneFileKind::VirtualMesh => "virtual_mesh",
-                engine_scene::SceneFileKind::Terrain => "terrain",
-            };
-            format!(r#"{{"uri":"{}","kind":"{kind}"}}"#, file.uri)
+/// The files a scene references, loading as the page loads them
+/// ([`crate::host::SceneLoad`]): the page reads what it asks and decodes
+/// each image as it says, then takes the scene's files.
+#[wasm_bindgen(js_name = SceneLoad)]
+pub struct PageSceneLoad {
+    load: Option<crate::host::SceneLoad>,
+}
+
+#[wasm_bindgen(js_class = SceneLoad)]
+impl PageSceneLoad {
+    /// The load of the files scene `source` references.
+    #[wasm_bindgen(constructor)]
+    pub fn new(source: &str) -> Result<PageSceneLoad, JsValue> {
+        Ok(Self {
+            load: Some(crate::host::SceneLoad::new(
+                source,
+                crate::host::LoadingHost::Page,
+            )?),
         })
-        .collect();
-    format!("[{}]", entries.join(","))
+    }
+
+    /// The reads it asks for since the last call, as `{uri, prefix?}`: a
+    /// file whole, or its first `prefix` bytes.
+    pub fn take_reads(&mut self) -> Result<js_sys::Array, JsValue> {
+        let out = js_sys::Array::new();
+        for read in self.loading()?.take_reads() {
+            let object = js_sys::Object::new();
+            // Setting a field of a plain new object cannot fail.
+            let _ = js_sys::Reflect::set(&object, &"uri".into(), &read.uri.into());
+            if let Some(prefix) = read.prefix {
+                let _ = js_sys::Reflect::set(&object, &"prefix".into(), &(prefix as f64).into());
+            }
+            out.push(&object);
+        }
+        Ok(out)
+    }
+
+    /// The page read `bytes` of file `uri`, which streams from `url` where
+    /// it is a streamed file: for an image, who decodes it here
+    /// (`engine`, `browser` or `transcoder`, as `IMAGE_FORMATS` says).
+    pub fn read(
+        &mut self,
+        uri: &str,
+        bytes: Vec<u8>,
+        url: &str,
+    ) -> Result<Option<String>, JsValue> {
+        Ok(self
+            .loading()?
+            .read(uri, bytes, url)?
+            .map(|image| image.decoder.name().to_owned()))
+    }
+
+    /// Image `uri` decoded to `width` × `height` RGBA8 pixels, rows from
+    /// the top.
+    pub fn image(
+        &mut self,
+        uri: &str,
+        width: u32,
+        height: u32,
+        pixels: Vec<u8>,
+    ) -> Result<(), JsValue> {
+        let image = crate::host::Image {
+            width,
+            height,
+            pixels,
+        };
+        self.loading()?.image(uri, image);
+        Ok(())
+    }
+
+    /// Image `uri`'s `bytes` decoded here with the engine's decoder.
+    pub fn decode(&mut self, uri: &str, bytes: &[u8]) -> Result<(), JsValue> {
+        Ok(self.loading()?.decode(uri, bytes)?)
+    }
+
+    /// Image `uri` transcoded to block-compressed `format` (`bc7`, `etc2`
+    /// or `astc`): `width` × `height`, its levels concatenated in `data`
+    /// from the base down with their byte lengths in `levels`.
+    pub fn compressed_image(
+        &mut self,
+        uri: &str,
+        format: &str,
+        width: u32,
+        height: u32,
+        data: Vec<u8>,
+        levels: Vec<u32>,
+    ) -> Result<(), JsValue> {
+        let (format, levels) = compressed_levels(uri, format, &data, &levels)?;
+        self.loading()?
+            .compressed_image(uri, format, width, height, levels);
+        Ok(())
+    }
+
+    /// The scene's files, once every one is held; the load ends.
+    pub fn finish(&mut self) -> Result<SceneFileSet, JsValue> {
+        let load = self.load.take().ok_or_else(ended)?;
+        Ok(SceneFileSet {
+            files: load.finish()?,
+        })
+    }
+
+    fn loading(&mut self) -> Result<&mut crate::host::SceneLoad, JsValue> {
+        self.load.as_mut().ok_or_else(ended)
+    }
+}
+
+/// A finished load's refusal.
+fn ended() -> JsValue {
+    crate::Error::new(
+        engine_core::ErrorCode::InvalidRequest,
+        "$",
+        "the scene's files were taken",
+    )
+    .into()
+}
+
+/// The texture format `format` names (`bc7`, `etc2` or `astc`) and
+/// `data` split into its levels by their byte lengths `levels`, for image
+/// `uri`.
+fn compressed_levels(
+    uri: &str,
+    format: &str,
+    data: &[u8],
+    levels: &[u32],
+) -> Result<(engine_core::TextureFormat, Vec<Vec<u8>>), JsValue> {
+    let invalid = |path: &str, message: &str| {
+        JsValue::from(crate::Error::new(
+            engine_core::ErrorCode::InvalidTexture,
+            path,
+            format!("{uri}: {message}"),
+        ))
+    };
+    let format = match format {
+        "bc7" => engine_core::TextureFormat::Bc7,
+        "etc2" => engine_core::TextureFormat::Etc2Rgba8,
+        "astc" => engine_core::TextureFormat::Astc4x4,
+        _ => {
+            return Err(invalid(
+                "$.format",
+                "compressed formats are bc7, etc2 and astc",
+            ));
+        }
+    };
+    let mut rest = data;
+    let mut split = Vec::with_capacity(levels.len());
+    for &length in levels {
+        let Some((level, tail)) = rest.split_at_checked(length as usize) else {
+            return Err(invalid("$.levels", "level lengths exceed the data"));
+        };
+        split.push(level.to_vec());
+        rest = tail;
+    }
+    if !rest.is_empty() {
+        return Err(invalid("$.levels", "data exceeds the level lengths"));
+    }
+    Ok((format, split))
 }
 
 /// Bytes of the prefix of the virtual mesh file whose first
@@ -132,17 +238,6 @@ pub fn scene_file_list(source: &str) -> String {
 #[wasm_bindgen]
 pub fn virtual_prefix_bytes(header: &[u8]) -> Option<u32> {
     engine_core::VirtualMesh::prefix_bytes(header).map(|bytes| bytes as u32)
-}
-
-/// Bytes of the prefix (header and directory) of the terrain file
-/// whose first 64 bytes are `header`: what hosts fetch before a scene
-/// loads; tiles stream by byte range as the camera needs them. `None` when
-/// it is not a terrain file.
-#[wasm_bindgen]
-pub fn terrain_prefix_bytes(header: &[u8]) -> Option<u32> {
-    engine_core::FileHeader::prefix_bytes(header)
-        .ok()
-        .map(|bytes| bytes as u32)
 }
 
 /// A hosted game as the page calls it: the game surface's methods whose

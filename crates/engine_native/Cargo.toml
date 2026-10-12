@@ -22,7 +22,6 @@ engine_worker.workspace = true
 png.workspace = true
 sha2.workspace = true
 serde_json.workspace = true
-zune-jpeg.workspace = true
 winit.workspace = true
 pollster.workspace = true
 

@@ -47,6 +47,20 @@ impl StressFiles {
         );
     }
 
+    /// Adds image `name` from its file's `bytes`, an uncompressed RGBA8
+    /// KTX2 image, as every host reads them.
+    pub fn add_encoded_image(&mut self, name: &str, bytes: &[u8]) -> Result<(), JsValue> {
+        if engine::host::image_format(bytes).map(|format| format.name) != Some("ktx2-rgba8") {
+            return Err(JsValue::from_str(&format!(
+                "{name} is not an uncompressed RGBA8 KTX2 image"
+            )));
+        }
+        let image = engine::host::decode_image(name, bytes)
+            .map_err(|message| JsValue::from_str(&message))?;
+        self.add_image(name, image.width, image.height, image.pixels);
+        Ok(())
+    }
+
     /// The files the dense scene reads, as a JSON array of names.
     pub fn dense_names() -> String {
         serde_json::to_string(&crate::DENSE_FILES).unwrap_or_else(|_| "[]".into())

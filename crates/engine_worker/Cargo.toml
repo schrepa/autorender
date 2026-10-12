@@ -18,6 +18,9 @@ engine_terrain.workspace = true
 engine_math.workspace = true
 sha2.workspace = true
 serde_json.workspace = true
+# Images as every host decodes them (`decode_image`).
+png.workspace = true
+zune-jpeg.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
