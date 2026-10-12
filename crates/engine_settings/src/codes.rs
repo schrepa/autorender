@@ -214,6 +214,8 @@ error_codes! {
     InvalidStreamed => "invalid_streamed",
     /// Only roots stand on the ground.
     InvalidGrounded => "invalid_grounded",
+    /// Only roots ride the sea.
+    InvalidFloating => "invalid_floating",
     /// An environment section is invalid.
     InvalidEnvironment => "invalid_environment",
 

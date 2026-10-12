@@ -3343,7 +3343,7 @@
           ]
         },
         "floating": {
-          "description": "Rides the sea.",
+          "description": "Rides the sea. Roots only.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneFloating"

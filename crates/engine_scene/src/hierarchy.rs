@@ -204,6 +204,14 @@ fn expand_list(
                 "only roots stand on the ground; ground the placement or root instead",
             ));
         }
+        // Floating objects ride the sea themselves.
+        if entity.source.floating.is_some() && entity.source.parent.is_some() {
+            return Err(SceneError::new(
+                ErrorCode::InvalidFloating,
+                format!("{}.floating", entity.path),
+                "only roots ride the sea; float the placement or root instead",
+            ));
+        }
     }
     validate_graph(
         entities

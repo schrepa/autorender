@@ -450,6 +450,11 @@
       "message": "must be in [0, 4]",
       "path": "$.environment.bloom.intensity"
     },
+    "refusal invalid_floating at $.entities[1].floating": {
+      "code": "invalid_floating",
+      "message": "only roots ride the sea; float the placement or root instead",
+      "path": "$.entities[1].floating"
+    },
     "refusal invalid_grounded at $.entities[1].grounded": {
       "code": "invalid_grounded",
       "message": "only roots stand on the ground; ground the placement or root instead",

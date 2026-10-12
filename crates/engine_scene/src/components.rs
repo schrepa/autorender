@@ -16,7 +16,7 @@ use engine_core::bevy_ecs::world::EntityWorldMut;
 macro_rules! entity_components {
     ($then:ident) => {
         $then! {
-            /// Rides the sea.
+            /// Rides the sea. Roots only.
             floating: engine_core::Floating { feature: Ocean, shows: "Floating", direct },
         }
     };

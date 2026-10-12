@@ -76,6 +76,7 @@
     "invalid_command": "The command is not one the bridge runs.",
     "invalid_environment": "An environment section is invalid.",
     "invalid_fingerprint": "A source fingerprint is malformed.",
+    "invalid_floating": "Only roots ride the sea.",
     "invalid_grounded": "Only roots stand on the ground.",
     "invalid_id": "An ID is empty or has characters IDs may not.",
     "invalid_input": "An input axis or turn is out of bounds.",
