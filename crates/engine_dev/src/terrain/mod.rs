@@ -1,9 +1,8 @@
 //! Terrain for agents: read-only queries ([`queries`]: heights at points,
 //! a sweep comparing what terrain queries, collision rays and generated
-//! terrains' layers say the ground is, routes for paths, walks, and the
-//! sea's surface and tracks) and controls ([`controls`]: temporary edits of
-//! generated terrains, with undo and redo, tracks pressed, agents sent and
-//! streamed items removed).
+//! terrains' layers say the ground is, routes for paths, walks and tracks)
+//! and controls ([`controls`]: temporary edits of generated terrains, with
+//! undo and redo, tracks pressed, agents sent and streamed items removed).
 
 mod controls;
 mod queries;
@@ -15,16 +14,10 @@ use engine_core::{
 };
 use engine_settings::ErrorCode;
 
-use crate::DevError;
-use crate::bounded;
-use crate::protocol::bounds;
+use crate::{DevError, coordinate};
 
 pub use controls::{Press, TerrainEditing, change_world, edit_terrain, nav_go, press_track};
 pub(crate) use queries::execute;
-
-fn coordinate(value: f64, path: &str) -> Result<f32, DevError> {
-    bounded(value, bounds::COORDINATE, ErrorCode::OutOfRange, path).map(|value| value as f32)
-}
 
 /// The `missing_plugin` error of requests about `feature`, which the engine
 /// lacks.

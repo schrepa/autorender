@@ -508,111 +508,124 @@ pub struct ScenePrefab {
     pub entities: Vec<SceneObject>,
 }
 
-engine_settings::settings! {
-    /// One local transform, optional renderable, or prefab instance root.
-    /// Tags are game-defined startup hook names.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-    #[serde(deny_unknown_fields)]
-    pub struct SceneObject {
-        #[cfg_attr(
-            feature = "schema",
-            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-        )]
-        pub id: String = String::new() => any,
-        /// Optional display label, at most 128 UTF-8 bytes without control characters.
-        #[serde(default)]
-        #[cfg_attr(feature = "schema", schemars(length(max = 128)))]
-        pub name: String = String::new() => any,
-        #[cfg_attr(
-            feature = "schema",
-            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-        )]
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub mesh: Option<String> = None => any,
-        #[cfg_attr(
-            feature = "schema",
-            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-        )]
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub material: Option<String> = None => any,
-        /// Parent ID in the scene, or in this prefab's local definition.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(
-            feature = "schema",
-            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-        )]
-        pub parent: Option<String> = None => any,
-        /// Named prefab to expand below this transform-only instance root.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(
-            feature = "schema",
-            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-        )]
-        pub prefab: Option<String> = None => any,
-        /// Local collision shape, independent of rendering.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub collider: Option<SceneCollider> = None => any,
-        /// A point or spot light.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub light: Option<SceneLight> = None => any,
-        /// A particle emitter.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub particles: Option<SceneEmitter> = None => any,
-        /// Multiplies this object's color and opacity channel by channel,
-        /// each factor finite and in `[0, 1]`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub tint: Option<[f32; 4]> = None => range(0.0, 1.0),
-        /// Plays an animation on its targets.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub animation: Option<ScenePlayer> = None => any,
-        /// The skin deforming this object's mesh. Requires a mesh with
-        /// joints and weights.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(
-            feature = "schema",
-            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-        )]
-        pub skin: Option<String> = None => any,
-        /// Projects a material onto the opaque surfaces inside this entity's
-        /// box.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub decal: Option<crate::SceneDecal> = None => any,
-        /// Captures this entity's surroundings into an environment map that
-        /// surfaces inside its world box reflect.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub reflection_probe: Option<crate::SceneReflectionProbe> = None => any,
-        /// A heightfield terrain whose tiles stream around the camera.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub terrain: Option<crate::SceneTerrain> = None => any,
-        /// One of this document's meshes bent along a curve.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub spline: Option<crate::SceneSpline> = None => any,
-        /// Rides the sea.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub floating: Option<engine_core::Floating> = None => any,
-        /// Presses tracks into deformable ground.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub deformer: Option<engine_core::Deformer> = None => any,
-        /// Walks over the terrain to a destination. Roots only.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub nav_agent: Option<engine_core::NavAgent> = None => any,
-        /// Stands on the terrain: its translation's y becomes
-        /// `offset` meters above the ground under it. Roots only.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub grounded: Option<engine_core::Grounded> = None => any,
-        /// Names it a place the camera may be sent to, whose
-        /// terrain workers generate ahead of need.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub prefetch: Option<engine_core::TerrainPrefetch> = None => any,
-        #[serde(default)]
-        pub transform: SceneTransform = SceneTransform::default() => any,
-        /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.
-        #[serde(default)]
-        #[cfg_attr(feature = "schema", schemars(length(max = 16)))]
-        pub tags: Vec<String> = Vec::new() => any,
-    }
+/// The document's part of `entity_components!`: [`SceneObject`], with a
+/// field for each component listed, after the spline's.
+macro_rules! scene_object {
+    ($(
+        $(#[$doc:meta])*
+        $field:ident: $type:ty { feature: $feature:ident, shows: $shows:literal, direct },
+    )*) => {
+        engine_settings::settings! {
+            /// One local transform, optional renderable, or prefab instance root.
+            /// Tags are game-defined startup hook names.
+            #[derive(Debug, Clone, Serialize, Deserialize)]
+            #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+            #[serde(deny_unknown_fields)]
+            pub struct SceneObject {
+                #[cfg_attr(
+                    feature = "schema",
+                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                )]
+                pub id: String = String::new() => any,
+                /// Optional display label, at most 128 UTF-8 bytes without control characters.
+                #[serde(default)]
+                #[cfg_attr(feature = "schema", schemars(length(max = 128)))]
+                pub name: String = String::new() => any,
+                #[cfg_attr(
+                    feature = "schema",
+                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                )]
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub mesh: Option<String> = None => any,
+                #[cfg_attr(
+                    feature = "schema",
+                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                )]
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub material: Option<String> = None => any,
+                /// Parent ID in the scene, or in this prefab's local definition.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                #[cfg_attr(
+                    feature = "schema",
+                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                )]
+                pub parent: Option<String> = None => any,
+                /// Named prefab to expand below this transform-only instance root.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                #[cfg_attr(
+                    feature = "schema",
+                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                )]
+                pub prefab: Option<String> = None => any,
+                /// Local collision shape, independent of rendering.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub collider: Option<SceneCollider> = None => any,
+                /// A point or spot light.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub light: Option<SceneLight> = None => any,
+                /// A particle emitter.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub particles: Option<SceneEmitter> = None => any,
+                /// Multiplies this object's color and opacity channel by channel,
+                /// each factor finite and in `[0, 1]`.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub tint: Option<[f32; 4]> = None => range(0.0, 1.0),
+                /// Plays an animation on its targets.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub animation: Option<ScenePlayer> = None => any,
+                /// The skin deforming this object's mesh. Requires a mesh with
+                /// joints and weights.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                #[cfg_attr(
+                    feature = "schema",
+                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                )]
+                pub skin: Option<String> = None => any,
+                /// Projects a material onto the opaque surfaces inside this entity's
+                /// box.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub decal: Option<crate::SceneDecal> = None => any,
+                /// Captures this entity's surroundings into an environment map that
+                /// surfaces inside its world box reflect.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub reflection_probe: Option<crate::SceneReflectionProbe> = None => any,
+                /// A heightfield terrain whose tiles stream around the camera.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub terrain: Option<crate::SceneTerrain> = None => any,
+                /// One of this document's meshes bent along a curve.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub spline: Option<crate::SceneSpline> = None => any,
+                $(
+                    $(#[$doc])*
+                    #[serde(default, skip_serializing_if = "Option::is_none")]
+                    pub $field: Option<$type> = None => any,
+                )*
+                /// Presses tracks into deformable ground.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub deformer: Option<engine_core::Deformer> = None => any,
+                /// Walks over the terrain to a destination. Roots only.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub nav_agent: Option<engine_core::NavAgent> = None => any,
+                /// Stands on the terrain: its translation's y becomes
+                /// `offset` meters above the ground under it. Roots only.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub grounded: Option<engine_core::Grounded> = None => any,
+                /// Names it a place the camera may be sent to, whose
+                /// terrain workers generate ahead of need.
+                #[serde(default, skip_serializing_if = "Option::is_none")]
+                pub prefetch: Option<engine_core::TerrainPrefetch> = None => any,
+                #[serde(default)]
+                pub transform: SceneTransform = SceneTransform::default() => any,
+                /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.
+                #[serde(default)]
+                #[cfg_attr(feature = "schema", schemars(length(max = 16)))]
+                pub tags: Vec<String> = Vec::new() => any,
+            }
+        }
+    };
 }
+
+crate::components::entity_components!(scene_object);
 
 engine_settings::settings! {
     /// Local transform with Euler XYZ rotation expressed in degrees.

@@ -52,7 +52,6 @@ pub fn generated() -> Result<Generated, String> {
         "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
         "Tint": schemars::schema_for!(views::TintView),
-        "Floating": schemars::schema_for!(engine_core::Floating),
         "Deformer": schemars::schema_for!(engine_core::Deformer),
         "Tracks": schemars::schema_for!(views::TracksView),
         "WorldCells": schemars::schema_for!(views::WorldCellsView),
@@ -69,6 +68,10 @@ pub fn generated() -> Result<Generated, String> {
         "BrowserControl": schemars::schema_for!(protocol::BrowserControl),
         "FrameStats": frame_stats(&mut problems),
     });
+    if let Some(all) = schemas.as_object_mut() {
+        crate::features::schemas(all);
+    }
+    dev_features(&mut problems);
     let Some(described) = schemas.as_object() else {
         return Err("the inspectors' schemas are not an object".to_owned());
     };
@@ -265,6 +268,24 @@ fn frame_stats(problems: &mut Vec<String>) -> Value {
     schema
 }
 
+/// Checks that `dev_features!` lists features by name, sorted.
+fn dev_features(problems: &mut Vec<String>) {
+    let names = crate::features::NAMES;
+    for name in names {
+        if !engine_core::Feature::ALL
+            .iter()
+            .any(|feature| feature.name() == *name)
+        {
+            problems.push(format!(
+                "dev_features! lists {name}, which is no feature: name it as engine_features! does"
+            ));
+        }
+    }
+    if !names.windows(2).all(|pair| pair[0] < pair[1]) {
+        problems.push("dev_features! lists its features sorted, each once".to_owned());
+    }
+}
+
 /// Checks that every control names, once, where its state shows, and that
 /// the inspectors named exist.
 fn control_state(controls: &[String], schemas: &Value, problems: &mut Vec<String>) {
@@ -297,7 +318,8 @@ fn control_state(controls: &[String], schemas: &Value, problems: &mut Vec<String
 /// Where each property scenes author on an entity shows when it is
 /// inspected: in every entity reply's header, as an inspector, or as one
 /// field of an inspector. A property shown as an object shows each of its
-/// fields there.
+/// fields there. The components engine_scene lists say where they show
+/// themselves ([`engine_scene::COMPONENT_SHOWS`]).
 const AUTHORED: &[(&str, &str)] = &[
     ("id", "header"),
     ("name", "header"),
@@ -316,7 +338,6 @@ const AUTHORED: &[(&str, &str)] = &[
     ("reflection_probe", "ReflectionProbe"),
     ("terrain", "Terrain.terrain"),
     ("spline", "SplineMesh"),
-    ("floating", "Floating"),
     ("deformer", "Deformer"),
     ("nav_agent", "NavAgent.agent"),
     ("grounded", "Grounded"),
@@ -329,7 +350,6 @@ const AUTHORED: &[(&str, &str)] = &[
 /// their inspectors; and the document's structure, in the entities and
 /// replies' observations.
 const DOCUMENT: &[(&str, &str)] = &[
-    ("version", "structure"),
     ("id", "structure"),
     ("revision", "structure"),
     ("entities", "structure"),
@@ -364,8 +384,9 @@ fn authored_parity(scene: &Value, schemas: &Value, problems: &mut Vec<String>) {
         .as_object()
         .cloned()
         .unwrap_or_default();
+    let authored = || AUTHORED.iter().chain(engine_scene::COMPONENT_SHOWS);
     for (property, schema) in &object {
-        match AUTHORED.iter().find(|(authored, _)| authored == property) {
+        match authored().find(|(authored, _)| authored == property) {
             Some(&(_, shows)) => shown(
                 (definitions, schemas),
                 &format!("entities[].{property}"),
@@ -378,7 +399,7 @@ fn authored_parity(scene: &Value, schemas: &Value, problems: &mut Vec<String>) {
             )),
         }
     }
-    for (property, _) in AUTHORED {
+    for (property, _) in authored() {
         if object.get(*property).is_none() {
             problems.push(format!(
                 "AUTHORED lists {property}, which entities do not author"
@@ -392,6 +413,13 @@ fn authored_parity(scene: &Value, schemas: &Value, problems: &mut Vec<String>) {
             None => problems.push(format!(
                 "scene property {property} needs a place in DOCUMENT"
             )),
+        }
+    }
+    for (property, _) in DOCUMENT {
+        if document.get(*property).is_none() {
+            problems.push(format!(
+                "DOCUMENT lists {property}, which scenes do not author"
+            ));
         }
     }
 }

@@ -124,7 +124,7 @@ pub struct Context<'a> {
 }
 type HasInspector = Box<dyn Fn(&World, Option<Entity>) -> bool + Send + Sync>;
 
-struct Inspector {
+pub(crate) struct Inspector {
     descriptor: InspectorDescriptor,
     kind: InspectorKind,
     read: ReadInspector,
@@ -143,17 +143,18 @@ struct InspectSelector<'a> {
 /// session and cannot be replaced silently. Extension callbacks are trusted
 /// game code: keep their work and allocations bounded and never scan the world.
 pub struct DevTools {
-    inspectors: BTreeMap<String, Inspector>,
+    pub(crate) inspectors: BTreeMap<String, Inspector>,
     // The engine's own inspectors, once registered: games register up to
     // MAX_INSPECTORS beyond them.
     builtins: Option<usize>,
     // The feature of each inspector of a feature's type, by name.
-    features: BTreeMap<String, Feature>,
+    pub(crate) features: BTreeMap<String, Feature>,
 }
 
 /// The feature of each engine inspector of a feature's component or
-/// resource (environment sections name their own): inspecting them answers
-/// `missing_plugin` without the feature's plugin.
+/// resource (environment sections name their own, and the inspectors a
+/// feature's development file registers are its own): inspecting them
+/// answers `missing_plugin` without the feature's plugin.
 pub(crate) const INSPECTOR_FEATURES: &[(&str, Feature)] = &[
     ("Terrain", Feature::Terrain),
     ("Terrains", Feature::Terrain),
@@ -164,7 +165,6 @@ pub(crate) const INSPECTOR_FEATURES: &[(&str, Feature)] = &[
     ("StreamedId", Feature::WorldStreaming),
     ("NavAgent", Feature::Navigation),
     ("NavAgents", Feature::Navigation),
-    ("Floating", Feature::Ocean),
     ("AnimationPlayer", Feature::Animation),
     ("Skin", Feature::Animation),
     ("Tracks", Feature::Deformation),
@@ -189,6 +189,7 @@ impl Default for DevTools {
         tools.register_components(&schemas);
         tools.register_animation(&schemas);
         tools.register_environment(&schemas);
+        crate::features::register(&mut tools, &schemas);
         tools.builtins = Some(tools.inspectors.len());
         tools
     }
@@ -335,12 +336,6 @@ impl DevTools {
             InspectorDescriptor::generated(schemas, "LocalLight")
                 .with_default(json!(SceneLight::default())),
             |light| json!(SceneLight::from(light)),
-        )
-        .expect("built-in descriptor is bounded");
-        self.register_component::<engine_core::Floating>(
-            InspectorDescriptor::generated(schemas, "Floating")
-                .with_default(json!(engine_core::Floating::default())),
-            |floating| json!(floating),
         )
         .expect("built-in descriptor is bounded");
         self.register_component::<engine_core::TerrainPrefetch>(
@@ -1273,6 +1268,7 @@ impl DevTools {
         let query = match request.route() {
             Route::Collision(query) => return crate::collision::execute(engine, scene, query),
             Route::Terrain(query) => return crate::terrain::execute(engine, query),
+            Route::Feature(query) => return query.answer(engine, scene),
             Route::Tools(query) => query,
         };
         if let ToolsQuery::Inspect {

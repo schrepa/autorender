@@ -9,6 +9,7 @@ mod collision;
 mod controls;
 mod digest;
 mod error;
+pub mod features;
 mod inspect;
 mod protocol;
 mod terrain;
@@ -62,4 +63,15 @@ pub(crate) fn bounded<T: engine_settings::Setting>(
         Ok(()) => Ok(value),
         Err(invalid) => Err(DevError::new(code, path, invalid.rule)),
     }
+}
+
+/// World coordinate `value` of a request, at `path`, as requests bound them.
+pub(crate) fn coordinate(value: f64, path: &str) -> Result<f32, DevError> {
+    bounded(
+        value,
+        protocol::bounds::COORDINATE,
+        engine_settings::ErrorCode::OutOfRange,
+        path,
+    )
+    .map(|value| value as f32)
 }

@@ -110,8 +110,10 @@ pub(crate) enum Route {
     Tools(ToolsQuery),
     /// The collision world's queries.
     Collision(CollisionQuery),
-    /// Terrain, water, deformation and navigation queries.
+    /// Terrain, deformation and navigation queries.
     Terrain(TerrainQuery),
+    /// A feature's own query, which its development file answers.
+    Feature(Box<dyn crate::features::EngineQuery>),
 }
 
 /// The development tools' own queries ([`DevRequest`]'s, which document
@@ -163,8 +165,8 @@ pub(crate) enum CollisionQuery {
     },
 }
 
-/// Terrain, water, deformation and navigation queries ([`DevRequest`]'s,
-/// which document them).
+/// Terrain, deformation and navigation queries ([`DevRequest`]'s, which
+/// document them).
 pub(crate) enum TerrainQuery {
     TerrainHeight {
         points: Vec<[f64; 2]>,
@@ -173,10 +175,6 @@ pub(crate) enum TerrainQuery {
         from: [f64; 2],
         to: [f64; 2],
         options: Option<engine_core::terrain_data::NavOptions>,
-    },
-    WaterQuery {
-        points: Vec<[f64; 2]>,
-        seconds: Option<f64>,
     },
     DeformationQuery {
         points: Vec<[f64; 2]>,
@@ -306,19 +304,7 @@ pub enum DevRequest {
         #[serde(default)]
         options: Option<engine_core::terrain_data::NavOptions>,
     },
-    /// The sea's surface over world points `[x, z]` at simulation time `seconds` (by default the time the last frame
-    /// presented), as frames draw it: its height, normal, how much the waves
-    /// compress it there (1 still, toward 0 on sharpening crests, where foam
-    /// gathers) and the still sea's point the waves moved there, or null
-    /// without a sea; the ground below where a terrain tile is resident,
-    /// and the water's depth over it.
-    WaterQuery {
-        version: u32,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = bounds::MAX_POINTS)))]
-        points: Vec<[f64; 2]>,
-        #[serde(default)]
-        seconds: Option<f64>,
-    },
+    WaterQuery(crate::features::ocean::WaterQuery),
     /// The tracks deformers and agents pressed at world points
     /// `[x, z]`, refilled to simulation time `seconds` (by default
     /// the time the last frame presented), as the log holds them: how deep
@@ -553,11 +539,7 @@ impl DevRequest {
                 to,
                 options,
             } => Route::Terrain(TerrainQuery::NavPath { from, to, options }),
-            Self::WaterQuery {
-                version: _,
-                points,
-                seconds,
-            } => Route::Terrain(TerrainQuery::WaterQuery { points, seconds }),
+            Self::WaterQuery(query) => Route::Feature(Box::new(query)),
             Self::DeformationQuery {
                 version: _,
                 points,
@@ -607,7 +589,7 @@ impl DevRequest {
             | Self::TerrainHeight { version, .. }
             | Self::TerrainSweep { version, .. }
             | Self::TerrainRoute { version, .. }
-            | Self::WaterQuery { version, .. }
+            | Self::WaterQuery(crate::features::ocean::WaterQuery { version, .. })
             | Self::DeformationQuery { version, .. }
             | Self::NavPath { version, .. }
             | Self::CollisionEvents { version, .. } => *version,

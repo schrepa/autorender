@@ -620,9 +620,7 @@ fn spawn_entity(
     if let Some(decal) = &component.decal {
         entity.insert(decal.runtime(lookups.owned_materials[decal.material]));
     }
-    if let Some(floating) = source.floating {
-        entity.insert(floating);
-    }
+    source.spawn_components(&mut entity);
     if let Some(deformer) = source.deformer {
         entity.insert(deformer);
     }

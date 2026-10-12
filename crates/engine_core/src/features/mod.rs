@@ -1,7 +1,12 @@
 //! The engine's features: the one list of them, what each plugin of the
 //! engine's bundle adds, the scenes, environment sections and development
 //! tools that name them, and the ground the features that stand things on
-//! it read.
+//! it read. A feature's folder here holds the feature: its settings,
+//! components, systems and plugin.
+
+mod ocean;
+
+pub use ocean::*;
 
 use bevy_app::App;
 use bevy_ecs::prelude::{Component, Resource, World};
