@@ -86,6 +86,7 @@ impl DevHost {
                 | BrowserControl::Capture { .. }
                 | BrowserControl::Game { .. }
                 | BrowserControl::Reload { .. }
+                | BrowserControl::DebugPanic { .. }
         )
     }
 
@@ -492,6 +493,9 @@ impl DevHost {
                     DevError::new(ErrorCode::RenderFailed, "$", error.to_string())
                 })?;
                 Ok(json!({"rendered":true}))
+            }
+            BrowserControl::DebugPanic { .. } => {
+                panic!("debug_panic: a development session asked the engine to panic")
             }
             // The host runs these: it receives them validated, with their
             // defaults.

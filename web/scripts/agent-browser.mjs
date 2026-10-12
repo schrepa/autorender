@@ -185,6 +185,8 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     await pruneSessions(resolve(workspace, "artifacts", "agent"));
     return {
       session, url: url.href, instance, build, close, setInvalidated,
+      /** The page the runtime runs in, for checks that read it. */
+      page,
       async execute(command) {
         if (command.op === "describe" && command.name === "ProfileCapture") {
           if (Object.keys(command).some(key => !["op", "name"].includes(key))) throw new AgentError("invalid_request", "describe accepts only name.");

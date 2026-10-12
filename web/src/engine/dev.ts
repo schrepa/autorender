@@ -2,6 +2,7 @@
 import { readDistribution, readStats, type Runtime } from "./host";
 import { adapterInfo } from "./adapter";
 import { BenchmarkError, type BenchmarkOptions, type Reply, sampleBenchmark } from "./benchmark.ts";
+import { fatal } from "./panic";
 // The protocol's version, request limit and ops, generated from the engine
 // (`cargo xtask schema`).
 import protocol from "../generated/protocol.json";
@@ -16,6 +17,10 @@ interface Host {
   isBusy?(): boolean;
   size(): [number, number];
   poll(): void;
+  /** Stops the page for good: the engine's module stopped. */
+  fail(error: unknown): void;
+  /** Why the engine's module stopped (its panic's message), once it did. */
+  stopped(): string | undefined;
   source?: { url: string; load(signal: AbortSignal): Promise<string>; files?(source: string, signal: AbortSignal): Promise<unknown> };
   /** The game's own controls, which the `game` control runs by name. */
   controls?: Record<string, PageControl>;
@@ -42,15 +47,6 @@ declare global {
 export function connectDevelopment(host: Host): () => void {
   let disposed = false;
   let busy = false;
-  // The module's panic, once it panicked: its instance is unusable after.
-  let panic: string | undefined;
-  let lastPanic: string | undefined;
-  const consoleError = console.error;
-  console.error = (...args: unknown[]) => {
-    const text = args.map(String).join(" ");
-    if (text.includes("panicked at")) lastPanic = text.slice(0, 4000);
-    consoleError.apply(console, args);
-  };
   const runtime = host.game;
   if (!runtime.dev_command) throw new Error("Development Wasm is missing; run cargo xtask dev.");
 
@@ -59,9 +55,13 @@ export function connectDevelopment(host: Host): () => void {
     const [width, height] = host.size();
     return JSON.parse(runtime.dev_command!(JSON.stringify({ ...command, version: protocol.version }), width, height, host.paused()));
   }
+  /** The reply to every request once the engine's module stopped. */
+  function panicked(message: string): Reply {
+    return { ok: false, error: { code: "runtime_panicked", path: "$", message } };
+  }
   function error(code: string, path: string, message: string): Reply {
     const reply: Reply = { ok: false, error: { code, path, message } };
-    if (!disposed && !host.signal.aborted) {
+    if (!disposed && !host.signal.aborted && !host.stopped()) {
       try { reply.observation = invoke({ op: "status" }).observation; } catch { /* Preserve the original runtime failure. */ }
     }
     return reply;
@@ -140,7 +140,8 @@ export function connectDevelopment(host: Host): () => void {
     parameters: host.parameters ?? {},
     async request(command: Command): Promise<Reply> {
       if (disposed || host.signal.aborted) return error("session_closed", "$", "the browser runtime was disposed");
-      if (panic) return { ok: false, error: { code: "runtime_panicked", path: "$", message: panic } };
+      const stopped = host.stopped();
+      if (stopped) return panicked(stopped);
       if (busy || host.isBusy?.()) return error("command_busy", "$", "one development command is already running");
       if (!command || typeof command !== "object" || Array.isArray(command) || typeof command.op !== "string") {
         return error("invalid_request", "$.command", "expected an object with an op string");
@@ -171,9 +172,9 @@ export function connectDevelopment(host: Host): () => void {
       } catch (cause) {
         if (disposed || host.signal.aborted) return error("session_closed", "$", "runtime was disposed during command");
         if (cause instanceof BenchmarkError) return error(cause.code, "$", cause.message);
-        if (cause instanceof WebAssembly.RuntimeError) {
-          panic = lastPanic ?? String(cause);
-          return { ok: false, error: { code: "runtime_panicked", path: "$", message: panic } };
+        if (fatal(cause)) {
+          host.fail(cause);
+          return panicked(host.stopped() ?? String(cause));
         }
         return error("browser_command_failed", "$", String(cause));
       } finally {
@@ -186,7 +187,6 @@ export function connectDevelopment(host: Host): () => void {
   host.signal.addEventListener("abort", dispose, { once: true });
   function dispose() {
     disposed = true;
-    console.error = consoleError;
     if (window.__engineDev === api) delete window.__engineDev;
   }
   return dispose;

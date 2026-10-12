@@ -5,8 +5,11 @@
  * but for the known divergences listed here, each tagged with the hosts
  * step that removes it (`host`: a difference of the transports, which
  * stays). A divergence that no longer shows fails the check until its entry
- * goes. Builds `stress-lab` natively (`--profile quick --features dev`) and
- * opens the development server's stress.html (`DEMO_URL`). */
+ * goes. Last, `debug_panic` stops the engine on both: each answers
+ * `runtime_panicked` with the same report, and the page shows it stopped
+ * and calls into its module no more. Builds `stress-lab` natively
+ * (`--profile quick --features dev`) and opens the development server's
+ * stress.html (`DEMO_URL`). */
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";
 import { launchBrowserSession } from "./agent-browser.mjs";
@@ -87,6 +90,10 @@ const CASES = [
   ["step while running", { op: "step", ticks: 1 }, "error"],
   ["capture while running", { op: "capture" }, "error"],
   ["pause", { op: "pause" }],
+  // A panic stops the engine on both hosts, which then answer everything
+  // with the panic's report: last, as nothing runs after it.
+  ["debug panic", { op: "debug_panic" }, "error"],
+  ["status after the panic", { op: "status" }, "error"],
 ];
 
 /** Every field path of `value`: object fields by name, array elements as
@@ -119,7 +126,9 @@ function divergences(name, expectError, web, native) {
   }
   if (web.ok !== native.ok) return found;
   if (!web.ok) {
-    for (const field of ["code", "path"]) {
+    // A panic's message is the same report on both hosts.
+    const fields = web.error?.code === "runtime_panicked" ? ["code", "path", "message"] : ["code", "path"];
+    for (const field of fields) {
       if (web.error?.[field] !== native.error?.[field]) found.push(`${name}: error ${field} ${web.error?.[field]} on web, ${native.error?.[field]} natively`);
     }
   }
@@ -165,6 +174,20 @@ try {
   }, null, 1));
   assert.deepEqual(unknown, [], `the hosts diverge where no known divergence says so:\n${unknown.join("\n")}`);
   assert.deepEqual(gone, [], `known divergences that no longer show; delete their entries:\n${gone.join("\n")}`);
+  // Both report the engine's own panic, where it happened; the page says the
+  // engine stopped and calls into its module no more (nothing fails after).
+  const panic = replies["debug panic"];
+  for (const reply of [panic.web, panic.native]) {
+    assert.equal(reply.error?.code, "runtime_panicked", JSON.stringify(reply));
+    assert.match(reply.error.message, /^panicked at crates[\\/]engine[\\/]src[\\/]dev_host\.rs:\d+:\d+: debug_panic: /, reply.error.message);
+  }
+  const errors = [];
+  web.page.on("pageerror", error => errors.push(String(error)));
+  web.page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  assert.equal(await web.page.locator("#status").getAttribute("data-state"), "error");
+  assert.match(await web.page.locator("#status").textContent(), /Engine stopped/);
+  assert.deepEqual(errors, [], "the page calls into the stopped module no more");
   console.log(`host parity smoke passed: ${CASES.length} commands, ${found.length} divergences, all known`);
 } finally {
   await web?.close();

@@ -165,7 +165,6 @@ impl<G: Game> PageHost<G> {
         canvas: HtmlCanvasElement,
         build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> Result<Self, JsValue> {
-        console_error_panic_hook::set_once();
         let target = engine_render::RenderTarget::Canvas(canvas);
         Ok(Self {
             host: GameHost::launch(target, build).await?,

@@ -7,12 +7,14 @@
 // slices the worker reads its messages and runs its most urgent job, and
 // a job the engine cancelled stops there. A part of a job's output ready
 // before the rest, as a tile's shape, goes back after its
-// slice. A module that traps is unusable:
-// the worker then says it broke, and the pool replaces it.
+// slice. The engine's code panicking here (or its module trapping) stops
+// the engine: the worker says so with the panic's report and runs no more.
+// A worker that breaks otherwise says so, and the pool replaces it.
 
 import type { JobWorker } from "../../pkg/engine_worker";
 import { decodeImagePixels } from "./decode";
 import { type TranscodedImage, transcodeWith, workerTranscoder } from "./ktx2";
+import { fatal, panicReport } from "./panic";
 
 type Request =
   | { type: "init"; bindings?: string; module?: WebAssembly.Module }
@@ -49,7 +51,7 @@ const jobs: Job[] = [];
 let running = false;
 
 scope.onmessage = (event) => {
-  queue = queue.then(() => handle(event.data)).catch(error => fail(error));
+  queue = queue.then(() => handle(event.data)).catch(error => fatal(error) ? stopped(error) : fail(error));
 };
 
 /** Says the module is unusable once. */
@@ -57,6 +59,14 @@ function fail(error: unknown) {
   if (broken) return;
   broken = true;
   scope.postMessage({ type: "broken", error: String(error) });
+}
+
+/** Says once that the engine's module stopped here: its panic's report,
+ * or the trap. */
+function stopped(error: unknown) {
+  if (broken) return;
+  broken = true;
+  scope.postMessage({ type: "panicked", report: panicReport(error) ?? null, error: String(error) });
 }
 
 // Yields to messages between slices, without timers' clamping.
@@ -113,8 +123,11 @@ async function work() {
         }
       } catch (error) {
         drop(job);
+        if (fatal(error)) {
+          stopped(error);
+          return;
+        }
         scope.postMessage({ type: "failed", id: job.id, error: String(error) });
-        if (error instanceof WebAssembly.RuntimeError) fail(error);
       }
       await yieldToMessages();
     }

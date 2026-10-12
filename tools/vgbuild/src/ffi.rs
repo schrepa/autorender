@@ -174,6 +174,10 @@ struct Context<'a> {
     failed: bool,
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a tool's panic must not unwind into the C++ that called it"
+)]
 extern "C" fn trampoline(
     context: *mut c_void,
     group: ClodGroup,

@@ -16,11 +16,14 @@ pub struct GameHost<G: Game> {
 
 impl<G: Game> GameHost<G> {
     /// Starts the renderer presenting to `target` and, while the GPU
-    /// compiles its pipelines, the engine and game `build` makes.
+    /// compiles its pipelines, the engine and game `build` makes. From here
+    /// on a panic stops the engine for good, on every host
+    /// ([`engine_panic`]'s hook).
     pub async fn launch<E: Into<crate::Error>>(
         target: RenderTarget,
         build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> crate::Result<Self> {
+        engine_panic::install();
         let mut game = None;
         let app = AppHost::launch(target, || {
             let (engine, built) = build().map_err(Into::into)?;

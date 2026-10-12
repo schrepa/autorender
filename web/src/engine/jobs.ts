@@ -8,7 +8,9 @@
 // as Blobs, which every worker reads without the page copying them again.
 // ?workers=N runs N workers and ?workers=off none, so the engine does the
 // work itself; a worker that breaks is replaced once, and the engine takes
-// back its jobs. Jobs carry priorities: each goes to the
+// back its jobs. A worker's panic, as the game module's, stops the engine
+// for good: the pool's workers end and it calls the module no more. Jobs
+// carry priorities: each goes to the
 // worker with the fewest in flight, among those the one whose most urgent
 // job is least urgent, and workers run their most urgent job a slice at a
 // time; jobs the engine cancels stop at their worker's next slice. Parts of
@@ -18,10 +20,12 @@
 // (job-cache.ts).
 
 import workerWasmUrl from "../../pkg/engine_worker_bg.wasm?url";
+import { PANIC_PREFIX } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 import { engineWorkerModule } from "./bindings";
 import { JobCache, jobCacheSettings } from "./job-cache";
 import type { TranscodedImage } from "./ktx2";
+import { fatal, type PanicReport } from "./panic";
 
 /** The game methods a pool serves. */
 export type JobRuntime = Pick<Runtime, "set_job_workers" | "take_jobs" | "complete_job" | "fail_job" | "part_job" | "report_job_cache">;
@@ -44,7 +48,8 @@ type WorkerMessage =
   | { type: "failed"; id: number; error: string }
   | { type: "task"; task: number; result: unknown }
   | { type: "task_failed"; task: number; error: string }
-  | { type: "broken"; error: string };
+  | { type: "broken"; error: string }
+  | { type: "panicked"; report: PanicReport | null; error: string };
 
 /** Decoded image pixels, rows from the top. */
 export interface Pixels { width: number; height: number; pixels: Uint8Array }
@@ -69,6 +74,8 @@ export class JobPool {
   private readonly shares = new Map<string, Blob>();
   private readonly tasks = new Map<number, Task>();
   private runtime: JobRuntime | undefined;
+  /** What the attached runtime's host does once a module stopped. */
+  private failed: ((error: unknown) => void) | undefined;
   private timer = 0;
   private nextTask = 1;
   private restarts = 0;
@@ -100,10 +107,12 @@ export class JobPool {
 
   /** Serves `runtime`'s jobs: it hands them to the pool's workers from now
    * on, and the pool polls it for them between frames too, so jobs made
-   * by development commands in paused sessions run. */
-  attach(runtime: JobRuntime) {
+   * by development commands in paused sessions run. Once the runtime's
+   * module or a worker's stops, the pool ends and calls `failed`. */
+  attach(runtime: JobRuntime, failed: (error: unknown) => void) {
     this.runtime = runtime;
-    runtime.set_job_workers(this.size);
+    this.failed = failed;
+    this.call(runtime => runtime.set_job_workers(this.size));
     clearInterval(this.timer);
     this.timer = window.setInterval(() => this.exchange(), 50);
   }
@@ -113,13 +122,50 @@ export class JobPool {
     clearInterval(this.timer);
     this.timer = 0;
     this.runtime = undefined;
+    this.failed = undefined;
+  }
+
+  /** Ends the pool for good: it serves no runtime, its workers end and its
+   * tasks fail; the page's next pool starts afresh. */
+  terminate() {
+    this.detach();
+    for (const slot of this.slots) {
+      slot.broken = true;
+      slot.worker.terminate();
+    }
+    for (const task of this.tasks.values()) task.reject(new Error("the engine stopped"));
+    this.tasks.clear();
+    if (pool === this) pool = undefined;
+  }
+
+  /** Runs `use` on the attached runtime; a module that stopped ends the pool
+   * and tells the host. */
+  private call(use: (runtime: JobRuntime) => void) {
+    const runtime = this.runtime;
+    if (!runtime) return;
+    try {
+      use(runtime);
+    } catch (error) {
+      if (!fatal(error)) throw error;
+      this.stop(error);
+    }
+  }
+
+  /** Ends the pool after `error` stopped a module, and tells the host. */
+  private stop(error: unknown) {
+    const failed = this.failed;
+    this.terminate();
+    failed?.(error);
   }
 
   /** Hands workers what the attached runtime made since the last exchange. */
   exchange() {
-    const runtime = this.runtime;
-    if (!runtime) return;
-    const messages = runtime.take_jobs();
+    this.call(runtime => this.hand(runtime, runtime.take_jobs()));
+    this.report();
+  }
+
+  /** Hands workers `messages`, which `runtime` made. */
+  private hand(runtime: JobRuntime, messages: JobMessage[]) {
     for (const message of messages) {
       if ("cancel" in message) {
         if (this.looking.has(message.cancel)) {
@@ -147,7 +193,6 @@ export class JobPool {
         this.dispatch(runtime, message);
       }
     }
-    this.report();
   }
 
   /** Hands `message`'s job to the worker with the fewest in flight. */
@@ -172,14 +217,14 @@ export class JobPool {
       const kept = cache && key ? await cache.lookup(key) : undefined;
       if (this.dropped.has(message.id) || this.runtime !== runtime) return;
       if (kept) {
-        runtime.complete_job(message.id, kept);
-        if (!cache?.verify) return;
+        this.call(runtime => runtime.complete_job(message.id, kept));
+        if (!cache?.verify || this.runtime !== runtime) return;
         this.verifying.set(message.id, kept);
       }
       if (key) this.keys.set(message.id, key);
-      this.dispatch(runtime, message);
+      this.call(runtime => this.dispatch(runtime, message));
     } catch (error) {
-      runtime.fail_job(message.id, String(error));
+      this.call(runtime => runtime.fail_job(message.id, String(error)));
     } finally {
       this.looking.delete(message.id);
       this.dropped.delete(message.id);
@@ -196,7 +241,7 @@ export class JobPool {
       const text = `${hits} ${misses} ${bytes} ${mismatches}`;
       if (text === this.reported || this.runtime !== runtime) return;
       this.reported = text;
-      runtime.report_job_cache(hits, misses, bytes, mismatches);
+      this.call(runtime => runtime.report_job_cache(hits, misses, bytes, mismatches));
     });
   }
 
@@ -295,12 +340,12 @@ export class JobPool {
           if (key && !sameBytes(kept, message.output)) void this.cache.then(cache => cache?.mismatch(key));
           break;
         }
-        this.runtime?.complete_job(message.id, message.output);
+        this.call(runtime => runtime.complete_job(message.id, message.output));
         if (key) void this.cache.then(cache => cache?.store(key, message.output));
         break;
       }
       case "part":
-        if (slot.jobs.has(message.id)) this.runtime?.part_job(message.id, message.output);
+        if (slot.jobs.has(message.id)) this.call(runtime => runtime.part_job(message.id, message.output));
         break;
       case "failed":
         this.keys.delete(message.id);
@@ -308,7 +353,7 @@ export class JobPool {
           slot.jobs.delete(message.id);
           break;
         }
-        if (slot.jobs.delete(message.id)) this.runtime?.fail_job(message.id, message.error);
+        if (slot.jobs.delete(message.id)) this.call(runtime => runtime.fail_job(message.id, message.error));
         break;
       case "task":
         slot.tasks.delete(message.task);
@@ -323,6 +368,12 @@ export class JobPool {
       case "broken":
         this.lose(slot, message.error);
         break;
+      case "panicked":
+        // The engine's code panicked on a worker: the engine stops, as when
+        // the game's module panics.
+        this.stop(message.report ? new Error(`${PANIC_PREFIX}${JSON.stringify(message.report)}`)
+          : new WebAssembly.RuntimeError(message.error));
+        break;
     }
   }
 
@@ -336,7 +387,7 @@ export class JobPool {
     console.warn(`An engine worker stopped: ${error}`);
     for (const id of slot.jobs.keys()) {
       this.keys.delete(id);
-      if (!this.verifying.delete(id)) this.runtime?.fail_job(id, error);
+      if (!this.verifying.delete(id)) this.call(runtime => runtime.fail_job(id, error));
     }
     slot.jobs.clear();
     for (const task of slot.tasks) {
@@ -348,7 +399,7 @@ export class JobPool {
       this.restarts++;
       this.slots[this.slots.indexOf(slot)] = this.spawn();
     }
-    this.runtime?.set_job_workers(this.size);
+    this.call(runtime => runtime.set_job_workers(this.size));
   }
 }
 

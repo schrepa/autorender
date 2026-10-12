@@ -8,8 +8,8 @@
 //! a time; jobs the engine cancels stop at their worker's next slice, and
 //! parts of outputs ready early, as a tile's shape, go back as they come.
 //! Outputs of jobs the engine marks keepable come from the job cache where
-//! the same build made them before. A worker that panics takes no more
-//! jobs, and the engine takes back those it held.
+//! the same build made them before. A worker's panic ends the program, as
+//! every engine panic does (`engine_panic`'s hook).
 
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -92,8 +92,6 @@ enum Report {
     Done(u64, Vec<u8>),
     Part(u64, Vec<u8>),
     Failed(u64, String),
-    /// The worker panicked: it takes no more jobs.
-    Broken(usize, String),
 }
 
 struct Slot {
@@ -104,7 +102,6 @@ struct Slot {
     thread: Option<JoinHandle<()>>,
     // Jobs in flight, each with its priority (lower first).
     jobs: HashMap<u64, u32>,
-    broken: bool,
 }
 
 /// Job workers beside a game, and the cache of their outputs.
@@ -137,7 +134,7 @@ impl JobPool {
                         let _ = register.send(engine_profiler::sampler::SampledThread::current(
                             format!("Job worker {index}"),
                         ));
-                        work(index, &inbox, &report);
+                        work(&inbox, &report);
                     })
                     .expect("threads start");
                 Slot {
@@ -146,7 +143,6 @@ impl JobPool {
                     sampled: registered.recv().ok().flatten(),
                     thread: Some(thread),
                     jobs: HashMap::new(),
-                    broken: false,
                 }
             })
             .collect();
@@ -169,9 +165,9 @@ impl JobPool {
             .collect()
     }
 
-    /// Workers able to run jobs.
+    /// Workers that run jobs.
     pub fn size(&self) -> usize {
-        self.slots.iter().filter(|slot| !slot.broken).count()
+        self.slots.len()
     }
 
     /// Serves `host`'s jobs from now on.
@@ -232,14 +228,10 @@ impl JobPool {
     /// Hands `request` to the worker with the fewest jobs in flight; among
     /// those, the one whose most urgent job is least urgent.
     fn dispatch<G: Game>(&mut self, host: &mut GameHost<G>, request: JobRequest) {
-        let slot = self
-            .slots
-            .iter_mut()
-            .filter(|slot| !slot.broken)
-            .min_by_key(|slot| {
-                let urgent = slot.jobs.values().min().copied().unwrap_or(u32::MAX);
-                (slot.jobs.len(), std::cmp::Reverse(urgent))
-            });
+        let slot = self.slots.iter_mut().min_by_key(|slot| {
+            let urgent = slot.jobs.values().min().copied().unwrap_or(u32::MAX);
+            (slot.jobs.len(), std::cmp::Reverse(urgent))
+        });
         let Some(slot) = slot else {
             host.fail_job(request.id, "no workers".into());
             return;
@@ -254,7 +246,7 @@ impl JobPool {
     }
 
     fn broadcast(&mut self, order: impl Fn() -> Order) {
-        for slot in self.slots.iter().filter(|slot| !slot.broken) {
+        for slot in &self.slots {
             let _ = slot.orders.send(order());
         }
     }
@@ -310,18 +302,6 @@ impl JobPool {
                         host.fail_job(JobId(id), error);
                     }
                 }
-                Report::Broken(index, error) => {
-                    eprintln!("A job worker broke and takes no more jobs: {error}");
-                    let slot = &mut self.slots[index];
-                    slot.broken = true;
-                    for (id, _) in slot.jobs.drain() {
-                        self.keys.remove(&id);
-                        if self.verifying.remove(&id).is_none() {
-                            host.fail_job(JobId(id), "worker unavailable".into());
-                        }
-                    }
-                    host.set_job_workers(self.size() as u32);
-                }
             }
         }
     }
@@ -365,9 +345,9 @@ struct Held {
     started: bool,
 }
 
-/// Worker `index`'s loop: its orders in turn, and between them its most
-/// urgent job a slice at a time; reports to `report`.
-fn work(index: usize, inbox: &Receiver<Order>, report: &Sender<Report>) {
+/// A worker's loop: its orders in turn, and between them its most urgent
+/// job a slice at a time; reports to `report`.
+fn work(inbox: &Receiver<Order>, report: &Sender<Report>) {
     let mut worker = engine_worker::Worker::new();
     worker.warm();
     let mut jobs: Vec<Held> = Vec::new();
@@ -419,46 +399,39 @@ fn work(index: usize, inbox: &Receiver<Order>, report: &Sender<Report>) {
             continue;
         };
         let job = &mut jobs[at];
-        let slice = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if !job.started {
-                worker.start(job.id, job.kind, &job.input)?;
-                job.started = true;
-            }
-            let start = Instant::now();
-            loop {
-                if let Some(output) = worker.step(job.id, STEP_UNITS)? {
-                    return Ok(Some(output));
-                }
-                if start.elapsed() >= SLICE {
-                    return Ok(None);
-                }
-            }
-        }));
         let id = job.id;
-        match slice {
-            Ok(Ok(Some(output))) => {
+        match slice(&mut worker, job) {
+            Ok(Some(output)) => {
                 jobs.remove(at);
                 let _ = report.send(Report::Done(id, output));
             }
-            Ok(Ok(None)) => {
+            Ok(None) => {
                 if let Some(part) = worker.take_part(id) {
                     let _ = report.send(Report::Part(id, part));
                 }
             }
-            Ok(Err(error)) => {
+            Err(error) => {
                 jobs.remove(at);
                 worker.cancel(id);
                 let _ = report.send(Report::Failed(id, error));
             }
-            Err(panic) => {
-                let error = panic
-                    .downcast_ref::<&str>()
-                    .map(|text| (*text).to_owned())
-                    .or_else(|| panic.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| "panicked".into());
-                let _ = report.send(Report::Broken(index, error));
-                return;
-            }
+        }
+    }
+}
+
+/// One slice of `job` on `worker`: its output once done, else none yet.
+fn slice(worker: &mut engine_worker::Worker, job: &mut Held) -> Result<Option<Vec<u8>>, String> {
+    if !job.started {
+        worker.start(job.id, job.kind, &job.input)?;
+        job.started = true;
+    }
+    let start = Instant::now();
+    loop {
+        if let Some(output) = worker.step(job.id, STEP_UNITS)? {
+            return Ok(Some(output));
+        }
+        if start.elapsed() >= SLICE {
+            return Ok(None);
         }
     }
 }

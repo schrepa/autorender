@@ -82,9 +82,11 @@ mod browser {
 
     #[wasm_bindgen]
     impl JobWorker {
+        /// A worker whose panics stop it for good, as the engine's do
+        /// ([`engine_panic`]'s hook).
         #[wasm_bindgen(constructor)]
         pub fn new() -> Self {
-            console_error_panic_hook::set_once();
+            engine_panic::install();
             Self {
                 worker: super::Worker::new(),
             }

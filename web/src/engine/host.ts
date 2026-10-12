@@ -3,6 +3,7 @@ import type { Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
 import { BrowserInput } from "./input";
 import { type JobPool, jobPool } from "./jobs";
+import { fatal, panicReport } from "./panic";
 import { HOST_PARAMETERS } from "./parameters";
 import "./style.css";
 
@@ -213,7 +214,10 @@ const QUIET_FRAMES = 3;
 const PREPARE_LIMIT_MS = 60000;
 let developmentBusy = false;
 let disposeDevelopment: (() => void) | undefined;
+// Once the engine failed, nothing calls into its module again; `stopped`
+// says why when its module stopped (a panic's message, or the trap).
 let failed = false;
+let stopped: string | undefined;
 let request = 0;
 // Loading work while pipelines compile: browsers stop calling
 // animation frames while their GPU process compiles, so it runs in tasks.
@@ -247,16 +251,27 @@ function setStatus(text: string, state: string) {
 
 function clearInput() { input.clear(); }
 
+/** Tells the game's page `reason` interrupted its timing, while the engine
+ * runs: its handlers may call into the module. */
+function interrupt(reason: string) {
+  if (!failed) options.interrupted?.(reason);
+}
+
+/** Drops the game's suspension time and held input, while its module runs. */
+function suspendGame() {
+  if (!failed) game?.suspend();
+}
+
 function resize() {
   if (disposed) return;
   const bounds = canvas.getBoundingClientRect();
-  if (bounds.width <= 0 || bounds.height <= 0) { options.interrupted?.("resize"); pixelWidth = 0; pixelHeight = 0; return; }
+  if (bounds.width <= 0 || bounds.height <= 0) { interrupt("resize"); pixelWidth = 0; pixelHeight = 0; return; }
   const dpr = Math.min(window.devicePixelRatio || 1, 1.5) * resolutionScale;
   // A resolution budget controls fill cost independently of entity count.
   const scale = Math.min(dpr, 2560 / Math.max(bounds.width, 1), 1440 / Math.max(bounds.height, 1));
   const width = Math.max(1, Math.round(bounds.width * scale));
   const height = Math.max(1, Math.round(bounds.height * scale));
-  if (width !== pixelWidth || height !== pixelHeight) options.interrupted?.("resize");
+  if (width !== pixelWidth || height !== pixelHeight) interrupt("resize");
   pixelWidth = width;
   pixelHeight = height;
 }
@@ -264,8 +279,9 @@ const observer = new ResizeObserver(resize);
 observer.observe(canvas);
 window.addEventListener("resize", resize, listenerOptions);
 
-function stopClock() {
-  options.interrupted?.("suspension");
+/** Stops frames and the loading tasks between them; calls nothing in the
+ * module. */
+function halt() {
   cancelAnimationFrame(request);
   request = 0;
   clearTimeout(working);
@@ -276,30 +292,52 @@ function stopClock() {
   betweenSpent = 0;
   hud.reset();
   clearInput();
-  game?.suspend();
 }
 
+function stopClock() {
+  interrupt("suspension");
+  halt();
+  suspendGame();
+}
+
+/** Stops the page for good after `error`: the engine's panic or its
+ * module's trap, or a failure to start or run a frame. The page says so
+ * first; then frames, loading and the job workers stop, and nothing calls
+ * into the module again. */
 function fail(error: unknown) {
-  if (disposed) return;
+  if (disposed || failed) return;
   failed = true;
-  stopClock();
-  setStatus("Renderer unavailable", "error");
+  stopped = fatal(error) ? panicReport(error)?.message ?? String(error) : undefined;
+  setStatus(stopped ? "Engine stopped" : "Renderer unavailable", "error");
   message.hidden = false;
-  message.textContent = `Unable to start or continue the engine.\n${String(error)}\nWebGPU requires a supported browser on localhost or HTTPS.`;
+  message.textContent = stopped ? `The engine stopped.\n${stopped}`
+    : `Unable to start or continue the engine.\n${String(error)}\nWebGPU requires a supported browser on localhost or HTTPS.`;
   pause.disabled = true;
   reset.disabled = true;
+  halt();
+  jobs?.terminate();
+  jobs = undefined;
   console.error(error);
+}
+
+/** Runs `work`, which calls into the module; a module that stopped stops
+ * the page. */
+function guarded(work: () => void) {
+  try { work(); } catch (error) { fail(error); }
 }
 
 /** Terrain loading until shortly before the frame due at `due`. */
 function workBetweenFrames(due: number) {
   between = 0;
   if (disposed || !game || paused || document.hidden || failed || preparing) return;
-  const start = performance.now();
-  const spare = due - start - BETWEEN_MARGIN_MS;
-  if (spare > 1) game.work_between_frames(spare);
-  jobs?.exchange();
-  betweenSpent = performance.now() - start;
+  const current = game;
+  guarded(() => {
+    const start = performance.now();
+    const spare = due - start - BETWEEN_MARGIN_MS;
+    if (spare > 1) current.work_between_frames(spare);
+    jobs?.exchange();
+    betweenSpent = performance.now() - start;
+  });
 }
 
 /** Schedules terrain loading after the frame that started at `timestamp`. */
@@ -317,10 +355,13 @@ function scheduleBetweenFrames(timestamp: number) {
 function workWhileCompiling() {
   working = 0;
   if (disposed || !game || paused || document.hidden || failed || !preparing) return;
-  if (!readStats(game).pipelines_compiling) return;
-  game.work(pixelWidth, pixelHeight);
-  jobs?.exchange();
-  working = window.setTimeout(workWhileCompiling, 0);
+  const current = game;
+  guarded(() => {
+    if (!readStats(current).pipelines_compiling) return;
+    current.work(pixelWidth, pixelHeight);
+    jobs?.exchange();
+    working = window.setTimeout(workWhileCompiling, 0);
+  });
 }
 
 function prepareFrame(current: T, timestamp: number) {
@@ -350,6 +391,8 @@ function prepareFrame(current: T, timestamp: number) {
 function frame(timestamp: number) {
   request = 0;
   if (disposed || !game || paused || document.hidden || failed) return;
+  // The module stopped where the page's own code caught its error.
+  if (panicReport()) { fail(new Error("the engine panicked")); return; }
   try {
     if (preparing) {
       prepareFrame(game, timestamp);
@@ -384,8 +427,11 @@ function resume() {
   }
 }
 
-window.addEventListener("blur", () => { options.interrupted?.("focus_lost"); clearInput(); game?.suspend(); hud.skipInterval(); }, listenerOptions);
-canvas.addEventListener("blur", () => { options.interrupted?.("focus_lost"); game?.suspend(); hud.skipInterval(); }, listenerOptions);
+window.addEventListener("blur", () => { interrupt("focus_lost"); clearInput(); suspendGame(); hud.skipInterval(); }, listenerOptions);
+canvas.addEventListener("blur", () => { interrupt("focus_lost"); suspendGame(); hud.skipInterval(); }, listenerOptions);
+// A module that stops where nothing caught its error stops the page too.
+window.addEventListener("error", event => { if (fatal(event.error)) fail(event.error); }, listenerOptions);
+window.addEventListener("unhandledrejection", event => { if (fatal(event.reason)) fail(event.reason); }, listenerOptions);
 document.addEventListener("visibilitychange", () => {
   stopClock();
   if (failed) return;
@@ -404,7 +450,9 @@ function setPaused(value: boolean) {
 pause.addEventListener("click", () => {
   if (!developmentBusy) setPaused(!paused);
 }, listenerOptions);
-reset.addEventListener("click", () => { if (!developmentBusy) game?.reset_camera(); }, listenerOptions);
+reset.addEventListener("click", () => {
+  if (!developmentBusy && !failed && game) guarded(() => game?.reset_camera());
+}, listenerOptions);
 const reload = document.getElementById("reload") as HTMLButtonElement | null;
 reload?.addEventListener("click", async () => {
   if (disposed || failed || developmentBusy || reload.disabled || !game || !options.reload) return;
@@ -418,7 +466,8 @@ reload?.addEventListener("click", async () => {
     current.suspend(); clearInput(); hud.skipInterval();
     notice.textContent = "Scene reloaded from its source file.";
   } catch (error) {
-    if (!disposed) notice.textContent = `Reload failed; the current scene is still running. ${String(error)}`;
+    if (fatal(error)) fail(error);
+    else if (!disposed) notice.textContent = `Reload failed; the current scene is still running. ${String(error)}`;
   } finally { developmentBusy = false; if (!disposed) reload.disabled = false; }
 }, listenerOptions);
 
@@ -432,9 +481,10 @@ async function start() {
   if (disposed) { created.free(); return; }
   game = created;
   applySwitches(created);
-  // The game's jobs run on the page's workers.
+  // The game's jobs run on the page's workers; a module of theirs or the
+  // game's that stops stops the page.
   jobs = jobPool();
-  jobs?.attach(created);
+  jobs?.attach(created, fail);
   resize();
   message.hidden = true;
   pause.disabled = false;
@@ -451,6 +501,9 @@ async function start() {
         game.frame(performance.now(), pixelWidth, pixelHeight, 0, 0, 0, 0, 0, 0, 0, 0);
         game.suspend();
         options.poll?.(game);
+      } catch (error) {
+        if (fatal(error)) fail(error);
+        throw error;
       } finally { resume(); }
     },
     setResolutionScale(scale) {
@@ -471,6 +524,7 @@ async function start() {
       isBusy: () => developmentBusy,
       size: () => [pixelWidth, pixelHeight], poll: () => options.poll?.(created),
       source: options.source,
+      fail, stopped: () => stopped,
       controls: Object.fromEntries(Object.entries(options.controls ?? {}).map(([name, control]) => [name, {
         description: control.description, run: (args: Record<string, unknown>) => control.run(created, args),
       }])),
@@ -490,7 +544,9 @@ if (import.meta.hot) import.meta.hot.dispose(() => {
   jobs?.detach();
   disposeDevelopment?.();
   lifecycle.abort();
-  stopClock(); observer.disconnect(); input.dispose(); game?.free(); game = undefined;
+  stopClock(); observer.disconnect(); input.dispose();
+  if (!failed) game?.free();
+  game = undefined;
 });
 void start().catch(fail);
 }

@@ -10,7 +10,9 @@
 //! `vendor: "pix"` the last frame's per-draw counters replayed through PIX
 //! where the session loaded it (`--vendor pix`), written as files.
 //! Sessions draw offscreen and start paused, as the page's development
-//! sessions do; a first line says the session is ready.
+//! sessions do; a first line says the session is ready. A panic ends the
+//! session's process (`engine_panic`'s hook writes its report on standard
+//! error), and the program driving the session answers what follows.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -56,8 +58,6 @@ pub struct DevSession<G: Game> {
     paused: bool,
     started: Instant,
     instance: String,
-    // The engine panicked: the session is unusable after.
-    panic: Option<String>,
 }
 
 impl<G: Game> DevSession<G> {
@@ -85,7 +85,6 @@ impl<G: Game> DevSession<G> {
             paused: true,
             started: Instant::now(),
             instance,
-            panic: None,
         }
     }
 
@@ -167,7 +166,7 @@ impl<G: Game> DevSession<G> {
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return Ok(()),
             }
-            if self.panic.is_none() && !self.paused && Instant::now() >= next {
+            if !self.paused && Instant::now() >= next {
                 next = Instant::now() + FRAME;
                 let timestamp = self.now();
                 if let Err(error) = self.game.frame(timestamp) {
@@ -190,9 +189,6 @@ impl<G: Game> DevSession<G> {
 
     /// The reply to the command line `line`.
     fn request(&mut self, line: &str) -> Value {
-        if let Some(panic) = &self.panic {
-            return json!({"ok": false, "error": {"code": "runtime_panicked", "path": "$", "message": panic}});
-        }
         if line.len() > engine::dev::MAX_REQUEST_BYTES {
             return self.error(
                 "request_too_large",
@@ -212,20 +208,7 @@ impl<G: Game> DevSession<G> {
                 );
             }
         };
-        let handled =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.dispatch(&command)));
-        match handled {
-            Ok(reply) => reply,
-            Err(panic) => {
-                let message = panic
-                    .downcast_ref::<&str>()
-                    .map(|text| (*text).to_owned())
-                    .or_else(|| panic.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| "the engine panicked".into());
-                self.panic = Some(message.clone());
-                json!({"ok": false, "error": {"code": "runtime_panicked", "path": "$", "message": message}})
-            }
-        }
+        self.dispatch(&command)
     }
 
     /// Runs `command`: the engine checks it, pause rules included, and runs
@@ -298,9 +281,7 @@ impl<G: Game> DevSession<G> {
     fn error(&mut self, code: &str, path: &str, message: &str) -> Value {
         let mut reply =
             json!({"ok": false, "error": {"code": code, "path": path, "message": message}});
-        if self.panic.is_none() {
-            reply["observation"] = self.invoke_op("status")["observation"].clone();
-        }
+        reply["observation"] = self.invoke_op("status")["observation"].clone();
         reply
     }
 

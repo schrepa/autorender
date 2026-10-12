@@ -1,6 +1,9 @@
 /** Own one native development runtime: a game's program serving the
  * development protocol over standard input and output (`--dev`), drawing
- * offscreen, as pages serve it to browser sessions. */
+ * offscreen, as pages serve it to browser sessions. A panic ends the
+ * program after its panic hook writes the report on standard error; the
+ * session then answers every request `runtime_panicked` with the report's
+ * message, as a page's does. */
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
@@ -8,6 +11,7 @@ import { relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { inflateSync } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
+import { PANIC_PREFIX } from "../src/generated/host.ts";
 import { AgentError } from "./agent-protocol.mjs";
 import { workspace } from "./workspace.mjs";
 
@@ -122,12 +126,20 @@ export async function launchNativeSession({ program, args = [], session = random
   const diagnostics = [];
   const waiting = [];
   let closing, invalidated = false, invalidationCallback, ready;
+  // The report of the runtime's panic, once its hook wrote one.
+  let panic;
+  const panicked = () => ({ ok: false, error: { code: "runtime_panicked", path: "$", message: panic.message } });
   function diagnostic(kind, message) {
     diagnostics.push({ kind, message: message.slice(0, 2000), at: new Date().toISOString() });
     if (diagnostics.length > 100) diagnostics.shift();
   }
   const readyLine = new Promise((resolveReady, rejectReady) => { ready = { resolve: resolveReady, reject: rejectReady }; });
-  createInterface({ input: child.stderr }).on("line", line => diagnostic("stderr", line));
+  createInterface({ input: child.stderr }).on("line", line => {
+    if (line.startsWith(PANIC_PREFIX)) {
+      try { panic = JSON.parse(line.slice(PANIC_PREFIX.length)); } catch { /* A torn line: the exit says the rest. */ }
+    }
+    diagnostic("stderr", line);
+  });
   createInterface({ input: child.stdout }).on("line", line => {
     let value;
     try { value = JSON.parse(line); } catch { diagnostic("stdout", line); return; }
@@ -139,11 +151,15 @@ export async function launchNativeSession({ program, args = [], session = random
     invalidated = true;
     const error = new AgentError("session_unavailable", `The native runtime exited. Diagnostics: ${JSON.stringify(diagnostics.slice(-5))}`);
     ready?.reject(error);
-    for (const pending of waiting.splice(0)) pending.reject(error);
+    for (const pending of waiting.splice(0)) {
+      if (panic) pending.resolve(panicked());
+      else pending.reject(error);
+    }
     try { invalidationCallback?.(); } finally { void close(); }
   }
   child.on("error", error => { diagnostic("spawn", String(error)); invalidate(); });
-  child.on("exit", invalidate);
+  // Once its output is read to the end: a panic's report comes before.
+  child.on("close", invalidate);
   function close() {
     if (!closing) {
       closing = new Promise(resolveClose => {
@@ -163,6 +179,7 @@ export async function launchNativeSession({ program, args = [], session = random
   const aborted = () => { void close(); };
   signal?.addEventListener("abort", aborted, { once: true });
   function request(command) {
+    if (panic && invalidated) return Promise.resolve(panicked());
     if (invalidated || closing) return Promise.reject(new AgentError("session_unavailable", "The native runtime is no longer available."));
     return new Promise((resolveReply, rejectReply) => {
       waiting.push({ resolve: resolveReply, reject: rejectReply });

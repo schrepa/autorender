@@ -20,7 +20,8 @@
     "resume",
     "capture",
     "game",
-    "reload"
+    "reload",
+    "debug_panic"
   ],
   "errors": {
     "activation_committed": "The build was already activated.",

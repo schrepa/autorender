@@ -638,6 +638,12 @@
         "terrain",
         "texture"
       ]
+    },
+    {
+      "op": "debug_panic",
+      "smokes": [
+        "host-parity"
+      ]
     }
   ],
   "sections": [

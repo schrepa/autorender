@@ -101,6 +101,7 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("capture", ""),
     ("game", "GameControls"),
     ("reload", "status"),
+    ("debug_panic", "status"),
 ];
 
 /// Where a query runs.
@@ -681,6 +682,12 @@ pub enum BrowserControl {
         )]
         revision: String,
     },
+    /// Panics the engine, as a bug in it would, to check what the host does
+    /// then: the engine stops for good, and every later request answers
+    /// `runtime_panicked` with the panic's message and where it happened.
+    DebugPanic {
+        version: u32,
+    },
 }
 
 impl BrowserControl {
@@ -706,7 +713,8 @@ impl BrowserControl {
             | Self::Render { .. }
             | Self::Capture { .. }
             | Self::Game { .. }
-            | Self::Reload { .. } => true,
+            | Self::Reload { .. }
+            | Self::DebugPanic { .. } => true,
             Self::Pause { .. } | Self::Resume { .. } => false,
         }
     }
@@ -732,7 +740,8 @@ impl BrowserControl {
             | Self::Resume { version }
             | Self::Capture { version, .. }
             | Self::Game { version, .. }
-            | Self::Reload { version, .. } => *version,
+            | Self::Reload { version, .. }
+            | Self::DebugPanic { version } => *version,
             Self::Environment(control) => control.version,
         }
     }
