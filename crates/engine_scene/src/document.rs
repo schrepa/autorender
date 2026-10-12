@@ -491,21 +491,18 @@ fn zero_uv(uv: &[f32; 2]) -> bool {
     *uv == [0.0; 2]
 }
 
-/// A reusable entity tree whose parents reference IDs within the definition.
-///
-/// Instance roots use [`SceneObject::prefab`]. Template roots become children of
-/// that instance root. Nested prefab references are deliberately unsupported.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct ScenePrefab {
-    #[cfg_attr(
-        feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
-    )]
-    pub id: String,
-    #[cfg_attr(feature = "schema", schemars(length(max = 10_000)))]
-    pub entities: Vec<SceneObject>,
+engine_settings::settings! {
+    /// A reusable entity tree whose parents reference IDs within the definition.
+    ///
+    /// Instance roots use [`SceneObject::prefab`]. Template roots become children of
+    /// that instance root. Nested prefab references are deliberately unsupported.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct ScenePrefab {
+        pub id: String = String::new() => id,
+        pub entities: Vec<SceneObject> = Vec::new() => count(0, 10_000),
+    }
 }
 
 /// The document's part of `entity_components!`: [`SceneObject`], with a
@@ -585,8 +582,7 @@ macro_rules! scene_object {
                 pub transform: SceneTransform = SceneTransform::default() => any,
                 /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.
                 #[serde(default)]
-                #[cfg_attr(feature = "schema", schemars(length(max = 16)))]
-                pub tags: Vec<String> = Vec::new() => any,
+                pub tags: Vec<String> = Vec::new() => count(0, 16),
             }
         }
     };

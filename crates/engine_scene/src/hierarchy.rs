@@ -83,6 +83,15 @@ impl SceneDocument {
             "$.prefabs",
         )?;
         for (index, prefab) in self.prefabs.iter().enumerate() {
+            // Its own rules: its ID's, checked with the others' above, and
+            // its entities' count.
+            prefab.validate().map_err(|invalid| {
+                crate::error::broken_rule(
+                    ErrorCode::InvalidValue,
+                    &format!("$.prefabs[{index}]"),
+                    invalid,
+                )
+            })?;
             let path = format!("$.prefabs[{index}].entities");
             unique_ids(
                 prefab.entities.iter().map(|entity| entity.id.as_str()),

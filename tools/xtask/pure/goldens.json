@@ -752,10 +752,20 @@
       "message": "must be a relative path of letters, digits, '_', '.', '-' and '/' inside the scene's folder",
       "path": "$.textures[0].uri"
     },
+    "refusal invalid_value at $.entities[0].tags": {
+      "code": "invalid_value",
+      "message": "must hold at most 16 values",
+      "path": "$.entities[0].tags"
+    },
     "refusal invalid_value at $.entities[0].tint": {
       "code": "invalid_value",
       "message": "each value must be in [0, 1]",
       "path": "$.entities[0].tint"
+    },
+    "refusal invalid_value at $.prefabs[0].entities": {
+      "code": "invalid_value",
+      "message": "must hold at most 10000 values",
+      "path": "$.prefabs[0].entities"
     },
     "refusal invalid_world_transform at $.entities[1].transform": {
       "code": "invalid_world_transform",
