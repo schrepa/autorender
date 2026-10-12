@@ -67,6 +67,53 @@ export interface AssetsResult {
   textures: number;
 }
 
+/** Where a cast shape hit. */
+export interface CastHit {
+  /** How far it travelled. */
+  distance: number;
+  /** What it hit. */
+  entity: HitEntity;
+  /** The fraction of the displacement travelled. */
+  fraction: number;
+  /** The surface's normal there. */
+  normal: number[];
+  /** The placed object hit, where a terrain's placement was. */
+  placed?: PlacedHit | null;
+  /** Where it touched, in world space. */
+  point: number[];
+  /** Whether the shape started overlapping it. */
+  started_overlapping: boolean;
+}
+
+/**
+ * What `collision_events` answers: a page of the latest fixed tick's
+ * sensor transitions, which reading does not consume.
+ */
+export interface CollisionEventsResult {
+  /** Pairs overlapping now. */
+  active_pairs: number;
+  /** Pairs the sensors' broad phase found. */
+  candidate_pairs: number;
+  /** The tick that committed them. */
+  committed_tick?: string | null;
+  /** Whether every candidate pair was checked. */
+  complete: boolean;
+  /** Why the tick's events are incomplete, where they are. */
+  error?: DevError | null;
+  /** The page's events. */
+  events: SensorEventRow[];
+  /** Where the next page starts, where one does. */
+  next_offset?: number | null;
+  /** Sensors alone make events: always true. */
+  sensor_only: boolean;
+  /** The events' sequence number, a decimal string. */
+  sequence: string;
+  /** The tick that attempted them. */
+  tick?: string | null;
+  /** The events selected. */
+  total: number;
+}
+
 export interface CollisionLimitsView {
   max_candidate_pairs: number;
   max_colliders: number;
@@ -202,6 +249,20 @@ export interface EntityRow {
   tags?: string[] | null;
 }
 
+/** An entity a hit or event names, by its authored identity. */
+export interface HitEntity {
+  /** Whether it still exists. */
+  alive: boolean;
+  /** Its authored ID, where it has one. */
+  id?: string | null;
+  /** Whether it belongs to the active scene, streamed in or not. */
+  in_active_scene: boolean;
+  /** Its display name. */
+  name?: string | null;
+  /** The scene it was authored in. */
+  scene?: string | null;
+}
+
 /**
  * The host's side of each call the bridge takes: its view, whether its
  * frames are paused, and what it is.
@@ -261,10 +322,14 @@ export interface Observation {
 /** Each op's result where it is typed, by op: what a successful reply's `result` holds besides what hosts add. */
 export interface OpResults {
   assets: AssetsResult;
+  collision_events: CollisionEventsResult;
   describe: DescribeResult;
   digest: DigestResult;
   distribution: DistributionResult;
   inspect: InspectResult;
+  overlap: OverlapResult;
+  raycast: RaycastResult;
+  shape_cast: ShapeCastResult;
   status: StatusResult;
 }
 
@@ -285,6 +350,26 @@ export interface Outcome {
   now?: number | null;
   /** What the game's control returned. */
   result?: unknown;
+}
+
+/** What `overlap` answers: every entity the shape overlaps, by scene and ID. */
+export interface OverlapResult {
+  /** Whether the query saw every candidate: always, or it fails. */
+  complete: boolean;
+  /** Each, sorted by scene and ID. */
+  hits: HitEntity[];
+  /** The collision world queried. */
+  snapshot: CollisionWorldView;
+  /** How many it overlaps. */
+  total: number;
+}
+
+/** A placed object a hit names: its terrain's placement layer and asset. */
+export interface PlacedHit {
+  /** The asset's index. */
+  asset: number;
+  /** The placement layer's index. */
+  layer: number;
 }
 
 export type PresentationModeView = "current" | "interpolated";
@@ -325,12 +410,61 @@ export interface PresentationStateView {
   tick?: string | null;
 }
 
+/** Where a ray hit. */
+export interface RayHit {
+  /** How far along the ray. */
+  distance: number;
+  /** What it hit. */
+  entity: HitEntity;
+  /** The surface's normal there. */
+  normal: number[];
+  /** The placed object hit, where a terrain's placement was. */
+  placed?: PlacedHit | null;
+  /** Where, in world space. */
+  point: number[];
+  /** Whether the ray started inside it. */
+  started_inside: boolean;
+}
+
+/** What `raycast` answers: the closest complete hit, if any. */
+export interface RaycastResult {
+  /** Whether the query saw every candidate: always, or it fails. */
+  complete: boolean;
+  /** The closest hit. */
+  hit?: RayHit | null;
+  /** The collision world queried. */
+  snapshot: CollisionWorldView;
+}
+
 /** The authored scene a reply observed. */
 export interface SceneObservation {
   /** The scene's ID. */
   id: string;
   /** The scene's revision, a decimal string. */
   revision: string;
+}
+
+/** Whether a pair began or stopped overlapping. */
+export type SensorEventKindView = "enter" | "exit";
+
+/** One sensor transition: a pair began or stopped overlapping. */
+export interface SensorEventRow {
+  /** The pair's first entity. */
+  first: HitEntity;
+  /** Whether the pair began or stopped overlapping. */
+  kind: SensorEventKindView;
+  /** Its second. */
+  second: HitEntity;
+}
+
+/** What `shape_cast` answers: the closest complete hit, if any. */
+export interface ShapeCastResult {
+  /** Whether the query saw every candidate: always, or it fails. */
+  complete: boolean;
+  /** The closest hit. */
+  hit?: CastHit | null;
+  /** The collision world queried. */
+  snapshot: CollisionWorldView;
 }
 
 /** What requests and replies keep within. */

@@ -20,8 +20,13 @@ use engine_settings::stated;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::results::{
+    CastHit, CollisionEventsResult, HitEntity, OverlapResult, PlacedHit, RayHit, RaycastResult,
+    SensorEventKindView, SensorEventRow, ShapeCastResult,
+};
 use crate::features::EngineQuery;
 use crate::protocol::{bounds, default_limit};
+use crate::results::result;
 use crate::{
     DevError, MAX_SCAN_ENTITIES, bounded,
     views::{ColliderShapeView, ColliderView, CollisionLimitsView, CollisionWorldView},
@@ -64,12 +69,17 @@ impl EngineQuery for RaycastQuery {
             .raycast(ray, filter)
             .map_err(native_error)?;
         let world = engine.app.world();
-        Ok(json!({
-            "snapshot": world_value(world.resource::<CollisionWorld>()), "complete": true,
-            "hit": hit.map(|hit| json!({"entity":identities.entity(world, hit.entity),
-                "distance":hit.distance, "point":hit.point.to_array(),
-                "normal":hit.normal.to_array(), "started_inside":hit.started_inside,
-                "placed":hit.placed.map(placed_json)})),
+        Ok(result::raycast(RaycastResult {
+            snapshot: world_view(world.resource::<CollisionWorld>()),
+            complete: true,
+            hit: hit.map(|hit| RayHit {
+                entity: identities.entity(world, hit.entity),
+                distance: hit.distance,
+                point: hit.point.to_array(),
+                normal: hit.normal.to_array(),
+                started_inside: hit.started_inside,
+                placed: hit.placed.map(placed),
+            }),
         }))
     }
 }
@@ -123,12 +133,14 @@ impl EngineQuery for OverlapQuery {
             .map(|entity| identities.entity(world, entity))
             .collect();
         hits.sort_by(|a, b| {
-            (a["scene"].as_str(), a["id"].as_str()).cmp(&(b["scene"].as_str(), b["id"].as_str()))
+            (a.scene.as_deref(), a.id.as_deref()).cmp(&(b.scene.as_deref(), b.id.as_deref()))
         });
-        Ok(
-            json!({"snapshot":world_value(world.resource::<CollisionWorld>()),
-            "complete":true,"total":hits.len(),"hits":hits}),
-        )
+        Ok(result::overlap(OverlapResult {
+            snapshot: world_view(world.resource::<CollisionWorld>()),
+            complete: true,
+            total: hits.len(),
+            hits,
+        }))
     }
 }
 
@@ -178,13 +190,18 @@ impl EngineQuery for ShapeCastQuery {
             .cast_shape(shape, matrix, displacement, filter, options)
             .map_err(native_error)?;
         let world = engine.app.world();
-        Ok(json!({
-            "snapshot":world_value(world.resource::<CollisionWorld>()),"complete":true,
-            "hit":hit.map(|hit| json!({"entity":identities.entity(world, hit.entity),
-                "fraction":hit.fraction,"distance":hit.fraction * ray.max_distance,
-                "point":hit.point.to_array(),"normal":hit.normal.to_array(),
-                "started_overlapping":hit.started_overlapping,
-                "placed":hit.placed.map(placed_json)})),
+        Ok(result::shape_cast(ShapeCastResult {
+            snapshot: world_view(world.resource::<CollisionWorld>()),
+            complete: true,
+            hit: hit.map(|hit| CastHit {
+                entity: identities.entity(world, hit.entity),
+                fraction: hit.fraction,
+                distance: hit.fraction * ray.max_distance,
+                point: hit.point.to_array(),
+                normal: hit.normal.to_array(),
+                started_overlapping: hit.started_overlapping,
+                placed: hit.placed.map(placed),
+            }),
         }))
     }
 }
@@ -235,18 +252,35 @@ impl EngineQuery for CollisionEventsQuery {
             entity.is_none_or(|entity| event.pair.first == entity || event.pair.second == entity)
         };
         let total = events.events().iter().filter(matches).count();
-        let rows: Vec<_> = events.events().iter().filter(matches).skip(offset).take(limit)
-            .map(|event| json!({"kind":match event.kind { SensorEventKind::Enter => "enter", SensorEventKind::Exit => "exit" },
-                "first":identities.entity(world, event.pair.first),"second":identities.entity(world, event.pair.second)})).collect();
+        let rows: Vec<_> = events
+            .events()
+            .iter()
+            .filter(matches)
+            .skip(offset)
+            .take(limit)
+            .map(|event| SensorEventRow {
+                kind: match event.kind {
+                    SensorEventKind::Enter => SensorEventKindView::Enter,
+                    SensorEventKind::Exit => SensorEventKindView::Exit,
+                },
+                first: identities.entity(world, event.pair.first),
+                second: identities.entity(world, event.pair.second),
+            })
+            .collect();
         let next = offset.saturating_add(rows.len());
-        Ok(
-            json!({"sensor_only":true,"sequence":events.sequence().to_string(),
-            "tick":events.tick().map(|tick| tick.to_string()),
-            "committed_tick":events.committed_tick().map(|tick| tick.to_string()),
-            "complete":events.complete(),"candidate_pairs":events.candidate_pairs(),
-            "active_pairs":events.pairs().len(),"error":events.error().map(|error| json!(native_error(error))),
-            "total":total,"events":rows,"next_offset":(next < total).then_some(next)}),
-        )
+        Ok(result::collision_events(CollisionEventsResult {
+            sensor_only: true,
+            sequence: events.sequence().to_string(),
+            tick: events.tick().map(|tick| tick.to_string()),
+            committed_tick: events.committed_tick().map(|tick| tick.to_string()),
+            complete: events.complete(),
+            candidate_pairs: events.candidate_pairs(),
+            active_pairs: events.pairs().len(),
+            error: events.error().map(native_error),
+            total,
+            events: rows,
+            next_offset: (next < total).then_some(next),
+        }))
     }
 }
 
@@ -473,8 +507,11 @@ fn ray(origin: [f64; 3], direction: [f64; 3], max_distance: f64) -> Result<Colli
 
 /// A placed object a hit names: its terrain's placement
 /// layer and asset indices.
-fn placed_json(part: engine_collision::PlacedPart) -> serde_json::Value {
-    json!({"layer": part.layer, "asset": part.asset})
+fn placed(part: engine_collision::PlacedPart) -> PlacedHit {
+    PlacedHit {
+        layer: part.layer,
+        asset: part.asset,
+    }
 }
 
 fn query_filter(
@@ -568,7 +605,7 @@ impl<'a> Identities<'a> {
         })
     }
 
-    fn entity(&self, world: &World, entity: Entity) -> Value {
+    fn entity(&self, world: &World, entity: Entity) -> HitEntity {
         let id = self.ids.get(&entity).copied();
         let metadata = world.get::<SceneEntity>(entity);
         // A loaded streamed entity of the active scene.
@@ -576,9 +613,19 @@ impl<'a> Identities<'a> {
             && metadata.zip(self.scene).is_some_and(|(metadata, scene)| {
                 scene.streamed().is_some() && metadata.scene_id == scene.id()
             });
-        json!({"id":id.or_else(|| metadata.map(|metadata| metadata.authored_id.as_str())),
-            "scene":if id.is_some() { self.scene.map(SceneInstance::id) } else { metadata.map(|metadata| metadata.scene_id.as_str()) },
-            "name":metadata.map(|metadata| metadata.name.as_str()),
-            "in_active_scene":id.is_some() || streamed,"alive":world.get_entity(entity).is_ok()})
+        HitEntity {
+            id: id
+                .or_else(|| metadata.map(|metadata| metadata.authored_id.as_str()))
+                .map(str::to_owned),
+            scene: if id.is_some() {
+                self.scene.map(SceneInstance::id)
+            } else {
+                metadata.map(|metadata| metadata.scene_id.as_str())
+            }
+            .map(str::to_owned),
+            name: metadata.map(|metadata| metadata.name.clone()),
+            in_active_scene: id.is_some() || streamed,
+            alive: world.get_entity(entity).is_ok(),
+        }
     }
 }

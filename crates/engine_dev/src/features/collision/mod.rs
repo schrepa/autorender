@@ -3,6 +3,7 @@
 //! sensor events.
 
 mod queries;
+mod results;
 
 use engine_collision::{Collider, CollisionWorld};
 use serde_json::Value;
@@ -12,6 +13,10 @@ pub use queries::{
     OverlapQuery, RaycastQuery, ShapeCastQuery,
 };
 pub(crate) use queries::{native_error, world_value, world_view};
+pub use results::{
+    CastHit, CollisionEventsResult, HitEntity, OverlapResult, PlacedHit, RayHit, RaycastResult,
+    SensorEventKindView, SensorEventRow, ShapeCastResult,
+};
 
 use crate::inspect::Inspector;
 use crate::{DevTools, InspectorDescriptor, InspectorKind};
