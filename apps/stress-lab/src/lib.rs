@@ -3,7 +3,6 @@ mod authored;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 mod catalog;
-mod caves;
 mod city;
 mod config;
 mod dense;
@@ -15,10 +14,8 @@ mod metro;
 pub mod native;
 mod observation;
 mod presets;
-mod rocks;
 mod scene;
 mod shapes;
-mod trees;
 
 pub use authored::{AuthoredScene, PlayerWalk};
 pub use catalog::{Catalog, Choice, Switch, catalog, switches};

@@ -14,8 +14,8 @@ const MAX_STRUCT_FIELDS: usize = 30;
 
 /// The files longer than [`MAX_FILE_LINES`]: each one's most lines.
 const LONG_FILES: &[(&str, usize)] = &[
-    ("apps/stress-lab/src/city.rs", 2093),
-    ("apps/stress-lab/src/highlands.rs", 2176),
+    ("apps/stress-lab/src/city/mod.rs", 2093),
+    ("apps/stress-lab/src/highlands/mod.rs", 2175),
     ("apps/stress-lab/src/metro/mod.rs", 3577),
     ("crates/engine_assets/src/simplify.rs", 2383),
     ("crates/engine_core/src/hierarchy.rs", 1714),

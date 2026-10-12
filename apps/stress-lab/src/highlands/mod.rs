@@ -14,6 +14,10 @@
 //! the lake, streamed: they exist only near the camera. A
 //! hiker walks the road's first stretch and back.
 
+mod caves;
+mod rocks;
+mod trees;
+
 use engine::collections::HashMap;
 use std::sync::Arc;
 
@@ -1051,7 +1055,7 @@ fn surface(
     let mut placed = Vec::with_capacity(BOULDERS + SPRUCES);
     for seed in 0..BOULDERS as u32 {
         let mut mesh = |detail| {
-            crate::rocks::boulder(seed, detail).and_then(|(mesh, error)| {
+            rocks::boulder(seed, detail).and_then(|(mesh, error)| {
                 Ok(PlacementLod {
                     mesh: assets
                         .insert_mesh(mesh)
@@ -1061,7 +1065,7 @@ fn surface(
             })
         };
         let full = mesh(0)?.mesh;
-        let lods = (1..=crate::rocks::COARSER)
+        let lods = (1..=rocks::COARSER)
             .map(&mut mesh)
             .collect::<Result<Vec<_>, _>>()?;
         // Boulders collide as spheres a little inside their faces.
@@ -1078,13 +1082,9 @@ fn surface(
     }
     // Spruces of a few shapes over one bark and needle atlas, their needles
     // cut out by its alpha.
-    let atlas = Texture::from_rgba(
-        crate::trees::ATLAS,
-        crate::trees::ATLAS,
-        crate::trees::atlas(),
-    )
-    .and_then(|texture| assets.insert_texture(texture))
-    .map_err(error)?;
+    let atlas = Texture::from_rgba(trees::ATLAS, trees::ATLAS, trees::atlas())
+        .and_then(|texture| assets.insert_texture(texture))
+        .map_err(error)?;
     let needles = Material::new([1.0, 1.0, 1.0, 1.0])
         .and_then(|material| {
             material.with_surface(Surface {
@@ -1098,12 +1098,11 @@ fn surface(
         .map_err(error)?;
     for seed in 0..SPRUCES as u32 {
         let mut mesh = |detail| {
-            crate::trees::conifer(seed, detail)
-                .and_then(|mesh| assets.insert_mesh(mesh).map_err(error))
+            trees::conifer(seed, detail).and_then(|mesh| assets.insert_mesh(mesh).map_err(error))
         };
         let full = mesh(0)?;
-        let mut lods = Vec::with_capacity(crate::trees::CONIFER_ERRORS.len());
-        for (detail, error) in crate::trees::CONIFER_ERRORS.into_iter().enumerate() {
+        let mut lods = Vec::with_capacity(trees::CONIFER_ERRORS.len());
+        for (detail, error) in trees::CONIFER_ERRORS.into_iter().enumerate() {
             lods.push(PlacementLod {
                 mesh: mesh(detail + 1)?,
                 error,
@@ -1173,7 +1172,7 @@ fn surface(
     };
     for seed in 0..CLIFFS as u32 {
         let mut mesh = |detail| {
-            crate::rocks::cliff(seed, detail).and_then(|(mesh, error)| {
+            rocks::cliff(seed, detail).and_then(|(mesh, error)| {
                 Ok(PlacementLod {
                     mesh: assets
                         .insert_mesh(mesh)
@@ -1184,7 +1183,7 @@ fn surface(
         };
         let full = mesh(0)?.mesh;
         cave_rocks.push(full);
-        let lods = (1..=crate::rocks::COARSER)
+        let lods = (1..=rocks::COARSER)
             .map(&mut mesh)
             .collect::<Result<Vec<_>, _>>()?;
         placed.push(PlacementAsset {
@@ -1614,7 +1613,7 @@ fn open_cave(world: &mut World) {
         at(44.0, -5.0, fall * 18.0 + fall * 16.0),
         at(58.0, 0.0, fall * 18.0 + fall * 22.0),
     ];
-    let Ok(mesh) = crate::caves::cave(&points, CAVE_RADIUS, 79) else {
+    let Ok(mesh) = caves::cave(&points, CAVE_RADIUS, 79) else {
         return;
     };
     let Ok(mesh) = world.resource_mut::<AssetLibrary>().insert_mesh(mesh) else {

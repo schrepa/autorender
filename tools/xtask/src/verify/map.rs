@@ -488,12 +488,7 @@ pub(crate) const MAP: &[Rule] = &[
         checks: &[Cells(&["metro-views", "metro-bc7-off"])],
     },
     Rule {
-        paths: &[
-            "apps/stress-lab/src/highlands*",
-            "apps/stress-lab/src/rocks*",
-            "apps/stress-lab/src/trees*",
-            "apps/stress-lab/src/caves*",
-        ],
+        paths: &["apps/stress-lab/src/highlands/**"],
         checks: &[Cells(&["highlands", "highlands-views"])],
     },
     Rule {
@@ -504,7 +499,7 @@ pub(crate) const MAP: &[Rule] = &[
     // polygon helpers).
     Rule {
         paths: &[
-            "apps/stress-lab/src/city*",
+            "apps/stress-lab/src/city/**",
             "apps/stress-lab/src/shapes*",
             "apps/stress-lab/src/shapes/**",
         ],
