@@ -99,6 +99,24 @@ export interface CollisionWorldView {
   tick: string;
 }
 
+/** What `describe` answers: every type it describes, or one of them. */
+export type DescribeResult = { types: DescribedType[] } | { constraints: string; control_state: Record<string, unknown>; kind: TypeKind; name: string; schema: unknown } | { constraints: string; kind: TypeKind; name: string; schema: unknown } | { kind: TypeKind; name: string; schema: unknown; source: string } | { codes: Record<string, unknown>; kind: TypeKind; name: string } | { descriptor: InspectorDescriptor; feature?: string | null; kind: TypeKind };
+
+/** One type `describe` answers for, as its listing names it. */
+export interface DescribedType {
+  /** What it shows, where it says. */
+  description?: string | null;
+  /**
+   * An inspector's feature: null where it belongs to none; absent for
+   * the types that are no inspector.
+   */
+  feature?: string | null;
+  /** What it is. */
+  kind: TypeKind;
+  /** The name `describe` takes. */
+  name: string;
+}
+
 /** Stable machine-readable code and affected field; messages are for people. */
 export interface DevError {
   /** What failed, as the catalog names it. */
@@ -166,6 +184,24 @@ export interface DistributionResult {
 /** What a host does for the request under way. */
 export type Effect = { kind: "pause"; paused: boolean } | { kind: "wait"; within_ms: number } | { kind: "frame"; timestamp: number } | { kind: "show" } | { args: Record<string, unknown>; kind: "game"; name: string } | { kind: "source" };
 
+/** The components an entity row shows. */
+export type EntityComponents = Record<string, unknown> | string[];
+
+/** An authored entity as inspection shows it. */
+export interface EntityRow {
+  /**
+   * The inspected component's value by the inspector's name, or without
+   * one the names of the component inspectors it has.
+   */
+  components: EntityComponents;
+  /** Its authored ID. */
+  id: string;
+  /** Its display name, empty where it has none. */
+  name: string;
+  /** Its tags; null where it holds no authored metadata. */
+  tags?: string[] | null;
+}
+
 /**
  * The host's side of each call the bridge takes: its view, whether its
  * frames are paused, and what it is.
@@ -191,6 +227,23 @@ export interface HostContext {
 }
 
 /**
+ * What `inspect` answers: a resource's value, the entity selected, or a
+ * page of the scene's entities.
+ */
+export type InspectResult = { resource: string; value: unknown } | { entity: EntityRow } | { entities: EntityRow[]; limit: number; next_offset?: number | null; offset: number; total: number };
+
+/**
+ * Structural metadata for a registered projection. Built-in schemas are
+ * generated during host compilation from the same DTOs used for responses.
+ */
+export interface InspectorDescriptor {
+  default?: unknown;
+  description: string;
+  name: string;
+  schema: unknown;
+}
+
+/**
  * The engine's state a reply observed. Counters and revisions are decimal
  * strings, which keep 64-bit values exact in JavaScript.
  */
@@ -208,8 +261,10 @@ export interface Observation {
 /** Each op's result where it is typed, by op: what a successful reply's `result` holds besides what hosts add. */
 export interface OpResults {
   assets: AssetsResult;
+  describe: DescribeResult;
   digest: DigestResult;
   distribution: DistributionResult;
+  inspect: InspectResult;
   status: StatusResult;
 }
 
@@ -344,3 +399,6 @@ export interface TextureAsset {
 
 /** Whether the library holds a texture's pixels. */
 export type TextureState = "cpu_ready" | "missing";
+
+/** What a type `describe` answers for is. */
+export type TypeKind = "component" | "resource" | "authoring" | "protocol" | "observation" | "catalog";

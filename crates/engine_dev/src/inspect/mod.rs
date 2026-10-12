@@ -25,8 +25,8 @@ use serde_json::{Value, json};
 use crate::protocol::{Route, ToolsQuery};
 use crate::reply::{Observation, Reply, SceneObservation};
 use crate::results::{
-    AssetsResult, DistributionResult, StatusLimits, StatusResult, TextureAsset, TextureState,
-    result,
+    AssetsResult, DescribeResult, DescribedType, DistributionResult, EntityComponents, EntityRow,
+    InspectResult, StatusLimits, StatusResult, TextureAsset, TextureState, TypeKind, result,
 };
 use crate::{
     DevError, DevRequest, MAX_DESCRIPTION_BYTES, MAX_INSPECTOR_BYTES, MAX_INSPECTORS,
@@ -41,14 +41,14 @@ use crate::{
 
 /// The types describe answers itself, by name and kind, with what one
 /// is where its name does not say: no inspector may take their names.
-const DESCRIBED: &[(&str, &str, &str)] = &[
-    ("SceneDocument", "authoring", ""),
-    ("protocol", "protocol", ""),
-    ("BrowserControl", "protocol", ""),
-    ("FrameStats", "observation", ""),
+const DESCRIBED: &[(&str, TypeKind, &str)] = &[
+    ("SceneDocument", TypeKind::Authoring, ""),
+    ("protocol", TypeKind::Protocol, ""),
+    ("BrowserControl", TypeKind::Protocol, ""),
+    ("FrameStats", TypeKind::Observation, ""),
     (
         "ErrorCodes",
-        "catalog",
+        TypeKind::Catalog,
         "every error code replies answer with and what it means",
     ),
 ];
@@ -69,6 +69,7 @@ pub fn reserved_names() -> impl Iterator<Item = &'static str> {
 
 /// Names address deliberate SDK projections, never Rust type names or pointers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum InspectorKind {
     Component,
@@ -78,6 +79,7 @@ pub enum InspectorKind {
 /// Structural metadata for a registered projection. Built-in schemas are
 /// generated during host compilation from the same DTOs used for responses.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct InspectorDescriptor {
     pub name: String,
     pub description: String,
@@ -471,9 +473,9 @@ impl DevTools {
                     render_slot: None,
                 },
             ))),
-            ToolsQuery::Describe { name, definition } => {
-                self.describe(name.as_deref(), definition.as_deref())
-            }
+            ToolsQuery::Describe { name, definition } => self
+                .describe(name.as_deref(), definition.as_deref())
+                .map(result::describe),
             ToolsQuery::Distribution { values } => {
                 if values.len() > crate::bounds::MAX_VALUES {
                     return Err(DevError::new(
@@ -492,17 +494,19 @@ impl DevTools {
                 component,
                 offset,
                 limit,
-            } => self.inspect(
-                world,
-                context,
-                InspectSelector {
-                    entity: entity.as_deref(),
-                    parent: parent.as_deref(),
-                    component: component.as_deref(),
-                    offset,
-                    limit,
-                },
-            ),
+            } => self
+                .inspect(
+                    world,
+                    context,
+                    InspectSelector {
+                        entity: entity.as_deref(),
+                        parent: parent.as_deref(),
+                        component: component.as_deref(),
+                        offset,
+                        limit,
+                    },
+                )
+                .map(result::inspect),
         }
     }
 
@@ -533,52 +537,85 @@ impl DevTools {
         }
     }
 
-    fn describe(&self, name: Option<&str>, definition: Option<&str>) -> Result<Value, DevError> {
+    fn describe(
+        &self,
+        name: Option<&str>,
+        definition: Option<&str>,
+    ) -> Result<DescribeResult, DevError> {
+        let feature = |name: &str| self.features.get(name).map(|feature| feature.name());
         let Some(name) = name else {
-            let mut types: Vec<Value> = self.inspectors.values().map(|inspector| json!({"name": inspector.descriptor.name, "kind": inspector.kind, "description": inspector.descriptor.description, "feature": self.features.get(&inspector.descriptor.name).map(|feature| feature.name())})).collect();
-            types.extend(DESCRIBED.iter().map(|&(name, kind, description)| {
-                let mut entry = json!({"name": name, "kind": kind});
-                if !description.is_empty() {
-                    entry["description"] = json!(description);
-                }
-                entry
-            }));
-            return Ok(json!({"types": types}));
+            let mut types: Vec<DescribedType> = self
+                .inspectors
+                .values()
+                .map(|inspector| DescribedType {
+                    name: inspector.descriptor.name.clone(),
+                    kind: inspector.kind.into(),
+                    description: Some(inspector.descriptor.description.clone()),
+                    feature: Some(feature(&inspector.descriptor.name)),
+                })
+                .collect();
+            types.extend(
+                DESCRIBED
+                    .iter()
+                    .map(|&(name, kind, description)| DescribedType {
+                        name: name.to_owned(),
+                        kind,
+                        description: (!description.is_empty()).then(|| description.to_owned()),
+                        feature: None,
+                    }),
+            );
+            return Ok(DescribeResult::Listing { types });
         };
         match name {
-            "SceneDocument" => Ok(
-                json!({"name": name, "kind": "authoring", "schema": scene_schema(definition)?, "constraints": format!("Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state; the opt-in ones ({}) are then off.", SceneEnvironment::opt_in_sections().join(", "))}),
-            ),
+            "SceneDocument" => Ok(DescribeResult::Authoring {
+                name: name.to_owned(),
+                kind: TypeKind::Authoring,
+                schema: scene_schema(definition)?,
+                constraints: format!(
+                    "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state; the opt-in ones ({}) are then off.",
+                    SceneEnvironment::opt_in_sections().join(", ")
+                ),
+            }),
             "protocol" | "BrowserControl" => {
                 let schemas: Value =
                     serde_json::from_str(include_str!("../generated/inspectors.json"))
                         .expect("generated schemas are JSON");
-                Ok(
-                    json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": format!("version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need CollisionPlugin but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source."),
-                        // Where each control's effect shows: an inspector, status, the game's controls, or nothing.
-                        "control_state": crate::protocol::CONTROL_STATE.iter().map(|&(op, shows)| (op.to_owned(), json!(shows))).collect::<serde_json::Map<_, _>>()}),
-                )
+                Ok(DescribeResult::Protocol {
+                    name: name.to_owned(),
+                    kind: TypeKind::Protocol,
+                    schema: schemas[name].clone(),
+                    constraints: format!(
+                        "version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need CollisionPlugin but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source."
+                    ),
+                    // Where each control's effect shows: an inspector, status, the game's controls, or nothing.
+                    control_state: crate::protocol::CONTROL_STATE
+                        .iter()
+                        .map(|&(op, shows)| (op.to_owned(), json!(shows)))
+                        .collect(),
+                })
             }
-            "ErrorCodes" => Ok(json!({
-                "name": name,
-                "kind": "catalog",
-                "codes": ErrorCode::ALL
+            "ErrorCodes" => Ok(DescribeResult::Catalog {
+                name: name.to_owned(),
+                kind: TypeKind::Catalog,
+                codes: ErrorCode::ALL
                     .iter()
                     .map(|&(code, text, _)| (text.to_owned(), json!(code.description())))
-                    .collect::<serde_json::Map<_, _>>(),
-            })),
-            "FrameStats" => {
-                let schema: Value = serde_json::from_str(crate::FRAME_STATS_SCHEMA)
-                    .expect("generated schema is JSON");
-                Ok(
-                    json!({"name": name, "kind": "observation", "schema": schema, "source": "every successful reply's result.rendering: the last frame's stats"}),
-                )
-            }
+                    .collect(),
+            }),
+            "FrameStats" => Ok(DescribeResult::Observation {
+                name: name.to_owned(),
+                kind: TypeKind::Observation,
+                schema: serde_json::from_str(crate::FRAME_STATS_SCHEMA)
+                    .expect("generated schema is JSON"),
+                source: "every successful reply's result.rendering: the last frame's stats",
+            }),
             _ => {
                 let inspector = self.inspector(name)?;
-                Ok(
-                    json!({"kind": inspector.kind, "descriptor": inspector.descriptor, "feature": self.features.get(name).map(|feature| feature.name())}),
-                )
+                Ok(DescribeResult::Inspector {
+                    kind: inspector.kind.into(),
+                    descriptor: inspector.descriptor.clone(),
+                    feature: feature(name),
+                })
             }
         }
     }
@@ -610,7 +647,7 @@ impl DevTools {
         world: &World,
         context: Context<'_>,
         selector: InspectSelector<'_>,
-    ) -> Result<Value, DevError> {
+    ) -> Result<InspectResult, DevError> {
         let scene = context.scene;
         let InspectSelector {
             entity,
@@ -646,7 +683,10 @@ impl DevTools {
             }
             self.check_feature(world, &inspector.descriptor.name)?;
             let value = read_value(inspector, world, None, &context)?;
-            return Ok(json!({"resource": inspector.descriptor.name, "value": value}));
+            return Ok(InspectResult::Resource {
+                resource: inspector.descriptor.name.clone(),
+                value,
+            });
         }
         let scene = scene.ok_or_else(|| {
             DevError::new(
@@ -685,9 +725,9 @@ impl DevTools {
                     "gameplay removed this authored entity",
                 ));
             }
-            return Ok(
-                json!({"entity": self.entity_row(world, context, scene, id, entity, inspector)?}),
-            );
+            return Ok(InspectResult::Entity {
+                entity: self.entity_row(world, context, scene, id, entity, inspector)?,
+            });
         }
         let parent = parent
             .map(|id| {
@@ -726,9 +766,13 @@ impl DevTools {
             total += 1;
         }
         let next = offset.saturating_add(rows.len());
-        Ok(
-            json!({"entities": rows, "offset": offset, "limit": limit, "total": total, "next_offset": (next < total).then_some(next)}),
-        )
+        Ok(InspectResult::Page {
+            entities: rows,
+            offset,
+            limit,
+            total,
+            next_offset: (next < total).then_some(next),
+        })
     }
 
     fn entity_row(
@@ -739,23 +783,38 @@ impl DevTools {
         id: &str,
         entity: Entity,
         inspector: Option<&Inspector>,
-    ) -> Result<Value, DevError> {
+    ) -> Result<EntityRow, DevError> {
         let metadata = world.get::<SceneEntity>(entity);
-        let mut row = json!({"id": id, "name": metadata.map(|metadata| metadata.name.as_str()).unwrap_or(""), "tags": metadata.map(|metadata| &metadata.tags)});
-        if let Some(inspector) = inspector {
+        let components = if let Some(inspector) = inspector {
             self.check_feature(world, &inspector.descriptor.name)?;
-            row["components"] = json!({inspector.descriptor.name.clone(): read_value(inspector, world, Some(entity), &Context { scene: Some(scene), ..context })?});
+            let context = Context {
+                scene: Some(scene),
+                ..context
+            };
+            let value = read_value(inspector, world, Some(entity), &context)?;
+            EntityComponents::Values(
+                [(inspector.descriptor.name.clone(), value)]
+                    .into_iter()
+                    .collect(),
+            )
         } else {
-            row["components"] = json!(
+            EntityComponents::Names(
                 self.inspectors
                     .values()
-                    .filter(|inspector| inspector.kind == InspectorKind::Component
-                        && (inspector.has)(world, Some(entity)))
-                    .map(|inspector| &inspector.descriptor.name)
-                    .collect::<Vec<_>>()
-            );
-        }
-        Ok(row)
+                    .filter(|inspector| {
+                        inspector.kind == InspectorKind::Component
+                            && (inspector.has)(world, Some(entity))
+                    })
+                    .map(|inspector| inspector.descriptor.name.clone())
+                    .collect(),
+            )
+        };
+        Ok(EntityRow {
+            id: id.to_owned(),
+            name: metadata.map_or_else(String::new, |metadata| metadata.name.clone()),
+            tags: metadata.map(|metadata| metadata.tags.clone()),
+            components,
+        })
     }
 }
 

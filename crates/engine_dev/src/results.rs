@@ -9,6 +9,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::views::{CollisionWorldView, PresentationStateView};
+use crate::{InspectorDescriptor, InspectorKind};
 
 /// Ops whose results are still built as untyped JSON, sorted. The list only
 /// shrinks: a new op's result is typed, in `results!` below.
@@ -22,12 +23,10 @@ pub const UNTYPED_RESULTS: &[&str] = &[
     "debug_panic",
     "deform",
     "deformation_query",
-    "describe",
     "environment",
     "frames",
     "game",
     "input",
-    "inspect",
     "nav_go",
     "nav_path",
     "overlap",
@@ -80,6 +79,8 @@ results! {
     assets: crate::results::AssetsResult,
     digest: crate::results::DigestResult,
     distribution: crate::results::DistributionResult,
+    inspect: crate::results::InspectResult,
+    describe: crate::results::DescribeResult,
 }
 
 /// The engine as a session finds it: the world's size, the inspectors,
@@ -215,6 +216,178 @@ pub struct AssetDigests {
     pub textures: DigestEntry,
     /// Animation clips, slot by slot.
     pub clips: DigestEntry,
+}
+
+/// What `inspect` answers: a resource's value, the entity selected, or a
+/// page of the scene's entities.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum InspectResult {
+    /// A resource inspector's value.
+    Resource {
+        /// The inspector's name.
+        resource: String,
+        /// Its value, as the inspector's schema describes it.
+        value: Value,
+    },
+    /// The entity an `entity` selector names.
+    Entity {
+        /// Its row.
+        entity: EntityRow,
+    },
+    /// A page of the scene's entities, of a parent's children, or of those
+    /// holding a component.
+    Page {
+        /// The page's rows.
+        entities: Vec<EntityRow>,
+        /// Where the page starts among the entities selected.
+        offset: usize,
+        /// The page's size at most.
+        limit: usize,
+        /// The entities selected.
+        total: usize,
+        /// Where the next page starts, where one does.
+        next_offset: Option<usize>,
+    },
+}
+
+/// An authored entity as inspection shows it.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct EntityRow {
+    /// Its authored ID.
+    pub id: String,
+    /// Its display name, empty where it has none.
+    pub name: String,
+    /// Its tags; null where it holds no authored metadata.
+    pub tags: Option<Vec<String>>,
+    /// The inspected component's value by the inspector's name, or without
+    /// one the names of the component inspectors it has.
+    pub components: EntityComponents,
+}
+
+/// The components an entity row shows.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum EntityComponents {
+    /// The inspected component's value, by its inspector's name.
+    Values(serde_json::Map<String, Value>),
+    /// The names of the component inspectors the entity has.
+    Names(Vec<String>),
+}
+
+/// What `describe` answers: every type it describes, or one of them.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum DescribeResult {
+    /// Without a name: every type describe answers for.
+    Listing {
+        /// Each type, inspectors first.
+        types: Vec<DescribedType>,
+    },
+    /// The protocol's requests or controls.
+    Protocol {
+        /// `protocol` or `BrowserControl`.
+        name: String,
+        /// `protocol`.
+        kind: TypeKind,
+        /// The requests' schema.
+        schema: Value,
+        /// What the schema cannot say.
+        constraints: String,
+        /// Where each control's effect shows: an inspector, `status`, the
+        /// game's controls, or nothing.
+        control_state: serde_json::Map<String, Value>,
+    },
+    /// The scene document's schema, or one of its definitions.
+    Authoring {
+        /// `SceneDocument`.
+        name: String,
+        /// `authoring`.
+        kind: TypeKind,
+        /// The schema's top level and its definitions' names, or the
+        /// definition asked for.
+        schema: Value,
+        /// What validation checks beyond the schema.
+        constraints: String,
+    },
+    /// What a frame observed.
+    Observation {
+        /// `FrameStats`.
+        name: String,
+        /// `observation`.
+        kind: TypeKind,
+        /// Its schema.
+        schema: Value,
+        /// Where replies carry it.
+        source: &'static str,
+    },
+    /// The error codes replies answer with.
+    Catalog {
+        /// `ErrorCodes`.
+        name: String,
+        /// `catalog`.
+        kind: TypeKind,
+        /// What each code means, by code.
+        codes: serde_json::Map<String, Value>,
+    },
+    /// An inspector.
+    Inspector {
+        /// Whether it reads components or a resource.
+        kind: TypeKind,
+        /// Its name, description and schema.
+        descriptor: InspectorDescriptor,
+        /// The feature it belongs to, where it is a feature's.
+        feature: Option<&'static str>,
+    },
+}
+
+/// One type `describe` answers for, as its listing names it.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct DescribedType {
+    /// The name `describe` takes.
+    pub name: String,
+    /// What it is.
+    pub kind: TypeKind,
+    /// What it shows, where it says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// An inspector's feature: null where it belongs to none; absent for
+    /// the types that are no inspector.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature: Option<Option<&'static str>>,
+}
+
+/// What a type `describe` answers for is.
+#[derive(Clone, Copy, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum TypeKind {
+    /// An inspector of components.
+    Component,
+    /// An inspector of a resource.
+    Resource,
+    /// The scene document.
+    Authoring,
+    /// The protocol's requests or controls.
+    Protocol,
+    /// What a frame observed.
+    Observation,
+    /// The error catalog.
+    Catalog,
+}
+
+impl From<InspectorKind> for TypeKind {
+    fn from(kind: InspectorKind) -> Self {
+        match kind {
+            InspectorKind::Component => Self::Component,
+            InspectorKind::Resource => Self::Resource,
+        }
+    }
 }
 
 /// The spread of the values a `distribution` request named.
