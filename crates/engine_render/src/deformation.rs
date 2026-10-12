@@ -57,7 +57,7 @@ pub(crate) struct DeformationShading {
 }
 
 pub(crate) struct DeformationPass {
-    layout: wgpu::BindGroupLayout,
+    layout: crate::pipelines::GroupLayout,
     pipelines: Option<[wgpu::ComputePipeline; 5]>,
     // The map's words, and the texels along a side they hold (0: a
     // placeholder).
@@ -432,16 +432,19 @@ fn fit(device: &wgpu::Device, map: DeformationMap) -> Option<DeformationMap> {
     None
 }
 
-fn pipelines(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> [wgpu::ComputePipeline; 5] {
+fn pipelines(
+    device: &wgpu::Device,
+    layout: &crate::pipelines::GroupLayout,
+) -> [wgpu::ComputePipeline; 5] {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine/deformation.wgsl"),
         source: wgpu::ShaderSource::Wgsl(crate::gpu_data::DEFORMATION_SHADER.into()),
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("engine/deformation-layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
+    let pipeline_layout = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::DEFORMATION_PIPELINES,
+        &[layout],
+    );
     // In `Entry`'s order.
     [
         deformation::wipe,

@@ -12,7 +12,7 @@ use crate::shaders::entry::mipmaps;
 pub(crate) struct MipGenerator {
     // sRGB color and linear data targets.
     pipelines: [wgpu::RenderPipeline; 2],
-    layout: wgpu::BindGroupLayout,
+    layout: crate::pipelines::GroupLayout,
     sampler: wgpu::Sampler,
 }
 
@@ -23,11 +23,11 @@ impl MipGenerator {
             label: Some("engine/mipmaps.wgsl"),
             source: wgpu::ShaderSource::Wgsl(MIPMAP_SHADER.into()),
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/texture-mip-pipeline-layout"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::MIPMAP_PIPELINES,
+            &[&layout],
+        );
         let pipelines = [
             wgpu::TextureFormat::Rgba8UnormSrgb,
             wgpu::TextureFormat::Rgba8Unorm,

@@ -6,11 +6,12 @@
 use crate::shaders::entry::presentation;
 use std::cell::OnceCell;
 
-use crate::bindings::{
-    PRESENTATION_COMPACT, PRESENTATION_COMPOSE, PRESENTATION_CULL, PRESENTATION_FADES,
-    PRESENTATION_LEVEL, PRESENTATION_SKIN_BOUNDS, PRESENTATION_TESTS,
-};
+use crate::bindings::PRESENTATION_LEVEL;
 use crate::gpu_data::PRESENTATION_SHADER;
+use crate::pipeline_layouts::{
+    PRESENTATION_COMPACT_PIPELINES, PRESENTATION_COMPOSE_PIPELINES, PRESENTATION_CULL_PIPELINES,
+    PRESENTATION_FADE_PIPELINES, PRESENTATION_SKIN_BOUND_PIPELINES, PRESENTATION_TEST_PIPELINES,
+};
 use crate::pipelines::{Family, Fillers, layout};
 
 /// The passes' shared layouts; skinned slots' bounds have
@@ -49,7 +50,7 @@ pub(super) struct Pipelines {
 pub(super) struct Shaders {
     pub(super) pipelines: Pipelines,
     pub(super) families: Families,
-    pub(super) level_layout: wgpu::BindGroupLayout,
+    pub(super) level_layout: crate::pipelines::GroupLayout,
     fillers: Fillers,
     module: wgpu::ShaderModule,
 }
@@ -62,11 +63,11 @@ impl Shaders {
         });
         let level_layout = layout(device, &PRESENTATION_LEVEL);
         let families = Families {
-            compose: Family::new(device, &PRESENTATION_COMPOSE, &[&level_layout]),
-            cull: Family::new(device, &PRESENTATION_CULL, &[]),
-            tests: Family::new(device, &PRESENTATION_TESTS, &[]),
-            compact: Family::new(device, &PRESENTATION_COMPACT, &[]),
-            fades: Family::new(device, &PRESENTATION_FADES, &[]),
+            compose: Family::new(device, &PRESENTATION_COMPOSE_PIPELINES, &[&level_layout]),
+            cull: Family::new(device, &PRESENTATION_CULL_PIPELINES, &[]),
+            tests: Family::new(device, &PRESENTATION_TEST_PIPELINES, &[]),
+            compact: Family::new(device, &PRESENTATION_COMPACT_PIPELINES, &[]),
+            fades: Family::new(device, &PRESENTATION_FADE_PIPELINES, &[]),
             skin_bounds: OnceCell::new(),
         };
         let pipeline = |entry: crate::shaders::Entry, family: &Family| {
@@ -100,7 +101,7 @@ impl Shaders {
     pub(super) fn skin_bounds_family(&self, device: &wgpu::Device) -> &Family {
         self.families
             .skin_bounds
-            .get_or_init(|| Family::new(device, &PRESENTATION_SKIN_BOUNDS, &[]))
+            .get_or_init(|| Family::new(device, &PRESENTATION_SKIN_BOUND_PIPELINES, &[]))
     }
 
     fn lazy<'a>(

@@ -18,7 +18,7 @@ pub(super) struct Instances {
     pub(super) color_staging: Vec<ColorData>,
     // Group 2 of retained mesh pipelines, one per pose buffer: its poses,
     // the colors, its palette, and grounds none of the slots stand on.
-    pub(super) pose_layout: wgpu::BindGroupLayout,
+    pub(super) pose_layout: crate::pipelines::GroupLayout,
     pose_groups: [GroupCache<4>; 2],
     grounds: wgpu::Buffer,
     // Temporal frames cull into this buffer and `buffer` in turn; released

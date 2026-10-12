@@ -108,7 +108,7 @@ impl Drop for Targets {
 pub(crate) struct PostPass {
     // The layout of every post.wgsl pass and fillers for the bindings each
     // leaves out.
-    layout: wgpu::BindGroupLayout,
+    layout: crate::pipelines::GroupLayout,
     fillers: Fillers,
     occlusion: wgpu::RenderPipeline,
     // Filters occlusion and brings shafts to half resolution in one pass.
@@ -123,7 +123,7 @@ pub(crate) struct PostPass {
     // Sun shafts read the camera group of the main passes (shadow maps and
     // lighting) and their own.
     shafts: wgpu::RenderPipeline,
-    shafts_layout: wgpu::BindGroupLayout,
+    shafts_layout: crate::pipelines::GroupLayout,
     bloom_first: wgpu::RenderPipeline,
     bloom_down: wgpu::RenderPipeline,
     bloom_up: wgpu::RenderPipeline,
@@ -157,7 +157,7 @@ impl PostPass {
     pub(crate) fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
-        camera_layout: &wgpu::BindGroupLayout,
+        camera_layout: &crate::pipelines::GroupLayout,
     ) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/post.wgsl"),
@@ -166,11 +166,11 @@ impl PostPass {
         let bloom_format = bloom_format(device);
         // Every pass of post.wgsl shares one layout.
         let layout = pipelines::layout(device, &POST);
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/post-pipeline-layout"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::POST_PIPELINES,
+            &[&layout],
+        );
         let pipeline = |label, entry: crate::shaders::Entry, format: wgpu::TextureFormat, blend| {
             fullscreen(
                 device,
@@ -233,12 +233,11 @@ impl PostPass {
             label: Some("engine/shafts.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHAFTS_SHADER.into()),
         });
-        let shafts_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/post-shafts-pipeline-layout"),
-                bind_group_layouts: &[Some(camera_layout), Some(&shafts_layout)],
-                immediate_size: 0,
-            });
+        let shafts_pipeline_layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::SHAFT_PIPELINES,
+            &[camera_layout, &shafts_layout],
+        );
         let shafts = fullscreen(
             device,
             &Fullscreen {

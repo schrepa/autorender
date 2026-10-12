@@ -47,7 +47,7 @@ struct Maps {
 }
 
 pub(crate) struct SkyMaps {
-    layout: wgpu::BindGroupLayout,
+    layout: crate::pipelines::GroupLayout,
     pipeline: Option<wgpu::ComputePipeline>,
     maps: Option<Maps>,
     // A one-texel map of open sky bound while no terrain has one.
@@ -400,15 +400,18 @@ fn array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
     })
 }
 
-fn pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {
+fn pipeline(
+    device: &wgpu::Device,
+    layout: &crate::pipelines::GroupLayout,
+) -> wgpu::ComputePipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine/terrain-sky.wgsl"),
         source: wgpu::ShaderSource::Wgsl(crate::gpu_data::TERRAIN_SKY_SHADER.into()),
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("engine/terrain-sky-layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
+    let pipeline_layout = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::TERRAIN_SKY_PIPELINES,
+        &[layout],
+    );
     crate::pipelines::compute_entry(device, &pipeline_layout, &module, terrain_sky::build_sky)
 }

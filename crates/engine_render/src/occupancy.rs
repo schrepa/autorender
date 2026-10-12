@@ -68,7 +68,7 @@ pub(crate) struct Area {
 }
 
 pub(crate) struct OccupancyPass {
-    layout: wgpu::BindGroupLayout,
+    layout: crate::pipelines::GroupLayout,
     // Each map's pipeline: the near one keeps the densest cover, the far
     // one adds covers up.
     pipelines: [Option<wgpu::RenderPipeline>; 2],
@@ -402,18 +402,18 @@ fn targets(
 /// far one adds covers up and keeps the heights' maximum.
 fn pipeline(
     device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
+    layout: &crate::pipelines::GroupLayout,
     map: usize,
 ) -> wgpu::RenderPipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine/occupancy.wgsl"),
         source: wgpu::ShaderSource::Wgsl(crate::gpu_data::OCCUPANCY_SHADER.into()),
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("engine/occupancy-layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
+    let pipeline_layout = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::OCCUPANCY_PIPELINES,
+        &[layout],
+    );
     let blend = |operation| {
         Some(wgpu::BlendState {
             color: wgpu::BlendComponent {

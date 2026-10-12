@@ -261,9 +261,9 @@ pub(crate) struct VirtualTexture {
     bakes: Vec<(u32, u64, BakeRecord)>,
     bake_buffer: wgpu::Buffer,
     // Bakes' and feedback's layouts and pipelines.
-    bake_layout: wgpu::BindGroupLayout,
+    bake_layout: crate::pipelines::GroupLayout,
     bake_pipeline: Option<wgpu::RenderPipeline>,
-    feedback_layouts: [wgpu::BindGroupLayout; 3],
+    feedback_layouts: [crate::pipelines::GroupLayout; 3],
     feedback_pipeline: Option<wgpu::ComputePipeline>,
     pub(crate) stats: VtStats,
 }
@@ -845,8 +845,8 @@ impl VirtualTexture {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         shader: &wgpu::ShaderModule,
-        (camera_layout, camera_group): (&wgpu::BindGroupLayout, &wgpu::BindGroup),
-        (terrain_layout, terrain_group): (&wgpu::BindGroupLayout, &wgpu::BindGroup),
+        (camera_layout, camera_group): (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
+        (terrain_layout, terrain_group): (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
         heights: &wgpu::TextureView,
         maps: &crate::terrain_maps::TerrainMaps,
         uniform_of: impl Fn(u64) -> Option<u32>,
@@ -855,15 +855,11 @@ impl VirtualTexture {
             return;
         }
         let pipeline = self.bake_pipeline.get_or_insert_with(|| {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/terrain-vt-bake-layout"),
-                bind_group_layouts: &[
-                    Some(camera_layout),
-                    Some(terrain_layout),
-                    Some(&self.bake_layout),
-                ],
-                immediate_size: 0,
-            });
+            let layout = crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::TERRAIN_VT_BAKE_PIPELINES,
+                &[camera_layout, terrain_layout, &self.bake_layout],
+            );
             let formats = [
                 wgpu::TextureFormat::Rgba8UnormSrgb,
                 wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -976,11 +972,11 @@ impl VirtualTexture {
         }
         let layouts = &self.feedback_layouts;
         let pipeline = self.feedback_pipeline.get_or_insert_with(|| {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/terrain-vt-feedback-layout"),
-                bind_group_layouts: &[Some(&layouts[0]), Some(&layouts[1]), Some(&layouts[2])],
-                immediate_size: 0,
-            });
+            let layout = crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::TERRAIN_VT_FEEDBACK_PIPELINES,
+                &[&layouts[0], &layouts[1], &layouts[2]],
+            );
             crate::pipelines::compute_entry(device, &layout, shader, meshes::cs_terrain_vt_feedback)
         });
         let camera_group = crate::pipelines::group(

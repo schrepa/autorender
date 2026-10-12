@@ -95,16 +95,16 @@ pub(crate) struct GroupLayout {
 }
 
 pub(crate) struct ScatterPass {
-    layout: wgpu::BindGroupLayout,
+    layout: crate::pipelines::GroupLayout,
     // The mesh pipelines' pose layouts, plain and temporal, and the depth
     // passes', which equal descriptors make interchangeable with theirs.
-    pose_layouts: [wgpu::BindGroupLayout; 2],
-    shadow_layout: wgpu::BindGroupLayout,
+    pose_layouts: [crate::pipelines::GroupLayout; 2],
+    shadow_layout: crate::pipelines::GroupLayout,
     pipeline: Option<wgpu::ComputePipeline>,
     // Setting objects on the terrain: its layout and pipeline, its uniform,
     // the terrains' places, its group (by the buffers' and terrain
     // sources' generations), and whether this frame runs it.
-    snap_layout: wgpu::BindGroupLayout,
+    snap_layout: crate::pipelines::GroupLayout,
     snap_pipeline: Option<wgpu::ComputePipeline>,
     snap: wgpu::Buffer,
     terrains: wgpu::Buffer,
@@ -812,16 +812,19 @@ fn grow(
     true
 }
 
-fn snap_pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {
+fn snap_pipeline(
+    device: &wgpu::Device,
+    layout: &crate::pipelines::GroupLayout,
+) -> wgpu::ComputePipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine/scatter-snap.wgsl"),
         source: wgpu::ShaderSource::Wgsl(crate::gpu_data::SCATTER_SNAP_SHADER.into()),
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("engine/scatter-snap-layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
+    let pipeline_layout = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::SCATTER_SNAP_PIPELINES,
+        &[layout],
+    );
     crate::pipelines::compute_entry(
         device,
         &pipeline_layout,
@@ -830,16 +833,19 @@ fn snap_pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu:
     )
 }
 
-fn pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {
+fn pipeline(
+    device: &wgpu::Device,
+    layout: &crate::pipelines::GroupLayout,
+) -> wgpu::ComputePipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine/scatter-cull.wgsl"),
         source: wgpu::ShaderSource::Wgsl(crate::gpu_data::SCATTER_CULL_SHADER.into()),
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("engine/scatter-cull-layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
+    let pipeline_layout = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::SCATTER_CULL_PIPELINES,
+        &[layout],
+    );
     crate::pipelines::compute_entry(
         device,
         &pipeline_layout,

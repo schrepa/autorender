@@ -57,7 +57,9 @@ impl Renderer {
         let adapter_info = crate::AdapterInfo::of(&adapter.get_info());
         let adapter_limits = adapter.limits();
         // Buffers as large as the adapter allows: content, not constants,
-        // sizes them.
+        // sizes them. Every pipeline layout keeps within the per-stage
+        // limits every device grants (`cargo xtask lint` checks them).
+        let required = crate::pipeline_layouts::REQUIRED_LIMITS;
         let limits = wgpu::Limits {
             max_buffer_size: adapter_limits.max_buffer_size,
             max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
@@ -67,7 +69,14 @@ impl Renderer {
             // where the adapter allows them.
             max_storage_buffers_per_shader_stage: adapter_limits
                 .max_storage_buffers_per_shader_stage
-                .max(8),
+                .max(required.storage_buffers),
+            max_bind_groups: required.bind_groups,
+            max_uniform_buffers_per_shader_stage: required.uniform_buffers,
+            max_sampled_textures_per_shader_stage: required.sampled_textures,
+            max_samplers_per_shader_stage: required.samplers,
+            max_storage_textures_per_shader_stage: required.storage_textures,
+            max_dynamic_uniform_buffers_per_pipeline_layout: required.dynamic_uniform_buffers,
+            max_dynamic_storage_buffers_per_pipeline_layout: required.dynamic_storage_buffers,
             // Terrain tiles, impostors and reflection probes
             // take a layer each.
             max_texture_array_layers: adapter_limits.max_texture_array_layers,

@@ -213,11 +213,11 @@ mod gpu {
     /// What every atlas shares: the bakes' and draws' layouts and
     /// pipelines, and the draws' sampler.
     pub(crate) struct ImpostorPipelines {
-        bake_layout: wgpu::BindGroupLayout,
+        bake_layout: crate::pipelines::GroupLayout,
         bake_pipeline_layout: wgpu::PipelineLayout,
         bake_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
         shade_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
-        draw_layout: wgpu::BindGroupLayout,
+        draw_layout: crate::pipelines::GroupLayout,
         draw_pipelines: HashMap<(Targets, bool), wgpu::RenderPipeline>,
         sampler: wgpu::Sampler,
         // Stands in for the frames' depths while bakes draw them.
@@ -228,20 +228,15 @@ mod gpu {
         /// `material_layout` binds a material's maps (group 1 of bakes).
         pub(crate) fn new(
             device: &wgpu::Device,
-            material_layout: &wgpu::BindGroupLayout,
-            empty_layout: &wgpu::BindGroupLayout,
+            material_layout: &crate::pipelines::GroupLayout,
+            empty_layout: &crate::pipelines::GroupLayout,
         ) -> Self {
             let bake_layout = crate::pipelines::layout(device, &IMPOSTOR_BAKE);
-            let bake_pipeline_layout =
-                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("engine/impostor-bake-pipeline-layout"),
-                    bind_group_layouts: &[
-                        Some(empty_layout),
-                        Some(material_layout),
-                        Some(&bake_layout),
-                    ],
-                    immediate_size: 0,
-                });
+            let bake_pipeline_layout = crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::IMPOSTOR_BAKE_PIPELINES,
+                &[empty_layout, material_layout, &bake_layout],
+            );
             let draw_layout = crate::pipelines::layout(device, &IMPOSTOR_DRAW);
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/impostor-sampler"),
@@ -265,7 +260,7 @@ mod gpu {
         }
 
         /// The layout of the impostor draws' group 1.
-        pub(crate) fn draw_layout(&self) -> &wgpu::BindGroupLayout {
+        pub(crate) fn draw_layout(&self) -> &crate::pipelines::GroupLayout {
             &self.draw_layout
         }
 

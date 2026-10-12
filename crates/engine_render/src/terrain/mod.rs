@@ -437,7 +437,7 @@ impl TerrainPass {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         shader: &wgpu::ShaderModule,
-        camera: (&wgpu::BindGroupLayout, &wgpu::BindGroup),
+        camera: (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
     ) {
         if !self.vt.baking() {
             return;

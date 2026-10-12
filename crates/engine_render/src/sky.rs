@@ -98,7 +98,7 @@ struct Passes {
 }
 
 pub(crate) struct SkyPass {
-    layout: wgpu::BindGroupLayout,
+    layout: crate::pipelines::GroupLayout,
     passes: Option<Passes>,
     transmittance: Table,
     multiple: Table,
@@ -368,7 +368,7 @@ impl SkyPass {
 /// scattering and sky-view tables and the blank texels.
 fn passes(
     device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
+    layout: &crate::pipelines::GroupLayout,
     [transmittance, multiple, view, blank, blank_out]: [&Table; 5],
     sampler: &wgpu::Sampler,
     uniform: &wgpu::Buffer,
@@ -378,11 +378,11 @@ fn passes(
         label: Some("engine/sky.wgsl"),
         source: wgpu::ShaderSource::Wgsl(crate::gpu_data::SKY_SHADER.into()),
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("engine/sky-layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
+    let pipeline_layout = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::SKY_TABLE_PIPELINES,
+        &[layout],
+    );
     let pipeline = |entry: crate::shaders::Entry| {
         crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry)
     };

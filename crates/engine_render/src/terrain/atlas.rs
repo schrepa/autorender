@@ -53,12 +53,12 @@ pub(crate) struct TileAtlas {
     // Normal maps of tiles uploaded this frame (layer, spacing), the pass
     // computing them, and their sampler.
     normal_jobs: Vec<(u32, f32)>,
-    normal_pass: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
+    normal_pass: Option<(crate::pipelines::GroupLayout, wgpu::ComputePipeline)>,
     // Control values the GPU gives tiles uploaded this frame,
     // the pass giving them, and each terrain's surface data there with
     // the data it holds, which changes when the data does.
     control_jobs: Vec<ControlJob>,
-    control_pass: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
+    control_pass: Option<(crate::pipelines::GroupLayout, wgpu::ComputePipeline)>,
     surfaces: HashMap<u64, (Arc<SurfaceData>, wgpu::Buffer)>,
     pub(super) normal_sampler: wgpu::Sampler,
     pub(super) control_sampler: wgpu::Sampler,
@@ -437,11 +437,11 @@ impl TileAtlas {
                 label: Some("engine/terrain-control.wgsl"),
                 source: wgpu::ShaderSource::Wgsl(crate::gpu_data::TERRAIN_CONTROL_SHADER.into()),
             });
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/terrain-control-layout"),
-                bind_group_layouts: &[Some(&layout)],
-                immediate_size: 0,
-            });
+            let pipeline_layout = crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::TERRAIN_CONTROL_PIPELINES,
+                &[&layout],
+            );
             let pipeline = crate::pipelines::compute_entry(
                 device,
                 &pipeline_layout,
@@ -568,11 +568,11 @@ impl TileAtlas {
                 label: Some("engine/terrain-normals.wgsl"),
                 source: wgpu::ShaderSource::Wgsl(crate::gpu_data::TERRAIN_NORMALS_SHADER.into()),
             });
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/terrain-normals-layout"),
-                bind_group_layouts: &[Some(&layout)],
-                immediate_size: 0,
-            });
+            let pipeline_layout = crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::TERRAIN_NORMAL_PIPELINES,
+                &[&layout],
+            );
             let pipeline = crate::pipelines::compute_entry(
                 device,
                 &pipeline_layout,

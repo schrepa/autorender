@@ -14,8 +14,8 @@ use crate::entries;
 /// this frame's camera bins it resolves.
 pub(super) struct VisibilityDraws {
     pub(super) buffer: Option<VisibilityBuffer>,
-    pub(super) layout: wgpu::BindGroupLayout,
-    pub(super) resolve_layout: wgpu::BindGroupLayout,
+    pub(super) layout: crate::pipelines::GroupLayout,
+    pub(super) resolve_layout: crate::pipelines::GroupLayout,
     pub(super) pipelines: Option<[wgpu::RenderPipeline; 2]>,
     pub(super) resolve_layouts: [Option<wgpu::PipelineLayout>; 2],
     pub(super) resolve_pipelines: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
@@ -54,11 +54,17 @@ impl Renderer {
     pub(super) fn prepare_visibility(&mut self, snapshot: &RenderSnapshot, kind: PassKind) -> bool {
         self.visibility.bins.clear();
         let lit = kind.lit;
+        // The storage buffers its resolves bind in fragments: poses, colors,
+        // previous poses, the arena's meshes, clusters and pages, the
+        // selected clusters, and the camera's reflection probe grid and
+        // cloud shadows; lit frames add the local lights' three.
         let needed = if lit {
-            RESOLVE_LIT_STORAGE_BUFFERS
+            &crate::pipeline_layouts::LIT_RESOLVE_PIPELINES
         } else {
-            RESOLVE_STORAGE_BUFFERS
-        };
+            &crate::pipeline_layouts::RESOLVE_PIPELINES
+        }
+        .limits
+        .storage_buffers;
         if !snapshot.environment.virtual_geometry.visibility_buffer
             || self.device.limits().max_storage_buffers_per_shader_stage < needed
             || self
@@ -96,17 +102,15 @@ impl Renderer {
     /// for this frame's resolved bins' material variants.
     pub(super) fn ensure_visibility_pipelines(&mut self, kind: PassKind) {
         if self.visibility.pipelines.is_none() {
-            let layout = self
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("engine/visibility-pipeline-layout"),
-                    bind_group_layouts: &[
-                        Some(&self.camera.layout),
-                        Some(&self.mesh_pipelines.empty_layout),
-                        Some(&self.visibility.layout),
-                    ],
-                    immediate_size: 0,
-                });
+            let layout = crate::pipelines::pipeline_layout(
+                &self.device,
+                &crate::pipeline_layouts::VISIBILITY_PIPELINES,
+                &[
+                    &self.camera.layout,
+                    &self.mesh_pipelines.empty_layout,
+                    &self.visibility.layout,
+                ],
+            );
             let pipeline = |double_sided: bool| {
                 crate::pipelines::geometry(
                     &self.device,
@@ -146,22 +150,23 @@ impl Renderer {
         let lit = kind.lit;
         if self.visibility.resolve_layouts[usize::from(lit)].is_none() {
             let lights = self.lights.as_ref().filter(|_| lit);
-            let mut layouts = vec![
-                Some(&self.camera.layout),
-                Some(self.materials.layout()),
-                Some(&self.visibility.resolve_layout),
-            ];
-            if let Some(lights) = lights {
-                layouts.push(Some(lights.fragment_layout()));
-            }
-            self.visibility.resolve_layouts[usize::from(lit)] = Some(
-                self.device
-                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("engine/visibility-resolve-pipeline-layout"),
-                        bind_group_layouts: &layouts,
-                        immediate_size: 0,
-                    }),
+            let groups = (
+                &self.camera.layout,
+                self.materials.layout(),
+                &self.visibility.resolve_layout,
             );
+            self.visibility.resolve_layouts[usize::from(lit)] = Some(match lights {
+                Some(lights) => crate::pipelines::pipeline_layout(
+                    &self.device,
+                    &crate::pipeline_layouts::LIT_RESOLVE_PIPELINES,
+                    &[groups.0, groups.1, groups.2, lights.fragment_layout()],
+                ),
+                None => crate::pipelines::pipeline_layout(
+                    &self.device,
+                    &crate::pipeline_layouts::RESOLVE_PIPELINES,
+                    &[groups.0, groups.1, groups.2],
+                ),
+            });
         }
         let missing: Vec<Variant> = self
             .virtual_draws

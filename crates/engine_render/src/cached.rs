@@ -123,7 +123,7 @@ impl<const N: usize> GroupCache<N> {
         &mut self,
         device: &wgpu::Device,
         label: &str,
-        (table, layout): (&crate::bindings::Table, &wgpu::BindGroupLayout),
+        (table, layout): (&crate::bindings::Table, &crate::pipelines::GroupLayout),
         entries: [(&str, Bound<'_>); N],
     ) -> &wgpu::BindGroup {
         let key = entries.each_ref().map(|(_, bound)| bound.generation);
@@ -141,7 +141,7 @@ impl<const N: usize> GroupCache<N> {
         &mut self,
         device: &wgpu::Device,
         label: &str,
-        (table, layout): (&crate::bindings::Table, &wgpu::BindGroupLayout),
+        (table, layout): (&crate::bindings::Table, &crate::pipelines::GroupLayout),
         entries: [(&str, Bound<'_>); N],
         fillers: &crate::pipelines::Fillers,
     ) -> &wgpu::BindGroup {

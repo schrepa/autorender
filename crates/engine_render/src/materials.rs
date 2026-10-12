@@ -47,7 +47,7 @@ struct Defaults {
 }
 
 pub(crate) struct MaterialStore {
-    layout: wgpu::BindGroupLayout,
+    layout: crate::pipelines::GroupLayout,
     samplers: HashMap<Sampler, wgpu::Sampler>,
     // Keyed by handle and whether the view decodes sRGB: a texture read as
     // both color and data uploads once per color space.
@@ -119,7 +119,7 @@ impl MaterialStore {
     }
 
     /// Group 1 of every mesh pipeline.
-    pub(crate) fn layout(&self) -> &wgpu::BindGroupLayout {
+    pub(crate) fn layout(&self) -> &crate::pipelines::GroupLayout {
         &self.layout
     }
 
@@ -400,7 +400,7 @@ const MAP_BINDINGS: [(&str, &str); 5] = [
 
 fn bind_group(
     device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
+    layout: &crate::pipelines::GroupLayout,
     views: [&wgpu::TextureView; 5],
     samplers: [&wgpu::Sampler; 5],
     uniform: &wgpu::Buffer,

@@ -137,8 +137,8 @@ mod gpu {
         count: wgpu::ComputePipeline,
         scan: wgpu::ComputePipeline,
         fill: wgpu::ComputePipeline,
-        compute_layout: wgpu::BindGroupLayout,
-        fragment_layout: wgpu::BindGroupLayout,
+        compute_layout: crate::pipelines::GroupLayout,
+        fragment_layout: crate::pipelines::GroupLayout,
         uniform: wgpu::Buffer,
         written: Option<ClusterUniform>,
         inputs: wgpu::Buffer,
@@ -183,11 +183,11 @@ mod gpu {
                 label: Some("engine/lights.wgsl"),
                 source: wgpu::ShaderSource::Wgsl(LIGHT_SHADER.into()),
             });
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/light-binning-pipeline-layout"),
-                bind_group_layouts: &[Some(&compute_layout)],
-                immediate_size: 0,
-            });
+            let layout = crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::LIGHT_BINNING_PIPELINES,
+                &[&compute_layout],
+            );
             let pipeline = |entry: crate::shaders::Entry| {
                 crate::pipelines::compute_entry(device, &layout, &module, entry)
             };
@@ -233,7 +233,7 @@ mod gpu {
         }
 
         /// Group 3 of the lit mesh pipelines.
-        pub(crate) fn fragment_layout(&self) -> &wgpu::BindGroupLayout {
+        pub(crate) fn fragment_layout(&self) -> &crate::pipelines::GroupLayout {
             &self.fragment_layout
         }
 

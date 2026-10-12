@@ -128,7 +128,7 @@ mod gpu {
     }
 
     pub(crate) struct ParticlePass {
-        layout: wgpu::BindGroupLayout,
+        layout: crate::pipelines::GroupLayout,
         pipeline_layout: wgpu::PipelineLayout,
         module: wgpu::ShaderModule,
         alpha: wgpu::RenderPipeline,
@@ -157,7 +157,7 @@ mod gpu {
         /// `camera_layout` is group 0 of the mesh pipelines.
         pub(crate) fn new(
             device: &wgpu::Device,
-            camera_layout: &wgpu::BindGroupLayout,
+            camera_layout: &crate::pipelines::GroupLayout,
             surface_format: wgpu::TextureFormat,
             depth_format: wgpu::TextureFormat,
             transparent_targets: &[Option<wgpu::ColorTargetState>],
@@ -168,11 +168,11 @@ mod gpu {
                 .max_storage_buffer_binding_size
                 .min(limits.max_buffer_size)
                 / 4;
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/particle-pipeline-layout"),
-                bind_group_layouts: &[Some(camera_layout), Some(&layout)],
-                immediate_size: 0,
-            });
+            let pipeline_layout = crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::PARTICLE_PIPELINES,
+                &[camera_layout, &layout],
+            );
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("engine/particles.wgsl"),
                 source: wgpu::ShaderSource::Wgsl(PARTICLE_SHADER.into()),

@@ -19,17 +19,11 @@ pub(crate) const ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
 /// Bytes between draws' uniforms: the uniform offset alignment every device
 /// supports.
 pub(crate) const DRAW_STRIDE: u64 = 256;
-/// Storage buffers the resolve's fragment stage binds: poses, colors,
-/// previous poses, the arena's meshes, clusters and pages, the selected
-/// clusters, and the camera's reflection probe grid and cloud shadows; lit
-/// frames add the local lights' three.
-pub(crate) const RESOLVE_STORAGE_BUFFERS: u32 = 9;
-pub(crate) const RESOLVE_LIT_STORAGE_BUFFERS: u32 = 12;
 
 /// The ID target, the tile lists and each draw's uniform, sized to the
 /// viewport and the frame's bins.
 pub(crate) struct VisibilityBuffer {
-    layout: wgpu::BindGroupLayout,
+    layout: crate::pipelines::GroupLayout,
     classify: wgpu::ComputePipeline,
     args: wgpu::ComputePipeline,
     // The ID target, at the frame's size.
@@ -68,11 +62,11 @@ impl VisibilityBuffer {
             source: wgpu::ShaderSource::Wgsl(VISIBILITY_SHADER.into()),
         });
         let layout = crate::pipelines::layout(device, &VISIBILITY_CLASSIFY);
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/visibility-classify-pipeline-layout"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::VISIBILITY_CLASSIFY_PIPELINES,
+            &[&layout],
+        );
         let pipeline = |entry: crate::shaders::Entry| {
             crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry)
         };

@@ -161,26 +161,41 @@ impl Renderer {
             return None;
         }
         if self.impostors.pipelines.pipeline(targets, lit).is_none() {
-            let pose_layout = if targets == Targets::Temporal {
+            use crate::pipeline_layouts::{
+                IMPOSTOR_PIPELINES, LIT_IMPOSTOR_PIPELINES, LIT_TEMPORAL_IMPOSTOR_PIPELINES,
+                TEMPORAL_IMPOSTOR_PIPELINES,
+            };
+            let temporal = targets == Targets::Temporal;
+            let pose_layout = if temporal {
                 self.temporal.as_ref()?.pose_layout()
             } else {
                 &self.instances.pose_layout
             };
-            let mut layouts = vec![
-                Some(&self.camera.layout),
-                Some(self.impostors.pipelines.draw_layout()),
-                Some(pose_layout),
-            ];
-            if lit {
-                layouts.push(Some(self.lights.as_ref()?.fragment_layout()));
-            }
-            let layout = self
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("engine/impostor-pipeline-layout"),
-                    bind_group_layouts: &layouts,
-                    immediate_size: 0,
-                });
+            let (camera, draw) = (&self.camera.layout, self.impostors.pipelines.draw_layout());
+            let layout = if lit {
+                let lights = self.lights.as_ref()?.fragment_layout();
+                let declared = if temporal {
+                    &LIT_TEMPORAL_IMPOSTOR_PIPELINES
+                } else {
+                    &LIT_IMPOSTOR_PIPELINES
+                };
+                crate::pipelines::pipeline_layout(
+                    &self.device,
+                    declared,
+                    &[camera, draw, pose_layout, lights],
+                )
+            } else {
+                let declared = if temporal {
+                    &TEMPORAL_IMPOSTOR_PIPELINES
+                } else {
+                    &IMPOSTOR_PIPELINES
+                };
+                crate::pipelines::pipeline_layout(
+                    &self.device,
+                    declared,
+                    &[camera, draw, pose_layout],
+                )
+            };
             let pipeline = crate::impostors::draw_pipeline(
                 &self.device,
                 &self.mesh_shader,

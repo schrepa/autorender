@@ -90,7 +90,7 @@ mod gpu {
     type PipelineKey = (bool, DecalBlend, bool);
 
     pub(crate) struct DecalPass {
-        layout: wgpu::BindGroupLayout,
+        layout: crate::pipelines::GroupLayout,
         // Without and with the local lights' group.
         pipeline_layouts: [Option<wgpu::PipelineLayout>; 2],
         pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
@@ -203,8 +203,8 @@ mod gpu {
             &mut self,
             device: &wgpu::Device,
             shader: &wgpu::ShaderModule,
-            groups: [&wgpu::BindGroupLayout; 2],
-            lights: Option<&wgpu::BindGroupLayout>,
+            groups: [&crate::pipelines::GroupLayout; 2],
+            lights: Option<&crate::pipelines::GroupLayout>,
             post: bool,
         ) {
             let lit = lights.is_some();
@@ -219,15 +219,18 @@ mod gpu {
                 let layout =
                     self.pipeline_layouts[usize::from(shades_lights)].get_or_insert_with(|| {
                         let [camera, material] = groups;
-                        let mut layouts = vec![Some(camera), Some(material), Some(&self.layout)];
-                        if shades_lights {
-                            layouts.push(lights);
+                        match lights.filter(|_| shades_lights) {
+                            Some(lights) => crate::pipelines::pipeline_layout(
+                                device,
+                                &crate::pipeline_layouts::LIT_DECAL_PIPELINES,
+                                &[camera, material, &self.layout, lights],
+                            ),
+                            None => crate::pipelines::pipeline_layout(
+                                device,
+                                &crate::pipeline_layouts::DECAL_PIPELINES,
+                                &[camera, material, &self.layout],
+                            ),
                         }
-                        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                            label: Some("engine/decal-pipeline-layout"),
-                            bind_group_layouts: &layouts,
-                            immediate_size: 0,
-                        })
                     });
                 let pipeline = pipeline(device, shader, layout, self.surface_format, key);
                 self.pipelines.insert(key, pipeline);

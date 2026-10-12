@@ -74,9 +74,9 @@ pub(crate) struct TemporalPass {
     // temporal frame.
     mesh_layout: wgpu::PipelineLayout,
     lit_layout: Option<wgpu::PipelineLayout>,
-    pose_layout: wgpu::BindGroupLayout,
+    pose_layout: crate::pipelines::GroupLayout,
     resolve_pipeline: wgpu::RenderPipeline,
-    resolve_layout: wgpu::BindGroupLayout,
+    resolve_layout: crate::pipelines::GroupLayout,
     sampler: wgpu::Sampler,
     uniform: wgpu::Buffer,
     written: Option<ResolveUniform>,
@@ -97,31 +97,26 @@ impl TemporalPass {
     /// renderer's.
     pub(crate) fn new(
         device: &wgpu::Device,
-        camera_layout: &wgpu::BindGroupLayout,
-        texture_layout: &wgpu::BindGroupLayout,
+        camera_layout: &crate::pipelines::GroupLayout,
+        texture_layout: &crate::pipelines::GroupLayout,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
         let pose_layout = crate::pipelines::layout(device, &TEMPORAL_POSES);
-        let mesh_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/temporal-mesh-pipeline-layout"),
-            bind_group_layouts: &[
-                Some(camera_layout),
-                Some(texture_layout),
-                Some(&pose_layout),
-            ],
-            immediate_size: 0,
-        });
+        let mesh_layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::TEMPORAL_MESH_PIPELINES,
+            &[camera_layout, texture_layout, &pose_layout],
+        );
         let resolve_layout = crate::pipelines::layout(device, &TAA_RESOLVE);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/temporal.wgsl"),
             source: wgpu::ShaderSource::Wgsl(TEMPORAL_SHADER.into()),
         });
-        let resolve_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/taa-resolve-pipeline-layout"),
-                bind_group_layouts: &[Some(&resolve_layout)],
-                immediate_size: 0,
-            });
+        let resolve_pipeline_layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::TAA_RESOLVE_PIPELINES,
+            &[&resolve_layout],
+        );
         let resolve_pipeline = crate::pipelines::fullscreen(
             device,
             &crate::pipelines::Fullscreen {
@@ -282,22 +277,17 @@ impl TemporalPass {
     pub(crate) fn ensure_lit_layout(
         &mut self,
         device: &wgpu::Device,
-        layouts: [&wgpu::BindGroupLayout; 3],
+        layouts: [&crate::pipelines::GroupLayout; 3],
     ) {
         if self.lit_layout.is_some() {
             return;
         }
         let [camera, texture, lights] = layouts;
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/temporal-lit-mesh-pipeline-layout"),
-            bind_group_layouts: &[
-                Some(camera),
-                Some(texture),
-                Some(&self.pose_layout),
-                Some(lights),
-            ],
-            immediate_size: 0,
-        });
+        let layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::LIT_TEMPORAL_MESH_PIPELINES,
+            &[camera, texture, &self.pose_layout, lights],
+        );
         self.lit_layout = Some(layout);
     }
 
@@ -315,7 +305,7 @@ impl TemporalPass {
 
     /// The pose group layout of temporal frames: poses, colors, previous
     /// poses and joint palettes.
-    pub(crate) fn pose_layout(&self) -> &wgpu::BindGroupLayout {
+    pub(crate) fn pose_layout(&self) -> &crate::pipelines::GroupLayout {
         &self.pose_layout
     }
 

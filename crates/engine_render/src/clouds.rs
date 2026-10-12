@@ -82,9 +82,9 @@ pub(crate) struct DomeBinding<'a> {
 }
 
 pub(crate) struct CloudPass {
-    march_layout: wgpu::BindGroupLayout,
-    noise_layout: wgpu::BindGroupLayout,
-    sky_layout: wgpu::BindGroupLayout,
+    march_layout: crate::pipelines::GroupLayout,
+    noise_layout: crate::pipelines::GroupLayout,
+    sky_layout: crate::pipelines::GroupLayout,
     // The noise volume's and the march's pipelines, made with the first
     // frame that has clouds.
     pipelines: Option<[wgpu::ComputePipeline; 3]>,
@@ -138,8 +138,8 @@ pub(crate) struct CloudPass {
     // blocks), the march's pipeline and the composite's by target, and the
     // blocks' sampler; this frame's blocks to march, and whether they march
     // the sky.
-    view_layout: wgpu::BindGroupLayout,
-    composite_layout: wgpu::BindGroupLayout,
+    view_layout: crate::pipelines::GroupLayout,
+    composite_layout: crate::pipelines::GroupLayout,
     view_clouds: wgpu::Buffer,
     view_uniform: wgpu::Buffer,
     // The composite's indirect draw, which the march gives a triangle once
@@ -316,7 +316,7 @@ impl CloudPass {
     }
 
     /// The sky pipelines' second group layout.
-    pub(crate) fn sky_layout(&self) -> &wgpu::BindGroupLayout {
+    pub(crate) fn sky_layout(&self) -> &crate::pipelines::GroupLayout {
         &self.sky_layout
     }
 
@@ -661,7 +661,7 @@ impl CloudPass {
         &mut self,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
-        camera_layout: &wgpu::BindGroupLayout,
+        camera_layout: &crate::pipelines::GroupLayout,
         (format, canvas): (wgpu::TextureFormat, bool),
         depth: &Versioned<wgpu::TextureView>,
     ) {
@@ -674,11 +674,11 @@ impl CloudPass {
         };
         let layouts = (camera_layout, &self.composite_layout);
         let layout = self.composite_pipeline_layout.get_or_insert_with(|| {
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/cloud-composite-layout"),
-                bind_group_layouts: &[Some(layouts.0), Some(layouts.1)],
-                immediate_size: 0,
-            })
+            crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::CLOUD_COMPOSITE_PIPELINES,
+                &[layouts.0, layouts.1],
+            )
         });
         self.composite_pipelines
             .entry((format, canvas))
@@ -924,16 +924,19 @@ fn view_texture(
 }
 
 /// The view's march.
-fn view_pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {
+fn view_pipeline(
+    device: &wgpu::Device,
+    layout: &crate::pipelines::GroupLayout,
+) -> wgpu::ComputePipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine/clouds.wgsl"),
         source: wgpu::ShaderSource::Wgsl(crate::gpu_data::CLOUDS_SHADER.into()),
     });
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("engine/cloud-view-layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
+    let layout = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::CLOUD_VIEW_PIPELINES,
+        &[layout],
+    );
     crate::pipelines::compute_entry(device, &layout, &module, clouds::march_view)
 }
 
@@ -1053,23 +1056,25 @@ pub(crate) fn shadow_uniform(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu
 
 fn pipelines(
     device: &wgpu::Device,
-    noise_layout: &wgpu::BindGroupLayout,
-    march_layout: &wgpu::BindGroupLayout,
+    noise_layout: &crate::pipelines::GroupLayout,
+    march_layout: &crate::pipelines::GroupLayout,
 ) -> [wgpu::ComputePipeline; 3] {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine/clouds.wgsl"),
         source: wgpu::ShaderSource::Wgsl(crate::gpu_data::CLOUDS_SHADER.into()),
     });
-    let layout = |group: &wgpu::BindGroupLayout| {
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/clouds-layout"),
-            bind_group_layouts: &[Some(group)],
-            immediate_size: 0,
-        })
-    };
-    let march = layout(march_layout);
+    let noise = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::CLOUD_NOISE_PIPELINES,
+        &[noise_layout],
+    );
+    let march = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::CLOUD_MARCH_PIPELINES,
+        &[march_layout],
+    );
     [
-        crate::pipelines::compute_entry(device, &layout(noise_layout), &module, clouds::make_noise),
+        crate::pipelines::compute_entry(device, &noise, &module, clouds::make_noise),
         crate::pipelines::compute_entry(device, &march, &module, clouds::march_clouds),
         crate::pipelines::compute_entry(device, &march, &module, clouds::shadow_clouds),
     ]

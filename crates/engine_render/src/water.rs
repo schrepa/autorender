@@ -141,8 +141,8 @@ struct DepthCopy {
 }
 
 pub(crate) struct WaterPass {
-    pub(crate) layout: wgpu::BindGroupLayout,
-    depth_layout: wgpu::BindGroupLayout,
+    pub(crate) layout: crate::pipelines::GroupLayout,
+    depth_layout: crate::pipelines::GroupLayout,
     depth: ScreenTarget<DepthCopy>,
     // Each terrain's water by terrain ID, the order it draws in.
     terrains: BTreeMap<u64, TerrainWater>,
@@ -524,7 +524,7 @@ impl WaterPass {
         &mut self,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
-        camera: &wgpu::BindGroupLayout,
+        camera: &crate::pipelines::GroupLayout,
         (targets, coming): (Targets, bool),
         formats: (wgpu::TextureFormat, wgpu::TextureFormat),
     ) {
@@ -552,18 +552,18 @@ impl WaterPass {
         &mut self,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
-        camera: &wgpu::BindGroupLayout,
+        camera: &crate::pipelines::GroupLayout,
         targets: Targets,
         (canvas, depth): (wgpu::TextureFormat, wgpu::TextureFormat),
         surface: Surface,
     ) -> wgpu::RenderPipeline {
         // Water and the sea share one layout.
         let layout = self.pipeline_layout.get_or_insert_with(|| {
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/water-layout"),
-                bind_group_layouts: &[Some(camera), Some(&self.layout), Some(&self.depth_layout)],
-                immediate_size: 0,
-            })
+            crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::WATER_PIPELINES,
+                &[camera, &self.layout, &self.depth_layout],
+            )
         });
         let (vertex, fragment) = match surface {
             Surface::Grid => crate::entries::water(targets),
@@ -724,7 +724,7 @@ fn chunk_layout() -> wgpu::VertexBufferLayout<'static> {
 fn upload(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    layout: &wgpu::BindGroupLayout,
+    layout: &crate::pipelines::GroupLayout,
     grid: &Arc<WaterGrid>,
 ) -> TerrainWater {
     let (width, height) = (grid.width as u32, grid.height as u32);
@@ -1007,7 +1007,7 @@ pub(crate) fn underwater(environment: &Environment, eye: Vec3, seconds: f64) -> 
 fn ocean_draw(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    layout: &wgpu::BindGroupLayout,
+    layout: &crate::pipelines::GroupLayout,
 ) -> OceanDraw {
     let texture = |label, format| {
         crate::targets::texture_2d(

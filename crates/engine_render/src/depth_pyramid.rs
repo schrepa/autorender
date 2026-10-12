@@ -47,8 +47,8 @@ pub(crate) struct DepthPyramid {
     down: wgpu::ComputePipeline,
     // The group layouts of the first level, which reads the depth buffer,
     // and of the levels after it, which read the level below.
-    first_layout: wgpu::BindGroupLayout,
-    down_layout: wgpu::BindGroupLayout,
+    first_layout: crate::pipelines::GroupLayout,
+    down_layout: crate::pipelines::GroupLayout,
     // The levels, by the depth buffer generation they reduce.
     levels: Cached<u64, Levels>,
 }
@@ -64,12 +64,12 @@ impl DepthPyramid {
         // 12.
         let first_layout = crate::pipelines::layout(device, &PYRAMID_FIRST);
         let down_layout = crate::pipelines::layout(device, &PYRAMID_DOWN);
-        let pipeline = |entry: crate::shaders::Entry, group: &wgpu::BindGroupLayout| {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(entry.name),
-                bind_group_layouts: &[Some(group)],
-                immediate_size: 0,
-            });
+        let pipeline = |entry: crate::shaders::Entry,
+                        (declared, group): (
+            &crate::pipeline_layouts::PipelineLayout,
+            &crate::pipelines::GroupLayout,
+        )| {
+            let layout = crate::pipelines::pipeline_layout(device, declared, &[group]);
             crate::pipelines::compute_entry(device, &layout, &module, entry)
         };
         let (first, down) = match reduction {
@@ -80,8 +80,20 @@ impl DepthPyramid {
             ),
         };
         Self {
-            first: pipeline(first, &first_layout),
-            down: pipeline(down, &down_layout),
+            first: pipeline(
+                first,
+                (
+                    &crate::pipeline_layouts::PYRAMID_FIRST_PIPELINES,
+                    &first_layout,
+                ),
+            ),
+            down: pipeline(
+                down,
+                (
+                    &crate::pipeline_layouts::PYRAMID_DOWN_PIPELINES,
+                    &down_layout,
+                ),
+            ),
             first_layout,
             down_layout,
             levels: Cached::default(),

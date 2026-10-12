@@ -25,7 +25,7 @@ pub(super) struct GroupSources<'a> {
 }
 
 pub(crate) struct TerrainPipelines {
-    pub(super) layout: wgpu::BindGroupLayout,
+    pub(super) layout: crate::pipelines::GroupLayout,
     group: Cached<GroupKey, wgpu::BindGroup>,
     // The group the runtime virtual texture's bakes bind,
     // its material maps' views leaving out the sheets they draw into.
@@ -36,7 +36,7 @@ pub(crate) struct TerrainPipelines {
     // resolves' own group.
     pub(crate) deferred_ids: HashMap<bool, wgpu::RenderPipeline>,
     pub(crate) resolves: HashMap<(Targets, bool), wgpu::RenderPipeline>,
-    pub(crate) resolve_layout: wgpu::BindGroupLayout,
+    pub(crate) resolve_layout: crate::pipelines::GroupLayout,
     probe_pipelines: HashMap<(bool, bool), wgpu::RenderPipeline>,
     shadow: Option<wgpu::RenderPipeline>,
 }
@@ -184,14 +184,14 @@ impl TerrainPipelines {
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         (camera, empty, lights): (
-            &wgpu::BindGroupLayout,
-            &wgpu::BindGroupLayout,
-            Option<&wgpu::BindGroupLayout>,
+            &crate::pipelines::GroupLayout,
+            &crate::pipelines::GroupLayout,
+            Option<&crate::pipelines::GroupLayout>,
         ),
         (targets, lit, holes): (Targets, bool, bool),
         canvas: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
-        camera_terrain: &wgpu::BindGroupLayout,
+        camera_terrain: &crate::pipelines::GroupLayout,
     ) {
         if self.pipelines.contains_key(&(targets, lit, holes)) {
             return;
@@ -228,17 +228,20 @@ impl TerrainPipelines {
         &mut self,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
-        (camera, lights): (&wgpu::BindGroupLayout, Option<&wgpu::BindGroupLayout>),
+        (camera, lights): (
+            &crate::pipelines::GroupLayout,
+            Option<&crate::pipelines::GroupLayout>,
+        ),
         (targets, lit, holes): (Targets, bool, bool),
         depth: wgpu::TextureFormat,
-        camera_terrain: &wgpu::BindGroupLayout,
+        camera_terrain: &crate::pipelines::GroupLayout,
     ) {
         if !self.deferred_ids.contains_key(&holes) {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/terrain-ids-layout"),
-                bind_group_layouts: &[Some(camera), Some(&self.layout)],
-                immediate_size: 0,
-            });
+            let layout = crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::TERRAIN_PIPELINES,
+                &[camera, &self.layout],
+            );
             let ids = [Some(wgpu::ColorTargetState::from(
                 wgpu::TextureFormat::Rg32Uint,
             ))];
@@ -263,22 +266,23 @@ impl TerrainPipelines {
         if self.resolves.contains_key(&(targets, lit)) {
             return;
         }
-        let mut groups = vec![
-            Some(camera_terrain),
-            Some(&self.layout),
-            Some(&self.resolve_layout),
-        ];
-        if lit {
+        let groups = (camera_terrain, &self.layout, &self.resolve_layout);
+        let layout = if lit {
             let Some(lights) = lights else {
                 return;
             };
-            groups.push(Some(lights));
-        }
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/terrain-resolve-layout"),
-            bind_group_layouts: &groups,
-            immediate_size: 0,
-        });
+            crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::LIT_TERRAIN_RESOLVE_PIPELINES,
+                &[groups.0, groups.1, groups.2, lights],
+            )
+        } else {
+            crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::TERRAIN_RESOLVE_PIPELINES,
+                &[groups.0, groups.1, groups.2],
+            )
+        };
         let color_targets = targets.color_targets(wgpu::TextureFormat::Bgra8Unorm);
         let pipeline = crate::pipelines::fullscreen(
             device,
@@ -303,9 +307,9 @@ impl TerrainPipelines {
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         (camera, empty, lights): (
-            &wgpu::BindGroupLayout,
-            &wgpu::BindGroupLayout,
-            Option<&wgpu::BindGroupLayout>,
+            &crate::pipelines::GroupLayout,
+            &crate::pipelines::GroupLayout,
+            Option<&crate::pipelines::GroupLayout>,
         ),
         (lit, holes): (bool, bool),
         format: wgpu::TextureFormat,
@@ -340,11 +344,11 @@ impl TerrainPipelines {
             source: wgpu::ShaderSource::Wgsl(crate::gpu_data::TERRAIN_SHADOW_SHADER.into()),
         });
         let view_layout = crate::pipelines::layout(device, &SHADOW_VIEW);
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/terrain-shadow-layout"),
-            bind_group_layouts: &[Some(&view_layout), Some(&self.layout)],
-            immediate_size: 0,
-        });
+        let layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::TERRAIN_CASTER_PIPELINES,
+            &[&view_layout, &self.layout],
+        );
         let pipeline = crate::pipelines::geometry(
             device,
             &crate::pipelines::Geometry {
@@ -381,24 +385,25 @@ impl TerrainPipelines {
 /// for `lit` pipelines an empty group and the lights.
 fn pipeline_layout(
     device: &wgpu::Device,
-    camera: &wgpu::BindGroupLayout,
-    terrain: &wgpu::BindGroupLayout,
-    empty: &wgpu::BindGroupLayout,
-    lights: Option<&wgpu::BindGroupLayout>,
+    camera: &crate::pipelines::GroupLayout,
+    terrain: &crate::pipelines::GroupLayout,
+    empty: &crate::pipelines::GroupLayout,
+    lights: Option<&crate::pipelines::GroupLayout>,
     lit: bool,
 ) -> Option<wgpu::PipelineLayout> {
-    let mut layouts = vec![Some(camera), Some(terrain)];
-    if lit {
-        layouts.push(Some(empty));
-        layouts.push(Some(lights?));
-    }
-    Some(
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/terrain-pipeline-layout"),
-            bind_group_layouts: &layouts,
-            immediate_size: 0,
-        }),
-    )
+    Some(if lit {
+        crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::LIT_TERRAIN_PIPELINES,
+            &[camera, terrain, empty, lights?],
+        )
+    } else {
+        crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::TERRAIN_PIPELINES,
+            &[camera, terrain],
+        )
+    })
 }
 
 fn geometry(

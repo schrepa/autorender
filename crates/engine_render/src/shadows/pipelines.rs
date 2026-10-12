@@ -7,6 +7,9 @@ use super::{LEVEL_VIEW, SHADOW_FORMAT, VIEW_STRIDE};
 use crate::bindings::{SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW};
 use crate::gpu_data::Vertex;
 use crate::gpu_data::{SHADOW_SHADER, ShadowCullUniform};
+use crate::pipeline_layouts::{
+    CASTER_PIPELINES, IMPOSTOR_CASTER_PIPELINES, MASKED_CASTER_PIPELINES, PipelineLayout,
+};
 use crate::pipelines::{group, layout, vertex_attributes};
 use crate::shaders::Entry;
 use crate::shaders::entry::shadow;
@@ -16,10 +19,10 @@ use crate::shaders::entry::shadow;
 pub(super) struct ShadowPipelines {
     pub(super) select: wgpu::ComputePipeline,
     pub(super) count: wgpu::ComputePipeline,
-    pub(super) select_layout: wgpu::BindGroupLayout,
+    pub(super) select_layout: crate::pipelines::GroupLayout,
     // Skinned casters of GPU-presented frames.
     pub(super) select_skinned: wgpu::ComputePipeline,
-    pub(super) skinned_layout: wgpu::BindGroupLayout,
+    pub(super) skinned_layout: crate::pipelines::GroupLayout,
     // Slot casters by `masked + 2 * skinned`: plain; alpha-masked,
     // with a material group; and of meshes with joints,
     // which read a skin stream and the joint palettes.
@@ -28,11 +31,11 @@ pub(super) struct ShadowPipelines {
     // have impostors, and what creating them takes.
     pub(super) impostor_casters: Option<wgpu::RenderPipeline>,
     module: wgpu::ShaderModule,
-    view_layout: wgpu::BindGroupLayout,
+    view_layout: crate::pipelines::GroupLayout,
     pub(super) clear: wgpu::RenderPipeline,
     pub(super) view_buffer: wgpu::Buffer,
     pub(super) view_group: wgpu::BindGroup,
-    pub(super) pose_layout: wgpu::BindGroupLayout,
+    pub(super) pose_layout: crate::pipelines::GroupLayout,
     pub(super) cull: wgpu::Buffer,
 }
 
@@ -44,17 +47,13 @@ fn caster_pipeline(
     device: &wgpu::Device,
     module: &wgpu::ShaderModule,
     label: &str,
-    layouts: &[Option<&wgpu::BindGroupLayout>],
+    (declared, layouts): (&PipelineLayout, &[&crate::pipelines::GroupLayout]),
     entry_point: Entry,
     buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
     clear: bool,
     fragment: Option<Entry>,
 ) -> wgpu::RenderPipeline {
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some(label),
-        bind_group_layouts: layouts,
-        immediate_size: 0,
-    });
+    let layout = crate::pipelines::pipeline_layout(device, declared, layouts);
     crate::pipelines::geometry(
         device,
         &crate::pipelines::Geometry {
@@ -104,18 +103,21 @@ impl ShadowPipelines {
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub(super) fn new(device: &wgpu::Device, material_layout: &wgpu::BindGroupLayout) -> Self {
+    pub(super) fn new(
+        device: &wgpu::Device,
+        material_layout: &crate::pipelines::GroupLayout,
+    ) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/shadows.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHADOW_SHADER.into()),
         });
         // Selection and counting share one explicit layout, and so one group.
         let select_layout = layout(device, &SHADOW_SELECT);
-        let compute_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/shadow-select-pipeline-layout"),
-            bind_group_layouts: &[Some(&select_layout)],
-            immediate_size: 0,
-        });
+        let compute_layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::SHADOW_SELECT_PIPELINES,
+            &[&select_layout],
+        );
         let compute = |entry: crate::shaders::Entry| {
             crate::pipelines::compute_entry(device, &compute_layout, &module, entry)
         };
@@ -124,12 +126,11 @@ impl ShadowPipelines {
         // Skinned casters bind their palette bounds instead of
         // candidates, poses and stillness: within eight storage buffers.
         let skinned_layout = layout(device, &SHADOW_SKINNED);
-        let skinned_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/shadow-skinned-pipeline-layout"),
-                bind_group_layouts: &[Some(&skinned_layout)],
-                immediate_size: 0,
-            });
+        let skinned_pipeline_layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::SHADOW_SKINNED_PIPELINES,
+            &[&skinned_layout],
+        );
         let select_skinned = crate::pipelines::compute_entry(
             device,
             &skinned_pipeline_layout,
@@ -158,7 +159,7 @@ impl ShadowPipelines {
             attributes: &masked_vertex_attributes,
         };
         let pipeline = |label: &str,
-                        layouts: &[Option<&wgpu::BindGroupLayout>],
+                        layouts: (&PipelineLayout, &[&crate::pipelines::GroupLayout]),
                         entry_point: Entry,
                         buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
                         clear: bool,
@@ -176,7 +177,7 @@ impl ShadowPipelines {
         };
         let plain = pipeline(
             "engine/shadow-affine",
-            &[Some(&view_layout), Some(&pose_layout)],
+            (&CASTER_PIPELINES, &[&view_layout, &pose_layout]),
             shadow::vs_affine,
             &[
                 Some(mesh_layout.clone()),
@@ -191,11 +192,10 @@ impl ShadowPipelines {
         );
         let masked = pipeline(
             "engine/shadow-affine-masked",
-            &[
-                Some(&view_layout),
-                Some(&pose_layout),
-                Some(material_layout),
-            ],
+            (
+                &MASKED_CASTER_PIPELINES,
+                &[&view_layout, &pose_layout, material_layout],
+            ),
             shadow::vs_affine_masked,
             &[
                 Some(masked_mesh_layout.clone()),
@@ -215,7 +215,7 @@ impl ShadowPipelines {
         };
         let skinned = pipeline(
             "engine/shadow-affine-skinned",
-            &[Some(&view_layout), Some(&pose_layout)],
+            (&CASTER_PIPELINES, &[&view_layout, &pose_layout]),
             shadow::vs_affine_skinned,
             &[
                 Some(mesh_layout.clone()),
@@ -227,11 +227,10 @@ impl ShadowPipelines {
         );
         let masked_skinned = pipeline(
             "engine/shadow-affine-masked-skinned",
-            &[
-                Some(&view_layout),
-                Some(&pose_layout),
-                Some(material_layout),
-            ],
+            (
+                &MASKED_CASTER_PIPELINES,
+                &[&view_layout, &pose_layout, material_layout],
+            ),
             shadow::vs_affine_masked_skinned,
             &[Some(masked_mesh_layout), Some(slot_layout), skin_layout],
             false,
@@ -241,7 +240,7 @@ impl ShadowPipelines {
         // distinct layout costs Firefox a root signature.
         let clear = pipeline(
             "engine/shadow-clear",
-            &[Some(&view_layout), Some(&pose_layout)],
+            (&CASTER_PIPELINES, &[&view_layout, &pose_layout]),
             shadow::vs_clear,
             &[],
             true,
@@ -292,17 +291,16 @@ impl ShadowPipelines {
     pub(super) fn impostor_caster(
         &self,
         device: &wgpu::Device,
-        impostor_layout: &wgpu::BindGroupLayout,
+        impostor_layout: &crate::pipelines::GroupLayout,
     ) -> wgpu::RenderPipeline {
         caster_pipeline(
             device,
             &self.module,
             "engine/shadow-impostor-cards",
-            &[
-                Some(&self.view_layout),
-                Some(&self.pose_layout),
-                Some(impostor_layout),
-            ],
+            (
+                &IMPOSTOR_CASTER_PIPELINES,
+                &[&self.view_layout, &self.pose_layout, impostor_layout],
+            ),
             shadow::vs_impostor_card,
             &[Some(wgpu::VertexBufferLayout {
                 array_stride: 8,

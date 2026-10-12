@@ -50,7 +50,7 @@ struct Maps {
 }
 
 pub(crate) struct Horizons {
-    layout: wgpu::BindGroupLayout,
+    layout: crate::pipelines::GroupLayout,
     pipeline: Option<wgpu::ComputePipeline>,
     maps: Option<Maps>,
     // A one-texel map bound while no terrain casts, and the maps' sampler.
@@ -513,16 +513,19 @@ fn records_texture(
     (texture, Versioned::new(view))
 }
 
-fn pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {
+fn pipeline(
+    device: &wgpu::Device,
+    layout: &crate::pipelines::GroupLayout,
+) -> wgpu::ComputePipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine/terrain-horizon.wgsl"),
         source: wgpu::ShaderSource::Wgsl(crate::gpu_data::TERRAIN_HORIZON_SHADER.into()),
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("engine/terrain-horizon-layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
+    let pipeline_layout = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::TERRAIN_HORIZON_PIPELINES,
+        &[layout],
+    );
     crate::pipelines::compute_entry(
         device,
         &pipeline_layout,

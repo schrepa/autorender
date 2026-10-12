@@ -8,6 +8,9 @@ use engine_render::bindings::{
     Binding, Format, Kind, SHARED_GROUPS, Sample, Sampling, Stages, TABLES, Table, View,
 };
 use engine_render::gpu_layouts::{Layout, constants, layouts};
+use engine_render::pipeline_layouts::{
+    LAYOUT_BUDGET, PIPELINE_LAYOUTS, PipelineLayout, REQUIRED_LIMITS, StageLimits,
+};
 use engine_render::shaders::{ENTRIES, Stage};
 use naga::valid::{Capabilities, ValidationFlags, Validator};
 
@@ -623,6 +626,193 @@ fn check_ranges() -> Result<usize, String> {
     }
 }
 
+/// What a binding takes of the limits per stage.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Resource {
+    UniformBuffer,
+    StorageBuffer,
+    SampledTexture,
+    Sampler,
+    StorageTexture,
+}
+
+impl Resource {
+    const ALL: [Resource; 5] = [
+        Resource::UniformBuffer,
+        Resource::StorageBuffer,
+        Resource::SampledTexture,
+        Resource::Sampler,
+        Resource::StorageTexture,
+    ];
+
+    fn of(kind: Kind) -> Resource {
+        match kind {
+            Kind::Uniform { .. } => Resource::UniformBuffer,
+            Kind::Read { .. } | Kind::Write => Resource::StorageBuffer,
+            Kind::Texture { .. } => Resource::SampledTexture,
+            Kind::Sampler(_) => Resource::Sampler,
+            Kind::Storage(_) | Kind::Storage3d(_) => Resource::StorageTexture,
+        }
+    }
+
+    fn limit(self, limits: &StageLimits) -> u32 {
+        match self {
+            Resource::UniformBuffer => limits.uniform_buffers,
+            Resource::StorageBuffer => limits.storage_buffers,
+            Resource::SampledTexture => limits.sampled_textures,
+            Resource::Sampler => limits.samplers,
+            Resource::StorageTexture => limits.storage_textures,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Resource::UniformBuffer => "uniform buffers",
+            Resource::StorageBuffer => "storage buffers",
+            Resource::SampledTexture => "sampled textures",
+            Resource::Sampler => "samplers",
+            Resource::StorageTexture => "storage textures",
+        }
+    }
+}
+
+/// How many of `resource` the bindings of `layout`'s tables visible to
+/// `stage` take: every one counts, used or not.
+fn stage_count(layout: &PipelineLayout, stage: Stages, resource: Resource) -> u32 {
+    let count = layout
+        .groups
+        .iter()
+        .flat_map(|table| table.bindings)
+        .filter(|binding| covers(binding.stages, stage) && Resource::of(binding.kind) == resource)
+        .count();
+    u32::try_from(count).unwrap_or(u32::MAX)
+}
+
+/// Every pipeline layout (`engine_render::pipeline_layouts`): its tables
+/// serve one shader module's groups at their slots (a table binding nothing
+/// stands in anywhere), within the bind groups every device grants; each
+/// stage's buffers, textures and samplers, counted over its tables'
+/// bindings visible to the stage, within the limits every device grants
+/// ([`REQUIRED_LIMITS`]), or within larger ones it names, which must be what
+/// it takes; its dynamic uniform buffers within the limit; no two layouts of
+/// the same tables, every table in some layout, no two tables of one label
+/// (pipeline layouts check their groups by it); and as many layouts as
+/// [`LAYOUT_BUDGET`]. Returns how many layouts there are.
+fn check_pipeline_layouts() -> Result<usize, String> {
+    let mut errors = Vec::new();
+    for (index, &(name, table)) in TABLES.iter().enumerate() {
+        if let Some((earlier, _)) = TABLES[..index]
+            .iter()
+            .find(|(_, other)| other.label == table.label)
+        {
+            errors.push(format!(
+                "{name} and {earlier} share the label {}",
+                table.label
+            ));
+        }
+        if !PIPELINE_LAYOUTS
+            .iter()
+            .any(|(_, layout)| layout.groups.iter().any(|group| group.label == table.label))
+        {
+            errors.push(format!(
+                "{name} is in no pipeline layout (engine_render::pipeline_layouts)"
+            ));
+        }
+    }
+    let stages = [
+        (Stages::VERTEX, "vertex"),
+        (Stages::FRAGMENT, "fragment"),
+        (Stages::COMPUTE, "compute"),
+    ];
+    for (index, &(name, layout)) in PIPELINE_LAYOUTS.iter().enumerate() {
+        let limits = &layout.limits;
+        if layout.groups.len() > limits.bind_groups as usize {
+            errors.push(format!(
+                "{name}: {} groups, beyond the {} every device grants",
+                layout.groups.len(),
+                limits.bind_groups
+            ));
+        }
+        let serves_slots = |module: &str| {
+            layout.groups.iter().zip(0u32..).all(|(table, slot)| {
+                table.bindings.is_empty()
+                    || table
+                        .serves
+                        .iter()
+                        .any(|serves| serves.module == module && serves.group == slot)
+            })
+        };
+        if !layout
+            .groups
+            .iter()
+            .flat_map(|table| table.serves)
+            .any(|serves| serves_slots(serves.module))
+        {
+            errors.push(format!(
+                "{name}: no shader module's groups are its tables at their slots (the tables' `serves`)"
+            ));
+        }
+        if let Some((earlier, _)) = PIPELINE_LAYOUTS[..index].iter().find(|(_, other)| {
+            other.groups.len() == layout.groups.len()
+                && other
+                    .groups
+                    .iter()
+                    .zip(layout.groups)
+                    .all(|(a, b)| a.label == b.label)
+        }) {
+            errors.push(format!("{name} binds the same tables as {earlier}"));
+        }
+        let dynamic = layout
+            .groups
+            .iter()
+            .flat_map(|table| table.bindings)
+            .filter(|binding| matches!(binding.kind, Kind::Uniform { dynamic: true, .. }))
+            .count();
+        if dynamic > limits.dynamic_uniform_buffers as usize {
+            errors.push(format!(
+                "{name}: {dynamic} dynamic uniform buffers, beyond the {} every device grants",
+                limits.dynamic_uniform_buffers
+            ));
+        }
+        for resource in Resource::ALL {
+            let (limit, required) = (resource.limit(limits), resource.limit(&REQUIRED_LIMITS));
+            let mut most = 0;
+            for (stage, stage_name) in stages {
+                let used = stage_count(layout, stage, resource);
+                most = most.max(used);
+                if used > limit {
+                    errors.push(format!(
+                        "{name}: its {stage_name} stage binds {used} {}, beyond the {limit} {}",
+                        resource.name(),
+                        if limit == required {
+                            "every device grants (name a larger limit with `needing`, and check the device where the layout is built)"
+                        } else {
+                            "it names"
+                        }
+                    ));
+                }
+            }
+            if limit > required && most != limit {
+                errors.push(format!(
+                    "{name} names {limit} {} but binds at most {most} to a stage",
+                    resource.name()
+                ));
+            }
+        }
+    }
+    if PIPELINE_LAYOUTS.len() != LAYOUT_BUDGET {
+        errors.push(format!(
+            "{} pipeline layouts, against a budget of {LAYOUT_BUDGET}: each distinct layout costs Firefox's D3D12 backend about 150 ms of startup, so the budget follows the layouts only deliberately (engine_render::pipeline_layouts::LAYOUT_BUDGET)",
+            PIPELINE_LAYOUTS.len()
+        ));
+    }
+    if errors.is_empty() {
+        Ok(PIPELINE_LAYOUTS.len())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
 /// The module-scope constants of `module` with a literal value.
 fn wgsl_constants(module: &naga::Module) -> Vec<(&str, f64)> {
     module
@@ -965,6 +1155,7 @@ pub fn check(root: &Path) -> Result<(), String> {
     let entry_points = check_bindings(&modules);
     let entries = check_entries(&modules);
     let ranges = check_ranges();
+    let pipeline_layouts = check_pipeline_layouts();
     let shared = check_constants(root, &modules);
     let unused = check_unused(&modules);
     let structs = check_upload_structs(root);
@@ -973,6 +1164,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         entry_points.as_ref().err(),
         entries.as_ref().err(),
         ranges.as_ref().err(),
+        pipeline_layouts.as_ref().err(),
         shared.as_ref().err(),
         unused.as_ref().err(),
         structs.as_ref().err(),
@@ -988,7 +1180,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         ));
     }
     println!(
-        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} bindings of shared groups within their features' ranges; {} WGSL constants mirror {} Rust ones.",
+        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} bindings of shared groups within their features' ranges; {} pipeline layouts within every device's limits and their budget; {} WGSL constants mirror {} Rust ones.",
         modules.len(),
         mirrors?,
         layouts().len(),
@@ -996,6 +1188,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         entry_points?,
         entries?,
         ranges?,
+        pipeline_layouts?,
         shared?,
         constants().count()
     );

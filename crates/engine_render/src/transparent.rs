@@ -64,7 +64,7 @@ impl Drop for Targets {
 }
 
 pub(crate) struct TransparentPass {
-    layout: wgpu::BindGroupLayout,
+    layout: crate::pipelines::GroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
     module: wgpu::ShaderModule,
     // Composites into the canvas and into the scene target (leaving glow).
@@ -81,11 +81,11 @@ impl TransparentPass {
         depth_format: wgpu::TextureFormat,
     ) -> Self {
         let layout = crate::pipelines::layout(device, &TRANSPARENT_COMPOSITE);
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/transparent-composite-pipeline-layout"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::TRANSPARENT_COMPOSITE_PIPELINES,
+            &[&layout],
+        );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/transparent.wgsl"),
             source: wgpu::ShaderSource::Wgsl(TRANSPARENT_SHADER.into()),

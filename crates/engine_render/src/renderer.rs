@@ -45,9 +45,7 @@ use crate::virtual_geometry::{
     CameraTests, Cone, IdBuffers, MAX_VIEWS, SelectionFrame, VirtualBatch, VirtualGeometryPass,
     VirtualView,
 };
-use crate::visibility::{
-    ID_FORMAT, RESOLVE_LIT_STORAGE_BUFFERS, RESOLVE_STORAGE_BUFFERS, VisibilityBuffer,
-};
+use crate::visibility::{ID_FORMAT, VisibilityBuffer};
 
 mod camera;
 mod display;

@@ -17,7 +17,7 @@ pub(super) struct MeshPipelines {
     pub(super) layouts: [Option<wgpu::PipelineLayout>; 2],
     pub(super) variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
     sky: [Option<wgpu::RenderPipeline>; 4],
-    pub(super) empty_layout: wgpu::BindGroupLayout,
+    pub(super) empty_layout: crate::pipelines::GroupLayout,
     pub(super) empty_group: wgpu::BindGroup,
 }
 
@@ -266,20 +266,23 @@ impl Renderer {
                 .expect("lit frames create the light pass")
                 .fragment_layout()
         });
-        let groups = [
-            Some(&self.camera.layout),
-            Some(self.materials.layout()),
-            Some(&self.instances.pose_layout),
-            lights,
-        ];
-        let count = if lit { 4 } else { 3 };
-        self.mesh_pipelines.layouts[index] = Some(self.device.create_pipeline_layout(
-            &wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/mesh-pipeline-layout"),
-                bind_group_layouts: &groups[..count],
-                immediate_size: 0,
-            },
-        ));
+        let groups = (
+            &self.camera.layout,
+            self.materials.layout(),
+            &self.instances.pose_layout,
+        );
+        self.mesh_pipelines.layouts[index] = Some(match lights {
+            Some(lights) => crate::pipelines::pipeline_layout(
+                &self.device,
+                &crate::pipeline_layouts::LIT_MESH_PIPELINES,
+                &[groups.0, groups.1, groups.2, lights],
+            ),
+            None => crate::pipelines::pipeline_layout(
+                &self.device,
+                &crate::pipeline_layouts::MESH_PIPELINES,
+                &[groups.0, groups.1, groups.2],
+            ),
+        });
     }
 
     /// The pipeline of `kind` shading materials of `variant`.
@@ -396,15 +399,18 @@ fn flat_batch(
 fn sky_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
-    (camera_layout, clouds_layout): (&wgpu::BindGroupLayout, &wgpu::BindGroupLayout),
+    (camera_layout, clouds_layout): (
+        &crate::pipelines::GroupLayout,
+        &crate::pipelines::GroupLayout,
+    ),
     fragment: crate::shaders::Entry,
     targets: &[Option<wgpu::ColorTargetState>],
 ) -> wgpu::RenderPipeline {
-    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("engine/sky-pipeline-layout"),
-        bind_group_layouts: &[Some(camera_layout), Some(clouds_layout)],
-        immediate_size: 0,
-    });
+    let layout = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::SKY_PIPELINES,
+        &[camera_layout, clouds_layout],
+    );
     crate::pipelines::fullscreen(
         device,
         &crate::pipelines::Fullscreen {

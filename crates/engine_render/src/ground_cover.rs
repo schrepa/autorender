@@ -47,8 +47,8 @@ struct Growth {
 const MAX_TIERS: usize = 8;
 
 pub(crate) struct GroundCoverPass {
-    grow_layout: wgpu::BindGroupLayout,
-    draw_layout: wgpu::BindGroupLayout,
+    grow_layout: crate::pipelines::GroupLayout,
+    draw_layout: crate::pipelines::GroupLayout,
     // The growth's and the finish's pipelines, created with the first
     // frame that has cover.
     compute: Option<(wgpu::ComputePipeline, wgpu::ComputePipeline)>,
@@ -400,9 +400,9 @@ impl GroundCoverPass {
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         (camera, empty, lights): (
-            &wgpu::BindGroupLayout,
-            &wgpu::BindGroupLayout,
-            Option<&wgpu::BindGroupLayout>,
+            &crate::pipelines::GroupLayout,
+            &crate::pipelines::GroupLayout,
+            Option<&crate::pipelines::GroupLayout>,
         ),
         (targets, lit): (Targets, bool),
         canvas: wgpu::TextureFormat,
@@ -411,19 +411,22 @@ impl GroundCoverPass {
         if self.pipelines.contains_key(&(targets, lit)) {
             return;
         }
-        let mut layouts = vec![Some(camera), Some(&self.draw_layout)];
-        if lit {
+        let layout = if lit {
             let Some(lights) = lights else {
                 return;
             };
-            layouts.push(Some(empty));
-            layouts.push(Some(lights));
-        }
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/cover-pipeline-layout"),
-            bind_group_layouts: &layouts,
-            immediate_size: 0,
-        });
+            crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::LIT_COVER_PIPELINES,
+                &[camera, &self.draw_layout, empty, lights],
+            )
+        } else {
+            crate::pipelines::pipeline_layout(
+                device,
+                &crate::pipeline_layouts::COVER_PIPELINES,
+                &[camera, &self.draw_layout],
+            )
+        };
         let (vertex, fragment) = crate::entries::cover(targets, lit);
         let color_targets = targets.color_targets(canvas);
         let pipeline = crate::pipelines::geometry(
@@ -564,17 +567,17 @@ pub(crate) fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
 
 fn compute(
     device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
+    layout: &crate::pipelines::GroupLayout,
 ) -> (wgpu::ComputePipeline, wgpu::ComputePipeline) {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine/cover-grow.wgsl"),
         source: wgpu::ShaderSource::Wgsl(crate::gpu_data::COVER_GROW_SHADER.into()),
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("engine/cover-grow-layout"),
-        bind_group_layouts: &[Some(layout)],
-        immediate_size: 0,
-    });
+    let pipeline_layout = crate::pipelines::pipeline_layout(
+        device,
+        &crate::pipeline_layouts::COVER_GROW_PIPELINES,
+        &[layout],
+    );
     (
         crate::pipelines::compute_entry(device, &pipeline_layout, &module, cover_grow::grow_cover),
         crate::pipelines::compute_entry(

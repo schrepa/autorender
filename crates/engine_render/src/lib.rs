@@ -13,6 +13,7 @@ pub use engine_core::RenderStats;
 pub mod bindings;
 mod cached;
 mod gpu_data;
+pub mod pipeline_layouts;
 
 mod batches;
 mod clouds;

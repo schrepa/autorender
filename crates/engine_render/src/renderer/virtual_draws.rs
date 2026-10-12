@@ -18,7 +18,7 @@ use crate::entries;
 pub(super) struct VirtualDraws {
     pub(super) pass: VirtualGeometryPass,
     pub(super) pipelines: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
-    pub(super) pose_layout: wgpu::BindGroupLayout,
+    pub(super) pose_layout: crate::pipelines::GroupLayout,
     pub(super) layouts: [Option<wgpu::PipelineLayout>; 2],
     pub(super) pose_groups: [GroupCache<6>; 4],
     pub(super) bins: Vec<(Option<MaterialHandle>, Variant)>,
@@ -310,22 +310,23 @@ impl Renderer {
         let lit = kind.lit;
         if self.virtual_draws.layouts[usize::from(lit)].is_none() {
             let lights = self.lights.as_ref().filter(|_| lit);
-            let mut layouts = vec![
-                Some(&self.camera.layout),
-                Some(self.materials.layout()),
-                Some(&self.virtual_draws.pose_layout),
-            ];
-            if let Some(lights) = lights {
-                layouts.push(Some(lights.fragment_layout()));
-            }
-            self.virtual_draws.layouts[usize::from(lit)] = Some(
-                self.device
-                    .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                        label: Some("engine/virtual-pipeline-layout"),
-                        bind_group_layouts: &layouts,
-                        immediate_size: 0,
-                    }),
+            let groups = (
+                &self.camera.layout,
+                self.materials.layout(),
+                &self.virtual_draws.pose_layout,
             );
+            self.virtual_draws.layouts[usize::from(lit)] = Some(match lights {
+                Some(lights) => crate::pipelines::pipeline_layout(
+                    &self.device,
+                    &crate::pipeline_layouts::LIT_VIRTUAL_MESH_PIPELINES,
+                    &[groups.0, groups.1, groups.2, lights.fragment_layout()],
+                ),
+                None => crate::pipelines::pipeline_layout(
+                    &self.device,
+                    &crate::pipeline_layouts::VIRTUAL_MESH_PIPELINES,
+                    &[groups.0, groups.1, groups.2],
+                ),
+            });
         }
         let missing: Vec<Variant> = self
             .virtual_draws

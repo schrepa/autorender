@@ -173,7 +173,7 @@ fn shader_stages(stages: Stages) -> wgpu::ShaderStages {
 /// about 150 ms. Passes of one family therefore share a table listing every
 /// binding any of them reads, and their bind groups fill the bindings a pass
 /// leaves alone with [`Fillers`].
-pub(crate) fn layout(device: &wgpu::Device, table: &Table) -> wgpu::BindGroupLayout {
+pub(crate) fn layout(device: &wgpu::Device, table: &'static Table) -> GroupLayout {
     let entries: Vec<wgpu::BindGroupLayoutEntry> = table
         .bindings
         .iter()
@@ -184,41 +184,80 @@ pub(crate) fn layout(device: &wgpu::Device, table: &Table) -> wgpu::BindGroupLay
             count: None,
         })
         .collect();
-    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some(table.label),
-        entries: &entries,
+    GroupLayout {
+        table,
+        layout: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some(table.label),
+            entries: &entries,
+        }),
+    }
+}
+
+/// A bind group layout and the table (`crate::bindings`) it was made from,
+/// which [`pipeline_layout`] checks against the tables a pipeline layout
+/// declares.
+#[derive(Clone, Debug)]
+pub(crate) struct GroupLayout {
+    table: &'static Table,
+    layout: wgpu::BindGroupLayout,
+}
+
+impl std::ops::Deref for GroupLayout {
+    type Target = wgpu::BindGroupLayout;
+
+    fn deref(&self) -> &wgpu::BindGroupLayout {
+        &self.layout
+    }
+}
+
+/// The pipeline layout `declared` names (`crate::pipeline_layouts`), over
+/// `groups`, layouts of its tables in order: the one way pipeline layouts
+/// are made, so each is one `cargo xtask lint` counted. Groups of other
+/// tables than it declares are a programming error.
+pub(crate) fn pipeline_layout(
+    device: &wgpu::Device,
+    declared: &crate::pipeline_layouts::PipelineLayout,
+    groups: &[&GroupLayout],
+) -> wgpu::PipelineLayout {
+    assert!(
+        groups.len() == declared.groups.len()
+            && groups
+                .iter()
+                .zip(declared.groups)
+                .all(|(group, table)| group.table.label == table.label),
+        "{} binds other groups than it declares (crate::pipeline_layouts)",
+        declared.label
+    );
+    let layouts: Vec<Option<&wgpu::BindGroupLayout>> =
+        groups.iter().map(|group| Some(&group.layout)).collect();
+    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(declared.label),
+        bind_group_layouts: &layouts,
+        immediate_size: 0,
     })
 }
 
 /// A shared layout: its table (`crate::bindings`), group
 /// layout, and the pipeline layout of passes binding it first, then `more`.
 pub(crate) struct Family {
-    table: &'static Table,
-    group: wgpu::BindGroupLayout,
+    group: GroupLayout,
     pub(crate) pipeline: wgpu::PipelineLayout,
 }
 
 impl Family {
+    /// The family of pipelines over `declared`: a group of its first table,
+    /// then the layouts of the rest, `more`.
     pub(crate) fn new(
         device: &wgpu::Device,
-        table: &'static Table,
-        more: &[&wgpu::BindGroupLayout],
+        declared: &'static crate::pipeline_layouts::PipelineLayout,
+        more: &[&GroupLayout],
     ) -> Self {
-        let group = layout(device, table);
-        let groups: Vec<Option<&wgpu::BindGroupLayout>> = std::iter::once(&group)
+        let group = layout(device, declared.groups[0]);
+        let groups: Vec<&GroupLayout> = std::iter::once(&group)
             .chain(more.iter().copied())
-            .map(Some)
             .collect();
-        let pipeline = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(table.label),
-            bind_group_layouts: &groups,
-            immediate_size: 0,
-        });
-        Self {
-            table,
-            group,
-            pipeline,
-        }
+        let pipeline = pipeline_layout(device, declared, &groups);
+        Self { group, pipeline }
     }
 
     /// A group of this layout binding `resources` by name, filled where
@@ -230,7 +269,14 @@ impl Family {
         resources: &[(&str, wgpu::BindingResource<'_>)],
         fillers: &Fillers,
     ) -> wgpu::BindGroup {
-        filled_group(device, label, self.table, &self.group, resources, fillers)
+        filled_group(
+            device,
+            label,
+            self.group.table,
+            &self.group,
+            resources,
+            fillers,
+        )
     }
 }
 
@@ -347,9 +393,10 @@ pub(crate) fn group(
     device: &wgpu::Device,
     label: &str,
     table: &Table,
-    layout: &wgpu::BindGroupLayout,
+    layout: &GroupLayout,
     resources: &[(&str, wgpu::BindingResource<'_>)],
 ) -> wgpu::BindGroup {
+    debug_assert_eq!(layout.table.label, table.label, "{label}'s layout");
     debug_assert_eq!(
         resources.len(),
         table.bindings.len(),
@@ -375,10 +422,11 @@ pub(crate) fn filled_group(
     device: &wgpu::Device,
     label: &str,
     table: &Table,
-    layout: &wgpu::BindGroupLayout,
+    layout: &GroupLayout,
     resources: &[(&str, wgpu::BindingResource<'_>)],
     fillers: &Fillers,
 ) -> wgpu::BindGroup {
+    debug_assert_eq!(layout.table.label, table.label, "{label}'s layout");
     for (name, _) in resources {
         table.binding(name);
     }

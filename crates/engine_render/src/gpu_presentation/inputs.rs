@@ -73,7 +73,7 @@ pub(super) struct NodeInputs {
 }
 
 impl NodeInputs {
-    pub(super) fn new(device: &wgpu::Device, level_layout: &wgpu::BindGroupLayout) -> Self {
+    pub(super) fn new(device: &wgpu::Device, level_layout: &crate::pipelines::GroupLayout) -> Self {
         let levels = crate::buffers::uniform(
             device,
             "engine/presentation-levels",

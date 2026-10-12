@@ -25,7 +25,7 @@ const CAMERA_BINDINGS: usize = 20;
 const TERRAIN_BINDINGS: usize = 18;
 
 pub(super) struct CameraBindings {
-    pub(super) layout: wgpu::BindGroupLayout,
+    pub(super) layout: crate::pipelines::GroupLayout,
     pub(super) buffer: wgpu::Buffer,
     lighting_buffer: wgpu::Buffer,
     /// Clouds' shadows, copied in by the clouds' pass.
@@ -43,7 +43,7 @@ pub(super) struct CameraBindings {
     probe_groups: [GroupCache<CAMERA_BINDINGS>; FACES],
     // Terrain's resolves' first group, the main one without
     // what glass refracts, and its layout.
-    pub(super) terrain_layout: wgpu::BindGroupLayout,
+    pub(super) terrain_layout: crate::pipelines::GroupLayout,
     terrain_group: GroupCache<TERRAIN_BINDINGS>,
 }
 

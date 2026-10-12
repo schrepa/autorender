@@ -4,8 +4,10 @@
 //! pipeline drawing shadow views' bins.
 
 use super::VISIBLE_BYTES;
-use crate::bindings::{
-    VIRTUAL_BIN, VIRTUAL_SEED, VIRTUAL_SELECT, VIRTUAL_SHADOW, VIRTUAL_TRAVERSE,
+use crate::bindings::VIRTUAL_SHADOW;
+use crate::pipeline_layouts::{
+    VIRTUAL_BIN_PIPELINES, VIRTUAL_SEED_PIPELINES, VIRTUAL_SELECT_PIPELINES,
+    VIRTUAL_TRAVERSE_PIPELINES,
 };
 use crate::pipelines::{Family, Fillers, layout};
 use crate::shaders::entry::virtual_geometry;
@@ -29,10 +31,10 @@ pub(super) struct Pipelines {
 
 impl Pipelines {
     pub(super) fn new(device: &wgpu::Device, module: &wgpu::ShaderModule) -> Self {
-        let seed_family = Family::new(device, &VIRTUAL_SEED, &[]);
-        let traverse_family = Family::new(device, &VIRTUAL_TRAVERSE, &[]);
-        let select_family = Family::new(device, &VIRTUAL_SELECT, &[]);
-        let bin_family = Family::new(device, &VIRTUAL_BIN, &[]);
+        let seed_family = Family::new(device, &VIRTUAL_SEED_PIPELINES, &[]);
+        let traverse_family = Family::new(device, &VIRTUAL_TRAVERSE_PIPELINES, &[]);
+        let select_family = Family::new(device, &VIRTUAL_SELECT_PIPELINES, &[]);
+        let bin_family = Family::new(device, &VIRTUAL_BIN_PIPELINES, &[]);
         let pipeline = |entry: crate::shaders::Entry, family: &Family| {
             crate::pipelines::compute_entry(device, &family.pipeline, module, entry)
         };
@@ -74,18 +76,18 @@ impl Pipelines {
 /// Depth-only drawing of shadow views' bins (`vs_shadow`) and its layout:
 /// the arena, the frame's poses and the shadow maps' views.
 pub(super) struct ShadowDrawing {
-    pub(super) layout: wgpu::BindGroupLayout,
+    pub(super) layout: crate::pipelines::GroupLayout,
     pub(super) pipeline: wgpu::RenderPipeline,
 }
 
 impl ShadowDrawing {
     pub(super) fn new(device: &wgpu::Device, module: &wgpu::ShaderModule) -> Self {
         let layout = layout(device, &VIRTUAL_SHADOW);
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/virtual-shadow-pipeline-layout"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
+        let pipeline_layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::VIRTUAL_SHADOW_PIPELINES,
+            &[&layout],
+        );
         let attributes = wgpu::vertex_attr_array![0 => Uint32, 1 => Uint32];
         let pipeline = crate::pipelines::geometry(
             device,

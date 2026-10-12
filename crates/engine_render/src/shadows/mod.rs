@@ -253,7 +253,7 @@ pub(crate) struct ShadowPass {
     // never compile them.
     pipelines: Option<ShadowPipelines>,
     // The material group layout of masked casters.
-    material_layout: wgpu::BindGroupLayout,
+    material_layout: crate::pipelines::GroupLayout,
     maps: ShadowMaps,
     // Terrains whose horizon records lookups loop over, as
     // last set, which the lookup uniform carries.
@@ -287,7 +287,10 @@ pub(crate) struct ShadowPass {
 impl ShadowPass {
     /// The bindings the main passes read; pipelines follow with the first
     /// frame that has shadows. `material_layout`: the mesh material group.
-    pub(crate) fn new(device: &wgpu::Device, material_layout: &wgpu::BindGroupLayout) -> Self {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        material_layout: &crate::pipelines::GroupLayout,
+    ) -> Self {
         Self {
             pipelines: None,
             material_layout: material_layout.clone(),
@@ -718,7 +721,7 @@ impl ShadowPass {
     pub(crate) fn prepare_impostor_casters(
         &mut self,
         device: &wgpu::Device,
-        impostor_layout: &wgpu::BindGroupLayout,
+        impostor_layout: &crate::pipelines::GroupLayout,
     ) {
         if let Some(pipelines) = &mut self.pipelines
             && pipelines.impostor_casters.is_none()

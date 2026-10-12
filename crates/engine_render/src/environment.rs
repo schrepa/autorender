@@ -45,9 +45,9 @@ struct Maps {
 
 // The sky, level and prefilter passes' group layouts.
 struct Layouts {
-    sky: wgpu::BindGroupLayout,
-    down: wgpu::BindGroupLayout,
-    prefilter: wgpu::BindGroupLayout,
+    sky: crate::pipelines::GroupLayout,
+    down: crate::pipelines::GroupLayout,
+    prefilter: crate::pipelines::GroupLayout,
 }
 
 pub(crate) struct Environment {
@@ -96,12 +96,12 @@ impl Environment {
         };
         let targets: [Option<wgpu::ColorTargetState>; FACES_PER_PASS] =
             std::array::from_fn(|_| Some(ENVIRONMENT_FORMAT.into()));
-        let pipeline = |entry: crate::shaders::Entry, group: &wgpu::BindGroupLayout| {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(entry.name),
-                bind_group_layouts: &[Some(group)],
-                immediate_size: 0,
-            });
+        let pipeline = |entry: crate::shaders::Entry,
+                        (declared, group): (
+            &crate::pipeline_layouts::PipelineLayout,
+            &crate::pipelines::GroupLayout,
+        )| {
+            let layout = crate::pipelines::pipeline_layout(device, declared, &[group]);
             crate::pipelines::fullscreen(
                 device,
                 &crate::pipelines::Fullscreen {
@@ -116,9 +116,27 @@ impl Environment {
                 },
             )
         };
-        let sky = pipeline(environment::fs_environment_sky, &layouts.sky);
-        let down = pipeline(environment::fs_environment_down, &layouts.down);
-        let prefilter = pipeline(environment::fs_environment_prefilter, &layouts.prefilter);
+        let sky = pipeline(
+            environment::fs_environment_sky,
+            (
+                &crate::pipeline_layouts::ENVIRONMENT_SKY_PIPELINES,
+                &layouts.sky,
+            ),
+        );
+        let down = pipeline(
+            environment::fs_environment_down,
+            (
+                &crate::pipeline_layouts::ENVIRONMENT_DOWN_PIPELINES,
+                &layouts.down,
+            ),
+        );
+        let prefilter = pipeline(
+            environment::fs_environment_prefilter,
+            (
+                &crate::pipeline_layouts::ENVIRONMENT_PREFILTER_PIPELINES,
+                &layouts.prefilter,
+            ),
+        );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/environment-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -490,7 +508,7 @@ fn sky(lighting: &LightingUniform, clouds: [f32; 4], air: [f32; 4]) -> [[f32; 4]
 /// physically based sky's `air`.
 fn sky_group(
     device: &wgpu::Device,
-    layout: &wgpu::BindGroupLayout,
+    layout: &crate::pipelines::GroupLayout,
     lighting: &wgpu::Buffer,
     clouds: crate::clouds::DomeBinding<'_>,
     air: crate::sky::AirBindings<'_>,
