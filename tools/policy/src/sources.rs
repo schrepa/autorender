@@ -195,6 +195,82 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
     }
 }
 
+/// The engine's error for games, and the file of every engine error's
+/// conversion into it.
+const ENGINE_ERROR: &str = "crates/engine/src/error.rs";
+
+/// A public error type an engine crate declares: where, and its name.
+pub struct ErrorType {
+    path: String,
+    line: usize,
+    name: String,
+}
+
+/// Collects the public error types (`pub struct` or `pub enum` named
+/// `*Error`) the engine crate file `path` declares in `source`; the engine's
+/// own error is not one.
+pub fn error_types(path: &str, source: &str, found: &mut Vec<ErrorType>) {
+    if !path.starts_with("crates/") || path == ENGINE_ERROR {
+        return;
+    }
+    for (index, code) in rust::split(source).code.iter().enumerate() {
+        let code = code.trim_start();
+        let Some(declared) = code
+            .strip_prefix("pub struct ")
+            .or_else(|| code.strip_prefix("pub enum "))
+        else {
+            continue;
+        };
+        let name: String = declared
+            .chars()
+            .take_while(|character| character.is_alphanumeric() || *character == '_')
+            .collect();
+        if name.ends_with("Error") {
+            found.push(ErrorType {
+                path: path.to_owned(),
+                line: index + 1,
+                name,
+            });
+        }
+    }
+}
+
+/// Fails at each of `found` that does not convert into the engine's error:
+/// an `impl From<…Name> for Error` in [`ENGINE_ERROR`].
+pub fn conversions(
+    root: &std::path::Path,
+    found: &[ErrorType],
+    problems: &mut Problems,
+) -> Result<(), String> {
+    let source = std::fs::read_to_string(root.join(ENGINE_ERROR))
+        .map_err(|error| format!("cannot read {ENGINE_ERROR}: {error}"))?;
+    let impls: Vec<String> = rust::split(&source)
+        .code
+        .iter()
+        .map(|code| code.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|code| code.starts_with("impl From<") && code.ends_with("> for Error {"))
+        .collect();
+    for error in found {
+        let converted = impls.iter().any(|code| {
+            let from = &code["impl From<".len()..code.len() - "> for Error {".len()];
+            from == error.name || from.ends_with(&format!("::{}", error.name))
+        });
+        if !converted {
+            problems.at(
+                &error.path,
+                error.line,
+                &format!(
+                    "{} is a public engine error without a conversion into engine::Error: \
+                     add `impl From<{}> for Error` to {ENGINE_ERROR}, an exhaustive match \
+                     choosing each variant's code",
+                    error.name, error.name
+                ),
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Whether the workspace lint `key` is `lint`, or a tool's whole group
 /// (`rustdoc::all`) that holds it.
 fn covers(key: &str, lint: &str) -> bool {

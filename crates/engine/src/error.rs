@@ -1,11 +1,39 @@
 //! One error for games: every engine error converts to it with `?`, keeping
 //! a code from the catalog (`ErrorCode`), the JSON path or field at fault
 //! where there is one, and a message for people.
+//!
+//! # When the engine panics, refuses, or degrades
+//!
+//! - **Panic** only on a broken invariant of the engine's own code, with an
+//!   `expect` or `unreachable!` message that names the invariant. Nothing a
+//!   game, scene, request, file, worker, device or budget supplies may
+//!   panic: shipped builds abort, and Wasm cannot unwind, so
+//!   `catch_unwind` would catch nothing.
+//! - **Return an [`Error`]** when a caller asked for something that cannot
+//!   be done. Check before changing anything, so a failure changes nothing.
+//!   A library crate's own error converts into [`Error`] here, through an
+//!   exhaustive match with no `_` arm, so a new variant chooses its code.
+//!   `Result<_, String>` is for tools, binaries and job payloads only.
+//! - **Degrade and report** when engine-scheduled work fails or is refused
+//!   during a frame: skip the work and keep the frame, and count what was
+//!   left out as `dropped_*` in the frame's statistics, or as a failure
+//!   with its latest message in the feature's inspector. Never `.ok()` an
+//!   engine error away uncounted. Only the failure path allocates.
+//!
+//! # Codes
+//!
+//! Every code is declared once, in the catalog ([`ErrorCode`],
+//! `engine_settings::codes`); Rust never spells one as a string. A code
+//! names the caller's remedy. [`ErrorCode::GameRule`] is only for a game's
+//! own refusals, made with [`Error::game_rule`]. Lint fails at a public
+//! engine error type without a conversion here.
 
 use std::fmt;
 
+use engine_core::terrain_data::{FormatError, codec::CodecError};
 use engine_core::{
-    AssetError, ErrorCode, HierarchyError, InterpolationError, InvalidSetting, TransformEditError,
+    AssetError, BiomeError, ErrorCode, HierarchyError, InterpolationError, InvalidSetting,
+    LayerError, PyramidError, SimplifyError, TransformEditError,
 };
 
 /// An engine or game error: its code, where, and what is wrong.
@@ -32,6 +60,12 @@ impl Error {
             path: path.into(),
             message: message.into(),
         }
+    }
+
+    /// A game's own refusal (`game_rule`) with its message: a request the
+    /// game's rules refuse, where the engine's would take it.
+    pub fn game_rule(message: impl Into<String>) -> Self {
+        Self::new(ErrorCode::GameRule, "$", message)
     }
 }
 
@@ -145,6 +179,85 @@ impl From<TransformEditError> for Error {
             TransformEditError::MissingTransform(_) => ErrorCode::MissingComponent,
         };
         Self::new(code, "$", error.to_string())
+    }
+}
+
+impl From<SimplifyError> for Error {
+    fn from(error: SimplifyError) -> Self {
+        let code = match error {
+            SimplifyError::TriangleCount { .. }
+            | SimplifyError::IndexOutOfBounds { .. }
+            | SimplifyError::TooLarge { .. }
+            | SimplifyError::AttributeLayout { .. }
+            | SimplifyError::VertexFlagCount { .. } => ErrorCode::InvalidMesh,
+            SimplifyError::InvalidWeight { .. } | SimplifyError::InvalidTargetError => {
+                ErrorCode::InvalidValue
+            }
+        };
+        Self::new(code, "$", error.to_string())
+    }
+}
+
+#[cfg(feature = "dev")]
+impl From<engine_core::DevStepError> for Error {
+    fn from(error: engine_core::DevStepError) -> Self {
+        Self::new(ErrorCode::InvalidStep, "$.ticks", error.to_string())
+    }
+}
+
+impl From<engine_render::RenderError> for Error {
+    fn from(error: engine_render::RenderError) -> Self {
+        Self::new(ErrorCode::RenderFailed, "$", error.to_string())
+    }
+}
+
+impl From<CodecError> for Error {
+    fn from(error: CodecError) -> Self {
+        Self::new(ErrorCode::InvalidTerrain, "$", error.to_string())
+    }
+}
+
+impl From<FormatError> for Error {
+    fn from(error: FormatError) -> Self {
+        let code = match error {
+            FormatError::Magic
+            | FormatError::Version(_)
+            | FormatError::Pyramid(_)
+            | FormatError::Step
+            | FormatError::Truncated
+            | FormatError::Corrupt(_) => ErrorCode::InvalidTerrain,
+        };
+        Self::new(code, "$", error.to_string())
+    }
+}
+
+impl From<LayerError> for Error {
+    fn from(error: LayerError) -> Self {
+        Self::new(
+            ErrorCode::InvalidTerrain,
+            format!("$.layers[{}].{}", error.layer, error.field),
+            error.rule.into_owned(),
+        )
+    }
+}
+
+impl From<PyramidError> for Error {
+    fn from(error: PyramidError) -> Self {
+        let path = match error {
+            PyramidError::Tiles(_) => "$.tiles",
+            PyramidError::Spacing(_) => "$.spacing",
+        };
+        Self::new(ErrorCode::InvalidTerrain, path, error.to_string())
+    }
+}
+
+impl From<BiomeError> for Error {
+    fn from(error: BiomeError) -> Self {
+        Self::new(
+            ErrorCode::InvalidTerrain,
+            format!("$.{}", error.path),
+            error.rule,
+        )
     }
 }
 

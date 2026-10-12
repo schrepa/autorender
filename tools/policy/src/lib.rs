@@ -4,7 +4,8 @@
 //! `SAFETY:` comment on every unsafe block and impl, no crate-wide allow of
 //! a workspace lint, no work-left markers).
 //! `cargo xtask lint` runs it first; `cargo policy` runs it alone, in
-//! seconds, without compiling the engine.
+//! seconds, without compiling the engine. It also fails at a public engine
+//! error type that does not convert into `engine::Error`.
 
 mod manifests;
 pub mod rust;
@@ -79,6 +80,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         .cloned()
         .collect();
     let lints = manifests::check(root, &package_jsons, &mut problems)?;
+    let mut errors = Vec::new();
     for path in &files {
         if sources::LOCKFILES.contains(&path.as_str()) {
             continue;
@@ -92,8 +94,10 @@ pub fn check(root: &Path) -> Result<(), String> {
         sources::check_text(path, &text, &mut problems);
         if path.ends_with(".rs") {
             sources::check(path, &text, &lints, &mut problems);
+            sources::error_types(path, &text, &mut errors);
         }
     }
+    sources::conversions(root, &errors, &mut problems)?;
     for (path, _) in sources::UNSAFE_FILES {
         if !files.iter().any(|file| file == path) {
             problems.file(

@@ -55,6 +55,8 @@ pub use commands::*;
 pub use contact_shadows::*;
 pub use decals::*;
 pub use effects::*;
+/// What the mesh simplifier refuses, as level-of-detail generation runs it.
+pub use engine_assets::simplify::SimplifyError;
 pub use engine_assets::{
     Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding, LodLevel,
     MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshLods,

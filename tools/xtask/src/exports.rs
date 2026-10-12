@@ -21,6 +21,7 @@ const INTERNAL: &[&str] = &[
     "DevStepError",
     "GroundedAt",
     "MAX_DEV_TICKS",
+    "SimplifyError",
     "atmosphere_fields",
     "engine_features",
     "install",
