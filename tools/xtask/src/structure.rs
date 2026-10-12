@@ -32,7 +32,7 @@ const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
     (
         "crates/engine_core/src/features/terrain/residency.rs",
         "TerrainState",
-        42,
+        36,
     ),
     ("crates/engine_core/src/frame_stats.rs", "RenderStats", 42),
     (

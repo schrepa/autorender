@@ -73,8 +73,8 @@ impl Terrains {
                 .filter(|(key, _)| state.loads(key))
                 .collect();
             // Tiles kept in memory return at once.
-            if !state.cache.is_empty() {
-                self.restored += state.restore(&missing, &work);
+            if state.store.kept_tiles() > 0 {
+                self.restored += state.store.restore(&missing, &work);
                 missing.retain(|(key, _)| state.loads(key));
             }
             if missing.is_empty() && state.far_wanted.is_empty() && state.far_jobs.is_empty() {
@@ -113,6 +113,10 @@ impl Terrains {
         // What arrived uploads with the next frame.
         self.between += self.upload_left - work.upload.get();
         self.upload_left = work.upload.get();
+        #[cfg(debug_assertions)]
+        for state in &self.entries {
+            state.check();
+        }
         remaining
     }
 
@@ -260,7 +264,7 @@ impl Terrains {
         let room = settings.cache_bytes.saturating_sub(
             self.entries
                 .iter()
-                .map(|state| state.cached_bytes)
+                .map(|state| state.store.cached_bytes())
                 .sum::<u64>(),
         );
         for state in &mut self.entries {
@@ -318,9 +322,8 @@ impl Terrains {
                 && state.far_wanted.is_empty()
                 && state.far_jobs.is_empty();
             let (wanted, headed, held, around, named) = {
-                let tiles = &state.tiles;
-                let errors = &state.errors;
-                let ground = |key: TileKey| ground_bounds(tiles, &pyramid, errors, key);
+                let store = &state.store;
+                let ground = |key: TileKey| ground_bounds(store, &pyramid, key);
                 let seen = |low: Vec3, high: Vec3| planes.sees(low + origin, high + origin);
                 let view = |eye: Vec3| WantedView {
                     eye,
@@ -419,48 +422,37 @@ impl Terrains {
                 .chain(state.collision.iter().copied())
                 .chain(target.iter().copied())
                 .collect();
-            let before = state.tiles.len();
             // Tiles leaving stay in memory.
             let leaving: Vec<TileKey> = state
-                .tiles
+                .store
                 .keys()
                 .filter(|key| !keep.contains(key))
                 .copied()
                 .collect();
             for key in leaving {
-                if let Some(tile) = state.tiles.remove(&key) {
-                    state.cache_leaving(key, tile, frame);
-                }
+                state.leave(&key, frame);
             }
-            if kept < order.len() && state.tiles.len() > kept {
+            if kept < order.len() && state.store.len() > kept {
                 // Over budget: drop resident tiles outside the target, finest
                 // first. Within it, tiles the view only keeps (between the
                 // loading and keeping reaches) stay: a tile whose own
                 // bounds put it past the loading reach, where its parent's
                 // had it inside, must not leave and return frame by frame.
                 let mut extra: Vec<TileKey> = state
-                    .tiles
+                    .store
                     .keys()
                     .filter(|key| !target.contains(key))
                     .copied()
                     .collect();
                 extra.sort_unstable_by_key(|key| key.level);
-                for key in extra.into_iter().take(state.tiles.len() - kept) {
-                    if let Some(tile) = state.tiles.remove(&key) {
-                        state.cache_leaving(key, tile, frame);
-                    }
+                for key in extra.into_iter().take(state.store.len() - kept) {
+                    state.leave(&key, frame);
                 }
-            }
-            if state.tiles.len() != before {
-                state.revision += 1;
             }
             state.jobs.retain(|key, _| target.contains(key));
             // Load what is missing, most important first; disabled terrains
-            // load nothing.
-            // Tiles under edits since they loaded regenerate
+            // load nothing. Tiles under edits since they loaded regenerate
             // in their turn and draw until they do.
-            state.stale.retain(|key| state.tiles.contains_key(key));
-            state.shaped.retain(|key| state.tiles.contains_key(key));
             // While the eye moves fast, the finest levels'
             // tiles wait, and until it settles those it does not show; the
             // pinned levels, collision's tiles and those under focus
@@ -507,16 +499,14 @@ impl Terrains {
                 })
                 .collect();
             // Tiles kept in memory return at once.
-            if !state.cache.is_empty() {
-                self.restored += state.restore(&missing, &work);
+            if state.store.kept_tiles() > 0 {
+                self.restored += state.store.restore(&missing, &work);
                 missing.retain(|(key, _)| state.loads(key));
             }
             // Tiles places games name want stay in memory before those
             // that only left the view.
             for tile in &named {
-                if let Some(cached) = state.cache.get_mut(&tile.key) {
-                    cached.left = frame;
-                }
+                state.store.wanted_in_memory(&tile.key, frame);
             }
             // What workers generate ahead of need: the nearest tiles within
             // the idle reach and that places games name want,
@@ -531,7 +521,7 @@ impl Terrains {
                         .then(b.key.level.cmp(&a.key.level))
                 });
                 let fits = room
-                    .checked_div(state.tile_bytes)
+                    .checked_div(state.store.tile_bytes())
                     .map_or(usize::MAX, |fits| fits as usize);
                 let mut listed = HashSet::default();
                 state.ahead.extend(
@@ -541,8 +531,8 @@ impl Terrains {
                         .filter(|key| {
                             listed.insert(*key)
                                 && !keep.contains(key)
-                                && !state.tiles.contains_key(key)
-                                && !state.cache.contains_key(key)
+                                && !state.store.contains(key)
+                                && !state.store.in_memory(key)
                         })
                         .take(fits),
                 );
@@ -583,11 +573,11 @@ impl Terrains {
                 .into_iter()
                 .filter(|(key, _)| state.loads(key))
                 .collect();
-            stats.resident_tiles += state.tiles.len() as u32;
+            stats.resident_tiles += state.store.len() as u32;
             stats.missing_tiles += state.missing.len() as u32;
-            stats.shaped_tiles += state.shaped.len() as u32;
-            stats.cached_tiles += state.cache.len() as u32;
-            stats.cached_bytes += state.cached_bytes;
+            stats.shaped_tiles += state.store.count(&[Phase::Shape, Phase::Placing]) as u32;
+            stats.cached_tiles += state.store.kept_tiles() as u32;
+            stats.cached_bytes += state.store.cached_bytes();
             stats.idle_tiles += state.idle.len() as u32;
             stats.loading_tiles += (state.jobs.len()
                 + state.in_flight.len()
@@ -600,12 +590,12 @@ impl Terrains {
             stats.banded_tiles += state.banded_tiles;
             stats.unplaced_tiles += state.unplaced_tiles();
             if settings.enabled {
-                let tiles = &state.tiles;
+                let store = &state.store;
                 engine_terrain::select_patches(
                     &pyramid,
                     &ranges,
                     local_eye,
-                    |key| tiles.get(&key).map(Arc::as_ref),
+                    |key| store.get(&key).map(Arc::as_ref),
                     cutout,
                     &mut state.selection,
                 );
@@ -616,12 +606,16 @@ impl Terrains {
             stats.patches += state.selection.patches.len() as u32;
             stats.fallback_patches += state.selection.fallbacks;
             if cutout.is_some() {
-                stats.surroundings_tiles += state.tiles.len() as u32;
+                stats.surroundings_tiles += state.store.len() as u32;
                 stats.surroundings_patches += state.selection.patches.len() as u32;
             }
         }
         // Tiles kept in memory beyond its budget go, those that left first.
-        let cached: u64 = self.entries.iter().map(|state| state.cached_bytes).sum();
+        let cached: u64 = self
+            .entries
+            .iter()
+            .map(|state| state.store.cached_bytes())
+            .sum();
         if cached > settings.cache_bytes {
             let mut oldest: Vec<(u64, usize, TileKey)> = self
                 .entries
@@ -629,9 +623,9 @@ impl Terrains {
                 .enumerate()
                 .flat_map(|(index, state)| {
                     state
-                        .cache
-                        .iter()
-                        .map(move |(key, kept)| (kept.left, index, *key))
+                        .store
+                        .kept()
+                        .map(move |(left, key)| (left, index, key))
                 })
                 .collect();
             oldest.sort_unstable();
@@ -640,18 +634,22 @@ impl Terrains {
                 if over == 0 {
                     break;
                 }
-                let state = &mut self.entries[index];
-                let before = state.cached_bytes;
-                state.uncache(key);
-                over = over.saturating_sub(before - state.cached_bytes);
+                let store = &mut self.entries[index].store;
+                let before = store.cached_bytes();
+                store.forget(key);
+                over = over.saturating_sub(before - store.cached_bytes());
             }
         }
         stats.restored_tiles = self.restored;
-        stats.cached_bytes = self.entries.iter().map(|state| state.cached_bytes).sum();
+        stats.cached_bytes = self
+            .entries
+            .iter()
+            .map(|state| state.store.cached_bytes())
+            .sum();
         stats.cached_tiles = self
             .entries
             .iter()
-            .map(|state| state.cache.len() as u32)
+            .map(|state| state.store.kept_tiles() as u32)
             .sum();
         self.upload_left = work.upload.get();
         // Stacks no terrain's recipe shares any longer leave the workers;
@@ -696,6 +694,10 @@ impl Terrains {
         }
         stats.loading = self.loading();
         self.stats = stats;
+        #[cfg(debug_assertions)]
+        for state in &self.entries {
+            state.check();
+        }
     }
 }
 
@@ -706,14 +708,10 @@ impl Terrains {
 /// its ground, widened by how far the levels between measured apart and by
 /// four of the ancestor's spacings, as finer levels add detail. `None`
 /// without either.
-fn ground_bounds(
-    tiles: &HashMap<TileKey, Arc<Tile>>,
-    pyramid: &Pyramid,
-    errors: &[f32],
-    key: TileKey,
-) -> Option<[f32; 2]> {
+fn ground_bounds(store: &TileStore, pyramid: &Pyramid, key: TileKey) -> Option<[f32; 2]> {
+    let errors = store.errors();
     let error = |level: u8| errors.get(usize::from(level)).copied().unwrap_or(0.0);
-    if let Some(tile) = tiles.get(&key) {
+    if let Some(tile) = store.get(&key) {
         let [low, high] = tile.bounds();
         return Some([low - error(key.level), high + error(key.level)]);
     }
@@ -725,7 +723,7 @@ fn ground_bounds(
     while let Some(parent) = pyramid.parent(ancestor) {
         margin += error(ancestor.level);
         ancestor = parent;
-        let Some(tile) = tiles.get(&ancestor) else {
+        let Some(tile) = store.get(&ancestor) else {
             continue;
         };
         let level = u32::from(ancestor.level);
@@ -965,7 +963,7 @@ impl TerrainStreaming {
                         {
                             state.terrain.surface.assets = terrain.surface.assets;
                             state.terrain.surface.bridge = terrain.surface.bridge;
-                            state.revision += 1;
+                            state.standing += 1;
                         }
                     }
                 }

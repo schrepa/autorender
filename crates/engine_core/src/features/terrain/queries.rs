@@ -227,8 +227,8 @@ impl Terrains {
     fn obstacles(state: &TerrainState) -> Vec<Obstacle> {
         let assets = &state.terrain.surface.assets;
         state
-            .tiles
-            .values()
+            .store
+            .tiles()
             .flat_map(|tile| tile.placed().iter())
             .filter_map(|placed| {
                 let collider = assets.get(usize::from(placed.asset))?.collider?;
@@ -302,7 +302,7 @@ impl Terrains {
         self.entries
             .iter()
             .find(|state| state.entity == entity && state.around.is_none())
-            .map(|state| (state.errors.as_slice(), state.ranges.as_slice()))
+            .map(|state| (state.store.errors(), state.ranges.as_slice()))
     }
 
     /// Resident tiles of `entity`'s terrain.
@@ -310,7 +310,7 @@ impl Terrains {
         self.entries
             .iter()
             .filter(move |state| state.entity == entity && state.around.is_none())
-            .flat_map(|state| state.tiles.values())
+            .flat_map(|state| state.store.tiles())
     }
 
     /// Level-0 tiles resident around the camera and focus entities, of
@@ -321,7 +321,7 @@ impl Terrains {
             .filter(|state| state.terrain.collision)
             .flat_map(|state| {
                 state.collision.iter().filter_map(move |key| {
-                    let tile = state.tiles.get(key)?;
+                    let tile = state.store.get(key)?;
                     Some((state.entity, state.terrain.origin, tile))
                 })
             })
@@ -377,7 +377,7 @@ impl Terrains {
     pub fn revision(&self) -> u64 {
         self.entries
             .iter()
-            .map(|state| state.revision)
+            .map(TerrainState::revision)
             .fold(self.entries.len() as u64, u64::wrapping_add)
     }
 }

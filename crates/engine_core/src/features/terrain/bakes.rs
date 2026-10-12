@@ -28,7 +28,7 @@ pub(super) fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
         state.falls = baked
             .hydrology()
             .map_or_else(|| Arc::from(Vec::new()), |water| water.falls.clone());
-        state.revision += 1;
+        state.standing += 1;
     }
     state.baked = Some(baked);
     state.bake = None;

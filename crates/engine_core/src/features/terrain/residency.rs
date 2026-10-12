@@ -30,7 +30,8 @@ pub(super) const JUMP: f32 = 100.0;
 pub(super) struct TerrainState {
     pub(super) entity: Entity,
     pub(super) terrain: Terrain,
-    pub(super) tiles: HashMap<TileKey, Arc<Tile>>,
+    /// Its resident tiles, and those kept in memory.
+    pub(super) store: TileStore,
     /// Generators of tiles in progress.
     pub(super) jobs: HashMap<TileKey, Generator>,
     /// File tiles requested and not yet delivered.
@@ -40,13 +41,10 @@ pub(super) struct TerrainState {
     pub(super) selection: Selection,
     /// Level-0 tiles collision wants.
     pub(super) collision: Vec<TileKey>,
-    /// Advances whenever the resident tiles, or the placement assets and
-    /// bridge material standing on them, change.
-    pub(super) revision: u64,
-    /// The largest height difference measured between each level and the
-    /// next coarser one ([`Tile::morph_error`]), what its patches morph by;
-    /// zero until measured.
-    pub(super) errors: Vec<f32>,
+    /// Advances whenever what stands on its tiles changes: the placement
+    /// assets, the bridge material, and the bridges and falls its bakes
+    /// found ([`Self::revision`] adds the tiles' own).
+    pub(super) standing: u64,
     /// The ranges the last selection used.
     pub(super) ranges: Vec<f32>,
     /// The layers tiles generate from once its bakes are done,
@@ -61,14 +59,8 @@ pub(super) struct TerrainState {
     pub(super) bridges: Arc<[Bridge]>,
     pub(super) falls: Arc<[Fall]>,
     /// The layers its tiles generate from with its edits over them,
-    /// and the baked layers they were made over; and the
-    /// resident tiles under edits since, which draw until regenerated.
+    /// and the baked layers they were made over.
     pub(super) edited: Option<(Arc<Layers>, Arc<Layers>)>,
-    pub(super) stale: HashSet<TileKey>,
-    /// Resident tiles holding their shape alone so far:
-    /// heights and holes, drawn with coarser levels' materials and collided
-    /// with while the rest loads.
-    pub(super) shaped: HashSet<TileKey>,
     /// For a terrain's surroundings, what they were drawn
     /// from.
     pub(super) around: Option<Around>,
@@ -86,25 +78,18 @@ pub(super) struct TerrainState {
     pub(super) dispatched: HashMap<TileKey, (JobId, u64, u32)>,
     /// Resident tiles without their objects standing far away,
     /// with their tiles' priorities, and the jobs placing those, each
-    /// with the tile it places on.
+    /// with the tile it places on and that tile's arrival.
     pub(super) far_wanted: HashMap<TileKey, u32>,
-    pub(super) far_jobs: HashMap<TileKey, (JobId, Arc<Tile>)>,
+    pub(super) far_jobs: HashMap<TileKey, (JobId, Arc<Tile>, u64)>,
     pub(super) bake_job: Option<JobId>,
     pub(super) bake_inline: bool,
     pub(super) worker_failures: u32,
-    /// Tiles that left whole, kept in memory to return at
-    /// once while the layers they generated from stay, and their bytes.
-    pub(super) cache: HashMap<TileKey, CachedTile>,
-    pub(super) cached_bytes: u64,
     /// Tiles generating ahead of the view on workers while nothing is
     /// missing, for memory: each one's job and the recipe's
     /// revision it generates from; and the tiles to generate so, nearest
     /// first.
     pub(super) idle: HashMap<TileKey, (JobId, u64)>,
     pub(super) ahead: Vec<TileKey>,
-    /// The most memory one tile kept took: the room each tile generated
-    /// ahead of need is given.
-    pub(super) tile_bytes: u64,
     /// Tiles generating in bands of rows on several workers;
     /// tiles their bands made whose objects a job places, each with
     /// that job, the recipe's revision, its priority and its placing; and
@@ -140,24 +125,9 @@ pub(super) struct Banding {
     pub(super) jobs: Vec<(JobId, Option<TileBand>)>,
 }
 
-/// A tile kept in memory after it left the view: its bytes
-/// there and the frame it left, or the last a place a game names wanted it.
-pub(super) struct CachedTile {
-    tile: Arc<Tile>,
-    bytes: u64,
-    pub(super) left: u64,
-}
-
 /// Bytes of one of a tile's arrays on the GPU, heights or control values:
 /// what a tile arriving uploads, once or twice.
 pub(super) const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
-
-/// Bytes `tile` holds in memory.
-fn memory_bytes(tile: &Tile) -> u64 {
-    let arrays = tile.heights().len() + tile.control().map_or(0, <[u32]>::len);
-    let holes = tile.hole_bits().map_or(0, <[u64]>::len) * 8;
-    (arrays * 4 + holes + std::mem::size_of_val(tile.placed())) as u64
-}
 
 /// What a terrain's surroundings were drawn from: the layers
 /// its tiles generate from and its settings for them; and the rectangle of
@@ -170,19 +140,17 @@ pub(super) struct Around {
 
 impl TerrainState {
     pub(super) fn new(entity: Entity, terrain: Terrain) -> Self {
-        let levels = terrain.pyramid.levels() as usize;
         Self {
             entity,
+            store: TileStore::new(terrain.pyramid),
             terrain,
-            tiles: HashMap::default(),
             jobs: HashMap::default(),
             in_flight: HashSet::default(),
             arrivals: Vec::new(),
             failed: HashMap::default(),
             selection: Selection::default(),
             collision: Vec::new(),
-            revision: 1,
-            errors: vec![0.0; levels],
+            standing: 0,
             ranges: Vec::new(),
             baked: None,
             bake: None,
@@ -191,8 +159,6 @@ impl TerrainState {
             bridges: Arc::from(Vec::new()),
             falls: Arc::from(Vec::new()),
             edited: None,
-            stale: HashSet::default(),
-            shaped: HashSet::default(),
             around: None,
             missing: Vec::new(),
             target: HashSet::default(),
@@ -204,9 +170,6 @@ impl TerrainState {
             bake_job: None,
             bake_inline: false,
             worker_failures: 0,
-            cache: HashMap::default(),
-            cached_bytes: 0,
-            tile_bytes: 0,
             idle: HashMap::default(),
             ahead: Vec::new(),
             banded: HashMap::default(),
@@ -245,13 +208,7 @@ impl TerrainState {
         };
         if materials != self.materials {
             self.materials = materials;
-            let resident: Vec<TileKey> = self.tiles.keys().copied().collect();
-            self.stale.extend(resident);
-            let kept: Vec<TileKey> = self.cache.keys().copied().collect();
-            for key in kept {
-                self.uncache(key);
-            }
-            self.revision += 1;
+            self.store.invalidate(|_| true);
         }
     }
 
@@ -263,7 +220,7 @@ impl TerrainState {
             .extend(self.dispatched.values().map(|&(id, _, _)| id));
         retired
             .jobs
-            .extend(self.far_jobs.values().map(|&(id, _)| id));
+            .extend(self.far_jobs.values().map(|&(id, _, _)| id));
         retired.jobs.extend(self.bake_job);
         retired.jobs.extend(self.idle.values().map(|&(id, _)| id));
         retired.jobs.extend(
@@ -330,25 +287,9 @@ impl TerrainState {
             let last = first + Vec2::splat(size + 4.0 * spacing);
             first.x <= high.x && first.y <= high.y && last.x >= low.x && last.y >= low.y
         };
-        let stale: Vec<TileKey> = self
-            .tiles
-            .keys()
-            .filter(|key| under(key))
-            .copied()
-            .collect();
-        self.stale.extend(stale);
         self.jobs.retain(|key, _| !under(key));
         // Tiles kept in memory under the edits are no longer the ground.
-        let gone: Vec<TileKey> = self
-            .cache
-            .keys()
-            .filter(|key| under(key))
-            .copied()
-            .collect();
-        for key in gone {
-            self.uncache(key);
-        }
-        self.revision += 1;
+        self.store.invalidate(under);
     }
 
     /// The layers its tiles generate from: `base`, its layers
@@ -384,7 +325,7 @@ impl TerrainState {
             self.terrain.surface.rules.clone(),
         );
         match job.advance(budget) {
-            Some(tile) => self.insert(tile),
+            Some(tile) => self.store.arrive(Arc::new(tile), Phase::Whole),
             None => {
                 self.jobs.insert(key, job);
                 // Its shape draws meanwhile.
@@ -401,16 +342,15 @@ impl TerrainState {
         };
         if let Some(tile) = job.advance(budget) {
             self.jobs.remove(&key);
-            self.shaped.remove(&key);
-            self.insert(tile);
+            self.store.arrive(Arc::new(tile), Phase::Whole);
         }
         true
     }
 
     /// Whether `key` still loads: not resident, resident under edits since,
-    /// or resident with its shape alone.
+    /// or resident with its shape alone or its objects still placing.
     pub(super) fn loads(&self, key: &TileKey) -> bool {
-        !self.tiles.contains_key(key) || self.stale.contains(key) || self.shaped.contains(key)
+        self.store.loads(key)
     }
 
     /// Makes `shape`, a tile's heights and holes alone, resident until the
@@ -419,15 +359,14 @@ impl TerrainState {
     /// did.
     pub(super) fn shape(&mut self, shape: Tile) -> bool {
         let key = shape.key();
-        if self.tiles.contains_key(&key) {
+        if self.store.contains(&key) {
             return false;
         }
         let pyramid = self.terrain.pyramid;
         let mut ancestor = pyramid.parent(key);
         // The GPU gives shapes their materials.
         if !self.materials {
-            self.shaped.insert(key);
-            self.insert(shape);
+            self.store.arrive(Arc::new(shape), Phase::Shape);
             return true;
         }
         loop {
@@ -435,7 +374,7 @@ impl TerrainState {
                 return false;
             };
             if self
-                .tiles
+                .store
                 .get(&at)
                 .is_some_and(|tile| tile.control().is_some())
             {
@@ -443,39 +382,8 @@ impl TerrainState {
             }
             ancestor = pyramid.parent(at);
         }
-        self.shaped.insert(key);
-        self.insert(shape);
+        self.store.arrive(Arc::new(shape), Phase::Shape);
         true
-    }
-
-    /// Makes `tile` resident, measuring how far it lies from its resident
-    /// parent and its resident children from it.
-    pub(super) fn insert(&mut self, tile: Tile) {
-        self.insert_shared(Arc::new(tile));
-    }
-
-    /// [`Self::insert`] for a tile already shared, as one kept in memory.
-    fn insert_shared(&mut self, tile: Arc<Tile>) {
-        let key = tile.key();
-        let pyramid = self.terrain.pyramid;
-        let level = usize::from(key.level);
-        if let Some(parent) = pyramid
-            .parent(key)
-            .and_then(|parent| self.tiles.get(&parent))
-        {
-            self.errors[level] = crate::math::max(self.errors[level], tile.morph_error(parent));
-        }
-        if let Some(finer) = level.checked_sub(1) {
-            for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                let child = TileKey::new(finer as u8, key.x * 2 + dx, key.z * 2 + dz);
-                if let Some(child) = self.tiles.get(&child) {
-                    self.errors[finer] =
-                        crate::math::max(self.errors[finer], child.morph_error(&tile));
-                }
-            }
-        }
-        self.tiles.insert(key, tile);
-        self.revision += 1;
     }
 
     /// Makes generated `tile` resident in place of whatever its key held:
@@ -485,16 +393,15 @@ impl TerrainState {
     /// priority `priority`, whichever way it arrived.
     pub(super) fn arrive(&mut self, tile: Tile, priority: u32, jobs: Option<&mut Jobs>) {
         let key = tile.key();
-        self.stale.remove(&key);
-        self.shaped.remove(&key);
         self.far_wanted.remove(&key);
-        if let Some((id, _)) = self.far_jobs.remove(&key)
+        if let Some((id, _, _)) = self.far_jobs.remove(&key)
             && let Some(jobs) = jobs
         {
             jobs.cancel(id);
         }
         let far = self.lacks_far(&tile);
-        self.insert(tile);
+        let phase = if far { Phase::Far } else { Phase::Whole };
+        self.store.arrive(Arc::new(tile), phase);
         if far {
             self.far_wanted.insert(key, priority);
         }
@@ -524,12 +431,14 @@ impl TerrainState {
                 )
             })
             .collect();
-        let unplaced = self.tiles.iter().filter(|&(key, tile)| {
-            let Some(&(near, far)) = levels.get(usize::from(key.level)) else {
+        let unplaced = self.store.keys().filter(|key| {
+            let (Some(&(near, far)), Some(tile)) =
+                (levels.get(usize::from(key.level)), self.store.get(key))
+            else {
                 return false;
             };
-            if self.shaped.contains(key)
-                || self.stale.contains(key)
+            if matches!(self.store.phase(key), Some(Phase::Shape | Phase::Placing))
+                || self.store.stale(key)
                 || self.placements.contains_key(key)
             {
                 return false;
@@ -544,65 +453,70 @@ impl TerrainState {
         unplaced.count() as u32
     }
 
-    /// Keeps `tile`, leaving residency at frame `frame`, in memory
-    /// where it is whole: not its shape alone, not under
-    /// edits since and not without its objects standing far away.
-    pub(super) fn cache_leaving(&mut self, key: TileKey, tile: Arc<Tile>, frame: u64) {
-        if !(self.shaped.contains(&key)
-            || self.stale.contains(&key)
-            || self.far_wanted.contains_key(&key)
-            || self.far_jobs.contains_key(&key)
-            || self.lacks_far(&tile))
+    /// Takes tile `key` out of residency at frame `frame`, keeping it in
+    /// memory where it is whole: of the generation tiles are made from now,
+    /// neither its shape alone nor waiting on its objects.
+    pub(super) fn leave(&mut self, key: &TileKey, frame: u64) {
+        if let Some(left) = self.store.leave(key)
+            && left.current
+            && !self.lacks_far(&left.tile)
         {
-            self.cache_tile(key, tile, frame);
+            self.store.keep_in_memory(left.tile, frame);
         }
     }
 
-    /// Keeps `tile` in memory as of frame `frame`.
-    pub(super) fn cache_tile(&mut self, key: TileKey, tile: Arc<Tile>, frame: u64) {
-        let bytes = memory_bytes(&tile);
-        self.uncache(key);
-        self.cached_bytes += bytes;
-        self.tile_bytes = self.tile_bytes.max(bytes);
-        self.cache.insert(
-            key,
-            CachedTile {
-                tile,
-                bytes,
-                left: frame,
-            },
+    /// Advances whenever its resident tiles, or what stands on them, change.
+    pub(super) fn revision(&self) -> u64 {
+        self.store.revision().wrapping_add(self.standing)
+    }
+
+    /// Checks the residency invariants (R1, R2 and R5 are the store's):
+    /// R3, objects placing in bands are for resident tiles in
+    /// [`Phase::Placing`]; R4, every resident tile in [`Phase::Far`] has
+    /// its objects standing far away wanted or under way, never both, and
+    /// only such tiles do, a far job placing on the tile resident now; R6,
+    /// no resident tile lacks objects its level places with nothing under
+    /// way to place them. Panics naming the first broken.
+    #[cfg(debug_assertions)]
+    pub(super) fn check(&self) {
+        self.store.check();
+        for key in self.placements.keys() {
+            assert!(
+                self.store.phase(key) == Some(Phase::Placing),
+                "R3: objects place in bands for tile {key:?} in phase {:?}",
+                self.store.phase(key)
+            );
+        }
+        for key in self.store.keys() {
+            if self.store.phase(key) == Some(Phase::Far) {
+                let (wanted, placing) = (
+                    self.far_wanted.contains_key(key),
+                    self.far_jobs.contains_key(key),
+                );
+                assert!(
+                    wanted != placing,
+                    "R4: tile {key:?} waits on its objects standing far away, wanted {wanted}, under way {placing}"
+                );
+            }
+        }
+        for key in self.far_wanted.keys().chain(self.far_jobs.keys()) {
+            assert!(
+                self.store.phase(key) == Some(Phase::Far),
+                "R4: objects standing far away are wanted for tile {key:?} in phase {:?}",
+                self.store.phase(key)
+            );
+        }
+        for (key, (_, tile, arrival)) in &self.far_jobs {
+            assert!(
+                self.store.arrival(key) == Some(*arrival) && tile.key() == *key,
+                "R4: a far job places on tile {key:?} as it was resident before"
+            );
+        }
+        let unplaced = self.unplaced_tiles();
+        assert!(
+            unplaced == 0,
+            "R6: {unplaced} resident tiles lack objects their levels place with nothing under way"
         );
-    }
-
-    /// Drops `key`'s tile from memory, if kept; it.
-    pub(super) fn uncache(&mut self, key: TileKey) -> Option<Arc<Tile>> {
-        let cached = self.cache.remove(&key)?;
-        self.cached_bytes -= cached.bytes;
-        Some(cached.tile)
-    }
-
-    /// Makes the tiles of `missing` kept in memory resident again,
-    /// most important first, within `work`'s upload
-    /// budget; how many.
-    pub(super) fn restore(&mut self, missing: &[(TileKey, u32)], work: &Work) -> u64 {
-        let mut restored = 0;
-        for &(key, _) in missing {
-            if self.cache.is_empty() {
-                break;
-            }
-            if self.tiles.contains_key(&key) || !self.cache.contains_key(&key) {
-                continue;
-            }
-            if restored > 0 && !work.uploads() {
-                break;
-            }
-            if let Some(tile) = self.uncache(key) {
-                work.upload(2 * TILE_ARRAY_BYTES);
-                self.insert_shared(tile);
-                restored += 1;
-            }
-        }
-        restored
     }
 
     /// The finest resident tile holding terrain-local `local`, and its
@@ -614,7 +528,7 @@ impl TerrainState {
         let pyramid = &self.terrain.pyramid;
         (0..pyramid.levels()).find_map(|level| {
             let key = pyramid.tile_at(level, local)?;
-            let tile = self.tiles.get(&key)?;
+            let tile = self.store.get(&key)?;
             let sample = tile.sample(local - pyramid.tile_origin(key))?;
             Some((level, sample))
         })
@@ -630,7 +544,7 @@ impl TerrainState {
         let pyramid = &self.terrain.pyramid;
         (0..pyramid.levels()).find_map(|level| {
             let key = pyramid.tile_at(level, local)?;
-            let tile = self.tiles.get(&key)?;
+            let tile = self.store.get(&key)?;
             let at = (local - pyramid.tile_origin(key)) / tile.spacing();
             let (x, z) = (at.x.round() as i32, at.y.round() as i32);
             // Tiles whose materials the GPU gives: the rules'

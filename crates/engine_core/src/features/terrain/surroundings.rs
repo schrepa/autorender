@@ -97,7 +97,7 @@ impl Terrains {
             reach: around.cutout.0.to_array(),
             tiles: state.terrain.pyramid.base_tiles()[0],
             spacing: state.terrain.pyramid.spacing(0),
-            resident_tiles: state.tiles.len() as u32,
+            resident_tiles: state.store.len() as u32,
             patches: state.selection.patches.len() as u32,
         })
     }

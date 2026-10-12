@@ -95,18 +95,17 @@ pub(super) fn generate_on_workers(
         }
         wanted
     });
-    let tiles = &state.tiles;
-    state.far_jobs.retain(|key, (id, tile)| {
-        let wanted =
-            keep.contains(key) && tiles.get(key).is_some_and(|held| Arc::ptr_eq(held, tile));
+    let store = &state.store;
+    state.far_jobs.retain(|key, &mut (id, _, arrival)| {
+        let wanted = keep.contains(key) && store.arrival(key) == Some(arrival);
         if !wanted {
-            slots.jobs.cancel(*id);
+            slots.jobs.cancel(id);
         }
         wanted
     });
     state
         .far_wanted
-        .retain(|key, _| keep.contains(key) && tiles.contains_key(key));
+        .retain(|key, _| keep.contains(key) && store.contains(key));
     state.banded.retain(|key, banding| {
         let wanted = banding.made == revision && keep.contains(key);
         if !wanted {
@@ -119,7 +118,7 @@ pub(super) fn generate_on_workers(
         wanted
     });
     state.placements.retain(|key, placements| {
-        let wanted = placements.made == revision && keep.contains(key) && tiles.contains_key(key);
+        let wanted = placements.made == revision && keep.contains(key) && store.contains(key);
         if !wanted {
             for &(id, ref objects) in &placements.jobs {
                 if objects.is_none() {
@@ -150,11 +149,13 @@ pub(super) fn generate_on_workers(
         match tile {
             Some(tile) if made == revision && target.contains(&key) && tile.key() == key => {
                 // After its shape a tile uploads its control values alone.
-                work.upload(if state.shaped.contains(&key) {
-                    TILE_ARRAY_BYTES
-                } else {
-                    2 * TILE_ARRAY_BYTES
-                });
+                work.upload(
+                    if matches!(state.store.phase(&key), Some(Phase::Shape | Phase::Placing)) {
+                        TILE_ARRAY_BYTES
+                    } else {
+                        2 * TILE_ARRAY_BYTES
+                    },
+                );
                 state.failed.remove(&key);
                 state.arrive(tile, priority, Some(&mut *slots.jobs));
                 inserted = true;
@@ -222,7 +223,6 @@ pub(super) fn generate_on_workers(
         }
         work.upload(2 * TILE_ARRAY_BYTES);
         state.banded_tiles += 1;
-        state.stale.remove(&key);
         state.failed.remove(&key);
         if rules.places(key.level, banding.placing) {
             // Its objects in bands of candidate rows across workers too,
@@ -268,8 +268,7 @@ pub(super) fn generate_on_workers(
                     jobs,
                 },
             );
-            state.shaped.insert(key);
-            state.insert(tile);
+            state.store.arrive(Arc::new(tile), Phase::Placing);
         } else {
             state.arrive(tile, banding.priority, Some(&mut *slots.jobs));
         }
@@ -316,7 +315,7 @@ pub(super) fn generate_on_workers(
             state.worker_failures += 1;
             continue;
         }
-        let Some(tile) = state.tiles.get(&key).cloned() else {
+        let Some(tile) = state.store.get(&key).cloned() else {
             continue;
         };
         if placements.made != revision || !target.contains(&key) {
@@ -360,7 +359,7 @@ pub(super) fn generate_on_workers(
     let placing: Vec<(TileKey, JobId)> = state
         .far_jobs
         .iter()
-        .map(|(&key, &(id, _))| (key, id))
+        .map(|(&key, &(id, _, _))| (key, id))
         .collect();
     for (key, id) in placing {
         if inserted && work.expired() {
@@ -369,7 +368,7 @@ pub(super) fn generate_on_workers(
         let Some(output) = slots.jobs.take(id) else {
             continue;
         };
-        let Some((_, tile)) = state.far_jobs.remove(&key) else {
+        let Some((_, tile, _)) = state.far_jobs.remove(&key) else {
             continue;
         };
         match output
@@ -378,7 +377,9 @@ pub(super) fn generate_on_workers(
         {
             Some(far) => {
                 let placed = merge_placed(tile.placed(), &far);
-                state.insert(Tile::clone(&tile).with_placed(placed, Placing::All));
+                state.store.complete(Arc::new(
+                    Tile::clone(&tile).with_placed(placed, Placing::All),
+                ));
                 inserted = true;
             }
             None => {
@@ -402,9 +403,9 @@ pub(super) fn generate_on_workers(
                 .and_then(|bytes| engine_terrain::jobs::tile_output(&bytes).ok())
                 && made == revision
                 && tile.key() == key
-                && !state.tiles.contains_key(&key)
+                && !state.store.contains(&key)
             {
-                state.cache_tile(key, Arc::new(tile), frame);
+                state.store.keep_in_memory(Arc::new(tile), frame);
             }
         } else if !missing.is_empty() || made != revision || !state.ahead.contains(&key) {
             slots.jobs.cancel(id);
@@ -448,7 +449,9 @@ pub(super) fn generate_on_workers(
             break;
         }
         if far {
-            let Some(tile) = state.tiles.get(&key).cloned() else {
+            let (Some(tile), Some(arrival)) =
+                (state.store.get(&key).cloned(), state.store.arrival(&key))
+            else {
                 continue;
             };
             let input = engine_terrain::jobs::far_input(&recipe, &tile);
@@ -457,14 +460,15 @@ pub(super) fn generate_on_workers(
                 .jobs
                 .submit_cacheable(FAR_JOB, input, priority, identity);
             state.far_wanted.remove(&key);
-            state.far_jobs.insert(key, (id, tile));
+            state.far_jobs.insert(key, (id, tile, arrival));
         } else {
             // A tile replacing one resident, as after an edit, comes whole,
             // so its objects standing far away never leave the view; one not
             // resident hands out its shape first.
-            let resident = state.tiles.contains_key(&key);
+            let resident = state.store.contains(&key);
             let placing = if rules.places(key.level, Placing::Far)
-                && (!resident || state.shaped.contains(&key))
+                && (!resident
+                    || matches!(state.store.phase(&key), Some(Phase::Shape | Phase::Placing)))
             {
                 Placing::Near
             } else {

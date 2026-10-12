@@ -248,11 +248,11 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 material.map(|(assets, material)| RenderSurfaceMaps::of(material, assets, missing)),
             );
         }
-        if render.tiles_revision != state.revision || render.id != state.render_id() {
-            let mut tiles: Vec<Arc<Tile>> = state.tiles.values().cloned().collect();
+        if render.tiles_revision != state.revision() || render.id != state.render_id() {
+            let mut tiles: Vec<Arc<Tile>> = state.store.tiles().cloned().collect();
             tiles.sort_unstable_by_key(|tile| tile.key());
             render.tiles = Arc::from(tiles);
-            render.tiles_revision = state.revision;
+            render.tiles_revision = state.revision();
         }
         render.patches.clear();
         if enabled {

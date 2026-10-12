@@ -135,7 +135,7 @@ pub(super) fn load_tiles(
                 }
                 state.failed.remove(&key);
             }
-            for (key, (id, _)) in state.far_jobs.drain() {
+            for (key, (id, _, _)) in state.far_jobs.drain() {
                 if let Some(slots) = slots.as_deref_mut() {
                     slots.jobs.cancel(id);
                 }
@@ -155,11 +155,10 @@ pub(super) fn load_tiles(
                 }
             }
             for key in std::mem::take(&mut state.far_wanted).into_keys() {
-                state.tiles.remove(&key);
-                state.revision += 1;
+                state.store.leave(&key);
             }
             // The coarsest level always draws: generate it whole at once.
-            let first = state.tiles.is_empty();
+            let first = state.store.is_empty();
             for &(key, priority) in missing {
                 let whole = first && u32::from(key.level) + 1 == pyramid.levels();
                 if !whole && *budget == 0 && !work.refill(budget) {
@@ -167,7 +166,7 @@ pub(super) fn load_tiles(
                 }
                 let rules = &state.terrain.surface.rules;
                 // Tiles not resident hand out their shape first.
-                let staged = !state.tiles.contains_key(&key);
+                let staged = !state.store.contains(&key);
                 let materials = state.materials;
                 let job = state.jobs.entry(key).or_insert_with(|| {
                     Generator::new(layers.clone(), &pyramid, key)
@@ -237,7 +236,8 @@ pub(super) fn load_tiles(
                 }
                 if state.in_flight.contains(&key)
                     || state.jobs.contains_key(&key)
-                    || (state.tiles.contains_key(&key) && !state.shaped.contains(&key))
+                    || (state.store.contains(&key)
+                        && !matches!(state.store.phase(&key), Some(Phase::Shape | Phase::Placing)))
                     || state
                         .failed
                         .get(&key)
