@@ -119,7 +119,9 @@ impl Renderer {
             load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Store,
         };
-        // The meshes, as the opaque pass's start.
+        // The meshes, as the opaque pass's start. Terrain's visibility loads
+        // their depth: it is stored, whatever passes after the opaque phase
+        // read.
         let mut draws = 0;
         {
             let timestamp_writes = begins
@@ -127,10 +129,17 @@ impl Renderer {
                 .flatten()
                 .map(|span| span.render_part(true, false));
             let (colors, count) = self.color_attachments(node, view);
+            let depth = self.depth_attachment(node).map(|mut depth| {
+                depth.depth_ops = depth.depth_ops.map(|ops| wgpu::Operations {
+                    store: wgpu::StoreOp::Store,
+                    ..ops
+                });
+                depth
+            });
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("engine/opaque-meshes"),
                 color_attachments: &colors[..count],
-                depth_stencil_attachment: self.depth_attachment(node),
+                depth_stencil_attachment: depth,
                 timestamp_writes,
                 occlusion_query_set: None,
                 multiview_mask: None,
