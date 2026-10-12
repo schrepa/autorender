@@ -18,6 +18,7 @@
  * `node web/scripts/heavy-run.mjs [--label TEXT] -- COMMAND ARGS...`, exiting
  * with the command's exit code.
  */
+// @ts-check
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

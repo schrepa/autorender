@@ -4,6 +4,7 @@
  * WebGPU, and SwiftShader with `SOFTWARE_GPU=1`; and how checks and agent
  * sessions keep the shaders it compiled from one launch to the next.
  */
+// @ts-check
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -15,7 +16,8 @@ export const launchFlags = ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_G
 export const browserChannel = process.env.BROWSER_PATH ? "explicit-executable" : process.env.BROWSER_CHANNEL ?? "chrome";
 
 /** Playwright launch options with `args` after the shared flags and `extra`
- * beside them; `executablePath` overrides `BROWSER_PATH`. */
+ * beside them; `executablePath` overrides `BROWSER_PATH`.
+ * @param {{ executablePath?: string, args?: string[], [option: string]: any }} [options] */
 export function launchOptions({ executablePath, args = [], ...extra } = {}) {
   const path = executablePath ?? process.env.BROWSER_PATH;
   return {
@@ -105,7 +107,8 @@ function claimFolder() {
  * shaders it compiled for the next launch, else (`SMOKE_SHADER_CACHE=off`,
  * every folder in use, or a launch there failing) in a temporary profile.
  * Resolves to the context, its first page, Chrome's version and `close`,
- * which frees the folder too. */
+ * which frees the folder too.
+ * @param {{ executablePath?: string, args?: string[], [option: string]: any }} [options] */
 export async function launchContext({ executablePath, args = [], ...contextOptions } = {}) {
   const { chromium } = await import("@playwright/test");
   const options = launchOptions({ executablePath, args });

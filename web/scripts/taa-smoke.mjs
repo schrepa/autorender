@@ -4,6 +4,7 @@
  * frames stray from the capture are measured; its settings are inspected,
  * changed by the paused environment control and observed in ordinary
  * frames. */
+// @ts-check
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { artifacts, commander, devUrl, launch, openPaused, waitFrames } from "./harness.mjs";
@@ -64,7 +65,7 @@ async function compare(images, tolerances = [0, 8, 24]) {
       await image.decode();
       const canvas = document.createElement("canvas");
       canvas.width = image.width; canvas.height = image.height;
-      const context = canvas.getContext("2d");
+      const context = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
       context.drawImage(image, 0, 0);
       return context.getImageData(0, 0, image.width, image.height);
     }));

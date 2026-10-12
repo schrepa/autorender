@@ -1,4 +1,5 @@
 /** Real Chrome collision contracts; fixtures are routed responses, never source edits. */
+// @ts-check
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { artifacts, commander, devUrl, sceneUrl, developmentReady, launch, openPaused, routedScene } from "./harness.mjs";
@@ -8,6 +9,7 @@ const output = await artifacts("collision-smoke");
 const cube = half_extents => ({ kind: "cuboid", half_extents });
 const collider = (shape, memberships = 1, filter = 2, sensor = false) => ({ shape, memberships, filter, sensor });
 const filter = { memberships: 2, filter: 1, sensors: "exclude" };
+/** @type {any} */
 const fixture = {
   id: "collision-fixture", revision: 1,
   camera: { position: [12, 10, 16], target: [0, 0, 0] },

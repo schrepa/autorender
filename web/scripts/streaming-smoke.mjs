@@ -10,12 +10,14 @@
  * their item; reloads remove the old items; and invalid documents are
  * refused.
  */
+// @ts-check
 import assert from "node:assert/strict";
 import { artifacts, commander, sceneUrl, launch, openPaused, routedScene } from "./harness.mjs";
 
 const url = sceneUrl();
 const output = await artifacts("streaming-smoke");
 const cube = { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] } };
+/** @type {any} */
 const fixture = {
   id: "streaming-fixture", revision: 1,
   camera: { position: [0, 60, 40], target: [20, 20, 0], fov_degrees: 60, near: 0.5, far: 20000 },
@@ -202,13 +204,13 @@ try {
   checks.push({ check: "reload", items: state.items });
 
   // Refused documents keep the current scene.
-  for (const [name, change, code, path] of [
+  for (const [name, change, code, path] of /** @type {[string, (document: any) => void, string, string][]} */ ([
     ["terrain", document => { document.streamed.push({ id: "land", terrain: fixture.entities[1].terrain }); }, "invalid_streamed", "$.streamed[6].terrain"],
     ["parent across lists", document => { document.streamed[5].parent = "player"; }, "unknown_parent", "$.streamed[5].parent"],
     ["grounded child", document => { document.streamed[3].grounded = {}; }, "invalid_grounded", "$.streamed[3].grounded"],
     ["duplicate ID", document => { document.streamed[0].id = "player"; }, "duplicate_id", "$.streamed[0].id"],
     ["target outside the item", document => { document.streamed[2].animation = { clip: "spin" }; document.streamed[3].parent = undefined; }, "unknown_reference", "$.streamed[2].animation.clip"],
-  ]) {
+  ])) {
     const broken = structuredClone(fixture);
     change(broken);
     broken.revision = scene.revision + 1;

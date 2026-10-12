@@ -1,4 +1,5 @@
 /** Virtual geometry in the Stress Lab's dense scene, in real Chrome. */
+// @ts-check
 import assert from "node:assert/strict";
 import { access, readFile, stat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -124,7 +125,7 @@ try {
   // ground retires the other meshes and rebuilds the arena, and looking back
   // rebuilds it again. Meshes that stayed keep their streamed pages, the
   // pool never overruns, and the view looks as it did.
-  const last = cameras.at(-1);
+  const last = cameras[cameras.length - 1];
   const reference = await capture(`${last.label}-reference`, false);
   await command("camera", { position: [0.5, 0.6, 0.5], target: [0.5, -10, 0.52], vertical_fov_radians: 0.3, near: 0.05, far: 5000 });
   let ground;

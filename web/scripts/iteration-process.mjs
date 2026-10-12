@@ -1,4 +1,5 @@
 /** Bounded worker I/O and ownership of the compiler process tree. */
+// @ts-check
 import { spawn } from "node:child_process";
 
 const MAX_OUTPUT = 1024 * 1024;

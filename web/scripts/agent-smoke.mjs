@@ -1,4 +1,5 @@
 /** End-to-end agent workflow using an isolated, disposable authored scene. */
+// @ts-check
 import assert from "node:assert/strict";
 import { spawn, execFile } from "node:child_process";
 import { readFile, writeFile, mkdir, rm, unlink } from "node:fs/promises";
@@ -33,8 +34,8 @@ await mkdir(scenes, { recursive: true });
 await writeFile(sourcePath, sourceBytes, { flag: "wx" });
 
 const reservation = createServer();
-await new Promise(resolve => reservation.listen(0, "127.0.0.1", resolve));
-const port = reservation.address().port;
+await new Promise(resolve => reservation.listen(0, "127.0.0.1", () => resolve(undefined)));
+const port = /** @type {import("node:net").AddressInfo} */ (reservation.address()).port;
 await new Promise(resolve => reservation.close(resolve));
 const url = new URL(process.env.AGENT_URL ?? new URL("stress.html", `${process.env.DEMO_URL ?? "http://127.0.0.1:5173"}/`).href);
 url.searchParams.set("source", `/scenes/${fixtureName}`);

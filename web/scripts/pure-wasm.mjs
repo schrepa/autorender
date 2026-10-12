@@ -7,6 +7,7 @@
  *   node web/scripts/pure-wasm.mjs JOBS.json
  * Prints one JSON object; a job whose output differs exits 3.
  */
+// @ts-check
 import "./exit-codes.mjs";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -33,6 +34,7 @@ for (const entry of entries) {
   id++;
   worker.start(id, entry.job, Buffer.from(entry.input, "base64"));
   const budget = entry.slice ?? Number.MAX_SAFE_INTEGER;
+  /** @type {Uint8Array | null} */
   let part = null;
   let output;
   do {

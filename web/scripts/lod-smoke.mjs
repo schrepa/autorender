@@ -1,4 +1,5 @@
 /** Levels of detail and impostors in the Stress Lab's metro, in real Chrome. */
+// @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "./harness.mjs";

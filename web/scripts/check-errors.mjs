@@ -5,6 +5,7 @@
  * (src/generated/errors.ts), which tsc checks; this check reads the rest:
  * where the host and the scripts make codes, the codes smokes expect, and
  * codes Rust writes into JSON. */
+// @ts-check
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 

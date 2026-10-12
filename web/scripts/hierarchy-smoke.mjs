@@ -1,4 +1,5 @@
 /** Real browser hierarchy/prefab checks. All scene changes stay in routed responses. */
+// @ts-check
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {

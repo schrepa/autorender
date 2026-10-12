@@ -9,6 +9,7 @@
  * as their own inputs (their fixtures, the protocol they speak) stays
  * beside them.
  */
+// @ts-check
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

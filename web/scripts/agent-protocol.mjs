@@ -1,4 +1,5 @@
 /** Bounded, loopback-only transport for an explicitly enabled engine dev session. */
+// @ts-check
 import { createServer } from "node:http";
 
 export const VERSION = 1;
@@ -63,6 +64,7 @@ async function readRequest(request) {
 }
 
 /** Injecting execute keeps transport and failure contracts testable without a GPU. */
+/** @param {{ session: string, url: string, build?: string, execute: (command: any) => any, onTimeout?: () => void, onClose: () => any, development?: () => any, initiallyUnavailable?: boolean, deadlineMs?: number, queueLimit?: number }} options */
 export function createBridge({ session, url, build, execute, onTimeout = () => {}, onClose, development, initiallyUnavailable = false, deadlineMs = 15_000, queueLimit = 16 }) {
   let startedAt = new Date().toISOString();
   const requestIds = new Set();
@@ -151,7 +153,7 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
   const server = createServer({ requestTimeout: 5_000, headersTimeout: 5_000, connectionsCheckingInterval: 1000 }, async (request, response) => {
     let parsed;
     try {
-      const address = server.address();
+      const address = /** @type {import("node:net").AddressInfo} */ (server.address());
       if (request.headers.host !== `127.0.0.1:${address.port}` || request.headers.origin !== undefined) {
         throw new AgentError("origin_rejected", "Use a local command-line client with the bridge's 127.0.0.1 address.");
       }

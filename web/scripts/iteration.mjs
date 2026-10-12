@@ -1,4 +1,5 @@
 /** Own the edit/build/browser loop; runtime frames never participate in watching. */
+// @ts-check
 import { randomUUID } from "node:crypto";
 import { createReadStream, readFileSync } from "node:fs";
 import { access, mkdir, lstat, realpath, rm, stat, open } from "node:fs/promises";

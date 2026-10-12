@@ -1,4 +1,5 @@
 /** Browser-backed session lifetime checks; no game or GPU rendering is required. */
+// @ts-check
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -24,14 +25,14 @@ const fixture = createServer((_, response) => {
     };
   </script>`);
 });
-await new Promise(resolve => fixture.listen(0, "127.0.0.1", resolve));
-const url = `http://127.0.0.1:${fixture.address().port}`;
+await new Promise(resolve => fixture.listen(0, "127.0.0.1", () => resolve(undefined)));
+const url = `http://127.0.0.1:${/** @type {import("node:net").AddressInfo} */ (fixture.address()).port}`;
 
 try {
   for (const operation of ["replace", "navigate"]) {
     const reserve = createServer();
-    await new Promise(resolve => reserve.listen(0, "127.0.0.1", resolve));
-    const port = reserve.address().port;
+    await new Promise(resolve => reserve.listen(0, "127.0.0.1", () => resolve(undefined)));
+    const port = /** @type {import("node:net").AddressInfo} */ (reserve.address()).port;
     await new Promise(resolve => reserve.close(resolve));
     const child = spawn(process.execPath, [script, "serve", "--url", url, "--port", String(port)], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";

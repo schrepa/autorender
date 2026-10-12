@@ -1,6 +1,7 @@
 /** The web host's layers: `src/engine/` is the engine's browser host and
  * imports only itself, `src/generated/`, the engine's worker bindings and
  * packages, never an app such as `src/stress/`. */
+// @ts-check
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";

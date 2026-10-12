@@ -1,4 +1,5 @@
 /** Real Chrome interpolation contracts. The disposable scene exists only in routed responses. */
+// @ts-check
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { artifacts, commander, sceneUrl, differentPixels, launch, near, openPaused, protocol, routedScene } from "./harness.mjs";
@@ -100,6 +101,7 @@ try {
   await scene.route();
   assert.equal((await openPaused(page, url, { timeout: 30_000 })).observation.tick, "0");
   assert.equal(bindingUrls.size, 1, "The ordinary-frame check must use the exact loaded game bindings.");
+  /** @type {any} */
   const ordinaryFrames = await page.evaluate(async ({ moduleUrl, fixture, protocolVersion }) => {
     const { StressGame, SceneFileSet } = await import(moduleUrl);
     const canvas = document.createElement("canvas");

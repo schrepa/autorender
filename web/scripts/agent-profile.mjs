@@ -1,4 +1,5 @@
 /** Optional tooling only: one bounded capture, artifacts instead of huge replies. */
+// @ts-check
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";

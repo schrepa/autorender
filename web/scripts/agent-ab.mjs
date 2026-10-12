@@ -6,6 +6,7 @@
  * ran once unmeasured. The report gives
  * each variant's median of window medians, B against A, and the noise the
  * repeated windows of one variant show (A against A, B against B). */
+// @ts-check
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { AgentError } from "./agent-protocol.mjs";
@@ -115,7 +116,7 @@ export async function runAb(session, values) {
     const of = variant => median(windows.filter(window => window.variant === variant).map(window => window.draws_ms[label]).filter(value => typeof value === "number"));
     const [a, b] = [of("a"), of("b")];
     return { label, a, b, b_minus_a: a !== null && b !== null ? b - a : null };
-  }).filter(draw => draw.b_minus_a !== null).sort((x, y) => Math.abs(y.b_minus_a) - Math.abs(x.b_minus_a)).slice(0, 20);
+  }).filter(draw => draw.b_minus_a !== null).sort((x, y) => Math.abs(/** @type {number} */ (y.b_minus_a)) - Math.abs(/** @type {number} */ (x.b_minus_a))).slice(0, 20);
   return {
     order: order.join(""), mode, warmup, samples, profile: profile ? { duration_ms: durationMs } : null,
     variants, compared, draws, windows,

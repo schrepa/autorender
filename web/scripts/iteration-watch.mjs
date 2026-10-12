@@ -3,6 +3,7 @@
  * Content hashes deliberately do not trust timestamps, editor rename behavior,
  * or platform-specific recursive filesystem notifications.
  */
+// @ts-check
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, opendir } from "node:fs/promises";
@@ -68,7 +69,7 @@ export async function fingerprintSources(root, options = {}) {
   const maxFiles = limit(options.maxFiles ?? MAX_FILES, MAX_FILES, "maxFiles");
   const maxBytes = limit(options.maxBytes ?? MAX_BYTES, MAX_BYTES, "maxBytes");
   root = resolve(root);
-  const rootStat = await statPath(root, "");
+  const rootStat = /** @type {import("node:fs").BigIntStats} */ (await statPath(root, ""));
   if (!rootStat.isDirectory()) throw new SourceWatchError("source_type", "Expected a workspace directory.", "$");
   const files = [];
   let declaredBytes = 0;
@@ -104,10 +105,10 @@ export async function fingerprintSources(root, options = {}) {
     if (!stat.isDirectory()) throw new SourceWatchError("source_type", "Expected a build input directory.", tree);
     const pending = [{ path: tree, depth: 1 }];
     while (pending.length) {
-      const current = pending.pop();
+      const current = /** @type {{ path: string, depth: number }} */ (pending.pop());
       // Recheck queued directories so an editor cannot silently replace one
       // with a symlink between discovery and traversal.
-      const directoryStat = await statPath(root, current.path);
+      const directoryStat = /** @type {import("node:fs").BigIntStats} */ (await statPath(root, current.path));
       if (!directoryStat.isDirectory()) throw changed(current.path);
       let directory;
       try { directory = await opendir(join(root, current.path)); }
@@ -116,7 +117,7 @@ export async function fingerprintSources(root, options = {}) {
         if (IGNORED.has(entry.name)) continue;
         const path = `${current.path}/${entry.name}`;
         if (++entries > MAX_ENTRIES) throw new SourceWatchError("source_budget", `Build input traversal exceeds ${MAX_ENTRIES} entries.`, path);
-        const child = await statPath(root, path);
+        const child = /** @type {import("node:fs").BigIntStats} */ (await statPath(root, path));
         if (child.isDirectory()) {
           if (current.depth >= MAX_DEPTH) throw new SourceWatchError("source_budget", `Build input traversal exceeds ${MAX_DEPTH} levels.`, path);
           pending.push({ path, depth: current.depth + 1 });
@@ -177,6 +178,7 @@ export async function fingerprintSources(root, options = {}) {
  * notifies when source is unchanged. Ordinary concurrent-edit races retry
  * silently. Stop/abort prevents all later callbacks.
  */
+/** @param {{ root: string, onChange: (snapshot: any) => void, onError?: (error: any) => void, intervalMs?: number, debounceMs?: number, signal?: AbortSignal }} options */
 export function watchSources({ root, onChange, onError = () => {}, intervalMs = 500, debounceMs = 200, signal }) {
   if (typeof onChange !== "function" || typeof onError !== "function") throw new TypeError("Source callbacks must be functions.");
   if (!Number.isFinite(intervalMs) || intervalMs < 1 || intervalMs > 60_000) throw new TypeError("intervalMs must be between 1 and 60000.");

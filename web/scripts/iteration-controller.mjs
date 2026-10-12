@@ -2,6 +2,7 @@
  * Only the newest requested source fingerprint is retained while work runs.
  * Browser/process/filesystem policy lives in the supervisor adapters.
  */
+// @ts-check
 import { randomUUID } from "node:crypto";
 
 const MAX_RESULT_BYTES = 512 * 1024;
@@ -52,6 +53,7 @@ export class IterationController {
   #latest;
   #abort;
 
+  /** @param {{ build: any, prepare: any, promote: any, discard: any, fingerprint: any, onEvent?: (status: any) => void, signal?: AbortSignal }} operations */
   constructor({ build, prepare, promote, discard, fingerprint, onEvent = () => {}, signal }) {
     for (const callback of [build, prepare, promote, discard, fingerprint, onEvent]) {
       if (typeof callback !== "function") throw new TypeError("Iteration operations must be functions.");

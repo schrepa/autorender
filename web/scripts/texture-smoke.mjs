@@ -1,4 +1,5 @@
 /** Texture lifecycle integration against a development host; fixtures stay in routed responses. */
+// @ts-check
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { artifacts, commander, gardenScene, sceneUrl, differentPixels, launch, openPaused, residency, routedScene } from "./harness.mjs";
@@ -74,7 +75,7 @@ try {
   assert.deepEqual(input.held, [0], JSON.stringify(input));
   await command("input", { forward: 0 });
   const playerBefore = await command("inspect", { entity: player, component: "Transform" });
-  const progressBefore = await page.locator("canvas").evaluate(canvas => JSON.parse(canvas.dataset.progress));
+  const progressBefore = await page.locator("canvas").evaluate(canvas => JSON.parse(/** @type {string} */ (canvas.dataset.progress)));
   const beforeFailure = await command("assets");
   const invalidResults = [];
   for (const kind of ["base64"]) {
@@ -92,7 +93,7 @@ try {
     const unchanged = await command("inspect", { entity: player, component: "Transform" });
     assert.deepEqual(unchanged.result.entity, playerBefore.result.entity);
     assert.deepEqual(residency(await command("assets")), residency(beforeFailure));
-    assert.deepEqual(await page.locator("canvas").evaluate(canvas => JSON.parse(canvas.dataset.progress)), progressBefore);
+    assert.deepEqual(await page.locator("canvas").evaluate(canvas => JSON.parse(/** @type {string} */ (canvas.dataset.progress))), progressBefore);
   }
 
   // Establish a reset baseline so screenshot differences come from edited pixels.

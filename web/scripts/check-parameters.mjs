@@ -1,6 +1,7 @@
 /** Every page parameter the web host and the Stress Lab read is one they
  * declare with what it does (src/engine/parameters.ts, src/stress/
  * parameters.ts), so agents find them all in describe's PageParameters. */
+// @ts-check
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -15,7 +16,7 @@ const stress = declared(await readFile(`${web}src/stress/parameters.ts`, "utf8")
 // A parameter read by name, or a host switch named in its table.
 const read = /(?:URLSearchParams\([^)]*\)|params|searchParams)\.(?:get|has)\(\s*["'](\w+)["']|^\s*\["(\w+)", \["/gm;
 const unknown = [];
-for (const [folder, names] of [["src/engine", host], ["src/stress", new Set([...host, ...stress])]]) {
+for (const [folder, names] of /** @type {[string, Set<string>][]} */ ([["src/engine", host], ["src/stress", new Set([...host, ...stress])]])) {
   for (const file of (await readdir(`${web}${folder}`)).filter(name => name.endsWith(".ts"))) {
     for (const match of (await readFile(`${web}${folder}/${file}`, "utf8")).matchAll(read)) {
       const name = match[1] ?? match[2];

@@ -7,6 +7,7 @@
  * break their types answer with the field at fault, and the catalog of
  * error codes describes every code.
  */
+// @ts-check
 import assert from "node:assert/strict";
 import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
 

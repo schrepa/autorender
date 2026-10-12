@@ -20,6 +20,7 @@
  * frame statistics, its digests, the views that did not settle, and why a
  * run stopped where one did.
  */
+// @ts-check
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -126,6 +127,7 @@ async function shoot(capture, file) {
 
 /** One run: the cell on one side, its files into `folder`. */
 async function run(entry, folder) {
+  /** @type {{ cell: any, side: any, index: any, shots: Record<string, any>, digests: Record<string, any>, unsettled: string[], error: string | null }} */
   const result = { cell: entry.cell, side: entry.side, index: entry.index, shots: {}, digests: {}, unsettled: [], error: null };
   await mkdir(folder, { recursive: true });
   await page.unrouteAll({ behavior: "ignoreErrors" });

@@ -9,6 +9,7 @@
  * out no jobs. Screenshots of both views are kept to compare by eye: the
  * sky, wind and water move with time, which the sessions spend differently.
  */
+// @ts-check
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";

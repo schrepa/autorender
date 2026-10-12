@@ -7,6 +7,7 @@
  * running page draws the far ball coarser than the near one, and the clip at
  * its end draws the ribbon bent where its start draws it straight.
  */
+// @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
@@ -34,6 +35,7 @@ function ball(rings, segments) {
 }
 // Rows of two vertices at heights 0, 1 and 2: the lowest moves with the
 // root joint, the highest with the tip joint, the middle with both.
+/** @type {[number, number[]][]} */
 const rows = [[0, [1, 0, 0, 0]], [1, [0.5, 0.5, 0, 0]], [2, [0, 1, 0, 0]]];
 const vertices = rows.flatMap(([y, weights]) => [-0.3, 0.3].map(x => ({
   position: [x, y, 0], normal: [0, 0, 1], uv: [x + 0.3, y / 2], joints: [0, 1, 0, 0], weights,

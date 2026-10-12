@@ -5,6 +5,7 @@
  * Importing this module is enough; the harness does. Node prints the error
  * as always.
  */
+// @ts-check
 let failedAssertion = false;
-process.on("uncaughtExceptionMonitor", error => { failedAssertion = error?.code === "ERR_ASSERTION"; });
+process.on("uncaughtExceptionMonitor", error => { failedAssertion = /** @type {any} */ (error)?.code === "ERR_ASSERTION"; });
 process.on("exit", code => { if (code === 1 && failedAssertion) process.exitCode = 3; });

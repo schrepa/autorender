@@ -9,6 +9,7 @@
  * their plugins and needs come from the engine's one list of them
  * (protocol.json's `features`).
  */
+// @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { commander, developmentReady, launch, protocol, routedScene, sceneUrl } from "./harness.mjs";

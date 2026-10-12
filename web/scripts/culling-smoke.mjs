@@ -1,4 +1,5 @@
 /** Culling and GPU residency checks; authored fixtures exist only in routed responses. */
+// @ts-check
 import assert from "node:assert/strict";
 import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
 
@@ -7,6 +8,7 @@ const output = await artifacts("culling-smoke");
 const camera = { position: [0, 0.6, 8], target: [0, 0.6, 0], vertical_fov_radians: Math.PI / 3, near: 1, far: 50 };
 // Shadows start off, so residency first follows visibility alone: shadow maps
 // draw off-screen casters too.
+/** @type {any} */
 const fixture = {
   id: "culling-fixture", revision: 1,
   camera: { position: camera.position, target: camera.target, fov_degrees: 60, near: 1, far: 50 },
@@ -103,7 +105,7 @@ try {
   assert.equal(inside.visible, 1, "A bound containing the camera remains visible even if back-face culling hides its surfaces.");
   cases.push(inside);
 
-  const aspect = await page.locator("canvas").evaluate(canvas => canvas.width / canvas.height);
+  const aspect = await page.locator("canvas").evaluate(/** @param {HTMLCanvasElement} canvas */ canvas => canvas.width / canvas.height);
   const borderX = 8 * Math.tan(camera.vertical_fov_radians / 2) * aspect;
   const complex = structuredClone(fixture);
   complex.prefabs = [{ id: "tilted", entities: [{ id: "child", mesh: "box", material: "textured", transform: { rotation_degrees: [17, 35, 26], scale: [0.8, 1.1, 0.6] } }] }];

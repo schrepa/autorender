@@ -4,6 +4,7 @@
  * moving a point rebuilds them, an invalid curve is refused with the scene
  * kept, and removing the field removes the chunks.
  */
+// @ts-check
 import assert from "node:assert/strict";
 import { artifacts, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
 
@@ -12,6 +13,7 @@ const output = await artifacts("spline-smoke");
 const curve = [[-12, 0.5, 4], [-4, 0.5, -2], [4, 0.5, 3], [12, 0.5, -3]];
 /** Meters along the straight lines between `points`, which the curve through them exceeds a little. */
 const polyline = points => points.slice(1).reduce((sum, point, index) => sum + Math.hypot(...point.map((value, axis) => value - points[index][axis])), 0);
+/** @type {any} */
 const fixture = {
   id: "spline-fixture", revision: 1,
   camera: { position: [0, 14, 22], target: [0, 0, 0], fov_degrees: 55, near: 0.1, far: 500 },
