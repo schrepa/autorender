@@ -244,7 +244,7 @@ impl GpuInputs {
             sequence: self.sequence,
             shift: self.shift,
             shift_sequence: self.shift_sequence,
-            current: &hierarchy.locals,
+            current: hierarchy.locals(),
             current_stamps: &self.current_stamps,
             previous: &self.previous,
             previous_stamps: &self.previous_stamps,
@@ -378,14 +378,14 @@ impl InterpolationState {
         if !self.gathers_gpu() {
             return None;
         }
-        let version = (hierarchy.topology_revision, hierarchy.revision);
+        let version = hierarchy.stamp();
         let stamped = if self.gpu.current_version == version {
             self.gpu.stamped[0]
         } else {
-            hierarchy.locals.len()
+            hierarchy.locals().len()
         };
         Some(GpuCurrent {
-            poses: &hierarchy.locals,
+            poses: hierarchy.locals(),
             version,
             stamped,
         })
@@ -395,16 +395,16 @@ impl InterpolationState {
     pub(super) fn gathered_topology(&self, hierarchy: &HierarchyScratch) -> bool {
         self.gpu
             .gathered
-            .is_some_and(|(topology, ..)| topology == hierarchy.topology_revision)
-            && self.gpu.info.len() == hierarchy.links.len()
+            .is_some_and(|(topology, ..)| topology == hierarchy.topology_revision())
+            && self.gpu.info.len() == hierarchy.links().len()
     }
 
     /// Whether the last gather still describes the current inputs.
     pub(super) fn gathered_current(&self, hierarchy: &HierarchyScratch) -> bool {
         self.gpu.gathered
             == Some((
-                hierarchy.topology_revision,
-                hierarchy.revision,
+                hierarchy.topology_revision(),
+                hierarchy.revision(),
                 self.revision,
             ))
     }
@@ -418,8 +418,8 @@ impl InterpolationState {
         self.gpu.alpha = alpha;
         self.gpu.hold = false;
         let key = (
-            hierarchy.topology_revision,
-            hierarchy.revision,
+            hierarchy.topology_revision(),
+            hierarchy.revision(),
             self.revision,
         );
         if self.gpu.gathered == Some(key) {
@@ -427,9 +427,9 @@ impl InterpolationState {
             return;
         }
         let _profile = engine_profile::span("interpolation", "gather_gpu_inputs");
-        let changes = hierarchy.changes.take();
+        let changes = hierarchy.take_changes();
         self.gather_nodes(hierarchy, key, changes.as_deref());
-        hierarchy.changes.restore(changes);
+        hierarchy.restore_changes(changes);
     }
 
     fn gather_nodes(
@@ -438,11 +438,11 @@ impl InterpolationState {
         key: (u64, u64, u64),
         changes: Option<&[u32]>,
     ) {
-        let nodes = hierarchy.links.len();
+        let nodes = hierarchy.links().len();
         let reindexed = self
             .gpu
             .gathered
-            .is_none_or(|(topology, ..)| topology != hierarchy.topology_revision)
+            .is_none_or(|(topology, ..)| topology != hierarchy.topology_revision())
             || self.gpu.info.len() != nodes;
         if reindexed {
             self.gpu.reindex(nodes);
@@ -506,7 +506,7 @@ impl InterpolationState {
         engine_profile::counter("interpolation.gpu_visited", self.gpu.visited as f64);
         let gpu = &mut self.gpu;
         gpu.last_epoch = Some(epoch);
-        gpu.last_revision = hierarchy.revision;
+        gpu.last_revision = hierarchy.revision();
         gpu.stamped = changed;
         // Active parents by depth: every level composes after its ancestors.
         gpu.depth_counts.clear();
@@ -643,7 +643,7 @@ impl Walk<'_> {
             Some(hint as usize)
         } else {
             self.indices
-                .get(&self.hierarchy.sources[index].entity)
+                .get(&self.hierarchy.sources()[index].entity)
                 .copied()
         };
         let (own_snap, blends) = match record {
@@ -755,7 +755,7 @@ fn walk(
     pass: Pass,
     sparse: Option<&[u32]>,
 ) -> [usize; 4] {
-    let nodes = hierarchy.links.len();
+    let nodes = hierarchy.links().len();
     let GpuInputs {
         current_stamps,
         previous,
@@ -787,10 +787,10 @@ fn walk(
     let mut gather = Walk {
         pass,
         hierarchy,
-        links: &hierarchy.links[..nodes],
-        locals: &hierarchy.locals[..nodes],
-        local_revisions: &hierarchy.local_revisions[..nodes],
-        history_hints: &hierarchy.history_hints[..nodes],
+        links: &hierarchy.links()[..nodes],
+        locals: &hierarchy.locals()[..nodes],
+        local_revisions: &hierarchy.local_revisions()[..nodes],
+        history_hints: &hierarchy.history_hints()[..nodes],
         history_nodes: records.history_nodes,
         intervals: &records.intervals[..record_count],
         record_previous: &records.previous[..record_count],
@@ -827,7 +827,7 @@ fn walk(
         *queue_generation = 1;
     }
     let generation = *queue_generation;
-    let links = &hierarchy.links[..nodes];
+    let links = &hierarchy.links()[..nodes];
     let queued = &mut queued[..nodes];
     // Each node is queued once, in the bucket of its depth: parents always
     // precede their children, which sit one level deeper.
@@ -900,10 +900,10 @@ fn walk_all(
 ) -> [usize; 4] {
     // A later sparse gather needs the complete active set; beyond its bound
     // none can be sparse, so stop listing.
-    let nodes = hierarchy.links.len();
+    let nodes = hierarchy.links().len();
     let limit = nodes / SPARSE_SHARE;
     let mut listed = true;
-    for &index in &hierarchy.order {
+    for &index in hierarchy.order() {
         let (_, after) = gather.node(index);
         if after & ACTIVE != 0 {
             if next_active.len() < limit {

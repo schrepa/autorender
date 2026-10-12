@@ -106,7 +106,7 @@ impl InterpolationState {
         alpha: f32,
     ) -> usize {
         let preparation = engine_profile::span("interpolation", "prepare_blended_branches");
-        let nodes = hierarchy.links.len();
+        let nodes = hierarchy.links().len();
         let histories = self.history.len();
         // This policy limits full-order visits to twice the opt-in count.
         let dense = histories >= nodes.div_ceil(2);
@@ -181,21 +181,21 @@ impl InterpolationState {
             let entity = self.history[record].entity;
             let cached = self.history_nodes[record] as usize;
             let index = if hierarchy
-                .sources
+                .sources()
                 .get(cached)
                 .is_some_and(|source| source.entity == entity)
             {
                 index_reused += 1;
                 Some(cached)
             } else {
-                let next = hierarchy.indices.get(&entity).copied();
+                let next = hierarchy.node_index(entity);
                 self.history_nodes[record] = next.map_or(u32::MAX, |index| index as u32);
                 next
             };
             let Some(index) = index else {
                 continue;
             };
-            let pose = &hierarchy.locals[index];
+            let pose = &hierarchy.locals()[index];
             let current = &Transform::from_pose(pose);
             let interval = &self.intervals[record];
             debug_assert_eq!(
@@ -205,7 +205,7 @@ impl InterpolationState {
             );
             let blends = interval.blends(self.epoch, self.active);
             let snap_branch = !blends;
-            let local = if blends && hierarchy.links[index].has_global() {
+            let local = if blends && hierarchy.links()[index].has_global() {
                 let previous = Transform::from_pose(previous_pose(
                     &self.previous[record],
                     interval,
@@ -247,12 +247,12 @@ impl InterpolationState {
         // eligible keep stale finite poses whose results are never consumed.
         let mut previous = [Transform::default(); 4];
         let mut current = [Transform::default(); 4];
-        for indices in hierarchy.order.chunks(4) {
+        for indices in hierarchy.order().chunks(4) {
             let mut eligible = [false; 4];
             let mut own_snap = [false; 4];
             for (lane, &index) in indices.iter().enumerate() {
                 self.display[index].reset();
-                let hint = hierarchy.history_hints[index];
+                let hint = hierarchy.history_hints()[index];
                 if hint == u32::MAX {
                     continue;
                 }
@@ -260,14 +260,14 @@ impl InterpolationState {
                     index_reused += 1;
                     hint as usize
                 } else if let Some(record) =
-                    self.resolve_record(index, hierarchy.sources[index].entity)
+                    self.resolve_record(index, hierarchy.sources()[index].entity)
                 {
                     record
                 } else {
                     continue;
                 };
-                let link = &hierarchy.links[index];
-                let pose = &hierarchy.locals[index];
+                let link = &hierarchy.links()[index];
+                let pose = &hierarchy.locals()[index];
                 let interval = &self.intervals[record];
                 debug_assert_eq!(
                     interval.scales_compatible,
@@ -294,7 +294,7 @@ impl InterpolationState {
             // A parent's display value/reset/fallback must be committed before
             // any child consumes it, including dependencies inside this block.
             for (lane, &index) in indices.iter().enumerate() {
-                let link = &hierarchy.links[index];
+                let link = &hierarchy.links()[index];
                 if !link.topology_valid() {
                     self.written_presented += usize::from(self.commit(index, None));
                     continue;
@@ -342,14 +342,14 @@ impl InterpolationState {
                     covered = true;
                     break;
                 }
-                ancestor = hierarchy.links[index].parent();
+                ancestor = hierarchy.links()[index].parent();
             }
             if covered {
                 continue;
             }
             self.display_work.push(root);
             while let Some(index) = self.display_work.pop() {
-                let parent_display = hierarchy.links[index]
+                let parent_display = hierarchy.links()[index]
                     .parent()
                     .and_then(|parent| self.inherited(parent));
                 let snap = self.display[index].snap_branch
@@ -378,7 +378,7 @@ impl InterpolationState {
         parent_display: Option<Inherited>,
         local: Option<Mat4>,
     ) {
-        let link = &hierarchy.links[index];
+        let link = &hierarchy.links()[index];
         let parent_changed = parent_display.is_some_and(|parent| parent.changed);
         let parent_global = if let Some(display) = parent_display {
             display.global()
@@ -392,7 +392,7 @@ impl InterpolationState {
         let global = if link.has_global() && !fallback && (local.is_some() || parent_changed) {
             let local = match local {
                 Some(local) => local,
-                None => Transform::from_pose(&hierarchy.locals[index]).matrix(),
+                None => Transform::from_pose(&hierarchy.locals()[index]).matrix(),
             };
             let matrix = parent_global.unwrap_or(Mat4::IDENTITY) * local;
             if valid_global_matrix(matrix) {

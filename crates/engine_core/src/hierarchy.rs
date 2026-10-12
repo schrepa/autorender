@@ -544,23 +544,23 @@ pub struct GlobalTransforms {
     // Each source's Entity, the only source key the change scan reads, in a
     // dense copy so matching rows streams 8 bytes per node.
     entities: Vec<Entity>,
-    pub(crate) sources: Vec<Source>,
+    sources: Vec<Source>,
     // The sole cached copy of each admitted local pose, in upload layout: GPU
     // presentation uploads current poses from it directly.
-    pub(crate) locals: Vec<NodePose>,
+    locals: Vec<NodePose>,
     // Boundary revision (`Self::revision`) at which each local last changed.
-    pub(crate) local_revisions: Vec<u64>,
+    local_revisions: Vec<u64>,
     // Interpolation record of each node (u32::MAX: none), paired with the
     // record's node index and rewritten at every topology rebuild.
-    pub(crate) history_hints: Vec<u32>,
-    pub(crate) links: Vec<Link>,
+    history_hints: Vec<u32>,
+    links: Vec<Link>,
     globals: Vec<Mat4>,
     // Admission bounds of each stored global with children, checked by its
     // leaves instead of composing theirs.
     certificates: Vec<Certificate>,
     revisions: Vec<u64>,
-    pub(crate) indices: EntityIndices,
-    pub(crate) order: Vec<usize>,
+    indices: EntityIndices,
+    order: Vec<usize>,
     // Advances whenever any node's validity may have changed: a node turned
     // valid or invalid, or topology rebuilt.
     validity_epoch: u64,
@@ -568,16 +568,16 @@ pub struct GlobalTransforms {
     dirty: Dirty,
     // Nodes whose local or output revision changed since GPU presentation
     // last gathered: its gather visits only these.
-    pub(crate) changes: ChangeLog,
+    changes: ChangeLog,
     last_scan: Option<Tick>,
     incomplete: bool,
     // Transformed entities admitted ([`TransformNodeLimit`]).
-    pub(crate) limit: usize,
+    limit: usize,
     report: HierarchyReport,
-    pub(crate) topology_revision: u64,
+    topology_revision: u64,
     // Advances whenever a boundary observed a changed source, rebuilt topology
     // or evaluated nodes: consumers of local/world state can skip otherwise.
-    pub(crate) revision: u64,
+    revision: u64,
 }
 
 pub(crate) type HierarchyScratch = GlobalTransforms;
@@ -1046,6 +1046,89 @@ impl GlobalTransforms {
     /// Advances whenever a node's validity may have changed.
     pub(crate) fn validity_epoch(&self) -> u64 {
         self.validity_epoch
+    }
+
+    // Views of the nodes, by admitted index: what presentation, interpolation
+    // and rendering read, and nothing they could write.
+
+    /// Each node's source: its entity, parent and admission stamps.
+    #[inline]
+    pub(crate) fn sources(&self) -> &[Source] {
+        &self.sources
+    }
+
+    /// Each node's cached local pose, in upload layout.
+    #[inline]
+    pub(crate) fn locals(&self) -> &[NodePose] {
+        &self.locals
+    }
+
+    /// The boundary revision at which each node's local last changed.
+    #[inline]
+    pub(crate) fn local_revisions(&self) -> &[u64] {
+        &self.local_revisions
+    }
+
+    /// Each node's interpolation record (`u32::MAX`: none).
+    #[inline]
+    pub(crate) fn history_hints(&self) -> &[u32] {
+        &self.history_hints
+    }
+
+    /// Each node's topology: its parent, depth, children and global's kind.
+    #[inline]
+    pub(crate) fn links(&self) -> &[Link] {
+        &self.links
+    }
+
+    /// The nodes, parents first.
+    #[inline]
+    pub(crate) fn order(&self) -> &[usize] {
+        &self.order
+    }
+
+    /// The admitted index of `entity`.
+    #[inline]
+    pub(crate) fn node_index(&self, entity: Entity) -> Option<usize> {
+        self.indices.get(&entity).copied()
+    }
+
+    /// The most transformed entities admitted ([`TransformNodeLimit`]).
+    #[inline]
+    pub(crate) fn node_limit(&self) -> usize {
+        self.limit
+    }
+
+    /// Advances whenever topology rebuilds: node indices may have moved.
+    #[inline]
+    pub(crate) fn topology_revision(&self) -> u64 {
+        self.topology_revision
+    }
+
+    /// Advances whenever a boundary observed a changed source, rebuilt
+    /// topology or evaluated nodes: consumers of local and world state may
+    /// skip their work otherwise.
+    #[inline]
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Both revisions, as consumers' caches key what they derived.
+    #[inline]
+    pub(crate) fn stamp(&self) -> (u64, u64) {
+        (self.topology_revision, self.revision)
+    }
+
+    /// Takes the nodes changed since GPU presentation last gathered (`None`:
+    /// too many to list), for [`Self::restore_changes`] after the gather.
+    pub(crate) fn take_changes(&mut self) -> Option<Vec<u32>> {
+        self.changes.take()
+    }
+
+    /// Gives back the change log [`Self::take_changes`] took, emptied for
+    /// the next boundary.
+    pub(crate) fn restore_changes(&mut self, nodes: Option<Vec<u32>>) {
+        self.changes.restore(nodes);
     }
 
     pub fn len(&self) -> usize {

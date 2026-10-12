@@ -468,7 +468,7 @@ impl PresentedTransforms {
     }
 
     fn prepare_membership(&mut self, hierarchy: &HierarchyScratch) {
-        if self.prepared_topology == hierarchy.topology_revision
+        if self.prepared_topology == hierarchy.topology_revision()
             && self.prepared_topology != u64::MAX
         {
             return;
@@ -476,13 +476,13 @@ impl PresentedTransforms {
         self.presented_entities.clear();
         self.presented_map.clear();
         self.presented_entities
-            .reserve_exact(hierarchy.sources.len());
-        self.presented_map.reserve(hierarchy.sources.len());
-        for (index, source) in hierarchy.sources.iter().enumerate() {
+            .reserve_exact(hierarchy.sources().len());
+        self.presented_map.reserve(hierarchy.sources().len());
+        for (index, source) in hierarchy.sources().iter().enumerate() {
             self.presented_entities.push(source.entity);
             self.presented_map.insert(source.entity, index);
         }
-        self.resize_display(hierarchy.links.len());
+        self.resize_display(hierarchy.links().len());
         // A different source order invalidates sparse traversal flags, never
         // silently reuses one entity's scratch as another entity's ancestry.
         for display in &mut self.display {
@@ -490,7 +490,7 @@ impl PresentedTransforms {
         }
         self.touched_display.clear();
         self.dense_display = false;
-        self.prepared_topology = hierarchy.topology_revision;
+        self.prepared_topology = hierarchy.topology_revision();
     }
 
     /// Record of `node` whose hint was stale: resolves the full Entity and
@@ -527,7 +527,11 @@ impl PresentedTransforms {
     /// clears node hints for the rebuild to re-establish.
     pub(crate) fn reconcile(&mut self, world: &World, hierarchy: &HierarchyScratch) {
         self.revision += 1;
-        let count = self.history_query.iter(world).len().min(hierarchy.limit);
+        let count = self
+            .history_query
+            .iter(world)
+            .len()
+            .min(hierarchy.node_limit());
         if count == 0 {
             self.history.clear();
             self.intervals.clear();
@@ -547,7 +551,7 @@ impl PresentedTransforms {
         for (position, input) in self
             .history_query
             .iter(world)
-            .take(hierarchy.limit)
+            .take(hierarchy.node_limit())
             .enumerate()
         {
             if !rebuilding
@@ -997,12 +1001,12 @@ fn observe_record(
     let cached = Some(node as usize)
         .filter(|&index| {
             hierarchy
-                .sources
+                .sources()
                 .get(index)
                 .is_some_and(|source| source.entity == history.entity)
         })
-        .or_else(|| hierarchy.indices.get(&history.entity).copied())
-        .map(|index| hierarchy.locals[index]);
+        .or_else(|| hierarchy.node_index(history.entity))
+        .map(|index| hierarchy.locals()[index]);
     let current = transform.to_pose();
     if let Some(local) = &cached {
         observe_local(
@@ -1127,7 +1131,7 @@ pub(crate) fn begin_tick(world: &mut World) {
         // previous poses when no boundary changed locals in between.
         let hierarchy = world
             .get_resource::<HierarchyScratch>()
-            .map(|hierarchy| hierarchy.revision);
+            .map(|hierarchy| hierarchy.revision());
         state.gpu.begin_tick(hierarchy);
         state.counters(&mut world.resource_mut::<PresentationState>());
     });

@@ -950,7 +950,7 @@ impl RetainedRender {
         if gpu {
             let key = (
                 assets.revision(),
-                globals.topology_revision,
+                globals.topology_revision(),
                 globals.validity_epoch(),
             );
             let mut inputs = std::mem::take(&mut skins.inputs);
@@ -1198,7 +1198,7 @@ impl RetainedRender {
         let total = query.iter(world).len();
         if gpu
             && self.gpu
-            && self.gpu_topology == Some(globals.topology_revision)
+            && self.gpu_topology == Some(globals.topology_revision())
             && !aged
             && !assets_changed
             && !stamps_changed
@@ -1269,7 +1269,7 @@ impl RetainedRender {
                 );
             }
         }
-        self.finish_pass(pass, assets_changed, gpu, globals.topology_revision);
+        self.finish_pass(pass, assets_changed, gpu, globals.topology_revision());
     }
 
     /// Re-resolves the objects of `replaced` materials on a GPU-presented
