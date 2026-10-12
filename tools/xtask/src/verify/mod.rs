@@ -6,11 +6,13 @@
 //!   pure corpora the rules call for;
 //! - `pr` (under 10 minutes, the default): all of lint, the smoke checks the
 //!   rules call for against a server of this checkout, the terrain corpus's
-//!   jobs in Wasm where called for, and equivalence's smoke tier and the
-//!   cells the rules name, natively, where any rule calls for equivalence;
+//!   jobs in Wasm where called for, equivalence's smoke tier and the cells
+//!   the rules name, natively, where any rule calls for equivalence, and
+//!   the factory tools' self-checks where called for;
 //! - `merge` (about 30-45 minutes): all of lint, every smoke check, the
 //!   terrain corpus's jobs in Wasm, equivalence's full tier natively and,
-//!   where a rule calls for it, its browser leg.
+//!   where a rule calls for it, its browser leg, and the self-checks called
+//!   for.
 //!
 //! The change is the working tree, untracked files included, against the
 //! base: its merge-base with origin/main, or with `--base REV`, which
@@ -71,6 +73,8 @@ struct Selection {
     cells: BTreeSet<&'static str>,
     equivalence: bool,
     browser: bool,
+    /// The self-checks of the factory's tools called for.
+    self_checks: BTreeSet<&'static str>,
     /// The Cargo packages holding changed files, for Clippy.
     packages: BTreeSet<String>,
     /// Changed files no rule covers: they call for everything.
@@ -107,6 +111,9 @@ impl Selection {
                 Check::Cells(cells) => self.cells.extend(cells),
                 Check::Equivalence => self.equivalence = true,
                 Check::Browser => self.browser = true,
+                Check::Tools(kind) => {
+                    self.self_checks.insert(kind);
+                }
             }
         }
         if let Some(package) = package_of(root, path) {
@@ -330,6 +337,21 @@ fn steps<'a>(
             move || crate::equivalence::equivalence(root, &options),
         ));
     }
+    let self_checks: Vec<String> = if everything {
+        Vec::new()
+    } else {
+        selection
+            .self_checks
+            .iter()
+            .map(|kind| (*kind).to_owned())
+            .collect()
+    };
+    if everything || !self_checks.is_empty() {
+        let name = format!("selfcheck {}", self_checks.join(" "));
+        steps.push(Step::new(name.trim_end().to_owned(), move || {
+            crate::selfcheck::selfcheck(root, &self_checks)
+        }));
+    }
     Ok(steps)
 }
 
@@ -429,6 +451,11 @@ pub(crate) fn check(root: &Path) -> Result<(), String> {
                 Check::Pure(corpus) if !corpora.contains(corpus) => {
                     problems.push(format!(
                         "a rule names the pure corpus {corpus}, which does not exist"
+                    ));
+                }
+                Check::Tools(kind) if !crate::selfcheck::KINDS.contains(kind) => {
+                    problems.push(format!(
+                        "a rule names the self-check {kind}, which does not exist"
                     ));
                 }
                 _ => {}

@@ -6,6 +6,7 @@
 
 use Check::{
     AllSmokes, Browser, Cells, Equivalence, Everything, ItsSmoke, Pure, PureWasm, Shaders, Smoke,
+    Tools,
 };
 
 /// What a change calls for, beyond what its level always runs.
@@ -33,6 +34,9 @@ pub(crate) enum Check {
     Equivalence,
     /// Equivalence's browser leg, at the merge level.
     Browser,
+    /// A self-check of the factory's tools (`cargo xtask selfcheck KIND`):
+    /// `measure` or `checks`.
+    Tools(&'static str),
 }
 
 /// One rule: the paths it covers, as globs (`*` within a segment, `**`
@@ -93,7 +97,7 @@ pub(crate) const MAP: &[Rule] = &[
             "bench/metrics.json",
             "bench/shader-paths.json",
         ],
-        checks: &[Equivalence],
+        checks: &[Equivalence, Tools("measure")],
     },
     // The math everything computes with.
     Rule {
@@ -465,9 +469,14 @@ pub(crate) const MAP: &[Rule] = &[
             Equivalence,
         ],
     },
+    // The native host's measured runs and the load monitor measure uses.
     Rule {
-        paths: &["crates/engine_profile/**", "crates/engine_profiler/**"],
-        checks: &[Smoke("native")],
+        paths: &[
+            "crates/engine_native/src/**/measure*",
+            "crates/engine_profile/**",
+            "crates/engine_profiler/**",
+        ],
+        checks: &[Smoke("native"), Tools("measure")],
     },
     // The Stress Lab: every workload's cells and its content digests.
     Rule {
@@ -521,7 +530,7 @@ pub(crate) const MAP: &[Rule] = &[
             "apps/stress-lab/src/observation*",
             "apps/stress-lab/src/metrics*",
         ],
-        checks: &[Smoke("native")],
+        checks: &[Smoke("native"), Tools("measure")],
     },
     // The tools.
     Rule {
@@ -587,15 +596,24 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Browser],
     },
+    // The factory's tools, which check themselves.
     Rule {
         paths: &[
             "tools/xtask/src/measure.rs",
-            "tools/xtask/src/checks.rs",
             "tools/xtask/src/formats.rs",
             "tools/xtask/src/shader_report.rs",
             "tools/xtask/src/bench.rs",
+            "tools/xtask/src/selfcheck.rs",
         ],
-        checks: &[],
+        checks: &[Tools("measure")],
+    },
+    Rule {
+        paths: &[
+            "tools/xtask/src/checks.rs",
+            "tools/xtask/src/serve.rs",
+            "tools/xtask/src/selfcheck.rs",
+        ],
+        checks: &[Tools("checks")],
     },
     // The smoke runner, its server and lock: one quick check through them.
     Rule {

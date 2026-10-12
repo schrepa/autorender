@@ -1056,21 +1056,35 @@ fn spec_of(task: &Value) -> Result<(u64, &Value), String> {
     Ok((id, spec))
 }
 
+pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
+    measure_with(root, arguments, None)
+}
+
+/// [`measure`], the tools taken to be commit `tools` where given (the
+/// self-check's commit of the working tree, whose tools run), else this
+/// checkout's HEAD, which must be clean.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
-pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
+pub(crate) fn measure_with(
+    root: &Path,
+    arguments: &[String],
+    tools: Option<&str>,
+) -> Result<(), String> {
     let options = options(arguments)?;
     let task = read_json(&options.task)?;
     let (task_id, spec) = spec_of(&task)?;
     let profile_start = read_json(&options.profile)?;
     let previous = options.extend.as_deref().map(read_json).transpose()?;
     // The tools are this checkout, which must be the task's tools commit.
-    let tools_sha = git(root, &["rev-parse", "HEAD"])?;
-    if !git(root, &["status", "--porcelain", "--untracked-files=no"])?.is_empty() {
-        return Err("the tools checkout has uncommitted changes: measure from a clean checkout of the task's tools commit".into());
-    }
+    let tools_sha = match tools {
+        Some(tools) => tools.to_owned(),
+        None if git(root, &["status", "--porcelain", "--untracked-files=no"])?.is_empty() => {
+            git(root, &["rev-parse", "HEAD"])?
+        }
+        None => return Err("the tools checkout has uncommitted changes: measure from a clean checkout of the task's tools commit".into()),
+    };
     if let Some(wanted) = spec["tools_sha"]
         .as_str()
         .filter(|wanted| *wanted != tools_sha)
