@@ -5,6 +5,48 @@
 
 use super::*;
 
+/// What the opaque passes draw.
+#[derive(Clone, Copy)]
+enum Opaque {
+    /// The meshes of the phase, impostors' cards and virtual geometry's
+    /// forward bins.
+    Meshes,
+    /// Terrain's patches, shaded forward.
+    Terrain,
+    /// Terrain's ground cover.
+    Cover,
+    /// Objects placed on terrain.
+    Scatter,
+    /// The sky over the pixels nothing covers.
+    Sky,
+}
+
+/// Where an opaque contributor draws.
+#[derive(Clone, Copy)]
+enum Slot {
+    /// Every opaque phase, first.
+    Early,
+    /// The first phase, after the meshes, where terrain shades forward;
+    /// deferred terrain's own passes draw it otherwise.
+    Terrain,
+    /// The first phase, after terrain: in the opaque pass, or after deferred
+    /// terrain in the late pass.
+    Late,
+    /// After the last opaque geometry, unless the visibility buffer resolves
+    /// after it: depth testing leaves the sky only uncovered pixels.
+    Last,
+}
+
+/// The opaque passes' contributors in drawing order, each in its slot: one
+/// order for forward and deferred terrain alike.
+const OPAQUE: [(Opaque, Slot); 5] = [
+    (Opaque::Meshes, Slot::Early),
+    (Opaque::Terrain, Slot::Terrain),
+    (Opaque::Cover, Slot::Late),
+    (Opaque::Scatter, Slot::Late),
+    (Opaque::Sky, Slot::Last),
+];
+
 impl Renderer {
     /// The sky of the frame's opaque targets, drawn after its last opaque
     /// geometry.
@@ -68,21 +110,47 @@ impl Renderer {
             "engine/opaque-meshes",
             timestamp_writes,
         );
-        let mut draws = if state.kind.instance_count > 0 {
-            self.draw_opaque(state, &mut pass, phase, virtual_first)
-        } else {
-            0
-        };
-        if !forward {
-            return draws;
-        }
-        if phase == 0 {
-            draws += self.draw_terrain(state, &mut pass);
-            draws += self.draw_scatter(state, &mut pass);
-        }
-        // Last, so depth testing leaves the sky only uncovered pixels.
-        if phase + 1 == phases && !resolve_phase {
-            self.draw_sky(state, &mut pass);
+        let (first, last) = (phase == 0, phase + 1 == phases && !resolve_phase);
+        self.draw_contributors(
+            state,
+            &mut pass,
+            (phase, virtual_first),
+            |slot| match slot {
+                Slot::Early => true,
+                Slot::Terrain | Slot::Late => forward && first,
+                Slot::Last => forward && last,
+            },
+        )
+    }
+
+    /// Draws the opaque contributors whose slot `drawn` takes, in their
+    /// order, the meshes those of `phase` from virtual geometry's bin
+    /// `virtual_first`; returns the draws, the sky's aside.
+    fn draw_contributors(
+        &self,
+        state: &FrameState<'_>,
+        pass: &mut wgpu::RenderPass<'_>,
+        (phase, virtual_first): (usize, Option<usize>),
+        drawn: impl Fn(Slot) -> bool,
+    ) -> u32 {
+        let mut draws = 0;
+        for (contributor, slot) in OPAQUE {
+            if !drawn(slot) {
+                continue;
+            }
+            draws += match contributor {
+                Opaque::Meshes if state.kind.instance_count > 0 => {
+                    self.draw_opaque(state, pass, phase, virtual_first)
+                }
+                Opaque::Meshes => 0,
+                Opaque::Terrain => self.draw_terrain_patches(state, pass),
+                Opaque::Cover => self.draw_terrain_cover(state, pass),
+                Opaque::Scatter => self.draw_scatter(state, pass),
+                Opaque::Sky => {
+                    self.draw_sky(state, pass);
+                    0
+                }
+            };
         }
         draws
     }
@@ -134,12 +202,11 @@ impl Renderer {
             "engine/opaque-meshes",
             timestamp_writes,
         );
-        let mut draws = self.draw_terrain_cover(state, &mut pass);
-        draws += self.draw_scatter(state, &mut pass);
-        if ends {
-            self.draw_sky(state, &mut pass);
-        }
-        draws
+        self.draw_contributors(state, &mut pass, (0, None), |slot| match slot {
+            Slot::Late => true,
+            Slot::Last => ends,
+            Slot::Early | Slot::Terrain => false,
+        })
     }
 
     /// The sky over the pixels nothing covers, after the opaque surfaces.

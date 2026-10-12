@@ -198,6 +198,28 @@ pub(crate) struct MapSources<'a> {
     pub scatter_draw: &'a ScatterDraw<'a>,
 }
 
+/// What each shadow map draws.
+#[derive(Clone, Copy)]
+enum Casters {
+    /// Terrain's patches.
+    Terrain,
+    /// Objects placed on terrain.
+    Scatter,
+    /// The selected mesh casters.
+    Meshes,
+    /// Virtual geometry's clusters.
+    Virtual,
+}
+
+/// Each shadow map's casters in drawing order: depth alone is written, so
+/// the order changes no texel, but it is one order for every map.
+const CASTERS: [Casters; 4] = [
+    Casters::Terrain,
+    Casters::Scatter,
+    Casters::Meshes,
+    Casters::Virtual,
+];
+
 /// A caster group as depth passes draw it: its pipeline choice (masked,
 /// skinned), mesh, joints stream, material and group index.
 struct Caster<'m> {
@@ -805,17 +827,7 @@ impl ShadowPass {
                 caster.index,
             )
         });
-        let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
-            draws.set(draws.get() + terrain_draw(pass, map));
-            draws.set(
-                draws.get()
-                    + scatter_draw(
-                        pass,
-                        map,
-                        &pipelines.casters,
-                        pipelines.impostor_casters.as_ref(),
-                    ),
-            );
+        let draw_meshes = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
             let Some(pose_group) = pose_group else {
                 return;
             };
@@ -849,7 +861,29 @@ impl ShadowPass {
                 );
                 draws.set(draws.get() + 1);
             }
-            draws.set(draws.get() + virtual_draw(pass, map));
+        };
+        let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
+            for casters in CASTERS {
+                match casters {
+                    Casters::Terrain => draws.set(draws.get() + terrain_draw(pass, map)),
+                    Casters::Scatter => draws.set(
+                        draws.get()
+                            + scatter_draw(
+                                pass,
+                                map,
+                                &pipelines.casters,
+                                pipelines.impostor_casters.as_ref(),
+                            ),
+                    ),
+                    Casters::Meshes => draw_meshes(pass, map),
+                    // Clusters draw in the frames binding poses, as meshes.
+                    Casters::Virtual => {
+                        if pose_group.is_some() {
+                            draws.set(draws.get() + virtual_draw(pass, map));
+                        }
+                    }
+                }
+            }
         };
         // Profiled frames time the near cascades together, the moving map and
         // the kept map.

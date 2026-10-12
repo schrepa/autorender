@@ -399,7 +399,7 @@ impl Renderer {
 
     /// Draws the camera's terrain patches into the opaque pass; returns the
     /// draws.
-    pub(super) fn draw_terrain(
+    pub(super) fn draw_terrain_patches(
         &self,
         state: &FrameState<'_>,
         pass: &mut wgpu::RenderPass<'_>,
@@ -430,7 +430,7 @@ impl Renderer {
                 draws += self.terrain.draw(pass, range, 0, terrain.uniform);
             }
         }
-        draws + self.draw_terrain_cover(state, pass)
+        draws
     }
 
     /// Draws every terrain patch into reflection probe face `face` of the
