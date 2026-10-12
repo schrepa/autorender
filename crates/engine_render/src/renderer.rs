@@ -31,7 +31,7 @@ use crate::mesh_arena::{Bindings, MeshArena, MeshDraw, Placement};
 use crate::pipelines::PipelineCounts;
 use crate::post::PostPass;
 use crate::probes::{FACES, ProbePass, face_view_projection};
-use crate::profiling::{GpuProfiler, Span};
+use crate::profiling::GpuProfiler;
 use crate::render_features::{Eager, FeatureFrames, Lazy, Ready, RenderFeature, RenderFeatures};
 use crate::retained_uploads::RetainedUploads;
 use crate::shadows::{CasterDraw, ShadowPass};
@@ -232,9 +232,6 @@ pub struct Renderer {
     // sky's.
     environment: Environment,
     probes: ProbePass,
-    // Clouds: their dome, which the sky and its environment
-    // map show.
-    clouds: crate::clouds::CloudPass,
     // The physically based sky.
     sky: crate::sky::SkyPass,
     // Virtual geometry and the visibility buffer resolving

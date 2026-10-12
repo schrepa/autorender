@@ -334,12 +334,12 @@ impl Renderer {
         features.frames.water = self.prepare_water(snapshot, passes.opaque_kind);
         // Terrain's horizon maps may have been replaced.
         self.refresh_camera_group();
-        let mut shape = self.frame_shape(
+        let shape = self.frame_shape(
             kind,
             (&packing, &features, &passes),
             (virtual_frame, resolving, scatter, terrain),
         );
-        shape.clouds = self.prepare_cloud_composite(shape.targets);
+        features.frames.clouds = self.prepare_cloud_composite(shape.targets);
         let mut state = FrameState {
             snapshot,
             frame,

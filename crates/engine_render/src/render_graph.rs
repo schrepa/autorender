@@ -223,8 +223,6 @@ pub(crate) enum Pass {
     TerrainHorizons,
     /// The shadow maps.
     ShadowMaps,
-    /// This frame's slice of the clouds' dome, and their shadows' grid.
-    CloudDome,
     /// Tracks pressed into the deformation map.
     Deformation,
     /// The runtime virtual texture's pages baked.
@@ -260,10 +258,6 @@ pub(crate) enum Pass {
     Feature(FeaturePass),
     /// Reflection probe faces captured after the frame.
     ProbeCaptures,
-    /// The view's clouds marched after the opaque scene and water, then
-    /// laid over it.
-    CloudMarch,
-    CloudComposite,
 }
 
 /// Builds the frame order from one table: every pass, in the order frames
@@ -308,7 +302,7 @@ passes! {
     terrain_horizons: TerrainHorizons,
     shadow_maps: ShadowMaps,
     lights: Feature(FeaturePass::Lights),
-    cloud_dome: CloudDome,
+    cloud_dome: Feature(FeaturePass::CloudDome),
     deformation: Deformation,
     vt_bakes: VtBakes,
     ground_cover: Feature(FeaturePass::GroundCover),
@@ -327,8 +321,8 @@ passes! {
     visibility_resolve_phase_two: Resolve { phase: Phase::Two },
     decals: Feature(FeaturePass::Decals),
     water: Feature(FeaturePass::Water),
-    cloud_march: CloudMarch,
-    cloud_composite: CloudComposite,
+    cloud_march: Feature(FeaturePass::CloudMarch),
+    cloud_composite: Feature(FeaturePass::CloudComposite),
     transparent: Feature(FeaturePass::Transparent),
     transparent_composite: Feature(FeaturePass::TransparentComposite),
     effects: Feature(FeaturePass::Effects),
@@ -681,11 +675,9 @@ pub(crate) struct FrameShape {
     pub(crate) phases: u8,
     pub(crate) shadows: bool,
     /// Work before the passes reading it: terrain's horizon maps build
-    /// (shadowed frames only), the clouds' dome marches, tracks press into
-    /// the deformation map, the virtual texture bakes pages and ground cover
-    /// grows.
+    /// (shadowed frames only), tracks press into the deformation map and the
+    /// virtual texture bakes pages.
     pub(crate) horizons: bool,
-    pub(crate) cloud_dome: bool,
     pub(crate) deformation: bool,
     pub(crate) vt_bakes: bool,
     /// Terrain draws deferred in the first opaque phase: its visibility
@@ -699,8 +691,6 @@ pub(crate) struct FrameShape {
     pub(crate) shadow_clusters: bool,
     pub(crate) resolves: [bool; 2],
     pub(crate) lights: bool,
-    /// The view's clouds march and cover the scene.
-    pub(crate) clouds: bool,
     /// Glass reads the opaque scene.
     pub(crate) refraction: bool,
     pub(crate) effects: Effects,
@@ -786,9 +776,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     // What the first opaque phase draws and shades with: the clouds' dome
     // (the sky) and their shadows, tracks, the virtual texture's pages and
     // ground cover, grown over the tracks.
-    if shape.cloud_dome {
-        graph.add(Pass::CloudDome).write(CloudDome);
-    }
     if shape.deformation {
         graph.add(Pass::Deformation).write(Tracks);
     }
@@ -810,7 +797,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             (Surface, Clear::Color(TRANSPARENT)),
         ],
     };
-    let scene = shape.scene();
     for phase in Phase::first(shape.phases) {
         if phase == Phase::Two {
             graph
@@ -870,16 +856,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             }
             resolve.depth(Depth, Access::ReadOnly);
         }
-    }
-    // The view's clouds march up to what the opaque scene
-    // and water show, then cover it before transparent surfaces draw.
-    if shape.clouds {
-        graph.add(Pass::CloudMarch).read(Depth).write(CloudView);
-        graph
-            .add(Pass::CloudComposite)
-            .read(CloudView)
-            .read(Depth)
-            .color(scene, Access::Load);
     }
     if shape.probes {
         graph

@@ -146,7 +146,7 @@ impl Renderer {
     fn draw_sky(&self, state: &FrameState<'_>, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(self.sky_pipeline(state));
         pass.set_bind_group(0, self.camera.group(), &[]);
-        pass.set_bind_group(1, self.clouds.sky_group(), &[]);
+        pass.set_bind_group(1, self.features.clouds.get().sky_group(), &[]);
         pass.draw(0..3, 0..1);
     }
 
@@ -438,7 +438,7 @@ impl Renderer {
         if phase + 1 == phases {
             pass.set_pipeline(self.sky_pipeline(state));
             pass.set_bind_group(0, self.camera.group(), &[]);
-            pass.set_bind_group(1, self.clouds.sky_group(), &[]);
+            pass.set_bind_group(1, self.features.clouds.get().sky_group(), &[]);
             pass.draw(0..3, 0..1);
         }
     }

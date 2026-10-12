@@ -53,7 +53,7 @@ impl CameraBindings {
     pub(super) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        lighting_buffer: wgpu::Buffer,
+        (lighting_buffer, cloud_shadows): (wgpu::Buffer, wgpu::Buffer),
         sources: &GroupSources<'_>,
     ) -> Self {
         let buffer = crate::buffers::uniform(
@@ -62,7 +62,6 @@ impl CameraBindings {
             size_of::<CameraUniform>() as u64,
         );
         let layout = crate::pipelines::layout(device, &CAMERA);
-        let cloud_shadows = crate::clouds::shadow_uniform(device, queue);
         let refraction_texture = crate::targets::texel(
             device,
             queue,

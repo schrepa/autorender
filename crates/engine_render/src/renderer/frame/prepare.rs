@@ -3,6 +3,7 @@
 //! preparation, the pipelines it draws with, and its render graph's shape.
 
 use super::*;
+use crate::clouds::CloudFrame;
 use crate::decals::{DecalFrame, DecalPass};
 use crate::temporal::ResolveFrame;
 use crate::transparent::TransparencyFrame;
@@ -600,7 +601,7 @@ impl Renderer {
         let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
         // Clouds: this frame's march of their dome, which the
         // sky and its environment map show; exact frames march all of it.
-        self.clouds.prepare(
+        self.features.clouds.get_mut().prepare(
             &self.device,
             &self.queue,
             (
@@ -613,7 +614,7 @@ impl Renderer {
         );
         // And their march in the view, after the opaque
         // scene and water.
-        self.clouds.prepare_view(
+        self.features.clouds.get_mut().prepare_view(
             &self.device,
             &self.queue,
             (
@@ -624,11 +625,14 @@ impl Renderer {
             snapshot.view_projection,
             [self.depth.texture.width(), self.depth.texture.height()],
             lighting,
+            &self.depth.view,
         );
-        self.clouds
+        self.features
+            .clouds
+            .get_mut()
             .prepare_sky_group(&self.device, self.sky.bindings());
         self.environment
-            .set_clouds(&self.device, self.clouds.dome());
+            .set_clouds(&self.device, self.features.clouds.get().dome());
         prelude.sky = self.prepare_sky(snapshot);
         let (environment, probe_list, dropped_probes) =
             self.prepare_environment(snapshot, lighting);
@@ -919,7 +923,7 @@ impl Renderer {
                 4,
             ),
         ];
-        copies.extend(self.clouds.sky_copies());
+        copies.extend(self.features.clouds.get().sky_copies());
         self.sky.encode(
             &self.device,
             &self.queue,
@@ -967,7 +971,10 @@ impl Renderer {
             self.environment.cubes()
         };
         // Frames whose maps and sky stand record nothing here.
-        let keys = (self.clouds.environment_key(), self.sky.environment_key());
+        let keys = (
+            self.features.clouds.get().environment_key(),
+            self.sky.environment_key(),
+        );
         let mut environment_encoder = self
             .environment
             .needs_encoding(probe_settings.resolution, cubes, lighting, keys)
@@ -1327,7 +1334,6 @@ impl Renderer {
             phases,
             shadows: features.shadow_frame.is_some(),
             horizons: self.terrain.horizons.pending(),
-            cloud_dome: self.clouds.marches_dome(),
             deformation: self.terrain.deformation.pending(),
             vt_bakes: self.terrain.vt.baking(),
             deferred: self.terrain_deferred(terrain, passes.opaque_kind),
@@ -1339,28 +1345,27 @@ impl Renderer {
                 resolving && phases == 2 && self.virtual_draws.phase_two.is_some(),
             ],
             lights: features.light_frame().is_some(),
-            clouds: false,
             refraction: features.refraction && post.is_some(),
             effects: post.unwrap_or_default(),
             probes: kind.gpu_mode && !features.probe_list.is_empty(),
         }
     }
 
-    /// Clouds in the view: their composite's pipeline into
-    /// `targets` and its group; whether they draw this frame.
-    pub(super) fn prepare_cloud_composite(&mut self, targets: Targets) -> bool {
-        if !self.clouds.marches_view() {
-            return false;
-        }
+    /// Clouds: what this frame records of them, and the view's
+    /// composite's pipeline into `targets` and its group.
+    pub(super) fn prepare_cloud_composite(
+        &mut self,
+        targets: Targets,
+    ) -> Option<Ready<CloudFrame>> {
         let target = self.cloud_target(targets);
-        self.clouds.prepare_composite(
-            &self.device,
-            &self.mesh_shader,
-            &self.camera.layout,
-            target,
-            &self.depth.view,
-        );
-        true
+        let (device, shader) = (&self.device, &self.mesh_shader);
+        let (camera, depth) = (&self.camera.layout, &self.depth.view);
+        self.features.clouds.prepare(|clouds| {
+            if clouds.marches_view() {
+                clouds.prepare_composite(device, shader, camera, target, depth);
+            }
+            clouds.frame(target)
+        })
     }
 
     /// Temporal antialiasing's pose groups and the camera

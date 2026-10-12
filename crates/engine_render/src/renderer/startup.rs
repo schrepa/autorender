@@ -167,7 +167,7 @@ impl Renderer {
         let camera = CameraBindings::new(
             &device,
             &queue,
-            lighting_buffer,
+            (lighting_buffer, clouds.shadows().clone()),
             &camera::GroupSources {
                 shadows: &shadows,
                 environment: &environment,
@@ -232,7 +232,6 @@ impl Renderer {
             shadows,
             environment,
             probes,
-            clouds,
             sky,
             virtual_draws,
             visibility,
@@ -254,6 +253,7 @@ impl Renderer {
                 occupancy: Eager::new(occupancy),
                 lights: Lazy::default(),
                 ground_cover: Eager::new(ground_cover),
+                clouds: Eager::new(clouds),
                 decals: Lazy::default(),
                 water: Eager::new(water),
                 transparency: Eager::new(crate::transparent::Transparency::default()),

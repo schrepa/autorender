@@ -242,7 +242,7 @@ impl Renderer {
         self.mesh_pipelines.sky[index] = Some(sky_pipeline(
             &self.device,
             &self.mesh_shader,
-            (&self.camera.layout, self.clouds.sky_layout()),
+            (&self.camera.layout, self.features.clouds.get().sky_layout()),
             fragment,
             &color_targets,
         ));

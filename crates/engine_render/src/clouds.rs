@@ -27,6 +27,8 @@ use crate::bindings::{CLOUD_COMPOSITE, CLOUD_MARCH, CLOUD_NOISE, CLOUD_SKY, CLOU
 use crate::cached::{Bound, Cached, GroupCache, Versioned};
 use crate::gpu_data::LightingUniform;
 use crate::gpu_layouts::constants::{CLOUD_GROUP, NOISE_GROUP};
+use crate::render_features::{Encode, FeaturePass, RenderFeature};
+use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource};
 
 /// Texels along each side of the noise volume.
 const NOISE_SIZE: u32 = 128;
@@ -90,7 +92,9 @@ pub(crate) struct CloudPass {
     pipelines: Option<[wgpu::ComputePipeline; 3]>,
     _noise: wgpu::Texture,
     noise_view: wgpu::TextureView,
-    noise_made: bool,
+    noise: Noise,
+    // The shadows' grid, as the camera group binds it.
+    shadows: wgpu::Buffer,
     // Three domes of the settings' size: two shown, blended, and one
     // marching.
     domes: Option<[(wgpu::Texture, wgpu::TextureView); 3]>,
@@ -237,7 +241,8 @@ impl CloudPass {
             pipelines: None,
             _noise: noise,
             noise_view,
-            noise_made: false,
+            noise: Noise::Unmade,
+            shadows: shadow_uniform(device, queue),
             domes: None,
             roles: [0, 1, 2],
             origins: [glam::Vec3::ZERO; 3],
@@ -521,6 +526,51 @@ impl CloudPass {
         uniform.shadow_rows = self.shadow_rows(whole);
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         self.write_domes(queue, eye, &settings);
+        self.prepare_dome_draws(device);
+    }
+
+    /// The pipelines and groups this frame's march of the dome binds, and
+    /// the noise volume's, which the first march makes.
+    fn prepare_dome_draws(&mut self, device: &wgpu::Device) {
+        let Some(domes) = &self.domes else {
+            return;
+        };
+        let (noise_layout, march_layout) = (&self.noise_layout, &self.march_layout);
+        self.pipelines
+            .get_or_insert_with(|| pipelines(device, noise_layout, march_layout));
+        let (layout, uniform, noise_view, noise_sampler, cells) = (
+            &self.march_layout,
+            &self.uniform,
+            &self.noise_view,
+            &self.noise_sampler,
+            &self.shadow_cells,
+        );
+        self.march_groups.get_or_insert_with(self.generation, || {
+            std::array::from_fn(|index| {
+                crate::pipelines::group(
+                    device,
+                    "engine/cloud-march",
+                    &CLOUD_MARCH,
+                    layout,
+                    &[
+                        crate::buffers::entry("clouds", uniform),
+                        ("noise_volume", crate::pipelines::view(noise_view)),
+                        ("noise_sampler", crate::pipelines::sampler(noise_sampler)),
+                        ("dome", crate::pipelines::view(&domes[index].1)),
+                        crate::buffers::entry("shadow_cells", cells),
+                    ],
+                )
+            })
+        });
+        if matches!(self.noise, Noise::Unmade) {
+            self.noise = Noise::Due(crate::pipelines::group(
+                device,
+                "engine/cloud-noise",
+                &CLOUD_NOISE,
+                &self.noise_layout,
+                &[("noise_out", crate::pipelines::view(&self.noise_view))],
+            ));
+        }
     }
 
     /// Plans this frame's clouds in the view of `settings`
@@ -528,6 +578,7 @@ impl CloudPass {
     /// `view_projection` (unjittered) onto a canvas of `canvas` pixels in
     /// `lighting`'s sun and sky; call after [`Self::prepare`]. Nothing
     /// marches without clouds or with the view's march off.
+    #[expect(clippy::too_many_arguments, reason = "the view's inputs, typed")]
     pub(crate) fn prepare_view(
         &mut self,
         device: &wgpu::Device,
@@ -536,6 +587,7 @@ impl CloudPass {
         view_projection: glam::Mat4,
         canvas: [u32; 2],
         lighting: &LightingUniform,
+        depth: &Versioned<wgpu::TextureView>,
     ) {
         let settings = settings.sanitized();
         self.view_job = None;
@@ -577,6 +629,7 @@ impl CloudPass {
         );
         self.view_job = Some(blocks);
         self.view_blocks = blocks[0] * blocks[1];
+        self.prepare_view_draws(device, depth);
     }
 
     /// Whether this frame marches clouds in the view.
@@ -584,30 +637,16 @@ impl CloudPass {
         self.view_job.is_some()
     }
 
-    /// Whether this frame marches a slice of the dome: what
-    /// [`Self::encode`] records.
-    pub(crate) fn marches_dome(&self) -> bool {
-        self.job.is_some() && self.domes.is_some()
-    }
-
-    /// Records this frame's march of the view's clouds up to
-    /// what the depth buffer `depth` shows, timed by `profiler`
-    /// (`cloud_view`); after [`Self::encode`] made the noise.
-    pub(crate) fn encode_view(
-        &mut self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        depth: &Versioned<wgpu::TextureView>,
-        profiler: &crate::profiling::GpuProfiler,
-    ) {
-        let (Some(blocks), Some(targets)) = (self.view_job, &self.view_targets) else {
+    /// The view march's pipeline and group, up to what the depth buffer
+    /// `depth` shows.
+    fn prepare_view_draws(&mut self, device: &wgpu::Device, depth: &Versioned<wgpu::TextureView>) {
+        let Some(targets) = &self.view_targets else {
             return;
         };
         let layout = &self.view_layout;
-        let pipeline = self
-            .view_pipeline
+        self.view_pipeline
             .get_or_insert_with(|| view_pipeline(device, layout));
-        let group = self.view_group.bind(
+        self.view_group.bind(
             device,
             "engine/cloud-view",
             (&CLOUD_VIEW, layout),
@@ -640,6 +679,20 @@ impl CloudPass {
                 ),
             ],
         );
+    }
+
+    /// Records this frame's march of the view's clouds, timed by `profiler`
+    /// (`cloud_view`); after the dome's march made the noise.
+    fn encode_view(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        profiler: &crate::profiling::GpuProfiler,
+    ) {
+        let (Some(blocks), Some(pipeline), Some(group)) =
+            (self.view_job, &self.view_pipeline, self.view_group.get())
+        else {
+            return;
+        };
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/cloud-view"),
             timestamp_writes: profiler.span("cloud_view").map(|span| span.compute()),
@@ -705,10 +758,19 @@ impl CloudPass {
         );
     }
 
+    /// What this frame records: the dome's march, and the view's march and
+    /// composite into `target` (the format of the scene's color, and whether
+    /// that is the canvas); `None` when neither marches.
+    pub(crate) fn frame(&self, target: (wgpu::TextureFormat, bool)) -> Option<CloudFrame> {
+        let dome = self.job.is_some() && self.domes.is_some();
+        let view = self.view_job.map(|_| target);
+        (dome || view.is_some()).then_some(CloudFrame { dome, view })
+    }
+
     /// Lays the view's clouds over `pass`'s target of `format` (`canvas`:
     /// the canvas), the camera's `camera` group bound; after
     /// [`Self::prepare_composite`].
-    pub(crate) fn draw_composite(
+    fn draw_composite(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         camera: &wgpu::BindGroup,
@@ -757,64 +819,32 @@ impl CloudPass {
         queue.write_buffer(&self.dome_uniform, 0, bytemuck::bytes_of(&uniform));
     }
 
-    /// Records the noise volume the first time, then this frame's march
-    /// and the shadows' grid, copied into `shadows` (the camera group's
-    /// uniform), timed by `profiler` (`clouds`).
-    pub(crate) fn encode(
-        &mut self,
-        device: &wgpu::Device,
+    /// Records the noise volume when this frame makes it, then this frame's
+    /// march and the shadows' grid, copied into the uniform the camera group
+    /// binds, timed by `profiler` (`clouds`).
+    fn encode_dome(
+        &self,
         encoder: &mut wgpu::CommandEncoder,
-        shadows: &wgpu::Buffer,
         profiler: &crate::profiling::GpuProfiler,
     ) {
-        let (Some((target, _, count)), Some(domes)) = (self.job, &self.domes) else {
+        let (Some((target, _, count)), Some(domes), Some([make, march, shade]), Some(groups)) = (
+            self.job,
+            &self.domes,
+            &self.pipelines,
+            self.march_groups.get(),
+        ) else {
             return;
         };
-        let [make, march, shade] = self
-            .pipelines
-            .get_or_insert_with(|| pipelines(device, &self.noise_layout, &self.march_layout));
-        let (layout, uniform, noise_view, noise_sampler, cells) = (
-            &self.march_layout,
-            &self.uniform,
-            &self.noise_view,
-            &self.noise_sampler,
-            &self.shadow_cells,
-        );
-        let groups = self.march_groups.get_or_insert_with(self.generation, || {
-            std::array::from_fn(|index| {
-                crate::pipelines::group(
-                    device,
-                    "engine/cloud-march",
-                    &CLOUD_MARCH,
-                    layout,
-                    &[
-                        crate::buffers::entry("clouds", uniform),
-                        ("noise_volume", crate::pipelines::view(noise_view)),
-                        ("noise_sampler", crate::pipelines::sampler(noise_sampler)),
-                        ("dome", crate::pipelines::view(&domes[index].1)),
-                        crate::buffers::entry("shadow_cells", cells),
-                    ],
-                )
-            })
-        });
         let group = &groups[target];
-        if !self.noise_made {
-            let noise_group = crate::pipelines::group(
-                device,
-                "engine/cloud-noise",
-                &CLOUD_NOISE,
-                &self.noise_layout,
-                &[("noise_out", crate::pipelines::view(noise_view))],
-            );
+        if let Noise::Due(noise_group) = &self.noise {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/cloud-noise"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(make);
-            pass.set_bind_group(0, &noise_group, &[]);
+            pass.set_bind_group(0, noise_group, &[]);
             let groups = NOISE_SIZE.div_ceil(NOISE_GROUP);
             pass.dispatch_workgroups(groups, groups, groups);
-            self.noise_made = true;
         }
         let width = domes[target].0.width();
         if count > 0 {
@@ -841,8 +871,18 @@ impl CloudPass {
                 1,
             );
         }
-        encoder.copy_buffer_to_buffer(cells, 0, shadows, 0, CLOUD_SHADOW_BYTES as u64);
-        self.recorded = self.completed;
+        encoder.copy_buffer_to_buffer(
+            &self.shadow_cells,
+            0,
+            &self.shadows,
+            0,
+            CLOUD_SHADOW_BYTES as u64,
+        );
+    }
+
+    /// The shadows' grid, as the camera group binds it.
+    pub(crate) fn shadows(&self) -> &wgpu::Buffer {
+        &self.shadows
     }
 
     /// Bytes of the noise volume, the domes and the view's blocks.
@@ -1041,7 +1081,7 @@ pub(crate) fn shadow_lighting(clouds: &Clouds, eye: glam::Vec3) -> ([f32; 4], [f
 
 /// The camera group's buffer of clouds' shadows: every cell passing all
 /// the light until the clouds' pass copies its grid in.
-pub(crate) fn shadow_uniform(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer {
+fn shadow_uniform(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer {
     let buffer = crate::buffers::storage(
         device,
         "engine/cloud-shadows",
@@ -1078,4 +1118,99 @@ fn pipelines(
         crate::pipelines::compute_entry(device, &march, &module, clouds::march_clouds),
         crate::pipelines::compute_entry(device, &march, &module, clouds::shadow_clouds),
     ]
+}
+
+/// The noise volume, which the first march of the dome makes.
+enum Noise {
+    Unmade,
+    /// This frame's march makes it, writing through the group.
+    Due(wgpu::BindGroup),
+    Made,
+}
+
+/// What a frame records of the clouds: the dome's march, and the view's
+/// march and composite into the scene's color of the given format (and
+/// whether that is the canvas).
+pub(crate) struct CloudFrame {
+    dome: bool,
+    view: Option<(wgpu::TextureFormat, bool)>,
+}
+
+impl RenderFeature for CloudPass {
+    type Frame = CloudFrame;
+    type Stats = engine_core::CloudStats;
+
+    /// The dome's slice, which the sky and its environment map show; then
+    /// the view's march up to what the opaque scene and water show, and its
+    /// composite over the scene before transparent surfaces draw.
+    fn declare(frame: &CloudFrame, shape: &FrameShape, graph: &mut RenderGraph) {
+        if frame.dome {
+            graph
+                .add(Pass::Feature(FeaturePass::CloudDome))
+                .write(Resource::CloudDome);
+        }
+        if frame.view.is_some() {
+            graph
+                .add(Pass::Feature(FeaturePass::CloudMarch))
+                .read(Resource::Depth)
+                .write(Resource::CloudView);
+            graph
+                .add(Pass::Feature(FeaturePass::CloudComposite))
+                .read(Resource::CloudView)
+                .read(Resource::Depth)
+                .color(shape.scene(), Access::Load);
+        }
+    }
+
+    fn encode(
+        &self,
+        frame: &CloudFrame,
+        node: &Node,
+        encode: &Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        let pass = node.pass();
+        if pass == Pass::Feature(FeaturePass::CloudDome) {
+            self.encode_dome(encoder, encode.profiler);
+        } else if pass == Pass::Feature(FeaturePass::CloudMarch) {
+            self.encode_view(encoder, encode.profiler);
+        } else if let Some(target) = frame.view {
+            let mut pass = encode.render_pass(
+                encoder,
+                node,
+                "engine/cloud-composite",
+                encode
+                    .profiler
+                    .span("cloud_composite")
+                    .map(crate::profiling::Span::render),
+            );
+            self.draw_composite(&mut pass, encode.camera, target);
+        }
+        0
+    }
+
+    /// A march recorded completes its dome for the sky's environment map.
+    fn after_submit(&mut self, frame: Option<&CloudFrame>) {
+        if frame.is_some_and(|frame| frame.dome) {
+            self.recorded = self.completed;
+            // Its march made the noise volume, if it was due.
+            self.noise = Noise::Made;
+        }
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        CloudPass::capacity_bytes(self)
+    }
+
+    /// The dome's rows marched and the view's blocks.
+    fn stats(
+        this: Option<&Self>,
+        _frame: Option<&CloudFrame>,
+        _snapshot: &engine_core::RenderSnapshot,
+    ) -> engine_core::CloudStats {
+        engine_core::CloudStats {
+            rows: this.map_or(0, |clouds| clouds.rows),
+            view_blocks: this.map_or(0, |clouds| clouds.view_blocks),
+        }
+    }
 }

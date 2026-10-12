@@ -2,6 +2,7 @@
 
 use super::frame::{EncodeReport, FrameKind, FrameState};
 use super::*;
+use crate::clouds::CloudPass;
 use crate::decals::DecalPass;
 use crate::gpu_presentation::GpuPrepared;
 use crate::ground_cover::GroundCoverPass;
@@ -10,8 +11,8 @@ use crate::transparent::Transparency;
 use crate::water::WaterPass;
 
 use engine_core::{
-    Applied, CloudStats, CullingStats, DeformationStats, DetailStats, ProbeStats, ShadowStats,
-    SkyStats, TerrainRenderStats, VirtualGeometryStats,
+    Applied, CullingStats, DeformationStats, DetailStats, ProbeStats, ShadowStats, SkyStats,
+    TerrainRenderStats, VirtualGeometryStats,
 };
 
 /// Records every number and flag of `stats` as the counter `render.<path>`,
@@ -295,10 +296,11 @@ impl Renderer {
                 stamps: self.terrain.deformation.pressed,
                 texels: self.terrain.deformation.texels,
             },
-            clouds: CloudStats {
-                rows: self.clouds.rows,
-                view_blocks: self.clouds.view_blocks,
-            },
+            clouds: CloudPass::stats(
+                Some(self.features.clouds.get()),
+                features.frames.clouds.as_ref().map(Ready::frame),
+                snapshot,
+            ),
             world_streaming: snapshot.cells,
             sky: SkyStats {
                 tables: self.sky.built,
@@ -413,7 +415,7 @@ impl Renderer {
             "memory.gpu_environment_bytes",
             (self.environment.capacity_bytes()
                 + self.probes.capacity_bytes()
-                + self.clouds.capacity_bytes()
+                + self.features.clouds.get().capacity_bytes()
                 + self.sky.capacity_bytes()) as f64,
         );
         engine_profile::counter(

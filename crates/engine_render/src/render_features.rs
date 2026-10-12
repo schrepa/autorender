@@ -7,6 +7,7 @@
 
 use engine_core::RenderSnapshot;
 
+use crate::clouds::CloudPass;
 use crate::decals::DecalPass;
 use crate::ground_cover::GroundCoverPass;
 use crate::lights::LightPass;
@@ -408,6 +409,9 @@ render_features! {
     lights: Lazy<LightPass> => [Lights],
     /// Ground cover grown on the terrain.
     ground_cover: Eager<GroundCoverPass> => [GroundCover],
+    /// Clouds: a slice of their dome each frame, which the sky shows, and
+    /// their march in the view, laid over the scene.
+    clouds: Eager<CloudPass> => [CloudDome, CloudMarch, CloudComposite],
     /// Decals over the opaque surfaces.
     decals: Lazy<DecalPass> => [Decals],
     /// Terrains' lakes and rivers, and the sea, over the opaque scene.

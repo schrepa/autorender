@@ -25,12 +25,6 @@ impl Renderer {
                     .encode_horizons(&self.device, encoder, &self.profiler);
             }
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
-            Pass::CloudDome => self.clouds.encode(
-                &self.device,
-                encoder,
-                &self.camera.cloud_shadows,
-                &self.profiler,
-            ),
             Pass::Deformation => {
                 self.terrain
                     .deformation
@@ -67,11 +61,6 @@ impl Renderer {
             Pass::Feature(pass) => {
                 report.draws += self.encode_feature(pass, state, encoder, view, node);
             }
-            Pass::CloudMarch => {
-                self.clouds
-                    .encode_view(&self.device, encoder, &self.depth.view, &self.profiler);
-            }
-            Pass::CloudComposite => self.encode_cloud_composite(state, encoder, view, node),
             Pass::ProbeCaptures => self.encode_probes(state, encoder, report),
         }
     }
@@ -321,28 +310,6 @@ impl Renderer {
             &self.mesh_shader,
             &self.camera.buffer,
             (&ids.view, (size.width, size.height)),
-        );
-    }
-
-    /// The view's clouds laid over the scene's color.
-    fn encode_cloud_composite(
-        &self,
-        state: &FrameState<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        node: &Node,
-    ) {
-        let mut pass = self.render_pass(
-            encoder,
-            node,
-            view,
-            "engine/cloud-composite",
-            self.profiler.span("cloud_composite").map(Span::render),
-        );
-        self.clouds.draw_composite(
-            &mut pass,
-            self.camera.group(),
-            self.cloud_target(state.shape.targets),
         );
     }
 
