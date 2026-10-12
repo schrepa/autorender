@@ -112,6 +112,10 @@ pub struct AnimationControl {
     #[serde(default)]
     pub time: Option<f32>,
     #[serde(default)]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        schemars(transform = engine_settings::stated(AnimationPlayer::SPEED))
+    )]
     pub speed: Option<f32>,
     #[serde(default)]
     pub looping: Option<bool>,
@@ -154,14 +158,13 @@ fn animate(
             "must be finite and at least 0",
         ));
     }
-    if let Some(speed) = change.speed
-        && !(speed.is_finite() && speed.abs() <= 100.0)
-    {
-        return Err(DevError::new(
+    if let Some(speed) = change.speed {
+        crate::bounded(
+            speed,
+            AnimationPlayer::SPEED,
             ErrorCode::OutOfRange,
             "$.speed",
-            "must be finite and within +/-100",
-        ));
+        )?;
     }
     let clip = change
         .clip

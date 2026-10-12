@@ -644,7 +644,7 @@
     },
     "refusal invalid_animation at $.entities[0].animation.speed": {
       "code": "invalid_animation",
-      "message": "speed must be finite and within ±1000",
+      "message": "speed must be in [-1000, 1000]",
       "path": "$.entities[0].animation.speed"
     },
     "refusal invalid_camera at $.camera.near": {

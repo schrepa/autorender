@@ -97,6 +97,10 @@ pub struct ScenePlayer {
     pub clip: String,
     /// Playback rate: 1 is real time, 0 paused, negative backward.
     #[serde(default = "one", skip_serializing_if = "is_one")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(transform = engine_settings::stated(engine_core::AnimationPlayer::SPEED))
+    )]
     pub speed: f32,
     #[serde(rename = "loop", default = "yes", skip_serializing_if = "is_yes")]
     pub looping: bool,

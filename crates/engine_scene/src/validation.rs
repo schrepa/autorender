@@ -533,13 +533,18 @@ impl SceneDocument {
         };
         let path = format!("{}.animation", entity.path);
         reference(&player.clip, animation_ids, &format!("{path}.clip"))?;
-        if !player.speed.is_finite() || player.speed.abs() > 1000.0 {
-            return Err(SceneError::new(
+        engine_settings::Setting::check(
+            &player.speed,
+            "speed",
+            engine_core::AnimationPlayer::SPEED,
+        )
+        .map_err(|invalid| {
+            SceneError::new(
                 ErrorCode::InvalidAnimation,
                 format!("{path}.speed"),
-                "speed must be finite and within ±1000",
-            ));
-        }
+                invalid.to_string(),
+            )
+        })?;
         if !player.time.is_finite() || player.time < 0.0 {
             return Err(SceneError::new(
                 ErrorCode::InvalidAnimation,

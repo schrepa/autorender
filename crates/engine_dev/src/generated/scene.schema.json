@@ -3757,7 +3757,9 @@
         "speed": {
           "description": "Playback rate: 1 is real time, 0 paused, negative backward.",
           "type": "number",
-          "format": "float"
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": -1000.0
         },
         "time": {
           "description": "Starting time in seconds.",

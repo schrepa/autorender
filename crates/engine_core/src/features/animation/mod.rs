@@ -8,6 +8,7 @@ pub use skin::*;
 
 use bevy_ecs::prelude::{Component, Entity, Local, Query, Res, SystemSet};
 use bevy_ecs::schedule::IntoScheduleConfigs;
+use engine_settings::Rule;
 
 use crate::{AnimationSample, AssetLibrary, ClipHandle, FixedTime, Transform};
 
@@ -31,6 +32,10 @@ pub struct AnimationPlayer {
 }
 
 impl AnimationPlayer {
+    /// The speeds players keep, as scenes author them and the development
+    /// control sets them: up to a thousand times real time, either way.
+    pub const SPEED: Rule = Rule::Range(-1000.0, 1000.0);
+
     /// A player of `clip` from its start at real time, looping.
     pub fn new(clip: ClipHandle, targets: Vec<Option<Entity>>) -> Self {
         Self {
