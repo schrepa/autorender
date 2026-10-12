@@ -153,6 +153,23 @@ export function strictStats(stats) {
   });
 }
 
+/** Waits while the page runs ordinary frames (after `resume`) until
+ * `frames` more were drawn and `done` holds for a status reply: frame
+ * counts and the engine's own state, not milliseconds, say when enough
+ * ran, on a fast machine and a slow one alike. Resolves to that reply. */
+export async function waitFrames(command, frames, { done = () => true, deadline = 120_000 } = {}) {
+  const first = Number((await command("status")).observation.frame);
+  const until = Date.now() + deadline;
+  for (;;) {
+    const status = await command("status");
+    if (Number(status.observation.frame) - first >= frames && done(status)) return status;
+    if (Date.now() > until) {
+      throw new Error(`${frames} frames did not run to the state wanted within ${deadline / 1000} s: ${JSON.stringify(status.observation)}`);
+    }
+    await delay(10);
+  }
+}
+
 /** The development protocol's version, request limit and ops, generated
  * from the engine (`cargo xtask schema`). */
 export const protocol = JSON.parse(readFileSync(new URL("../src/generated/protocol.json", import.meta.url), "utf8"));

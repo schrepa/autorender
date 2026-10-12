@@ -93,12 +93,32 @@ async function session(name, query, walk) {
   return { shown, terrains, samples, drawn: drawn(rendering), jobs, agents };
 }
 
+/** Waits until the job cache's index in the origin's file system lists
+ * exactly the outputs the cache's folder holds: the page writes it a little
+ * after its last change, and the next session keeps only what it lists. */
+async function cacheIndexWritten() {
+  for (let attempt = 0; ; attempt++) {
+    const { listed, held } = await page.evaluate(async () => {
+      try {
+        const folder = await (await navigator.storage.getDirectory()).getDirectoryHandle("engine-job-cache");
+        const held = [];
+        for await (const name of folder.keys()) if (name !== "index.json") held.push(name);
+        const index = JSON.parse(await (await (await folder.getFileHandle("index.json")).getFile()).text());
+        return { listed: Object.keys(index).sort(), held: held.sort() };
+      } catch {
+        return { listed: [], held: [] };
+      }
+    });
+    if (held.length > 0 && JSON.stringify(listed) === JSON.stringify(held)) return;
+    assert.ok(attempt < 600, `the job cache's index lists what its folder holds: ${listed.length} of ${held.length} outputs`);
+    await delay(50);
+  }
+}
+
 const checks = [];
 try {
   const workers = await session("workers", {}, true);
-  // The page's job cache writes its index a little after
-  // its last change.
-  await delay(3000);
+  await cacheIndexWritten();
   assert.ok(workers.jobs.workers > 0, `workers run jobs: ${JSON.stringify(workers.jobs)}`);
   assert.ok(workers.jobs.completed > 0 && workers.jobs.failed === 0, `the bakes and tiles ran there: ${JSON.stringify(workers.jobs)}`);
   assert.ok(workers.jobs.shares > 0 && workers.jobs.shared_bytes > 0, `the terrain's layers are shared with them: ${JSON.stringify(workers.jobs)}`);

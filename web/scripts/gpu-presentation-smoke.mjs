@@ -3,7 +3,7 @@
  * paused environment control and observed in GPU-presented frames. */
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "./harness.mjs";
+import { artifacts, commander, devUrl, differentPixels, launch, openPaused, waitFrames } from "./harness.mjs";
 
 // Every renderable moves; hierarchy, textures and several meshes exercise
 // composition, per-group bounds and compaction across draw groups.
@@ -101,8 +101,12 @@ async function verify(workload) {
   const url = devUrl("stress.html", { config: workload.config });
   await openPaused(page, url);
   if (workload.settle) {
+    // Ordinary frames until the kept shadow map stopped redrawing and its
+    // levels hold every tile.
     await command("resume");
-    await delay(1500);
+    await waitFrames(command, 2, {
+      done: ({ result }) => result.rendering.shadows.kept_redraw === 0 && result.rendering.shadows.levels_pending === 0,
+    });
     await command("pause");
   }
   await command("render");
@@ -134,7 +138,7 @@ async function verify(workload) {
 
   // Ordinary frames use GPU presentation by default.
   await command("resume");
-  await delay(500);
+  await waitFrames(command, 3);
   const resumed = await command("pause");
   assert.equal(resumed.observation.presentation.mode, "interpolated");
   assert.equal(resumed.observation.presentation.gpu_pending, true);

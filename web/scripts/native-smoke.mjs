@@ -110,9 +110,15 @@ try {
   assert.equal((await digestAfter(12)).hash, digest.hash, "the same ticks of the same workload digest the same");
   assert.notEqual((await digestAfter(24)).hash, digest.hash, "moving renderables change the digest");
 
-  // Resuming runs frames in real time until paused again.
+  // Resuming runs frames in real time until paused again: ticks advance
+  // past the stepped ones while it runs.
   await run({ op: "resume" });
-  await new Promise(resolve => setTimeout(resolve, 1500));
+  for (let attempt = 0; ; attempt++) {
+    const running = await run({ op: "status" });
+    if (Number(running.observation.tick) > 12) break;
+    assert.ok(attempt < 3000, `ticks run while resumed: ${JSON.stringify(running.observation)}`);
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
   const paused = await run({ op: "pause" });
   assert.equal(paused.paused, true);
   assert.ok(Number(paused.observation.tick) > 12, `ticks ran while resumed: ${JSON.stringify(paused.observation)}`);

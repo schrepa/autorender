@@ -184,7 +184,13 @@ try {
   const errors = [];
   web.page.on("pageerror", error => errors.push(String(error)));
   web.page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
-  await new Promise(resolve => setTimeout(resolve, 1500));
+  // Ninety of the browser's animation frames, in which the stopped page
+  // must call into its module no more.
+  await web.page.evaluate(() => new Promise(resolve => {
+    let frames = 0;
+    const next = () => (++frames >= 90 ? resolve() : requestAnimationFrame(next));
+    requestAnimationFrame(next);
+  }));
   assert.equal(await web.page.locator("#status").getAttribute("data-state"), "error");
   assert.match(await web.page.locator("#status").textContent(), /Engine stopped/);
   assert.deepEqual(errors, [], "the page calls into the stopped module no more");

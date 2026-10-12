@@ -6,8 +6,7 @@
  * frames. */
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
-import { setTimeout as delay } from "node:timers/promises";
-import { artifacts, commander, devUrl, launch, openPaused } from "./harness.mjs";
+import { artifacts, commander, devUrl, launch, openPaused, waitFrames } from "./harness.mjs";
 
 // Textured meshes of several shapes give many edges; nothing moves, so any
 // difference between ordinary frames and captures is the antialiasing.
@@ -41,12 +40,13 @@ async function capture(name) {
   return screenshot(name);
 }
 
-// Ordinary frames for `ms`, screenshots taken while they run.
-async function run(name, ms) {
+// Ordinary frames, screenshots taken while they run: the first once
+// `frames` were drawn, the second 18 frames later.
+async function run(name, frames) {
   await command("resume");
-  await delay(ms);
+  await waitFrames(command, frames);
   const first = await screenshot(`${name}-a`);
-  await delay(300);
+  await waitFrames(command, 18);
   const second = await screenshot(`${name}-b`);
   await command("pause");
   return [first, second];
@@ -139,7 +139,7 @@ try {
   // pixels change, how much the content at a coarser scale does, how much
   // smoother the image is, and how much a still view then flickers, all
   // measured, not judged. Thin, distant towers alias across much of the view.
-  const [first, second] = await run("taa-still", 1500);
+  const [first, second] = await run("taa-still", 90);
   const smoothed = await compare([exact, first]);
   results.smoothed = smoothed;
   const stable = await compare([first, second]);
@@ -168,14 +168,14 @@ try {
   const off = await command("environment", { temporal_antialiasing: { enabled: false } });
   assert.deepEqual(off.result.environment_changed, ["temporal_antialiasing"]);
   assert.deepEqual(await inspect(), { enabled: false });
-  await run("taa-off", 500);
+  await run("taa-off", 30);
   const plainFrame = await observed();
   assert.equal(plainFrame.temporal_antialiasing.active, false, "turned off, ordinary frames do not resolve temporally");
   assert.ok(!plainFrame.render_passes.includes("temporal_resolve"));
   const invalid = await command("environment", { temporal_antialiasing: { enabled: true, samples: 8 } }, false);
   assert.equal(invalid.error.code, "unknown_field", "unknown temporal antialiasing fields are rejected");
   await command("environment", { temporal_antialiasing: { enabled: true } });
-  await run("taa-again", 500);
+  await run("taa-again", 30);
   assert.equal((await observed()).temporal_antialiasing.active, true, "turned on again, ordinary frames resolve temporally");
 
   // Captures after temporal frames are still exact.
@@ -184,7 +184,7 @@ try {
 
   // CPU-presented ordinary frames with the setting on, against the capture.
   results.cpu_url = await open(still, { taa: "on", presentation: "cpu" });
-  const [cpu] = await run("cpu-still", 800);
+  const [cpu] = await run("cpu-still", 48);
   const cpuPair = await compare([exact, cpu]);
   results.cpu = cpuPair;
   measurements.push({
@@ -196,7 +196,7 @@ try {
   // follows each object, so motion should blur little beyond the still view.
   results.moving_url = await open(moving, { taa: "on" });
   const movingExact = await capture("moving-exact");
-  const [movingFirst] = await run("taa-moving", 1500);
+  const [movingFirst] = await run("taa-moving", 90);
   const movingPair = await compare([movingExact, movingFirst]);
   results.moving = movingPair;
   assert.ok(movingPair.distinct_colors > 16, "the moving view must draw textured geometry");
