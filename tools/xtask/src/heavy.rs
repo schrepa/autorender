@@ -7,14 +7,18 @@
 //! The lock is the folder `ENGINE_HEAVY_LOCK_DIR`, else
 //! `engine-heavy-run.lock` in the temporary folder Node uses, holding
 //! `owner.json` (`{pid, label, cwd, command, started}`). A lock whose owner
-//! process ended is stale and taken over. After taking it, a holder waits up
-//! to 15 minutes while a headless Chrome of another program runs (the
-//! factory's workers do not take the lock). A holder's children run with
+//! process ended is stale and taken over. Those waiting queue in the folder
+//! beside it, `engine-heavy-run.lock.queue`, each as
+//! `MILLISECONDS-PID.json`, and take it in the order they came: a run that
+//! releases it between steps (equivalence, cell by cell) and wants it again
+//! queues behind them. After taking it, a holder waits up to 15 minutes
+//! while a headless Chrome of another program runs (the factory's workers
+//! do not take the lock). A holder's children run with
 //! `ENGINE_HEAVY_LOCK_HELD=1` ([`HELD`]) and pass straight through, so runs
 //! nest.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -46,9 +50,25 @@ impl HeavyRun {
         }
         let folder = folder();
         let owner = folder.join("owner.json");
+        let queue = queue_folder(&folder);
+        let mut ticket: Option<Ticket> = None;
         let mut reported: Option<Instant> = None;
         loop {
-            match fs::create_dir(&folder) {
+            // Its turn: first in the queue, or nobody queued before it came.
+            let line = queued(&queue);
+            let turn = match &ticket {
+                Some(Ticket(mine)) => {
+                    line.first().map(String::as_str)
+                        == mine.file_name().and_then(|name| name.to_str())
+                }
+                None => line.is_empty(),
+            };
+            let made = if turn {
+                fs::create_dir(&folder)
+            } else {
+                Err(std::io::ErrorKind::AlreadyExists.into())
+            };
+            match made {
                 Ok(()) => {
                     let record = json!({
                         "pid": std::process::id(),
@@ -97,20 +117,36 @@ impl HeavyRun {
                     }
                 }
             }
+            if ticket.is_none() {
+                ticket = Some(Ticket::take(&queue, label)?);
+            }
             if reported.is_none_or(|at| at.elapsed() > Duration::from_secs(60)) {
                 reported = Some(Instant::now());
-                eprintln!(
-                    "heavy-run: waiting for the heavy-run lock held by pid {} ({}) since {}",
-                    held.as_ref()
-                        .map_or(Value::Null, |held| held["pid"].clone()),
-                    describe(held.as_ref()),
-                    held.as_ref()
-                        .and_then(|held| held["started"].as_str())
-                        .unwrap_or("unknown")
-                );
+                match &held {
+                    Some(held) => eprintln!(
+                        "heavy-run: waiting for the heavy-run lock held by pid {} ({}) since {}",
+                        held["pid"],
+                        describe(Some(held)),
+                        held["started"].as_str().unwrap_or("unknown")
+                    ),
+                    None => {
+                        let mine = ticket
+                            .as_ref()
+                            .and_then(|Ticket(path)| path.file_name())
+                            .and_then(|name| name.to_str());
+                        let before = queued(&queue)
+                            .iter()
+                            .position(|name| Some(name.as_str()) == mine)
+                            .unwrap_or(0);
+                        eprintln!(
+                            "heavy-run: waiting for its turn after {before} queued before it"
+                        );
+                    }
+                }
             }
             std::thread::sleep(Duration::from_secs(3));
         }
+        drop(ticket);
         let run = Self {
             taken: Some(folder),
         };
@@ -174,9 +210,72 @@ fn folder() -> PathBuf {
         .join("engine-heavy-run.lock")
 }
 
+/// A place in the queue of those waiting for the lock: its file, removed
+/// when the lock is taken or the wait ends.
+struct Ticket(PathBuf);
+
+impl Ticket {
+    /// Queues this process in `queue` as `label`.
+    fn take(queue: &Path, label: &str) -> Result<Self, String> {
+        fs::create_dir_all(queue).map_err(|error| {
+            format!(
+                "cannot make the heavy-run queue {}: {error}",
+                queue.display()
+            )
+        })?;
+        let since = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis());
+        let path = queue.join(format!("{since:013}-{}.json", std::process::id()));
+        let record = json!({"pid": std::process::id(), "label": label});
+        fs::write(&path, record.to_string())
+            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for Ticket {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// The queue beside the lock `folder`.
+fn queue_folder(folder: &Path) -> PathBuf {
+    let mut name = folder.as_os_str().to_owned();
+    name.push(".queue");
+    PathBuf::from(name)
+}
+
+/// The tickets in `queue` in the order they came, removing those of
+/// processes that ended.
+fn queued(queue: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(queue) else {
+        return Vec::new();
+    };
+    let mut line = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(pid) = name
+            .strip_suffix(".json")
+            .and_then(|stem| stem.split_once('-'))
+            .and_then(|(_, pid)| pid.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        if pid != u64::from(std::process::id()) && !alive(pid) {
+            let _ = fs::remove_file(entry.path());
+            continue;
+        }
+        line.push(name);
+    }
+    line.sort();
+    line
+}
+
 /// The lock's owner as its file says, or nothing while it is written or
 /// gone.
-fn holder(owner: &std::path::Path) -> Option<Value> {
+fn holder(owner: &Path) -> Option<Value> {
     fs::read_to_string(owner)
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())

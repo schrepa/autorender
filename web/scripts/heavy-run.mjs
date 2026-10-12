@@ -8,7 +8,11 @@
  * `engine-heavy-run.lock` in the system's temporary folder, holding
  * `owner.json` ({pid, label, cwd, command, started}); `cargo xtask` takes
  * the same one (tools/xtask/src/heavy.rs). A lock whose owner process ended
- * is stale and taken over. After taking it, a holder waits up to 15 minutes
+ * is stale and taken over. Those waiting queue in the folder beside it,
+ * `engine-heavy-run.lock.queue`, each as `MILLISECONDS-PID.json`, and take
+ * it in the order they came: a run that releases it between steps
+ * (equivalence, cell by cell) and wants it again queues behind them. After
+ * taking it, a holder waits up to 15 minutes
  * while a headless Chrome of another program runs (the factory's workers do
  * not take the lock). A holder's children run with `ENGINE_HEAVY_LOCK_HELD=1`
  * and pass straight through, so runs nest.
@@ -20,7 +24,7 @@
  */
 // @ts-check
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -31,6 +35,7 @@ export const HELD = "ENGINE_HEAVY_LOCK_HELD";
 
 const lock = process.env.ENGINE_HEAVY_LOCK_DIR ?? join(tmpdir(), "engine-heavy-run.lock");
 const owner = join(lock, "owner.json");
+const queue = `${lock}.queue`;
 /** How long a holder waits for another program's headless Chrome. */
 const FOREIGN_CHROME_WAIT_MS = 15 * 60_000;
 
@@ -55,7 +60,30 @@ function heldBy() {
   try { return JSON.parse(readFileSync(owner, "utf8")); } catch { return null; }
 }
 
+/** The tickets in the queue in the order they came, removing those of
+ * processes that ended. */
+function queued() {
+  let names;
+  try { names = readdirSync(queue); } catch { return []; }
+  const line = [];
+  for (const name of names) {
+    const pid = Number(/^\d+-(\d+)\.json$/.exec(name)?.[1]);
+    if (!pid) continue;
+    if (pid !== process.pid && !alive(pid)) { rmSync(join(queue, name), { force: true }); continue; }
+    line.push(name);
+  }
+  return line.sort();
+}
+
 let holding = false;
+/** This process's ticket in the queue while it waits.
+ * @type {string | null} */
+let ticket = null;
+/** Leaves the queue. */
+function leave() {
+  if (ticket) rmSync(join(queue, ticket), { force: true });
+  ticket = null;
+}
 
 /** Removes the lock where this process holds it. */
 function release() {
@@ -72,8 +100,13 @@ function release() {
 export async function holdHeavyRun(label, command = process.argv.slice(1)) {
   if (process.env[HELD] === "1" || holding) return;
   let reported = 0;
+  process.on("exit", leave);
   for (;;) {
+    // Its turn: first in the queue, or nobody queued before it came.
+    const line = queued();
+    const turn = ticket ? line[0] === ticket : line.length === 0;
     try {
+      if (!turn) throw Object.assign(new Error("not its turn"), { code: "EEXIST" });
       mkdirSync(lock);
       writeFileSync(owner, JSON.stringify({ pid: process.pid, label, cwd: process.cwd(), command, started: new Date().toISOString() }, null, 1));
       break;
@@ -94,12 +127,19 @@ export async function holdHeavyRun(label, command = process.argv.slice(1)) {
       const age = Date.now() - (statSync(lock, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
       if (age > 60_000) { rmSync(lock, { recursive: true, force: true }); continue; }
     }
+    if (!ticket) {
+      mkdirSync(queue, { recursive: true });
+      ticket = `${String(Date.now()).padStart(13, "0")}-${process.pid}.json`;
+      writeFileSync(join(queue, ticket), JSON.stringify({ pid: process.pid, label }));
+    }
     if (Date.now() - reported > 60_000) {
       reported = Date.now();
-      console.error(`heavy-run: waiting for the heavy-run lock held by pid ${held?.pid} (${held?.label || held?.command?.join(" ")}) since ${held?.started}`);
+      if (held) console.error(`heavy-run: waiting for the heavy-run lock held by pid ${held.pid} (${held.label || held.command?.join(" ")}) since ${held.started}`);
+      else console.error(`heavy-run: waiting for its turn after ${queued().indexOf(ticket)} queued before it`);
     }
     await delay(3000);
   }
+  leave();
   holding = true;
   process.env[HELD] = "1";
   process.on("exit", release);
