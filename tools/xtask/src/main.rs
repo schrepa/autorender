@@ -1,3 +1,6 @@
+//! The repository's tasks: building, serving, checking and measuring the
+//! engine and its games (`cargo xtask help` lists them).
+
 mod authoring;
 mod bench;
 mod checks;

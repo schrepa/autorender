@@ -81,6 +81,15 @@ dbg_macro = "deny"
 todo = "deny"
 # A builder whose result is dropped did nothing.
 return_self_not_must_use = "deny"
+# A panic names the invariant it guards (`expect`), unfinished code does
+# not build, and an error is handled, not turned into nothing.
+unwrap_used = "deny"
+unimplemented = "deny"
+unused_result_ok = "deny"
+
+[workspace.lints.rustdoc]
+# Every crate opens by saying what it is.
+missing_crate_level_docs = "deny"
 
 [profile.release]
 lto = "thin"

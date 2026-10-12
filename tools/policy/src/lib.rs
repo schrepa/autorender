@@ -1,6 +1,7 @@
 //! Repository policy that needs no build: manifests (one lint table for
 //! every crate, inherited package keys and dependencies, exact pins, an
-//! exact toolchain) and sources (unsafe code only in the listed files).
+//! exact toolchain) and sources (unsafe code only in the listed files, no
+//! crate-wide allow of a workspace lint, no work-left markers).
 //! `cargo xtask lint` runs it first; `cargo policy` runs it alone, in
 //! seconds, without compiling the engine.
 
@@ -76,14 +77,21 @@ pub fn check(root: &Path) -> Result<(), String> {
         .filter(|path| path.ends_with("package.json") && !path.contains("node_modules/"))
         .cloned()
         .collect();
-    manifests::check(root, &package_jsons, &mut problems)?;
+    let lints = manifests::check(root, &package_jsons, &mut problems)?;
     for path in &files {
-        if !path.ends_with(".rs") {
+        if sources::LOCKFILES.contains(&path.as_str()) {
             continue;
         }
-        let source = std::fs::read_to_string(root.join(path))
+        let bytes = std::fs::read(root.join(path))
             .map_err(|error| format!("cannot read {path}: {error}"))?;
-        sources::check(path, &source, &mut problems);
+        // Text files only: images, fonts and Wasm are not sources.
+        let Ok(text) = String::from_utf8(bytes) else {
+            continue;
+        };
+        sources::check_text(path, &text, &mut problems);
+        if path.ends_with(".rs") {
+            sources::check(path, &text, &lints, &mut problems);
+        }
     }
     for (path, _) in sources::UNSAFE_FILES {
         if !files.iter().any(|file| file == path) {

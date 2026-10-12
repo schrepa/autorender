@@ -1,6 +1,23 @@
-//! Source rules: unsafe code stays in the files the list names.
+//! Source rules: unsafe code stays in the files the list names, crate roots
+//! allow no workspace lint crate-wide, and no file leaves work for later
+//! behind a marker.
 
 use crate::{Problems, rust};
+
+/// Files the source rules skip: what package managers write.
+pub const LOCKFILES: &[&str] = &["Cargo.lock", "web/package-lock.json"];
+
+/// Markers of work left for later, which belongs in an issue or a commit,
+/// not in the tree (spelled in parts so this file holds none).
+const MARKERS: [&str; 4] = [
+    concat!("TO", "DO"),
+    concat!("FIX", "ME"),
+    concat!("XX", "X"),
+    concat!("HA", "CK"),
+];
+
+/// Lint groups that take every workspace lint with them.
+const GROUPS: [&str; 2] = ["warnings", "clippy::all"];
 
 /// The files that may contain unsafe code, each for a reason. Every other
 /// Rust file has none (the workspace denies `unsafe_code`, and a file
@@ -56,10 +73,55 @@ pub const UNSAFE_FILES: &[(&str, &str)] = &[
     ),
 ];
 
+/// Checks the text file `path` (relative, `/`-separated) with text `text`.
+pub fn check_text(path: &str, text: &str, problems: &mut Problems) {
+    for (index, line) in text.lines().enumerate() {
+        for marker in MARKERS {
+            if line.match_indices(marker).any(|(at, _)| {
+                let before = line[..at].chars().next_back();
+                let after = line[at + marker.len()..].chars().next();
+                // `MARKERs` counts; `MARKERX` and `aMARKER` are other words.
+                !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+                    && !after
+                        .is_some_and(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            }) {
+                problems.at(
+                    path,
+                    index + 1,
+                    &format!(
+                        "a {marker} marker: do the work, or say what the code does now (work \
+                         left for later belongs in an issue)"
+                    ),
+                );
+            }
+        }
+    }
+}
+
 /// Checks the Rust file `path` (relative, `/`-separated) with text
-/// `source`.
-pub fn check(path: &str, source: &str, problems: &mut Problems) {
+/// `source`, where `lints` are the workspace's.
+pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems) {
     let split = rust::split(source);
+    if crate_root(path) {
+        let code: String = split.code.concat().split_whitespace().collect();
+        for attribute in ["#![allow(", "#![expect("] {
+            for (at, _) in code.match_indices(attribute) {
+                let listed = &code[at + attribute.len()..];
+                let listed = &listed[..listed.find(')').unwrap_or(listed.len())];
+                for lint in listed.split(',').filter(|item| !item.contains('=')) {
+                    if lints.iter().any(|key| key == lint) || GROUPS.contains(&lint) {
+                        problems.file(
+                            path,
+                            &format!(
+                                "allows the workspace lint {lint} crate-wide; allow it where \
+                                 it is needed, with a reason"
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
     let listed = UNSAFE_FILES.iter().any(|(file, _)| *file == path);
     let first = split
         .code
@@ -81,4 +143,13 @@ pub fn check(path: &str, source: &str, problems: &mut Problems) {
              remove it from the list",
         );
     }
+}
+
+/// Whether `path` is the root file of a crate target (a library, binary,
+/// example or build script), where inner attributes apply crate-wide.
+fn crate_root(path: &str) -> bool {
+    let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+    matches!(name, "lib.rs" | "main.rs" | "build.rs")
+        || folder.ends_with("/bin")
+        || folder.ends_with("/examples")
 }

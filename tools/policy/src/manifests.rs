@@ -38,18 +38,34 @@ fn inherited(item: &Item) -> bool {
 }
 
 /// Checks the workspace manifest, every member's, the toolchain file and
-/// the web manifests in `package_jsons`.
-pub fn check(root: &Path, package_jsons: &[String], problems: &mut Problems) -> Result<(), String> {
+/// the web manifests in `package_jsons`; the workspace's lints, as
+/// attributes name them (`unsafe_code`, `clippy::todo`).
+pub fn check(
+    root: &Path,
+    package_jsons: &[String],
+    problems: &mut Problems,
+) -> Result<Vec<String>, String> {
     let workspace_manifest = parse(root, "Cargo.toml")?;
     let workspace = workspace_manifest
         .as_item()
         .get("workspace")
         .ok_or("Cargo.toml has no [workspace]")?;
-    if table(workspace, "lints").is_none() {
-        problems.file(
+    let mut lints = Vec::new();
+    match table(workspace, "lints") {
+        Some(tools) => {
+            for (tool, table) in tools.iter() {
+                for (lint, _) in table.as_table_like().into_iter().flat_map(TableLike::iter) {
+                    lints.push(match tool {
+                        "rust" => lint.to_owned(),
+                        _ => format!("{tool}::{lint}"),
+                    });
+                }
+            }
+        }
+        None => problems.file(
             "Cargo.toml",
             "the workspace declares no [workspace.lints] table",
-        );
+        ),
     }
     let inherited_keys: Vec<&str> = table(workspace, "package")
         .map(|package| package.iter().map(|(key, _)| key).collect())
@@ -93,7 +109,7 @@ pub fn check(root: &Path, package_jsons: &[String], problems: &mut Problems) -> 
     for path in package_jsons {
         check_package_json(root, path, problems)?;
     }
-    Ok(())
+    Ok(lints)
 }
 
 /// The workspace's members, `dir/*` patterns expanded to the folders under
