@@ -294,6 +294,8 @@ export async function checkHistory(name, resources = {}) {
       frame_counts: results.frames.map(({ label, delta }) => ({ label, delta })), measurements: results.measurements }));
   } catch (error) {
     await writeFile(`${output}/results.json`, JSON.stringify({ ok: false, error: String(error), errors, ...results }, null, 2));
+    console.log(JSON.stringify({ ok: false, artifact: output, error: String(error),
+      comparisons: results.comparisons, measurements: results.measurements }));
     throw error;
   } finally { await browser.close(); }
 }
