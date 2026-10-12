@@ -4,11 +4,12 @@ use super::frame::{EncodeReport, FrameKind, FrameState};
 use super::*;
 use crate::decals::DecalPass;
 use crate::gpu_presentation::GpuPrepared;
+use crate::water::WaterPass;
 
 use engine_core::{
     Applied, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn, GroundCoverStats,
-    LightStats, OccupancyStats, OceanStats, ProbeStats, ShadowStats, SkyStats, TerrainRenderStats,
-    VirtualGeometryStats, WaterStats,
+    LightStats, OccupancyStats, ProbeStats, ShadowStats, SkyStats, TerrainRenderStats,
+    VirtualGeometryStats,
 };
 
 /// Records every number and flag of `stats` as the counter `render.<path>`,
@@ -84,6 +85,8 @@ impl Renderer {
         );
         let (particle_frame, refraction) = (&features.particle_frame, features.refraction);
         let dropped_probes = features.dropped_probes;
+        let (water, ocean) =
+            WaterPass::stats(features.frames.water.as_ref().map(Ready::frame), snapshot);
         let (mesh_upload_bytes, texture_upload_bytes) =
             (state.assets.mesh_bytes, state.assets.texture_bytes);
         let (camera_upload_bytes, instance_upload_bytes) =
@@ -300,25 +303,8 @@ impl Renderer {
             occupancy: OccupancyStats {
                 redraws: self.occupancy.redraws,
             },
-            water: WaterStats {
-                chunks: if state.shape.water {
-                    self.water.chunks_drawn()
-                } else {
-                    0
-                },
-            },
-            ocean: OceanStats {
-                sectors: if state.shape.water {
-                    self.water.ocean_drawn().0
-                } else {
-                    0
-                },
-                triangles: if state.shape.water {
-                    self.water.ocean_drawn().1
-                } else {
-                    0
-                },
-            },
+            water,
+            ocean,
             deformation: DeformationStats {
                 stamps: self.terrain.deformation.pressed,
                 texels: self.terrain.deformation.texels,
@@ -465,7 +451,7 @@ impl Renderer {
                 + self.ground_cover.capacity_bytes()
                 + self.scatter.capacity_bytes()
                 + self.occupancy.capacity_bytes()
-                + self.water.capacity_bytes()) as f64,
+                + self.features.water.get().capacity_bytes()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_transparent_bytes",

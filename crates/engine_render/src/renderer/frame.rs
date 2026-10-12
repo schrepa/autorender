@@ -271,7 +271,7 @@ impl Renderer {
         let writes = self.write_frame_data(frame, kind, &packing, &mut prelude.poses);
         // Profiling captures time this frame's passes from here.
         self.profiler.begin_frame(&self.device);
-        let features = self.prepare_features(
+        let mut features = self.prepare_features(
             frame,
             gpu.as_ref(),
             kind,
@@ -312,7 +312,7 @@ impl Renderer {
         let scatter =
             self.prepare_scatter(snapshot, passes.opaque_kind, passes.impostor_pass.is_some());
         // Water on terrains.
-        let water = self.prepare_water(snapshot, passes.opaque_kind);
+        features.frames.water = self.prepare_water(snapshot, passes.opaque_kind);
         // Terrain's horizon maps may have been replaced.
         self.refresh_camera_group();
         let mut shape = self.frame_shape(
@@ -320,7 +320,6 @@ impl Renderer {
             (&packing, &features, &passes),
             (virtual_frame, resolving, scatter, terrain),
         );
-        shape.water = water;
         shape.clouds = self.prepare_cloud_composite(shape.targets);
         let mut state = FrameState {
             snapshot,

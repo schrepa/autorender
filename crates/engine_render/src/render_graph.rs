@@ -277,8 +277,6 @@ pub(crate) enum Pass {
     TemporalResolve,
     /// Reflection probe faces captured after the frame.
     ProbeCaptures,
-    /// Water over the opaque scene.
-    Water,
     /// The view's clouds marched after the opaque scene and water, then
     /// laid over it.
     CloudMarch,
@@ -345,7 +343,7 @@ passes! {
     visibility_tiles_phase_two: Classify { phase: Phase::Two },
     visibility_resolve_phase_two: Resolve { phase: Phase::Two },
     decals: Feature(FeaturePass::Decals),
-    water: Water,
+    water: Feature(FeaturePass::Water),
     cloud_march: CloudMarch,
     cloud_composite: CloudComposite,
     transparent: Transparent,
@@ -721,8 +719,6 @@ pub(crate) struct FrameShape {
     pub(crate) shadow_clusters: bool,
     pub(crate) resolves: [bool; 2],
     pub(crate) lights: bool,
-    /// Water draws over the opaque scene.
-    pub(crate) water: bool,
     /// The view's clouds march and cover the scene.
     pub(crate) clouds: bool,
     /// Transparent draws or particles, and glass reading
@@ -741,6 +737,20 @@ impl FrameShape {
             Resource::Canvas
         } else {
             Resource::Scene
+        }
+    }
+
+    /// The main passes' color targets, in pipeline target order.
+    pub(crate) fn main_targets(&self) -> &'static [Resource] {
+        match self.targets {
+            Targets::Canvas => &[Resource::Canvas],
+            Targets::Post => &[Resource::Scene, Resource::Glow, Resource::Surface],
+            Targets::Temporal => &[
+                Resource::Scene,
+                Resource::Motion,
+                Resource::Glow,
+                Resource::Surface,
+            ],
         }
     }
 }
@@ -900,18 +910,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             }
             resolve.depth(Depth, Access::ReadOnly);
         }
-    }
-    // Water blends over the opaque scene and writes its
-    // depth, which transparent surfaces and screen effects then see.
-    if shape.water {
-        let mut water = graph
-            .add(Pass::Water)
-            .read_if(shape.shadows, ShadowMaps)
-            .read(Probes);
-        for &(target, _) in targets {
-            water = water.color(target, Access::Load);
-        }
-        water.depth(Depth, Access::Load);
     }
     // The view's clouds march up to what the opaque scene
     // and water show, then cover it before transparent surfaces draw.

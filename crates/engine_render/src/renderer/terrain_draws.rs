@@ -4,6 +4,7 @@
 use super::frame::FrameState;
 use super::*;
 use crate::terrain::{FrameTerrain, TerrainViews};
+use crate::water::WaterFrame;
 
 /// Terrain's visibility target: each pixel's terrain (its
 /// directory start plus one; 0 where none shows) and depth's bits, and the
@@ -253,52 +254,40 @@ impl Renderer {
 
     /// Prepares this frame's water and its pipeline into
     /// `opaque_kind`'s targets, created while terrains with hydrology still
-    /// bake; returns whether any of it draws.
+    /// bake; `None` when none of it draws.
     pub(super) fn prepare_water(
         &mut self,
         snapshot: &RenderSnapshot,
         opaque_kind: PassKind,
-    ) -> bool {
-        let Some(targets) = opaque_kind.targets() else {
-            return false;
-        };
+    ) -> Option<Ready<WaterFrame>> {
+        let targets = opaque_kind.targets()?;
         let coming = snapshot
             .terrain
             .terrains
             .iter()
             .any(|terrain| terrain.hydrology && terrain.water.is_none());
-        if coming {
-            self.water.ensure_pipeline(
-                &self.device,
-                &self.mesh_shader,
-                &self.camera.layout,
-                (targets, true),
-                (self.display.format(), DEPTH_FORMAT),
-            );
-        }
-        let environment = &snapshot.environment;
-        if !self.water.prepare(
-            &self.device,
-            &self.queue,
-            &snapshot.terrain,
-            (environment.water, environment.ocean),
-            (
-                snapshot.camera_position,
-                environment.wind.velocity,
-                snapshot.presented_seconds,
-            ),
-            &self.depth.texture,
-        ) {
-            return false;
-        }
-        self.water.ensure_pipeline(
-            &self.device,
-            &self.mesh_shader,
-            &self.camera.layout,
-            (targets, false),
-            (self.display.format(), DEPTH_FORMAT),
-        );
-        true
+        let (device, shader, camera) = (&self.device, &self.mesh_shader, &self.camera.layout);
+        let formats = (self.display.format(), DEPTH_FORMAT);
+        self.features.water.prepare(|water| {
+            if coming {
+                water.ensure_pipeline(device, shader, camera, (targets, true), formats);
+            }
+            let environment = &snapshot.environment;
+            let prepared = water.prepare(
+                device,
+                &self.queue,
+                &snapshot.terrain,
+                (environment.water, environment.ocean),
+                (
+                    snapshot.camera_position,
+                    environment.wind.velocity,
+                    snapshot.presented_seconds,
+                ),
+                &self.depth.texture,
+            )?;
+            water.ensure_pipeline(device, shader, camera, (targets, false), formats);
+            Some(prepared)
+        })
     }
 
     /// Whether this frame's terrain draws deferred, given whether it draws

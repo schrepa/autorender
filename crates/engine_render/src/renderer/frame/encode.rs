@@ -79,8 +79,9 @@ impl Renderer {
                 self.encode_visibility_resolve(state, encoder, view, node, phase.index());
             }
             Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
-            Pass::Feature(pass) => self.encode_feature(pass, state, encoder, view, node),
-            Pass::Water => report.draws += self.encode_water(state, encoder, view, node),
+            Pass::Feature(pass) => {
+                report.draws += self.encode_feature(pass, state, encoder, view, node);
+            }
             Pass::CloudMarch => {
                 self.clouds
                     .encode_view(&self.device, encoder, &self.depth.view, &self.profiler);
@@ -191,7 +192,8 @@ impl Renderer {
         crate::render_features::render_pass(encoder, node, &views, label, timestamp_writes)
     }
 
-    /// `node`, a feature's pass `pass`, encoded by its feature.
+    /// `node`, a feature's pass `pass`, encoded by its feature; returns
+    /// the draws it adds to the frame's draw calls.
     fn encode_feature(
         &self,
         pass: FeaturePass,
@@ -199,7 +201,7 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         node: &Node,
-    ) {
+    ) -> u32 {
         let views = FrameViews {
             renderer: self,
             canvas: view,
@@ -214,10 +216,10 @@ impl Renderer {
             &views,
             &self.profiler,
             (self.camera.group(), &self.materials, lights),
-            state.shape.targets,
+            (state.shape.targets, &self.depth.texture),
         );
         self.features
-            .encode(pass, &state.features.frames, node, &encode, encoder);
+            .encode(pass, &state.features.frames, node, &encode, encoder)
     }
 
     /// GPU presentation's blending, composition, culling and compaction.
@@ -355,28 +357,6 @@ impl Renderer {
                 self.profiler.span("light_bins"),
             );
         }
-    }
-
-    /// Water over the opaque scene, writing its depth;
-    /// returns its draws.
-    fn encode_water(
-        &self,
-        state: &FrameState<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        node: &Node,
-    ) -> u32 {
-        // The ground behind the water, before it draws.
-        self.water.copy_depth(encoder, &self.depth.texture);
-        let mut pass = self.render_pass(
-            encoder,
-            node,
-            view,
-            "engine/water",
-            self.profiler.span("water").map(Span::render),
-        );
-        self.water
-            .draw(&mut pass, self.camera.group(), state.shape.targets)
     }
 
     /// The view's clouds laid over the scene's color.

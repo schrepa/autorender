@@ -33,7 +33,7 @@ use crate::pipelines::PipelineCounts;
 use crate::post::PostPass;
 use crate::probes::{FACES, ProbePass, face_view_projection};
 use crate::profiling::{GpuProfiler, Span};
-use crate::render_features::{FeatureFrames, Ready, RenderFeature, RenderFeatures};
+use crate::render_features::{Eager, FeatureFrames, Lazy, Ready, RenderFeature, RenderFeatures};
 use crate::retained_uploads::RetainedUploads;
 use crate::shadows::{CasterDraw, ShadowPass};
 use crate::staging::{self, StagingRing};
@@ -252,8 +252,6 @@ pub struct Renderer {
     terrain: crate::terrain::TerrainPass,
     // Ground cover grown each frame on terrain.
     ground_cover: crate::ground_cover::GroundCoverPass,
-    // Terrains' lakes and rivers.
-    water: crate::water::WaterPass,
     // Objects placed on terrain: their pass, their meshes
     // and a counter advancing when that set changes, and their draw groups
     // and slots.

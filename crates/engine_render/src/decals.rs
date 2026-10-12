@@ -296,7 +296,7 @@ mod gpu {
             node: &Node,
             encode: &Encode<'_>,
             encoder: &mut wgpu::CommandEncoder,
-        ) {
+        ) -> u32 {
             let mut pass = encode.render_pass(
                 encoder,
                 node,
@@ -310,6 +310,8 @@ mod gpu {
                 encode.lights,
                 encode.targets != Targets::Canvas,
             );
+            // Their draws are not the frame's mesh draws.
+            0
         }
 
         fn capacity_bytes(&self) -> u64 {

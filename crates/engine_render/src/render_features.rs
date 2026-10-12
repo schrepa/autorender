@@ -12,11 +12,13 @@ use crate::materials::MaterialStore;
 use crate::profiling::GpuProfiler;
 use crate::render_graph::{Clear, FrameShape, Load, Node, Ops, RenderGraph, Resource};
 use crate::targets::Targets;
+use crate::water::WaterPass;
 
 /// A feature of the renderer.
 pub(crate) trait RenderFeature {
     /// What the feature prepared for a frame, which its own preparation
-    /// makes and [`Lazy::prepare`] hands back as a [`Ready`].
+    /// makes and its holder ([`Lazy`] or [`Eager`]) hands back as a
+    /// [`Ready`].
     type Frame;
     /// The feature's part of a frame's stats.
     type Stats;
@@ -26,14 +28,14 @@ pub(crate) trait RenderFeature {
     fn declare(frame: &Self::Frame, shape: &FrameShape, graph: &mut RenderGraph);
 
     /// Encodes `node`, one of the feature's nodes the graph kept, into
-    /// `encoder`.
+    /// `encoder`; returns the draws it adds to the frame's draw calls.
     fn encode(
         &self,
         frame: &Self::Frame,
         node: &Node,
         encode: &Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
-    );
+    ) -> u32;
 
     /// Work after the frame is submitted.
     fn after_submit(&mut self) {}
@@ -79,7 +81,8 @@ impl<F: RenderFeature> Lazy<F> {
         self.feature.as_ref()
     }
 
-    pub(crate) fn get_mut(&mut self) -> Option<&mut F> {
+    /// The feature, once a frame created it, for work after the frame.
+    fn each_mut(&mut self) -> Option<&mut F> {
         self.feature.as_mut()
     }
 
@@ -91,8 +94,42 @@ impl<F: RenderFeature> Lazy<F> {
     }
 }
 
-/// What a feature prepared for a frame. Only [`Lazy::prepare`] makes one,
-/// so holding one proves the feature exists and is prepared.
+/// A feature the renderer creates with itself.
+pub(crate) struct Eager<F> {
+    feature: F,
+}
+
+impl<F: RenderFeature> Eager<F> {
+    pub(crate) fn new(feature: F) -> Self {
+        Self { feature }
+    }
+
+    /// What `prepare` made of the feature for a frame, which encoding the
+    /// feature requires; `None` when it prepared nothing.
+    pub(crate) fn prepare(
+        &mut self,
+        prepare: impl FnOnce(&mut F) -> Option<F::Frame>,
+    ) -> Option<Ready<F::Frame>> {
+        prepare(&mut self.feature).map(|frame| Ready { frame })
+    }
+
+    pub(crate) fn get(&self) -> &F {
+        &self.feature
+    }
+
+    /// The feature, for work after the frame.
+    fn each_mut(&mut self) -> Option<&mut F> {
+        Some(&mut self.feature)
+    }
+
+    /// The feature `ready` was prepared by.
+    fn ready(&self, _ready: &Ready<F::Frame>) -> &F {
+        &self.feature
+    }
+}
+
+/// What a feature prepared for a frame. Only its holder's `prepare` makes
+/// one, so holding one proves the feature exists and is prepared.
 pub(crate) struct Ready<F> {
     frame: F,
 }
@@ -121,6 +158,8 @@ pub(crate) struct Encode<'f> {
     pub(crate) lights: Option<&'f wgpu::BindGroup>,
     /// Where the frame's main passes draw.
     pub(crate) targets: Targets,
+    /// The depth buffer's texture.
+    pub(crate) depth: &'f wgpu::Texture,
 }
 
 impl<'f> Encode<'f> {
@@ -132,7 +171,7 @@ impl<'f> Encode<'f> {
             &'f MaterialStore,
             Option<&'f wgpu::BindGroup>,
         ),
-        targets: Targets,
+        (targets, depth): (Targets, &'f wgpu::Texture),
     ) -> Self {
         Self {
             views,
@@ -141,6 +180,7 @@ impl<'f> Encode<'f> {
             materials,
             lights,
             targets,
+            depth,
         }
     }
 
@@ -230,12 +270,12 @@ fn store_operation(ops: Ops) -> wgpu::StoreOp {
 }
 
 /// Builds the renderer's features from one list: each one's field, its
-/// type, and the render graph passes it owns, which become
-/// [`FeaturePass`]es the feature declares and encodes.
+/// holder ([`Lazy`] or [`Eager`]) and type, and the render graph passes it
+/// owns, which become [`FeaturePass`]es the feature declares and encodes.
 macro_rules! render_features {
     ($(
         $(#[$doc:meta])*
-        $field:ident: $feature:ty => [$($pass:ident),+ $(,)?],
+        $field:ident: $holder:ident<$feature:ty> => [$($pass:ident),+ $(,)?],
     )*) => {
         /// The render graph passes features own (`Pass::Feature`), each
         /// declared and encoded by its feature.
@@ -244,13 +284,13 @@ macro_rules! render_features {
             $($($pass,)+)*
         }
 
-        /// The features, each created with the first frame needing it.
-        #[derive(Default)]
+        /// The features, in their holders.
         pub(crate) struct RenderFeatures {
-            $($(#[$doc])* pub(crate) $field: Lazy<$feature>,)*
+            $($(#[$doc])* pub(crate) $field: $holder<$feature>,)*
         }
 
         /// What each feature prepared for a frame.
+        #[derive(Default)]
         pub(crate) struct FeatureFrames {
             $(pub(crate) $field: Option<Ready<<$feature as RenderFeature>::Frame>>,)*
         }
@@ -269,7 +309,8 @@ macro_rules! render_features {
             }
 
             /// Encodes `node`, a kept node of the feature pass `pass`, with
-            /// what its feature prepared in `frames`.
+            /// what its feature prepared in `frames`; returns the draws it
+            /// adds to the frame's draw calls.
             pub(crate) fn encode(
                 &self,
                 pass: FeaturePass,
@@ -277,21 +318,21 @@ macro_rules! render_features {
                 node: &Node,
                 encode: &Encode<'_>,
                 encoder: &mut wgpu::CommandEncoder,
-            ) {
+            ) -> u32 {
                 match pass {
                     $($(FeaturePass::$pass)|+ => {
                         let ready = frames
                             .$field
                             .as_ref()
                             .expect("features declare their passes only with what they prepared");
-                        self.$field.ready(ready).encode(ready.frame(), node, encode, encoder);
+                        self.$field.ready(ready).encode(ready.frame(), node, encode, encoder)
                     })*
                 }
             }
 
             /// Each feature's work after the frame is submitted.
             pub(crate) fn after_submit(&mut self) {
-                $(if let Some(feature) = self.$field.get_mut() {
+                $(if let Some(feature) = self.$field.each_mut() {
                     feature.after_submit();
                 })*
             }
@@ -301,5 +342,7 @@ macro_rules! render_features {
 
 render_features! {
     /// Decals over the opaque surfaces.
-    decals: DecalPass => [Decals],
+    decals: Lazy<DecalPass> => [Decals],
+    /// Terrains' lakes and rivers, and the sea, over the opaque scene.
+    water: Eager<WaterPass> => [Water],
 }

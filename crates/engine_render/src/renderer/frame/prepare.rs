@@ -645,7 +645,10 @@ impl Renderer {
             transparent_draws,
             particle_frame,
             transparency,
-            frames: FeatureFrames { decals },
+            frames: FeatureFrames {
+                decals,
+                ..FeatureFrames::default()
+            },
         }
     }
 
@@ -1338,7 +1341,6 @@ impl Renderer {
                 resolving && phases == 2 && self.virtual_draws.phase_two.is_some(),
             ],
             lights: features.light_frame.is_some() && self.lights.is_some(),
-            water: false,
             clouds: false,
             transparency: features.transparency && self.transparent.is_some(),
             refraction: features.refraction && post.is_some(),

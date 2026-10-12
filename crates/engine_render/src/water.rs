@@ -11,6 +11,8 @@
 //! distance light travels through the water, and where it runs shallow
 //! enough to foam.
 //!
+//! Water is a feature of the renderer (`crate::render_features`).
+//!
 //! Rivers draw as ribbons along their lines, flat across,
 //! their edges reaching under the banks, in chunks the camera culls.
 //!
@@ -30,11 +32,16 @@ use bytemuck::Zeroable;
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::math::max;
 use engine_core::terrain_data::Rivers;
-use engine_core::{Environment, MAX_OCEAN_WAVES, Ocean, RenderTerrains, Water, WaterGrid};
+use engine_core::{
+    Environment, MAX_OCEAN_WAVES, Ocean, OceanStats, RenderSnapshot, RenderTerrains, Water,
+    WaterGrid, WaterStats,
+};
 
 use crate::bindings::{WATER, WATER_DEPTH};
 use crate::gpu_layouts::constants::WATER_DEPTH_RANGE as DEPTH_RANGE;
-use crate::render_graph::Targets;
+use crate::profiling::Span;
+use crate::render_features::{Encode, FeaturePass, RenderFeature};
+use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource, Targets};
 use crate::targets::{FrameSize, ScreenTarget};
 
 /// Quads along each side of a chunk at full detail; coarser chunks draw a
@@ -140,6 +147,14 @@ struct DepthCopy {
     group: wgpu::BindGroup,
 }
 
+/// What water draws this frame: lakes' and rivers' chunks, and the sea's
+/// sectors and their triangles.
+pub(crate) struct WaterFrame {
+    chunks: u32,
+    sectors: u32,
+    triangles: u32,
+}
+
 pub(crate) struct WaterPass {
     pub(crate) layout: crate::pipelines::GroupLayout,
     depth_layout: crate::pipelines::GroupLayout,
@@ -174,13 +189,8 @@ impl WaterPass {
         }
     }
 
-    /// Chunks drawn this frame: lakes' and rivers'.
-    pub(crate) fn chunks_drawn(&self) -> u32 {
-        self.chunks_drawn
-    }
-
     /// The sea's sectors drawn this frame and their triangles.
-    pub(crate) fn ocean_drawn(&self) -> (u32, u32) {
+    fn ocean_drawn(&self) -> (u32, u32) {
         self.ocean.as_ref().map_or((0, 0), |ocean| {
             let sectors: u32 = ocean.runs.iter().map(|run| run.len() as u32).sum();
             let per_sector = OCEAN_SEGMENTS / OCEAN_SECTORS;
@@ -188,28 +198,9 @@ impl WaterPass {
         })
     }
 
-    /// Bytes of the water's textures and its depth copy.
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        let depth = self
-            .depth
-            .size()
-            .map_or(0, |size| u64::from(size.width) * u64::from(size.height) * 4);
-        self.terrains
-            .values()
-            .map(|water| {
-                (water.grid.width * water.grid.height * 8) as u64
-                    + water
-                        .rivers
-                        .as_ref()
-                        .map_or(0, |mesh| mesh.vertices.size() + mesh.indices.size())
-            })
-            .sum::<u64>()
-            + depth
-    }
-
     /// Copies the opaque `depth` into the copy water reads, before it
     /// draws.
-    pub(crate) fn copy_depth(&self, encoder: &mut wgpu::CommandEncoder, depth: &wgpu::Texture) {
+    fn copy_depth(&self, encoder: &mut wgpu::CommandEncoder, depth: &wgpu::Texture) {
         if let Some(copy) = self.depth.get()
             && depth.size() == copy.texture.size()
         {
@@ -224,7 +215,7 @@ impl WaterPass {
     /// Prepares this frame's water of `terrains` as `settings` shade it and
     /// the sea `ocean`, seen from `eye` with the wind's
     /// `wind` velocity, its waves at the simulation time `seconds` the
-    /// frame presents; returns whether any of it draws.
+    /// frame presents; `None` when none of it draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -233,7 +224,7 @@ impl WaterPass {
         (settings, ocean): (Water, Ocean),
         (eye, wind, seconds): (Vec3, [f32; 2], f64),
         depth: &wgpu::Texture,
-    ) -> bool {
+    ) -> Option<WaterFrame> {
         self.chunks_drawn = 0;
         self.records.clear();
         self.terrains
@@ -260,7 +251,7 @@ impl WaterPass {
             .values()
             .any(|water| !water.river_draws.is_empty());
         if self.records.is_empty() && !sea && !rivers {
-            return false;
+            return None;
         }
         // The depth copy, at the depth buffer's size: the frame's.
         let size = FrameSize {
@@ -294,7 +285,12 @@ impl WaterPass {
             }
             queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&self.records));
         }
-        true
+        let (sectors, triangles) = self.ocean_drawn();
+        Some(WaterFrame {
+            chunks: self.chunks_drawn,
+            sectors,
+            triangles,
+        })
     }
 
     /// Prepares the sea seen through `view` (eye-relative)
@@ -635,7 +631,7 @@ impl WaterPass {
 
     /// Records this frame's water into `pass` with the main passes' first
     /// group `camera`; returns its draws.
-    pub(crate) fn draw(
+    fn draw(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         camera: &wgpu::BindGroup,
@@ -698,6 +694,76 @@ impl WaterPass {
             }
         }
         draws
+    }
+}
+
+impl RenderFeature for WaterPass {
+    type Frame = WaterFrame;
+    type Stats = (WaterStats, OceanStats);
+
+    /// Water blends over the opaque scene, with its shadows and probes, and
+    /// writes its depth, which transparent surfaces and screen effects then
+    /// see.
+    fn declare(_frame: &WaterFrame, shape: &FrameShape, graph: &mut RenderGraph) {
+        let mut water = graph
+            .add(Pass::Feature(FeaturePass::Water))
+            .read_if(shape.shadows, Resource::ShadowMaps)
+            .read(Resource::Probes);
+        for &target in shape.main_targets() {
+            water = water.color(target, Access::Load);
+        }
+        water.depth(Resource::Depth, Access::Load);
+    }
+
+    fn encode(
+        &self,
+        _frame: &WaterFrame,
+        node: &Node,
+        encode: &Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        // The ground behind the water, before it draws.
+        self.copy_depth(encoder, encode.depth);
+        let mut pass = encode.render_pass(
+            encoder,
+            node,
+            "engine/water",
+            encode.profiler.span("water").map(Span::render),
+        );
+        self.draw(&mut pass, encode.camera, encode.targets)
+    }
+
+    /// Bytes of the water's textures and its depth copy.
+    fn capacity_bytes(&self) -> u64 {
+        let depth = self
+            .depth
+            .size()
+            .map_or(0, |size| u64::from(size.width) * u64::from(size.height) * 4);
+        self.terrains
+            .values()
+            .map(|water| {
+                (water.grid.width * water.grid.height * 8) as u64
+                    + water
+                        .rivers
+                        .as_ref()
+                        .map_or(0, |mesh| mesh.vertices.size() + mesh.indices.size())
+            })
+            .sum::<u64>()
+            + depth
+    }
+
+    /// Chunks drawn (lakes' and rivers'), and the sea's sectors drawn and
+    /// their triangles.
+    fn stats(frame: Option<&WaterFrame>, _snapshot: &RenderSnapshot) -> (WaterStats, OceanStats) {
+        (
+            WaterStats {
+                chunks: frame.map_or(0, |frame| frame.chunks),
+            },
+            OceanStats {
+                sectors: frame.map_or(0, |frame| frame.sectors),
+                triangles: frame.map_or(0, |frame| frame.triangles),
+            },
+        )
     }
 }
 
