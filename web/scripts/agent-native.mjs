@@ -24,17 +24,22 @@ const READY_TIMEOUT_MS = 300_000;
 
 /** The program `native` names: a workspace package's native binary
  * (`NAME-native`), built with its development tools (and with `profiling`,
- * its profiling captures), or a path to one built so. */
+ * its profiling captures), or a path to one built so. ENGINE_NATIVE_PROFILE
+ * names another cargo profile to build it with: `dev` keeps debug
+ * assertions, the engine's checks of its invariants, on. */
 export function nativeProgram(native, { profiling = false } = {}) {
   if (!/^[a-z][a-z0-9-]*$/.test(native)) return resolve(native);
   // Profiling builds keep line tables (the `profiling` profile) and, on
   // Linux, frame pointers, which the in-process sampler follows there.
-  const [profile, features] = profiling ? ["profiling", "dev,profiling"] : ["release", "dev"];
+  const [chosen, features] = profiling ? ["profiling", "dev,profiling"] : ["release", "dev"];
+  const profile = process.env.ENGINE_NATIVE_PROFILE || chosen;
   const env = profiling && process.platform === "linux"
     ? { ...process.env, RUSTFLAGS: `${process.env.RUSTFLAGS ?? ""} -Cforce-frame-pointers=yes`.trim() }
     : process.env;
   execFileSync("cargo", ["build", "-q", "-p", native, "--profile", profile, "--features", features], { cwd: workspace, env, stdio: ["ignore", "ignore", "inherit"] });
-  return resolve(workspace, "target", profile, process.platform === "win32" ? `${native}-native.exe` : `${native}-native`);
+  // Cargo builds the dev profile into target/debug.
+  const folder = profile === "dev" ? "debug" : profile;
+  return resolve(workspace, "target", folder, process.platform === "win32" ? `${native}-native.exe` : `${native}-native`);
 }
 
 async function pruneSessions(root) {

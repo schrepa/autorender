@@ -10,9 +10,11 @@
 //!   the rules name, natively, where any rule calls for equivalence, and
 //!   the factory tools' self-checks where called for;
 //! - `merge` (about 30-45 minutes): all of lint, every smoke check, the
-//!   terrain corpus's jobs in Wasm, equivalence's full tier natively and,
-//!   where a rule calls for it, its browser leg, and the self-checks called
-//!   for.
+//!   native smoke again with its program built in the dev profile (where
+//!   debug assertions check the engine's invariants, such as the terrain
+//!   store's), the terrain corpus's jobs in Wasm, equivalence's full tier
+//!   natively and, where a rule calls for it, its browser leg, and the
+//!   self-checks called for.
 //!
 //! The change is the working tree, untracked files included, against the
 //! base: its merge-base with origin/main, or with `--base REV`, which
@@ -292,6 +294,19 @@ fn steps<'a>(
     if !smokes.is_empty() {
         let mut options = vec!["--serve".to_owned(), "--keep-going".to_owned()];
         options.extend(smokes);
+        steps.push(Step::new(
+            format!("smoke {}", options.join(" ")),
+            move || crate::smoke::smoke(root, &options),
+        ));
+    }
+    // The engine's debug assertions run nowhere else with a GPU: the
+    // native smoke's program built in the dev profile.
+    if level == Level::Merge {
+        let options = vec![
+            "--native-profile".to_owned(),
+            "dev".to_owned(),
+            "native".to_owned(),
+        ];
         steps.push(Step::new(
             format!("smoke {}", options.join(" ")),
             move || crate::smoke::smoke(root, &options),

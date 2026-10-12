@@ -95,14 +95,18 @@ pub fn check(root: &Path) -> Result<(), String> {
 /// `smoke --list` lists the checks; `smoke NAME...` runs those in order and
 /// `smoke --all` every one, stopping at the first failure unless
 /// `--keep-going`, against the server `DEMO_URL` names or, with `--serve`,
-/// one of this checkout. Fails with exit code 3 when a check's assertion
-/// failed, 1 when one stopped otherwise.
+/// one of this checkout; with `--native-profile PROFILE` the native programs
+/// the checks build use that cargo profile (`dev`: debug assertions on).
+/// Fails with exit code 3 when a check's assertion failed, 1 when one
+/// stopped otherwise.
 pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
-    let usage = "usage: smoke --list | [--serve] [--keep-going] (--all | NAME...)";
+    let usage = "usage: smoke --list | [--serve] [--keep-going] [--native-profile PROFILE] (--all | NAME...)";
     let smokes = smokes(root)?;
     let (mut serve, mut keep_going, mut all) = (false, false, false);
+    let mut native_profile = None;
     let mut names: Vec<&str> = Vec::new();
-    for option in options {
+    let mut given = options.iter();
+    while let Some(option) = given.next() {
         match option.as_str() {
             "--list" if options.len() == 1 => {
                 for (name, summary) in &smokes {
@@ -113,6 +117,14 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
             "--serve" => serve = true,
             "--keep-going" => keep_going = true,
             "--all" => all = true,
+            "--native-profile" => {
+                native_profile = Some(
+                    given
+                        .next()
+                        .filter(|profile| !profile.starts_with("--"))
+                        .ok_or(usage)?,
+                );
+            }
             name if !name.starts_with("--") => names.push(name),
             _ => {
                 return Err(format!(
@@ -167,6 +179,9 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
             .env(HELD.0, HELD.1);
         if let Some(server) = &server {
             command.env("DEMO_URL", &server.url);
+        }
+        if let Some(profile) = native_profile {
+            command.env("ENGINE_NATIVE_PROFILE", profile);
         }
         let status = command
             .status()
