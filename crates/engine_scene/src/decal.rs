@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::{Placement, Reach, SceneComponent};
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneError, SceneMaterial};
+use crate::{SceneDocument, SceneError, SceneFiles, SceneMaterial};
 
 impl Setting for SceneDecalBlend {}
 
@@ -135,7 +135,12 @@ impl SceneComponent for SceneDecal {
 
     const PLACEMENT: Placement = Placement::Anywhere;
 
-    fn prepare(&self, _: &str, document: &SceneDocument) -> Result<PreparedDecal, SceneError> {
+    fn prepare(
+        &self,
+        _: &str,
+        document: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<PreparedDecal, SceneError> {
         Ok(SceneDecal::prepare(self, &document.materials))
     }
 
@@ -144,7 +149,7 @@ impl SceneComponent for SceneDecal {
     }
 
     // It projects inside its entity's unit box.
-    fn reach(_: &PreparedDecal, reach: &Reach) -> Option<f32> {
-        Some(reach.of_box(Vec3::splat(-0.5), Vec3::splat(0.5)))
+    fn reach(_: &PreparedDecal, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
+        extend(reach.of_box(Vec3::splat(-0.5), Vec3::splat(0.5)));
     }
 }

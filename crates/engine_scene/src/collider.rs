@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::{Placement, SceneComponent};
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneError};
+use crate::{SceneDocument, SceneError, SceneFiles};
 
 /// Explicit local collision geometry. Parent transforms apply as full affine
 /// matrices; rendering meshes never supply implicit collider dimensions.
@@ -100,7 +100,12 @@ impl SceneComponent for SceneCollider {
 
     const PLACEMENT: Placement = Placement::Anywhere;
 
-    fn prepare(&self, path: &str, _: &SceneDocument) -> Result<Collider, SceneError> {
+    fn prepare(
+        &self,
+        path: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<Collider, SceneError> {
         self.runtime(path)
     }
 

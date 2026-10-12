@@ -1,15 +1,17 @@
 //! The list of components scenes author on entities, and how each is
 //! prepared and joins the entity spawned for an object authoring it.
 
+use std::collections::HashMap;
+
 use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{
-    Deformer, Floating, Grounded, InterpolateTransform, NavAgent, TerrainPrefetch, Tint,
+    Deformer, Floating, Grounded, InterpolateTransform, Mesh, NavAgent, TerrainPrefetch, Tint,
 };
 use engine_settings::ErrorCode;
 
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneError};
+use crate::{SceneDocument, SceneError, SceneFiles};
 
 /// The components scenes author on entities that this list declares, in
 /// the order spawning adds them. Each entry, after the field's doc comment,
@@ -86,6 +88,23 @@ macro_rules! entity_components {
                 rule: any,
                 direct
             },
+            /// One of this document's meshes bent along a curve.
+            spline: crate::SceneSpline { feature: Core, shows: "SplineMesh", rule: any, mirror },
+            /// Captures this entity's surroundings into an environment map that
+            /// surfaces inside its world box reflect.
+            reflection_probe: crate::SceneReflectionProbe {
+                feature: Core,
+                shows: "ReflectionProbe",
+                rule: any,
+                mirror
+            },
+            /// A heightfield terrain whose tiles stream around the camera.
+            terrain: crate::SceneTerrain {
+                feature: Terrain,
+                shows: "Terrain.terrain",
+                rule: any,
+                mirror
+            },
         }
     };
 }
@@ -104,27 +123,41 @@ macro_rules! component_feature {
 
 pub(crate) use component_feature;
 
-/// Where in a document's hierarchy entities may author a component.
+/// Where in a document entities may author a component.
 pub(crate) enum Placement {
     /// On any entity.
     Anywhere,
     /// On roots only: authored under a parent, it fails with the code and
     /// the rule.
     Roots(ErrorCode, &'static str),
+    /// On the document's entities and prefabs only: authored on a streamed
+    /// entity, it fails with the code and the rule.
+    Entities(ErrorCode, &'static str),
 }
 
 /// Where a streamed entity stands in its item, which its components reach
-/// beyond.
-pub(crate) struct Reach {
+/// beyond, and the document's meshes they may name.
+pub(crate) struct Reach<'a> {
     /// The entity's world matrix.
     pub world: Mat4,
     /// The item's position: its root's.
     pub position: Vec3,
     /// The entity's distance from it.
     pub from: f32,
+    /// The document's meshes, and their indices by authored ID.
+    pub meshes: (&'a [Mesh], &'a HashMap<&'a str, usize>),
 }
 
-impl Reach {
+impl Reach<'_> {
+    /// The diagonal of the bounds of the document's mesh `id`; none, 0.
+    pub fn mesh_size(&self, id: &str) -> f32 {
+        let (meshes, indices) = self.meshes;
+        indices.get(id).map_or(0.0, |&mesh| {
+            let bounds = meshes[mesh].bounds();
+            (bounds.max() - bounds.min()).length()
+        })
+    }
+
     /// The distance from the item's position to the farthest corner of the
     /// entity's local box from `min` to `max`.
     pub fn of_box(&self, min: Vec3, max: Vec3) -> f32 {
@@ -156,18 +189,24 @@ pub(crate) trait SceneComponent {
     const PLACEMENT: Placement;
 
     /// The authored value, at authored path `path` of `document`, prepared
-    /// to spawn; its own rules are checked with the entity's.
-    fn prepare(&self, path: &str, document: &SceneDocument) -> Result<Self::Prepared, SceneError>;
+    /// to spawn; its own rules are checked with the entity's. `files`
+    /// supplies the files it reads, or with `None` they read as
+    /// placeholders.
+    fn prepare(
+        &self,
+        path: &str,
+        document: &SceneDocument,
+        files: Option<&SceneFiles>,
+    ) -> Result<Self::Prepared, SceneError>;
 
     /// Adds the component `prepared` makes to `entity`, spawned for the
     /// object authoring it; `lookups` holds the document's resident assets.
     fn spawn(prepared: &Self::Prepared, entity: &mut EntityWorldMut<'_>, lookups: &Lookups);
 
-    /// How far from a streamed item's position the component reaches, when
-    /// it reaches beyond its entity.
-    fn reach(_prepared: &Self::Prepared, _reach: &Reach) -> Option<f32> {
-        None
-    }
+    /// Hands `extend` how far from a streamed item's position the
+    /// component reaches, when it reaches beyond its entity standing at
+    /// `reach`.
+    fn reach(_prepared: &Self::Prepared, _reach: &Reach<'_>, _extend: &mut impl FnMut(f32)) {}
 }
 
 impl SceneComponent for [f32; 4] {
@@ -175,7 +214,12 @@ impl SceneComponent for [f32; 4] {
 
     const PLACEMENT: Placement = Placement::Anywhere;
 
-    fn prepare(&self, _: &str, _: &SceneDocument) -> Result<Tint, SceneError> {
+    fn prepare(
+        &self,
+        _: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<Tint, SceneError> {
         Ok(Tint(*self))
     }
 
@@ -192,7 +236,12 @@ impl SceneComponent for Floating {
         "only roots ride the sea; float the placement or root instead",
     );
 
-    fn prepare(&self, _: &str, _: &SceneDocument) -> Result<Self, SceneError> {
+    fn prepare(
+        &self,
+        _: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<Self, SceneError> {
         Ok(*self)
     }
 
@@ -206,7 +255,12 @@ impl SceneComponent for Deformer {
 
     const PLACEMENT: Placement = Placement::Anywhere;
 
-    fn prepare(&self, _: &str, _: &SceneDocument) -> Result<Self, SceneError> {
+    fn prepare(
+        &self,
+        _: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<Self, SceneError> {
         Ok(*self)
     }
 
@@ -220,7 +274,12 @@ impl SceneComponent for TerrainPrefetch {
 
     const PLACEMENT: Placement = Placement::Anywhere;
 
-    fn prepare(&self, _: &str, _: &SceneDocument) -> Result<Self, SceneError> {
+    fn prepare(
+        &self,
+        _: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<Self, SceneError> {
         Ok(*self)
     }
 
@@ -238,7 +297,12 @@ impl SceneComponent for Grounded {
         "only roots stand on the ground; ground the placement or root instead",
     );
 
-    fn prepare(&self, _: &str, _: &SceneDocument) -> Result<Self, SceneError> {
+    fn prepare(
+        &self,
+        _: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<Self, SceneError> {
         Ok(*self)
     }
 
@@ -256,7 +320,12 @@ impl SceneComponent for NavAgent {
         "only roots walk; give the placement or root the agent instead",
     );
 
-    fn prepare(&self, _: &str, _: &SceneDocument) -> Result<Self, SceneError> {
+    fn prepare(
+        &self,
+        _: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<Self, SceneError> {
         Ok(*self)
     }
 
@@ -298,12 +367,33 @@ macro_rules! components {
                 Ok(())
             }
 
+            /// Fails at the first listed component this streamed object, at
+            /// authored path `path`, authors that only the document's
+            /// entities may.
+            pub(crate) fn check_streamed(&self, path: &str) -> Result<(), SceneError> {
+                $(
+                    if self.$field.is_some()
+                        && let Placement::Entities(code, rule) =
+                            <$type as SceneComponent>::PLACEMENT
+                    {
+                        return Err(SceneError::new(
+                            code,
+                            format!("{path}.{}", stringify!($field)),
+                            rule,
+                        ));
+                    }
+                )*
+                Ok(())
+            }
+
             /// The listed components this object, at authored path `path`
-            /// of `document`, authors, prepared in the list's order.
+            /// of `document`, authors, prepared in the list's order with the
+            /// scene's `files`.
             pub(crate) fn prepare_components(
                 &self,
                 path: &str,
                 document: &SceneDocument,
+                files: Option<&SceneFiles>,
             ) -> Result<PreparedComponents, SceneError> {
                 Ok(PreparedComponents {
                     $($field: self
@@ -314,6 +404,7 @@ macro_rules! components {
                                 component,
                                 &format!("{path}.{}", stringify!($field)),
                                 document,
+                                files,
                             )
                         })
                         .transpose()?,)*
@@ -340,14 +431,10 @@ macro_rules! components {
 
             /// Hands `extend` how far each component reaching beyond its
             /// streamed entity, standing at `reach`, reaches.
-            pub(crate) fn reach(&self, reach: &Reach, extend: &mut impl FnMut(f32)) {
+            pub(crate) fn reach(&self, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
                 $(
-                    if let Some(value) = self
-                        .$field
-                        .as_ref()
-                        .and_then(|prepared| <$type as SceneComponent>::reach(prepared, reach))
-                    {
-                        extend(value);
+                    if let Some(prepared) = &self.$field {
+                        <$type as SceneComponent>::reach(prepared, reach, extend);
                     }
                 )*
             }

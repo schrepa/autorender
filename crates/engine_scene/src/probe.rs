@@ -3,9 +3,13 @@
 //! surfaces inside its world box reflect. It mirrors the runtime component
 //! field for field, so inspected values paste back into scenes.
 
-use engine_core::{Interior, ReflectionProbe, glam::Vec3};
+use engine_core::{Interior, ReflectionProbe, bevy_ecs::world::EntityWorldMut, glam::Vec3};
 use engine_settings::settings;
 use serde::{Deserialize, Serialize};
+
+use crate::components::{Placement, Reach, SceneComponent};
+use crate::instance::Lookups;
+use crate::{SceneDocument, SceneError, SceneFiles};
 
 settings! {
     /// A reflection probe on this entity.
@@ -64,5 +68,29 @@ impl From<&ReflectionProbe> for SceneReflectionProbe {
             blend: probe.blend,
             interior: probe.interior,
         }
+    }
+}
+
+impl SceneComponent for SceneReflectionProbe {
+    type Prepared = ReflectionProbe;
+
+    const PLACEMENT: Placement = Placement::Anywhere;
+
+    fn prepare(
+        &self,
+        _: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<ReflectionProbe, SceneError> {
+        Ok(self.runtime())
+    }
+
+    fn spawn(prepared: &ReflectionProbe, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*prepared);
+    }
+
+    // Surfaces within its extent reflect it.
+    fn reach(prepared: &ReflectionProbe, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
+        extend(reach.from + prepared.extent.length());
     }
 }

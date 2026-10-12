@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::{Placement, Reach, SceneComponent};
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneError};
+use crate::{SceneDocument, SceneError, SceneFiles};
 
 settings! {
     /// A point or spot light on this entity.
@@ -238,7 +238,12 @@ impl SceneComponent for SceneLight {
 
     const PLACEMENT: Placement = Placement::Anywhere;
 
-    fn prepare(&self, _: &str, _: &SceneDocument) -> Result<LocalLight, SceneError> {
+    fn prepare(
+        &self,
+        _: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<LocalLight, SceneError> {
         Ok(self.runtime())
     }
 
@@ -247,8 +252,8 @@ impl SceneComponent for SceneLight {
     }
 
     // Its light reaches its range.
-    fn reach(prepared: &LocalLight, reach: &Reach) -> Option<f32> {
-        Some(reach.from + prepared.range)
+    fn reach(prepared: &LocalLight, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
+        extend(reach.from + prepared.range);
     }
 }
 
@@ -257,7 +262,12 @@ impl SceneComponent for SceneEmitter {
 
     const PLACEMENT: Placement = Placement::Anywhere;
 
-    fn prepare(&self, _: &str, _: &SceneDocument) -> Result<ParticleEmitter, SceneError> {
+    fn prepare(
+        &self,
+        _: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<ParticleEmitter, SceneError> {
         Ok(self.runtime())
     }
 
@@ -266,13 +276,13 @@ impl SceneComponent for SceneEmitter {
     }
 
     // Its particles reach as far as they fly in their lifetime.
-    fn reach(emitter: &ParticleEmitter, reach: &Reach) -> Option<f32> {
-        Some(
+    fn reach(emitter: &ParticleEmitter, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
+        extend(
             reach.from
                 + emitter.offset.length()
                 + emitter.radius
                 + emitter.speed * emitter.lifetime
                 + 0.5 * emitter.acceleration.length() * emitter.lifetime * emitter.lifetime,
-        )
+        );
     }
 }

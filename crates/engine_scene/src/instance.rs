@@ -546,9 +546,9 @@ impl SceneDocument {
 /// its clips.
 pub(crate) struct Lookups {
     scene_id: String,
-    meshes: BTreeMap<String, MeshHandle>,
-    materials: BTreeMap<String, MaterialHandle>,
-    owned_meshes: Vec<MeshHandle>,
+    pub(crate) meshes: BTreeMap<String, MeshHandle>,
+    pub(crate) materials: BTreeMap<String, MaterialHandle>,
+    pub(crate) owned_meshes: Vec<MeshHandle>,
     pub(crate) owned_materials: Vec<MaterialHandle>,
     clips: Vec<ClipHandle>,
 }
@@ -606,18 +606,6 @@ fn spawn_entity(
         });
     }
     component.components.spawn(&mut entity, lookups);
-    if let Some(spline) = &source.spline {
-        entity.insert(spline.runtime(
-            lookups.meshes[spline.mesh.as_str()],
-            lookups.materials[spline.material.as_str()],
-        ));
-    }
-    if let Some(probe) = component.probe {
-        entity.insert(probe);
-    }
-    if let Some(terrain) = &component.terrain {
-        entity.insert(terrain.runtime(&lookups.owned_materials, &lookups.owned_meshes));
-    }
     entity.id()
 }
 

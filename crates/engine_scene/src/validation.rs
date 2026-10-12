@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use engine_core::{
-    AnimationClip, Mesh, ReflectionProbe, Texture, Transform,
+    AnimationClip, Mesh, Texture, Transform,
     glam::{Mat4, Vec3},
 };
 
@@ -56,13 +56,10 @@ pub(crate) struct PreparedItem {
 /// An expanded entity's validated components besides its transform, mesh
 /// and material.
 pub(crate) struct PreparedEntity {
-    /// The listed ones.
+    /// The listed ones, prepared with the scene's files.
     pub components: PreparedComponents,
-    pub probe: Option<ReflectionProbe>,
     pub player: Option<PreparedPlayer>,
     pub skin: Option<PreparedSkin>,
-    /// Prepared with the scene's files.
-    pub terrain: Option<crate::terrain::PreparedTerrain>,
 }
 
 /// Resolves an ID a clip target or skin joint names, from an entity's
@@ -194,28 +191,13 @@ impl SceneDocument {
                 .or_else(|| entity_indices.get(id))
                 .copied()
         };
-        let mut components = expanded
+        let components = expanded
             .entities
             .iter()
-            .map(|entity| self.prepare_entity(entity, &resolve, &rigs))
+            .map(|entity| self.prepare_entity(entity, &resolve, &rigs, files))
             .collect::<Result<Vec<_>, _>>()?;
-        // Terrains read their files.
-        for (entity, component) in expanded.entities.iter().zip(&mut components) {
-            component.terrain = entity
-                .source
-                .terrain
-                .as_ref()
-                .map(|terrain| {
-                    terrain.prepare(
-                        &format!("{}.terrain", entity.path),
-                        files,
-                        (&self.materials, &self.meshes),
-                    )
-                })
-                .transpose()?;
-        }
 
-        let streamed_components = self.prepare_streamed(&streamed, &rigs)?;
+        let streamed_components = self.prepare_streamed(&streamed, &rigs, files)?;
 
         let CpuAssets {
             textures,
@@ -249,12 +231,13 @@ impl SceneDocument {
     }
 
     /// The components of the streamed entities, whose
-    /// animation targets and skin joints resolve within their item. No
-    /// terrains: they stream their own tiles.
+    /// animation targets and skin joints resolve within their item, but
+    /// those only the document's entities may author.
     fn prepare_streamed(
         &self,
         streamed: &ExpandedScene,
         rigs: &Rigs<'_>,
+        files: Option<&SceneFiles>,
     ) -> Result<Vec<PreparedEntity>, SceneError> {
         let indices: HashMap<&str, usize> = streamed
             .entities
@@ -277,14 +260,8 @@ impl SceneDocument {
             .entities
             .iter()
             .map(|entity| {
-                if entity.source.terrain.is_some() {
-                    return Err(SceneError::new(
-                        ErrorCode::InvalidStreamed,
-                        format!("{}.terrain", entity.path),
-                        "terrains stream their own tiles; author them in entities",
-                    ));
-                }
-                self.prepare_entity(entity, &resolve, rigs)
+                entity.source.check_streamed(&entity.path)?;
+                self.prepare_entity(entity, &resolve, rigs, files)
             })
             .collect()
     }
@@ -365,6 +342,7 @@ impl SceneDocument {
                 world,
                 position,
                 from,
+                meshes: (meshes, &mesh_indices),
             };
             let source = &streamed.entities[index].source;
             let component = &components[index];
@@ -379,23 +357,6 @@ impl SceneDocument {
                 extend(standing.of_box(bounds.min(), bounds.max()));
             }
             component.components.reach(&standing, &mut extend);
-            if let Some(probe) = component.probe {
-                extend(from + probe.extent.length());
-            }
-            if let Some(spline) = &source.spline {
-                let size = mesh_indices.get(spline.mesh.as_str()).map_or(0.0, |&mesh| {
-                    let bounds = meshes[mesh].bounds();
-                    (bounds.max() - bounds.min()).length()
-                });
-                for point in &spline.points {
-                    extend(
-                        world
-                            .transform_point3(Vec3::from_array(*point))
-                            .distance(position)
-                            + size,
-                    );
-                }
-            }
             if reach.is_finite() {
                 items[item].reach = engine_core::math::max(items[item].reach, reach);
             }
@@ -554,15 +515,14 @@ impl SceneDocument {
         entity: &ExpandedObject,
         resolve: &Resolve<'_>,
         rigs: &Rigs<'_>,
+        files: Option<&SceneFiles>,
     ) -> Result<PreparedEntity, SceneError> {
         let (source, path) = (&entity.source, &entity.path);
         // The components' rules are checked with the entity's.
         Ok(PreparedEntity {
             player: self.prepare_player(entity, resolve, &rigs.animation_ids)?,
             skin: self.prepare_skin(entity, resolve, &rigs.skin_ids)?,
-            components: source.prepare_components(path, self)?,
-            probe: source.reflection_probe.map(|probe| probe.runtime()),
-            terrain: None,
+            components: source.prepare_components(path, self, files)?,
         })
     }
 

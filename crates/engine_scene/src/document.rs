@@ -578,16 +578,6 @@ macro_rules! scene_object {
                     #[serde(default, skip_serializing_if = "Option::is_none")]
                     pub $field: Option<$type> = None => $rule $(($($arg),*))?,
                 )*
-                /// Captures this entity's surroundings into an environment map that
-                /// surfaces inside its world box reflect.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub reflection_probe: Option<crate::SceneReflectionProbe> = None => any,
-                /// A heightfield terrain whose tiles stream around the camera.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub terrain: Option<crate::SceneTerrain> = None => any,
-                /// One of this document's meshes bent along a curve.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub spline: Option<crate::SceneSpline> = None => any,
                 #[serde(default)]
                 pub transform: SceneTransform = SceneTransform::default() => any,
                 /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

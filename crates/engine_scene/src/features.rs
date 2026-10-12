@@ -8,7 +8,7 @@ use engine_settings::ErrorCode;
 use crate::{SceneDocument, SceneEnvironment, SceneError, SceneObject, SectionVisitor};
 
 /// This module's part of `entity_components!`: the features an object
-/// needs for the components listed, after its terrain's.
+/// needs for the components listed, before its animation's.
 macro_rules! object_features {
     ($(
         $(#[$doc:meta])*
@@ -23,7 +23,6 @@ macro_rules! object_features {
             /// The features this object authors, by field.
             fn features(&self) -> impl Iterator<Item = (&'static str, Feature)> {
                 [
-                    ("terrain", self.terrain.is_some(), Some(Feature::Terrain)),
                     $((
                         stringify!($field),
                         self.$field.is_some(),

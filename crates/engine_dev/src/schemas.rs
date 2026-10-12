@@ -330,9 +330,6 @@ const AUTHORED: &[(&str, &str)] = &[
     ("prefab", "Hierarchy.prefab_id"),
     ("animation", "AnimationPlayer"),
     ("skin", "Skin.skin"),
-    ("reflection_probe", "ReflectionProbe"),
-    ("terrain", "Terrain.terrain"),
-    ("spline", "SplineMesh"),
     ("transform", "Transform"),
 ];
 

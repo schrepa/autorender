@@ -6,6 +6,7 @@
 use engine_settings::ErrorCode;
 use std::sync::Arc;
 
+use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::{
     Biome, Biomes, Blend, Cover, ErosionLayer, ErosionStage, HeightImage, HeightmapLayer,
     HydrologyLayer, HydrologyStage, Layer, Layers, MaterialHandle, MeshHandle, NoiseLayer,
@@ -17,7 +18,9 @@ use engine_core::{
 use engine_settings::{Rule, Setting};
 use serde::{Deserialize, Serialize};
 
-use crate::{SceneError, SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
+use crate::components::{Placement, SceneComponent};
+use crate::instance::Lookups;
+use crate::{SceneDocument, SceneError, SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
 
 /// A heightfield terrain on this entity.
 ///
@@ -927,3 +930,26 @@ impl SceneHeightmap {
 
 /// Validated as the scene prepares its terrains.
 impl engine_settings::Setting for SceneTerrain {}
+
+impl SceneComponent for SceneTerrain {
+    type Prepared = PreparedTerrain;
+
+    // Terrains stream their own tiles.
+    const PLACEMENT: Placement = Placement::Entities(
+        ErrorCode::InvalidStreamed,
+        "terrains stream their own tiles; author them in entities",
+    );
+
+    fn prepare(
+        &self,
+        path: &str,
+        document: &SceneDocument,
+        files: Option<&SceneFiles>,
+    ) -> Result<PreparedTerrain, SceneError> {
+        SceneTerrain::prepare(self, path, files, (&document.materials, &document.meshes))
+    }
+
+    fn spawn(prepared: &PreparedTerrain, entity: &mut EntityWorldMut<'_>, lookups: &Lookups) {
+        entity.insert(prepared.runtime(&lookups.owned_materials, &lookups.owned_meshes));
+    }
+}

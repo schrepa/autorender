@@ -1,11 +1,16 @@
 //! Scene spline meshes: an entity field bending
 //! copies of one of the document's meshes along a curve.
 
-use engine_core::{MAX_SPLINE_POINTS, MaterialHandle, MeshHandle, SplineMesh, glam::Vec3};
+use engine_core::{
+    MAX_SPLINE_POINTS, MaterialHandle, MeshHandle, SplineMesh, bevy_ecs::world::EntityWorldMut,
+    glam::Vec3,
+};
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
-use crate::SceneError;
+use crate::components::{Placement, Reach, SceneComponent};
+use crate::instance::Lookups;
+use crate::{SceneDocument, SceneError, SceneFiles};
 
 /// A mesh bent along a curve on this entity.
 ///
@@ -86,3 +91,41 @@ impl SceneSpline {
 
 /// Validated with its entity's references (`SceneSpline::validate`).
 impl engine_settings::Setting for SceneSpline {}
+
+impl SceneComponent for SceneSpline {
+    // Its curve is checked with the entity; its mesh and material resolve
+    // when it spawns.
+    type Prepared = Self;
+
+    const PLACEMENT: Placement = Placement::Anywhere;
+
+    fn prepare(
+        &self,
+        _: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<Self, SceneError> {
+        Ok(self.clone())
+    }
+
+    fn spawn(prepared: &Self, entity: &mut EntityWorldMut<'_>, lookups: &Lookups) {
+        entity.insert(prepared.runtime(
+            lookups.meshes[prepared.mesh.as_str()],
+            lookups.materials[prepared.material.as_str()],
+        ));
+    }
+
+    // Its copies reach past each of its points by their mesh's size.
+    fn reach(prepared: &Self, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
+        let size = reach.mesh_size(&prepared.mesh);
+        for point in &prepared.points {
+            extend(
+                reach
+                    .world
+                    .transform_point3(Vec3::from_array(*point))
+                    .distance(reach.position)
+                    + size,
+            );
+        }
+    }
+}
