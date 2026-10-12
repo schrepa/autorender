@@ -3,14 +3,13 @@ import { randomUUID } from "node:crypto";
 import { createReadStream, readFileSync } from "node:fs";
 import { access, mkdir, lstat, realpath, rm, stat, open } from "node:fs/promises";
 import { resolve, dirname, relative } from "node:path";
-import { fileURLToPath } from "node:url";
 import { AgentError, createBridge, failure } from "./agent-protocol.mjs";
 import { launchBrowserSession } from "./agent-browser.mjs";
 import { fingerprintSources, watchSources } from "./iteration-watch.mjs";
 import { IterationController } from "./iteration-controller.mjs";
 import { runBuild } from "./iteration-process.mjs";
+import { workspace } from "./workspace.mjs";
 
-const workspace = fileURLToPath(new URL("../../", import.meta.url));
 // The browser clients and their games' pages, generated from xtask
 // (`cargo xtask schema`).
 const clients = JSON.parse(readFileSync(new URL("../src/generated/clients.json", import.meta.url), "utf8"));

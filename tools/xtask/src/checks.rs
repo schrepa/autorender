@@ -1,6 +1,8 @@
 //! The engine factory's checks: smoke scripts (`web/scripts/NAME.mjs`) run
 //! against a development server of one commit, with the scripts of the
-//! same or another commit, every attempt kept. A check holds when its
+//! same or another commit, every attempt kept. The scripts build, run and
+//! write in the served commit's checkout (`ENGINE_WORKSPACE`), so another
+//! commit's checks test this one's programs and files. A check holds when its
 //! first attempt does what it must (exit 0, or 3 for an assertion where it
 //! must fail); one that does not runs again, up to `ATTEMPTS` in all, so a
 //! failure followed by a pass shows as flaky. `cargo xtask checks` runs a
@@ -9,9 +11,8 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
-use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{Value, json};
@@ -19,6 +20,7 @@ use sha2::{Digest, Sha256};
 
 use crate::bench::hex;
 use crate::measure::{checkout, commit_id, git, iso, output, read_json};
+use crate::serve::{Server, free_port};
 
 /// Attempts a check gets in all.
 const ATTEMPTS: usize = 3;
@@ -33,83 +35,24 @@ fn holds(expect: &str, exit_code: i32) -> bool {
     }
 }
 
-/// A free port on this machine, which the operating system picks.
-fn free_port() -> Result<u16, String> {
-    TcpListener::bind("127.0.0.1:0")
-        .and_then(|listener| listener.local_addr())
-        .map(|address| address.port())
-        .map_err(|error| format!("no free port: {error}"))
-}
-
-/// A development server of one commit, stopped with its processes when
-/// dropped.
-struct Server {
-    child: Child,
-    url: String,
+/// A development server of one commit, and what it serves.
+struct Served {
+    server: Server,
     build: Value,
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let pid = self.child.id().to_string();
-        // Cargo starts npm, which starts Vite: the whole tree.
-        if cfg!(windows) {
-            let _ = Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &pid])
-                .output();
-        } else {
-            let _ = Command::new("kill")
-                .args(["-TERM", "--", &format!("-{pid}")])
-                .output();
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
 }
 
 /// Starts `cargo xtask dev` in `source` on a free port and waits until it
 /// serves: its build of the page logged into `log`.
-fn start_server(source: &Path, sha: &str, log: &Path) -> Result<Server, String> {
+fn start_server(source: &Path, sha: &str, log: &Path) -> Result<Served, String> {
     let port = free_port()?;
-    let file = fs::File::create(log).map_err(|error| error.to_string())?;
-    let errors = file.try_clone().map_err(|error| error.to_string())?;
     let mut command = Command::new("cargo");
     command
         .args(["xtask", "dev", "--port", &port.to_string()])
-        .current_dir(source)
-        .stdout(file)
-        .stderr(errors);
-    #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        .current_dir(source);
     let started = Instant::now();
-    let child = command
-        .spawn()
-        .map_err(|error| format!("cannot start the development server: {error}"))?;
-    let mut server = Server {
-        child,
-        url: format!("http://127.0.0.1:{port}"),
-        build: Value::Null,
-    };
-    loop {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            break;
-        }
-        if let Some(status) = server.child.try_wait().map_err(|error| error.to_string())? {
-            return Err(format!(
-                "the development server of {sha} stopped ({status}); see {}",
-                log.display()
-            ));
-        }
-        if started.elapsed() > SERVER_START {
-            return Err(format!(
-                "the development server of {sha} did not start within {} minutes",
-                SERVER_START.as_secs() / 60
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    server.build = web_build(source, sha, started.elapsed())?;
-    Ok(server)
+    let server = Server::start(command, port, log, sha, SERVER_START)?;
+    let build = web_build(source, sha, started.elapsed())?;
+    Ok(Served { server, build })
 }
 
 /// What a development server serves: the commit's page and its Wasm
@@ -243,7 +186,9 @@ pub fn run(
                 let attempt_log =
                     folder.join(format!("{name}-{}-{}.log", &sha[..12], attempts.len() + 1));
                 let (exit_code, measurements) = match (&server, &web) {
-                    (Ok(server), Some(web)) => attempt(web, name, &server.url, &attempt_log)?,
+                    (Ok(served), Some(web)) => {
+                        attempt(web, &source, name, &served.server.url, &attempt_log)?
+                    }
                     (Err(error), _) => {
                         fs::write(&attempt_log, format!("{error}\n"))
                             .map_err(|error| error.to_string())?;
@@ -282,9 +227,16 @@ pub fn run(
     Ok((entries, incomplete))
 }
 
-/// One attempt of check `name` from `web` against `url`: its exit code and
-/// what it measured, its output into `log`.
-fn attempt(web: &Path, name: &str, url: &str, log: &Path) -> Result<(i32, Vec<Value>), String> {
+/// One attempt of check `name` from `web` against `url`, a server of the
+/// checkout `workspace`, which the scripts build, run and write in: its exit
+/// code and what it measured, its output into `log`.
+fn attempt(
+    web: &Path,
+    workspace: &Path,
+    name: &str,
+    url: &str,
+    log: &Path,
+) -> Result<(i32, Vec<Value>), String> {
     let script = format!("scripts/{name}.mjs");
     if !web.join(&script).is_file() {
         fs::write(log, format!("{script} does not exist\n")).map_err(|error| error.to_string())?;
@@ -293,6 +245,7 @@ fn attempt(web: &Path, name: &str, url: &str, log: &Path) -> Result<(i32, Vec<Va
     let mut child = Command::new("node")
         .arg(&script)
         .env("DEMO_URL", url)
+        .env("ENGINE_WORKSPACE", workspace)
         .current_dir(web)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

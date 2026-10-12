@@ -8,10 +8,8 @@
  * repeated windows of one variant show (A against A, B against B). */
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { AgentError } from "./agent-protocol.mjs";
-
-const workspace = fileURLToPath(new URL("../../", import.meta.url));
+import { workspace } from "./workspace.mjs";
 
 const median = values => {
   const sorted = [...values].sort((a, b) => a - b);

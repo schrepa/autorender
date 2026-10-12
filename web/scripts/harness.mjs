@@ -11,6 +11,11 @@
  * `{ name, value, unit, note? }`, which `cargo xtask checks` keeps with the
  * attempt; it never fails on a fixed limit of those. A failed assertion
  * exits 3, anything else that stops a check 1 (`exit-codes.mjs`).
+ *
+ * Every check opens a browser or a native GPU host, so importing the
+ * harness holds the machine's heavy-run lock for the check's life
+ * (`heavy-run.mjs`). Checks build, run and write into the served workspace
+ * (`workspace.mjs`).
  */
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";
@@ -18,10 +23,13 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { constants, setPriority } from "node:os";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { launchContext } from "./browser-launch.mjs";
+import { holdHeavyRun } from "./heavy-run.mjs";
+import { workspace, workspacePath } from "./workspace.mjs";
+
+await holdHeavyRun(`smoke ${basename(process.argv[1] ?? "")}`);
 
 /** The development server the checks open: `DEMO_URL`, else Vite's default. */
 export const base = `${(process.env.DEMO_URL ?? "http://127.0.0.1:5173").replace(/\/$/, "")}/`;
@@ -52,14 +60,13 @@ export function gardenScene() {
   return JSON.parse(readFileSync(new URL("fixtures/garden.scene.json", import.meta.url), "utf8"));
 }
 
-/** Builds the binaries `cargoArguments` select (`-p PACKAGE`, `--bin NAME`,
- * `--profile quick`) with the `cargo` on PATH, or `CARGO`, in the background
- * and below normal priority, so a check's browser work runs meanwhile and
- * keeps the processors it needs: resolves to each binary's path by name,
- * wherever the target folder is. Await it before running one. */
+/** Builds the workspace's binaries `cargoArguments` select (`-p PACKAGE`,
+ * `--bin NAME`, `--profile quick`) with the `cargo` on PATH, or `CARGO`, in
+ * the background and below normal priority, so a check's browser work runs
+ * meanwhile and keeps the processors it needs: resolves to each binary's
+ * path by name, wherever the target folder is. Await it before running one. */
 export function cargoBinaries(cargoArguments) {
   const built = new Promise((resolveBuild, reject) => {
-    const workspace = fileURLToPath(new URL("../../", import.meta.url));
     const child = spawn(process.env.CARGO ?? "cargo", ["build", "-q", "--locked", "--message-format=json", ...cargoArguments],
       { cwd: workspace, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     // The compilers it starts inherit the priority.
@@ -83,10 +90,10 @@ export function cargoBinaries(cargoArguments) {
   return built;
 }
 
-/** `artifacts/NAME/`, emptied, for `name`'s captures: each run replaces
- * the last one's. */
+/** The workspace's `artifacts/NAME/`, emptied, for `name`'s captures: each
+ * run replaces the last one's. */
 export async function artifacts(name) {
-  const output = fileURLToPath(new URL(`../../artifacts/${name}/`, import.meta.url));
+  const output = `${workspacePath("artifacts", name)}${sep}`;
   await rm(output, { recursive: true, force: true });
   await mkdir(output, { recursive: true });
   return output;

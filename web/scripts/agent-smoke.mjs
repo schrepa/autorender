@@ -5,23 +5,22 @@ import { readFile, writeFile, mkdir, rm, unlink } from "node:fs/promises";
 import { createServer } from "node:net";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { cargoBinaries, strictStats } from "./harness.mjs";
+import { workspace } from "./workspace.mjs";
 
 const executeFile = promisify(execFile);
 // `cargo xtask scene`'s program, built once while the bridge starts: each
 // call then runs it without Cargo, whose rebuild after an engine change
 // would count against the call's timeout.
 const xtask = cargoBinaries(["-p", "xtask"]);
-const workspace = fileURLToPath(new URL("../../", import.meta.url));
 const script = join(workspace, "web/scripts/agent.mjs");
 const fixtureName = `agent-smoke-${randomUUID()}.scene.json`;
 // Local scenes are not tracked, so a fresh checkout has no folder for them.
 const scenes = join(workspace, "web/public/scenes");
 const sourcePath = join(scenes, fixtureName);
-const sourceBytes = await readFile(join(workspace, "web/scripts/fixtures/garden.scene.json"));
+const sourceBytes = await readFile(new URL("fixtures/garden.scene.json", import.meta.url));
 const source = JSON.parse(sourceBytes.toString("utf8"));
 assert.ok(Number.isSafeInteger(source.revision), "The smoke fixture revision must fit a JavaScript integer.");
 const playerId = source.entities.find(entity => entity.tags?.includes("player"))?.id;

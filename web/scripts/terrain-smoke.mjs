@@ -16,15 +16,17 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { sep } from "node:path";
 import { artifacts, cargoBinaries, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
+import { workspacePath } from "./workspace.mjs";
 
 const tools = cargoBinaries(["-p", "engine_assetc", "--profile", "quick", "--bin", "terrain_bake", "--bin", "terrain_import"]);
 const url = sceneUrl();
 const output = await artifacts("terrain-smoke");
-const scenes = fileURLToPath(new URL("../public/scenes/", import.meta.url));
-const folder = fileURLToPath(new URL("../public/scenes/terrain-smoke/", import.meta.url));
-const source = fileURLToPath(new URL("../public/scenes/terrain-smoke.scene.json", import.meta.url));
+// The served workspace's scenes, which the development server serves.
+const scenes = `${workspacePath("web/public/scenes")}${sep}`;
+const folder = `${workspacePath("web/public/scenes/terrain-smoke")}${sep}`;
+const source = workspacePath("web/public/scenes/terrain-smoke.scene.json");
 // Terrain-local plateau at (512, 512), a hole 48 m east of it, and an
 // imported dome 200 m high centered at (764, 764).
 const terrain = {

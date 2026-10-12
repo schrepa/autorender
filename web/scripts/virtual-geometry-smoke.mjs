@@ -1,11 +1,12 @@
 /** Virtual geometry in the Stress Lab's dense scene, in real Chrome. */
 import assert from "node:assert/strict";
 import { access, readFile, stat } from "node:fs/promises";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "./harness.mjs";
+import { workspacePath } from "./workspace.mjs";
 
-const denseFiles = fileURLToPath(new URL("../public/stress/dense/manifest.json", import.meta.url));
+const denseFiles = workspacePath("web/public/stress/dense/manifest.json");
 try {
   await access(denseFiles);
 } catch {

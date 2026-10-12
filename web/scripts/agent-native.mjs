@@ -6,12 +6,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgentError } from "./agent-protocol.mjs";
+import { workspace } from "./workspace.mjs";
 
-const workspace = fileURLToPath(new URL("../../", import.meta.url));
 // Sessions' captures stay under artifacts/agent/SESSION, as browser
 // sessions' do; past the most recent SESSIONS_KEPT, the oldest go.
 const SESSIONS_KEPT = 10;

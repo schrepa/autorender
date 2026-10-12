@@ -8,12 +8,13 @@
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import { runAb } from "./agent-ab.mjs";
 import { launchNativeSession, nativeProgram } from "./agent-native.mjs";
+import { holdHeavyRun } from "./heavy-run.mjs";
+import { workspace, workspacePath } from "./workspace.mjs";
 
-const workspace = fileURLToPath(new URL("../../", import.meta.url));
+await holdHeavyRun("smoke native-smoke.mjs");
 const program = nativeProgram("stress-lab", { profiling: true });
 
 const session = await launchNativeSession({ program, args: ["--preset=visual", "--size=640x400", "--workers=2"] });
@@ -69,7 +70,7 @@ try {
   // Firefox Profiler file; the summary says what was captured and what
   // this machine could add.
   const profile = await run({ op: "profile", duration_ms: 500 });
-  const artifact = path => JSON.parse(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"));
+  const artifact = path => JSON.parse(readFileSync(workspacePath(path), "utf8"));
   const trace = artifact(profile.artifacts.trace);
   assert.ok(trace.gpu.completed > 0, `GPU spans were read back: ${JSON.stringify({ ...trace.gpu, samples: undefined, draw_samples: undefined })}`);
   assert.ok(trace.gpu.samples.some(sample => sample.name === "opaque_meshes"));

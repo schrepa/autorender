@@ -9,6 +9,7 @@ mod development;
 mod features;
 mod formats;
 mod gpu;
+mod heavy;
 mod importing;
 mod iteration_build;
 mod measure;
@@ -16,62 +17,93 @@ mod pipeline;
 mod process;
 mod profiling;
 mod scaffold;
+mod serve;
 mod shader_report;
 mod smoke;
 
 use std::{env, process::ExitCode};
 
-fn main() -> ExitCode {
-    match execute() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("xtask: {error}");
-            ExitCode::FAILURE
+/// How a command failed, and the exit code it ends with: 1 when it could
+/// not do what it was asked, 3 when it did and found what it checks wrong
+/// (a smoke's failed assertion), as the smokes' own exit codes say.
+pub struct Failure {
+    pub message: String,
+    pub code: u8,
+}
+
+impl Failure {
+    /// A check that ran and found what it checks wrong: exit code 3.
+    pub fn found(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            code: 3,
         }
     }
 }
 
-fn execute() -> Result<(), String> {
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self { message, code: 1 }
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+
+fn main() -> ExitCode {
+    match execute() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(failure) => {
+            eprintln!("xtask: {}", failure.message);
+            ExitCode::from(failure.code)
+        }
+    }
+}
+
+fn execute() -> Result<(), Failure> {
     let mut arguments = env::args().skip(1);
     let task = arguments.next().unwrap_or_else(|| "help".to_owned());
     let options: Vec<_> = arguments.collect();
     let root = process::repository_root()?;
     if task == "dev" {
-        return pipeline::dev(&root, dev_port(&options)?);
+        return Ok(pipeline::dev(&root, dev_port(&options)?)?);
     }
     if task == "agent" {
-        return development::agent(&root, &options);
+        return Ok(development::agent(&root, &options)?);
     }
     if task == "scene" {
-        return development::scene(&options);
+        return Ok(development::scene(&options)?);
     }
     if task == "asset" {
-        return importing::asset(&options);
+        return Ok(importing::asset(&options)?);
     }
     if task == "profile" {
-        return match options.as_slice() {
+        return Ok(match options.as_slice() {
             [] => profiling::build(&root, false),
             [option] if option == "--attribution" => profiling::build(&root, true),
             _ => Err("usage: profile [--attribution]".into()),
-        };
+        }?);
     }
     if task == "smoke" {
         return smoke::smoke(&root, &options);
     }
     if task == "bench" {
-        return bench::bench(&root, &options);
+        return Ok(bench::bench(&root, &options)?);
     }
     if task == "measure" {
-        return measure::measure(&root, &options);
+        return Ok(measure::measure(&root, &options)?);
     }
     if task == "checks" {
-        return checks::check_task(&root, &options);
+        return Ok(checks::check_task(&root, &options)?);
     }
     if task == "new" {
-        return scaffold::new(&root, &options);
+        return Ok(scaffold::new(&root, &options)?);
     }
     if task == "gpu" && !options.is_empty() {
-        return shader_report::run(&root, &options);
+        return Ok(shader_report::run(&root, &options)?);
     }
     if task == "build-dev" {
         let [option, output] = options.as_slice() else {
@@ -89,14 +121,14 @@ fn execute() -> Result<(), String> {
         };
     }
     if matches!(task.as_str(), "help" | "--help" | "-h") {
-        return help(&options);
+        return Ok(help(&options)?);
     }
     if let Some(argument) = options.first() {
-        return Err(format!(
-            "unexpected argument {argument:?}; run `cargo xtask help` for usage"
-        ));
+        return Err(
+            format!("unexpected argument {argument:?}; run `cargo xtask help` for usage").into(),
+        );
     }
-    match task.as_str() {
+    Ok(match task.as_str() {
         "build" => pipeline::build(&root),
         "lint" => pipeline::lint(&root),
         "docs" => pipeline::docs(&root),
@@ -106,7 +138,7 @@ fn execute() -> Result<(), String> {
         _ => Err(format!(
             "unknown command {task:?}; run `cargo xtask help` for usage"
         )),
-    }
+    }?)
 }
 
 fn dev_port(arguments: &[String]) -> Result<u16, String> {
@@ -137,7 +169,7 @@ fn commands() -> Vec<(String, &'static str)> {
         ("assets".into(), "Validate authored scene sources without changing them"),
         ("schema".into(), "Write the generated protocol summary, client list, stats and game surface types, and each app's own"),
         ("new app NAME".into(), "Start a game in apps/NAME with its page web/NAME.html, from the engine's app template"),
-        ("smoke --list | --all | NAME...".into(), "List or run the browser smoke checks against a running dev server"),
+        ("smoke --list | [--serve] [--keep-going] (--all | NAME...)".into(), "List or run the browser smoke checks: against the development server DEMO_URL names, or with --serve one of this checkout started on a free port (never 5173-5175) and stopped after; holding the machine's heavy-run lock; stopping at the first failure, or with --keep-going running every one and listing each result; exit 3 when an assertion failed"),
         ("gpu".into(), "Check the renderer's shaders against its Rust GPU layouts and bindings"),
         ("gpu --report DIR [--no-rga]".into(), "Report every shader entry point's cost offline, on any machine: naga's counts and SPIR-V, and with Radeon GPU Analyzer (downloaded once, Windows and Linux) its AMD machine code, registers and memory on RDNA 2, 3 and 4"),
         ("bench check".into(), "Check bench/ against the code: the metric catalog names what measurements report, the scene and settings files known options, the shader paths every shader"),

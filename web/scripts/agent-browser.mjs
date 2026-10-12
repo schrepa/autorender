@@ -2,12 +2,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgentError, loopbackUrl } from "./agent-protocol.mjs";
 import { launchContext } from "./browser-launch.mjs";
-
-const workspace = fileURLToPath(new URL("../../", import.meta.url));
+import { workspace } from "./workspace.mjs";
 
 /** How many pixels of two captures under artifacts/agent differ by more
  * than `tolerance` (0 to 255) in a color channel: `{a, b, tolerance}`. */

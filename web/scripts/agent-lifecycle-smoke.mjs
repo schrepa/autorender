@@ -4,11 +4,13 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { holdHeavyRun } from "./heavy-run.mjs";
+import { workspacePath } from "./workspace.mjs";
 
-const script = fileURLToPath(new URL("./agent.mjs", import.meta.url));
+await holdHeavyRun("smoke agent-lifecycle-smoke.mjs");
+const script = workspacePath("web/scripts/agent.mjs");
 const fixture = createServer((_, response) => {
   response.writeHead(200, { "Content-Type": "text/html" });
   response.end(`<script>

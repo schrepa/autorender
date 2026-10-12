@@ -18,10 +18,17 @@ pub fn build(root: &Path) -> Result<(), String> {
     run(root, NPM, &["run", "build", "--prefix", "web"])
 }
 
-pub fn dev(root: &Path, port: u16) -> Result<(), String> {
+/// What the development server serves, made: the authored sources checked,
+/// the clients built with their development tools, the web dependencies
+/// installed.
+pub fn prepare_dev(root: &Path) -> Result<(), String> {
     authoring::validate_sources(root)?;
     build_wasm(root, true, QUICK)?;
-    install_web_dependencies(root)?;
+    install_web_dependencies(root)
+}
+
+pub fn dev(root: &Path, port: u16) -> Result<(), String> {
+    prepare_dev(root)?;
     println!("Serving the games at http://127.0.0.1:{port}; press Ctrl+C to stop.");
     println!(
         "For automatic Rust rebuilds and managed browser sessions, run `cargo xtask agent watch`."
