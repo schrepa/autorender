@@ -41,6 +41,7 @@
 
 use engine_core::collections::HashMap;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use engine_core::glam::Vec3;
@@ -231,7 +232,9 @@ pub(crate) struct VirtualTexture {
     maps_generation: u64,
     materials: u32,
     sheet_texels: u32,
-    terrains: HashMap<u64, Textured>,
+    // Each textured terrain by terrain ID, the order its feedback
+    // dispatches and directory writes run in.
+    terrains: BTreeMap<u64, Textured>,
     resident: HashMap<PageKey, u32>,
     owners: Vec<Option<PageKey>>,
     asked: Vec<u64>,
@@ -277,7 +280,7 @@ impl VirtualTexture {
             maps_generation: u64::MAX,
             materials: 0,
             sheet_texels: 1,
-            terrains: HashMap::default(),
+            terrains: BTreeMap::new(),
             resident: HashMap::default(),
             owners: Vec::new(),
             asked: Vec::new(),
@@ -506,6 +509,10 @@ impl VirtualTexture {
                 f32::from(key.z) * side - margin,
             ];
             let high = [low[0] + side + 2.0 * margin, low[1] + side + 2.0 * margin];
+            #[expect(
+                clippy::iter_over_hash_type,
+                reason = "marks every resident page over the tile, in any order"
+            )]
             for (page, &slot) in &self.resident {
                 let span = texel_size(usize::from(page.mip)) * PAGE_TEXELS as f32;
                 let over = (0..2).all(|axis| {

@@ -4,6 +4,7 @@
 //! control values of tiles uploaded each frame.
 
 use super::*;
+use std::collections::BTreeMap;
 
 /// The arrays: heights, control values and normals, a layer per tile.
 struct Arrays {
@@ -161,21 +162,26 @@ impl TileAtlas {
                 listed.insert((terrain.id, tile.key()), tile);
             }
         }
-        let free = &mut self.free;
-        let changed = &mut self.changed;
+        let mut released = Vec::new();
         self.slots.retain(|key, layer| {
             let keep = listed.contains_key(key);
             if !keep {
-                free.push(*layer);
-                changed.push(*key);
+                released.push((*key, *layer));
             }
             keep
         });
+        // In key order, so which layers tiles take next follows no hash:
+        // layers free last are taken first.
+        released.sort_unstable();
+        for (key, layer) in released {
+            self.free.push(layer);
+            self.changed.push(key);
+        }
         self.held.retain(|key, _| listed.contains_key(key));
         self.arrivals.retain(|key, _| listed.contains_key(key));
         self.surfaced.retain(|key, _| listed.contains_key(key));
         // Terrains whose tiles' control values the GPU gives.
-        let surfaces: HashMap<u64, &Arc<SurfaceData>> = terrains
+        let surfaces: BTreeMap<u64, &Arc<SurfaceData>> = terrains
             .terrains
             .iter()
             .filter_map(|terrain| Some((terrain.id, terrain.gpu_surface.as_ref()?)))
@@ -184,7 +190,13 @@ impl TileAtlas {
         // Tiles replaced under their keys upload again into their layers; one
         // whose surface materials arrive with it takes them over gradually,
         // and edits change them in place.
-        for (key, tile) in &listed {
+        for (key, tile) in terrains.terrains.iter().flat_map(|terrain| {
+            terrain
+                .tiles
+                .iter()
+                .map(|tile| ((terrain.id, tile.key()), tile))
+        }) {
+            let key = &key;
             let had = self.held.get(key).map(|held| held.control().is_some());
             match (had, tile.control().is_some()) {
                 (_, false) if !surfaces.contains_key(&key.0) => {
@@ -378,6 +390,10 @@ impl TileAtlas {
         let byte = |fade: f32| (engine_core::math::clamp(fade, 0.0, 1.0) * 255.0 + 0.5) as u32;
         // Tiles that finished fading in change what pages over them hold.
         let mut fading = engine_core::collections::HashSet::default();
+        #[expect(
+            clippy::iter_over_hash_type,
+            reason = "each tile's fades land in its own layer's word, and the fading set"
+        )]
         for (key, &layer) in &self.slots {
             let normals = match self.arrivals.get(key) {
                 Some(&at) if fades => self.fade_since(at),
@@ -396,8 +412,10 @@ impl TileAtlas {
             };
             *word |= (byte(normals) | (byte(materials) << 8)) << ((layer % 2) * 16);
         }
-        self.changed
-            .extend(self.fading.difference(&fading).copied());
+        // Sorted: the order pages drop in follows no hash.
+        let mut faded: Vec<(u64, TileKey)> = self.fading.difference(&fading).copied().collect();
+        faded.sort_unstable();
+        self.changed.extend(faded);
         self.fading = fading;
         words
     }
@@ -435,7 +453,7 @@ impl TileAtlas {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        surfaces: &HashMap<u64, &Arc<SurfaceData>>,
+        surfaces: &BTreeMap<u64, &Arc<SurfaceData>>,
     ) {
         self.surfaces.retain(|id, _| surfaces.contains_key(id));
         for (&id, &surface) in surfaces {

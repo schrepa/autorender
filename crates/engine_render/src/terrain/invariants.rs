@@ -19,6 +19,10 @@ use super::*;
 impl TerrainPass {
     /// Asserts T1 to T5 over `terrains`, just prepared.
     #[expect(clippy::too_many_lines, reason = "one assertion pass over every table")]
+    #[expect(
+        clippy::iter_over_hash_type,
+        reason = "assertions over every entry hold in any order"
+    )]
     pub(super) fn check(&self, terrains: &RenderTerrains) {
         let atlas = &self.atlas;
         let tables = &self.tables;

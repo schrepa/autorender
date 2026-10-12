@@ -4,7 +4,8 @@
 //! records and WGSL live together; ordinary gameplay never handles GPU objects.
 #![deny(
     clippy::wildcard_enum_match_arm,
-    clippy::match_wildcard_for_single_variants
+    clippy::match_wildcard_for_single_variants,
+    clippy::iter_over_hash_type
 )]
 
 pub use engine_core::RenderStats;
