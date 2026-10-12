@@ -16,6 +16,8 @@ mod views;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod authoring;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod schemas;
 
 pub use animation::{Animate, animate};
 pub use controls::{validated_camera, validated_presentation_alpha};
@@ -33,21 +35,15 @@ pub use protocol::{
 };
 
 /// The ops of queries and controls, as requests name them, from the
-/// protocol's schema (build.rs).
+/// protocol's schema ([`schemas`], which `cargo xtask schema` runs).
 mod ops {
-    include!(concat!(env!("OUT_DIR"), "/ops.rs"));
+    include!("generated/ops.rs");
 }
 pub use ops::{CONTROL_OPS, QUERY_OPS};
 
-/// The protocol as hosts and tools need it: its version, request limit and
-/// ops, which `cargo xtask schema` writes for the web host and scripts.
-pub const PROTOCOL_SUMMARY: &str = include_str!(concat!(env!("OUT_DIR"), "/protocol.json"));
-
 /// The JSON schema of [`engine_core::FrameStats`], what every reply's
-/// `rendering` holds, which `cargo xtask schema` turns into the web host's
-/// types.
-pub const FRAME_STATS_SCHEMA: &str =
-    include_str!(concat!(env!("OUT_DIR"), "/frame_stats.schema.json"));
+/// `rendering` holds ([`schemas`] generates it).
+pub const FRAME_STATS_SCHEMA: &str = include_str!("generated/frame_stats.schema.json");
 pub use terrain::{Press, TerrainEditing, change_world, edit_terrain, nav_go, press_track};
 
 pub const MAX_INSPECTOR_BYTES: usize = 16 * 1024;

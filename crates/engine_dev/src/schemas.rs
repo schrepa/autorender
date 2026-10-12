@@ -1,33 +1,32 @@
-#[allow(dead_code)]
-#[path = "src/protocol.rs"]
-mod protocol;
-#[allow(dead_code)]
-#[path = "src/views.rs"]
-mod views;
+//! The development protocol's generated files, which `cargo xtask schema`
+//! writes and lint keeps current: every inspector's schema, the frame
+//! stats' and the scene's, the ops of queries and controls, and the
+//! protocol's summary for hosts and tools. Generating them checks the rules
+//! that keep what agents see complete: every type and field describes
+//! itself, fits one reply, and whatever a scene authors shows in an
+//! inspector.
 
-/// Each scene environment section's schema, by the name of its inspector.
-struct Sections(serde_json::Map<String, serde_json::Value>);
+use engine_scene::{EnvironmentSection, SectionVisitor};
+use serde_json::{Map, Value, json};
 
-impl engine_scene::SectionVisitor for Sections {
-    fn section<T: engine_scene::EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
-        let schema = serde_json::to_value(T::schema()).expect("schema serializes");
-        // Agents learn each field from its own doc comment.
-        for (field, property) in schema["properties"].as_object().into_iter().flatten() {
-            if property["description"].as_str().is_none_or(str::is_empty) {
-                panic!(
-                    "{}.{field} needs a doc comment: sections describe themselves",
-                    T::NAME
-                );
-            }
-        }
-        self.0.insert(T::NAME.to_owned(), schema);
-    }
+use crate::{protocol, views};
+
+/// The development protocol's generated files, and the values tools
+/// generate others from.
+pub struct Generated {
+    /// Each file by path from the repository root, with its contents.
+    pub files: Vec<(&'static str, String)>,
+    /// The protocol's summary: its version, request limit, ops, features
+    /// and error codes.
+    pub summary: Value,
+    /// The schema of what a frame observed ([`engine_core::FrameStats`]).
+    pub frame_stats: Value,
 }
 
-fn main() {
-    println!("cargo:rerun-if-changed=src/views.rs");
-    println!("cargo:rerun-if-changed=src/protocol.rs");
-    let mut schemas = serde_json::json!({
+/// The generated files and values, or every rule the types break.
+pub fn generated() -> Result<Generated, String> {
+    let mut problems = Vec::new();
+    let mut schemas = json!({
         "Transform": schemars::schema_for!(views::TransformView),
         "GlobalTransform": schemars::schema_for!(views::GlobalTransformView),
         "InterpolateTransform": schemars::schema_for!(views::InterpolateTransformView),
@@ -64,70 +63,76 @@ fn main() {
         "Skin": schemars::schema_for!(views::SkinView),
         "protocol": schemars::schema_for!(protocol::DevRequest),
         "BrowserControl": schemars::schema_for!(protocol::BrowserControl),
-        "FrameStats": frame_stats(),
+        "FrameStats": frame_stats(&mut problems),
     });
+    let Some(described) = schemas.as_object() else {
+        return Err("the inspectors' schemas are not an object".to_owned());
+    };
     // Each type's description fits one reply, its envelope and constraints
     // beside it.
-    for (name, schema) in schemas.as_object().expect("schemas are an object") {
+    for (name, schema) in described {
         let bytes = schema.to_string().len();
         if bytes + 8 * 1024 > protocol::MAX_RESPONSE_BYTES {
-            panic!(
+            problems.push(format!(
                 "describe {name} would take {bytes} bytes of a {}-byte reply: split the type or page its schema",
                 protocol::MAX_RESPONSE_BYTES
-            );
+            ));
         }
     }
     // Inspectors describe themselves by their types' doc comments.
-    for (name, schema) in schemas.as_object().expect("schemas are an object") {
+    for (name, schema) in described {
         if ["protocol", "BrowserControl", "FrameStats"].contains(&name.as_str()) {
             continue;
         }
         let description = schema["description"].as_str().unwrap_or_default();
         if description.is_empty() || description.len() > protocol::bounds::MAX_DESCRIPTION_BYTES {
-            panic!(
+            problems.push(format!(
                 "{name} needs a doc comment of at most {} bytes: inspectors describe themselves",
                 protocol::bounds::MAX_DESCRIPTION_BYTES
-            );
+            ));
         }
     }
-    let mut sections = Sections(serde_json::Map::new());
+    let mut sections = Sections {
+        schemas: Map::new(),
+        problems: Vec::new(),
+    };
     engine_scene::SceneEnvironment::default().visit(&mut sections);
+    problems.append(&mut sections.problems);
     // A settings section is never named as the plural of a component, which
     // reads as a store of them: `LocalLight`'s settings are
     // `LocalLightSettings`, not `LocalLights`.
-    for name in sections.0.keys() {
+    for name in sections.schemas.keys() {
         if let Some(component) = name.strip_suffix('s')
             && schemas.get(component).is_some()
         {
-            panic!(
+            problems.push(format!(
                 "settings {name} read as a store of {component}s: name them {component}Settings"
-            );
+            ));
         }
     }
-    schemas
-        .as_object_mut()
-        .expect("schemas are an object")
-        .extend(sections.0);
-    let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
-    std::fs::write(output.join("inspectors.json"), schemas.to_string())
-        .expect("write generated development schemas");
-    std::fs::write(
-        output.join("frame_stats.schema.json"),
-        serde_json::to_string_pretty(&schemas["FrameStats"]).expect("schema serializes"),
-    )
-    .expect("write generated frame stats schema");
-    std::fs::write(
-        output.join("scene.schema.json"),
-        engine_scene::SceneDocument::schema_json(),
-    )
-    .expect("write generated scene development schema");
+    if let Some(all) = schemas.as_object_mut() {
+        all.extend(sections.schemas);
+    }
+    // Every inspector a feature owns exists.
+    for (name, _) in crate::inspect::INSPECTOR_FEATURES {
+        if schemas.get(*name).is_none() {
+            problems.push(format!(
+                "INSPECTOR_FEATURES names {name}, which is no inspector"
+            ));
+        }
+    }
+    let scene_schema = engine_scene::SceneDocument::schema_json();
     // The ops of queries and controls, from their schemas: no list to keep.
-    let queries = ops(&schemas["protocol"]);
-    let controls = ops(&schemas["BrowserControl"]);
-    control_state(&controls, &schemas);
-    let scene: serde_json::Value =
-        serde_json::from_str(&engine_scene::SceneDocument::schema_json()).expect("scene schema");
-    authored_parity(&scene, &schemas);
+    let queries = ops(&schemas["protocol"], &mut problems);
+    let controls = ops(&schemas["BrowserControl"], &mut problems);
+    control_state(&controls, &schemas, &mut problems);
+    match serde_json::from_str::<Value>(&scene_schema) {
+        Ok(scene) => authored_parity(&scene, &schemas, &mut problems),
+        Err(error) => problems.push(format!("the scene schema is not JSON: {error}")),
+    }
+    if !problems.is_empty() {
+        return Err(problems.join("\n"));
+    }
     let constant = |name: &str, what: &str, ops: &[String]| {
         format!(
             "/// The op of every {what}, as requests name it.
@@ -137,12 +142,7 @@ pub const {name}: [&str; {}] = {:?};
             ops
         )
     };
-    std::fs::write(
-        output.join("ops.rs"),
-        constant("QUERY_OPS", "query", &queries) + &constant("CONTROL_OPS", "control", &controls),
-    )
-    .expect("write generated op lists");
-    let summary = serde_json::json!({
+    let summary = json!({
         "version": protocol::PROTOCOL_VERSION,
         "max_request_bytes": protocol::MAX_REQUEST_BYTES,
         // Profiling captures, which the agent's bridge requests.
@@ -153,7 +153,7 @@ pub const {name}: [&str; {}] = {:?};
         // plugin adding it and the features it needs.
         "features": engine_core::Feature::ALL
             .iter()
-            .map(|feature| serde_json::json!({
+            .map(|feature| json!({
                 "name": feature.name(),
                 "plugin": feature.plugin(),
                 "needs": feature.needs().iter().map(|need| need.name()).collect::<Vec<_>>(),
@@ -162,25 +162,69 @@ pub const {name}: [&str; {}] = {:?};
         // Every error code replies answer with and what it means.
         "errors": engine_settings::ErrorCode::ALL
             .iter()
-            .map(|&(code, name, _)| (name.to_owned(), serde_json::json!(code.description())))
-            .collect::<serde_json::Map<_, _>>(),
+            .map(|&(code, name, _)| (name.to_owned(), json!(code.description())))
+            .collect::<Map<_, _>>(),
     });
-    std::fs::write(
-        output.join("protocol.json"),
-        serde_json::to_string_pretty(&summary).expect("summary serializes")
-            + "
-",
-    )
-    .expect("write generated protocol summary");
+    let pretty = |value: &Value| {
+        serde_json::to_string_pretty(value).map_err(|error| format!("cannot write JSON: {error}"))
+    };
+    let files = vec![
+        (
+            "crates/engine_dev/src/generated/inspectors.json",
+            schemas.to_string(),
+        ),
+        (
+            "crates/engine_dev/src/generated/frame_stats.schema.json",
+            pretty(&schemas["FrameStats"])?,
+        ),
+        (
+            "crates/engine_dev/src/generated/scene.schema.json",
+            scene_schema,
+        ),
+        (
+            "crates/engine_dev/src/generated/ops.rs",
+            constant("QUERY_OPS", "query", &queries)
+                + &constant("CONTROL_OPS", "control", &controls),
+        ),
+        ("web/src/generated/protocol.json", pretty(&summary)? + "\n"),
+    ];
+    Ok(Generated {
+        files,
+        summary,
+        frame_stats: schemas["FrameStats"].clone(),
+    })
+}
+
+/// Each scene environment section's schema, by the name of its inspector,
+/// and the fields that lack a doc comment.
+struct Sections {
+    schemas: Map<String, Value>,
+    problems: Vec<String>,
+}
+
+impl SectionVisitor for Sections {
+    fn section<T: EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
+        let schema = serde_json::to_value(T::schema()).unwrap_or_default();
+        // Agents learn each field from its own doc comment.
+        for (field, property) in schema["properties"].as_object().into_iter().flatten() {
+            if property["description"].as_str().is_none_or(str::is_empty) {
+                self.problems.push(format!(
+                    "{}.{field} needs a doc comment: sections describe themselves",
+                    T::NAME
+                ));
+            }
+        }
+        self.schemas.insert(T::NAME.to_owned(), schema);
+    }
 }
 
 /// The schema of what a frame observed, after checking the rules that keep it
 /// one readable definition: every field has a doc comment, a feature's
 /// numbers live under its environment section's key, and what a budget or
 /// the device's limits left out is named `dropped` or `dropped_*`.
-fn frame_stats() -> serde_json::Value {
-    let schema = serde_json::to_value(schemars::schema_for!(engine_core::FrameStats))
-        .expect("schema serializes");
+fn frame_stats(problems: &mut Vec<String>) -> Value {
+    let schema =
+        serde_json::to_value(schemars::schema_for!(engine_core::FrameStats)).unwrap_or_default();
     let objects = std::iter::once(("FrameStats", &schema)).chain(
         schema["$defs"]
             .as_object()
@@ -191,23 +235,27 @@ fn frame_stats() -> serde_json::Value {
     for (name, object) in objects {
         for (field, property) in object["properties"].as_object().into_iter().flatten() {
             if property["description"].as_str().is_none_or(str::is_empty) {
-                panic!("{name}.{field} needs a doc comment: frame stats describe themselves");
+                problems.push(format!(
+                    "{name}.{field} needs a doc comment: frame stats describe themselves"
+                ));
             }
             if field.contains("dropped") && field != "dropped" && !field.starts_with("dropped_") {
-                panic!("{name}.{field}: name what budgets drop `dropped` or `dropped_*`");
+                problems.push(format!(
+                    "{name}.{field}: name what budgets drop `dropped` or `dropped_*`"
+                ));
             }
         }
     }
-    let render = serde_json::to_value(schemars::schema_for!(engine_core::RenderStats))
-        .expect("schema serializes");
+    let render =
+        serde_json::to_value(schemars::schema_for!(engine_core::RenderStats)).unwrap_or_default();
     for (field, property) in render["properties"].as_object().into_iter().flatten() {
         if property.get("$ref").is_some()
             && !engine_core::Environment::KEYS.contains(&field.as_str())
         {
-            panic!(
+            problems.push(format!(
                 "RenderStats.{field} groups a feature's stats under a key that is no environment \
                  section's: name it after the section"
-            );
+            ));
         }
     }
     schema
@@ -215,25 +263,29 @@ fn frame_stats() -> serde_json::Value {
 
 /// Checks that every control names, once, where its state shows, and that
 /// the inspectors named exist.
-fn control_state(controls: &[String], schemas: &serde_json::Value) {
+fn control_state(controls: &[String], schemas: &Value, problems: &mut Vec<String>) {
     for op in controls {
         let listed = protocol::CONTROL_STATE
             .iter()
             .filter(|(listed, _)| listed == op)
             .count();
         if listed != 1 {
-            panic!("control {op} must name where its state shows once in CONTROL_STATE");
+            problems.push(format!(
+                "control {op} must name where its state shows once in CONTROL_STATE"
+            ));
         }
     }
     for (op, shows) in protocol::CONTROL_STATE {
         if !controls.iter().any(|control| control == op) {
-            panic!("CONTROL_STATE lists {op}, which is no control");
+            problems.push(format!("CONTROL_STATE lists {op}, which is no control"));
         }
         // The environment's inspector is its sections' together.
         if !["", "status", "GameControls", "Environment"].contains(shows)
             && schemas.get(*shows).is_none()
         {
-            panic!("control {op}'s state shows in {shows}, which is no inspector");
+            problems.push(format!(
+                "control {op}'s state shows in {shows}, which is no inspector"
+            ));
         }
     }
 }
@@ -302,82 +354,107 @@ const RENAMED: &[(&str, &str)] = &[
 /// every field of an object there, under its name or the one [`RENAMED`]
 /// gives. A property without an entry fails, so new ones come with their
 /// inspection.
-fn authored_parity(scene: &serde_json::Value, schemas: &serde_json::Value) {
+fn authored_parity(scene: &Value, schemas: &Value, problems: &mut Vec<String>) {
     let definitions = &scene["$defs"];
-    let check = |what: &str, property: &serde_json::Value, shows: &str| {
-        if ["header", "structure", "Environment"].contains(&shows) {
-            return;
+    let object = definitions["SceneObject"]["properties"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    for (property, schema) in &object {
+        match AUTHORED.iter().find(|(authored, _)| authored == property) {
+            Some(&(_, shows)) => shown(
+                (definitions, schemas),
+                &format!("entities[].{property}"),
+                schema,
+                shows,
+                problems,
+            ),
+            None => problems.push(format!(
+                "entity property {property} needs a place in AUTHORED"
+            )),
         }
-        let (inspector, field) = shows.split_once('.').unwrap_or((shows, ""));
-        let root = schemas
-            .get(inspector)
-            .unwrap_or_else(|| panic!("{what} shows in {inspector}, which is no inspector"));
-        let mut target = root;
-        if !field.is_empty() {
-            target = resolve(&root["$defs"], &root["properties"][field])
-                .unwrap_or_else(|| panic!("{what} shows in {shows}, which is no field"));
+    }
+    for (property, _) in AUTHORED {
+        if object.get(*property).is_none() {
+            problems.push(format!(
+                "AUTHORED lists {property}, which entities do not author"
+            ));
         }
-        let target = resolve(&root["$defs"], target).unwrap_or(target);
-        let Some((name, authored)) = definition(definitions, property) else {
-            return;
-        };
-        let Some(fields) = authored["properties"].as_object() else {
-            return;
-        };
-        // A field holding the scene's own type refers agents to its
-        // definition there instead of repeating it.
-        let declared = format!("`{name}`");
-        if target.get("properties").is_none()
-            && target["description"]
-                .as_str()
-                .is_some_and(|description| description.contains(&declared))
-        {
-            return;
+    }
+    let document = scene["properties"].as_object().cloned().unwrap_or_default();
+    for (property, schema) in &document {
+        match DOCUMENT.iter().find(|(authored, _)| authored == property) {
+            Some(&(_, shows)) => shown((definitions, schemas), property, schema, shows, problems),
+            None => problems.push(format!(
+                "scene property {property} needs a place in DOCUMENT"
+            )),
         }
-        for field in fields.keys() {
-            let shown = RENAMED
-                .iter()
-                .find(|(renamed, _)| *renamed == format!("{name}.{field}"))
-                .map_or(field.as_str(), |(_, shown)| shown);
-            if target["properties"].get(shown).is_none() {
-                panic!(
-                    "{what}.{field} ({name}) is authored but {shows} does not show it: add a field named {shown}, or rename it in RENAMED"
-                );
+    }
+}
+
+/// Checks that authored property `what` (of schema `property`) shows where
+/// `shows` says, every field of it: `definitions` are the scene's, `schemas`
+/// the inspectors'.
+fn shown(
+    (definitions, schemas): (&Value, &Value),
+    what: &str,
+    property: &Value,
+    shows: &str,
+    problems: &mut Vec<String>,
+) {
+    if ["header", "structure", "Environment"].contains(&shows) {
+        return;
+    }
+    let (inspector, field) = shows.split_once('.').unwrap_or((shows, ""));
+    let Some(root) = schemas.get(inspector) else {
+        problems.push(format!(
+            "{what} shows in {inspector}, which is no inspector"
+        ));
+        return;
+    };
+    let mut target = root;
+    if !field.is_empty() {
+        match resolve(&root["$defs"], &root["properties"][field]) {
+            Some(resolved) => target = resolved,
+            None => {
+                problems.push(format!("{what} shows in {shows}, which is no field"));
+                return;
             }
         }
+    }
+    let target = resolve(&root["$defs"], target).unwrap_or(target);
+    let Some((name, authored)) = definition(definitions, property) else {
+        return;
     };
-    let object = &definitions["SceneObject"]["properties"];
-    for (property, schema) in object.as_object().expect("entities have properties") {
-        let shows = AUTHORED
-            .iter()
-            .find(|(authored, _)| authored == property)
-            .unwrap_or_else(|| panic!("entity property {property} needs a place in AUTHORED"))
-            .1;
-        check(&format!("entities[].{property}"), schema, shows);
+    let Some(fields) = authored["properties"].as_object() else {
+        return;
+    };
+    // A field holding the scene's own type refers agents to its
+    // definition there instead of repeating it.
+    let declared = format!("`{name}`");
+    if target.get("properties").is_none()
+        && target["description"]
+            .as_str()
+            .is_some_and(|description| description.contains(&declared))
+    {
+        return;
     }
-    for (property, shows) in AUTHORED {
-        if object.get(*property).is_none() {
-            panic!("AUTHORED lists {property}, which entities do not author");
+    for field in fields.keys() {
+        let shown = RENAMED
+            .iter()
+            .find(|(renamed, _)| *renamed == format!("{name}.{field}"))
+            .map_or(field.as_str(), |(_, shown)| shown);
+        if target["properties"].get(shown).is_none() {
+            problems.push(format!(
+                "{what}.{field} ({name}) is authored but {shows} does not show it: add a field named {shown}, or rename it in RENAMED"
+            ));
         }
-        let _ = shows;
-    }
-    let document = &scene["properties"];
-    for (property, schema) in document.as_object().expect("documents have properties") {
-        let shows = DOCUMENT
-            .iter()
-            .find(|(authored, _)| authored == property)
-            .unwrap_or_else(|| panic!("scene property {property} needs a place in DOCUMENT"))
-            .1;
-        check(property, schema, shows);
     }
 }
 
 /// The definition `schema` names, directly, as an option, or as the items
 /// of a list: its name and body.
-fn definition<'a>(
-    definitions: &'a serde_json::Value,
-    schema: &'a serde_json::Value,
-) -> Option<(String, &'a serde_json::Value)> {
+fn definition<'a>(definitions: &'a Value, schema: &'a Value) -> Option<(String, &'a Value)> {
     if let Some(reference) = schema["$ref"].as_str() {
         let name = reference.rsplit('/').next()?;
         return Some((name.to_owned(), definitions.get(name)?));
@@ -394,10 +471,7 @@ fn definition<'a>(
 
 /// The object schema `schema` resolves to through references, options and
 /// list items, within `definitions`.
-fn resolve<'a>(
-    definitions: &'a serde_json::Value,
-    schema: &'a serde_json::Value,
-) -> Option<&'a serde_json::Value> {
+fn resolve<'a>(definitions: &'a Value, schema: &'a Value) -> Option<&'a Value> {
     if schema.is_null() {
         return None;
     }
@@ -415,21 +489,28 @@ fn resolve<'a>(
 }
 
 /// The `op` of every variant of an internally tagged request enum's schema.
-fn ops(schema: &serde_json::Value) -> Vec<String> {
+fn ops(schema: &Value, problems: &mut Vec<String>) -> Vec<String> {
     let variants = schema
         .get("oneOf")
         .or_else(|| schema.get("anyOf"))
-        .and_then(serde_json::Value::as_array)
-        .expect("request enums are one of their variants");
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if variants.is_empty() {
+        problems.push("request enums are one of their variants".to_owned());
+    }
     variants
         .iter()
-        .map(|variant| {
+        .filter_map(|variant| {
             let op = &variant["properties"]["op"];
-            op.get("const")
+            let name = op
+                .get("const")
                 .or_else(|| op["enum"].get(0))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_else(|| panic!("a request variant names no op: {variant}"))
-                .to_owned()
+                .and_then(Value::as_str);
+            if name.is_none() {
+                problems.push(format!("a request variant names no op: {variant}"));
+            }
+            name.map(str::to_owned)
         })
         .collect()
 }

@@ -7,7 +7,7 @@
 //! authoritative world pose. Renderers bin lights into view clusters and shade
 //! each pixel with its cluster's lights; frames without lights pay nothing.
 //!
-//! The [`LocalLights`] settings are inserted by default; without them, or
+//! The [`LocalLightSettings`] are inserted by default; without them, or
 //! when disabled, frames shade no local lights. Beyond `max_lights` the
 //! lights nearest the camera win, chosen every frame, and the rest count as
 //! dropped; beyond `lights_per_cluster` a cluster's later-binned lights are

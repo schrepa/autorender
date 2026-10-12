@@ -59,7 +59,7 @@ impl InspectorDescriptor {
     }
 
     /// The descriptor of the generated schema named `name` in `schemas`,
-    /// described by its type's doc comment: the engine's are build.rs's, an
+    /// described by its type's doc comment: the engine's are `schemas`', an
     /// app's are its tooling's. A name without a schema, or a schema without
     /// a description, is a programming error.
     pub fn generated(schemas: &Value, name: &str) -> Self {
@@ -153,7 +153,7 @@ pub struct DevTools {
 /// The feature of each engine inspector of a feature's component or
 /// resource (environment sections name their own): inspecting them answers
 /// `missing_plugin` without the feature's plugin.
-const INSPECTOR_FEATURES: &[(&str, Feature)] = &[
+pub(crate) const INSPECTOR_FEATURES: &[(&str, Feature)] = &[
     ("Terrain", Feature::Terrain),
     ("Terrains", Feature::Terrain),
     ("TerrainDebug", Feature::Terrain),
@@ -174,9 +174,8 @@ const INSPECTOR_FEATURES: &[(&str, Feature)] = &[
 
 impl Default for DevTools {
     fn default() -> Self {
-        let schemas: Value =
-            serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/inspectors.json")))
-                .expect("build-generated schemas are valid JSON");
+        let schemas: Value = serde_json::from_str(include_str!("generated/inspectors.json"))
+            .expect("generated schemas are valid JSON");
         let mut tools = Self {
             inspectors: BTreeMap::new(),
             builtins: None,
@@ -901,10 +900,11 @@ impl DevTools {
         }
         impl SectionVisitor for Sections<'_> {
             fn section<T: EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
-                let schema =
-                    self.schemas.get(T::NAME).cloned().unwrap_or_else(|| {
-                        panic!("build.rs generates no schema named {}", T::NAME)
-                    });
+                let schema = self
+                    .schemas
+                    .get(T::NAME)
+                    .cloned()
+                    .unwrap_or_else(|| panic!("schemas generates no schema named {}", T::NAME));
                 // The settings type's doc comment, whole in the schema.
                 let description = summary(
                     schema["description"]
@@ -976,9 +976,8 @@ fn sections_schema() -> Value {
 /// definition; without, the top level with its definitions' names in place
 /// of their bodies.
 fn scene_schema(definition: Option<&str>) -> Result<Value, DevError> {
-    let mut schema: Value =
-        serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json")))
-            .expect("generated scene schema is JSON");
+    let mut schema: Value = serde_json::from_str(include_str!("generated/scene.schema.json"))
+        .expect("generated scene schema is JSON");
     let definitions = schema
         .as_object_mut()
         .and_then(|schema| schema.remove("$defs"))
@@ -1407,11 +1406,9 @@ impl DevTools {
                 json!({"name": name, "kind": "authoring", "schema": scene_schema(definition)?, "constraints": format!("Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Fields newer than version 1 require the version that introduced them: {}. Every older version stays accepted with its own semantics. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state; the opt-in ones ({}) are then off.", engine_scene::version_features(), SceneEnvironment::opt_in_sections().join(", "))}),
             ),
             "protocol" | "BrowserControl" => {
-                let schemas: Value = serde_json::from_str(include_str!(concat!(
-                    env!("OUT_DIR"),
-                    "/inspectors.json"
-                )))
-                .expect("generated schemas are JSON");
+                let schemas: Value =
+                    serde_json::from_str(include_str!("generated/inspectors.json"))
+                        .expect("generated schemas are JSON");
                 Ok(
                     json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": format!("version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need CollisionPlugin but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source."),
                         // Where each control's effect shows: an inspector, status, the game's controls, or nothing.

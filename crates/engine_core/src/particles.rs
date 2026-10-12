@@ -5,7 +5,7 @@
 //! exact, and the CPU extracts only one record per emitter each frame.
 //! Particles blend in the transparent pass, in any order.
 //!
-//! The [`Particles`] settings are inserted by default; without them, or when
+//! The [`ParticleSettings`] are inserted by default; without them, or when
 //! disabled, frames draw no particles. Beyond `max_particles` the emitters
 //! nearest the camera win and the others are skipped whole, counted as the
 //! frame's dropped particles; without a budget only the GPU's buffer limits
@@ -25,7 +25,7 @@ use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
 
 /// Most particles one emitter keeps alive (its rate times its lifetime): a
 /// validity bound far above real effects. Frames draw every emitter unless
-/// [`Particles::max_particles`] sets a budget.
+/// [`ParticleSettings::max_particles`] sets a budget.
 pub const MAX_EMITTER_PARTICLES: u32 = 1 << 24;
 
 /// The widest an emitter's cone of directions opens, in degrees from its

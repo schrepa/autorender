@@ -6,7 +6,7 @@
 //! renderer keeps what it captured of each until the probe changes or the
 //! sky does.
 //!
-//! The [`ReflectionProbes`] settings are inserted by default; without them,
+//! The [`ReflectionProbeSettings`] are inserted by default; without them,
 //! or when disabled, frames capture and reflect no probes. Beyond
 //! `max_probes` the probes nearest the camera win and the rest count as
 //! dropped; without a budget, as many stay as the GPU's texture arrays hold.

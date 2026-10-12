@@ -60,17 +60,20 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         .expect("the client list serializes")
         + "
 ";
-    let stats: serde_json::Value =
-        serde_json::from_str(engine_dev::FRAME_STATS_SCHEMA).expect("generated schema is JSON");
-    let mut files = vec![
-        (
-            "web/src/generated/protocol.json".to_owned(),
-            engine_dev::PROTOCOL_SUMMARY.to_owned(),
-        ),
+    // The development protocol's: its inspectors', frame stats' and
+    // scene's schemas, its ops and its summary.
+    let development = engine_dev::schemas::generated()?;
+    let stats = &development.frame_stats;
+    let mut files: Vec<(String, String)> = development
+        .files
+        .iter()
+        .map(|(path, contents)| ((*path).to_owned(), contents.clone()))
+        .collect();
+    files.extend([
         ("web/src/generated/clients.json".to_owned(), clients),
         (
             "web/src/generated/stats.ts".to_owned(),
-            engine::tooling::interfaces(&stats, "FrameStats", "engine_core::FrameStats"),
+            engine::tooling::interfaces(stats, "FrameStats", "engine_core::FrameStats"),
         ),
         (
             "web/src/generated/runtime.ts".to_owned(),
@@ -82,9 +85,9 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         ),
         (
             "web/src/generated/coverage.json".to_owned(),
-            crate::coverage::coverage(root)?,
+            crate::coverage::coverage(root, &development.summary, stats)?,
         ),
-    ];
+    ]);
     for client in crate::process::clients()
         .iter()
         .filter(|client| client.schema)
