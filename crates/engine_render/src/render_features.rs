@@ -241,13 +241,9 @@ impl<'f> Encode<'f> {
         }
     }
 
-    /// The view of attachment `resource` this frame.
-    pub(crate) fn view(&self, resource: Resource) -> &wgpu::TextureView {
-        self.views.view(resource)
-    }
-
     /// Begins `node`'s render pass, labeled `label` and timed by
-    /// `timestamp_writes`.
+    /// `timestamp_writes`: the one way a feature reaches the frame's
+    /// attachments.
     pub(crate) fn render_pass<'e>(
         &self,
         encoder: &'e mut wgpu::CommandEncoder,
@@ -298,7 +294,7 @@ pub(crate) fn render_pass<'e>(
 }
 
 /// A color attachment's operations as the render graph derived them.
-pub(crate) fn color_operations(ops: Ops) -> wgpu::Operations<wgpu::Color> {
+fn color_operations(ops: Ops) -> wgpu::Operations<wgpu::Color> {
     wgpu::Operations {
         load: match ops.load {
             Load::Clear(Clear::Color([r, g, b, a])) => {

@@ -153,6 +153,7 @@ impl Renderer {
         let views = FrameViews {
             renderer: self,
             canvas,
+            history: None,
         };
         crate::render_features::render_pass(encoder, node, &views, label, timestamp_writes)
     }
@@ -167,9 +168,18 @@ impl Renderer {
         view: &wgpu::TextureView,
         node: &Node,
     ) -> u32 {
+        // The history temporal antialiasing's resolve writes this frame.
+        let history = state
+            .features
+            .frames
+            .temporal
+            .as_ref()
+            .zip(self.features.temporal.get())
+            .map(|(ready, temporal)| temporal.history_target(ready.frame()));
         let views = FrameViews {
             renderer: self,
             canvas: view,
+            history,
         };
         let meshes = FrameMeshes {
             renderer: self,
@@ -421,15 +431,20 @@ impl MeshDraws for FrameMeshes<'_> {
     }
 }
 
-/// A frame's attachments: the renderer's targets, and the canvas's view
-/// `canvas`.
+/// A frame's attachments: the renderer's targets, the canvas's view
+/// `canvas`, and the history temporal antialiasing resolves into, in
+/// frames resolving it.
 struct FrameViews<'a> {
     renderer: &'a Renderer,
     canvas: &'a wgpu::TextureView,
+    history: Option<&'a wgpu::TextureView>,
 }
 
 impl AttachmentViews for FrameViews<'_> {
     fn view(&self, resource: Resource) -> &wgpu::TextureView {
-        self.renderer.attachment_view(resource, self.canvas)
+        match (resource, self.history) {
+            (Resource::History, Some(history)) => history,
+            _ => self.renderer.attachment_view(resource, self.canvas),
+        }
     }
 }

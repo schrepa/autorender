@@ -22,7 +22,7 @@ use crate::gpu_data::{
 };
 use crate::post::PostPass;
 use crate::profiling::Span;
-use crate::render_features::{Encode, FeaturePass, RenderFeature, color_operations};
+use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{Access, BLACK, Clear, FrameShape, Node, Pass, RenderGraph, Resource};
 use crate::targets::{FrameSize, ScreenTarget};
 
@@ -317,6 +317,11 @@ impl TemporalPass {
         &self.pose_layout
     }
 
+    /// The history target `frame` resolves into.
+    pub(crate) fn history_target(&self, frame: &ResolveFrame) -> &wgpu::TextureView {
+        &self.targets.get().expect("sized in begin").history[frame.parity]
+    }
+
     /// The motion target of the opaque pass.
     pub(crate) fn motion(&self) -> &wgpu::TextureView {
         &self.targets.get().expect("sized in begin").motion
@@ -363,39 +368,12 @@ impl TemporalPass {
         resolve
     }
 
-    /// Records the resolve of `frame` into `canvas` and its history texture,
-    /// with operations `ops` for each.
-    fn encode_resolve(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        canvas: &wgpu::TextureView,
-        frame: &ResolveFrame,
-        [canvas_ops, history_ops]: [wgpu::Operations<wgpu::Color>; 2],
-        timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
-    ) {
-        let targets = self.targets.get().expect("sized in begin");
+    /// Draws the resolve of `frame` into `pass`, its node's pass over the
+    /// canvas and the history it writes.
+    fn draw_resolve(&self, mut pass: wgpu::RenderPass<'_>, frame: &ResolveFrame) {
         let group = self.resolve_groups[frame.parity]
             .get()
             .expect("bound in prepare_resolve");
-        let attachment = |view, ops| {
-            Some(wgpu::RenderPassColorAttachment {
-                view,
-                depth_slice: None,
-                resolve_target: None,
-                ops,
-            })
-        };
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/taa-resolve"),
-            color_attachments: &[
-                attachment(canvas, canvas_ops),
-                attachment(&targets.history[frame.parity], history_ops),
-            ],
-            depth_stencil_attachment: None,
-            timestamp_writes,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
         pass.set_pipeline(&self.resolve_pipeline);
         pass.set_bind_group(0, group, &[]);
         pass.draw(0..3, 0..1);
@@ -468,18 +446,13 @@ impl RenderFeature for TemporalPass {
         encode: &Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        let mut ops = node.colors().map(|(_, ops)| color_operations(ops));
-        let ops = [
-            ops.next().expect("the canvas"),
-            ops.next().expect("the history"),
-        ];
-        self.encode_resolve(
+        let pass = encode.render_pass(
             encoder,
-            encode.view(Resource::Canvas),
-            frame,
-            ops,
+            node,
+            "engine/taa-resolve",
             encode.profiler.span("taa_resolve").map(Span::render),
         );
+        self.draw_resolve(pass, frame);
         0
     }
 

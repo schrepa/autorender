@@ -27,7 +27,7 @@ use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::gpu_data::{POST_SHADER, PostUniform, SHAFTS_SHADER};
 use crate::pipelines::{self, Fillers, Fullscreen, filled_group, fullscreen};
 use crate::profiling::{GpuProfiler, Span};
-use crate::render_features::{Encode, FeaturePass, RenderFeature, color_operations};
+use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{Access, BLACK, Clear, FrameShape, Node, Pass, RenderGraph, Resource};
 use crate::screen_effects::{Effects, UniformFrame};
 use crate::targets::{FrameSize, ScreenTarget};
@@ -734,30 +734,10 @@ impl PostPass {
         shared
     }
 
-    /// Records the composite of a frame without temporal antialiasing into
-    /// `canvas` with operations `ops`, timed by `profiler`
-    /// (`post_composite`).
-    fn encode_composite(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        canvas: &wgpu::TextureView,
-        ops: wgpu::Operations<wgpu::Color>,
-        profiler: &GpuProfiler,
-    ) {
+    /// Draws the composite of a frame without temporal antialiasing into
+    /// `pass`, its node's pass over the canvas.
+    fn draw_composite(&self, mut pass: wgpu::RenderPass<'_>) {
         let targets = self.targets.get().expect("sized in begin");
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine/post-composite"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: canvas,
-                depth_slice: None,
-                resolve_target: None,
-                ops,
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: profiler.span("post_composite").map(Span::render),
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
         pass.set_pipeline(&self.composite);
         pass.set_bind_group(0, &targets.composite, &[]);
         pass.draw(0..3, 0..1);
@@ -1004,16 +984,13 @@ impl RenderFeature for PostPass {
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
         if node.pass() == Pass::Feature(FeaturePass::Composite) {
-            let (_, canvas) = node
-                .colors()
-                .next()
-                .expect("the composite draws the canvas");
-            self.encode_composite(
+            let pass = encode.render_pass(
                 encoder,
-                encode.view(Resource::Canvas),
-                color_operations(canvas),
-                encode.profiler,
+                node,
+                "engine/post-composite",
+                encode.profiler.span("post_composite").map(Span::render),
             );
+            self.draw_composite(pass);
         } else {
             // Ambient occlusion, bloom, reflections and sun shafts, after the
             // opaque and transparent passes.
