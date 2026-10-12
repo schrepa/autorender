@@ -51,42 +51,39 @@ pub fn dev(root: &Path, port: u16) -> Result<(), String> {
     )
 }
 
-/// The documentation of every item, private ones included, of the native
-/// workspace and of the browser façade, which fails where the workspace's
-/// rustdoc lints find a link that does not resolve, public docs linking a
-/// private item, or malformed markup.
-pub fn docs(root: &Path) -> Result<(), String> {
-    run(
-        root,
-        "cargo",
-        &[
-            "doc",
-            "--workspace",
-            "--all-features",
-            "--no-deps",
-            "--document-private-items",
-            "--locked",
-        ],
-    )?;
+/// The documentation of the native workspace and of the browser façade:
+/// their public items, or every item with `private` (minutes longer after a
+/// change low in the crate graph). Either fails where the workspace's
+/// rustdoc lints, all denied, find a link that does not resolve, public
+/// docs linking a private item, or malformed markup.
+pub fn docs(root: &Path, private: bool) -> Result<(), String> {
+    let mut native = vec![
+        "doc",
+        "--workspace",
+        "--all-features",
+        "--no-deps",
+        "--locked",
+    ];
     // Browser-only façade entry points do not exist in native rustdoc output.
-    run(
-        root,
-        "cargo",
-        &[
-            "doc",
-            "-p",
-            "engine",
-            "-p",
-            "engine_render",
-            "--features",
-            "engine/dev",
-            "--target",
-            WASM_TARGET,
-            "--no-deps",
-            "--document-private-items",
-            "--locked",
-        ],
-    )
+    let mut browser = vec![
+        "doc",
+        "-p",
+        "engine",
+        "-p",
+        "engine_render",
+        "--features",
+        "engine/dev",
+        "--target",
+        WASM_TARGET,
+        "--no-deps",
+        "--locked",
+    ];
+    if private {
+        native.push("--document-private-items");
+        browser.push("--document-private-items");
+    }
+    run(root, "cargo", &native)?;
+    run(root, "cargo", &browser)
 }
 
 /// The browser clients built with Cargo profile `profile`, their bindings in

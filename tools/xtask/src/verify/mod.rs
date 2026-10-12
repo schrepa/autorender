@@ -9,8 +9,9 @@
 //!   jobs in Wasm where called for, equivalence's smoke tier and the cells
 //!   the rules name, natively, where any rule calls for equivalence, and
 //!   the factory tools' self-checks where called for;
-//! - `merge` (about 30-45 minutes): all of lint, every smoke check, the
-//!   terrain corpus's jobs in Wasm, equivalence's full tier natively and,
+//! - `merge` (about 30-45 minutes): all of lint, the documentation of
+//!   private items too, every smoke check, the terrain corpus's jobs in
+//!   Wasm, equivalence's full tier natively and,
 //!   where a rule calls for it, its browser leg, and the self-checks called
 //!   for.
 //!
@@ -282,6 +283,12 @@ fn steps<'a>(
     steps.push(Step::new("lint", move || {
         Ok(crate::lint::run_stages(root, crate::lint::LINT)?)
     }));
+    // Lint documents public items; merging documents every item.
+    if level == Level::Merge {
+        steps.push(Step::new("docs --private", move || {
+            Ok(crate::pipeline::docs(root, true)?)
+        }));
+    }
     let smokes: Vec<String> = if level == Level::Merge || everything || selection.all_smokes {
         vec!["--all".into()]
     } else {
