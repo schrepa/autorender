@@ -449,6 +449,7 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &["crates/engine_scene/**", "crates/engine_settings/**"],
         checks: &[
             Pure("scenes"),
+            Pure("requests"),
             Pure("gltf"),
             Smoke("agent"),
             Smoke("plugins"),
@@ -459,6 +460,7 @@ pub(crate) const MAP: &[Rule] = &[
     Rule {
         paths: &["crates/engine_dev/**"],
         checks: &[
+            Pure("requests"),
             Smoke("agent"),
             Smoke("native"),
             Smoke("host-parity"),
@@ -568,6 +570,7 @@ pub(crate) const MAP: &[Rule] = &[
         checks: &[
             Pure("terrain"),
             Pure("scenes"),
+            Pure("requests"),
             Pure("simplify"),
             Pure("gltf"),
             Pure("import"),
@@ -581,7 +584,11 @@ pub(crate) const MAP: &[Rule] = &[
     },
     Rule {
         paths: &["tools/xtask/src/pure/scenes.rs"],
-        checks: &[Pure("scenes")],
+        checks: &[Pure("scenes"), Pure("requests")],
+    },
+    Rule {
+        paths: &["tools/xtask/src/pure/requests.rs"],
+        checks: &[Pure("requests")],
     },
     Rule {
         paths: &["tools/xtask/src/pure/simplify.rs"],

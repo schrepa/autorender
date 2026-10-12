@@ -163,27 +163,7 @@ impl DevHost {
         (width, height): (u32, u32),
         paused: bool,
     ) -> Result<Value, DevError> {
-        if op == "environment" {
-            // Its sections parse as a scene environment's, whose errors
-            // keep their whole path (a tagged request's lose it).
-            let mut request: Value =
-                serde_json::from_str(source).expect("the command parsed as JSON");
-            if let Some(fields) = request.as_object_mut() {
-                for key in ["op", "version", "merge"] {
-                    fields.remove(key);
-                }
-            }
-            engine_scene::parse_json::<engine_scene::SceneEnvironment>(&request.to_string())?;
-        }
-        let control: BrowserControl = engine_scene::parse_json(source)?;
-        control.validate()?;
-        if control.needs_pause() && !paused {
-            return Err(DevError::new(
-                ErrorCode::PauseRequired,
-                "$",
-                format!("pause the host before {op}"),
-            ));
-        }
+        let control = BrowserControl::parse(source, op, paused)?;
         controls::run(self, app, scene, (source, control.route()), (width, height))
     }
 

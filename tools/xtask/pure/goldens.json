@@ -354,6 +354,223 @@
     },
     "import height.r16": "ea49f25042d80991"
   },
+  "requests": {
+    "refusal duplicate_inspector at $.name": {
+      "code": "duplicate_inspector",
+      "message": "inspector name is already registered",
+      "path": "$.name"
+    },
+    "refusal entity_removed at $.filter.exclude": {
+      "code": "entity_removed",
+      "message": "the authored entity is no longer alive",
+      "path": "$.filter.exclude"
+    },
+    "refusal inspector_limit at $.name": {
+      "code": "inspector_limit",
+      "message": "a game may register at most 64 inspectors",
+      "path": "$.name"
+    },
+    "refusal inspector_too_large at $.schema": {
+      "code": "inspector_too_large",
+      "message": "descriptor must fit 16384 bytes and description 512 bytes",
+      "path": "$.schema"
+    },
+    "refusal invalid_benchmark at $.samples": {
+      "code": "invalid_benchmark",
+      "message": "must be in [1, 240]",
+      "path": "$.samples"
+    },
+    "refusal invalid_json at $": {
+      "code": "invalid_json",
+      "message": "EOF while parsing a value at line 1 column 16",
+      "path": "$"
+    },
+    "refusal invalid_name at $.component": {
+      "code": "invalid_name",
+      "message": "names require 1..64 ASCII letters, digits, underscores, dots, or hyphens",
+      "path": "$.component"
+    },
+    "refusal invalid_page at $.limit": {
+      "code": "invalid_page",
+      "message": "limit must be 1..100 and offset 0..10000",
+      "path": "$.limit"
+    },
+    "refusal invalid_path at FILE": {
+      "code": "invalid_path",
+      "message": "source must name a file",
+      "path": "FILE"
+    },
+    "refusal invalid_position at $.position": {
+      "code": "invalid_position",
+      "message": "must be in [-1000000, 1000000]",
+      "path": "$.position"
+    },
+    "refusal invalid_presentation_alpha at $.alpha": {
+      "code": "invalid_presentation_alpha",
+      "message": "must be in [0, 1]",
+      "path": "$.alpha"
+    },
+    "refusal invalid_ray at $.direction": {
+      "code": "invalid_ray",
+      "message": "direction must be a finite nonzero vector",
+      "path": "$.direction"
+    },
+    "refusal invalid_request at $.from": {
+      "code": "invalid_request",
+      "message": "no resident terrain lies under from",
+      "path": "$.from"
+    },
+    "refusal invalid_revision at $.revision": {
+      "code": "invalid_revision",
+      "message": "revisions are unsigned decimal strings without leading zeros",
+      "path": "$.revision"
+    },
+    "refusal invalid_rotation at $.rotation": {
+      "code": "invalid_rotation",
+      "message": "rotation must be a finite normalized XYZW quaternion (squared length within 0.001 of one)",
+      "path": "$.rotation"
+    },
+    "refusal invalid_selector at $.parent": {
+      "code": "invalid_selector",
+      "message": "entity and parent selectors are mutually exclusive",
+      "path": "$.parent"
+    },
+    "refusal invalid_shape at $.shape": {
+      "code": "invalid_shape",
+      "message": "must be in [0.0001, 10000]",
+      "path": "$.shape"
+    },
+    "refusal invalid_type at $": {
+      "code": "invalid_type",
+      "message": "invalid type: string \"three\", expected usize",
+      "path": "$"
+    },
+    "refusal invalid_utf8 at FILE": {
+      "code": "invalid_utf8",
+      "message": "invalid utf-8 sequence of 1 bytes from index 1",
+      "path": "FILE"
+    },
+    "refusal invalid_value at $": {
+      "code": "invalid_value",
+      "message": "invalid value: integer `-1`, expected usize",
+      "path": "$"
+    },
+    "refusal missing_component at $.component": {
+      "code": "missing_component",
+      "message": "selected component or resource is absent",
+      "path": "$.component"
+    },
+    "refusal missing_field at $.origin": {
+      "code": "missing_field",
+      "message": "missing field `origin`",
+      "path": "$.origin"
+    },
+    "refusal missing_plugin at $.op": {
+      "code": "missing_plugin",
+      "message": "TerrainPlugin is not added: add it, or EnginePlugins, to the engine",
+      "path": "$.op"
+    },
+    "refusal missing_resource at $.assets": {
+      "code": "missing_resource",
+      "message": "AssetLibrary is not installed",
+      "path": "$.assets"
+    },
+    "refusal no_scene at $.entity": {
+      "code": "no_scene",
+      "message": "authored entity inspection requires an active scene instance",
+      "path": "$.entity"
+    },
+    "refusal out_of_range at $.points": {
+      "code": "out_of_range",
+      "message": "name 1 to 256 points",
+      "path": "$.points"
+    },
+    "refusal pause_required at $": {
+      "code": "pause_required",
+      "message": "pause the host before step",
+      "path": "$"
+    },
+    "refusal request_too_large at $": {
+      "code": "request_too_large",
+      "message": "request must fit 16384 UTF-8 bytes",
+      "path": "$"
+    },
+    "refusal reserved_inspector at $.name": {
+      "code": "reserved_inspector",
+      "message": "describe answers FrameStats itself: choose another inspector name",
+      "path": "$.name"
+    },
+    "refusal revision_conflict at $.revision": {
+      "code": "revision_conflict",
+      "message": "expected revision 1, saved source is 3",
+      "path": "$.revision"
+    },
+    "refusal revision_exhausted at $.revision": {
+      "code": "revision_exhausted",
+      "message": "scene revision cannot advance past u64::MAX",
+      "path": "$.revision"
+    },
+    "refusal scan_limit at $.scene": {
+      "code": "scan_limit",
+      "message": "collision identity lookup admits at most 10000 authored entities",
+      "path": "$.scene"
+    },
+    "refusal scene_id_mismatch at $.id": {
+      "code": "scene_id_mismatch",
+      "message": "candidate must retain the saved scene ID",
+      "path": "$.id"
+    },
+    "refusal source_io at FILE": {
+      "code": "source_io",
+      "message": "the operating system's message",
+      "path": "FILE"
+    },
+    "refusal source_locked at FILE": {
+      "code": "source_locked",
+      "message": "another save owns this source lock; after a crashed save, confirm no writer is running before removing the lock",
+      "path": "FILE"
+    },
+    "refusal unknown_definition at $.definition": {
+      "code": "unknown_definition",
+      "message": "not a definition of the scene schema; describe SceneDocument lists them",
+      "path": "$.definition"
+    },
+    "refusal unknown_entity at $.entity": {
+      "code": "unknown_entity",
+      "message": "authored ID does not exist in the active scene (streamed entities only while their cell is loaded)",
+      "path": "$.entity"
+    },
+    "refusal unknown_field at $.sky": {
+      "code": "unknown_field",
+      "message": "unknown field `sky`, expected `version`",
+      "path": "$.sky"
+    },
+    "refusal unknown_inspector at $.component": {
+      "code": "unknown_inspector",
+      "message": "use describe to discover registered inspectors",
+      "path": "$.component"
+    },
+    "refusal unknown_terrain at $": {
+      "code": "unknown_terrain",
+      "message": "no generated terrain",
+      "path": "$"
+    },
+    "refusal unknown_variant at $.op": {
+      "code": "unknown_variant",
+      "message": "unknown variant `weather`, expected one of `status`, `inspect`, `assets`, `digest`, `distribution`, `describe`, `raycast`, `overlap`, `shape_cast`, `terrain_height`, `nav_path`, `water_query`, `deformation_query`, `terrain_sweep`, `terrain_route`, `collision_events` at line 1 column 15",
+      "path": "$.op"
+    },
+    "refusal unsupported_version at $.version": {
+      "code": "unsupported_version",
+      "message": "accepted protocol version: 1",
+      "path": "$.version"
+    },
+    "refusal wrong_world at $.scene": {
+      "code": "wrong_world",
+      "message": "scene instance belongs to a different engine world",
+      "path": "$.scene"
+    }
+  },
   "scenes": {
     "document components": "cccb8467c1234c93",
     "document components counts": {

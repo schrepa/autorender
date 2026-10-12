@@ -4,6 +4,33 @@ use engine_core::{Camera, glam::Vec3};
 use engine_settings::ErrorCode;
 
 impl BrowserControl {
+    /// `source`, a request naming control `op`, as hosts take it on a host
+    /// `paused` or not: parsed, checked ([`Self::validate`]) and refused
+    /// where it needs the host paused and it is not.
+    pub fn parse(source: &str, op: &str, paused: bool) -> Result<Self, DevError> {
+        if op == "environment" {
+            // Its sections parse as a scene environment's, whose errors
+            // keep their whole path (a tagged request's lose it).
+            let mut request: serde_json::Value = engine_scene::parse_json(source)?;
+            if let Some(fields) = request.as_object_mut() {
+                for key in ["op", "version", "merge"] {
+                    fields.remove(key);
+                }
+            }
+            engine_scene::parse_json::<engine_scene::SceneEnvironment>(&request.to_string())?;
+        }
+        let control: Self = engine_scene::parse_json(source)?;
+        control.validate()?;
+        if control.needs_pause() && !paused {
+            return Err(DevError::new(
+                ErrorCode::PauseRequired,
+                "$",
+                format!("pause the host before {op}"),
+            ));
+        }
+        Ok(control)
+    }
+
     /// Checks what deserialization does not: the protocol version, and the
     /// ranges and revision strings of the controls the browser host runs
     /// (benchmark, frames, capture and reload), which it receives back
