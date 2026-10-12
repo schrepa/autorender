@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use engine::host::{HostSettings, policy};
+use engine::host::{FramePhase, HostSettings};
 use engine::{Engine, Game, GameHost, GpuPreference, RenderTarget};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -14,9 +14,9 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::WindowId;
 
+use crate::host_error;
 use crate::input::Input;
 use crate::jobs::{JobOptions, JobPool};
-use crate::{Preparation, host_error};
 
 /// How a game's window opens.
 #[derive(Clone, Debug)]
@@ -120,10 +120,6 @@ struct Running<G: Game> {
     // Whether frames draw at the resolution policy's size: D3D12 and Metal
     // stretch a smaller surface over the window, Vulkan's takes its size.
     capped: bool,
-    started: Instant,
-    // Until play starts.
-    preparation: Option<Preparation>,
-    pace: Pace,
     title: Title,
     jobs: Option<JobPool>,
     // When play started, and each measured frame's start and CPU time.
@@ -178,9 +174,6 @@ impl<'a, G: Game> App<'a, G> {
             host,
             size,
             capped,
-            started: Instant::now(),
-            preparation: Some(Preparation::new()),
-            pace: Pace::default(),
             title: Title::new(&self.options.title),
             jobs,
             playing: None,
@@ -217,7 +210,6 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
             WindowEvent::Focused(false) => {
                 self.input.clear();
                 running.host.suspend();
-                running.pace.skip();
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key
@@ -254,11 +246,6 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
 }
 
 impl<G: Game> Running<G> {
-    /// Milliseconds since the game started.
-    fn now(&self) -> f64 {
-        self.started.elapsed().as_secs_f64() * 1000.0
-    }
-
     /// The size frames draw at, in physical pixels: the resolution
     /// policy's for the window's size and scale factor where the surface
     /// stretches over the window, else the window's.
@@ -278,26 +265,16 @@ impl<G: Game> Running<G> {
     }
 
     fn redraw(&mut self) -> engine::Result<()> {
-        let timestamp = self.now();
+        let timestamp = engine::host::now_ms();
         let (width, height) = self.drawn();
-        if let Some(preparation) = &mut self.preparation {
-            if preparation.frame(&mut self.host, timestamp, (width, height))? {
-                self.preparation = None;
-                self.pace.skip();
-            }
-            self.exchange_jobs();
-            return Ok(());
-        }
-        self.host.frame(timestamp, width, height)?;
+        let phase = self.host.animation_frame(timestamp, width, height)?;
         self.exchange_jobs();
-        self.title.frame(&self.window, timestamp, &self.host);
-        // Terrain loads until shortly before the next frame is due.
-        let spare = self.pace.spare(timestamp, self.now());
-        if spare > 1.0 {
-            let start = self.now();
-            self.host.work_between_frames(spare);
-            self.exchange_jobs();
-            self.pace.spent(self.now() - start);
+        if phase == FramePhase::Playing {
+            self.title.frame(&self.window, timestamp, &self.host);
+            // Terrain loads until shortly before the next frame is due.
+            if self.host.load_between_frames() {
+                self.exchange_jobs();
+            }
         }
         Ok(())
     }
@@ -311,7 +288,7 @@ impl<G: Game> Running<G> {
     /// Counts the frame that started at `start` toward `measure` once play
     /// settled: the report, once every frame was measured.
     fn measured(&mut self, measure: Measure, start: Instant) -> Option<WindowReport> {
-        if self.preparation.is_some() {
+        if self.host.preparing() {
             return None;
         }
         let playing = *self.playing.get_or_insert(start);
@@ -336,50 +313,6 @@ impl<G: Game> Running<G> {
             window: self.size,
             capped: self.capped,
         })
-    }
-}
-
-/// When the next frame is due, as the page reckons it: the recent interval
-/// between frames, without the time spent loading between them.
-struct Pace {
-    last: Option<f64>,
-    interval: f64,
-    spent: f64,
-}
-
-impl Default for Pace {
-    fn default() -> Self {
-        Self {
-            last: None,
-            interval: policy::FRAME_INTERVAL_MS,
-            spent: 0.0,
-        }
-    }
-}
-
-impl Pace {
-    /// Milliseconds to load in before the frame after the one that
-    /// started at `timestamp` is due, at `now`.
-    fn spare(&mut self, timestamp: f64, now: f64) -> f64 {
-        if let Some(last) = self.last {
-            let interval = timestamp - last - self.spent;
-            if interval > 0.0 && interval < policy::PACE_INTERVAL_LIMIT_MS {
-                self.interval += (interval - self.interval) * policy::PACE_SMOOTHING;
-            }
-        }
-        self.last = Some(timestamp);
-        self.spent = 0.0;
-        timestamp + self.interval - now - policy::BETWEEN_MARGIN_MS
-    }
-
-    fn spent(&mut self, milliseconds: f64) {
-        self.spent = milliseconds;
-    }
-
-    /// The next interval starts afresh: after a pause or preparation.
-    fn skip(&mut self) {
-        self.last = None;
-        self.spent = 0.0;
     }
 }
 

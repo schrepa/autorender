@@ -1,6 +1,4 @@
-import {
-  BETWEEN_MARGIN_MS, type Distribution, FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING, PREPARE_LIMIT_MS, QUIET_FRAMES,
-} from "../generated/host";
+import { type Distribution, FRAME_PHASES } from "../generated/host";
 import { engineError } from "../generated/errors";
 import { parseJson, type Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
@@ -188,8 +186,6 @@ let paused = development && !preparedDevelopment;
 let preparing = !development || preparedDevelopment;
 // Hidden from the start: creating the renderer already compiles pipelines.
 if (preparing) canvas.style.visibility = "hidden";
-let preparedSince: number | undefined;
-let quietFrames = 0;
 let developmentBusy = false;
 let disposeDevelopment: (() => void) | undefined;
 // Once the engine failed, nothing calls into its module again; `stopped`
@@ -200,19 +196,11 @@ let request = 0;
 // Loading work while pipelines compile: browsers stop calling
 // animation frames while their GPU process compiles, so it runs in tasks.
 let working = 0;
-// Terrain loading between frames: after a frame, a task
-// loads terrain until shortly before the next frame is due, by the recent
-// frame interval, while the frame found tiles to load. Frames waiting on
-// the GPU leave that time free; frames waiting on the CPU leave none.
+// Terrain loading between frames: after a frame of play, a task loads
+// terrain until shortly before the next frame is due, by the engine's pace
+// of recent frames. Frames waiting on the GPU leave that time free; frames
+// waiting on the CPU leave none.
 let between = 0;
-let lastFrameAt = 0;
-let frameInterval = FRAME_INTERVAL_MS;
-// Milliseconds the last task between frames loaded terrain: frames'
-// intervals are measured without them, so loading never takes the time it
-// made itself.
-let betweenSpent = 0;
-// ?between=off loads terrain within frames alone, for comparisons.
-const betweenFrames = new URLSearchParams(location.search).get("between") !== "off";
 const hud = new FrameHud(canvas);
 // Job workers, for games that hand out jobs.
 let jobs: JobPool | undefined;
@@ -268,8 +256,6 @@ function halt() {
   working = 0;
   clearTimeout(between);
   between = 0;
-  lastFrameAt = 0;
-  betweenSpent = 0;
   hud.reset();
   clearInput();
 }
@@ -312,29 +298,15 @@ function guarded(work: () => void) {
   try { work(); } catch (error) { fail(error); }
 }
 
-/** Terrain loading until shortly before the frame due at `due`. */
-function workBetweenFrames(due: number) {
+/** Terrain loading until shortly before the next frame of play is due. */
+function workBetweenFrames() {
   between = 0;
   if (disposed || !game || paused || document.hidden || failed || preparing) return;
   const current = game;
   guarded(() => {
-    const start = performance.now();
-    const spare = due - start - BETWEEN_MARGIN_MS;
-    if (spare > 1) current.work_between_frames(spare);
+    current.load_between_frames();
     jobs?.exchange();
-    betweenSpent = performance.now() - start;
   });
-}
-
-/** Schedules terrain loading after the frame that started at `timestamp`. */
-function scheduleBetweenFrames(timestamp: number) {
-  const interval = timestamp - lastFrameAt - betweenSpent;
-  betweenSpent = 0;
-  if (lastFrameAt > 0 && interval > 0 && interval < PACE_INTERVAL_LIMIT_MS) frameInterval += (interval - frameInterval) * PACE_SMOOTHING;
-  lastFrameAt = timestamp;
-  if (between || !betweenFrames || !game) return;
-  const due = timestamp + frameInterval;
-  between = window.setTimeout(() => workBetweenFrames(due), 0);
 }
 
 /** Loading work in tasks while preparation waits on compiles. */
@@ -343,55 +315,43 @@ function workWhileCompiling() {
   if (disposed || !game || paused || document.hidden || failed || !preparing) return;
   const current = game;
   guarded(() => {
-    if (!readStats(current).pipelines_compiling) return;
-    current.work(pixelWidth, pixelHeight);
+    const waiting = current.work_while_compiling(pixelWidth, pixelHeight);
     jobs?.exchange();
-    working = window.setTimeout(workWhileCompiling, 0);
+    if (waiting) working = window.setTimeout(workWhileCompiling, 0);
   });
 }
 
-function prepareFrame(current: T, timestamp: number) {
-  preparedSince ??= performance.now();
-  const late = performance.now() - preparedSince > PREPARE_LIMIT_MS;
-  const compiling = readStats(current).pipelines_compiling;
-  // Frames rendered while compiles run would only queue behind them; loading
-  // work goes on meanwhile.
-  if (compiling && !late) {
-    if (!working) working = window.setTimeout(workWhileCompiling, 0);
-    return;
-  }
-  current.suspend();
-  current.frame(timestamp, pixelWidth, pixelHeight);
-  jobs?.exchange();
-  const after = readStats(current);
-  quietFrames = after.pipelines_created === 0 ? quietFrames + 1 : 0;
-  if ((quietFrames < QUIET_FRAMES || after.loading) && !late) return;
+/** Play starts: the canvas shows what preparation drew. */
+function started() {
   preparing = false;
-  current.suspend();
   hud.skipInterval();
   canvas.style.visibility = "";
   message.hidden = true;
   setStatus("WebGPU active", "running");
 }
 
+/** The animation frame at `timestamp`: preparation's or one of play, as
+ * the engine's frame loop runs them. */
 function frame(timestamp: number) {
   request = 0;
   if (disposed || !game || paused || document.hidden || failed) return;
   // The module stopped where the page's own code caught its error.
   if (panicReport()) { fail(new Error("the engine panicked")); return; }
   try {
-    if (preparing) {
-      prepareFrame(game, timestamp);
-      if (!disposed) request = requestAnimationFrame(frame);
-      return;
-    }
-    options.beforeFrame?.(game, timestamp);
-    game.frame(timestamp, pixelWidth, pixelHeight);
+    if (!preparing) options.beforeFrame?.(game, timestamp);
+    const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
     jobs?.exchange();
-    options.afterFrame?.(game, timestamp);
-    if (hud.frame(game, timestamp)) options.poll?.(game);
-    options.afterHostFrame?.(game, timestamp);
-    scheduleBetweenFrames(timestamp);
+    if (phase === FRAME_PHASES.compiling) {
+      // Browsers stop animation frames while their GPU process compiles.
+      if (!working) working = window.setTimeout(workWhileCompiling, 0);
+    } else if (phase === FRAME_PHASES.started) {
+      started();
+    } else if (phase === FRAME_PHASES.playing) {
+      options.afterFrame?.(game, timestamp);
+      if (hud.frame(game, timestamp)) options.poll?.(game);
+      options.afterHostFrame?.(game, timestamp);
+      if (!between) between = window.setTimeout(workBetweenFrames, 0);
+    }
     if (!disposed) request = requestAnimationFrame(frame);
   } catch (error) { fail(error); }
 }
@@ -466,6 +426,7 @@ async function start() {
   game = created;
   // The engine switches the page's parameters name.
   created.apply_host_settings(location.search);
+  created.set_preparation(preparing);
   connectInput();
   // The game's jobs run on the page's workers; a module of theirs or the
   // game's that stops stops the page.

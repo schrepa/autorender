@@ -24,10 +24,14 @@ export interface Runtime {
   look(dx: number, dy: number): void;
   /** Nothing is held: the page took input away. */
   clear_input(): void;
-  /** Loading work in place of a frame while the GPU compiles pipelines. */
-  work(width: number, height: number): void;
-  /** Terrain loading for `milliseconds` between frames; whether tiles remain. */
-  work_between_frames(milliseconds: number): boolean;
+  /** The animation frame at `timestamp` on a `width` × `height` canvas, preparation's or one of play: what it did (`FRAME_PHASES`). */
+  animation_frame(timestamp: number, width: number, height: number): number;
+  /** Loading while preparation waits for the GPU to compile; whether it still waits. */
+  work_while_compiling(width: number, height: number): boolean;
+  /** Terrain loading until shortly before the next frame of play is due; whether tiles remain. */
+  load_between_frames(): boolean;
+  /** Whether frames prepare the starting state before play (the default), or play at once, as development sessions start. */
+  set_preparation(enabled: boolean): void;
   /** Workers the page runs jobs on. */
   set_job_workers(workers: number): void;
   /** Cancels, shares and jobs to hand workers since the last call. */

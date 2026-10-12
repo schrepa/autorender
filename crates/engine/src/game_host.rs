@@ -3,7 +3,7 @@
 //! development tools.
 use crate::app_host::{AppHost, JobMessage};
 use crate::game::Game;
-use crate::host::InputGatherer;
+use crate::host::{FrameLoop, FramePhase, InputGatherer};
 use engine_core::{ActionInput, Engine, ErrorCode, JobId};
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
@@ -13,6 +13,7 @@ pub struct GameHost<G: Game> {
     app: AppHost,
     game: G,
     input: InputGatherer,
+    frames: FrameLoop,
     #[cfg(feature = "dev")]
     development: crate::dev_host::DevHost,
 }
@@ -47,6 +48,7 @@ impl<G: Game> GameHost<G> {
             app,
             game,
             input,
+            frames: FrameLoop::default(),
             #[cfg(feature = "dev")]
             development,
         })
@@ -92,6 +94,59 @@ impl<G: Game> GameHost<G> {
             input.released,
         );
         self.app.frame(timestamp, width, height, input.state)
+    }
+
+    /// The animation frame at `timestamp` (the host's clock, milliseconds,
+    /// as [`crate::host::now_ms`] reads it) on a `width` × `height` view:
+    /// preparation's, or one of play, as the frame loop runs them.
+    pub fn animation_frame(
+        &mut self,
+        timestamp: f64,
+        width: u32,
+        height: u32,
+    ) -> crate::Result<FramePhase> {
+        let mut frames = std::mem::take(&mut self.frames);
+        let phase = frames.frame(self, timestamp, (width, height));
+        self.frames = frames;
+        phase
+    }
+
+    /// Loads terrain on a `width` × `height` view while preparation waits
+    /// for the GPU to compile pipelines; whether it still waits, so the
+    /// host's tasks go on.
+    pub fn work_while_compiling(&mut self, width: u32, height: u32) -> bool {
+        if !self.frames.preparing() || !self.frame_stats().pipelines_compiling {
+            return false;
+        }
+        self.work(width, height);
+        true
+    }
+
+    /// Loads terrain until shortly before the next frame of play is due,
+    /// by the recent interval between frames; whether tiles are still to
+    /// load.
+    pub fn load_between_frames(&mut self) -> bool {
+        let mut frames = std::mem::take(&mut self.frames);
+        let remaining = frames.between(self);
+        self.frames = frames;
+        remaining
+    }
+
+    /// Whether frames prepare the starting state before play (the
+    /// default), or play at once, as development sessions start.
+    pub fn set_preparation(&mut self, enabled: bool) {
+        self.frames.set_preparation(enabled);
+    }
+
+    /// Whether play has yet to start.
+    pub fn preparing(&self) -> bool {
+        self.frames.preparing()
+    }
+
+    /// Whether terrain loads between frames (the default), or within
+    /// frames alone.
+    pub fn set_between_frames(&mut self, enabled: bool) {
+        self.frames.set_between_frames(enabled);
     }
 
     /// A source (a keyboard key, a finger on a touch button) pressed
@@ -148,6 +203,7 @@ impl<G: Game> GameHost<G> {
     pub fn suspend(&mut self) {
         self.app.suspend();
         self.input.clear();
+        self.frames.skip();
         #[cfg(feature = "dev")]
         self.development.clear_input();
     }

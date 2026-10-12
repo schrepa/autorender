@@ -106,6 +106,9 @@ settings! {
     subpixel: bool = "subpixel",
         "sub-pixel culling of GPU-presented frames, over the scene's setting",
         ["scene" => None, "on" => Some(true), "off" => Some(false)] => set_subpixel_culling;
+    between: bool = "between",
+        "terrain loading between frames, in the time they leave free, or within frames alone",
+        ["on" => Some(true), "off" => Some(false)] => set_between_frames;
     terrain_clock: TerrainClock = "terrain-clock",
         "what terrain times its work by: the host's clock, or frames alone, each a slice of samples_per_frame with none between them",
         ["wall" => Some(TerrainClock::Wall), "frames" => Some(TerrainClock::Frames)] => set_terrain_clock;

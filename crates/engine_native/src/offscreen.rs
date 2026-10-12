@@ -10,12 +10,13 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use engine::host::FramePhase;
 use engine::{Engine, Game, GameHost, GpuPreference, RenderTarget};
 use serde_json::Value;
 
 use crate::files::Image;
 use crate::jobs::{JobOptions, JobPool};
-use crate::{Pix, Preparation, RenderDoc, host_error};
+use crate::{Pix, RenderDoc, host_error};
 
 /// A game drawn offscreen.
 pub struct Offscreen<G: Game> {
@@ -290,10 +291,12 @@ impl<G: Game> Offscreen<G> {
     /// stop creating pipelines and terrains have loaded the view, as a
     /// window does before play starts.
     pub fn prepare(&mut self, timestamp: f64) -> engine::Result<()> {
-        let mut preparation = Preparation::new();
-        while !preparation.frame(&mut self.host, timestamp, self.size)? {
+        let (width, height) = self.size;
+        self.host.set_preparation(true);
+        while self.host.animation_frame(timestamp, width, height)? != FramePhase::Started {
             self.exchange_jobs();
         }
+        self.exchange_jobs();
         Ok(())
     }
 

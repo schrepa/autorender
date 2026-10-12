@@ -27,10 +27,18 @@ macro_rules! __game_surface {
                 fn look(dx: f32, dy: f32);
                 /// Nothing is held: the page took input away.
                 fn clear_input();
-                /// Loading work in place of a frame while the GPU compiles pipelines.
-                fn work(width: u32, height: u32);
-                /// Terrain loading for `milliseconds` between frames; whether tiles remain.
-                fn work_between_frames(milliseconds: f64) -> bool;
+                /// The animation frame at `timestamp` on a `width` × `height` canvas,
+                /// preparation's or one of play: what it did (`FRAME_PHASES`).
+                fn animation_frame(timestamp: f64, width: u32, height: u32) -> Result<u32, $crate::__private::JsValue>;
+                /// Loading while preparation waits for the GPU to compile; whether it
+                /// still waits.
+                fn work_while_compiling(width: u32, height: u32) -> bool;
+                /// Terrain loading until shortly before the next frame of play is due;
+                /// whether tiles remain.
+                fn load_between_frames() -> bool;
+                /// Whether frames prepare the starting state before play (the
+                /// default), or play at once, as development sessions start.
+                fn set_preparation(enabled: bool);
                 /// Workers the page runs jobs on.
                 fn set_job_workers(workers: u32);
                 /// Cancels, shares and jobs to hand workers since the last call.

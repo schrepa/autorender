@@ -183,6 +183,17 @@ impl<G: Game> PageHost<G> {
         Ok(self.host.frame(timestamp, width, height)?)
     }
 
+    /// [`GameHost::animation_frame`]'s phase, as the page's `FRAME_PHASES`
+    /// number it.
+    pub fn animation_frame(
+        &mut self,
+        timestamp: f64,
+        width: u32,
+        height: u32,
+    ) -> Result<u32, JsValue> {
+        Ok(self.host.animation_frame(timestamp, width, height)? as u32)
+    }
+
     /// [`GameHost::take_jobs`] as the page's workers read them:
     /// `{cancel}`, `{clear: true}`, `{share, bytes}`, `{unshare}` and
     /// `{id, kind, input, priority, identity?}`.

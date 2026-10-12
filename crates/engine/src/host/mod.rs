@@ -6,6 +6,7 @@
 //! what a panic reports.
 
 mod adapter;
+mod frame_loop;
 mod input;
 pub mod policy;
 mod resolution;
@@ -19,6 +20,7 @@ pub use engine_core::{
     TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
 };
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
+pub use frame_loop::{FrameLoop, FramePhase};
 pub use input::{FrameInput, InputGatherer, KEYS};
 pub use resolution::view_size;
 pub use settings::{HostSettings, SETTINGS, Setting};
@@ -60,6 +62,15 @@ pub fn typescript() -> String {
     for (name, doc, value) in policy::constants() {
         output.push_str(&constant(name, &doc, &value));
     }
+    let phases: serde_json::Map<String, serde_json::Value> = FramePhase::ALL
+        .iter()
+        .map(|&(phase, name)| (name.to_owned(), (phase as u32).into()))
+        .collect();
+    output.push_str(&constant(
+        "FRAME_PHASES",
+        "What an animation frame did (Rust's `engine::host::FramePhase`), by name.",
+        &phases.into(),
+    ));
     let settings: serde_json::Map<String, serde_json::Value> = SETTINGS
         .iter()
         .map(|setting| (setting.name.to_owned(), setting.described().into()))

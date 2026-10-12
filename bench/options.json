@@ -108,6 +108,15 @@
       "what": "sub-pixel culling of GPU-presented frames, over the scene's setting"
     },
     {
+      "default": "on",
+      "name": "between",
+      "values": [
+        "on",
+        "off"
+      ],
+      "what": "terrain loading between frames, in the time they leave free, or within frames alone"
+    },
+    {
       "default": "wall",
       "name": "terrain-clock",
       "values": [
