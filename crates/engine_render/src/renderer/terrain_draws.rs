@@ -6,9 +6,8 @@ use super::*;
 use crate::terrain::{FrameTerrain, TerrainViews};
 
 /// Terrain's visibility target: each pixel's terrain (its
-/// directory start plus one; 0 where none shows) and depth's bits, of the
-/// depth target generation `generation`, and the group its resolves read
-/// it through.
+/// directory start plus one; 0 where none shows) and depth's bits, and the
+/// group its resolves read it through.
 pub(super) struct TerrainIds {
     pub(super) view: wgpu::TextureView,
     group: wgpu::BindGroup,
@@ -146,7 +145,36 @@ impl Renderer {
         if !maps.is_empty() {
             self.terrain.pipelines.ensure_shadow_pipeline(&self.device);
         }
+        if opaque_kind.targets().is_some() {
+            self.prepare_terrain_ids();
+        }
         true
+    }
+
+    /// Terrain's visibility target and its resolves' group, at the frame's
+    /// size, for frames whose terrain may shade deferred.
+    fn prepare_terrain_ids(&mut self) {
+        let size = self.display.size();
+        if self.terrain_ids.resizes(size) {
+            let texture = crate::targets::texture_2d(
+                &self.device,
+                "engine/terrain-ids",
+                size.pixels(),
+                1,
+                1,
+                wgpu::TextureFormat::Rg32Uint,
+                crate::targets::RENDER_TARGET,
+            );
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let group = crate::pipelines::group(
+                &self.device,
+                "engine/terrain-resolve-group",
+                &crate::bindings::TERRAIN_RESOLVE,
+                &self.terrain.pipelines.resolve_layout,
+                &[("terrain_ids_texture", crate::pipelines::view(&view))],
+            );
+            self.terrain_ids.set(size, TerrainIds { view, group });
+        }
     }
 
     /// Creates the pipelines `snapshot`'s terrains draw with unless they
@@ -270,28 +298,6 @@ impl Renderer {
             (targets, false),
             (self.display.format(), DEPTH_FORMAT),
         );
-        // Terrain's visibility target, at the frame's size.
-        let size = self.display.size();
-        if self.terrain_ids.resizes(size) {
-            let texture = crate::targets::texture_2d(
-                &self.device,
-                "engine/terrain-ids",
-                size.pixels(),
-                1,
-                1,
-                wgpu::TextureFormat::Rg32Uint,
-                crate::targets::RENDER_TARGET,
-            );
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let group = crate::pipelines::group(
-                &self.device,
-                "engine/terrain-resolve-group",
-                &crate::bindings::TERRAIN_RESOLVE,
-                &self.terrain.pipelines.resolve_layout,
-                &[("terrain_ids_texture", crate::pipelines::view(&view))],
-            );
-            self.terrain_ids.set(size, TerrainIds { view, group });
-        }
         true
     }
 
