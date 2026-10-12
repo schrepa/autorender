@@ -20,7 +20,7 @@ use crate::SceneError;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneSpline {
-    #[cfg_attr(feature = "schema", schemars(length(min = 2, max = 4096)))]
+    #[cfg_attr(feature = "schema", schemars(length(min = 2, max = MAX_SPLINE_POINTS)))]
     pub points: Vec<[f32; 3]>,
     /// ID of the bent mesh in this document.
     #[cfg_attr(

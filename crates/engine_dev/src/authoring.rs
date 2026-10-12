@@ -9,12 +9,11 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use engine_scene::SceneDocument;
+use engine_scene::{MAX_SOURCE_BYTES, SceneDocument};
 use serde::Serialize;
 
 use crate::DevError;
 
-pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 static NEXT_SAVE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Serialize)]

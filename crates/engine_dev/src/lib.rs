@@ -28,7 +28,7 @@ pub use protocol::bounds::{MAX_DESCRIPTION_BYTES, MAX_PAGE_SIZE};
 pub use protocol::{
     BenchmarkMode, BrowserControl, CollisionFilterRequest, CollisionSensorFilter,
     CollisionShapeRequest, DevRequest, Handler, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
-    PROTOCOL_VERSION, TerrainViewRequest,
+    PROTOCOL_VERSION,
 };
 
 /// The ops of queries and controls, as requests name them, from the

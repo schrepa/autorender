@@ -31,8 +31,8 @@ pub use animation::{
 pub use collider::{SceneCollider, SceneColliderShape};
 pub use decal::{SceneDecal, SceneDecalBlend};
 pub use document::{
-    MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
-    SceneSurface, SceneTransform, SceneVertex,
+    MAX_SOURCE_BYTES, MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMesh,
+    SceneObject, ScenePrefab, SceneSurface, SceneTransform, SceneVertex,
 };
 pub use engine_core::EnvironmentSection;
 pub use environment::{AtmospherePreset, SceneAtmosphere, SceneEnvironment, SectionVisitor};

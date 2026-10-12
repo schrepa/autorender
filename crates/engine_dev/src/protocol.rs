@@ -368,20 +368,6 @@ fn default_sweep_samples() -> u32 {
     16
 }
 
-/// What the terrain control shows.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum TerrainViewRequest {
-    Shaded,
-    Levels,
-    Normals,
-    Tiles,
-    Materials,
-    Sky,
-    Detail,
-}
-
 fn default_limit() -> usize {
     20
 }
@@ -474,7 +460,7 @@ pub enum BrowserControl {
         #[serde(default)]
         freeze: Option<bool>,
         #[serde(default)]
-        view: Option<TerrainViewRequest>,
+        view: Option<engine_core::TerrainView>,
     },
     /// Temporarily edit a generated terrain over its layers and bakes
     /// and render while paused: `change` raises or lowers the

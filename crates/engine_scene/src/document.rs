@@ -12,7 +12,7 @@ pub const SCENE_VERSION: u32 = 9;
 
 /// Largest scene source parsed: a sanity bound on JSON, not on content,
 /// which references image and buffer files for bulk data.
-pub(crate) const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 
 /// A persistent scene source. IDs are authored ASCII names, never runtime IDs.
 ///

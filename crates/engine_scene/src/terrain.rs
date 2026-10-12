@@ -390,10 +390,10 @@ pub struct SceneHeightmap {
     #[serde(default)]
     pub blend: Blend,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(length(max = 1024)))]
+    #[cfg_attr(feature = "schema", schemars(length(max = MAX_CREDIT)))]
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(length(max = 1024)))]
+    #[cfg_attr(feature = "schema", schemars(length(max = MAX_CREDIT)))]
     pub attribution: Option<String>,
 }
 

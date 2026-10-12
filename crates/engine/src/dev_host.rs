@@ -404,19 +404,7 @@ impl DevHost {
                     debug.freeze = freeze.then_some(debug.freeze.unwrap_or(eye));
                 }
                 if let Some(view) = view {
-                    debug.view = match view {
-                        engine_dev::TerrainViewRequest::Shaded => engine_core::TerrainView::Shaded,
-                        engine_dev::TerrainViewRequest::Levels => engine_core::TerrainView::Levels,
-                        engine_dev::TerrainViewRequest::Normals => {
-                            engine_core::TerrainView::Normals
-                        }
-                        engine_dev::TerrainViewRequest::Tiles => engine_core::TerrainView::Tiles,
-                        engine_dev::TerrainViewRequest::Materials => {
-                            engine_core::TerrainView::Materials
-                        }
-                        engine_dev::TerrainViewRequest::Sky => engine_core::TerrainView::Sky,
-                        engine_dev::TerrainViewRequest::Detail => engine_core::TerrainView::Detail,
-                    };
+                    debug.view = view;
                 }
                 world.insert_resource(debug);
                 rendered(app.dev_render(width, height), "terrain changed")?;
