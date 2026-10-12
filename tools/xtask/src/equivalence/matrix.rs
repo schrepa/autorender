@@ -146,6 +146,17 @@ pub(super) fn read_matrix(root: &Path) -> Result<(Vec<Cell>, Vec<String>), Strin
     if matrix["note"].as_str().is_none_or(str::is_empty) {
         problems.push(format!("{MATRIX}: a note says what it is"));
     }
+    for field in matrix
+        .as_object()
+        .into_iter()
+        .flat_map(|fields| fields.keys())
+    {
+        if !["note", "not_toggled", "cells"].contains(&field.as_str()) {
+            problems.push(format!(
+                "{MATRIX}: {field} is not a field (note, not_toggled, cells)"
+            ));
+        }
+    }
     let mut names = BTreeSet::new();
     let mut cells = Vec::new();
     for (index, entry) in matrix["cells"].as_array().into_iter().flatten().enumerate() {
@@ -161,7 +172,76 @@ pub(super) fn read_matrix(root: &Path) -> Result<(Vec<Cell>, Vec<String>), Strin
     if cells.is_empty() {
         problems.push(format!("{MATRIX}: cells lists the matrix's cells"));
     }
+    problems.extend(section_problems(&matrix, &cells)?);
     Ok((cells, problems))
+}
+
+/// What breaks the rule that every environment section is switched by some
+/// cell's environment, or listed under `not_toggled` with why it is not; and
+/// cells' environment naming what no scene environment holds.
+fn section_problems(matrix: &Value, cells: &[Cell]) -> Result<Vec<String>, String> {
+    let schema: Value = serde_json::from_str(&engine_scene::SceneDocument::schema_json())
+        .map_err(|error| format!("the scene schema is not JSON: {error}"))?;
+    let environment: BTreeSet<&str> = schema["$defs"]["SceneEnvironment"]["properties"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(key, _)| key.as_str())
+        .collect();
+    let mut problems = Vec::new();
+    let mut toggled = BTreeSet::new();
+    for cell in cells {
+        for key in cell
+            .environment
+            .as_ref()
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(key, _)| key.as_str())
+        {
+            if !environment.contains(key) {
+                problems.push(format!(
+                    "{MATRIX} {}: environment names {key}, which scene environments do not hold",
+                    cell.name
+                ));
+            }
+            toggled.insert(key);
+        }
+    }
+    let sections: BTreeSet<&str> = crate::coverage::environment_sections()
+        .iter()
+        .map(|(key, _)| *key)
+        .collect();
+    let not_toggled = matrix["not_toggled"].as_object();
+    for (key, reason) in not_toggled.into_iter().flatten() {
+        if !sections.contains(key.as_str()) {
+            problems.push(format!(
+                "{MATRIX}: not_toggled names {key}, which is no environment section"
+            ));
+        } else if toggled.contains(key.as_str()) {
+            problems.push(format!(
+                "{MATRIX}: not_toggled names {key}, which a cell's environment switches"
+            ));
+        }
+        if reason
+            .as_str()
+            .is_none_or(|reason| reason.trim().is_empty())
+        {
+            problems.push(format!(
+                "{MATRIX}: not_toggled {key} carries a written reason"
+            ));
+        }
+    }
+    for section in sections {
+        if !toggled.contains(section)
+            && !not_toggled.is_some_and(|listed| listed.contains_key(section))
+        {
+            problems.push(format!(
+                "{MATRIX}: no cell's environment switches the {section} section: add a variant, or list it under not_toggled with why"
+            ));
+        }
+    }
+    Ok(problems)
 }
 
 /// The cell `entry` describes, with what is wrong with it in `problems`.

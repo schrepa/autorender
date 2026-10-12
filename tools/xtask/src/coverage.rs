@@ -16,8 +16,13 @@ macro_rules! section_names {
     };
 }
 
+/// Each environment section's key and settings type, in authored order.
+pub fn environment_sections() -> &'static [(&'static str, &'static str)] {
+    engine::environment_sections!(section_names)
+}
+
 pub fn coverage(root: &Path, protocol: &Value, stats: &Value) -> Result<String, String> {
-    let sections: &[(&str, &str)] = engine::environment_sections!(section_names);
+    let sections = environment_sections();
     // What a smoke's comments mention it does not check.
     let smokes: Vec<(String, String)> = crate::smoke::scripts(root)?
         .into_iter()

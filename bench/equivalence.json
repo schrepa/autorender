@@ -1,5 +1,16 @@
 {
-  "note": "The cells `cargo xtask equivalence` runs on a base and a candidate natively, one after the other: each a workload (scene: bench/scenes/NAME.json) or an authored scene (source: a file under web/scripts/fixtures/ or bench/) with its switches (options, as bench/options.json names them), environment sections merged over the scene's, the ticks it steps, its views (scene: as launched; a Stress Lab view; or {name, camera} with the camera control's fields) and its captures (exact; cpu:ALPHA and gpu:ALPHA, a fraction of the last tick presented on the CPU or the GPU; display:FRAMES, the last of that many ordinary frames). Every cell runs with bench/settings/default.json, job workers off and each side's own generated files. tolerance is the largest channel difference a pixel may show and count as equal (0 unless given). unstable lists the captures (VIEW CAPTURE) that vary from run to run, each with why: they pass when a candidate run matches one of the base's over --repeat runs. The smoke tier runs by default; --tier full adds the rest. cargo xtask lint holds this file to the bench files and the Stress Lab.",
+  "note": "The cells `cargo xtask equivalence` runs on a base and a candidate natively, one after the other: each a workload (scene: bench/scenes/NAME.json) or an authored scene (source: a file under web/scripts/fixtures/ or bench/) with its switches (options, as bench/options.json names them), environment sections merged over the scene's, the ticks it steps, its views (scene: as launched; a Stress Lab view; or {name, camera} with the camera control's fields) and its captures (exact; cpu:ALPHA and gpu:ALPHA, a fraction of the last tick presented on the CPU or the GPU; display:FRAMES, the last of that many ordinary frames). Every cell runs with bench/settings/default.json, job workers off and each side's own generated files. tolerance is the largest channel difference a pixel may show and count as equal (0 unless given). unstable lists the captures (VIEW CAPTURE) that vary from run to run, each with why: they pass when a candidate run matches one of the base's over --repeat runs, or lies no farther from the nearest than the base's own images lie from each other. not_toggled names the environment sections no cell's environment switches, each with why. The smoke tier runs by default; --tier full adds the rest. cargo xtask lint holds this file to the bench files and the Stress Lab.",
+  "not_toggled": {
+    "terrain": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
+    "ground_cover": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
+    "wind": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
+    "occupancy": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
+    "water": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
+    "ocean": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
+    "deformation": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
+    "navigation": "Only the terrain workloads (highlands, the terrain fixture) hold it, and they stream by the host's wall clock, so a cell toggling it would give a new image every run until terrain streams by a frame clock.",
+    "world_streaming": "No cell's scene streams world cells; the streaming smoke drives them."
+  },
   "cells": [
     {
       "name": "field",
@@ -32,8 +43,8 @@
       "views": ["overview"],
       "captures": ["exact", "gpu:0.5"],
       "unstable": {
-        "overview exact": "One to three images per six-run A/A (2026-10-12): building faces 1 to 4 levels apart, once up to 28 over 221k pixels. Suspected: hash maps seeded at random per process.",
-        "overview gpu:0.5": "One to three images per six-run A/A (2026-10-12), as the exact capture: building faces a few levels apart. Suspected: hash maps seeded at random per process."
+        "overview exact": "One to four images per A/A (2026-10-12: 2, 1, 3 of six runs; 4 of 4 with builds running beside): building faces 1 to 4 levels apart, once up to 28 over 221k pixels. Suspected: hash maps seeded at random per process, and GPU timing.",
+        "overview gpu:0.5": "One to four images per A/A (2026-10-12: 2, 1, 3 of six runs; 4 of 4 with builds running beside): building faces 1 to 4 levels apart, once up to 28 over 221k pixels. Suspected: hash maps seeded at random per process, and GPU timing."
       }
     },
     {
@@ -104,8 +115,8 @@
     },
     {
       "name": "terrain",
-      "tier": "full",
-      "note": "The terrain fixture: a generated terrain with erosion, hydrology, roads, a bridge and a tunnel, an imported heightmap, materials, ground cover, placements, surroundings, water, a probe, a floating buoy, a walking agent and a deformer, from its own camera. In the full tier only: every run gives its own image until terrain streams by a frame clock instead of the host's wall clock.",
+      "tier": "smoke",
+      "note": "The terrain fixture: a generated terrain with erosion, hydrology, roads, a bridge and a tunnel, an imported heightmap, materials, ground cover, placements, surroundings, water, a probe, a floating buoy, a walking agent and a deformer, from its own camera.",
       "source": "web/scripts/fixtures/terrain.scene.json",
       "ticks": 30,
       "views": ["scene"],
@@ -124,6 +135,421 @@
       "ticks": 30,
       "views": ["close"],
       "captures": ["display:16"]
+    },
+    {
+      "name": "field-views",
+      "tier": "full",
+      "note": "The field workload's other views.",
+      "scene": "field-90k",
+      "ticks": 30,
+      "views": ["close", "away"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close exact": "Two images in four runs of the full-tier A/A (2026-10-12) up close, as the field's own captures vary. Suspected: hash maps seeded at random per process, and GPU timing.",
+        "close gpu:0.5": "Two images in four runs of the full-tier A/A (2026-10-12) up close, as the field's own captures vary. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "motion-views",
+      "tier": "full",
+      "note": "The motion workload's other views.",
+      "scene": "motion",
+      "ticks": 30,
+      "views": ["close", "away"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "city-views",
+      "tier": "full",
+      "note": "The city workload's other views.",
+      "scene": "city",
+      "ticks": 30,
+      "views": ["close", "away"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "metro-views",
+      "tier": "full",
+      "note": "The metro workload's other views.",
+      "scene": "metro",
+      "ticks": 30,
+      "views": ["away"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "dense-views",
+      "tier": "full",
+      "note": "The dense workload's other views.",
+      "scene": "dense",
+      "ticks": 30,
+      "views": ["away"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "away exact": "As dense's own captures: virtual geometry streams pages from GPU feedback read back a few frames late (one image in four A/A runs here).",
+        "away gpu:0.5": "As dense's own captures: virtual geometry streams pages from GPU feedback read back a few frames late (one image in four A/A runs here)."
+      }
+    },
+    {
+      "name": "highlands-views",
+      "tier": "full",
+      "note": "The highlands workload's other views.",
+      "scene": "highlands",
+      "ticks": 30,
+      "views": ["close", "away"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close exact": "A different image every run of the full-tier A/A (2026-10-12): terrain streams under the host's wall-clock budget, as for highlands.",
+        "close gpu:0.5": "A different image every run of the full-tier A/A (2026-10-12): terrain streams under the host's wall-clock budget, as for highlands.",
+        "away exact": "A different image every run of the full-tier A/A (2026-10-12): terrain streams under the host's wall-clock budget, as for highlands.",
+        "away gpu:0.5": "A different image every run of the full-tier A/A (2026-10-12): terrain streams under the host's wall-clock budget, as for highlands."
+      }
+    },
+    {
+      "name": "metro-shadows-off",
+      "tier": "full",
+      "note": "Metro without shadow maps, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "shadows": { "enabled": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "overview exact": "Two images in four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing.",
+        "overview gpu:0.5": "Two images in four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing.",
+        "close exact": "Two images in four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing.",
+        "close gpu:0.5": "Two images in four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-ambient-occlusion-off",
+      "tier": "full",
+      "note": "Metro without ambient occlusion, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "ambient_occlusion": { "intensity": 0 } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "overview exact": "Two images in four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing.",
+        "overview gpu:0.5": "Two images in four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing.",
+        "close exact": "Two images in four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing.",
+        "close gpu:0.5": "Two images in four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-bloom-off",
+      "tier": "full",
+      "note": "Metro without bloom, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "bloom": { "intensity": 0 } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-local-lights-off",
+      "tier": "full",
+      "note": "Metro without local lights, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "local_lights": { "enabled": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-particles-off",
+      "tier": "full",
+      "note": "Metro without particles, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "particles": { "enabled": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-reflection-probes-off",
+      "tier": "full",
+      "note": "Metro without reflection probes, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "reflection_probes": { "enabled": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "overview exact": "A different image in each of four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing.",
+        "overview gpu:0.5": "A different image in each of four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing.",
+        "close exact": "A different image in each of four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing.",
+        "close gpu:0.5": "A different image in each of four runs of the full-tier A/A (2026-10-12) in every capture. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-decals-off",
+      "tier": "full",
+      "note": "Metro without decals, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "decals": { "enabled": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-contact-shadows-off",
+      "tier": "full",
+      "note": "Metro without contact shadows, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "contact_shadows": { "enabled": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-occlusion-culling-off",
+      "tier": "full",
+      "note": "Metro without occlusion culling, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "occlusion_culling": { "enabled": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-subpixel-culling-off",
+      "tier": "full",
+      "note": "Metro without sub-pixel culling, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "subpixel_culling": { "enabled": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-lod-off",
+      "tier": "full",
+      "note": "Metro with every instance drawn as its mesh: no levels of detail, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "level_of_detail": { "enabled": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-impostors-off",
+      "tier": "full",
+      "note": "Metro drawing no impostors, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "level_of_detail": { "impostors": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-no-shafts",
+      "tier": "full",
+      "note": "Metro without sun shafts, through the Stress Lab's effects switch (the environment control cannot remove an opt-in section).",
+      "scene": "metro",
+      "options": { "effects": "no-shafts" },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-no-reflections",
+      "tier": "full",
+      "note": "Metro without screen-space reflections, through the Stress Lab's effects switch (the environment control cannot remove an opt-in section).",
+      "scene": "metro",
+      "options": { "effects": "no-reflections" },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-no-refraction",
+      "tier": "full",
+      "note": "Metro without glass refraction, through the Stress Lab's effects switch (the environment control cannot remove an opt-in section).",
+      "scene": "metro",
+      "options": { "effects": "no-refraction" },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "metro-golden",
+      "tier": "full",
+      "note": "Metro in the golden look's light.",
+      "scene": "metro",
+      "options": { "look": "golden" },
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "metro-dusk",
+      "tier": "full",
+      "note": "Metro in the dusk look's light.",
+      "scene": "metro",
+      "options": { "look": "dusk" },
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "metro-night",
+      "tier": "full",
+      "note": "Metro in the night look's light.",
+      "scene": "metro",
+      "options": { "look": "night" },
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "metro-day",
+      "tier": "full",
+      "note": "Metro in the day look's light.",
+      "scene": "metro",
+      "options": { "look": "day" },
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "metro-sky",
+      "tier": "full",
+      "note": "Metro in the sky look's light.",
+      "scene": "metro",
+      "options": { "look": "sky" },
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "metro-bc7-off",
+      "tier": "full",
+      "note": "Metro with its textures uncompressed, beside the smoke tier's BC7 metro: the compressed-texture paths and the plain ones.",
+      "scene": "metro",
+      "options": { "config": { "compressed_textures": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
+      }
+    },
+    {
+      "name": "dense-visibility",
+      "tier": "full",
+      "note": "Dense virtual geometry shaded through the visibility buffer.",
+      "scene": "dense",
+      "environment": { "virtual_geometry": { "visibility_buffer": true } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "overview exact": "Three images in four runs of the full-tier A/A (2026-10-12), as dense's own: virtual geometry streams pages from GPU feedback read back a few frames late.",
+        "overview gpu:0.5": "Three images in four runs of the full-tier A/A (2026-10-12), as dense's own: virtual geometry streams pages from GPU feedback read back a few frames late.",
+        "close exact": "Three images in four runs of the full-tier A/A (2026-10-12), as dense's own: virtual geometry streams pages from GPU feedback read back a few frames late.",
+        "close gpu:0.5": "Three images in four runs of the full-tier A/A (2026-10-12), as dense's own: virtual geometry streams pages from GPU feedback read back a few frames late."
+      }
+    },
+    {
+      "name": "garden-sun-shafts",
+      "tier": "full",
+      "note": "The garden with sun shafts switched on by the environment control.",
+      "source": "web/scripts/fixtures/garden.scene.json",
+      "environment": { "sun_shafts": {} },
+      "ticks": 30,
+      "views": ["scene"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "garden-reflections",
+      "tier": "full",
+      "note": "The garden with screen-space reflections switched on by the environment control.",
+      "source": "web/scripts/fixtures/garden.scene.json",
+      "environment": { "reflections": {} },
+      "ticks": 30,
+      "views": ["scene"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "garden-refraction",
+      "tier": "full",
+      "note": "The garden with refraction switched on by the environment control.",
+      "source": "web/scripts/fixtures/garden.scene.json",
+      "environment": { "refraction": {} },
+      "ticks": 30,
+      "views": ["scene"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "garden-clouds",
+      "tier": "full",
+      "note": "The garden with volumetric clouds switched on by the environment control.",
+      "source": "web/scripts/fixtures/garden.scene.json",
+      "environment": { "clouds": { "enabled": true } },
+      "ticks": 30,
+      "views": ["scene"],
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "scene exact": "Three images in four runs of the full-tier A/A (2026-10-12): the clouds' time-sliced dome and shadows depend on how many frames drew them.",
+        "scene gpu:0.5": "Three images in four runs of the full-tier A/A (2026-10-12): the clouds' time-sliced dome and shadows depend on how many frames drew them."
+      }
+    },
+    {
+      "name": "garden-sky",
+      "tier": "full",
+      "note": "The garden with the physical sky switched on by the environment control.",
+      "source": "web/scripts/fixtures/garden.scene.json",
+      "environment": { "sky": { "enabled": true } },
+      "ticks": 30,
+      "views": ["scene"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "garden-time-of-day",
+      "tier": "full",
+      "note": "The garden with the time of day switched on by the environment control.",
+      "source": "web/scripts/fixtures/garden.scene.json",
+      "environment": { "time_of_day": { "enabled": true } },
+      "ticks": 30,
+      "views": ["scene"],
+      "captures": ["exact", "gpu:0.5"]
     }
   ]
 }
