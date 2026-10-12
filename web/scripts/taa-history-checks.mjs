@@ -263,7 +263,7 @@ export async function checkHistory(name, resources = {}) {
       unit: "ratio", note: "Neighbor RGB variation in the moving fixture divided by the still fixture; earlier spec reference was 0.8." });
 
     await page.setViewportSize({ width: 1400, height: 900 });
-    const highlandsUrl = devUrl("stress.html", { preset: "highlands", taa: "on", rocks: "off", jobcache: "off" });
+    const highlandsUrl = devUrl("stress.html", { preset: "highlands", taa: "on" });
     await openPaused(page, highlandsUrl, { timeout: 120_000 });
     await command("render");
     const initialStatus = await command("status");
