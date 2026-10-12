@@ -244,18 +244,9 @@ impl<'a> RenderFrame<'a> {
             presented_seconds,
             environment,
             lights,
-            dropped_lights,
-            invalid_lights,
-            emitters,
-            dropped_particles,
-            invalid_emitters,
+            particles,
             decals,
-            decal_materials,
-            decal_textures,
-            dropped_decals,
-            invalid_decals,
             reflection_probes,
-            dropped_reflection_probes,
             terrain,
             deformation,
             cells,
@@ -276,12 +267,12 @@ impl<'a> RenderFrame<'a> {
         snapshot.elapsed_seconds = *elapsed_seconds;
         snapshot.presented_seconds = *presented_seconds;
         snapshot.environment = *environment;
-        snapshot.lights.clear();
-        snapshot.dropped_lights = *dropped_lights;
-        snapshot.invalid_lights = *invalid_lights;
-        for light in lights {
+        snapshot.lights.list.clear();
+        snapshot.lights.dropped = lights.dropped;
+        snapshot.lights.invalid = lights.invalid;
+        for light in &lights.list {
             let Some(slot) = light.slot else {
-                snapshot.lights.push(*light);
+                snapshot.lights.list.push(*light);
                 continue;
             };
             let model = self
@@ -290,26 +281,19 @@ impl<'a> RenderFrame<'a> {
                 .get(slot as usize)
                 .and_then(|&index| self.poses.prepared_matrix(index as usize));
             let Some(model) = model else {
-                snapshot.dropped_lights += 1;
+                snapshot.lights.dropped += 1;
                 continue;
             };
-            snapshot.lights.push(crate::RenderLight {
+            snapshot.lights.list.push(crate::RenderLight {
                 position: model.transform_point3(light.position),
                 direction: model.transform_vector3(light.direction).normalize_or_zero(),
                 slot: None,
                 ..*light
             });
         }
-        snapshot.emitters.clone_from(emitters);
-        snapshot.dropped_particles = *dropped_particles;
-        snapshot.invalid_emitters = *invalid_emitters;
+        snapshot.particles.clone_from(particles);
         snapshot.decals.clone_from(decals);
-        snapshot.decal_materials.clone_from(decal_materials);
-        snapshot.decal_textures.clone_from(decal_textures);
-        snapshot.dropped_decals = *dropped_decals;
-        snapshot.invalid_decals = *invalid_decals;
         snapshot.reflection_probes.clone_from(reflection_probes);
-        snapshot.dropped_reflection_probes = *dropped_reflection_probes;
         snapshot.terrain.clone_from(terrain);
         snapshot.deformation.clone_from(deformation);
         snapshot.cells = *cells;

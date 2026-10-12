@@ -144,7 +144,7 @@ pub struct RenderDecal {
     /// slots'); `None` draws `model`.
     pub joint: Option<u32>,
     /// Its material when it has maps, listed in
-    /// [`RenderSnapshot::decal_materials`]; `None` draws from `color` alone.
+    /// [`RenderDecals::materials`]; `None` draws from `color` alone.
     pub material: Option<MaterialHandle>,
     /// Linear color and alpha: the material's, alpha times the decal's
     /// opacity.
@@ -155,6 +155,23 @@ pub struct RenderDecal {
     /// Cosine of the fade angle: surfaces whose normals turn further from
     /// the box's +y fade.
     pub fade: f32,
+}
+
+/// A frame's decals ([`RenderSnapshot::decals`]) and what they draw with,
+/// filled in place.
+#[derive(Clone, Debug, Default)]
+pub struct RenderDecals {
+    /// Its decals, within the settings' budget.
+    pub list: Vec<RenderDecal>,
+    /// Materials with maps the decals draw with, each once, and their
+    /// textures; they may repeat [`RenderSnapshot::materials`] and
+    /// [`RenderSnapshot::textures`].
+    pub materials: Vec<RenderMaterial>,
+    pub textures: Vec<RenderTexture>,
+    /// Usable decals beyond the budget.
+    pub dropped: usize,
+    /// Decals breaking their rules, which no frame draws.
+    pub invalid: usize,
 }
 
 /// Decal records of each frame.
@@ -204,11 +221,11 @@ impl DecalExtraction {
     fn list(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
         // Extracted sanitized with the environment, before this.
         let settings = snapshot.environment.decals;
-        snapshot.decals.clear();
-        snapshot.decal_materials.clear();
-        snapshot.decal_textures.clear();
-        snapshot.dropped_decals = 0;
-        snapshot.invalid_decals = 0;
+        snapshot.decals.list.clear();
+        snapshot.decals.materials.clear();
+        snapshot.decals.textures.clear();
+        snapshot.decals.dropped = 0;
+        snapshot.decals.invalid = 0;
         if !settings.enabled {
             return;
         }
@@ -218,7 +235,7 @@ impl DecalExtraction {
         self.candidates.clear();
         for (position, (entity, decal)) in self.query.iter(world).enumerate() {
             if decal.validate().is_err() {
-                snapshot.invalid_decals += 1;
+                snapshot.decals.invalid += 1;
                 continue;
             }
             if self.hints.len() <= position {
@@ -235,7 +252,7 @@ impl DecalExtraction {
         let kept = settings
             .max_decals
             .map_or(usize::MAX, |budget| budget as usize);
-        snapshot.dropped_decals = self.candidates.len().saturating_sub(kept);
+        snapshot.decals.dropped = self.candidates.len().saturating_sub(kept);
         // Beyond the budget the nearest win; kept decals blend in their order.
         let candidates = &self.candidates;
         for position in self
@@ -259,22 +276,24 @@ impl DecalExtraction {
                     continue;
                 }
                 if !snapshot
-                    .decal_materials
+                    .decals
+                    .materials
                     .iter()
                     .any(|listed| listed.handle == decal.material)
                 {
-                    snapshot.decal_materials.push(RenderMaterial {
+                    snapshot.decals.materials.push(RenderMaterial {
                         handle: decal.material,
                         material: *material,
                         version: assets.material_version(decal.material).unwrap_or(0),
                     });
                     for texture in material.textures() {
                         if !snapshot
-                            .decal_textures
+                            .decals
+                            .textures
                             .iter()
                             .any(|listed| listed.handle == texture)
                         {
-                            snapshot.decal_textures.push(RenderTexture {
+                            snapshot.decals.textures.push(RenderTexture {
                                 handle: texture,
                                 texture: Arc::clone(
                                     assets.texture(texture).expect("checked above"),
@@ -292,7 +311,7 @@ impl DecalExtraction {
             let joint = Some(snapshot.joints.len() as u32 - 1);
             let mut color = material.color();
             color[3] *= decal.opacity;
-            snapshot.decals.push(RenderDecal {
+            snapshot.decals.list.push(RenderDecal {
                 model,
                 joint,
                 material: mapped.then_some(decal.material),

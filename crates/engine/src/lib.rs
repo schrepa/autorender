@@ -115,12 +115,12 @@ pub mod render {
         DeformationMap, GROUP_WORDS, GpuCurrent, GpuPresentation, MAX_NORMAL_INVERSE_NORM,
         MaterialBinding, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID,
         NODE_WORDS, NodeInfo, NodePose, PAGE_WORDS, PoseRows, PresentationMode, RIM_REACH,
-        RIM_START, RenderDecal, RenderDeformation, RenderEmitter, RenderFrame, RenderInstance,
-        RenderJoint, RenderLight, RenderMaterial, RenderMesh, RenderPlacementAsset,
-        RenderReflectionProbe, RenderSnapshot, RenderSurfaceMaps, RenderTerrain, RenderTerrains,
-        RenderTexture, STREAMING_GRIDS, StreamingGrid, TransformIndex, TransformPropagation,
-        VIRTUAL_MESH_MAGIC, carve_profile, presentation_bounds, propagate_transforms, rim_profile,
-        valid_global_matrix,
+        RIM_START, RenderDecal, RenderDecals, RenderDeformation, RenderEmitter, RenderFrame,
+        RenderInstance, RenderJoint, RenderLight, RenderLights, RenderMaterial, RenderMesh,
+        RenderParticles, RenderPlacementAsset, RenderReflectionProbe, RenderReflectionProbes,
+        RenderSnapshot, RenderSurfaceMaps, RenderTerrain, RenderTerrains, RenderTexture,
+        STREAMING_GRIDS, StreamingGrid, TransformIndex, TransformPropagation, VIRTUAL_MESH_MAGIC,
+        carve_profile, presentation_bounds, propagate_transforms, rim_profile, valid_global_matrix,
     };
 }
 

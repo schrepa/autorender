@@ -386,34 +386,14 @@ pub struct RenderSnapshot {
     /// sanitized ([`crate::Environment::current`]): a missing atmosphere
     /// reads as the default one and a missing effect resource as off.
     pub environment: crate::Environment,
-    /// This frame's local lights, within the settings' budget.
-    pub lights: Vec<crate::RenderLight>,
-    /// Usable lights beyond the budget, or without a valid pose.
-    pub dropped_lights: usize,
-    /// Lights breaking their rules, which no frame draws.
-    pub invalid_lights: usize,
-    /// This frame's particle emitters, within the particle
-    /// budget.
-    pub emitters: Vec<crate::RenderEmitter>,
-    /// Particles of emitters skipped beyond the budget.
-    pub dropped_particles: usize,
-    /// Emitters breaking their rules, which no frame draws.
-    pub invalid_emitters: usize,
-    /// This frame's decals, within the settings' budget.
-    pub decals: Vec<crate::RenderDecal>,
-    /// Materials with maps that decals draw with, each once, and their
-    /// textures; they may repeat [`Self::materials`] and [`Self::textures`].
-    pub decal_materials: Vec<RenderMaterial>,
-    pub decal_textures: Vec<RenderTexture>,
-    /// Usable decals beyond the budget.
-    pub dropped_decals: usize,
-    /// Decals breaking their rules, which no frame draws.
-    pub invalid_decals: usize,
-    /// This frame's usable reflection probes, nearest the
-    /// camera first, within the settings' budget.
-    pub reflection_probes: Vec<crate::RenderReflectionProbe>,
-    /// Usable probes beyond the budget.
-    pub dropped_reflection_probes: usize,
+    /// This frame's local lights.
+    pub lights: crate::RenderLights,
+    /// This frame's particle emitters.
+    pub particles: crate::RenderParticles,
+    /// This frame's decals and what they draw with.
+    pub decals: crate::RenderDecals,
+    /// This frame's reflection probes.
+    pub reflection_probes: crate::RenderReflectionProbes,
     /// This frame's terrains: their resident tiles and the
     /// patches the camera draws.
     pub terrain: crate::RenderTerrains,

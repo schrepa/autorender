@@ -242,7 +242,7 @@ mod gpu {
             depth: &wgpu::TextureView,
             depth_generation: u64,
         ) -> Option<ParticleFrame> {
-            if !snapshot.environment.particles.enabled || snapshot.emitters.is_empty() {
+            if !snapshot.environment.particles.enabled || snapshot.particles.list.is_empty() {
                 return None;
             }
             if self.packed != Some(emitters) {
@@ -285,7 +285,7 @@ mod gpu {
         /// per particle and one record per emitter, within what a storage
         /// binding holds: owners only when emitters' instances changed.
         fn pack(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, snapshot: &RenderSnapshot) {
-            self.counts = pack_emitters(&snapshot.emitters, &mut self.records, self.room);
+            self.counts = pack_emitters(&snapshot.particles.list, &mut self.records, self.room);
             let total = self.counts.1;
             if total == 0 {
                 return;

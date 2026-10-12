@@ -212,13 +212,17 @@ impl Renderer {
                 active: post_frame.is_some_and(|frame| frame.bloom),
             },
             local_lights: LightStats {
-                shaded: if lit { snapshot.lights.len() as u32 } else { 0 },
-                dropped: if lit {
-                    snapshot.dropped_lights.min(u32::MAX as usize) as u32
+                shaded: if lit {
+                    snapshot.lights.list.len() as u32
                 } else {
                     0
                 },
-                invalid: snapshot.invalid_lights.min(u32::MAX as usize) as u32,
+                dropped: if lit {
+                    snapshot.lights.dropped.min(u32::MAX as usize) as u32
+                } else {
+                    0
+                },
+                invalid: snapshot.lights.invalid.min(u32::MAX as usize) as u32,
                 visible: light_totals.map(|totals| totals[0]),
                 cluster_overflow: light_totals.map(|totals| totals[1]),
             },
@@ -230,8 +234,8 @@ impl Renderer {
             },
             particles: Drawn {
                 drawn: particle_frame.as_ref().map_or(0, |frame| frame.total),
-                invalid: snapshot.invalid_emitters.min(u32::MAX as usize) as u32,
-                dropped: (snapshot.dropped_particles as u64
+                invalid: snapshot.particles.invalid.min(u32::MAX as usize) as u32,
+                dropped: (snapshot.particles.dropped as u64
                     + particle_frame.as_ref().map_or(0, |frame| frame.dropped))
                 .min(u64::from(u32::MAX)) as u32,
             },
@@ -240,8 +244,8 @@ impl Renderer {
             },
             decals: Drawn {
                 drawn: decal_frame.as_ref().map_or(0, |frame| frame.drawn),
-                invalid: snapshot.invalid_decals.min(u32::MAX as usize) as u32,
-                dropped: (snapshot.dropped_decals as u64
+                invalid: snapshot.decals.invalid.min(u32::MAX as usize) as u32,
+                dropped: (snapshot.decals.dropped as u64
                     + decal_frame
                         .as_ref()
                         .map_or(0, |frame| u64::from(frame.dropped)))

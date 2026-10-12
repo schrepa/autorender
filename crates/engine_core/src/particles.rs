@@ -162,6 +162,18 @@ pub struct RenderEmitter {
     pub count: u32,
 }
 
+/// A frame's particle emitters ([`RenderSnapshot::particles`]), filled in
+/// place.
+#[derive(Clone, Debug, Default)]
+pub struct RenderParticles {
+    /// Its emitters, within the particle budget.
+    pub list: Vec<RenderEmitter>,
+    /// Particles of emitters skipped beyond the budget.
+    pub dropped: usize,
+    /// Emitters breaking their rules, which no frame draws.
+    pub invalid: usize,
+}
+
 /// Emitter records of each frame and the motion of their origins.
 pub(crate) struct ParticleExtraction {
     query: QueryState<(Entity, &'static ParticleEmitter)>,
@@ -201,18 +213,18 @@ impl ParticleExtraction {
     /// camera win.
     pub(crate) fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
         self.fill(world, snapshot, gpu);
-        if snapshot.emitters != self.previous {
+        if snapshot.particles.list != self.previous {
             self.revision += 1;
-            self.previous.clone_from(&snapshot.emitters);
+            self.previous.clone_from(&snapshot.particles.list);
         }
     }
 
     fn fill(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
         // Extracted sanitized with the environment, before this.
         let settings = snapshot.environment.particles;
-        snapshot.emitters.clear();
-        snapshot.dropped_particles = 0;
-        snapshot.invalid_emitters = 0;
+        snapshot.particles.list.clear();
+        snapshot.particles.dropped = 0;
+        snapshot.particles.invalid = 0;
         if !settings.enabled {
             self.motion.clear();
             return;
@@ -223,7 +235,7 @@ impl ParticleExtraction {
         let mut wanted = 0_u64;
         for (position, (entity, emitter)) in self.query.iter(world).enumerate() {
             if emitter.validate().is_err() {
-                snapshot.invalid_emitters += 1;
+                snapshot.particles.invalid += 1;
                 continue;
             }
             if self.hints.len() <= position {
@@ -247,7 +259,7 @@ impl ParticleExtraction {
             let (_, entity, model, emitter) = candidates[position];
             let count = emitter.capacity();
             if budget.is_some_and(|budget| total + u64::from(count) > budget) {
-                snapshot.dropped_particles += count as usize;
+                snapshot.particles.dropped += count as usize;
                 return;
             }
             total += u64::from(count);
@@ -268,7 +280,7 @@ impl ParticleExtraction {
                 None => Vec3::ZERO,
             };
             motion.insert(entity, (origin, time, velocity, extraction));
-            snapshot.emitters.push(RenderEmitter {
+            snapshot.particles.list.push(RenderEmitter {
                 origin,
                 velocity: if velocity.is_finite() {
                     velocity
@@ -291,7 +303,7 @@ impl ParticleExtraction {
         } else {
             (0..candidates.len()).for_each(&mut emit);
         }
-        if self.motion.len() > snapshot.emitters.len() {
+        if self.motion.len() > snapshot.particles.list.len() {
             self.motion.retain(|_, motion| motion.3 == extraction);
         }
     }

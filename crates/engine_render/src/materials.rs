@@ -128,14 +128,16 @@ impl MaterialStore {
     pub(crate) fn retain(&mut self, plan: &BatchPlan, snapshot: &RenderSnapshot) {
         let extra_material = |handle: &MaterialHandle| {
             snapshot
-                .decal_materials
+                .decals
+                .materials
                 .iter()
                 .chain(placed_materials(snapshot))
                 .any(|source| source.handle == *handle)
         };
         let extra_texture = |handle: &TextureHandle| {
             snapshot
-                .decal_textures
+                .decals
+                .textures
                 .iter()
                 .chain(placed_textures(snapshot))
                 .any(|source| source.handle == *handle)
@@ -180,7 +182,7 @@ impl MaterialStore {
                     .iter()
                     .find(|source| source.handle == handle)
             })
-            .chain(&snapshot.decal_materials)
+            .chain(&snapshot.decals.materials)
             .chain(placed_materials(snapshot))
             .filter(|source| !built(&self.materials, source))
             .collect();
@@ -204,7 +206,7 @@ impl MaterialStore {
                     let texture = snapshot
                         .textures
                         .iter()
-                        .chain(&snapshot.decal_textures)
+                        .chain(&snapshot.decals.textures)
                         .chain(placed_textures(snapshot))
                         .find(|texture| texture.handle == map.texture)
                         .expect(

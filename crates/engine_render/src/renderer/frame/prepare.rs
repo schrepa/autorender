@@ -42,7 +42,7 @@ impl Renderer {
             pass.reset();
         }
         let profile_residency = engine_profile::span("render", "validate_and_retire");
-        for source in snapshot.textures.iter().chain(&snapshot.decal_textures) {
+        for source in snapshot.textures.iter().chain(&snapshot.decals.textures) {
             if source.texture.width().max(source.texture.height()) > self.display.max_dimension {
                 return Err(RenderError(format!(
                     "Texture {:?} exceeds the device's {}-pixel dimension limit.",
@@ -757,7 +757,7 @@ impl Renderer {
                 // Reflection probes capture still slots,
                 // counted while captures wait.
                 stillness: (snapshot.environment.reflection_probes.enabled
-                    && !snapshot.reflection_probes.is_empty())
+                    && !snapshot.reflection_probes.list.is_empty())
                 .then(|| self.probes.slots.waiting()),
                 fade: self.switch_fades.share,
             };
@@ -940,7 +940,7 @@ impl Renderer {
         // cubes assigned and their grid uploaded.
         let probe_settings = snapshot.environment.reflection_probes;
         let probe_list: &[engine_core::RenderReflectionProbe] = if probe_settings.enabled {
-            &snapshot.reflection_probes
+            &snapshot.reflection_probes.list
         } else {
             &[]
         };
@@ -976,7 +976,7 @@ impl Renderer {
             .slots
             .plan(probe_list, (cubes - 1) as usize, lost, sky_changed);
         self.probes.upload(&self.device, &self.queue);
-        let dropped_probes = snapshot.dropped_reflection_probes as u64
+        let dropped_probes = snapshot.reflection_probes.dropped as u64
             + (probe_list.len() as u64).saturating_sub(u64::from(most_cubes - 1));
         self.refresh_camera_group();
         (environment_encoder, probe_list, dropped_probes)
@@ -1009,7 +1009,7 @@ impl Renderer {
 
         // Local lights: binned on the GPU from this frame's
         // poses, so slot lights follow GPU-presented meshes.
-        if snapshot.environment.local_lights.active() && !snapshot.lights.is_empty() {
+        if snapshot.environment.local_lights.active() && !snapshot.lights.list.is_empty() {
             let device = &self.device;
             let lights = self.lights.get_or_insert_with(|| LightPass::new(device));
             if temporal && let Some(pass) = self.temporal.as_mut() {
@@ -1102,7 +1102,7 @@ impl Renderer {
         // sample the depth buffer for their soft edges.
         let transparent_draws = self.plan.batches.iter().any(|batch| batch.transparent);
         let particle_frame =
-            if snapshot.environment.particles.enabled && !snapshot.emitters.is_empty() {
+            if snapshot.environment.particles.enabled && !snapshot.particles.list.is_empty() {
                 let device = &self.device;
                 let (camera_layout, format) = (&self.camera.layout, self.display.format());
                 let particles = self.particles.get_or_insert_with(|| {
@@ -1165,7 +1165,7 @@ impl Renderer {
             .as_ref()
             .and(self.lights.as_ref())
             .map(LightPass::fragment_layout);
-        if snapshot.environment.decals.enabled && !snapshot.decals.is_empty() {
+        if snapshot.environment.decals.enabled && !snapshot.decals.list.is_empty() {
             let (device, format) = (&self.device, self.display.format());
             let decals = self
                 .decals

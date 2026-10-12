@@ -155,6 +155,17 @@ pub struct RenderReflectionProbe {
     pub interior: Option<Interior>,
 }
 
+/// A frame's reflection probes ([`RenderSnapshot::reflection_probes`]),
+/// filled in place.
+#[derive(Clone, Debug, Default)]
+pub struct RenderReflectionProbes {
+    /// Its usable probes, nearest the camera first, within the settings'
+    /// budget.
+    pub list: Vec<RenderReflectionProbe>,
+    /// Usable probes beyond the budget.
+    pub dropped: usize,
+}
+
 /// Reflection probe records of each frame.
 pub(crate) struct ProbeExtraction {
     query: QueryState<(Entity, &'static ReflectionProbe)>,
@@ -180,8 +191,8 @@ impl ProbeExtraction {
     pub(crate) fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
         // Extracted sanitized with the environment, before this.
         let settings = snapshot.environment.reflection_probes;
-        snapshot.reflection_probes.clear();
-        snapshot.dropped_reflection_probes = 0;
+        snapshot.reflection_probes.list.clear();
+        snapshot.reflection_probes.dropped = 0;
         if !settings.enabled {
             return;
         }
@@ -223,9 +234,10 @@ impl ProbeExtraction {
         let ranked = self
             .nearest
             .nearest_first(candidates.iter().map(|(distance, _)| *distance), kept);
-        snapshot.dropped_reflection_probes = candidates.len() - ranked.len();
+        snapshot.reflection_probes.dropped = candidates.len() - ranked.len();
         snapshot
             .reflection_probes
+            .list
             .extend(ranked.map(|position| candidates[position].1));
     }
 }

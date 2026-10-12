@@ -232,6 +232,17 @@ impl RenderLight {
     }
 }
 
+/// A frame's local lights ([`RenderSnapshot::lights`]), filled in place.
+#[derive(Clone, Debug, Default)]
+pub struct RenderLights {
+    /// Its local lights, within the settings' budget.
+    pub list: Vec<RenderLight>,
+    /// Usable lights beyond the budget, or without a valid pose.
+    pub dropped: usize,
+    /// Lights breaking their rules, which no frame draws.
+    pub invalid: usize,
+}
+
 /// Retained light records and what they were built from.
 pub(crate) struct LightExtraction {
     query: QueryState<(Entity, Ref<'static, LocalLight>)>,
@@ -286,10 +297,10 @@ impl LightExtraction {
     ) {
         // Extracted sanitized with the environment, before this.
         let settings = snapshot.environment.local_lights;
-        snapshot.dropped_lights = 0;
-        snapshot.invalid_lights = 0;
+        snapshot.lights.dropped = 0;
+        snapshot.lights.invalid = 0;
         if !settings.active() {
-            snapshot.lights.clear();
+            snapshot.lights.list.clear();
             self.last_scan = None;
             self.revision += 1;
             return;
@@ -333,17 +344,17 @@ impl LightExtraction {
                 .is_none_or(|budget| self.lights.len() <= budget as usize)
         {
             // Unchanged lights that all follow slots: the records stand.
-            snapshot.invalid_lights = self.invalid;
+            snapshot.lights.invalid = self.invalid;
             return;
         }
-        snapshot.invalid_lights = self.invalid;
+        snapshot.lights.invalid = self.invalid;
         self.revision += 1;
         let globals = world.resource::<GlobalTransforms>();
         let poses = Poses::of(world, gpu);
         let budget = settings
             .max_lights
             .map_or(usize::MAX, |budget| budget as usize);
-        snapshot.lights.clear();
+        snapshot.lights.list.clear();
         if self.lights.len() > budget {
             // Nearest to the camera first, by authoritative position.
             let eye = snapshot.camera_position;
@@ -359,7 +370,7 @@ impl LightExtraction {
             let kept = self
                 .nearest
                 .kept_in_order(self.ranked.iter().map(|&(distance, _)| distance), budget);
-            snapshot.dropped_lights = self.lights.len() - kept.len();
+            snapshot.lights.dropped = self.lights.len() - kept.len();
             for position in kept {
                 let (entity, light, slot) = &self.lights[self.ranked[position].1];
                 let model = match slot {
@@ -369,9 +380,12 @@ impl LightExtraction {
                         None => continue,
                     },
                 };
-                snapshot
-                    .lights
-                    .push(RenderLight::new(light, settings.intensity, model, *slot));
+                snapshot.lights.list.push(RenderLight::new(
+                    light,
+                    settings.intensity,
+                    model,
+                    *slot,
+                ));
             }
             return;
         }
@@ -381,13 +395,14 @@ impl LightExtraction {
                 None => match poses.model(*entity) {
                     Some(model) => Some(model),
                     None => {
-                        snapshot.dropped_lights += 1;
+                        snapshot.lights.dropped += 1;
                         continue;
                     }
                 },
             };
             snapshot
                 .lights
+                .list
                 .push(RenderLight::new(light, settings.intensity, model, *slot));
         }
     }

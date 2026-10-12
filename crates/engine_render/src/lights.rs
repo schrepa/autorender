@@ -270,10 +270,10 @@ mod gpu {
             poses: FramePoses<'_>,
             revision: (u64, u64),
         ) -> Option<LightFrame> {
-            if !snapshot.environment.local_lights.active() || snapshot.lights.is_empty() {
+            if !snapshot.environment.local_lights.active() || snapshot.lights.list.is_empty() {
                 return None;
             }
-            let count = snapshot.lights.len();
+            let count = snapshot.lights.list.len();
             if count > self.capacity {
                 self.capacity = count.next_power_of_two();
                 self.inputs = storage(
@@ -295,7 +295,7 @@ mod gpu {
             if self.uploaded_revision != Some(revision) {
                 self.staged.clear();
                 self.staged
-                    .extend(snapshot.lights.iter().map(LightInput::from));
+                    .extend(snapshot.lights.list.iter().map(LightInput::from));
                 queue.write_buffer(&self.inputs, 0, bytemuck::cast_slice(&self.staged));
                 self.uploaded_revision = Some(revision);
             }

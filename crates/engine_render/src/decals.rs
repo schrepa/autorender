@@ -156,12 +156,17 @@ mod gpu {
             depth: &wgpu::TextureView,
             depth_generation: u64,
         ) -> Option<DecalFrame> {
-            if !snapshot.environment.decals.enabled || snapshot.decals.is_empty() {
+            if !snapshot.environment.decals.enabled || snapshot.decals.list.is_empty() {
                 return None;
             }
             let room = self.room;
             let (palette, (generation, parity)) = palette;
-            let dropped = pack_decals(&snapshot.decals, room, &mut self.staging, &mut self.runs);
+            let dropped = pack_decals(
+                &snapshot.decals.list,
+                room,
+                &mut self.staging,
+                &mut self.runs,
+            );
             if self.staging.is_empty() {
                 return None;
             }

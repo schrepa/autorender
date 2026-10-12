@@ -47,7 +47,6 @@ const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
         "RetainedRender",
         37,
     ),
-    ("crates/engine_core/src/scene.rs", "RenderSnapshot", 32),
     ("crates/engine_render/src/clouds.rs", "CloudPass", 48),
     ("crates/engine_render/src/renderer.rs", "Renderer", 50),
     ("crates/engine_render/src/scatter.rs", "ScatterPass", 40),
