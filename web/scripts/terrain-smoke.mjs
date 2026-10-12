@@ -1,133 +1,24 @@
 /**
- * Terrain checks: a fixture with a
- * generated terrain streams, draws, casts shadows, collides and answers
- * height queries; the terrain control and environment section change what
- * draws; its horizon map casts long shadows and aerial
- * perspective hazes it; an `ETR1` file baked from the same
- * layers streams by byte range and matches; the import tool brings
- * the dome in as a heightmap of its own and the scene it writes loads.
+ * The terrain fixture streams, draws, answers queries and collides.
  *
- * Bakes its file with engine_assetc's `terrain_bake` and imports with
- * `terrain_import`, built with the quick profile by the cargo on PATH while
- * the checks before them run, into web/public/scenes/, removing what they
- * wrote afterwards with the fixture's source.
+ * Its tiles stream and draw with their placed objects, impostors and
+ * shadows; it inspects as authored; its surroundings fill the view past its
+ * edges; its erosion bake, roads, bridge, tunnel and routes read back;
+ * height queries, a tile budget, collision against rendering, the settings
+ * section, speed-aware detail, tile memory and banded placing hold; the
+ * terrain control's views, the sky visibility map and freezing work; edits,
+ * walks and navigation agents cross it and authored objects stand on it;
+ * and a place a game names prefetches its tiles. The fixture and what the
+ * terrain smokes share: terrain-fixture.mjs.
  */
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { sep } from "node:path";
-import { artifacts, cargoBinaries, commander, sceneUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
-import { workspacePath } from "./workspace.mjs";
+import { differentPixels } from "./harness.mjs";
+import { fast, fixture, openTerrain, overview, terrain } from "./terrain-fixture.mjs";
 
-const tools = cargoBinaries(["-p", "engine_assetc", "--profile", "quick", "--bin", "terrain_bake", "--bin", "terrain_import"]);
-const url = sceneUrl();
-const output = await artifacts("terrain-smoke");
-// The served workspace's scenes, which the development server serves.
-const scenes = `${workspacePath("web/public/scenes")}${sep}`;
-const folder = `${workspacePath("web/public/scenes/terrain-smoke")}${sep}`;
-const source = workspacePath("web/public/scenes/terrain-smoke.scene.json");
-// The terrain fixture (fixtures/terrain.scene.json, its heightmap and
-// texture in fixtures/terrain-smoke/, which the page and the tools read
-// beside the scene in the served scenes' terrain-smoke/): a generated
-// terrain of 4 by 4 one-meter tiles at (-512, 0, -512). Its layers, in
-// order: noise hills; six rounds of erosion and the hydrology channels,
-// both baked over the two-meter tiles; a twelve-meter trench across the
-// last stretch of a gravel road through the south-western hills, which
-// bridges it; a forty-meter mound a straight road tunnels through; a
-// plateau flattened at (512, 512), terrain-local; a hole 48 m east of it;
-// and an imported dome 200 m high centered at (764, 764). Meadow below,
-// rock on steep ground and summit snow above 120 m; crates and balls
-// placed on the meadow, a quarter of them also on the pinned level-2
-// tiles; an author's big crate on the plateau and a ball on the level-1
-// tiles; surroundings to the horizon, their bakes eased out over 128 m.
-// Beside it: the player, a reflection probe, a buoy, an interior's probe,
-// a hiker and a roller.
-const fixture = JSON.parse(await readFile(new URL("fixtures/terrain.scene.json", import.meta.url), "utf8"));
-const fixtureFiles = new URL("fixtures/terrain-smoke/", import.meta.url);
-const terrain = fixture.entities.find(entity => entity.id === "ground").terrain;
-const overview = { position: [0, 80, 140], target: [0, 30, 0], vertical_fov_radians: Math.PI / 3, near: 0.5, far: 4000 };
-const { browser, page, errors } = await launch();
-const command = commander(page);
-const scene = routedScene(page, fixture);
+const { page, errors, command, scene, settled, close, settle, capture, heights, inspectTerrains } = await openTerrain("terrain");
 const checks = [];
 
-/** Renders until every wanted tile has been resident for a frame (bakes load
- * them all at once); returns the observation.
- * Job workers bake and generate tiles beside the page, their
- * outputs arriving between commands, so renders wait a little for them. */
-async function settle() {
-  let rendering;
-  let resident = 0;
-  for (let frame = 0; frame < 600; frame++) {
-    rendering = (await command("render")).result.rendering ?? (await command("status")).result.rendering;
-    const ready = rendering.terrain.tiles > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_patches === 0;
-    resident = ready ? resident + 1 : 0;
-    if (resident > 1) {
-      assert.equal(rendering.terrain.unplaced_tiles, 0, `every resident tile holds the objects its level places: ${JSON.stringify(rendering.terrain)}`);
-      return rendering;
-    }
-    if (!ready) await new Promise(resolve => setTimeout(resolve, 25));
-  }
-  assert.fail(`terrain did not settle: ${JSON.stringify(rendering)}`);
-}
-
-async function capture(name) {
-  // Pipelines go on compiling for seconds after the frames that first
-  // need them, and a capture presents only once they have.
-  for (let frame = 0; frame < 600; frame++) {
-    if (!(await command("render")).result.rendering.pipelines_compiling) break;
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
-  await command("capture");
-  const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
-  return bytes.toString("base64");
-}
-
-/** The mean color of the top third of a capture (base64 PNG): the sky. */
-async function skyColor(png) {
-  return page.evaluate(async png => {
-    const image = new Image();
-    image.src = `data:image/png;base64,${png}`;
-    await image.decode();
-    const canvas = document.createElement("canvas");
-    canvas.width = image.width; canvas.height = image.height;
-    const context = canvas.getContext("2d");
-    context.drawImage(image, 0, 0);
-    const { data } = context.getImageData(0, 0, image.width, Math.floor(image.height / 3));
-    const sum = [0, 0, 0];
-    for (let offset = 0; offset < data.length; offset += 4) {
-      sum[0] += data[offset]; sum[1] += data[offset + 1]; sum[2] += data[offset + 2];
-    }
-    return sum.map(value => value / (data.length / 4));
-  }, png);
-}
-
-/** Renders until `done` holds for a frame's observation, the virtual
- * texture's read-backs arriving a few frames late; returns it. */
-async function rendersUntil(done, what) {
-  let rendering;
-  for (let frame = 0; frame < 600; frame++) {
-    rendering = (await command("render")).result.rendering;
-    if (done(rendering)) return rendering;
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
-  assert.fail(`${what}: ${JSON.stringify(rendering)}`);
-}
-
-async function heights(points) {
-  return (await command("terrain_height", { points })).result.samples;
-}
-
 try {
-  await mkdir(folder, { recursive: true });
-  await cp(fixtureFiles, folder, { recursive: true });
-  await scene.route();
-  await openPaused(page, url);
-  // All tile work in one extraction, so renders settle quickly.
-  const fast = await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
-  assert.deepEqual(fast.result.environment_changed, ["terrain"]);
-  await command("camera", overview);
-  const settled = await settle();
   assert.ok(settled.terrain.patches > 0 && settled.terrain.triangles > 0, "terrain draws");
   assert.ok(settled.terrain.shadow_patches > 0, "terrain casts shadows");
   assert.equal(settled.terrain.dropped_tiles, 0);
@@ -136,8 +27,6 @@ try {
   // The pinned tiles stand a share of them everywhere.
   assert.ok(settled.terrain.placed_far_objects > 0 && settled.terrain.placed_far_objects < settled.terrain.placed_objects,
     `far crates: ${settled.terrain.placed_far_objects} of ${settled.terrain.placed_objects}`);
-  // Occupancy: the crates' covers are drawn around the camera.
-  assert.ok(settled.occupancy.redraws > 0, `the occupancy map draws: ${settled.occupancy.redraws}`);
   // GPU-presented frames bake the balls' impostor, which far
   // balls draw and cast as cards.
   let presented;
@@ -155,7 +44,7 @@ try {
     assert.ok(listing.result.types.some(type => type.name === name), `describe lists ${name}`);
   }
   const look = await command("inspect", { component: "Environment" });
-  assert.equal(look.result.value.terrain.samples_per_frame, 50_000_000);
+  assert.equal(look.result.value.terrain.samples_per_frame, fast.samples_per_frame);
   const inspected = await command("inspect", { entity: "ground", component: "Terrain" });
   const view = inspected.result.entity.components.Terrain;
   assert.equal(view.terrain.layers.length, 10);
@@ -209,7 +98,7 @@ try {
     await command("camera", { ...overview, position: [0, 1500, 1800], target: [0, 0, -2000], far: 20000 });
     const surroundedFrame = await settle();
     const surrounded = await capture("surroundings");
-    const edged = await command("environment", { terrain: { samples_per_frame: 50_000_000, surroundings: false } });
+    const edged = await command("environment", { terrain: { ...fast, surroundings: false } });
     assert.deepEqual(edged.result.environment_changed, ["terrain"]);
     const alone = await settle();
     assert.equal((await command("inspect", { component: "Terrains" })).result.value.surroundings_patches, 0, "settings turn the surroundings off");
@@ -217,23 +106,11 @@ try {
     const bare = await capture("no-surroundings");
     const filled = await differentPixels(page, [surrounded, bare]);
     assert.ok(filled.changed > 0.2 * filled.total, `the surroundings fill ${filled.changed} of ${filled.total} pixels`);
-    await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+    await command("environment", { terrain: fast });
     await command("camera", overview);
     await settle();
     checks.push({ check: "surroundings", reach: around.reach, tiles: status.surroundings_tiles, patches: status.surroundings_patches, pixels: filled.changed });
   }
-  // The hydrology bake read every sample of the two-meter
-  // tiles, found channels, and queries report what it found where they ask.
-  const water = view.hydrology;
-  assert.equal(water.baking, false, "the bake is done once tiles load");
-  assert.equal(water.samples, 513 * 513, `the bake reads its level: ${JSON.stringify(water)}`);
-  assert.ok(water.channel_samples > 0 && water.max_area > 20000, `water gathers into channels: ${JSON.stringify(water)}`);
-  const [watered] = (await command("terrain_height", { points: [[-300, -300]] })).result.samples;
-  assert.ok(watered.water && watered.water.flow > 0 && Number.isFinite(watered.water.wetness), `queries report water: ${JSON.stringify(watered)}`);
-  // Waterfalls are where its rivers drop steeply; the
-  // engine spawns what draws each one.
-  assert.equal((await command("inspect", { component: "Terrains" })).result.value.falls, water.falls, `falls spawn as found: ${JSON.stringify(water)}`);
-  checks.push({ check: "hydrology", samples: water.samples, channels: water.channel_samples, lakes: water.lake_samples, max_area: water.max_area, falls: water.falls });
   // The erosion bake ran its rounds over the same samples
   // first, wearing ground away.
   const worn = view.erosion;
@@ -332,11 +209,11 @@ try {
   checks.push({ check: "imported heightmap", peak: peak.height });
 
   // A tile budget keeps residency within it and reports what it drops.
-  const budget = await command("environment", { terrain: { samples_per_frame: 50_000_000, max_tiles: 3 } });
+  const budget = await command("environment", { terrain: { ...fast, max_tiles: 3 } });
   assert.ok(budget.result.rendering.terrain.tiles <= 3, `${budget.result.rendering.terrain.tiles} tiles under a budget of 3`);
   const budgeted = (await command("render")).result.rendering;
   assert.ok(budgeted.terrain.tiles <= 3 && budgeted.terrain.dropped_tiles > 0, JSON.stringify(budgeted));
-  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+  await command("environment", { terrain: fast });
   await settle();
   checks.push({ check: "tile budget", resident: budgeted.terrain.tiles, dropped: budgeted.terrain.dropped_tiles });
 
@@ -361,7 +238,7 @@ try {
   // The settings section: finer level of detail reaches further and draws
   // more triangles; invalid values are refused; disabled terrain draws
   // nothing.
-  const fine = await command("environment", { terrain: { samples_per_frame: 50_000_000, pixel_error: 2 } });
+  const fine = await command("environment", { terrain: { ...fast, pixel_error: 2 } });
   const finer = (await settle());
   const detailed = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
   assert.ok(detailed.level_ranges[0] > view.level_ranges[0], `level 0 reaches ${detailed.level_ranges[0]} m`);
@@ -376,16 +253,15 @@ try {
   const empty = await capture("disabled");
   const shown = await differentPixels(page, [shaded, empty]);
   assert.ok(shown.changed > 10_000, `terrain covers ${shown.changed} pixels`);
-  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+  await command("environment", { terrain: fast });
   await settle();
   checks.push({ check: "settings section", more: finer.terrain.triangles, terrainPixels: shown.changed });
-
 
   // Speed-aware detail: while the camera moves fast the
   // finest levels' tiles in view wait, and those out of view until it
   // settles; then they load. Collision's tiles never wait, so collision is
   // off here.
-  const moving = { samples_per_frame: 50_000_000, collision_radius: 0, motion_detail: { speed: 1, fastest: 2, levels: 8, settle: 0.25 } };
+  const moving = { ...fast, collision_radius: 0, motion_detail: { speed: 1, fastest: 2, levels: 8, settle: 0.25 } };
   await command("environment", { terrain: moving });
   let waited = 0;
   for (let step = 0; step < 12; step++) {
@@ -402,7 +278,7 @@ try {
   const tooMany = await command("environment", { terrain: { ...moving, motion_detail: { levels: 9 } } }, false);
   assert.equal(tooMany.error.code, "invalid_environment");
   assert.equal(tooMany.error.path, "$.terrain.motion_detail.levels");
-  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+  await command("environment", { terrain: fast });
   await command("camera", overview);
   await settle();
   checks.push({ check: "motion detail", waited });
@@ -410,14 +286,13 @@ try {
   // Tiles the view leaves stay in memory and return at once
   // when it comes back; with nothing missing, workers generate the tiles
   // within the idle reach into memory.
-  const inspectTerrains = async () => (await command("inspect", { component: "Terrains" })).result.value;
   // Memory starts empty and nothing is made ahead of the view until the
   // camera is back, so the tiles under the view after the move are made
   // then, however far this machine's workers got before (the motion checks'
   // camera passed the corner).
-  await command("environment", { terrain: { samples_per_frame: 50_000_000, cache_bytes: 1, idle_reach: 0 } });
+  await command("environment", { terrain: { ...fast, cache_bytes: 1, idle_reach: 0 } });
   await command("render");
-  await command("environment", { terrain: { samples_per_frame: 50_000_000, idle_reach: 0 } });
+  await command("environment", { terrain: { ...fast, idle_reach: 0 } });
   const home = await inspectTerrains();
   await command("camera", { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] });
   await settle();
@@ -435,11 +310,11 @@ try {
   assert.ok(back.restored_tiles > home.restored_tiles, `tiles return from memory: ${JSON.stringify(back)}`);
   // A budget of a byte empties memory, so what it holds next was made
   // ahead of the view.
-  await command("environment", { terrain: { samples_per_frame: 50_000_000, cache_bytes: 1 } });
+  await command("environment", { terrain: { ...fast, cache_bytes: 1 } });
   await command("render");
   const emptied = await inspectTerrains();
   assert.equal(emptied.cached_tiles, 0, `a byte keeps no tile: ${JSON.stringify(emptied)}`);
-  await command("environment", { terrain: { samples_per_frame: 50_000_000, idle_reach: 4 } });
+  await command("environment", { terrain: { ...fast, idle_reach: 4 } });
   let ahead = emptied;
   let generating = 0;
   for (let frame = 0; frame < 300 && ahead.cached_tiles === 0; frame++) {
@@ -449,7 +324,7 @@ try {
     generating = Math.max(generating, ahead.idle_tiles);
   }
   assert.ok(ahead.cached_tiles > 0, `workers generate tiles ahead of the view: ${JSON.stringify(ahead)}`);
-  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+  await command("environment", { terrain: fast });
   await settle();
   checks.push({ check: "memory", restored: back.restored_tiles, banded: corner.banded_tiles, cached: ahead.cached_tiles, bytes: ahead.cached_bytes, generating });
 
@@ -460,7 +335,7 @@ try {
   await command("camera", cornerView);
   await settle();
   const bandedObjects = (await command("render")).result.rendering.terrain.placed_objects;
-  await command("environment", { terrain: { samples_per_frame: 50_000_000, max_bands: 1, cache_bytes: 1 } });
+  await command("environment", { terrain: { ...fast, max_bands: 1, cache_bytes: 1 } });
   await command("camera", overview);
   await settle();
   await command("camera", cornerView);
@@ -468,58 +343,10 @@ try {
   const wholeObjects = (await command("render")).result.rendering.terrain.placed_objects;
   assert.ok(bandedObjects > 0, "objects stand on the banded tiles");
   assert.equal(wholeObjects, bandedObjects, "banded and whole tiles place the same objects");
-  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+  await command("environment", { terrain: fast });
   await command("camera", overview);
   await settle();
   checks.push({ check: "placing bands", objects: bandedObjects });
-
-  // The GPU gives tiles their surface materials, the rules'
-  // own but where its rounding crosses a threshold: the view drawn with
-  // the CPU's differs in few pixels. Back on the GPU, tiles loading at a
-  // new place get theirs from it as they upload.
-  const gpuView = await capture("gpu-materials");
-  await command("environment", { terrain: { samples_per_frame: 50_000_000, gpu_materials: false } });
-  await settle();
-  const cpuView = await capture("cpu-materials");
-  const materials = await differentPixels(page, [gpuView, cpuView], { tolerance: 8 });
-  assert.ok(materials.changed < materials.total * 0.01, `GPU materials differ from the CPU's in ${materials.changed} of ${materials.total} pixels`);
-  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
-  await settle();
-  await command("camera", { ...overview, position: [380, 90, -420], target: [300, 30, -300] });
-  let controls = 0;
-  for (let frame = 0; frame < 300; frame++) {
-    const rendering = (await command("render")).result.rendering;
-    controls += rendering.terrain.gpu_controls;
-    if (controls > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_patches === 0) break;
-    await new Promise(resolve => setTimeout(resolve, 25));
-  }
-  assert.ok(controls > 0, "the GPU gives new tiles their control values");
-  await command("camera", overview);
-  await settle();
-  checks.push({ check: "gpu materials", differing: materials.changed, controls });
-
-  // The runtime virtual texture bakes the ground into the
-  // pages the view asks for, its sheets growing to hold them, and the
-  // pixels reading them show the ground as computing it does; turned off,
-  // it keeps no sheets. Under a budget too small, the pages asked for
-  // beyond it drop and the ground computes itself.
-  const vt = rendering => ({ slots: rendering.terrain.vt_slots, pages: rendering.terrain.vt_pages, bakes: rendering.terrain.vt_bakes, missing: rendering.terrain.vt_missing, dropped: rendering.terrain.dropped_vt_pages });
-  const textured = await rendersUntil(rendering => rendering.terrain.vt_pages > 0 && rendering.terrain.vt_missing === 0 && rendering.terrain.vt_bakes === 0, "the view's pages bake");
-  assert.ok(textured.terrain.vt_slots >= textured.terrain.vt_pages && textured.terrain.dropped_vt_pages === 0, `pages bake into the sheets: ${JSON.stringify(vt(textured))}`);
-  const bakedView = await capture("virtual-texture");
-  await command("environment", { terrain: { samples_per_frame: 50_000_000, virtual_texture: false } });
-  const computed = await settle();
-  assert.ok(computed.terrain.vt_slots === 0 && computed.terrain.vt_pages === 0, `turned off, it keeps nothing: ${JSON.stringify(vt(computed))}`);
-  const computedView = await capture("virtual-texture-off");
-  const reading = await differentPixels(page, [bakedView, computedView]);
-  const seen = await differentPixels(page, [bakedView, computedView], { tolerance: 8 });
-  assert.ok(reading.changed > 0 && seen.changed < seen.total * 0.03, `pixels read the pages (${reading.changed} differ) and show the computed ground (${seen.changed} of ${seen.total} by more than 8)`);
-  await command("environment", { terrain: { samples_per_frame: 50_000_000, virtual_texture_pages: 4 } });
-  const scarce = await rendersUntil(rendering => rendering.terrain.dropped_vt_pages > 0, "pages beyond the budget drop");
-  assert.ok(scarce.terrain.vt_slots === 4 && scarce.terrain.vt_pages <= 4, `the budget bounds the pages: ${JSON.stringify(vt(scarce))}`);
-  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
-  await settle();
-  checks.push({ check: "virtual texture", pages: textured.terrain.vt_pages, slots: textured.terrain.vt_slots, read: reading.changed, differing: seen.changed, dropped: scarce.terrain.dropped_vt_pages });
 
   // The terrain control: development views change pixels, freezing keeps
   // the patches while the camera moves away.
@@ -537,178 +364,39 @@ try {
   await command("terrain", { view: "materials" });
   const materialView = await capture("view-materials");
   assert.ok((await differentPixels(page, [baseline, materialView])).changed > 10_000, "the materials view differs");
-  // Ground cover: the meadow's grass grows near the eye,
-  // counted a few frames late; turned off, none grows.
-  await command("camera", { position: [-12, 32, -8], target: [10, 30, 6], vertical_fov_radians: 1, near: 0.1, far: 5000 });
-  let grown;
-  for (let frame = 0; frame < 60; frame++) {
-    grown = (await command("render")).result.rendering;
-    if (grown.ground_cover.blades > 0) break;
-    // The tiles around the eye arrive from workers.
-    await new Promise(resolve => setTimeout(resolve, 25));
+  // The sky visibility map builds a band of rows a frame
+  // once the pinned level is resident; its view shows it unlit.
+  let sky;
+  for (let frame = 0; frame < 200; frame++) {
+    sky = (await command("render")).result.rendering;
+    if (sky.terrain.sky_maps === 2 && sky.terrain.sky_rows === 0) break;
+    if (sky.terrain.sky_maps < 2) await new Promise(resolve => setTimeout(resolve, 25));
   }
-  assert.ok(grown.ground_cover.blades > 0, `grass grows: ${JSON.stringify(grown)}`);
-  assert.equal(grown.ground_cover.dropped, 0);
-  const cover = (await command("inspect", { component: "GroundCover" })).result.value;
-  await command("environment", { ground_cover: { ...cover, enabled: false } });
-  let bare;
-  for (let frame = 0; frame < 8; frame++) bare = (await command("render")).result.rendering;
-  assert.equal(bare.ground_cover.blades, 0, "no blades once cover stops");
-  await command("environment", { ground_cover: cover });
-  checks.push({ check: "ground cover", blades: grown.ground_cover.blades });
-  // The wind blades and swaying crates bend in: its section
-  // reads back as set, and refuses speeds out of range.
-  const calm = (await command("inspect", { component: "Wind" })).result.value;
-  await command("environment", { wind: { velocity: [8, -2], gusts: 0.25 } });
-  assert.deepEqual((await command("inspect", { component: "Wind" })).result.value, { velocity: [8, -2], gusts: 0.25 });
-  const gale = await command("environment", { wind: { velocity: [80, 0], gusts: 0.25 } }, false);
-  assert.equal(gale.error.code, "invalid_environment", "winds past 40 m/s are refused");
-  assert.equal(gale.error.path, "$.wind.velocity");
-  await command("environment", { wind: calm });
-  checks.push({ check: "wind", calm });
-  // Occupancy reads back as set, and refuses a resolution out of range.
-  const occupancy = (await command("inspect", { component: "Occupancy" })).result.value;
-  await command("environment", { occupancy: { ...occupancy, strength: 0.5 } });
-  assert.equal((await command("inspect", { component: "Occupancy" })).result.value.strength, 0.5);
-  const coarse = await command("environment", { occupancy: { ...occupancy, resolution: 16 } }, false);
-  assert.equal(coarse.error.path, "$.occupancy.resolution");
-  await command("environment", { occupancy });
-  checks.push({ check: "occupancy", redraws: settled.occupancy.redraws });
-  // Contact shadows trace with the frame's effects: the
-  // blades and crates darken the sun's light where they reach; the section
-  // reads back as set and refuses rays out of range.
-  const contact = (await command("inspect", { component: "ContactShadows" })).result.value;
-  const traced = (await command("environment", { contact_shadows: contact })).result.rendering;
-  assert.equal(traced.contact_shadows.active, true, "contact shadows trace");
-  const withContact = await capture("contact-shadows");
-  await command("environment", { contact_shadows: { ...contact, enabled: false } });
-  const withoutContact = await capture("no-contact-shadows");
-  const contactPixels = await differentPixels(page, [withContact, withoutContact]);
-  assert.ok(contactPixels.changed > 100, `contact shadows shade ${contactPixels.changed} pixels`);
-  const reaching = await command("environment", { contact_shadows: { ...contact, length: 10 } }, false);
-  assert.equal(reaching.error.path, "$.contact_shadows.length");
-  await command("environment", { contact_shadows: contact });
-  checks.push({ check: "contact shadows", pixels: contactPixels.changed });
-  // Water stands in the bake's lakes: queries find its
-  // surface and depth, the overview draws chunks of it, it shades pixels
-  // and the section refuses water clearer than its range.
-  const grid = [];
-  for (let z = -480; z <= 480; z += 40) for (let x = -480; x <= 480; x += 40) grid.push([x, z]);
-  const lakes = [];
-  for (let i = 0; i < grid.length; i += 100) {
-    const samples = (await command("terrain_height", { points: grid.slice(i, i + 100) })).result.samples;
-    lakes.push(...samples.filter(sample => sample?.standing_water));
-  }
-  assert.ok(lakes.length > 0 && lakes.every(sample => sample.standing_water.depth > 0
-    && Math.abs(sample.standing_water.surface - sample.standing_water.depth - sample.height) < 1e-2),
-    `water stands in lakes: ${lakes.length}`);
-  const waterSettings = (await command("inspect", { component: "Water" })).result.value;
+  // One for the terrain and one for its surroundings.
+  assert.equal(sky.terrain.sky_maps, 2, `the sky maps build: ${JSON.stringify(sky)}`);
+  await command("terrain", { view: "sky" });
+  const skyView = await capture("view-sky");
+  assert.ok((await differentPixels(page, [baseline, skyView])).changed > 10_000, "the sky view differs");
+  checks.push({ check: "sky visibility", maps: sky.terrain.sky_maps });
+  await command("terrain", { view: "shaded" });
+  const frozen = await command("terrain", { freeze: true });
+  assert.ok(Array.isArray(frozen.result.frozen_at));
+  assert.deepEqual((await command("inspect", { component: "TerrainDebug" })).result.value.freeze, frozen.result.frozen_at);
+  await command("render");
+  const selected = async () => (await command("inspect", { component: "Terrains" })).result.value.patches;
+  const before = await selected();
+  await command("camera", { ...overview, position: [0, 900, 1400] });
+  const afar = (await command("render")).result.rendering;
+  assert.equal(await selected(), before, "a frozen eye keeps its patches");
+  await capture("frozen-from-afar");
+  await command("terrain", { freeze: false });
+  await command("render");
+  const moved = await selected();
+  assert.notEqual(moved, before, "unfrozen, patches follow the camera");
   await command("camera", overview);
-  const wet = (await command("environment", { water: waterSettings })).result.rendering;
-  assert.ok(wet.water.chunks > 0, `water draws: ${wet.water.chunks}`);
-  const withWater = await capture("water");
-  await command("environment", { water: { ...waterSettings, enabled: false } });
-  const withoutWater = await capture("no-water");
-  const waterPixels = await differentPixels(page, [withWater, withoutWater]);
-  assert.ok(waterPixels.changed > 1000, `water shades ${waterPixels.changed} pixels`);
-  const murky = await command("environment", { water: { ...waterSettings, clarity: 0 } }, false);
-  assert.equal(murky.error.path, "$.water.clarity");
-  await command("environment", { water: waterSettings });
-  checks.push({ check: "water", lake_samples: lakes.length, chunks: wet.water.chunks, pixels: waterPixels.changed });
-  // The sea stands at its level wherever the ground lies
-  // lower: queries sum the waves frames draw, which move with time and stay
-  // within their height, its sectors draw, and a camera just over the
-  // surface the CPU finds sees the sea where one just under it sees the
-  // ground below.
-  {
-    const still = (await command("inspect", { component: "Ocean" })).result.value;
-    assert.equal(still.enabled, false, "the sea is off by default");
-    const sea = { ...still, enabled: true, level: 40 };
-    await command("environment", { ocean: sea });
-    const shore = [];
-    for (let z = -440; z <= 440; z += 80) for (let x = -440; x <= 440; x += 80) shore.push([x, z]);
-    const tide = (await command("water_query", { points: shore, seconds: 12.5 })).result;
-    assert.ok(tide.level === 40 && tide.amplitude > 0.1 && tide.waves.length === sea.waves, `the sea's waves: ${JSON.stringify(tide).slice(0, 400)}`);
-    assert.ok(tide.samples.every(sample => Math.abs(sample.ocean.height - 40) <= tide.amplitude + 1e-2
-      && Math.abs(Math.hypot(...sample.ocean.normal) - 1) < 1e-3 && sample.ocean.normal[1] > 0.5),
-      `surfaces stay within the waves' height: ${JSON.stringify(tide.samples.slice(0, 3))}`);
-    const later = (await command("water_query", { points: shore, seconds: 13.5 })).result;
-    assert.ok(later.samples.some((sample, index) => Math.abs(sample.ocean.height - tide.samples[index].ocean.height) > 1e-2), "waves move");
-    const [depth, deepest] = tide.samples.map((sample, index) => [sample.depth ?? -1, shore[index]]).sort((a, b) => b[0] - a[0])[0];
-    assert.ok(depth > 8, `the sea stands deep somewhere: ${depth}`);
-    const surface = (await command("water_query", { points: [deepest] })).result.samples[0].ocean.height;
-    const down = offset => ({ position: [deepest[0], surface + offset, deepest[1]], target: [deepest[0], surface - 50, deepest[1] + 0.01], vertical_fov_radians: 0.2, near: 0.05, far: 2000 });
-    await command("camera", down(0.3));
-    const afloat = (await command("render")).result.rendering;
-    assert.ok(afloat.ocean.sectors > 0 && afloat.ocean.triangles > 0, `the sea draws: ${afloat.ocean.sectors} sectors`);
-    const above = await capture("sea-above");
-    await command("camera", down(-0.3));
-    const below = await capture("sea-below");
-    const crossing = await differentPixels(page, [above, below], { tolerance: 24 });
-    // Rivers carve their mouths deep under the sea, which
-    // darkens it from above, and the sky's state (how far its clouds have
-    // marched) sets how far the two views differ: between a quarter and half
-    // of the view changes across the surface, where a surface drawn off the
-    // queried one leaves both cameras on one side and the views alike.
-    assert.ok(crossing.changed > 0.15 * crossing.total, `the drawn surface lies where queries find it: ${crossing.changed} of ${crossing.total} pixels change across it`);
-    // Floating entities ride the sea each fixed tick at the
-    // tick's time, which frames present: the buoy stands on the surface
-    // queries find there.
-    await command("step", { ticks: 1 });
-    const buoy = (await command("inspect", { entity: "buoy", component: "Transform" })).result.entity.components.Transform;
-    const floating = (await command("inspect", { entity: "buoy", component: "Floating" })).result.entity.components.Floating;
-    assert.deepEqual(floating, { draft: 0.25, tilt: 1 }, `the buoy inspects as authored: ${JSON.stringify(floating)}`);
-    const swell = (await command("water_query", { points: [[400, -400]] })).result.samples[0].ocean;
-    assert.ok(Math.abs(buoy.translation[1] - (swell.height - 0.25)) < 2e-3, `the buoy floats: ${JSON.stringify(buoy)} on ${JSON.stringify(swell)}`);
-    // Under the sea its water veils everything: a camera a
-    // meter under the surface sees nothing like one a meter over it.
-    const level = (await command("water_query", { points: [deepest] })).result.samples[0].ocean.height;
-    const across = offset => ({ position: [deepest[0], level + offset, deepest[1]], target: [deepest[0] + 40, level + offset, deepest[1] + 40], vertical_fov_radians: 0.9, near: 0.05, far: 2000 });
-    await command("camera", across(1));
-    const dry = await capture("sea-afloat");
-    await command("camera", across(-1));
-    const diving = await capture("sea-diving");
-    const veiled = await differentPixels(page, [dry, diving], { tolerance: 24 });
-    assert.ok(veiled.changed > 0.5 * veiled.total, `under the sea, its water veils the view: ${veiled.changed} of ${veiled.total} pixels change`);
-    const sparse = await command("environment", { ocean: { ...sea, waves: 0 } }, false);
-    assert.equal(sparse.error.path, "$.ocean.waves");
-    await command("environment", { ocean: still });
-    await command("camera", overview);
-    checks.push({ check: "ocean", sectors: afloat.ocean.sectors, triangles: afloat.ocean.triangles, amplitude: tide.amplitude, depth, crossing: crossing.changed, buoy: buoy.translation[1], veiled: veiled.changed });
-  }
-  // Inside an interior's box the ground takes a tenth of the
-  // sky and sun: looking straight down at the box's edge, the half inside
-  // is far darker than the half outside.
-  {
-    const [edge] = (await command("terrain_height", { points: [[-280, 300]] })).result.samples;
-    await command("camera", { position: [-280, edge.height + 60, 300], target: [-280, edge.height, 300.01], vertical_fov_radians: 0.6, near: 0.5, far: 2000 });
-    const view = await capture("interior-edge");
-    const [first, second] = await page.evaluate(async png => {
-      const image = new Image();
-      image.src = `data:image/png;base64,${png}`;
-      await image.decode();
-      const canvas = document.createElement("canvas");
-      canvas.width = image.width; canvas.height = image.height;
-      const context = canvas.getContext("2d");
-      context.drawImage(image, 0, 0);
-      const { data, width, height } = context.getImageData(0, 0, image.width, image.height);
-      const sums = [0, 0], counts = [0, 0];
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          // Leave a band either side of the edge.
-          if (Math.abs(x - width / 2) < width * 0.1) continue;
-          const offset = (y * width + x) * 4, half = x < width / 2 ? 0 : 1;
-          sums[half] += 0.2126 * data[offset] + 0.7152 * data[offset + 1] + 0.0722 * data[offset + 2];
-          counts[half]++;
-        }
-      }
-      return [sums[0] / counts[0], sums[1] / counts[1]];
-    }, view);
-    const [dark, light] = first < second ? [first, second] : [second, first];
-    assert.ok(dark * 2 < light, `the interior darkens its ground: ${dark.toFixed(1)} against ${light.toFixed(1)}`);
-    await command("camera", overview);
-    checks.push({ check: "interior", inside: dark, outside: light });
-  }
+  await settle();
+  checks.push({ check: "terrain control", frozenPatches: before, visibleFromAfar: afar.terrain.patches, unfrozenPatches: moved });
+
   // Edits stand over a terrain's layers and bakes: the
   // ground moves where one reaches once its tiles regenerate, its id
   // repeated leaves it alone, undo takes it away and redo puts it back.
@@ -811,239 +499,6 @@ try {
     assert.equal(view.terrain.surface.placed.length, 2, "the inspector lists the authored objects");
     checks.push({ check: "authored placements", top: top.point[1], ground: ground.height });
   }
-  // Tracks press into the ground as deep as its materials
-  // let them, from the deform control and from deformers each tick: the
-  // log answers queries and presses them again where the map returns, they
-  // refill over the refill time, the budget drops the oldest, and the map
-  // shows them.
-  {
-    const spot = [-12, -6];
-    const settings = (await command("inspect", { component: "Deformation" })).result.value;
-    assert.equal(settings.enabled, true, "deformation is on by default");
-    const [ground] = await heights([spot]);
-    const close = { position: [spot[0] + 3, ground.height + 2.5, spot[1] + 3], target: [spot[0] - 1, ground.height, spot[1] - 1], vertical_fov_radians: 0.9, near: 0.05, far: 2000 };
-    await command("camera", close);
-    await settle();
-    const flat = await capture("tracks-before");
-    const rut = { from: [spot[0] - 3, spot[1] + 1], to: [spot[0] + 2, spot[1] - 1.5], radius: 0.3, depth: 0.2, flatness: 0.3 };
-    const pressed = (await command("deform", { ...rut, clear: true })).result;
-    assert.ok(pressed.enabled && pressed.stamps === 1, `a track presses: ${JSON.stringify(pressed)}`);
-    const query = async (points, seconds) => (await command("deformation_query", seconds === undefined ? { points } : { points, seconds })).result.samples;
-    const middle = [(rut.from[0] + rut.to[0]) / 2, (rut.from[1] + rut.to[1]) / 2];
-    const [inside, outside] = await query([middle, [spot[0] + 20, spot[1]]]);
-    assert.ok(inside.track > 0.15 && inside.deform > 0 && Math.abs(inside.depth - Math.min(inside.track, inside.deform)) < 1e-3,
-      `the log holds the track as deep as the meadow lets it: ${JSON.stringify(inside)}`);
-    assert.equal(outside.track, 0);
-    const tracked = await capture("tracks");
-    const trackPixels = await differentPixels(page, [flat, tracked]);
-    assert.ok(trackPixels.changed > 500, `the track shows: ${trackPixels.changed} pixels`);
-    // Far beyond the map and back: the log presses the track again.
-    await command("camera", { ...close, position: [600, 200, 600], target: [500, 100, 500] });
-    await command("camera", close);
-    await settle();
-    const returned = await capture("tracks-returned");
-    const replay = await differentPixels(page, [tracked, returned]);
-    assert.ok(replay.changed * 2 < trackPixels.changed, `the track persists: ${replay.changed} pixels differ`);
-    // The roller presses where it stands each tick, and inspects as authored.
-    const roller = (await command("inspect", { entity: "roller", component: "Deformer" })).result.entity.components.Deformer;
-    const authored = { radius: 0.5, depth: 0.2, contact: 0.5, flatness: 0.2 };
-    assert.deepEqual(roller, Object.fromEntries(Object.entries(authored).map(([key, value]) => [key, Math.fround(value)])), `the roller inspects as authored: ${JSON.stringify(roller)}`);
-    const counted = (await command("inspect", { component: "Tracks" })).result.value;
-    await command("step", { ticks: 3 });
-    const rolled = (await command("inspect", { component: "Tracks" })).result.value;
-    assert.ok(rolled.pressed >= counted.pressed + 3, `the roller presses each tick: ${JSON.stringify([counted, rolled])}`);
-    const [dimple] = await query([[10, 10]]);
-    assert.ok(dimple.track > 0.1, `the roller's dimple: ${JSON.stringify(dimple)}`);
-    // Two refill times after it was pressed, an e-squared of it is left.
-    await command("environment", { deformation: { ...settings, refill: 0.5 } });
-    const [later] = await query([middle], pressed.track.seconds + 1);
-    const left = inside.track * Math.exp(-2);
-    assert.ok(Math.abs(later.track - left) < 0.005, `the track refills: ${later.track} against ${left}`);
-    // The budget drops the oldest stamps.
-    await command("environment", { deformation: { ...settings, max_stamps: 1 } });
-    await command("deform", { from: [spot[0] + 5, spot[1]], radius: 0.2, depth: 0.1 });
-    const budgeted = (await command("inspect", { component: "Tracks" })).result.value;
-    assert.ok(budgeted.stamps === 1 && budgeted.dropped > 0, `the budget drops the oldest: ${JSON.stringify(budgeted)}`);
-    const coarse = await command("environment", { deformation: { ...settings, resolution: 100 } }, false);
-    assert.equal(coarse.error.path, "$.deformation.resolution");
-    const deep = await command("deform", { from: spot, radius: 0.2, depth: 20 }, false);
-    assert.equal(deep.error.path, "$.depth");
-    await command("environment", { deformation: settings });
-    await command("deform", { from: spot, radius: 0.01, depth: 0, clear: true });
-    await command("camera", overview);
-    checks.push({ check: "deformation", track: inside.track, depth: inside.depth, pixels: trackPixels.changed, replayed: replay.changed, dimple: dimple.track, refilled: later.track });
-  }
-  // Clouds are opt-in: the fixture has none until the
-  // environment control adds a layer; exact frames march the whole dome,
-  // which the sky shows; the view marches them too, lying
-  // over the ground from above the layer; no coverage marches nothing, and
-  // settings out of range are refused.
-  {
-    const up = { position: [0, 60, 0], target: [300, 400, 200], vertical_fov_radians: 1.0, near: 0.5, far: 4000 };
-    await command("camera", up);
-    const clear = await capture("sky-clear");
-    const layer = { enabled: true, coverage: 0.6, base: 600, thickness: 900, density: 1, wind: [8, 3], scale: 2000, seed: 3, shadows: 0.75, resolution: 1024, slices: 16 };
-    const clouded = (await command("environment", { clouds: layer })).result.rendering;
-    assert.equal(clouded.clouds.rows, 256, `exact frames march the whole dome: ${clouded.clouds.rows}`);
-    const view = (await command("inspect", { component: "Clouds" })).result.value;
-    assert.ok(Math.abs(view.coverage - 0.6) < 1e-6, `coverage reads back: ${view.coverage}`);
-    const cloudy = await capture("sky-clouds");
-    const cloudPixels = await differentPixels(page, [clear, cloudy]);
-    assert.ok(cloudPixels.changed > 20000, `clouds show in the sky: ${cloudPixels.changed} pixels`);
-    // Their shadows fall on the ground the sun lights.
-    await command("camera", { position: [0, 400, 1], target: [0, 30, 0], vertical_fov_radians: 1.0, near: 0.5, far: 4000 });
-    const shaded = await capture("cloud-shadows");
-    await command("environment", { clouds: { ...layer, shadows: 0 } });
-    const unshaded = await capture("no-cloud-shadows");
-    const shadowPixels = await differentPixels(page, [shaded, unshaded]);
-    assert.ok(shadowPixels.changed > 20000, `clouds shade the ground: ${shadowPixels.changed} pixels`);
-    // From above the layer the view's clouds lie over the ground below,
-    // which the dome cannot show; off, only the dome shows them.
-    await command("camera", { position: [0, 1900, 1], target: [400, 0, 300], vertical_fov_radians: 1.0, near: 0.5, far: 8000 });
-    const over = (await command("environment", { clouds: layer })).result.rendering;
-    assert.ok(over.clouds.view_blocks > 0, `the view marches its clouds: ${over.clouds.view_blocks}`);
-    const below = await capture("clouds-below");
-    const domed = (await command("environment", { clouds: { ...layer, in_view: false } })).result.rendering;
-    assert.equal(domed.clouds.view_blocks, 0, "off, the view marches none");
-    const domeOnly = await capture("clouds-dome-only");
-    const viewPixels = await differentPixels(page, [below, domeOnly]);
-    assert.ok(viewPixels.changed > 20000, `clouds lie below the camera: ${viewPixels.changed} pixels`);
-    const blockless = await command("environment", { clouds: { ...layer, view_block: 0 } }, false);
-    assert.equal(blockless.error.path, "$.clouds.view_block");
-    const none = (await command("environment", { clouds: { ...layer, coverage: 0 } })).result.rendering;
-    assert.equal(none.clouds.rows, 0, "no coverage marches nothing");
-    const odd = await command("environment", { clouds: { ...layer, resolution: 1000 } }, false);
-    assert.equal(odd.error.path, "$.clouds.resolution");
-    await command("environment", { clouds: { ...layer, enabled: false } });
-    await command("camera", overview);
-    checks.push({ check: "clouds", rows: clouded.clouds.rows, pixels: cloudPixels.changed, shadows: shadowPixels.changed, view_blocks: over.clouds.view_blocks, below: viewPixels.changed });
-  }
-  // The physically based sky is opt-in: its tables of the
-  // air build once, the sky-view again for each step of the sun, which the
-  // time of day moves; it replaces the authored sky, a dusk sky is redder
-  // than noon's, and settings out of range are refused.
-  {
-    await command("camera", { position: [0, 60, 0], target: [300, 200, 200], vertical_fov_radians: 1.0, near: 0.5, far: 4000 });
-    const authored = await capture("sky-authored");
-    const first = (await command("environment", { sky: {}, time_of_day: { hours: 12 } })).result.rendering;
-    assert.equal(first.sky.tables, 3, `the air's tables and the sky-view build: ${first.sky.tables}`);
-    assert.equal((await command("render")).result.rendering.sky.tables, 0, "unchanged, nothing builds");
-    const noon = await capture("sky-noon");
-    const replaced = await differentPixels(page, [authored, noon]);
-    assert.ok(replaced.changed > 20000, `the physical sky replaces the authored one: ${replaced.changed} pixels`);
-    const step = (await command("environment", { time_of_day: { hours: 19.3 } })).result.rendering;
-    assert.equal(step.sky.tables, 1, `the sun's step builds the sky-view alone: ${step.sky.tables}`);
-    const dusk = await capture("sky-dusk");
-    const [noonColor, duskColor] = [await skyColor(noon), await skyColor(dusk)];
-    assert.ok(duskColor[0] / Math.max(duskColor[2], 1) > noonColor[0] / Math.max(noonColor[2], 1),
-      `dusk is redder than noon: ${noonColor} ${duskColor}`);
-    const view = (await command("inspect", { component: "Sky" })).result.value;
-    assert.equal(view.enabled, true);
-    assert.equal((await command("environment", { sky: { mie_g: 2 } }, false)).error.path, "$.sky.mie_g");
-    assert.equal((await command("environment", { time_of_day: { hours: 25 } }, false)).error.path, "$.time_of_day.hours");
-    const off = (await command("environment", { sky: { enabled: false }, time_of_day: { enabled: false } })).result.rendering;
-    assert.equal(off.sky.tables, 0, "without the sky nothing builds");
-    await command("camera", overview);
-    checks.push({ check: "sky", noon: noonColor.map(Math.round), dusk: duskColor.map(Math.round), replaced: replaced.changed });
-  }
-  // Kept levels hold still casters sharper than the kept
-  // map around the camera on GPU-presented frames, every tile once built;
-  // with cascades out of reach, their shadows differ from the kept map's
-  // alone. The section refuses more levels than the engine keeps.
-  const kept = (await command("inspect", { component: "Shadows" })).result.value;
-  const reachless = { ...kept, near_distance: 1, distance: 400 };
-  const gpuCapture = async (name, shadows) => {
-    await command("environment", { shadows });
-    let rendering;
-    for (let frame = 0; frame < 40; frame++) {
-      rendering = (await command("present", { alpha: 1, gpu: true })).result.rendering;
-      if (frame > 8 && rendering.shadows.levels_pending === 0) break;
-    }
-    await command("capture", { alpha: 1, gpu: true });
-    const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
-    return { rendering, image: bytes.toString("base64") };
-  };
-  const leveled = await gpuCapture("kept-levels", { ...reachless, levels: 2, level_extent: 64 });
-  assert.equal(leveled.rendering.shadows.levels_pending, 0, `kept levels build: ${JSON.stringify(leveled.rendering)}`);
-  const unleveled = await gpuCapture("kept-map-only", { ...reachless, levels: 0 });
-  const levelPixels = await differentPixels(page, [leveled.image, unleveled.image]);
-  assert.ok(levelPixels.changed > 100, `kept levels change ${levelPixels.changed} pixels`);
-  const deep = await command("environment", { shadows: { ...kept, levels: 4 } }, false);
-  assert.equal(deep.error.path, "$.shadows.levels");
-  await command("environment", { shadows: kept });
-  checks.push({ check: "kept levels", pixels: levelPixels.changed });
-  await command("camera", overview);
-  // The sky visibility map builds a band of rows a frame
-  // once the pinned level is resident; its view shows it unlit.
-  let sky;
-  for (let frame = 0; frame < 200; frame++) {
-    sky = (await command("render")).result.rendering;
-    if (sky.terrain.sky_maps === 2 && sky.terrain.sky_rows === 0) break;
-    if (sky.terrain.sky_maps < 2) await new Promise(resolve => setTimeout(resolve, 25));
-  }
-  // One for the terrain and one for its surroundings.
-  assert.equal(sky.terrain.sky_maps, 2, `the sky maps build: ${JSON.stringify(sky)}`);
-  await command("terrain", { view: "sky" });
-  const skyView = await capture("view-sky");
-  assert.ok((await differentPixels(page, [baseline, skyView])).changed > 10_000, "the sky view differs");
-  checks.push({ check: "sky visibility", maps: sky.terrain.sky_maps });
-  await command("terrain", { view: "shaded" });
-  const frozen = await command("terrain", { freeze: true });
-  assert.ok(Array.isArray(frozen.result.frozen_at));
-  assert.deepEqual((await command("inspect", { component: "TerrainDebug" })).result.value.freeze, frozen.result.frozen_at);
-  await command("render");
-  const selected = async () => (await command("inspect", { component: "Terrains" })).result.value.patches;
-  const before = await selected();
-  await command("camera", { ...overview, position: [0, 900, 1400] });
-  const afar = (await command("render")).result.rendering;
-  assert.equal(await selected(), before, "a frozen eye keeps its patches");
-  await capture("frozen-from-afar");
-  await command("terrain", { freeze: false });
-  await command("render");
-  const moved = await selected();
-  assert.notEqual(moved, before, "unfrozen, patches follow the camera");
-  await command("camera", overview);
-  await settle();
-  checks.push({ check: "terrain control", frozenPatches: before, visibleFromAfar: afar.terrain.patches, unfrozenPatches: moved });
-
-  // Long shadows: a low sun behind the dome, with shadow maps
-  // reaching 60 m, shadows the plateau through the horizon map alone. A new
-  // sun rebuilds the map, an unchanged one keeps it.
-  const current = (await command("inspect", { component: "Environment" })).result.value;
-  const atmosphere = { ...current.atmosphere, sun_direction: [1, 0.22, 1] };
-  const shadows = { ...current.shadows, distance: 60, near_distance: 20 };
-  // The control renders a frame with the new sun.
-  const rebuilt = (await command("environment", { atmosphere, shadows })).result.rendering;
-  // The terrain's and its surroundings'.
-  assert.equal(rebuilt.terrain.horizons, 2);
-  assert.ok(rebuilt.terrain.horizon_builds >= 1, `a new sun rebuilds: ${JSON.stringify(rebuilt)}`);
-  assert.equal((await command("render")).result.rendering.terrain.horizon_builds, 0, "an unchanged sun keeps the map");
-  const above = { ...overview, position: [-60, 320, 220], target: [0, 30, 0] };
-  await command("camera", above);
-  await settle();
-  const long = await capture("horizon-shadows");
-  const flat = await command("environment", { terrain: { samples_per_frame: 50_000_000, sun_shadows: false } });
-  assert.equal(flat.result.rendering.terrain.horizons, 0);
-  await settle();
-  const short = await capture("map-shadows-only");
-  const lengthened = await differentPixels(page, [long, short]);
-  assert.ok(lengthened.changed > 20_000, `the dome's long shadow covers ${lengthened.changed} pixels`);
-  checks.push({ check: "horizon shadows", builds: rebuilt.terrain.horizon_builds, pixels: lengthened.changed });
-
-  // Aerial perspective: thick air from the eye hazes the
-  // terrain; none leaves it as it was.
-  await command("environment", { terrain: { samples_per_frame: 50_000_000 }, atmosphere: { ...atmosphere, aerial_start: 0, aerial_density: 0 } });
-  await settle();
-  const clear = await capture("no-air");
-  await command("environment", { atmosphere: { ...atmosphere, aerial_start: 0, aerial_density: 0.004 } });
-  await settle();
-  const hazed = await capture("thick-air");
-  const air = await differentPixels(page, [clear, hazed]);
-  assert.ok(air.changed > 100_000, `air hazes ${air.changed} pixels`);
-  await command("environment", { atmosphere: current.atmosphere, shadows: current.shadows });
-  await command("camera", overview);
-  await settle();
-  checks.push({ check: "aerial perspective", pixels: air.changed });
 
   // While the view wants nothing, workers generate the
   // terrain a camera at a place a game names wants into memory, with no
@@ -1052,7 +507,7 @@ try {
   const named = structuredClone(fixture);
   named.entities.push({ id: "spawn-point", prefetch: {}, transform: { translation: spawnPoint } });
   await scene.reload(command, named);
-  await command("environment", { terrain: { samples_per_frame: 50_000_000, idle_reach: 0 } });
+  await command("environment", { terrain: { ...fast, idle_reach: 0 } });
   await command("camera", overview);
   await settle();
   const prefetch = (await command("inspect", { entity: "spawn-point", component: "TerrainPrefetch" })).result.entity.components.TerrainPrefetch;
@@ -1072,71 +527,8 @@ try {
   await settle();
   checks.push({ check: "prefetch", cached: stored.cached_tiles, bytes: stored.cached_bytes, restored: sent.restored_tiles - stored.restored_tiles });
 
-  // An ETR1 file of the same layers streams by byte range and matches; the
-  // bake reads the heightmap beside the scene, as the page does.
-  await writeFile(source, JSON.stringify(fixture));
-  execFileSync((await tools).terrain_bake, [source, "ground", `${folder}ground.etr`], { stdio: "inherit" });
-  const generated = await heights([[10, -7], [-200, 150], [300, -310]]);
-  const filed = structuredClone(fixture);
-  filed.entities[1].terrain = { origin: terrain.origin, file: "terrain-smoke/ground.etr" };
-  await scene.reload(command, filed);
-  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
-  await command("camera", overview);
-  let streamed;
-  for (let attempt = 0; attempt < 60; attempt++) {
-    streamed = (await command("render")).result.rendering;
-    if (streamed.terrain.tiles > 0 && streamed.terrain.loading_tiles === 0 && streamed.terrain.fallback_patches === 0) break;
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  assert.equal(streamed.terrain.loading_tiles, 0, "file tiles arrive");
-  const read = await heights([[10, -7], [-200, 150], [300, -310]]);
-  for (const [index, sample] of read.entries()) {
-    assert.ok(sample && generated[index], `point ${index} resident from both`);
-    if (sample.level === generated[index].level) {
-      assert.ok(Math.abs(sample.height - generated[index].height) < 2e-3, `file height ${sample.height} vs ${generated[index].height}`);
-    }
-  }
-  checks.push({ check: "ETR1 file streaming", tiles: streamed.terrain.tiles });
-
-  // Running frames capture the probe's faces with terrain in them.
-  await command("resume");
-  let probes;
-  for (let attempt = 0; attempt < 50 && !(probes?.reflection_probes?.ready > 0); attempt++) {
-    await new Promise(resolve => setTimeout(resolve, 200));
-    probes = (await command("status")).result.rendering;
-  }
-  await command("pause");
-  assert.ok(probes.reflection_probes.ready > 0, `probe captured: ${JSON.stringify(probes)}`);
-  checks.push({ check: "probe captures", probes: probes.reflection_probes.ready });
-
-  // The import tool reads the dome as a RAW heightmap of its
-  // own, centered on its middle without detail noise, and the scene it
-  // writes loads with the dome's summit, its source and its attribution.
-  execFileSync((await tools).terrain_import, [
-    "--out", scenes, "--id", "terrain-smoke-import", "--size", "1024", "--extent", "128,128", "--range", "0,200",
-    "--detail", "0", "--attribution", "smoke fixture", `${folder}dome.r16`], { stdio: "inherit" });
-  const report = JSON.parse(await readFile(`${scenes}terrain-smoke-import/import.json`, "utf8"));
-  assert.ok(report.samples === 513 && Math.abs(report.highest - 200) < 1e-6 && report.filled_gaps > 0, `the import resamples and fills: ${JSON.stringify(report)}`);
-  // Reloads keep the scene's ID.
-  const imported = { ...JSON.parse(await readFile(`${scenes}terrain-smoke-import.scene.json`, "utf8")), id: fixture.id };
-  await scene.reload(command, imported);
-  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
-  await command("camera", overview);
-  await settle();
-  const [summit] = await heights([[0, 0]]);
-  assert.ok(summit && Math.abs(summit.height - 200) < 0.01, `the imported summit stands 200 m high: ${JSON.stringify(summit)}`);
-  const importedView = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
-  const importedMap = importedView.terrain.layers[0].heightmap;
-  assert.ok(importedMap.attribution === "smoke fixture" && importedMap.source.includes("dome.r16"), `the layer keeps its source and credit: ${JSON.stringify(importedMap)}`);
-  assert.equal(importedView.terrain.layers.length, 2, "without detail, the import and its rivers");
-  checks.push({ check: "import", samples: report.samples, summit: summit.height, filled: report.filled_gaps });
-
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ ok: true, checks }));
 } finally {
-  await browser.close();
-  await rm(folder, { recursive: true, force: true });
-  await rm(source, { force: true });
-  await rm(`${scenes}terrain-smoke-import`, { recursive: true, force: true });
-  await rm(`${scenes}terrain-smoke-import.scene.json`, { force: true });
+  await close();
 }

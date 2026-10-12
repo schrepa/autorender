@@ -1,10 +1,13 @@
 //! What the smokes check of each engine feature: every environment
 //! section, inspector and development op, whether frame stats report the
-//! section, and which smokes name each in their code (a comment naming one
-//! checks nothing). `cargo xtask schema` writes it as
-//! web/src/generated/coverage.json; lint keeps it current, so a gap shows
-//! where agents and reviewers look.
+//! section, and which smokes name each in their code by the syntax that
+//! uses it ([`Claims`]): a comment or a message naming one checks nothing.
+//! `cargo xtask schema` writes it as web/src/generated/coverage.json; lint
+//! keeps it current, so a gap shows where agents and reviewers look. What
+//! the checks actually sent when they ran, `cargo xtask smoke` records
+//! beside it.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -21,28 +24,19 @@ pub fn environment_sections() -> &'static [(&'static str, &'static str)] {
     engine::environment_sections!(section_names)
 }
 
+/// The coverage file: each section, inspector and op with the smokes whose
+/// code claims it, as JSON.
 pub fn coverage(root: &Path, protocol: &Value, stats: &Value) -> Result<String, String> {
     let sections = environment_sections();
-    // What a smoke's comments mention it does not check.
-    let smokes: Vec<(String, String)> = crate::smoke::scripts(root)?
+    let smokes: Vec<(String, Claims)> = crate::smoke::scripts(root)?
         .into_iter()
-        .map(|(name, _, source)| (name, uncommented(&source)))
+        .map(|(name, _, source)| (name, Claims::of(&source)))
         .collect();
-    // Smokes naming `word` whole, or `"word"` quoted.
-    let naming = |word: &str, quoted: bool| -> Vec<String> {
+    // The smokes whose claims of one kind (`kind`) hold `word`.
+    let naming = |kind: fn(&Claims) -> &BTreeSet<String>, word: &str| -> Vec<String> {
         smokes
             .iter()
-            .filter(|(_, text)| {
-                if quoted {
-                    return text.contains(&format!("\"{word}\""));
-                }
-                text.match_indices(word).any(|(at, _)| {
-                    let before = text[..at].chars().next_back();
-                    let after = text[at + word.len()..].chars().next();
-                    let part = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-                    !part(before) && !part(after)
-                })
-            })
+            .filter(|(_, claims)| kind(claims).contains(word))
             .map(|(name, _)| name.clone())
             .collect()
     };
@@ -65,7 +59,7 @@ pub fn coverage(root: &Path, protocol: &Value, stats: &Value) -> Result<String, 
         .filter(|ty| !section_types.contains(&ty["name"].as_str().unwrap_or_default()))
         .map(|ty| {
             let name = ty["name"].as_str().unwrap_or_default();
-            json!({"inspector": name, "kind": ty["kind"], "smokes": naming(name, true)})
+            json!({"inspector": name, "kind": ty["kind"], "smokes": naming(|claims| &claims.inspectors, name)})
         })
         .collect();
     let features: Vec<Value> = sections
@@ -75,7 +69,7 @@ pub fn coverage(root: &Path, protocol: &Value, stats: &Value) -> Result<String, 
                 "section": key,
                 "inspector": name,
                 "stats": reported(key),
-                "smokes": naming(key, false),
+                "smokes": naming(|claims| &claims.properties, key),
             })
         })
         .collect();
@@ -84,7 +78,7 @@ pub fn coverage(root: &Path, protocol: &Value, stats: &Value) -> Result<String, 
         .flat_map(|kind| protocol[kind].as_array().cloned().unwrap_or_default())
         .map(|op| {
             let op = op.as_str().unwrap_or_default().to_owned();
-            json!({"op": op, "smokes": naming(&op, true)})
+            json!({"op": op, "smokes": naming(|claims| &claims.ops, &op)})
         })
         .collect();
     Ok(serde_json::to_string_pretty(&json!({
@@ -126,12 +120,169 @@ pub fn check(root: &Path) -> Result<(), String> {
         unchecked.join(", ")
     ))
 }
-/// JavaScript `source` without its comments: strings, template literals
-/// (their `${}` holes included) and regular expressions stay as written,
-/// and each comment leaves a space (a line comment its line's end).
-fn uncommented(source: &str) -> String {
+/// What a smoke's code claims to check, by the syntax that uses each name:
+/// a word in a comment, a message or any other string claims nothing.
+#[derive(Debug, Default)]
+pub struct Claims {
+    /// Ops: strings a plain function call takes first (`command("render"`,
+    /// `cli("capture"`) or an `op` field holds (`op: "status"`).
+    pub ops: BTreeSet<String>,
+    /// Inspectors: strings a `component` field holds or a call of an
+    /// `inspect…` function takes (`inspect("player", "Transform")`).
+    pub inspectors: BTreeSet<String>,
+    /// Section keys, among other names: names used as properties
+    /// (`terrain:`, `.terrain`, `{ terrain }`).
+    pub properties: BTreeSet<String>,
+}
+
+impl Claims {
+    /// The claims of JavaScript `source`.
+    pub fn of(source: &str) -> Self {
+        // Both strippings keep every character but the comments' in place,
+        // so a position in one is the same position in the other.
+        let code: Vec<char> = stripped(source, true).chars().collect();
+        let bare: Vec<char> = stripped(source, false).chars().collect();
+        assert_eq!(code.len(), bare.len(), "strippings keep positions");
+        let mut claims = Self::default();
+        // Without their contents, the strings' quotes pair up in order.
+        let mut open: Option<(usize, char)> = None;
+        for (at, &c) in bare.iter().enumerate() {
+            if c != '"' && c != '\'' {
+                continue;
+            }
+            match open {
+                Some((start, quote)) if quote == c => {
+                    open = None;
+                    let value: String = code[start + 1..at].iter().collect();
+                    let field = field_before(&bare, start);
+                    if field == Some("op") || first_argument(&bare, start) {
+                        claims.ops.insert(value.clone());
+                    }
+                    let inspecting = enclosing_call(&bare, start)
+                        .is_some_and(|name| name.starts_with("inspect"));
+                    if field == Some("component") || inspecting {
+                        claims.inspectors.insert(value);
+                    }
+                }
+                Some(_) => {}
+                None => open = Some((at, c)),
+            }
+        }
+        let mut at = 0;
+        while at < bare.len() {
+            if !is_name(bare[at]) {
+                at += 1;
+                continue;
+            }
+            let end = (at..bare.len())
+                .find(|&end| !is_name(bare[end]))
+                .unwrap_or(bare.len());
+            let before = previous(&bare, at).map(|(_, c)| c);
+            let after = (end..bare.len()).find(|&next| !bare[next].is_whitespace());
+            let after_char = after.map(|next| bare[next]);
+            let key =
+                after_char == Some(':') && after.and_then(|next| bare.get(next + 1)) != Some(&':');
+            let member = before == Some('.');
+            let shorthand =
+                matches!(before, Some('{' | ',')) && matches!(after_char, Some('}' | ','));
+            if (key || member || shorthand) && !bare[at].is_ascii_digit() {
+                claims.properties.insert(bare[at..end].iter().collect());
+            }
+            at = end;
+        }
+        claims
+    }
+}
+
+/// Whether `c` can be part of a JavaScript name.
+fn is_name(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '$'
+}
+
+/// The last character before `at` that is not white space, and where.
+fn previous(code: &[char], at: usize) -> Option<(usize, char)> {
+    (0..at)
+        .rev()
+        .find(|&before| !code[before].is_whitespace())
+        .map(|before| (before, code[before]))
+}
+
+/// The name that ends where the white space before `end` starts, and where
+/// it starts.
+fn name_before(code: &[char], end: usize) -> Option<(usize, String)> {
+    let (last, c) = previous(code, end)?;
+    if !is_name(c) {
+        return None;
+    }
+    let start = (0..=last)
+        .rev()
+        .take_while(|&at| is_name(code[at]))
+        .last()?;
+    Some((start, code[start..=last].iter().collect()))
+}
+
+/// The field a value at `at` is given to (`op` in `op: "status"`).
+fn field_before(code: &[char], at: usize) -> Option<&'static str> {
+    let (colon, c) = previous(code, at)?;
+    if c != ':' {
+        return None;
+    }
+    let (_, name) = name_before(code, colon)?;
+    ["op", "component"].into_iter().find(|field| *field == name)
+}
+
+/// Whether the value at `at` is the first argument of a plain function
+/// call: `command("render"`, not a method's (`text.includes("render"`).
+fn first_argument(code: &[char], at: usize) -> bool {
+    match previous(code, at) {
+        Some((paren, '(')) => plain_call(code, paren).is_some(),
+        _ => false,
+    }
+}
+
+/// The name of the plain function whose call's parenthesis is at `paren`.
+fn plain_call(code: &[char], paren: usize) -> Option<String> {
+    const KEYWORDS: [&str; 9] = [
+        "if", "while", "for", "switch", "return", "catch", "function", "typeof", "await",
+    ];
+    let (start, name) = name_before(code, paren)?;
+    let method = previous(code, start).is_some_and(|(_, c)| c == '.');
+    (!method && !KEYWORDS.contains(&name.as_str())).then_some(name)
+}
+
+/// The plain function whose call's arguments hold the value at `at`.
+fn enclosing_call(code: &[char], at: usize) -> Option<String> {
+    let mut depth = 0usize;
+    for before in (0..at).rev() {
+        match code[before] {
+            ')' | ']' | '}' => depth += 1,
+            '[' | '{' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+            }
+            '(' => {
+                if depth == 0 {
+                    return plain_call(code, before);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// JavaScript `source` without its comments, each of which leaves a space
+/// (a line comment its line's end). Strings, template literals' text and
+/// regular expressions stay as written with `keep`; without it each of
+/// their characters becomes a space between their delimiters, which stay.
+fn stripped(source: &str, keep: bool) -> String {
     let chars: Vec<char> = source.chars().collect();
     let mut out = String::with_capacity(source.len());
+    // A character of a string's, a template's or a regular expression's text.
+    let text = |c: char| if keep { c } else { ' ' };
     // For each open template literal hole, the brace depth it opened at.
     let mut holes: Vec<usize> = Vec::new();
     let mut depth = 0usize;
@@ -142,24 +293,27 @@ fn uncommented(source: &str) -> String {
         let c = chars[at];
         let next = chars.get(at + 1).copied();
         if template {
-            out.push(c);
             at += 1;
             match c {
                 '\\' => {
+                    out.push(text(c));
                     if let Some(escaped) = next {
-                        out.push(escaped);
+                        out.push(text(escaped));
                         at += 1;
                     }
                 }
-                '`' => template = false,
+                '`' => {
+                    out.push(c);
+                    template = false;
+                }
                 '$' if next == Some('{') => {
-                    out.push('{');
+                    out.push_str("${");
                     at += 1;
                     holes.push(depth);
                     depth += 1;
                     template = false;
                 }
-                _ => {}
+                _ => out.push(text(c)),
             }
             continue;
         }
@@ -183,10 +337,10 @@ fn uncommented(source: &str) -> String {
                 at += 1;
                 while at < chars.len() && chars[at] != c && chars[at] != '\n' {
                     if chars[at] == '\\' && at + 1 < chars.len() {
-                        out.push(chars[at]);
+                        out.push(text(chars[at]));
                         at += 1;
                     }
-                    out.push(chars[at]);
+                    out.push(text(chars[at]));
                     at += 1;
                 }
                 if at < chars.len() && chars[at] == c {
@@ -207,17 +361,25 @@ fn uncommented(source: &str) -> String {
                 let mut class = false;
                 while at < chars.len() && chars[at] != '\n' {
                     let inside = chars[at];
-                    out.push(inside);
                     at += 1;
                     match inside {
                         '\\' if at < chars.len() => {
-                            out.push(chars[at]);
+                            out.push(text(inside));
+                            out.push(text(chars[at]));
                             at += 1;
                         }
-                        '[' => class = true,
-                        ']' => class = false,
-                        '/' if !class => break,
-                        _ => {}
+                        '/' if !class => {
+                            out.push(inside);
+                            break;
+                        }
+                        _ => {
+                            class = match inside {
+                                '[' => true,
+                                ']' => false,
+                                _ => class,
+                            };
+                            out.push(text(inside));
+                        }
                     }
                 }
             }

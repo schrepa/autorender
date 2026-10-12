@@ -51,6 +51,11 @@ try {
   await command("render");
   await command("describe", { name: "Collider" });
   await command("describe", { name: "CollisionWorld" });
+  // The world's state inspects: the fixture's colliders, all of them valid
+  // and within the budget, in a built hierarchy.
+  const world = (await command("inspect", { component: "CollisionWorld" })).result.value;
+  assert.ok(world.complete && world.colliders > 0 && world.invalid_colliders === 0 && world.overflow_colliders === 0 && world.bvh_nodes > 0,
+    `the collision world inspects: ${JSON.stringify(world)}`);
   const volume = await inspect("player", "Collider");
   assert.ok(volume);
   const before = await state();

@@ -2,6 +2,7 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { recordSent } from "./exercised.mjs";
 import { artifacts, commander, sceneUrl, differentPixels, launch, near, openPaused, protocol, routedScene } from "./harness.mjs";
 
 const url = sceneUrl(process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
@@ -109,6 +110,8 @@ try {
     canvas.style.cssText = "position:fixed;left:-10000px;top:0;width:320px;height:240px";
     document.body.append(canvas);
     let game;
+    // What it sends the game, which the check records outside.
+    const sent = [];
     try {
       // The fixture references no files.
       game = await StressGame.create_scene(canvas, JSON.stringify(fixture), new SceneFileSet(), "");
@@ -117,6 +120,7 @@ try {
       game.set_tick_pipelining(false);
       // No frame loop runs: the game is paused for every command.
       const request = command => {
+        sent.push(command);
         const reply = JSON.parse(game.dev_command(JSON.stringify({ version: protocolVersion, ...command }), 320, 240, true));
         if (!reply.ok) throw Object.assign(new Error("a command failed"), { reply });
         return reply;
@@ -135,13 +139,14 @@ try {
       game.suspend();
       frame(5000);
       const resumed = state();
-      return { before, afterTick, halfTick, resumed };
+      return { before, afterTick, halfTick, resumed, sent };
     } catch (error) {
       // A failed command is the check's failure, asserted outside.
-      if (error.reply) return { failed: error.reply };
+      if (error.reply) return { failed: error.reply, sent };
       throw error;
     } finally { game?.free(); canvas.remove(); }
   }, { moduleUrl: [...bindingUrls][0], fixture, protocolVersion: protocol.version });
+  for (const request of ordinaryFrames.sent) recordSent(request);
   assert.equal(ordinaryFrames.failed, undefined, `a command failed: ${JSON.stringify(ordinaryFrames.failed)}`);
   assert.equal(ordinaryFrames.before.observation.tick, "0");
   assert.equal(ordinaryFrames.afterTick.observation.tick, "1");
@@ -200,6 +205,8 @@ try {
   await presentedMatches("accessory", after.childGlobal.matrix, "focus loss resets inherited history");
   const movedAgain = await moveOne();
   await command("present", { alpha: 0.5 });
+  recordSent({ op: "resume" });
+  recordSent({ op: "pause" });
   const [resumed, paused] = await page.evaluate(async () => [
     await window.__engineDev.request({ op: "resume" }),
     await window.__engineDev.request({ op: "pause" }),

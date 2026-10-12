@@ -12,6 +12,7 @@
  */
 // @ts-check
 import assert from "node:assert/strict";
+import { recordSent } from "./exercised.mjs";
 import { artifacts, commander, sceneUrl, launch, openPaused, routedScene } from "./harness.mjs";
 
 const url = sceneUrl();
@@ -65,7 +66,9 @@ async function streaming(section) {
 }
 /** The Transform of streamed entity `id` while it is loaded, else null. */
 async function loaded(id) {
-  const reply = await page.evaluate(request => window.__engineDev.request(request), { op: "inspect", entity: id, component: "Transform" });
+  const request = { op: "inspect", entity: id, component: "Transform" };
+  recordSent(request);
+  const reply = await page.evaluate(request => window.__engineDev.request(request), request);
   if (!reply.ok) assert.equal(reply.error.code, "unknown_entity", JSON.stringify(reply.error));
   return reply.ok ? reply.result.entity.components.Transform : null;
 }

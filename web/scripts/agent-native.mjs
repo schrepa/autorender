@@ -13,6 +13,7 @@ import { inflateSync } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { PANIC_PREFIX } from "../src/generated/host.ts";
 import { AgentError } from "./agent-protocol.mjs";
+import { recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
 
 // Sessions' captures stay under artifacts/agent/SESSION, as browser
@@ -179,6 +180,7 @@ export async function launchNativeSession({ program, args = [], session = random
   const aborted = () => { void close(); };
   signal?.addEventListener("abort", aborted, { once: true });
   function request(command) {
+    recordSent(command);
     if (panic && invalidated) return Promise.resolve(panicked());
     if (invalidated || closing) return Promise.reject(new AgentError("session_unavailable", "The native runtime is no longer available."));
     return new Promise((resolveReply, rejectReply) => {

@@ -15,7 +15,8 @@
  * Every check opens a browser or a native GPU host, so importing the
  * harness holds the machine's heavy-run lock for the check's life
  * (`heavy-run.mjs`). Checks build, run and write into the served workspace
- * (`workspace.mjs`).
+ * (`workspace.mjs`). What their commands send is recorded for the smoke
+ * runner (`exercised.mjs`).
  */
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";
@@ -26,6 +27,7 @@ import { constants, setPriority } from "node:os";
 import { basename, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { launchContext } from "./browser-launch.mjs";
+import { recordSent } from "./exercised.mjs";
 import { holdHeavyRun } from "./heavy-run.mjs";
 import { workspace, workspacePath } from "./workspace.mjs";
 
@@ -121,6 +123,7 @@ export async function launch({ width = 1200, height = 900, timeout = 30_000, arg
  * no command is ever repeated after it ran. */
 export function commander(page, { deadline = 30_000 } = {}) {
   return async function command(op, fields = {}, expectedOk = true) {
+    recordSent({ op, ...fields });
     const until = Date.now() + deadline;
     for (;;) {
       let timer;

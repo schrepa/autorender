@@ -66,8 +66,13 @@ async function cli(verb, fields = {}, expectOk = true) {
 async function sceneCommand(args, expectOk = true) {
   let stdout;
   let code = 0;
-  try { ({ stdout } = await executeFile((await xtask).xtask, ["scene", ...args], { cwd: workspace, windowsHide: true, timeout: 120_000, maxBuffer: 1024 * 1024 })); }
-  catch (error) { stdout = error.stdout; code = error.code; }
+  const program = (await xtask).xtask;
+  try { ({ stdout } = await executeFile(program, ["scene", ...args], { cwd: workspace, windowsHide: true, timeout: 120_000, maxBuffer: 1024 * 1024 })); }
+  catch (error) {
+    // Only a run that exited answers; one that did not start stops the check.
+    if (typeof error.stdout !== "string") throw error;
+    stdout = error.stdout; code = error.code;
+  }
   assert.equal(code === 0, expectOk, stdout);
   const response = JSON.parse(stdout.trim().split(/\r?\n/).at(-1));
   assert.equal(response.ok, expectOk, JSON.stringify(response));
@@ -157,6 +162,10 @@ try {
   }
   // The inspection holds every section the environment's schema names.
   const look = await cli("inspect", { component: "Environment" });
+  // The atmosphere inspects in its scene section's shape, as the
+  // environment holds it.
+  const atmosphere = await cli("inspect", { component: "Atmosphere" });
+  assert.deepEqual(atmosphere.result.value, look.result.value.atmosphere);
   const sections = (await cli("describe", { name: "Environment" })).result.descriptor.schema.properties;
   assert.deepEqual(Object.keys(look.result.value).sort(), Object.keys(sections).sort());
   const mesh = await cli("inspect", { entity: playerId, component: "Mesh3d" });

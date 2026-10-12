@@ -6,10 +6,16 @@
 //! build, run and write in this checkout (`ENGINE_WORKSPACE`). A run holds
 //! the machine's heavy-run lock throughout ([`crate::heavy`]); each check
 //! exits 0, 3 for a failed assertion or 1 for anything else that stopped
-//! it, and so does the run.
+//! it, and so does the run. What each check sent the engine is recorded
+//! (`web/scripts/exercised.mjs`) and compared with what its code claims
+//! ([`crate::coverage::Claims`]) in `target/smoke-coverage/report.json`.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use std::{fs, path::Path, process::Command};
+use std::{fs, process::Command};
+
+use serde_json::{Value, json};
 
 use crate::Failure;
 use crate::heavy::{HELD, HeavyRun};
@@ -42,6 +48,12 @@ pub fn scripts(root: &Path) -> Result<Vec<(String, String, String)>, String> {
     }
     scripts.sort();
     Ok(scripts)
+}
+
+/// Where a run records what each check sent: `NAME/` for each, as every
+/// process of the check writes it, and `report.json`.
+fn sent_folder(root: &Path) -> PathBuf {
+    root.join("target").join("smoke-coverage")
 }
 
 /// Every smoke check: its name and the first line of what it checks. A
@@ -129,10 +141,18 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
         println!("smoke {name}");
         let started = Instant::now();
         let mut command = Command::new("node");
+        let sent = sent_folder(root).join(name);
+        // A record left by an earlier run is not this one's.
+        if let Err(error) = fs::remove_dir_all(&sent)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(format!("cannot clear {}: {error}", sent.display()).into());
+        }
         command
             .arg(&script)
             .current_dir(root.join("web"))
             .env("ENGINE_WORKSPACE", root)
+            .env("ENGINE_SMOKE_SENT", &sent)
             .env(HELD.0, HELD.1);
         if let Some(server) = &server {
             command.env("DEMO_URL", &server.url);
@@ -171,6 +191,15 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
             }
         }
     }
+    let passed: Vec<&str> = results
+        .iter()
+        .filter(|(_, code, _)| *code == Some(0))
+        .map(|(name, _, _)| *name)
+        .collect();
+    let everything = all && passed.len() == names.len();
+    if let Err(error) = report_sent(root, &passed, everything) {
+        println!("No record of what the checks sent: {error}");
+    }
     if failed.is_empty() {
         return Ok(());
     }
@@ -184,4 +213,170 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
     } else {
         Err(message.into())
     }
+}
+
+/// What a check's processes sent, merged: ops, environment sections set
+/// and components or resources inspected.
+#[derive(Default)]
+struct Sent {
+    ops: BTreeSet<String>,
+    sections: BTreeSet<String>,
+    inspectors: BTreeSet<String>,
+}
+
+/// The records of what one check sent in `folder`, one a process.
+fn sent(folder: &Path) -> Result<Sent, String> {
+    let mut sent = Sent::default();
+    let entries = match fs::read_dir(folder) {
+        Ok(entries) => entries,
+        // A check that sent nothing left no record.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(sent),
+        Err(error) => return Err(format!("cannot read {}: {error}", folder.display())),
+    };
+    for entry in entries {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        let record = crate::measure::read_json(&path)?;
+        for (field, into) in [
+            ("ops", &mut sent.ops),
+            ("sections", &mut sent.sections),
+            ("inspectors", &mut sent.inspectors),
+        ] {
+            into.extend(
+                record[field]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned),
+            );
+        }
+    }
+    Ok(sent)
+}
+
+/// Compares what each check that passed (`passed`) sent with what its code
+/// claims (the coverage file's lists), and, when every check ran and
+/// passed (`everything`), what the engine offers with what no check sent:
+/// writes `target/smoke-coverage/report.json` and prints a summary. A
+/// section counts as sent when an environment control set it or its
+/// settings were inspected.
+fn report_sent(root: &Path, passed: &[&str], everything: bool) -> Result<(), String> {
+    let development = engine_dev::schemas::generated()?;
+    let offered: Value = serde_json::from_str(&crate::coverage::coverage(
+        root,
+        &development.summary,
+        &development.frame_stats,
+    )?)
+    .map_err(|error| format!("the coverage file is not JSON: {error}"))?;
+    let section_of: BTreeMap<&str, &str> = crate::coverage::environment_sections()
+        .iter()
+        .map(|&(key, settings)| (settings, key))
+        .collect();
+    let lists = [
+        ("ops", "op"),
+        ("sections", "section"),
+        ("inspectors", "inspector"),
+    ];
+    let mut checks = serde_json::Map::new();
+    let mut unconfirmed = Vec::new();
+    let mut union: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+    for name in passed {
+        let mut sent = sent(&sent_folder(root).join(name))?;
+        let inspected_sections: Vec<String> = sent
+            .inspectors
+            .iter()
+            .filter_map(|inspector| {
+                section_of
+                    .get(inspector.as_str())
+                    .map(|key| (*key).to_owned())
+            })
+            .collect();
+        sent.sections.extend(inspected_sections);
+        let mut claimed_unsent = Vec::new();
+        for (list, key) in lists {
+            let exercised = match list {
+                "ops" => &sent.ops,
+                "sections" => &sent.sections,
+                _ => &sent.inspectors,
+            };
+            union
+                .entry(list)
+                .or_default()
+                .extend(exercised.iter().cloned());
+            for entry in offered[list].as_array().into_iter().flatten() {
+                let item = entry[key].as_str().unwrap_or_default();
+                let claims = entry["smokes"]
+                    .as_array()
+                    .is_some_and(|smokes| smokes.iter().any(|smoke| smoke == name));
+                if claims && !exercised.contains(item) {
+                    claimed_unsent.push(format!("{key} {item}"));
+                }
+            }
+        }
+        if !claimed_unsent.is_empty() {
+            unconfirmed.push(format!("{name}: {}", claimed_unsent.join(", ")));
+        }
+        checks.insert(
+            (*name).to_owned(),
+            json!({
+                "ops": sent.ops,
+                "sections": sent.sections,
+                "inspectors": sent.inspectors,
+                "claimed_not_sent": claimed_unsent,
+            }),
+        );
+    }
+    let mut counts = Vec::new();
+    let mut never = Vec::new();
+    for (list, key) in lists {
+        let items: Vec<&str> = offered[list]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry[key].as_str())
+            .collect();
+        let exercised = union.get(list);
+        let reached = items
+            .iter()
+            .filter(|item| exercised.is_some_and(|set| set.contains(**item)))
+            .count();
+        counts.push(format!("{reached} of {} {list}", items.len()));
+        if everything {
+            never.extend(
+                items
+                    .iter()
+                    .filter(|item| !exercised.is_some_and(|set| set.contains(**item)))
+                    .map(|item| format!("{key} {item}")),
+            );
+        }
+    }
+    let report = json!({
+        "checks": checks,
+        "sent_by_none": if everything { json!(never) } else { Value::Null },
+    });
+    let path = sent_folder(root).join("report.json");
+    fs::create_dir_all(sent_folder(root)).map_err(|error| error.to_string())?;
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&report).expect("reports serialize") + "\n",
+    )
+    .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    if passed.is_empty() {
+        return Ok(());
+    }
+    println!(
+        "\nThe checks that passed sent {} ({}).",
+        counts.join(", "),
+        path.display()
+    );
+    if !unconfirmed.is_empty() {
+        println!("Named in a check's code but not sent when it ran:");
+        for line in &unconfirmed {
+            println!("  {line}");
+        }
+    }
+    if everything && !never.is_empty() {
+        println!("Sent by no check: {}.", never.join(", "));
+    }
+    Ok(())
 }

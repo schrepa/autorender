@@ -5,6 +5,7 @@ import { resolve, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgentError, loopbackUrl } from "./agent-protocol.mjs";
 import { launchContext } from "./browser-launch.mjs";
+import { recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
 
 /** How many pixels of two captures under artifacts/agent differ by more
@@ -112,6 +113,7 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
   listeners.push(() => signal?.removeEventListener("abort", aborted));
   async function requestBrowser(command) {
     if (invalidated || closing) throw new AgentError("session_unavailable", "The owned browser runtime is no longer available.");
+    recordSent(command);
     const response = await page.evaluate(({ expected, expectedBuild, command }) => {
       const api = window.__engineDev;
       if (!api || api.instance !== expected || (expectedBuild !== null && api.build !== expectedBuild)) {
