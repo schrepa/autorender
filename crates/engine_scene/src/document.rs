@@ -24,7 +24,7 @@ pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 pub struct SceneDocument {
     #[cfg_attr(
         feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub id: String,
     pub revision: u64,
@@ -255,7 +255,7 @@ impl SceneSurface {
 pub struct SceneMesh {
     #[cfg_attr(
         feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub id: String,
     pub source: MeshSource,
@@ -501,7 +501,7 @@ fn zero_uv(uv: &[f32; 2]) -> bool {
 pub struct ScenePrefab {
     #[cfg_attr(
         feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub id: String,
     #[cfg_attr(feature = "schema", schemars(length(max = 10_000)))]
@@ -529,22 +529,25 @@ macro_rules! scene_object {
             pub struct SceneObject {
                 #[cfg_attr(
                     feature = "schema",
-                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
                 )]
                 pub id: String = String::new() => any,
                 /// Optional display label, at most 128 UTF-8 bytes without control characters.
                 #[serde(default)]
-                #[cfg_attr(feature = "schema", schemars(length(max = 128)))]
+                #[cfg_attr(
+                    feature = "schema",
+                    schemars(length(max = crate::validation::MAX_NAME_BYTES))
+                )]
                 pub name: String = String::new() => any,
                 #[cfg_attr(
                     feature = "schema",
-                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
                 )]
                 #[serde(default, skip_serializing_if = "Option::is_none")]
                 pub mesh: Option<String> = None => any,
                 #[cfg_attr(
                     feature = "schema",
-                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
                 )]
                 #[serde(default, skip_serializing_if = "Option::is_none")]
                 pub material: Option<String> = None => any,
@@ -552,14 +555,14 @@ macro_rules! scene_object {
                 #[serde(default, skip_serializing_if = "Option::is_none")]
                 #[cfg_attr(
                     feature = "schema",
-                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
                 )]
                 pub parent: Option<String> = None => any,
                 /// Named prefab to expand below this transform-only instance root.
                 #[serde(default, skip_serializing_if = "Option::is_none")]
                 #[cfg_attr(
                     feature = "schema",
-                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
                 )]
                 pub prefab: Option<String> = None => any,
                 /// Plays an animation on its targets.
@@ -570,7 +573,7 @@ macro_rules! scene_object {
                 #[serde(default, skip_serializing_if = "Option::is_none")]
                 #[cfg_attr(
                     feature = "schema",
-                    schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
                 )]
                 pub skin: Option<String> = None => any,
                 $(

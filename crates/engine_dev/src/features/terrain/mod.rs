@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use super::EngineControl;
 use crate::inspect::Inspector;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::protocol::{bounds, stamp_rule};
+use crate::protocol::stamp_rule;
 use crate::views::TerrainDebugView;
 use crate::{Context, DevError, DevTools, InspectorDescriptor, InspectorKind};
 use controls::{TerrainEditing, edit_terrain};
@@ -316,7 +316,7 @@ pub struct TerrainEditControl {
     pub terrain: Option<String>,
     #[cfg_attr(
         not(target_arch = "wasm32"),
-        schemars(length(min = 1, max = bounds::MAX_EDIT_ID), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub id: String,
     pub center: [f64; 2],

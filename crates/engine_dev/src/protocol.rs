@@ -45,8 +45,6 @@ pub mod bounds {
     pub const TURN: Rule = Rule::Range(-1000.0, 1000.0);
     /// IDs a world change names at most, in each list.
     pub const MAX_CHANGES: usize = 256;
-    /// Bytes of a terrain edit's ID at most.
-    pub const MAX_EDIT_ID: usize = 64;
     /// Values a distribution request names at most, within the request's
     /// bytes (`MAX_REQUEST_BYTES`).
     pub const MAX_VALUES: usize = 1024;

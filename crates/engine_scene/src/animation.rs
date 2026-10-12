@@ -34,7 +34,7 @@ pub(crate) struct PreparedSkin {
 pub struct SceneAnimation {
     #[cfg_attr(
         feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub id: String,
     /// Optional display label.
@@ -129,7 +129,7 @@ fn is_zero(value: &f32) -> bool {
 pub struct SceneSkin {
     #[cfg_attr(
         feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub id: String,
     /// Joint entity IDs, resolved like animation targets.

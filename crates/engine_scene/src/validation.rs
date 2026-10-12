@@ -388,13 +388,7 @@ impl SceneDocument {
         )?;
         let skin_ids = unique_ids(self.skins.iter().map(|skin| skin.id.as_str()), "$.skins")?;
         for (index, animation) in self.animations.iter().enumerate() {
-            if animation.name.len() > 128 || animation.name.chars().any(char::is_control) {
-                return Err(SceneError::new(
-                    ErrorCode::InvalidName,
-                    format!("$.animations[{index}].name"),
-                    "names must be at most 128 UTF-8 bytes without control characters",
-                ));
-            }
+            display_name(&animation.name, &format!("$.animations[{index}].name"))?;
             for (target, id) in animation.targets.iter().enumerate() {
                 identifier(id, &format!("$.animations[{index}].targets[{target}]"))?;
             }
@@ -652,17 +646,32 @@ fn item_roots(entities: &[ExpandedObject], indices: &BTreeMap<&str, usize>) -> V
         .collect()
 }
 
+/// Checks authored ID `id` at `path`: engine_settings' ID rule, which every
+/// ID's schema states.
 pub(crate) fn identifier(id: &str, path: &str) -> Result<(), SceneError> {
-    if id.is_empty()
-        || id.len() > 64
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-    {
+    if engine_settings::is_id(id) {
+        return Ok(());
+    }
+    Err(SceneError::new(
+        ErrorCode::InvalidId,
+        path,
+        format!("IDs {}", engine_settings::Rule::Id.describe()),
+    ))
+}
+
+/// Bytes of an authored display name at most.
+pub(crate) const MAX_NAME_BYTES: usize = 128;
+
+/// Checks display name `name` at `path`: at most [`MAX_NAME_BYTES`] UTF-8
+/// bytes, without control characters.
+pub(crate) fn display_name(name: &str, path: &str) -> Result<(), SceneError> {
+    if name.len() > MAX_NAME_BYTES || name.chars().any(char::is_control) {
         return Err(SceneError::new(
-            ErrorCode::InvalidId,
+            ErrorCode::InvalidName,
             path,
-            "IDs must contain 1 to 64 ASCII letters, digits, underscores, hyphens or periods",
+            format!(
+                "names must be at most {MAX_NAME_BYTES} UTF-8 bytes without control characters"
+            ),
         ));
     }
     Ok(())

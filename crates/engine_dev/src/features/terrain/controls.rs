@@ -15,7 +15,6 @@ use serde_json::{Value, json};
 use crate::DevError;
 use crate::coordinate;
 use crate::features::feature;
-use crate::protocol::bounds::MAX_EDIT_ID;
 
 /// A terrain edit control.
 pub(super) enum TerrainEditing {
@@ -94,16 +93,14 @@ pub(super) fn edit_terrain(
             falloff,
             change,
         } => {
-            if id.is_empty()
-                || id.len() > MAX_EDIT_ID
-                || !id
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b"_-.".contains(&byte))
-            {
+            if !engine_settings::is_id(&id) {
                 return Err(DevError::new(
                     ErrorCode::InvalidRequest,
                     "$.id",
-                    format!("id must be 1 to {MAX_EDIT_ID} letters, digits, '_', '-' and '.'"),
+                    format!(
+                        "id must be 1 to {} letters, digits, '_', '-' and '.'",
+                        engine_settings::MAX_ID_BYTES
+                    ),
                 ));
             }
             let x = coordinate(center[0], "$.center[0]")?;

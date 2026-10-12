@@ -25,7 +25,7 @@ use crate::{SceneError, SceneSurface};
 pub struct SceneMaterial {
     #[cfg_attr(
         feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub id: String,
     pub color: [f32; 4],
@@ -193,7 +193,7 @@ impl From<&str> for SceneMap {
 pub struct SceneTextureMap {
     #[cfg_attr(
         feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

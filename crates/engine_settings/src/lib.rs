@@ -52,6 +52,23 @@ impl std::fmt::Display for InvalidSetting {
 
 impl std::error::Error for InvalidSetting {}
 
+/// Bytes an authored ID holds at most ([`Rule::Id`]).
+pub const MAX_ID_BYTES: usize = 64;
+
+/// The characters authored IDs consist of, as a JSON schema pattern
+/// ([`Rule::Id`]).
+pub const ID_PATTERN: &str = "^[A-Za-z0-9_.-]+$";
+
+/// Whether `text` is an authored ID: 1 to [`MAX_ID_BYTES`] ASCII letters,
+/// digits, underscores, hyphens or periods.
+pub fn is_id(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= MAX_ID_BYTES
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
+
 /// What values a setting accepts.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Rule {
@@ -76,6 +93,12 @@ pub enum Rule {
     /// A multiple of the first value from the second to the third;
     /// sanitizing rounds down to one.
     Multiple(f64, f64, f64),
+    /// An authored ID ([`is_id`]): strings.
+    Id,
+    /// A list of the first bound to the second values, both included:
+    /// lists, whose values keep their own types' rules; sanitizing keeps
+    /// the first values up to the second bound.
+    Count(f64, f64),
 }
 
 impl Rule {
@@ -115,6 +138,14 @@ impl Rule {
         Self::Multiple(step, min, max)
     }
 
+    pub const fn id() -> Self {
+        Self::Id
+    }
+
+    pub const fn count(min: f64, max: f64) -> Self {
+        Self::Count(min, max)
+    }
+
     /// The rule as an error states it.
     pub fn describe(self) -> String {
         match self {
@@ -129,6 +160,11 @@ impl Rule {
             Self::Multiple(step, min, max) => {
                 format!("must be a multiple of {step} in [{min}, {max}]")
             }
+            Self::Id => format!(
+                "must contain 1 to {MAX_ID_BYTES} ASCII letters, digits, underscores, hyphens or periods"
+            ),
+            Self::Count(min, max) if min > 0.0 => format!("must hold {min} to {max} values"),
+            Self::Count(_, max) => format!("must hold at most {max} values"),
         }
     }
 
@@ -176,6 +212,17 @@ impl Rule {
                 keywords.insert("multipleOf".into(), number(step));
                 keywords.insert("minimum".into(), number(min));
                 keywords.insert("maximum".into(), number(max));
+            }
+            Self::Id => {
+                keywords.insert("maxLength".into(), json!(MAX_ID_BYTES));
+                keywords.insert("minLength".into(), json!(1));
+                keywords.insert("pattern".into(), json!(ID_PATTERN));
+            }
+            Self::Count(min, max) => {
+                keywords.insert("maxItems".into(), json!(max as u64));
+                if min > 0.0 {
+                    keywords.insert("minItems".into(), json!(min as u64));
+                }
             }
         }
         keywords
@@ -253,11 +300,22 @@ pub mod rule {
     pub fn same(rule: Option<Rule>) -> Rule {
         rule.expect("the mirrored type declares the field")
     }
+
+    /// An authored ID ([`Rule::Id`]).
+    pub fn id() -> Rule {
+        Rule::Id
+    }
+
+    /// A list of `min` to `max` values ([`Rule::Count`]).
+    pub fn count(min: impl Bound, max: impl Bound) -> Rule {
+        Rule::Count(min.bound(), max.bound())
+    }
 }
 
-/// States `rule` in the schema of `field`, a property of `schema`: on each
-/// number of an array (of arrays), otherwise on the value. A bound on
-/// anything but numbers fails the schema's build.
+/// States `rule` in the schema of `field`, a property of `schema`: an ID's
+/// on the string and a count's on the list; any other on each number of an
+/// array (of arrays), otherwise on the value. A rule on a value of another
+/// kind fails the schema's build.
 #[cfg(feature = "schema")]
 pub fn state(schema: &mut schemars::Schema, field: &str, rule: Rule) {
     use serde_json::{Map, Value};
@@ -293,7 +351,32 @@ pub fn state(schema: &mut schemars::Schema, field: &str, rule: Rule) {
     else {
         panic!("settings field {field} has no schema property");
     };
-    let target = numbers(property, field);
+    let target = match rule {
+        // An ID bounds the string, a count the list, themselves.
+        Rule::Id => {
+            assert!(
+                has_type(property, "string"),
+                "{field}: ID rules apply to strings"
+            );
+            property
+        }
+        Rule::Count(..) => {
+            assert!(
+                has_type(property, "array"),
+                "{field}: count rules apply to lists"
+            );
+            property
+        }
+        Rule::Any
+        | Rule::Finite
+        | Rule::Range(..)
+        | Rule::AboveTo(..)
+        | Rule::Above(_)
+        | Rule::AtLeast(_)
+        | Rule::Budget
+        | Rule::PowerOfTwo(..)
+        | Rule::Multiple(..) => numbers(property, field),
+    };
     let whole = has_type(target, "integer");
     target.extend(rule.keywords(whole));
 }
@@ -375,6 +458,9 @@ impl Setting for f32 {
             Rule::Budget | Rule::PowerOfTwo(..) | Rule::Multiple(..) => {
                 panic!("{field}: whole-number rules apply to whole numbers")
             }
+            Rule::Id | Rule::Count(..) => {
+                panic!("{field}: ID and count rules apply to IDs and lists")
+            }
         };
         if keeps {
             Ok(())
@@ -398,7 +484,9 @@ impl Setting for f32 {
             | Rule::Above(_)
             | Rule::Budget
             | Rule::PowerOfTwo(..)
-            | Rule::Multiple(..) => self,
+            | Rule::Multiple(..)
+            | Rule::Id
+            | Rule::Count(..) => self,
         }
     }
 
@@ -419,6 +507,7 @@ fn whole_keeps(value: u64, rule: Rule) -> bool {
         Rule::Budget => value >= 1,
         Rule::PowerOfTwo(min, max) => within(min, max) && value.is_power_of_two(),
         Rule::Multiple(step, min, max) => within(min, max) && value.is_multiple_of(step as u64),
+        Rule::Id | Rule::Count(..) => panic!("ID and count rules apply to IDs and lists"),
     }
 }
 
@@ -436,6 +525,7 @@ fn whole_kept(value: u64, rule: Rule) -> u64 {
             let step = step as u64;
             (clamp(min, max) / step * step).max(min as u64)
         }
+        Rule::Id | Rule::Count(..) => value,
     }
 }
 
@@ -482,6 +572,9 @@ impl Setting for f64 {
             Rule::Budget | Rule::PowerOfTwo(..) | Rule::Multiple(..) => {
                 panic!("{field}: whole-number rules apply to whole numbers")
             }
+            Rule::Id | Rule::Count(..) => {
+                panic!("{field}: ID and count rules apply to IDs and lists")
+            }
         };
         if keeps {
             Ok(())
@@ -496,7 +589,26 @@ impl Setting for f64 {
 }
 
 impl Setting for bool {}
-impl Setting for String {}
+
+/// An authored ID keeps [`Rule::Id`]; other text takes `any`.
+impl Setting for String {
+    fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
+        match rule {
+            Rule::Any => Ok(()),
+            Rule::Id if is_id(self) => Ok(()),
+            Rule::Id => Err(broken(field, rule)),
+            Rule::Finite
+            | Rule::Range(..)
+            | Rule::AboveTo(..)
+            | Rule::Above(_)
+            | Rule::AtLeast(_)
+            | Rule::Budget
+            | Rule::PowerOfTwo(..)
+            | Rule::Multiple(..)
+            | Rule::Count(..) => panic!("{field}: text takes any or id"),
+        }
+    }
+}
 /// A world box, which its type's extra rules check (`any` here).
 impl Setting for (Vec3, Vec3) {}
 
@@ -547,9 +659,17 @@ impl<T: Setting, const N: usize> Setting for [T; N] {
     }
 }
 
-/// Each value of a list keeps the rule; an error names the value by index.
+/// A count bounds the list; any other rule each value of it, an error
+/// naming the value by index.
 impl<T: Setting> Setting for Vec<T> {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
+        if let Rule::Count(min, max) = rule {
+            return if (min as usize..=max as usize).contains(&self.len()) {
+                Ok(())
+            } else {
+                Err(broken(field, rule))
+            };
+        }
         for (index, value) in self.iter().enumerate() {
             value.check(field, rule).map_err(|invalid| {
                 let rest = invalid.field.strip_prefix(field).unwrap_or_default();
@@ -563,6 +683,11 @@ impl<T: Setting> Setting for Vec<T> {
     }
 
     fn kept(self, rule: Rule, _: Self) -> Self {
+        if let Rule::Count(_, max) = rule {
+            let mut kept = self;
+            kept.truncate(max as usize);
+            return kept;
+        }
         self.into_iter()
             .filter(Setting::usable)
             .map(|value| value.clone().kept(rule, value))
@@ -592,7 +717,8 @@ impl Setting for Vec3 {
 /// Declares a type once per field: `pub name: Type = default => rule(...)`,
 /// where the rule is one of [`rule`]'s (`any`, `finite`, `range(min, max)`,
 /// `above_to(min, max)`, `above(min)`, `at_least(min)`, `budget`,
-/// `power_of_two(min, max)`, `multiple(step, min, max)`, or
+/// `power_of_two(min, max)`, `multiple(step, min, max)`, `id` for an
+/// authored ID, `count(min, max)` for a list's length, or
 /// `same(Other::rule_of("field"))` for a field mirroring another type's). The
 /// caller derives what the type needs (the JSON schema included, which states
 /// the rules when the caller's `schema` feature is on). A type with rules

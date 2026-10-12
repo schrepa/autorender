@@ -39,7 +39,7 @@ settings! {
         /// ID of the projected material in this document.
         #[cfg_attr(
             feature = "schema",
-            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+            schemars(transform = engine_settings::stated(engine_settings::rule::id()))
         )]
         pub material: String = String::new() => any,
         /// How the decal combines with the surface it lies on.

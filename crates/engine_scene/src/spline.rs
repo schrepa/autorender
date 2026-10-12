@@ -29,13 +29,13 @@ pub struct SceneSpline {
     /// ID of the bent mesh in this document.
     #[cfg_attr(
         feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub mesh: String,
     /// ID of the material its chunks draw with in this document.
     #[cfg_attr(
         feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
     )]
     pub material: String,
 }

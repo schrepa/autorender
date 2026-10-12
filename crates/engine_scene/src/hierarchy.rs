@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::{MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix};
 
-use crate::validation::{identifier, reference, unique_ids};
+use crate::validation::{display_name, identifier, reference, unique_ids};
 use crate::{SceneDocument, SceneError, SceneObject, ScenePrefab};
 
 pub(crate) struct ExpandedObject {
@@ -252,13 +252,7 @@ fn validate_object(
     if let Some(parent) = &entity.parent {
         identifier(parent, &format!("{path}.parent"))?;
     }
-    if entity.name.len() > 128 || entity.name.chars().any(char::is_control) {
-        return Err(SceneError::new(
-            ErrorCode::InvalidName,
-            format!("{path}.name"),
-            "names must be at most 128 UTF-8 bytes without control characters",
-        ));
-    }
+    display_name(&entity.name, &format!("{path}.name"))?;
     let mut tags = BTreeSet::new();
     for (index, tag) in entity.tags.iter().enumerate() {
         let path = format!("{path}.tags[{index}]");
