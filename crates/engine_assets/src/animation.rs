@@ -300,8 +300,13 @@ impl AnimationChannel {
                     KeyInterpolation::CubicSpline => values[key * 3 + 1],
                 };
                 match self.property {
+                    AnimatedProperty::Translation => AnimationSample::Translation(value),
                     AnimatedProperty::Scale => AnimationSample::Scale(value),
-                    _ => AnimationSample::Translation(value),
+                    AnimatedProperty::Rotation => {
+                        unreachable!(
+                            "rotation channels hold quaternion keys (AnimationChannel::new)"
+                        )
+                    }
                 }
             }
             Keyframes::Rotations(values) => AnimationSample::Rotation(match self.interpolation {
