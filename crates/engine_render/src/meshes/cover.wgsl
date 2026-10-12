@@ -21,8 +21,8 @@ struct CoverFrame {
     wind: vec4<f32>,
 }
 
-@group(1) @binding(31) var<storage, read> cover_blades: array<CoverBlade>;
-@group(1) @binding(32) var<uniform> cover_frame: CoverFrame;
+@group(1) @binding(33) var<storage, read> cover_blades: array<CoverBlade>;
+@group(1) @binding(34) var<uniform> cover_frame: CoverFrame;
 
 // Segments along a blade; its strip has two vertices at each joint.
 const COVER_SEGMENTS: u32 = 4u;

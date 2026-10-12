@@ -300,23 +300,23 @@ tables! {
             sampler(6, "shadow_sampler", Comparison, F),
             // Receiver-plane lookups read four texels.
             sampler(7, "shadow_texels", NonFiltering, F),
-            texture(8, "refraction_source", Float, D2, F),
-            sampler(9, "refraction_sampler", Filtering, F),
-            texture(10, "environment_maps", Float, CubeArray, F),
-            sampler(11, "environment_sampler", Filtering, F),
-            read(12, "probe_words", F),
+            // The kept shadow levels, one layer each.
+            texture(8, "kept_levels", Depth, D2Array, F),
+            texture(9, "refraction_source", Float, D2, F),
+            sampler(10, "refraction_sampler", Filtering, F),
+            texture(11, "environment_maps", Float, CubeArray, F),
+            sampler(12, "environment_sampler", Filtering, F),
+            read(13, "probe_words", F),
             // Terrain's long sun shadows: each terrain's horizon
             // map, two texels of records per terrain, and the maps' sampler.
-            texture(13, "terrain_horizons", Float, D2Array, F),
-            texture(14, "terrain_horizon_records", Unfilterable, D2, F),
-            sampler(15, "terrain_horizon_sampler", Filtering, F),
+            texture(14, "terrain_horizons", Float, D2Array, F),
+            texture(15, "terrain_horizon_records", Unfilterable, D2, F),
+            sampler(16, "terrain_horizon_sampler", Filtering, F),
             // What placed objects cover around the camera: its
             // density, filtered, and the covers' tops and bottoms; the near map
             // in the first layer, the far one in the second.
-            texture(16, "occupancy_coverage", Float, D2Array, F),
-            texture(17, "occupancy_heights", Unfilterable, D2Array, F),
-            // The kept shadow levels, one layer each.
-            texture(18, "kept_levels", Depth, D2Array, F),
+            texture(17, "occupancy_coverage", Float, D2Array, F),
+            texture(18, "occupancy_heights", Unfilterable, D2Array, F),
             // Clouds' shadows: the eighth storage buffer the
             // terrain's lit fragments read (a uniform array read at each
             // fragment's own index is many times slower).
@@ -339,15 +339,15 @@ tables! {
             texture(5, "moving_shadows", Depth, D2, F),
             sampler(6, "shadow_sampler", Comparison, F),
             sampler(7, "shadow_texels", NonFiltering, F),
-            texture(10, "environment_maps", Float, CubeArray, F),
-            sampler(11, "environment_sampler", Filtering, F),
-            read(12, "probe_words", F),
-            texture(13, "terrain_horizons", Float, D2Array, F),
-            texture(14, "terrain_horizon_records", Unfilterable, D2, F),
-            sampler(15, "terrain_horizon_sampler", Filtering, F),
-            texture(16, "occupancy_coverage", Float, D2Array, F),
-            texture(17, "occupancy_heights", Unfilterable, D2Array, F),
-            texture(18, "kept_levels", Depth, D2Array, F),
+            texture(8, "kept_levels", Depth, D2Array, F),
+            texture(11, "environment_maps", Float, CubeArray, F),
+            sampler(12, "environment_sampler", Filtering, F),
+            read(13, "probe_words", F),
+            texture(14, "terrain_horizons", Float, D2Array, F),
+            texture(15, "terrain_horizon_records", Unfilterable, D2, F),
+            sampler(16, "terrain_horizon_sampler", Filtering, F),
+            texture(17, "occupancy_coverage", Float, D2Array, F),
+            texture(18, "occupancy_heights", Unfilterable, D2Array, F),
             read_of(19, "cloud_shadows", clouds::CLOUD_SHADOW_BYTES, F),
         ],
     };
@@ -381,7 +381,7 @@ tables! {
             read_of(0, "poses", POSE, V),
             read_of(1, "colors", COLOR, V),
             read_of(3, "palette", POSE, V),
-            read_of(12, "grounds", GROUND, V),
+            read_of(5, "grounds", GROUND, V),
         ],
     };
 
@@ -396,7 +396,7 @@ tables! {
             read_of(2, "previous_poses", POSE, V),
             read_of(3, "palette", POSE, V),
             read_of(4, "previous_palette", POSE, V),
-            read_of(12, "grounds", GROUND, V),
+            read_of(5, "grounds", GROUND, V),
         ],
     };
 
@@ -409,9 +409,9 @@ tables! {
             read_of(0, "poses", POSE, V),
             read_of(1, "colors", COLOR, V),
             read_of(2, "previous_poses", POSE, V),
-            read_of(5, "virtual_meshes", VIRTUAL_MESH, V),
-            read_of(6, "virtual_clusters", VIRTUAL_CLUSTER, V),
-            read_of(7, "virtual_pages", VIRTUAL_PAGE, V),
+            read_of(6, "virtual_meshes", VIRTUAL_MESH, V),
+            read_of(7, "virtual_clusters", VIRTUAL_CLUSTER, V),
+            read_of(8, "virtual_pages", VIRTUAL_PAGE, V),
         ],
     };
 
@@ -422,10 +422,10 @@ tables! {
         serves: [SHADER @ 2],
         bindings: &[
             read_of(0, "poses", POSE, V),
-            read_of(5, "virtual_meshes", VIRTUAL_MESH, V),
-            read_of(6, "virtual_clusters", VIRTUAL_CLUSTER, V),
-            read_of(7, "virtual_pages", VIRTUAL_PAGE, V),
-            dynamic_uniform(8, "visibility_draw", 16, V),
+            read_of(6, "virtual_meshes", VIRTUAL_MESH, V),
+            read_of(7, "virtual_clusters", VIRTUAL_CLUSTER, V),
+            read_of(8, "virtual_pages", VIRTUAL_PAGE, V),
+            dynamic_uniform(9, "visibility_draw", 16, V),
         ],
     };
 
@@ -438,13 +438,13 @@ tables! {
             read_of(0, "poses", POSE, F),
             read_of(1, "colors", COLOR, F),
             read_of(2, "previous_poses", POSE, F),
-            read_of(5, "virtual_meshes", VIRTUAL_MESH, F),
-            read_of(6, "virtual_clusters", VIRTUAL_CLUSTER, F),
-            read_of(7, "virtual_pages", VIRTUAL_PAGE, F),
-            dynamic_uniform(8, "visibility_draw", 16, VF),
-            read_of(9, "visible_clusters", 8, F),
-            texture(10, "visibility_ids", Uint, D2, VF),
-            read_of(11, "resolve_tiles", 4, V),
+            read_of(6, "virtual_meshes", VIRTUAL_MESH, F),
+            read_of(7, "virtual_clusters", VIRTUAL_CLUSTER, F),
+            read_of(8, "virtual_pages", VIRTUAL_PAGE, F),
+            dynamic_uniform(9, "visibility_draw", 16, VF),
+            read_of(10, "visible_clusters", 8, F),
+            texture(11, "visibility_ids", Uint, D2, VF),
+            read_of(12, "resolve_tiles", 4, V),
         ],
     };
 
@@ -467,8 +467,8 @@ tables! {
         serves: [SHADER @ 2],
         bindings: &[
             read(3, "palette", V),
-            read(8, "decal_records", VF),
-            texture(9, "decal_depth", Depth, D2, F),
+            read(13, "decal_records", VF),
+            texture(14, "decal_depth", Depth, D2, F),
         ],
     };
 
@@ -493,8 +493,8 @@ tables! {
         label: "engine/impostor-bake-layout",
         serves: [SHADER @ 2],
         bindings: &[
-            uniform_of(20, "impostor_bake", size_of::<ImpostorBakeUniform>(), VF),
-            texture(21, "impostor_shade", Depth, D2, F),
+            uniform_of(15, "impostor_bake", size_of::<ImpostorBakeUniform>(), VF),
+            texture(16, "impostor_shade", Depth, D2, F),
         ],
     };
 
@@ -754,9 +754,9 @@ tables! {
             // the normals' sampler.
             texture(30, "terrain_sky", Float, D2Array, F),
             // Runtime deformation's map.
-            read(37, "terrain_deformation", F),
+            read(31, "terrain_deformation", F),
             // Gathers of the control values (nearest).
-            sampler(50, "terrain_control_sampler", NonFiltering, F),
+            sampler(32, "terrain_control_sampler", NonFiltering, F),
         ],
     };
 
@@ -765,7 +765,7 @@ tables! {
     const TERRAIN_RESOLVE: Table = Table {
         label: "engine/terrain-resolve-layout",
         serves: [SHADER @ 2],
-        bindings: &[texture(62, "terrain_ids_texture", Uint, D2, F)],
+        bindings: &[texture(18, "terrain_ids_texture", Uint, D2, F)],
     };
 
     /// Group 2 of the runtime virtual texture's bakes: the
@@ -775,8 +775,8 @@ tables! {
         label: "engine/terrain-vt-bake-layout",
         serves: [SHADER @ 2],
         bindings: &[
-            read(67, "terrain_vt_bakes", VF),
-            texture(68, "terrain_vt_heights", Unfilterable, D2Array, F),
+            read(20, "terrain_vt_bakes", VF),
+            texture(21, "terrain_vt_heights", Unfilterable, D2Array, F),
         ],
     };
 
@@ -810,8 +810,8 @@ tables! {
         label: "engine/terrain-vt-feedback-layout",
         serves: [SHADER @ 2],
         bindings: &[
-            texture(62, "terrain_ids_texture", Uint, D2, C),
-            write(66, "terrain_vt_wanted", C),
+            texture(18, "terrain_ids_texture", Uint, D2, C),
+            write(19, "terrain_vt_wanted", C),
         ],
     };
 
@@ -1007,9 +1007,9 @@ tables! {
         label: "engine/water-layout",
         serves: [SHADER @ 1],
         bindings: &[
-            texture(33, "water_surface", Unfilterable, D2, V),
-            texture(34, "water_info", Unfilterable, D2, V),
-            uniform_of(35, "water", size_of::<water::WaterUniform>(), VF),
+            texture(35, "water_surface", Unfilterable, D2, V),
+            texture(36, "water_info", Unfilterable, D2, V),
+            uniform_of(37, "water", size_of::<water::WaterUniform>(), VF),
         ],
     };
 
@@ -1018,15 +1018,15 @@ tables! {
     const WATER_DEPTH: Table = Table {
         label: "engine/water-depth-layout",
         serves: [SHADER @ 2],
-        bindings: &[texture(36, "water_depth", Depth, D2, F)],
+        bindings: &[texture(17, "water_depth", Depth, D2, F)],
     };
 
     const COVER_DRAW: Table = Table {
         label: "engine/cover-layout",
         serves: [SHADER @ 1],
         bindings: &[
-            read(31, "cover_blades", V),
-            uniform_of(32, "cover_frame", size_of::<ground_cover::FrameUniform>(), V),
+            read(33, "cover_blades", V),
+            uniform_of(34, "cover_frame", size_of::<ground_cover::FrameUniform>(), V),
         ],
     };
 
@@ -1290,4 +1290,97 @@ tables! {
             write(4, "draw_args", C),
         ],
     };
+}
+
+/// The bindings one feature takes in a group features share: its numbers
+/// (a range of them) and its bindings' names.
+#[derive(Debug)]
+pub struct FeatureRange {
+    pub feature: &'static str,
+    pub numbers: core::ops::Range<u32>,
+    pub names: &'static [&'static str],
+}
+
+/// The groups several features share and each feature's range in them:
+/// group `group` of module `module`, every table serving it holding each
+/// binding within its feature's range.
+#[derive(Debug)]
+pub struct SharedGroup {
+    pub module: &'static str,
+    pub group: u32,
+    pub ranges: &'static [FeatureRange],
+}
+
+/// Declares [`SHARED_GROUPS`]: `MODULE @ group { feature: start..end [names], .. }`.
+macro_rules! shared_groups {
+    ($($module:ident @ $group:literal {
+        $($feature:ident: $start:literal..$end:literal [$($name:ident),* $(,)?]),* $(,)?
+    })*) => {
+        /// The mesh module's groups, which every surface pipeline shares,
+        /// each feature in a range of its own: `cargo xtask lint` holds every
+        /// table serving one to the ranges, so a feature adding a binding
+        /// takes a number in its range, and features never collide.
+        pub const SHARED_GROUPS: &[SharedGroup] = &[$(SharedGroup {
+            module: stringify!($module),
+            group: $group,
+            ranges: &[$(FeatureRange {
+                feature: stringify!($feature),
+                numbers: $start..$end,
+                names: &[$(stringify!($name)),*],
+            }),*],
+        }),*];
+    };
+}
+
+shared_groups! {
+    SHADER @ 0 {
+        frame: 0..2 [camera, lighting],
+        shadows: 2..9 [
+            shadow, near_shadows, kept_shadows, moving_shadows, shadow_sampler, shadow_texels,
+            kept_levels
+        ],
+        refraction: 9..11 [refraction_source, refraction_sampler],
+        environment: 11..13 [environment_maps, environment_sampler],
+        probes: 13..14 [probe_words],
+        horizons: 14..17 [terrain_horizons, terrain_horizon_records, terrain_horizon_sampler],
+        occupancy: 17..19 [occupancy_coverage, occupancy_heights],
+        clouds: 19..20 [cloud_shadows],
+    }
+    SHADER @ 1 {
+        material: 0..11 [
+            base_color_texture, base_color_sampler, metallic_roughness_texture,
+            metallic_roughness_sampler, normal_texture, normal_sampler, occlusion_texture,
+            occlusion_sampler, emissive_texture, emissive_sampler, material_maps
+        ],
+        impostors: 11..17 [
+            impostor_records, impostor_albedo, impostor_emissive, impostor_geometry,
+            impostor_surface, impostor_sampler
+        ],
+        terrain: 17..33 [
+            terrain_heights, terrain_view, terrain, terrain_holes, terrain_normals,
+            terrain_normal_sampler, terrain_directory, terrain_control, terrain_palette,
+            terrain_albedo, terrain_material_normals, terrain_orm, terrain_material_sampler,
+            terrain_sky, terrain_deformation, terrain_control_sampler
+        ],
+        cover: 33..35 [cover_blades, cover_frame],
+        water: 35..38 [water_surface, water_info, water],
+        sky: 38..46 [
+            sky_clouds, sky_cloud_sampler, sky_air, sky_view_table, sky_transmittance_table,
+            sky_table_sampler, sky_clouds_old, sky_domes
+        ],
+        view_clouds: 46..50 [view_clouds, view_cloud_front, view_cloud_depth, view_cloud_sampler],
+    }
+    SHADER @ 2 {
+        poses: 0..6 [poses, colors, previous_poses, palette, previous_palette, grounds],
+        virtual_geometry: 6..9 [virtual_meshes, virtual_clusters, virtual_pages],
+        visibility: 9..13 [visibility_draw, visible_clusters, visibility_ids, resolve_tiles],
+        decals: 13..15 [decal_records, decal_depth],
+        impostor_bakes: 15..17 [impostor_bake, impostor_shade],
+        water: 17..18 [water_depth],
+        terrain: 18..19 [terrain_ids_texture],
+        virtual_texture: 19..22 [terrain_vt_wanted, terrain_vt_bakes, terrain_vt_heights],
+    }
+    SHADER @ 3 {
+        lights: 0..4 [clusters, lights, cluster_ranges, cluster_lights],
+    }
 }

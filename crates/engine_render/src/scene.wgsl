@@ -129,20 +129,20 @@ struct Shadow {
 // grid aligned with the sun: x how far above the ground the sun clears the
 // terrain toward it, y how far toward the sun the slope setting that lies, z
 // the ground's height.
-@group(0) @binding(13) var terrain_horizons: texture_2d_array<f32>;
+@group(0) @binding(14) var terrain_horizons: texture_2d_array<f32>;
 // Two texels per terrain casting: its map's center (world x and z) and unit
 // direction toward the sun; the map's half extents along and across the
 // sun, how fast its shadows soften per meter of that distance, and the
 // meters receivers rise before comparing. One unused texel without any.
-@group(0) @binding(14) var terrain_horizon_records: texture_2d<f32>;
-@group(0) @binding(15) var terrain_horizon_sampler: sampler;
+@group(0) @binding(15) var terrain_horizon_records: texture_2d<f32>;
+@group(0) @binding(16) var terrain_horizon_sampler: sampler;
 // What placed objects cover around the camera: the densest
 // cover over each texel, and the covers' highest top and lowest bottom
 // (negated), above the map's reference height.
-@group(0) @binding(16) var occupancy_coverage: texture_2d_array<f32>;
-@group(0) @binding(17) var occupancy_heights: texture_2d_array<f32>;
+@group(0) @binding(17) var occupancy_coverage: texture_2d_array<f32>;
+@group(0) @binding(18) var occupancy_heights: texture_2d_array<f32>;
 // The kept shadow levels, one layer each.
-@group(0) @binding(18) var kept_levels: texture_depth_2d_array;
+@group(0) @binding(8) var kept_levels: texture_depth_2d_array;
 
 // How much the covers in occupancy layer `layer` (centered at `center`,
 // `inverse` over its side, heights above `reference`) hide the sky from

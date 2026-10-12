@@ -11,10 +11,10 @@
 // pixel or two fade out.
 
 // The water's surface (terrain-local meters), a texel a bake sample.
-@group(1) @binding(33) var water_surface: texture_2d<f32>;
+@group(1) @binding(35) var water_surface: texture_2d<f32>;
 // Per sample: meters of water over the ground (x, a 32nd of 32 m), its
 // flow along x and z (y and z, 0.5 still, a unit 16 m/s across).
-@group(1) @binding(34) var water_info: texture_2d<f32>;
+@group(1) @binding(36) var water_info: texture_2d<f32>;
 
 // One terrain's water, or the sea: the camera's view and
 // projection without its translation; the terrain's origin less the eye
@@ -45,9 +45,9 @@ struct WaterUniform {
     ocean_waves: array<vec4<f32>, 16>,
     ocean_reach: array<vec4<f32>, 4>,
 }
-@group(1) @binding(35) var<uniform> water: WaterUniform;
+@group(1) @binding(37) var<uniform> water: WaterUniform;
 // The opaque scene's depth, copied before water draws.
-@group(2) @binding(36) var water_depth: texture_depth_2d;
+@group(2) @binding(17) var water_depth: texture_depth_2d;
 
 // The opaque surface behind the water at `pixel` (its center), less the
 // eye, without the jitter of temporally antialiased frames.

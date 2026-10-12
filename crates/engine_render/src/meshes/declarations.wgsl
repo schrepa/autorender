@@ -91,12 +91,12 @@ fn material_flag(bit: u32, specialized: bool) -> bool {
 
 // What glass refracts: the frame's opaque color while
 // transparent surfaces draw with refraction, a white texel otherwise.
-@group(0) @binding(8) var refraction_source: texture_2d<f32>;
-@group(0) @binding(9) var refraction_sampler: sampler;
+@group(0) @binding(9) var refraction_source: texture_2d<f32>;
+@group(0) @binding(10) var refraction_sampler: sampler;
 // Environment maps: cubes of the light around, blurred down
 // their levels by roughness; the first holds the sky.
-@group(0) @binding(10) var environment_maps: texture_cube_array<f32>;
-@group(0) @binding(11) var environment_sampler: sampler;
+@group(0) @binding(11) var environment_maps: texture_cube_array<f32>;
+@group(0) @binding(12) var environment_sampler: sampler;
 // Reflection probes whose environment maps surfaces reflect,
 // found through a grid of cells over the ground plane listing the probes
 // whose boxes reach each cell. In vec4 words: [0] the grid's first corner
@@ -108,7 +108,7 @@ fn material_flag(bit: u32, specialized: bool) -> bool {
 // in the environment maps; and its interior's sky and sun shares (bits of
 // f32), whether it is an interior and whether it is captured.
 const PROBE_ENTRY_WORDS: u32 = 3u;
-@group(0) @binding(12) var<storage, read> probe_words: array<vec4<u32>>;
+@group(0) @binding(13) var<storage, read> probe_words: array<vec4<u32>>;
 
 // Stable engine-owned slots; three aligned rows give an exact 48-byte affine pose.
 struct AffinePose {
@@ -138,7 +138,7 @@ struct SlotColor {
 // and z of the ground's normal as two signed fractions, the meters each
 // one's base sinks, the meters up its stain reaches (0 for none, as for
 // every retained slot) and the stain's color as four bytes.
-@group(2) @binding(12) var<storage, read> grounds: array<vec4<u32>>;
+@group(2) @binding(5) var<storage, read> grounds: array<vec4<u32>>;
 // Temporal visible IDs mark moving slots; others kept their previous pose.
 const MOVED_SLOT: u32 = 0x80000000u;
 
@@ -202,9 +202,9 @@ struct VirtualMeshRecord {
     position_step: vec4<f32>,
     uv: vec4<f32>,
 }
-@group(2) @binding(5) var<storage, read> virtual_meshes: array<VirtualMeshRecord>;
-@group(2) @binding(6) var<storage, read> virtual_clusters: array<vec4<u32>>;
-@group(2) @binding(7) var<storage, read> virtual_pages: array<u32>;
+@group(2) @binding(6) var<storage, read> virtual_meshes: array<VirtualMeshRecord>;
+@group(2) @binding(7) var<storage, read> virtual_clusters: array<vec4<u32>>;
+@group(2) @binding(8) var<storage, read> virtual_pages: array<u32>;
 const VIRTUAL_PAGE_WORDS: u32 = 32768u;
 
 // The visibility buffer: each pixel of virtual geometry
@@ -219,11 +219,11 @@ struct VisibilityDraw {
     tile_base: u32,
     tiles_across: u32,
 }
-@group(2) @binding(8) var<uniform> visibility_draw: VisibilityDraw;
+@group(2) @binding(9) var<uniform> visibility_draw: VisibilityDraw;
 // Visible ID and cluster of each selected cluster, by bin.
-@group(2) @binding(9) var<storage, read> visible_clusters: array<vec2<u32>>;
-@group(2) @binding(10) var visibility_ids: texture_2d<u32>;
-@group(2) @binding(11) var<storage, read> resolve_tiles: array<u32>;
+@group(2) @binding(10) var<storage, read> visible_clusters: array<vec2<u32>>;
+@group(2) @binding(11) var visibility_ids: texture_2d<u32>;
+@group(2) @binding(12) var<storage, read> resolve_tiles: array<u32>;
 
 // Local lights, binned into view clusters by lights.wgsl.
 struct Clusters {

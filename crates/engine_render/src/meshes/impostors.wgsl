@@ -28,10 +28,10 @@ struct ImpostorBake {
     // The record's flags.
     flags: vec4<u32>,
 }
-@group(2) @binding(20) var<uniform> impostor_bake: ImpostorBake;
+@group(2) @binding(15) var<uniform> impostor_bake: ImpostorBake;
 // Each frame's nearest depth toward its viewer, at four times the layer's
 // texels, drawn before the colors.
-@group(2) @binding(21) var impostor_shade: texture_depth_2d;
+@group(2) @binding(16) var impostor_shade: texture_depth_2d;
 
 fn bake_hemisphere() -> bool {
     return (impostor_bake.flags.x & IMPOSTOR_HEMISPHERE) != 0u;

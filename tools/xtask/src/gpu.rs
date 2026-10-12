@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use engine_render::bindings::{
-    Binding, Format, Kind, Sample, Sampling, Stages, TABLES, Table, View,
+    Binding, Format, Kind, SHARED_GROUPS, Sample, Sampling, Stages, TABLES, Table, View,
 };
 use engine_render::gpu_layouts::{Layout, constants, layouts};
 use engine_render::shaders::{ENTRIES, Stage};
@@ -521,8 +521,105 @@ fn check_entries(modules: &[Checked]) -> Result<usize, String> {
     if errors.is_empty() {
         Ok(ENTRIES.len())
     } else {
-        Err(errors.join("
-"))
+        Err(errors.join(
+            "
+",
+        ))
+    }
+}
+
+/// Every table's binding numbers, and the shared groups' ranges
+/// (`engine_render::bindings::SHARED_GROUPS`): no table holds one number
+/// twice; in a shared group, features' ranges do not overlap, each binding
+/// of each table serving the group belongs to one feature and lies in its
+/// range, and every name a range lists is some table's. Returns how many
+/// bindings the ranges place.
+fn check_ranges() -> Result<usize, String> {
+    let mut errors = Vec::new();
+    for &(table_name, table) in TABLES {
+        for (index, binding) in table.bindings.iter().enumerate() {
+            if table.bindings[..index]
+                .iter()
+                .any(|earlier| earlier.binding == binding.binding)
+            {
+                errors.push(format!(
+                    "{table_name} holds binding {} twice (`{}`)",
+                    binding.binding, binding.name
+                ));
+            }
+        }
+    }
+    let mut placed = 0;
+    for shared in SHARED_GROUPS {
+        let at = format!("{} @ {}", shared.module, shared.group);
+        for (index, range) in shared.ranges.iter().enumerate() {
+            if range.numbers.is_empty() {
+                errors.push(format!("{at}: {}'s range is empty", range.feature));
+            }
+            for earlier in &shared.ranges[..index] {
+                if range.numbers.start < earlier.numbers.end
+                    && earlier.numbers.start < range.numbers.end
+                {
+                    errors.push(format!(
+                        "{at}: {} ({:?}) overlaps {} ({:?})",
+                        range.feature, range.numbers, earlier.feature, earlier.numbers
+                    ));
+                }
+            }
+        }
+        let serving = TABLES.iter().filter(|(_, table)| {
+            table
+                .serves
+                .iter()
+                .any(|serves| serves.module == shared.module && serves.group == shared.group)
+        });
+        for &(table_name, table) in serving {
+            for binding in table.bindings {
+                let owners: Vec<_> = shared
+                    .ranges
+                    .iter()
+                    .filter(|range| range.names.contains(&binding.name))
+                    .collect();
+                match owners.as_slice() {
+                    [] => errors.push(format!(
+                        "{table_name} binding {} `{}`: no feature of {at} lists it (bindings::SHARED_GROUPS)",
+                        binding.binding, binding.name
+                    )),
+                    [range] if !range.numbers.contains(&binding.binding) => errors.push(format!(
+                        "{table_name} binding {} `{}` lies outside {}'s range {:?} in {at}",
+                        binding.binding, binding.name, range.feature, range.numbers
+                    )),
+                    [_] => placed += 1,
+                    [..] => errors.push(format!(
+                        "{at}: `{}` is listed by several features",
+                        binding.name
+                    )),
+                }
+            }
+        }
+        for range in shared.ranges {
+            for name in range.names {
+                let bound = TABLES.iter().any(|(_, table)| {
+                    table.serves.iter().any(|serves| {
+                        serves.module == shared.module && serves.group == shared.group
+                    }) && table.bindings.iter().any(|binding| binding.name == *name)
+                });
+                if !bound {
+                    errors.push(format!(
+                        "{at}: {} lists `{name}`, which no table serving it binds",
+                        range.feature
+                    ));
+                }
+            }
+        }
+    }
+    if errors.is_empty() {
+        Ok(placed)
+    } else {
+        Err(errors.join(
+            "
+",
+        ))
     }
 }
 
@@ -867,6 +964,7 @@ pub fn check(root: &Path) -> Result<(), String> {
     let mirrors = check_layouts(&modules);
     let entry_points = check_bindings(&modules);
     let entries = check_entries(&modules);
+    let ranges = check_ranges();
     let shared = check_constants(root, &modules);
     let unused = check_unused(&modules);
     let structs = check_upload_structs(root);
@@ -874,6 +972,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         mirrors.as_ref().err(),
         entry_points.as_ref().err(),
         entries.as_ref().err(),
+        ranges.as_ref().err(),
         shared.as_ref().err(),
         unused.as_ref().err(),
         structs.as_ref().err(),
@@ -889,13 +988,14 @@ pub fn check(root: &Path) -> Result<(), String> {
         ));
     }
     println!(
-        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} WGSL constants mirror {} Rust ones.",
+        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} bindings of shared groups within their features' ranges; {} WGSL constants mirror {} Rust ones.",
         modules.len(),
         mirrors?,
         layouts().len(),
         TABLES.len(),
         entry_points?,
         entries?,
+        ranges?,
         shared?,
         constants().count()
     );

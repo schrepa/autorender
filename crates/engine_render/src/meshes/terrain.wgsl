@@ -24,7 +24,7 @@ override TERRAIN_HOLES: bool = false;
 // and 8 to 15), the second's share (16 to 23) and its strongest biome.
 @group(1) @binding(24) var terrain_control: texture_2d_array<u32>;
 // Gathers a 2x2 block of control values at once.
-@group(1) @binding(50) var terrain_control_sampler: sampler;
+@group(1) @binding(32) var terrain_control_sampler: sampler;
 
 // A surface material: its linear color (its base color factor with maps)
 // and roughness; its tiling in meters, height contrast, projection and its
@@ -65,7 +65,7 @@ const TERRAIN_PALETTE_ENTRIES: u32 = 170u;
 // Runtime deformation's map (`deformation.wgsl`), in its
 // reference units: each block's deepest track or highest rim, widened by a
 // block; each texel's track depth and rim height; and each texel's slopes.
-@group(1) @binding(37) var<storage, read> terrain_deformation: array<u32>;
+@group(1) @binding(31) var<storage, read> terrain_deformation: array<u32>;
 
 struct TerrainOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -1495,12 +1495,12 @@ struct TerrainVtBake {
     mip: u32,
     page: vec2<i32>,
 }
-@group(2) @binding(67) var<storage, read> terrain_vt_bakes: array<TerrainVtBake>;
+@group(2) @binding(20) var<storage, read> terrain_vt_bakes: array<TerrainVtBake>;
 // Every resident tile's heights, which bakes read in their fragments.
-@group(2) @binding(68) var terrain_vt_heights: texture_2d_array<f32>;
+@group(2) @binding(21) var terrain_vt_heights: texture_2d_array<f32>;
 // Each textured terrain's pages its pixels want this frame, a bit each by
 // mip and table entry, read back for the pages to bake.
-@group(2) @binding(66) var<storage, read_write> terrain_vt_wanted: array<atomic<u32>>;
+@group(2) @binding(19) var<storage, read_write> terrain_vt_wanted: array<atomic<u32>>;
 
 // The terrain's height at terrain-local `local` in its finest resident
 // level, bilinear between its samples (heights from the terrain's origin).
@@ -1675,7 +1675,7 @@ fn cs_terrain_vt_feedback(@builtin(global_invocation_id) id: vec3<u32>) {
 // shades the pixels holding it, once each: forward, the 2x2 quads its small
 // triangles cut shaded half again as many fragments.
 // Each pixel's terrain id and its depth's bits.
-@group(2) @binding(62) var terrain_ids_texture: texture_2d<u32>;
+@group(2) @binding(18) var terrain_ids_texture: texture_2d<u32>;
 
 // The id of this fragment's terrain in the visibility pass.
 @fragment

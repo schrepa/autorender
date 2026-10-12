@@ -12,8 +12,8 @@ struct DecalRecord {
     // x: palette entry, or NO_DECAL_POSE.
     pose: vec4<u32>,
 }
-@group(2) @binding(8) var<storage, read> decal_records: array<DecalRecord>;
-@group(2) @binding(9) var decal_depth: texture_depth_2d;
+@group(2) @binding(13) var<storage, read> decal_records: array<DecalRecord>;
+@group(2) @binding(14) var decal_depth: texture_depth_2d;
 
 const NO_DECAL_POSE: u32 = 0xffffffffu;
 
