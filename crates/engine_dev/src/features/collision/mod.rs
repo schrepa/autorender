@@ -1,8 +1,17 @@
 //! Collision's development tools: the inspectors of colliders and the
-//! collision world.
+//! collision world, and the queries of rays, overlaps, shape casts and
+//! sensor events.
+
+mod queries;
 
 use engine_collision::{Collider, CollisionWorld};
 use serde_json::Value;
+
+pub use queries::{
+    CollisionEventsQuery, CollisionFilterRequest, CollisionSensorFilter, CollisionShapeRequest,
+    OverlapQuery, RaycastQuery, ShapeCastQuery,
+};
+pub(crate) use queries::{native_error, world_value};
 
 use crate::inspect::Inspector;
 use crate::{DevTools, InspectorDescriptor, InspectorKind};
@@ -16,15 +25,13 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<Collider>(entity).is_some())
             }),
-            read: Box::new(|world, entity, _context| {
-                crate::collision::collider_value(world, entity?)
-            }),
+            read: Box::new(|world, entity, _context| queries::collider_value(world, entity?)),
         })
         .expect("built-in descriptor is bounded");
     tools
         .register_resource::<CollisionWorld>(
             InspectorDescriptor::generated(schemas, "CollisionWorld"),
-            crate::collision::world_value,
+            world_value,
         )
         .expect("built-in descriptor is bounded");
 }

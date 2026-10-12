@@ -1,7 +1,9 @@
 //! Terrain's development tools: the inspectors of terrains, their streaming,
-//! prefetch places and the development view.
+//! prefetch places and the development view; the controls of the view and
+//! of edits; and the queries of heights, sweeps and routes.
 
 mod controls;
+mod queries;
 
 use engine_core::bevy_ecs;
 use engine_core::bevy_ecs::prelude::{Entity, Resource, World};
@@ -20,6 +22,8 @@ use crate::protocol::{bounds, stamp_rule};
 use crate::views::TerrainDebugView;
 use crate::{Context, DevError, DevTools, InspectorDescriptor, InspectorKind};
 use controls::{TerrainEditing, edit_terrain};
+pub(crate) use queries::terrain_id;
+pub use queries::{TerrainHeightQuery, TerrainRouteQuery, TerrainSweepQuery};
 
 /// Registers terrain's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {

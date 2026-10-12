@@ -1,16 +1,19 @@
 //! Navigation's development tools: the inspectors of agents and of their
-//! walks.
+//! walks, sending agents and the query of walks.
 
 use engine_core::bevy_ecs::prelude::Entity;
-use engine_core::{Engine, Feature, Transform, has_feature};
+use engine_core::{
+    Engine, Feature, Terrain, TerrainSource, Terrains, Transform, glam::Vec2, has_feature,
+};
 use engine_scene::{SceneEntity, SceneInstance};
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{EngineControl, missing};
+use super::terrain::terrain_id;
+use super::{EngineControl, EngineQuery, missing};
 use crate::inspect::Inspector;
-use crate::{DevError, DevTools, InspectorDescriptor, InspectorKind};
+use crate::{DevError, DevTools, InspectorDescriptor, InspectorKind, coordinate};
 
 /// Registers navigation's inspectors.
 pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
@@ -173,4 +176,76 @@ fn nav_go(
         .expect("checked above");
     agent.destination = destination;
     Ok(json!({ "temporary": true, "destination": destination }))
+}
+
+/// The shortest walk over a generated terrain from world `from` to `to`
+/// `[x, z]`: across ground an agent stands on (no holes,
+/// no water deeper than `max_water`, no closer than `radius` to placed
+/// objects that collide on resident tiles), each step no steeper than
+/// `max_slope` (rise per meter), pulled taut and following the ground.
+/// It walks pyramid `level` (0 by default) unless the area within
+/// `margin` meters of the ends holds more than `max_samples` samples,
+/// then the finest level within. Returns its points (world, rounded to
+/// centimeters), length, the level walked and samples searched, or a
+/// null walk where none reaches.
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct NavPathQuery {
+    pub version: u32,
+    pub from: [f64; 2],
+    pub to: [f64; 2],
+    #[serde(default)]
+    pub options: Option<engine_core::terrain_data::NavOptions>,
+}
+
+impl EngineQuery for NavPathQuery {
+    fn answer(&self, engine: &mut Engine, _: Option<&SceneInstance>) -> Result<Value, DevError> {
+        walk(engine, self.from, self.to, self.options)
+    }
+}
+
+/// A navigation walk over the first generated terrain from `from` to `to`.
+fn walk(
+    engine: &mut Engine,
+    from: [f64; 2],
+    to: [f64; 2],
+    options: Option<engine_core::terrain_data::NavOptions>,
+) -> Result<Value, DevError> {
+    let from = Vec2::new(
+        coordinate(from[0], "$.from[0]")?,
+        coordinate(from[1], "$.from[1]")?,
+    );
+    let to = Vec2::new(coordinate(to[0], "$.to[0]")?, coordinate(to[1], "$.to[1]")?);
+    let options = options.unwrap_or_default();
+    options.validate().map_err(|invalid| {
+        DevError::new(
+            ErrorCode::OutOfRange,
+            format!("$.options.{}", invalid.field),
+            invalid.rule,
+        )
+    })?;
+    let world = engine.app.world_mut();
+    let entity = world
+        .query::<(Entity, &Terrain)>()
+        .iter(world)
+        .find(|(_, terrain)| matches!(terrain.source, TerrainSource::Generated(_)))
+        .map(|(entity, _)| entity)
+        .ok_or_else(|| DevError::new(ErrorCode::UnknownTerrain, "$", "no generated terrain"))?;
+    let walk = world
+        .get_resource::<Terrains>()
+        .filter(|_| has_feature(world, Feature::Terrain))
+        .ok_or_else(|| missing(Feature::Terrain))?
+        .walk(entity, from, to, &options);
+    let round = |value: f32| (f64::from(value) * 100.0).round() / 100.0;
+    Ok(json!({
+        "terrain": terrain_id(world, entity),
+        "options": options,
+        "walk": walk.map(|walk| json!({
+            "points": walk.points.iter().map(|point| point.map(round)).collect::<Vec<_>>(),
+            "length": walk.length,
+            "level": walk.level,
+            "searched": walk.searched,
+        })),
+    }))
 }

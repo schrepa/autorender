@@ -56,27 +56,17 @@ pub(crate) fn stamp_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) 
     engine_settings::stated(engine_core::Stamp::rule_of(field).expect("stamps declare the field"))
 }
 
-/// The schema transform stating route option `field`'s rule on the request
-/// field of that name.
-#[cfg(not(target_arch = "wasm32"))]
-fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
-    let state =
-        stated(engine_core::RouteOptions::rule_of(field).expect("route options declare the field"));
-    let default = serde_json::to_value(engine_core::RouteOptions::default())
-        .expect("route options serialize")[field]
-        .clone();
-    move |schema| {
-        state(schema);
-        schema.insert("default".into(), default.clone());
-    }
-}
-
 use crate::features::{
-    EngineControl,
+    EngineControl, EngineQuery,
     animation::AnimationControl,
-    deformation::DeformControl,
-    navigation::NavGoControl,
-    terrain::{TerrainControl, TerrainEditControl, TerrainRedoControl, TerrainUndoControl},
+    collision::{CollisionEventsQuery, OverlapQuery, RaycastQuery, ShapeCastQuery},
+    deformation::{DeformControl, DeformationQuery},
+    navigation::{NavGoControl, NavPathQuery},
+    ocean::WaterQuery,
+    terrain::{
+        TerrainControl, TerrainEditControl, TerrainHeightQuery, TerrainRedoControl,
+        TerrainRouteQuery, TerrainSweepQuery, TerrainUndoControl,
+    },
     world_streaming::WorldChangesControl,
 };
 
@@ -122,12 +112,8 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
 pub(crate) enum Route {
     /// Status, inspection, assets, the digest and descriptions.
     Tools(ToolsQuery),
-    /// The collision world's queries.
-    Collision(CollisionQuery),
-    /// Terrain, deformation and navigation queries.
-    Terrain(TerrainQuery),
-    /// A feature's own query, which its development file answers.
-    Feature(Box<dyn crate::features::EngineQuery>),
+    /// A feature's query, which its development file answers.
+    Feature(Box<dyn EngineQuery>),
 }
 
 /// The development tools' own queries ([`DevRequest`]'s, which document
@@ -146,67 +132,6 @@ pub(crate) enum ToolsQuery {
     Describe {
         name: Option<String>,
         definition: Option<String>,
-    },
-}
-
-/// The collision world's queries ([`DevRequest`]'s, which document them).
-pub(crate) enum CollisionQuery {
-    Raycast {
-        origin: [f64; 3],
-        direction: [f64; 3],
-        max_distance: f64,
-        filter: CollisionFilterRequest,
-    },
-    Overlap {
-        shape: CollisionShapeRequest,
-        position: [f64; 3],
-        rotation: [f64; 4],
-        filter: CollisionFilterRequest,
-        limit: usize,
-    },
-    ShapeCast {
-        shape: CollisionShapeRequest,
-        position: [f64; 3],
-        rotation: [f64; 4],
-        direction: [f64; 3],
-        max_distance: f64,
-        filter: CollisionFilterRequest,
-    },
-    CollisionEvents {
-        entity: Option<String>,
-        offset: usize,
-        limit: usize,
-    },
-}
-
-/// Terrain, deformation and navigation queries ([`DevRequest`]'s, which
-/// document them).
-pub(crate) enum TerrainQuery {
-    TerrainHeight {
-        points: Vec<[f64; 2]>,
-    },
-    NavPath {
-        from: [f64; 2],
-        to: [f64; 2],
-        options: Option<engine_core::terrain_data::NavOptions>,
-    },
-    DeformationQuery {
-        points: Vec<[f64; 2]>,
-        seconds: Option<f64>,
-    },
-    TerrainSweep {
-        center: [f64; 2],
-        half_extent: f64,
-        samples: u32,
-    },
-    TerrainRoute {
-        from: [f64; 2],
-        to: [f64; 2],
-        level: Option<u32>,
-        max_grade: Option<f64>,
-        grade_cost: Option<f64>,
-        water_cost: Option<f64>,
-        turn_cost: Option<f64>,
     },
 }
 
@@ -307,219 +232,28 @@ pub enum DevRequest {
         #[serde(default)]
         definition: Option<String>,
     },
-    /// Closest authoritative hit; rejects incomplete native candidate scans.
-    Raycast {
-        version: u32,
-        origin: [f64; 3],
-        direction: [f64; 3],
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::DISTANCE)))]
-        max_distance: f64,
-        #[serde(default)]
-        filter: CollisionFilterRequest,
-    },
-    /// Complete bounded shape overlap, using a world-space rigid query pose.
-    Overlap {
-        version: u32,
-        shape: CollisionShapeRequest,
-        position: [f64; 3],
-        #[serde(default = "identity_rotation")]
-        rotation: [f64; 4],
-        #[serde(default)]
-        filter: CollisionFilterRequest,
-        #[serde(default = "default_limit")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
-        limit: usize,
-    },
-    /// Closest translation-only shape cast; orientation stays fixed along the ray.
-    ShapeCast {
-        version: u32,
-        shape: CollisionShapeRequest,
-        position: [f64; 3],
-        #[serde(default = "identity_rotation")]
-        rotation: [f64; 4],
-        direction: [f64; 3],
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::DISTANCE)))]
-        max_distance: f64,
-        #[serde(default)]
-        filter: CollisionFilterRequest,
-    },
-    /// Terrain surfaces under world points `[x, z]`: each one's terrain, height, normal, hole and the level of the
-    /// resident tile answering, what its hydrology bake found there and the
-    /// water standing there, and the meters from the
-    /// nearest road's edge (negative on roads, null beyond
-    /// their masks' reach), or null where no tile is resident.
-    TerrainHeight {
-        version: u32,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = bounds::MAX_POINTS)))]
-        points: Vec<[f64; 2]>,
-    },
-    /// The shortest walk over a generated terrain from world `from` to `to`
-    /// `[x, z]`: across ground an agent stands on (no holes,
-    /// no water deeper than `max_water`, no closer than `radius` to placed
-    /// objects that collide on resident tiles), each step no steeper than
-    /// `max_slope` (rise per meter), pulled taut and following the ground.
-    /// It walks pyramid `level` (0 by default) unless the area within
-    /// `margin` meters of the ends holds more than `max_samples` samples,
-    /// then the finest level within. Returns its points (world, rounded to
-    /// centimeters), length, the level walked and samples searched, or a
-    /// null walk where none reaches.
-    NavPath {
-        version: u32,
-        from: [f64; 2],
-        to: [f64; 2],
-        #[serde(default)]
-        options: Option<engine_core::terrain_data::NavOptions>,
-    },
-    WaterQuery(crate::features::ocean::WaterQuery),
-    /// The tracks deformers and agents pressed at world points
-    /// `[x, z]`, refilled to simulation time `seconds` (by default
-    /// the time the last frame presented), as the log holds them: how deep
-    /// the deepest sinks deformable ground (`track`) and how high rims raise
-    /// it (`rim`); where a tile is resident, the most its surface materials
-    /// let tracks sink it (`deform`), the depth it shows (`depth`, the
-    /// lesser) and the ground's height. Also the stamps the log holds and
-    /// those its budget dropped.
-    DeformationQuery {
-        version: u32,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = bounds::MAX_POINTS)))]
-        points: Vec<[f64; 2]>,
-        #[serde(default)]
-        seconds: Option<f64>,
-    },
-    /// Compares, over `samples` by `samples` points across `half_extent`
-    /// meters of world `center` `[x, z]`, what terrain queries (the tiles
-    /// renderers draw), collision rays and generated terrains' layers say
-    /// the ground is: the largest differences and where.
-    TerrainSweep {
-        version: u32,
-        center: [f64; 2],
-        #[serde(default = "default_half_extent")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::SWEEP_EXTENT)))]
-        half_extent: f64,
-        #[serde(default = "default_sweep_samples")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::SWEEP_SAMPLES)))]
-        samples: u32,
-    },
-    /// The cheapest route over the generated terrain under world `from`
-    /// `[x, z]` to world `to`, over its layers with their
-    /// bakes, as a path layer would follow it: walking between the samples
-    /// of pyramid `level`, each step's cost growing by `grade_cost` times
-    /// its squared grade and by `water_cost` where water stands, each turn
-    /// costing `turn_cost` meters per unit of one less its angle's cosine,
-    /// refusing grades steeper than `max_grade` (rise per meter).
-    /// Returns the terrain's origin `[x, z]` and the route's points
-    /// terrain-local (a path layer's `points`; add the origin for world
-    /// points), its length, its steepest grade within the limit and the
-    /// turning steps of its hairpins crossing steeper ground (up to 45
-    /// degrees), or a null route where none keeps within the limits. Its
-    /// work grows with the square of the ends' distance.
-    TerrainRoute {
-        version: u32,
-        from: [f64; 2],
-        to: [f64; 2],
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = route_rule("level")))]
-        level: Option<u32>,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = route_rule("max_grade")))]
-        max_grade: Option<f64>,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = route_rule("grade_cost")))]
-        grade_cost: Option<f64>,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = route_rule("water_cost")))]
-        water_cost: Option<f64>,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = route_rule("turn_cost")))]
-        turn_cost: Option<f64>,
-    },
-    /// Non-consuming page of the latest fixed-tick sensor transition snapshot.
-    CollisionEvents {
-        version: u32,
-        #[serde(default)]
-        entity: Option<String>,
-        #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::EVENT_OFFSET)))]
-        offset: usize,
-        #[serde(default = "default_limit")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
-        limit: usize,
-    },
+    Raycast(RaycastQuery),
+    Overlap(OverlapQuery),
+    ShapeCast(ShapeCastQuery),
+    TerrainHeight(TerrainHeightQuery),
+    NavPath(NavPathQuery),
+    WaterQuery(WaterQuery),
+    DeformationQuery(DeformationQuery),
+    TerrainSweep(TerrainSweepQuery),
+    TerrainRoute(TerrainRouteQuery),
+    CollisionEvents(CollisionEventsQuery),
 }
 
-/// Query geometry dimensions are world units. No scale or rotation changes occur
-/// during a cast; sphere/cuboid transform admission matches native collision.
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CollisionShapeRequest {
-    Cuboid {
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(transform = stated(engine_settings::rule::range(engine_core::MIN_COLLIDER_EXTENT, engine_core::MAX_COLLIDER_EXTENT)))
-        )]
-        half_extents: [f64; 3],
-    },
-    Sphere {
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(engine_settings::rule::range(engine_core::MIN_COLLIDER_EXTENT, engine_core::MAX_COLLIDER_EXTENT))))]
-        radius: f64,
-    },
-}
-
-/// Layer matching is symmetric: query memberships intersect collider filter,
-/// and collider memberships intersect query filter. Exclusion uses a live ID
-/// in the supplied active scene; no runtime entity handle is accepted.
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct CollisionFilterRequest {
-    pub memberships: u32,
-    pub filter: u32,
-    pub sensors: CollisionSensorFilter,
-    pub exclude: Option<String>,
-}
-
-impl Default for CollisionFilterRequest {
-    fn default() -> Self {
-        Self {
-            memberships: 1,
-            filter: u32::MAX,
-            sensors: CollisionSensorFilter::Include,
-            exclude: None,
-        }
-    }
-}
-
-#[derive(Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum CollisionSensorFilter {
-    #[default]
-    Include,
-    Exclude,
-    Only,
-}
-
-fn identity_rotation() -> [f64; 4] {
-    [0.0, 0.0, 0.0, 1.0]
-}
-
-fn default_half_extent() -> f64 {
-    64.0
-}
-
-fn default_sweep_samples() -> u32 {
-    16
-}
-
-fn default_limit() -> usize {
+/// A page's size when a request names none.
+pub(crate) fn default_limit() -> usize {
     20
 }
 
 impl DevRequest {
     /// The query as the handler it runs in takes it: the one routing table
-    /// of queries. Every field is named, so a field added to a request
-    /// reaches its handler or fails to build.
+    /// of queries. A feature's query goes whole to its development file;
+    /// every field of the tools' own is named, so one added reaches the
+    /// tools or fails to build.
     pub(crate) fn route(self) -> Route {
         match self {
             Self::Status { version: _ } => Route::Tools(ToolsQuery::Status),
@@ -544,101 +278,16 @@ impl DevRequest {
                 name,
                 definition,
             } => Route::Tools(ToolsQuery::Describe { name, definition }),
-            Self::Raycast {
-                version: _,
-                origin,
-                direction,
-                max_distance,
-                filter,
-            } => Route::Collision(CollisionQuery::Raycast {
-                origin,
-                direction,
-                max_distance,
-                filter,
-            }),
-            Self::Overlap {
-                version: _,
-                shape,
-                position,
-                rotation,
-                filter,
-                limit,
-            } => Route::Collision(CollisionQuery::Overlap {
-                shape,
-                position,
-                rotation,
-                filter,
-                limit,
-            }),
-            Self::ShapeCast {
-                version: _,
-                shape,
-                position,
-                rotation,
-                direction,
-                max_distance,
-                filter,
-            } => Route::Collision(CollisionQuery::ShapeCast {
-                shape,
-                position,
-                rotation,
-                direction,
-                max_distance,
-                filter,
-            }),
-            Self::CollisionEvents {
-                version: _,
-                entity,
-                offset,
-                limit,
-            } => Route::Collision(CollisionQuery::CollisionEvents {
-                entity,
-                offset,
-                limit,
-            }),
-            Self::TerrainHeight { version: _, points } => {
-                Route::Terrain(TerrainQuery::TerrainHeight { points })
-            }
-            Self::NavPath {
-                version: _,
-                from,
-                to,
-                options,
-            } => Route::Terrain(TerrainQuery::NavPath { from, to, options }),
+            Self::Raycast(query) => Route::Feature(Box::new(query)),
+            Self::Overlap(query) => Route::Feature(Box::new(query)),
+            Self::ShapeCast(query) => Route::Feature(Box::new(query)),
+            Self::CollisionEvents(query) => Route::Feature(Box::new(query)),
+            Self::TerrainHeight(query) => Route::Feature(Box::new(query)),
+            Self::NavPath(query) => Route::Feature(Box::new(query)),
             Self::WaterQuery(query) => Route::Feature(Box::new(query)),
-            Self::DeformationQuery {
-                version: _,
-                points,
-                seconds,
-            } => Route::Terrain(TerrainQuery::DeformationQuery { points, seconds }),
-            Self::TerrainSweep {
-                version: _,
-                center,
-                half_extent,
-                samples,
-            } => Route::Terrain(TerrainQuery::TerrainSweep {
-                center,
-                half_extent,
-                samples,
-            }),
-            Self::TerrainRoute {
-                version: _,
-                from,
-                to,
-                level,
-                max_grade,
-                grade_cost,
-                water_cost,
-                turn_cost,
-            } => Route::Terrain(TerrainQuery::TerrainRoute {
-                from,
-                to,
-                level,
-                max_grade,
-                grade_cost,
-                water_cost,
-                turn_cost,
-            }),
+            Self::DeformationQuery(query) => Route::Feature(Box::new(query)),
+            Self::TerrainSweep(query) => Route::Feature(Box::new(query)),
+            Self::TerrainRoute(query) => Route::Feature(Box::new(query)),
         }
     }
 
@@ -649,16 +298,16 @@ impl DevRequest {
             | Self::Assets { version }
             | Self::Digest { version }
             | Self::Describe { version, .. }
-            | Self::Raycast { version, .. }
-            | Self::Overlap { version, .. }
-            | Self::ShapeCast { version, .. }
-            | Self::TerrainHeight { version, .. }
-            | Self::TerrainSweep { version, .. }
-            | Self::TerrainRoute { version, .. }
-            | Self::WaterQuery(crate::features::ocean::WaterQuery { version, .. })
-            | Self::DeformationQuery { version, .. }
-            | Self::NavPath { version, .. }
-            | Self::CollisionEvents { version, .. } => *version,
+            | Self::Raycast(RaycastQuery { version, .. })
+            | Self::Overlap(OverlapQuery { version, .. })
+            | Self::ShapeCast(ShapeCastQuery { version, .. })
+            | Self::TerrainHeight(TerrainHeightQuery { version, .. })
+            | Self::TerrainSweep(TerrainSweepQuery { version, .. })
+            | Self::TerrainRoute(TerrainRouteQuery { version, .. })
+            | Self::WaterQuery(WaterQuery { version, .. })
+            | Self::DeformationQuery(DeformationQuery { version, .. })
+            | Self::NavPath(NavPathQuery { version, .. })
+            | Self::CollisionEvents(CollisionEventsQuery { version, .. }) => *version,
         }
     }
 }

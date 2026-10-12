@@ -8,14 +8,12 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-mod collision;
 mod controls;
 mod digest;
 mod error;
 pub mod features;
 mod inspect;
 mod protocol;
-mod terrain;
 mod views;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -32,9 +30,8 @@ pub use inspect::{
 pub use protocol::bounds;
 pub use protocol::bounds::{MAX_DESCRIPTION_BYTES, MAX_PAGE_SIZE};
 pub use protocol::{
-    BenchmarkMode, BrowserControl, CollisionFilterRequest, CollisionSensorFilter,
-    CollisionShapeRequest, Control, DevRequest, EnvironmentControl, HostControl, MAX_REQUEST_BYTES,
-    MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
+    BenchmarkMode, BrowserControl, Control, DevRequest, EnvironmentControl, HostControl,
+    MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION,
 };
 
 /// The ops of queries and controls, as requests name them, from the

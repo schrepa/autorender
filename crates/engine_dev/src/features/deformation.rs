@@ -1,7 +1,9 @@
 //! Deformation's development tools: the inspectors of deformers and the
-//! tracks they press.
+//! tracks they press, pressing tracks and the query of tracks.
 
-use engine_core::{Deformation, Engine, Feature, FixedTime, Track, Tracks};
+use engine_core::{
+    Deformation, Engine, Feature, FixedTime, PresentedTime, Terrains, Track, Tracks, glam::Vec2,
+};
 use engine_scene::SceneInstance;
 use engine_settings::ErrorCode;
 #[cfg(not(target_arch = "wasm32"))]
@@ -9,7 +11,8 @@ use engine_settings::{rule::same, stated};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{EngineControl, feature_mut};
+use super::{EngineControl, EngineQuery, feature, feature_mut};
+use crate::protocol::bounds::MAX_POINTS;
 use crate::{DevError, DevTools, InspectorDescriptor, bounded, coordinate};
 
 /// Registers deformation's inspectors.
@@ -127,5 +130,91 @@ fn press_track(engine: &mut Engine, press: &DeformControl) -> Result<Value, DevE
         "stamps": tracks.len(),
         "dropped": tracks.dropped(),
         "enabled": resource.is_some_and(|settings| settings.enabled),
+    }))
+}
+
+/// The tracks deformers and agents pressed at world points
+/// `[x, z]`, refilled to simulation time `seconds` (by default
+/// the time the last frame presented), as the log holds them: how deep
+/// the deepest sinks deformable ground (`track`) and how high rims raise
+/// it (`rim`); where a tile is resident, the most its surface materials
+/// let tracks sink it (`deform`), the depth it shows (`depth`, the
+/// lesser) and the ground's height. Also the stamps the log holds and
+/// those its budget dropped.
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct DeformationQuery {
+    pub version: u32,
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = MAX_POINTS)))]
+    pub points: Vec<[f64; 2]>,
+    #[serde(default)]
+    pub seconds: Option<f64>,
+}
+
+impl EngineQuery for DeformationQuery {
+    fn answer(&self, engine: &mut Engine, _: Option<&SceneInstance>) -> Result<Value, DevError> {
+        tracks(engine, &self.points, self.seconds)
+    }
+}
+
+/// The tracks pressed at `points`, refilled to `seconds`.
+fn tracks(
+    engine: &mut Engine,
+    points: &[[f64; 2]],
+    seconds: Option<f64>,
+) -> Result<Value, DevError> {
+    if points.is_empty() || points.len() > MAX_POINTS {
+        return Err(DevError::new(
+            ErrorCode::OutOfRange,
+            "$.points",
+            format!("name 1 to {MAX_POINTS} points"),
+        ));
+    }
+    let world = engine.app.world();
+    let seconds = match seconds {
+        Some(seconds) if seconds.is_finite() && seconds.abs() <= 1.0e9 => seconds,
+        Some(_) => {
+            return Err(DevError::new(
+                ErrorCode::OutOfRange,
+                "$.seconds",
+                "seconds must be finite and within +/-1e9",
+            ));
+        }
+        None => world
+            .get_resource::<PresentedTime>()
+            .map_or(0.0, |time| time.seconds),
+    };
+    let settings = world
+        .get_resource::<Deformation>()
+        .copied()
+        .unwrap_or_default()
+        .sanitized();
+    let tracks = feature::<Tracks>(world, Feature::Deformation)?;
+    let terrains = feature::<Terrains>(world, Feature::Terrain)?;
+    // Tenths of millimeters keep responses small.
+    let round = |value: f32| (f64::from(value) * 1.0e4).round() / 1.0e4;
+    let samples = points
+        .iter()
+        .enumerate()
+        .map(|(index, point)| {
+            let x = coordinate(point[0], &format!("$.points[{index}][0]"))?;
+            let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
+            let depth = tracks.at(Vec2::new(x, z), seconds, &settings);
+            let deform = terrains.deform_at(x, z);
+            Ok(json!({
+                "track": round(depth.track),
+                "rim": round(depth.rim),
+                "deform": deform.map(round),
+                "depth": deform.map(|deform| round(engine_core::math::min(depth.track, deform))),
+                "ground": terrains.height_at(x, z).map(round),
+            }))
+        })
+        .collect::<Result<Vec<_>, DevError>>()?;
+    Ok(json!({
+        "seconds": seconds,
+        "samples": samples,
+        "stamps": tracks.len(),
+        "dropped": tracks.dropped(),
     }))
 }

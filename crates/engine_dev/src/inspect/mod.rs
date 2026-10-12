@@ -367,8 +367,6 @@ impl DevTools {
             ));
         }
         let query = match request.route() {
-            Route::Collision(query) => return crate::collision::execute(engine, scene, query),
-            Route::Terrain(query) => return crate::terrain::execute(engine, query),
             Route::Feature(query) => return query.answer(engine, scene),
             Route::Tools(query) => query,
         };
@@ -395,7 +393,7 @@ impl DevTools {
             )?;
             if engine.app.world().contains_resource::<CollisionWorld>() {
                 refresh_collision_world(engine.app.world_mut())
-                    .map_err(crate::collision::native_error)?;
+                    .map_err(crate::features::collision::native_error)?;
             }
         }
         if matches!(query, ToolsQuery::Inspect { .. } | ToolsQuery::Digest) {
@@ -419,7 +417,7 @@ impl DevTools {
                 // The features whose plugins the engine has.
                 "features": world.get_resource::<engine_core::Features>().map(|features| features.iter().map(engine_core::Feature::name).collect::<Vec<_>>()),
                 "presentation": presentation_value(engine.presentation()),
-                "collision": world.get_resource::<CollisionWorld>().map(crate::collision::world_value),
+                "collision": world.get_resource::<CollisionWorld>().map(crate::features::collision::world_value),
                 "fixed_delta_seconds": world.get_resource::<FixedTime>().map(|time| time.delta_seconds),
                 "limits": {"request_bytes": MAX_REQUEST_BYTES, "response_bytes": MAX_RESPONSE_BYTES, "page_size": MAX_PAGE_SIZE, "scan_entities": MAX_SCAN_ENTITIES},
             })),

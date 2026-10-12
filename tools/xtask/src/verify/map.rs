@@ -146,7 +146,9 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_core/src/**/navigation/**",
             "crates/engine_core/src/**/grounded*",
             "crates/engine_scene/src/**/terrain*",
-            "crates/engine_dev/src/terrain/**",
+            "crates/engine_dev/src/features/terrain/**",
+            "crates/engine_dev/src/features/navigation*",
+            "crates/engine_dev/src/features/deformation*",
             "crates/engine_collision/src/**/terrain*",
             "crates/engine_terrain/**",
         ],
@@ -423,7 +425,10 @@ pub(crate) const MAP: &[Rule] = &[
         ],
     },
     Rule {
-        paths: &["crates/engine_collision/**"],
+        paths: &[
+            "crates/engine_collision/**",
+            "crates/engine_dev/src/features/collision/**",
+        ],
         checks: &[
             Smoke("collision"),
             Smoke("terrain"),
