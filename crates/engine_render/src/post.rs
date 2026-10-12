@@ -368,7 +368,7 @@ impl PostPass {
     /// effects of `snapshot` over the depth buffer of `depth_generation`.
     /// `temporal` frames trace reflections from another pixel of each 2x2
     /// block than the frame before.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"

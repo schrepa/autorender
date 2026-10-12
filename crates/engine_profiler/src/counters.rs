@@ -20,6 +20,8 @@
 //! the GPU finished them. Unsafe code, as `pix.rs` holds: the Vulkan calls
 //! and the entry points wgpu calls.
 
+#![expect(unsafe_code, reason = "Vulkan's layer entry points and calls")]
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ffi::{CStr, c_char, c_void};
@@ -143,7 +145,6 @@ macro_rules! void {
     };
 }
 
-#[allow(unsafe_code)]
 fn start_vulkan(descriptor: &wgpu::InstanceDescriptor) -> Result<wgpu::Instance, String> {
     if INSTANCE.get().is_some() {
         return Err("counters follow one GPU instance per program".into());
@@ -223,7 +224,6 @@ fn start_vulkan(descriptor: &wgpu::InstanceDescriptor) -> Result<wgpu::Instance,
 
 /// Vulkan's `vkGetInstanceProcAddr`: the loader's, but this module's
 /// device creation and device function lookup.
-#[allow(unsafe_code)]
 unsafe extern "system" fn get_instance_proc_addr(
     instance: vk::Instance,
     name: *const c_char,
@@ -248,7 +248,6 @@ unsafe extern "system" fn get_instance_proc_addr(
 /// Vulkan's `vkGetDeviceProcAddr`: the driver's functions, but this
 /// module's for those that record and submit the counted device's command
 /// buffers.
-#[allow(unsafe_code)]
 unsafe extern "system" fn get_device_proc_addr(
     device: vk::Device,
     name: *const c_char,
@@ -282,7 +281,6 @@ unsafe extern "system" fn get_device_proc_addr(
 
 /// Vulkan's `vkCreateDevice`: the driver's, with performance queries
 /// enabled where the device has them, and its counting set up.
-#[allow(unsafe_code)]
 unsafe extern "system" fn create_device(
     physical: vk::PhysicalDevice,
     info: *const vk::DeviceCreateInfo<'_>,
@@ -350,7 +348,6 @@ unsafe extern "system" fn create_device(
 /// # Safety
 ///
 /// `items` points at `count` items, or is null.
-#[allow(unsafe_code)]
 unsafe fn slice<'a, T>(items: *const T, count: u32) -> &'a [T] {
     if items.is_null() || count == 0 {
         return &[];
@@ -380,7 +377,6 @@ struct Counter {
 
 /// The counters the selection asks for that `physical`'s queue `family`
 /// can count in one run; why none, where none.
-#[allow(unsafe_code)]
 fn plan(
     instance: &ash::Instance,
     physical: vk::PhysicalDevice,
@@ -576,7 +572,6 @@ impl Counting {
     ///
     /// `device` was created from `physical` with the extension and feature
     /// enabled, and is not in use yet.
-    #[allow(unsafe_code)]
     unsafe fn new(
         instance: &ash::Instance,
         physical: vk::PhysicalDevice,
@@ -626,7 +621,6 @@ impl Counting {
     /// # Safety
     ///
     /// `device` holds the profiling lock.
-    #[allow(unsafe_code)]
     unsafe fn objects(
         device: &ash::Device,
         family: u32,
@@ -677,7 +671,6 @@ impl Counting {
     /// # Safety
     ///
     /// The GPU finished with them.
-    #[allow(unsafe_code)]
     unsafe fn destroy(device: &ash::Device, state: &mut State) {
         // SAFETY: as the caller promises; Vulkan ignores null handles.
         unsafe {
@@ -698,7 +691,6 @@ impl Counting {
     /// The counters of the `count` first queries of `pool`, once the GPU
     /// finished them; waiting for them where `wait`. `None` while not
     /// finished, or where the driver failed to tell.
-    #[allow(unsafe_code)]
     fn read(&self, pool: vk::QueryPool, count: usize, wait: bool) -> Option<Vec<Vec<f64>>> {
         let counters = self.plan.counters.len();
         let mut data = vec![vk::PerformanceCounterResultKHR::default(); counters * count];
@@ -798,7 +790,6 @@ impl Counting {
 
     /// Resets the queries of `pools` on `queue` in a submission of its own,
     /// ahead of the command buffers using them.
-    #[allow(unsafe_code)]
     fn reset(
         &self,
         state: &mut State,
@@ -985,7 +976,6 @@ fn counting() -> &'static Counting {
         .expect("functions are hooked for the counting device")
 }
 
-#[allow(unsafe_code)]
 unsafe extern "system" fn begin_command_buffer(
     buffer: vk::CommandBuffer,
     info: *const vk::CommandBufferBeginInfo<'_>,
@@ -1018,7 +1008,6 @@ fn close(state: &mut State, buffer: vk::CommandBuffer) -> Option<(vk::QueryPool,
     Some((state.pools[recording.pool?].raw, query))
 }
 
-#[allow(unsafe_code)]
 unsafe extern "system" fn end_command_buffer(buffer: vk::CommandBuffer) -> vk::Result {
     let counting = counting();
     let open = close(&mut counting.state(), buffer);
@@ -1030,7 +1019,6 @@ unsafe extern "system" fn end_command_buffer(buffer: vk::CommandBuffer) -> vk::R
     unsafe { (counting.device.fp_v1_0().end_command_buffer)(buffer) }
 }
 
-#[allow(unsafe_code)]
 unsafe extern "system" fn begin_render_pass(
     buffer: vk::CommandBuffer,
     info: *const vk::RenderPassBeginInfo<'_>,
@@ -1044,7 +1032,6 @@ unsafe extern "system" fn begin_render_pass(
     unsafe { (counting.device.fp_v1_0().cmd_begin_render_pass)(buffer, info, contents) }
 }
 
-#[allow(unsafe_code)]
 unsafe extern "system" fn end_render_pass(buffer: vk::CommandBuffer) {
     let counting = counting();
     // SAFETY: forwarded as called.
@@ -1054,7 +1041,6 @@ unsafe extern "system" fn end_render_pass(buffer: vk::CommandBuffer) {
     }
 }
 
-#[allow(unsafe_code)]
 unsafe extern "system" fn begin_label(
     buffer: vk::CommandBuffer,
     label: *const vk::DebugUtilsLabelEXT<'_>,
@@ -1101,7 +1087,6 @@ unsafe extern "system" fn begin_label(
     }
 }
 
-#[allow(unsafe_code)]
 unsafe extern "system" fn end_label(buffer: vk::CommandBuffer) {
     let counting = counting();
     GROUPS.with_borrow_mut(|(groups, _)| groups.pop());
@@ -1125,7 +1110,6 @@ unsafe extern "system" fn end_label(buffer: vk::CommandBuffer) {
     unsafe { (counting.labels.fp().cmd_end_debug_utils_label_ext)(buffer) }
 }
 
-#[allow(unsafe_code)]
 unsafe extern "system" fn queue_submit(
     queue: vk::Queue,
     count: u32,
@@ -1171,7 +1155,6 @@ unsafe extern "system" fn queue_submit(
     result
 }
 
-#[allow(unsafe_code)]
 unsafe extern "system" fn destroy_device(
     device: vk::Device,
     allocator: *const vk::AllocationCallbacks<'_>,

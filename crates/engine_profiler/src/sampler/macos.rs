@@ -2,6 +2,8 @@
 //! registers and follows the frame pointer chain Apple's ABIs keep, then
 //! resumes it. A process may suspend its own threads without privilege.
 
+#![expect(unsafe_code, reason = "suspends threads and reads their registers")]
+
 use mach2::kern_return::KERN_SUCCESS;
 use mach2::thread_act::{thread_get_state, thread_resume, thread_suspend};
 
@@ -12,14 +14,12 @@ pub(super) struct Id(mach2::port::mach_port_t);
 
 // SAFETY: a Mach port name of this process's thread, which any thread of the
 // process may suspend, resume and read.
-#[allow(unsafe_code)]
 unsafe impl Send for Id {}
 
 pub(super) struct Open(mach2::port::mach_port_t);
 
 pub(super) fn current() -> Option<(Id, (u64, u64))> {
     // SAFETY: queries the calling thread's own port and stack.
-    #[allow(unsafe_code)]
     unsafe {
         let thread = libc::pthread_self();
         let port = libc::pthread_mach_thread_np(thread);
@@ -41,7 +41,6 @@ pub(super) fn sample(Open(port): &Open, bounds: (u64, u64), frames: &mut [u64]) 
     // SAFETY: the thread stays suspended while its registers are read and
     // its frame records followed within its stack's bounds; nothing here
     // allocates or locks.
-    #[allow(unsafe_code)]
     unsafe {
         if thread_suspend(*port) != KERN_SUCCESS {
             return 0;
@@ -56,7 +55,6 @@ pub(super) fn sample(Open(port): &Open, bounds: (u64, u64), frames: &mut [u64]) 
 }
 
 #[cfg(target_arch = "aarch64")]
-#[allow(unsafe_code)]
 unsafe fn registers(port: mach2::port::mach_port_t) -> Option<(u64, u64)> {
     use mach2::structs::arm_thread_state64_t;
     use mach2::thread_status::ARM_THREAD_STATE64;
@@ -76,7 +74,6 @@ unsafe fn registers(port: mach2::port::mach_port_t) -> Option<(u64, u64)> {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[allow(unsafe_code)]
 unsafe fn registers(port: mach2::port::mach_port_t) -> Option<(u64, u64)> {
     use mach2::structs::x86_thread_state64_t;
     use mach2::thread_status::x86_THREAD_STATE64;

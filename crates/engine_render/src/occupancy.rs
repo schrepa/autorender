@@ -151,7 +151,6 @@ impl OccupancyPass {
     /// slots or covers changed. Returns the near map's area and the far
     /// map's, if any, with the strength covers darken by;
     /// `None` without maps.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -341,7 +340,6 @@ impl OccupancyPass {
 /// The coverage and heights targets, `resolution` texels a side with a
 /// layer for each map, the views shading reads and each map's layer of
 /// each target.
-#[allow(clippy::type_complexity)]
 fn targets(
     device: &wgpu::Device,
     resolution: u32,

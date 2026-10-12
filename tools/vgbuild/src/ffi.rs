@@ -3,6 +3,8 @@
 //! the crate. Field order and types match the headers exactly; review them
 //! on every meshoptimizer upgrade (`vendor/meshoptimizer/VENDORED.md`).
 
+#![expect(unsafe_code, reason = "calls the vendored C++ meshoptimizer")]
+
 use std::ffi::{c_int, c_uint, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -105,7 +107,6 @@ type ClodOutput = extern "C" fn(
     cluster_count: usize,
 ) -> c_int;
 
-#[allow(unsafe_code)]
 unsafe extern "C" {
     fn clodDefaultConfig(max_triangles: usize) -> ClodConfig;
     fn clodBuild(
@@ -170,10 +171,7 @@ unsafe extern "C" {
 pub(crate) fn default_config(max_triangles: usize) -> ClodConfig {
     assert!((4..=256).contains(&max_triangles));
     // SAFETY: a plain constructor over a checked argument.
-    #[allow(unsafe_code)]
-    unsafe {
-        clodDefaultConfig(max_triangles)
-    }
+    unsafe { clodDefaultConfig(max_triangles) }
 }
 
 /// One cluster `clodBuild` reports: the group that refined into it (or -1)
@@ -216,7 +214,6 @@ extern "C" fn trampoline(
     // SAFETY: `build` passes its `Context` to one `clodBuild` call, which
     // calls this on the same thread, and every cluster's indices stay valid
     // during the call.
-    #[allow(unsafe_code)]
     let (context, clusters) = unsafe {
         (
             &mut *context.cast::<Context<'_>>(),
@@ -228,7 +225,6 @@ extern "C" fn trampoline(
         .map(|cluster| ClusterView {
             refined: cluster.refined,
             // SAFETY: as above.
-            #[allow(unsafe_code)]
             indices: unsafe { std::slice::from_raw_parts(cluster.indices, cluster.index_count) },
         })
         .collect();
@@ -282,7 +278,6 @@ pub(crate) fn build(
     };
     // SAFETY: every pointer in `mesh` borrows `input` for the call, the
     // indices were checked above, and `trampoline` only touches `context`.
-    #[allow(unsafe_code)]
     unsafe {
         clodBuild(config, mesh, (&raw mut context).cast(), trampoline);
     }
@@ -296,7 +291,6 @@ pub(crate) fn local_indices(indices: &[u32]) -> (Vec<u32>, Vec<u8>) {
     let mut triangles = vec![0; indices.len()];
     // SAFETY: both outputs hold `indices.len()` entries, the most unique
     // vertices there can be.
-    #[allow(unsafe_code)]
     let unique = unsafe {
         clodLocalIndices(
             vertices.as_mut_ptr(),
@@ -317,7 +311,6 @@ pub(crate) fn cluster_bounds(indices: &[u32], positions: &[[f32; 3]]) -> Meshopt
             .all(|&index| (index as usize) < positions.len())
     );
     // SAFETY: indices checked above address tightly packed positions.
-    #[allow(unsafe_code)]
     unsafe {
         meshopt_computeClusterBounds(
             indices.as_ptr(),
@@ -338,11 +331,9 @@ pub(crate) fn build_hierarchy(
 ) -> Vec<ClodNode> {
     assert!(groups.iter().all(|group| (group.depth as usize) < levels));
     // SAFETY: plain arithmetic.
-    #[allow(unsafe_code)]
     let bound = unsafe { clodBuildHierarchyBound(groups.len(), node_width, levels) };
     let mut nodes = vec![ClodNode::default(); bound];
     // SAFETY: `nodes` holds the bound the library gives for these groups.
-    #[allow(unsafe_code)]
     let written = unsafe {
         clodBuildHierarchy(
             nodes.as_mut_ptr(),
@@ -402,7 +393,6 @@ pub fn simplify(
         // SAFETY: `destination` holds as many indices as the input, the most
         // simplification writes; the indices were checked above and address
         // tightly packed positions.
-        #[allow(unsafe_code)]
         unsafe {
             meshopt_simplify(
                 destination.as_mut_ptr(),
@@ -422,7 +412,6 @@ pub fn simplify(
         // SAFETY: as above, and the attributes and flags, checked above,
         // cover every vertex (null pointers for none, as the library takes
         // them).
-        #[allow(unsafe_code)]
         unsafe {
             meshopt_simplifyWithAttributes(
                 destination.as_mut_ptr(),

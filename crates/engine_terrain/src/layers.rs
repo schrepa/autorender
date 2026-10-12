@@ -1354,7 +1354,7 @@ impl Layers {
     /// no point between `min` and `max` are skipped. Hydrology layers' rivers
     /// read the row through `span`'s row, where a tile has one,
     /// as they read sample by sample.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "the generator's row inputs")]
     pub(crate) fn apply_local(
         &self,
         index: usize,

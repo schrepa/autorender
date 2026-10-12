@@ -171,7 +171,7 @@ impl<G: Game> PageHost<G> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "inputs cross Wasm as numbers")]
     pub fn frame(
         &mut self,
         timestamp: f64,

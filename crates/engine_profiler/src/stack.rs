@@ -5,6 +5,14 @@
 //! megabyte on Windows, so that growing startup frames show before they
 //! overflow it. Unsafe code, as `pix.rs` holds: two system calls.
 
+#![cfg_attr(
+    windows,
+    expect(
+        unsafe_code,
+        reason = "queries the calling thread's stack limits and committed pages"
+    )
+)]
+
 /// The calling thread's deepest stack use in bytes; `None` off Windows.
 pub fn peak() -> Option<usize> {
     #[cfg(windows)]
@@ -34,7 +42,6 @@ mod windows {
 
     const MEM_COMMIT: u32 = 0x1000;
 
-    #[allow(unsafe_code)]
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn GetCurrentThreadStackLimits(low: *mut usize, high: *mut usize);
@@ -46,7 +53,6 @@ mod windows {
     }
 
     /// The span from the stack's top down to its lowest committed page.
-    #[allow(unsafe_code)]
     pub(super) fn peak() -> Option<usize> {
         let (mut low, mut high) = (0, 0);
         // SAFETY: two out parameters.

@@ -66,7 +66,10 @@ impl<'a> Span<'a> {
 }
 
 /// A draw a captured frame times: its index among the frame's.
-#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "profiling"),
+    expect(dead_code, reason = "only profiling builds time draws")
+)]
 pub(crate) struct Draw(u32);
 
 /// What profiling builds ask devices for: timestamps, and inside passes

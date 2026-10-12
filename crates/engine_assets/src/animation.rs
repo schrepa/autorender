@@ -116,7 +116,7 @@ fn acos_approx(v: f32) -> f32 {
         omx = 0.0;
     }
     let root = omx.sqrt();
-    #[allow(clippy::approx_constant)]
+    #[expect(clippy::approx_constant, reason = "the polynomial's own coefficients")]
     let mut result =
         ((((((-0.001_262_491_1 * x + 0.006_670_09) * x - 0.017_088_126) * x + 0.030_891_88) * x
             - 0.050_174_303)

@@ -410,7 +410,7 @@ mod gpu {
         /// levels below its first. Returns whether it was baked: not when
         /// `budget` impostors (at most the device's array layers) already
         /// are.
-        #[allow(clippy::too_many_arguments)]
+        #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
         #[expect(
             clippy::too_many_lines,
             reason = "longer than the line ceiling; it may only shrink"

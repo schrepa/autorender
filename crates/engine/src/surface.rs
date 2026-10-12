@@ -128,8 +128,7 @@ macro_rules! __export_game {
             host: $crate::browser::PageHost<$game>,
         }
 
-        // The frame takes every input axis and action edge as it is.
-        #[allow(clippy::too_many_arguments)]
+        #[expect(clippy::too_many_arguments, reason = "each input axis and edge")]
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
         impl $name {
             $( $(#[doc = $am_doc])* pub fn $am(&mut self, $($am_arg: $am_ty),*) $(-> $am_ret)? { self.host.$am($($am_arg),*) } )*

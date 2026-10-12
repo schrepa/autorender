@@ -132,7 +132,7 @@ impl GpuPresentationPass {
     /// `size` texels across, seen through `view_projection`,
     /// over `poses` (this frame's culling wrote them), after the frame's own
     /// drawing; returns whether [`Self::probe_draw_source`] can draw it.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     pub(crate) fn encode_probe_face(
         &mut self,
         device: &wgpu::Device,

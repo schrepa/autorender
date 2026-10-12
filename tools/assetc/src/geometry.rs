@@ -83,7 +83,7 @@ pub(crate) fn import(
 /// `matrix`; with `skinned`, carrying the primitive's joints and weights.
 /// Dense opaque primitives without extra streams become virtual meshes
 /// as `options` say.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "a primitive and the import")]
 fn import_primitive(
     output: &SceneDocument,
     binary: &[u8],

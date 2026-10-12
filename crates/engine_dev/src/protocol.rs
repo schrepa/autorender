@@ -619,9 +619,10 @@ impl DevRequest {
 /// The browser host enforces pause/lifecycle rules. Deserialization validates
 /// structure; the host also validates version, finite values, ranges, and u64
 /// revision parsing before changing state.
-// One short-lived request at a time: the environment variant's size does not
-// matter, and boxing its sections would complicate the typed schema.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one short-lived request at a time: the environment variant's size does not matter, and boxing its sections would complicate the typed schema"
+)]
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]

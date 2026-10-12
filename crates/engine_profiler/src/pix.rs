@@ -4,6 +4,14 @@
 //! `PIXEndCapture` do. Unsafe code, as `renderdoc.rs` holds: loading the
 //! library and calling its two exports.
 
+#![cfg_attr(
+    windows,
+    expect(
+        unsafe_code,
+        reason = "loads PIX's capturer and calls its capture functions"
+    )
+)]
+
 use std::path::Path;
 
 /// PIX's GPU capturer, loaded.
@@ -29,7 +37,6 @@ type BeginCapture = unsafe extern "system" fn(*const Parameters) -> i32;
 type EndCapture = unsafe extern "system" fn(i32) -> i32;
 
 #[cfg(windows)]
-#[allow(unsafe_code)]
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn LoadLibraryW(name: *const u16) -> isize;
@@ -53,7 +60,6 @@ impl Pix {
             let library = wide(versions.last()?.as_os_str());
             // SAFETY: a NUL-terminated path; the library stays loaded for
             // the program's life, as PIX's capturer must.
-            #[allow(unsafe_code)]
             let module = unsafe { LoadLibraryW(library.as_ptr()) };
             if module == 0 {
                 return None;
@@ -61,7 +67,6 @@ impl Pix {
             // SAFETY: NUL-terminated export names of the module loaded
             // above; their signatures are PIX's `BeginProgrammaticGpuCapture`
             // and `EndProgrammaticGpuCapture`.
-            #[allow(unsafe_code)]
             unsafe {
                 let begin = GetProcAddress(module, c"BeginProgrammaticGpuCapture".as_ptr().cast())?;
                 let end = GetProcAddress(module, c"EndProgrammaticGpuCapture".as_ptr().cast())?;
@@ -88,7 +93,6 @@ impl Pix {
             };
             // SAFETY: PIX reads the parameters, and copies the file name,
             // during the call.
-            #[allow(unsafe_code)]
             let result = unsafe { (self.begin)(&parameters) };
             checked("start", result)
         }
@@ -104,7 +108,6 @@ impl Pix {
         #[cfg(windows)]
         {
             // SAFETY: ends the capture begun above; FALSE keeps it.
-            #[allow(unsafe_code)]
             let result = unsafe { (self.end)(0) };
             checked("end", result)
         }

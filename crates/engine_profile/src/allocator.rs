@@ -2,7 +2,10 @@
 //! Counters measure requested bytes, not allocator metadata, committed Wasm
 //! pages, JS heaps or GPU memory. They include the profiler and all Rust code.
 
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "implements the standard allocator's unsafe contract"
+)]
 
 use serde::Serialize;
 use std::alloc::{GlobalAlloc, Layout};

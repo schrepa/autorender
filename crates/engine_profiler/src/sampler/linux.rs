@@ -5,6 +5,8 @@
 //! process needs no privilege, unlike `perf_event_open` under Ubuntu's or
 //! Debian's defaults.
 
+#![expect(unsafe_code, reason = "signals threads and reads their registers")]
+
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -17,7 +19,6 @@ pub(super) struct Id(libc::pthread_t);
 
 // SAFETY: a pthread handle names a thread for signalling and clocks, which
 // any thread of the process may use; the sampler uses it for nothing else.
-#[allow(unsafe_code)]
 unsafe impl Send for Id {}
 
 pub(super) struct Open(libc::pthread_t);
@@ -38,7 +39,6 @@ static FRAMES: [AtomicU64; MAX] = [const { AtomicU64::new(0) }; MAX];
 
 pub(super) fn current() -> Option<(Id, (u64, u64))> {
     // SAFETY: queries the calling thread's own attributes.
-    #[allow(unsafe_code)]
     unsafe {
         let thread = libc::pthread_self();
         let mut attributes: libc::pthread_attr_t = std::mem::zeroed();
@@ -59,7 +59,6 @@ pub(super) fn open(Id(thread): Id) -> Option<Open> {
 
 pub(super) fn cpu_ns(Open(thread): &Open) -> Option<u64> {
     // SAFETY: the clock of a live thread of this process.
-    #[allow(unsafe_code)]
     unsafe {
         let mut clock = 0;
         if libc::pthread_getcpuclockid(*thread, &mut clock) != 0 {
@@ -77,7 +76,6 @@ pub(super) fn sample(Open(thread): &Open, (low, high): (u64, u64), frames: &mut 
     DEPTH.store(0, Ordering::Relaxed);
     STATE.store(REQUESTED, Ordering::Release);
     // SAFETY: signals a thread of this process; the handler is installed.
-    #[allow(unsafe_code)]
     if unsafe { libc::pthread_kill(*thread, libc::SIGPROF) } != 0 {
         STATE.store(IDLE, Ordering::Release);
         return 0;
@@ -114,7 +112,6 @@ fn install() -> Option<()> {
         .get_or_init(|| {
             // SAFETY: installs a handler that only reads registers and the
             // interrupted thread's stack, and writes atomics.
-            #[allow(unsafe_code)]
             unsafe {
                 let mut action: libc::sigaction = std::mem::zeroed();
                 action.sa_sigaction = handler as *const () as usize;
@@ -126,7 +123,6 @@ fn install() -> Option<()> {
         .then_some(())
 }
 
-#[allow(unsafe_code)]
 extern "C" fn handler(_: libc::c_int, _: *mut libc::siginfo_t, context: *mut libc::c_void) {
     if STATE
         .compare_exchange(REQUESTED, WRITING, Ordering::AcqRel, Ordering::Acquire)
@@ -147,7 +143,6 @@ extern "C" fn handler(_: libc::c_int, _: *mut libc::siginfo_t, context: *mut lib
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-#[allow(unsafe_code)]
 unsafe fn registers(context: *const libc::ucontext_t) -> (u64, u64) {
     // SAFETY: the interrupted thread's saved registers.
     unsafe {
@@ -160,7 +155,6 @@ unsafe fn registers(context: *const libc::ucontext_t) -> (u64, u64) {
 }
 
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-#[allow(unsafe_code)]
 unsafe fn registers(context: *const libc::ucontext_t) -> (u64, u64) {
     // SAFETY: the interrupted thread's saved registers; x29 is the frame
     // pointer.
@@ -175,7 +169,6 @@ unsafe fn registers(context: *const libc::ucontext_t) -> (u64, u64) {
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 )))]
-#[allow(unsafe_code)]
 unsafe fn registers(_: *const libc::ucontext_t) -> (u64, u64) {
     (0, 0)
 }

@@ -38,7 +38,7 @@ const BENCHMARK_LIMIT: Duration = Duration::from_millis(engine::host::policy::BE
 /// how, on the host and the command's `args`.
 pub struct GameControl<G: Game> {
     pub description: String,
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity, reason = "a stored control callback")]
     pub run: Box<dyn FnMut(&mut GameHost<G>, &Map<String, Value>) -> Result<Value, String>>,
 }
 

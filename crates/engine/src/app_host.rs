@@ -143,7 +143,13 @@ struct Overrides {
 /// What a submitted frame shows. Only development controls submit exact
 /// frames and previews.
 #[derive(Clone, Copy)]
-#[cfg_attr(not(feature = "dev"), allow(dead_code))]
+#[cfg_attr(
+    not(feature = "dev"),
+    expect(
+        dead_code,
+        reason = "only development controls submit exact frames and previews"
+    )
+)]
 enum FrameKind {
     /// An ordinary frame at fraction `alpha` of the fixed tick: GPU-presented
     /// unless the game opted out, and blended by temporal antialiasing.

@@ -8,6 +8,14 @@
 //! register themselves, recording their stack's bounds, which no unwind
 //! reads outside. Samples never allocate while a thread is stopped.
 
+#![cfg_attr(
+    any(unix, target_arch = "x86_64"),
+    expect(
+        unsafe_code,
+        reason = "follows frame pointers within a thread's stack and reads sampled code"
+    )
+)]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
@@ -190,7 +198,6 @@ fn run(
 /// many. Each frame record holds the caller's frame pointer, then the
 /// return address.
 #[cfg(unix)]
-#[allow(unsafe_code)]
 pub(crate) fn walk_frame_pointers(
     pc: u64,
     mut fp: u64,
@@ -226,7 +233,6 @@ pub(crate) fn walk_frame_pointers(
 /// code of a function the sampler found running, which its module maps
 /// readable.
 #[cfg(target_arch = "x86_64")]
-#[allow(unsafe_code)]
 pub(crate) fn code(start: u64, length: usize) -> Vec<u8> {
     if start == 0 {
         return Vec::new();

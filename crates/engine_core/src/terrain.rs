@@ -987,7 +987,7 @@ impl Work {
 /// `slots` has workers, they bake and generate instead, each
 /// tile at its job priority. Returns whether a bake is still
 /// in progress, which nothing loads behind.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "the frame's disjoint borrows")]
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"

@@ -5,6 +5,14 @@
 //! times, the `GPU Engine` performance counters, the display driver's
 //! engine clocks); other systems report none yet.
 
+#![cfg_attr(
+    windows,
+    expect(
+        unsafe_code,
+        reason = "Windows' process, processor time and GPU counter calls"
+    )
+)]
+
 /// What other programs did during a window of a run.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Load {
@@ -121,7 +129,6 @@ mod windows {
     impl Monitor {
         pub(super) fn new(pid: u32) -> Option<Self> {
             // SAFETY: opens a process by its ID for reading its times.
-            #[allow(unsafe_code)]
             let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
             if process.is_null() {
                 return None;
@@ -140,7 +147,6 @@ mod windows {
                 .collect();
             // SAFETY: a query of this process's own, and a counter added to
             // it by its English path; both closed on drop.
-            #[allow(unsafe_code)]
             unsafe {
                 if PdhOpenQueryW(std::ptr::null(), 0, &mut monitor.query) == 0
                     && PdhAddEnglishCounterW(monitor.query, path.as_ptr(), 0, &mut monitor.counter)
@@ -248,7 +254,6 @@ mod windows {
         fn snapshot(&self) -> Snapshot {
             let (mut idle, mut kernel, mut user) = Default::default();
             // SAFETY: plain calls filling the times passed.
-            #[allow(unsafe_code)]
             let system =
                 (unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) } != 0).then(|| {
                     // Kernel time includes idle time.
@@ -256,7 +261,6 @@ mod windows {
                     (total.saturating_sub(ticks(idle)), total)
                 });
             // SAFETY: this process's pseudo-handle.
-            #[allow(unsafe_code)]
             let own = unsafe { GetCurrentProcess() };
             let processes = cpu_time(self.process).zip(cpu_time(own));
             Snapshot {
@@ -277,7 +281,6 @@ mod windows {
             // SAFETY: the query and counter opened above; the second call
             // fills a buffer of the size the first asked for, 8-byte
             // aligned, and its names point into that buffer.
-            #[allow(unsafe_code)]
             unsafe {
                 if PdhCollectQueryData(self.query) != 0
                     || PdhGetRawCounterArrayW(
@@ -324,7 +327,6 @@ mod windows {
                 clocks.finish();
             }
             // SAFETY: what `new` opened, closed once.
-            #[allow(unsafe_code)]
             unsafe {
                 if !self.query.is_null() {
                     PdhCloseQuery(self.query);
@@ -353,7 +355,6 @@ mod windows {
         let mut list = D3DKMT_ENUMADAPTERS2::default();
         // SAFETY: the first call counts the adapters, the second opens
         // that many into a list of that length.
-        #[allow(unsafe_code)]
         let opened = unsafe {
             if D3DKMTEnumAdapters2(&mut list) != 0 {
                 return Vec::new();
@@ -429,7 +430,6 @@ mod windows {
         };
         // SAFETY: an adapter handle opened above and a value of the size
         // and kind the query names.
-        #[allow(unsafe_code)]
         let status = unsafe { D3DKMTQueryAdapterInfo(&mut info) };
         (status == 0).then_some(value)
     }
@@ -439,7 +439,6 @@ mod windows {
         let (mut created, mut exited, mut kernel, mut user) = Default::default();
         // SAFETY: fills the times passed, or fails for a handle that is not
         // a process's.
-        #[allow(unsafe_code)]
         let read =
             unsafe { GetProcessTimes(process, &mut created, &mut exited, &mut kernel, &mut user) };
         (read != 0).then(|| ticks(kernel) + ticks(user))

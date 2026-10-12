@@ -99,7 +99,7 @@ impl Renderer {
     /// the meshes; terrain's visibility, writing each pixel's terrain and
     /// depth; each terrain's resolve, shading its pixels once each; then
     /// its cover, placed objects and the sky; each in a pass of its own.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     fn encode_opaque_deferred(
         &self,
         state: &FrameState<'_>,
@@ -520,7 +520,6 @@ impl Renderer {
 /// What profiling reports name a draw of `batch` by: its mesh, material,
 /// opaque phase and level of detail (`None` for exact frames' draws of
 /// every instance).
-#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
 fn draw_label(batch: &DrawBatch, phase: usize, level: Option<usize>) -> String {
     let material = batch
         .material

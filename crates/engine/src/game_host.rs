@@ -77,7 +77,7 @@ impl<G: Game> GameHost<G> {
     /// Runs one frame at `timestamp` milliseconds on a `width` × `height`
     /// view with `input` and the action bits `held`, `pressed` and
     /// `released` since the last frame.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "each input axis and edge")]
     pub fn frame(
         &mut self,
         timestamp: f64,

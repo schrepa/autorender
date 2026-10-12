@@ -368,7 +368,7 @@ impl VirtualTexture {
     /// frame draws; writes the windows and tables into the directory buffer
     /// at word `base` and the bakes into their buffer. Returns each
     /// terrain's uniform words, by its index in `terrains`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -829,7 +829,7 @@ impl VirtualTexture {
     /// terrain's with its uniform (`uniform_of` gives a terrain's offset by
     /// its id), through the camera's terrain group, the terrain group whose
     /// material maps leave the sheets out, and the bakes' own group.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     pub(crate) fn encode_bakes(
         &mut self,
         device: &wgpu::Device,
@@ -938,7 +938,7 @@ impl VirtualTexture {
     /// (its size `size`) for each textured terrain (`uniform_of` gives its
     /// uniform's offset), then copies the bits to a read-back and clears
     /// them.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     pub(crate) fn encode_feedback(
         &mut self,
         device: &wgpu::Device,

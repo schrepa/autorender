@@ -430,7 +430,7 @@ impl SceneTerrain {
     /// the component's surface (assets left to instantiation), each surface
     /// material's document material index and each asset's mesh and
     /// material indices.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity, reason = "the surface and its indices")]
     fn surface(
         &self,
         path: &str,

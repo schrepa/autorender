@@ -4,6 +4,11 @@
 //! [`RenderDoc::end`] is captured into an `.rdc` file. wgpu reaches
 //! RenderDoc only in builds with debug assertions; this reaches it in any.
 
+#![cfg_attr(
+    windows,
+    expect(unsafe_code, reason = "calls RenderDoc's capture functions")
+)]
+
 use std::path::Path;
 
 /// RenderDoc's API, in a program running under it.
@@ -33,7 +38,6 @@ const VERSION_1_1_2: u32 = 10102;
 type GetApi = unsafe extern "C" fn(u32, *mut *const Api) -> i32;
 
 #[cfg(windows)]
-#[allow(unsafe_code)]
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetModuleHandleW(name: *const u16) -> isize;
@@ -50,7 +54,6 @@ impl RenderDoc {
             // SAFETY: a NUL-terminated name; RenderDoc's library stays
             // loaded in the program it runs, and its `RENDERDOC_GetAPI`
             // fills the pointer with its API table of that version.
-            #[allow(unsafe_code)]
             unsafe {
                 let module = GetModuleHandleW(name.as_ptr());
                 if module == 0 {
@@ -78,7 +81,6 @@ impl RenderDoc {
                     .map_err(|_| "the capture path holds a NUL".to_owned())?;
             // SAFETY: the API table RenderDoc filled; RenderDoc copies the
             // template; null device and window capture its only device.
-            #[allow(unsafe_code)]
             unsafe {
                 ((*self.api).set_capture_file_path_template)(template.as_ptr().cast());
                 ((*self.api).start_frame_capture)(std::ptr::null_mut(), std::ptr::null_mut());
@@ -100,7 +102,6 @@ impl RenderDoc {
         #[cfg(windows)]
         {
             // SAFETY: ends the capture begun above on the same device.
-            #[allow(unsafe_code)]
             let ended = unsafe {
                 ((*self.api).end_frame_capture)(std::ptr::null_mut(), std::ptr::null_mut())
             };

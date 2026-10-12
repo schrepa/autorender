@@ -368,7 +368,7 @@ fn slide_lanes<'a, T: DerefMut<Target = Transform>>(
 }
 
 /// Moves every mover to its pose at the tick's simulated time.
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity, reason = "a query per mover kind")]
 fn animate(
     time: Res<FixedTime>,
     mut movers: ParamSet<(

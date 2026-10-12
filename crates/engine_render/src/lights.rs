@@ -35,7 +35,6 @@ impl ClusterUniform {
     /// view depth, its first two rows' lengths the projection scales, and
     /// the third row the near and far planes; a matrix without usable planes
     /// clusters over [0.1, 1000].
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         view_projection: Mat4,
         width: u32,
@@ -430,7 +429,7 @@ mod gpu {
         /// lights of `frame` without a slot or on slots `still` (storage and
         /// generation) counts still, into the lists the frame's own shading
         /// read before; [`Self::probe_fragment_group`] shades with them.
-        #[allow(clippy::too_many_arguments)]
+        #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
         pub(crate) fn encode_probe_face(
             &mut self,
             device: &wgpu::Device,

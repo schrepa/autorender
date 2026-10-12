@@ -1,6 +1,8 @@
 //! What only native renderers do: graphics debugger captures, waiting for
 //! the GPU's work or a mark in it, and reading offscreen frames back.
 
+#![expect(unsafe_code, reason = "starts and stops a graphics debugger's capture")]
+
 use super::*;
 
 /// A point in the GPU work a native renderer submitted
@@ -20,7 +22,6 @@ impl Renderer {
         self.debugger_capture = true;
         // SAFETY: no other capture is active (the flag pairs every start
         // with one stop); the debugger's own rules are its documentation's.
-        #[allow(unsafe_code)]
         unsafe {
             self.device.start_graphics_debugger_capture();
         }
@@ -36,7 +37,6 @@ impl Renderer {
         self.wait_for_gpu()?;
         self.debugger_capture = false;
         // SAFETY: the capture started above is the one active.
-        #[allow(unsafe_code)]
         unsafe {
             self.device.stop_graphics_debugger_capture();
         }

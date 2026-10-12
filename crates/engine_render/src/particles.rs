@@ -231,7 +231,7 @@ mod gpu {
         /// identity and its emitters revision) changed; `None` when the frame
         /// draws no particles. `depth` is the depth buffer of
         /// `depth_generation`, sampled for soft particles.
-        #[allow(clippy::too_many_arguments)]
+        #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,

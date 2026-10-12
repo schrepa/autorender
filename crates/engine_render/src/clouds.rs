@@ -529,7 +529,6 @@ impl CloudPass {
     /// `view_projection` (unjittered) onto a canvas of `canvas` pixels in
     /// `lighting`'s sun and sky; call after [`Self::prepare`]. Nothing
     /// marches without clouds or with the view's march off.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare_view(
         &mut self,
         device: &wgpu::Device,

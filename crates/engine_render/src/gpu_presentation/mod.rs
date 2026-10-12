@@ -960,7 +960,6 @@ fn node_groups(
 /// A compaction's group: its uniform `frame`, the draw groups, the hidden
 /// and sub-pixel `counts`, and compaction `compaction`'s draw arguments,
 /// visible IDs and impostor instances.
-#[allow(clippy::too_many_arguments)]
 fn compact_group(
     device: &wgpu::Device,
     shaders: &Shaders,

@@ -147,7 +147,6 @@ mod gpu {
         /// frame draws none. Decals read their displayed poses from
         /// `palette` (the frame's joint palette and its pose generation and
         /// parity). `depth` is the depth buffer of `depth_generation`.
-        #[allow(clippy::too_many_arguments)]
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,

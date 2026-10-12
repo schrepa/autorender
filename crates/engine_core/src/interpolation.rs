@@ -977,7 +977,7 @@ fn initial_record(
 
 /// `node` is the record's hint into the hierarchy being replaced; it is
 /// validated by full Entity against those previous sources.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "history and record, apart")]
 fn observe_record(
     history: &mut History,
     interval: &mut Interval,
@@ -1039,7 +1039,7 @@ fn observe_record(
     interval.scales_compatible = compatible_scales(previous, &current);
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "history and record, apart")]
 fn observe_local(
     history: &mut History,
     interval: &mut Interval,

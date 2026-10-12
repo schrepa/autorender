@@ -1867,7 +1867,7 @@ impl TerrainPass {
     /// Creates the opaque pipeline into `targets` (`lit` or not) unless it
     /// exists: `camera` and `lights` are the main passes' first and lights
     /// groups, `empty` the group standing in for the poses.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     pub(crate) fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,

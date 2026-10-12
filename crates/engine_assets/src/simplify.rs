@@ -1766,7 +1766,7 @@ fn sort_edge_collapses(sort_order: &mut [u32], collapses: &[Collapse]) {
 /// `performEdgeCollapses`: collapses in error order until a limit, never
 /// moving a vertex twice or onto a moved vertex in one pass. Returns the
 /// number of collapses and raises `result_error` to their largest error.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "meshoptimizer's own signature")]
 fn perform_edge_collapses(
     collapse_remap: &mut [u32],
     collapse_locked: &mut [bool],

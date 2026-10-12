@@ -37,7 +37,7 @@ pub(super) struct ShadowPipelines {
 /// A shadow caster pipeline of `module`'s `entry_point` over `layouts` and
 /// vertex `buffers`; `clear` passes write the far depth everywhere, and
 /// casters with a `fragment` stage test texels.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
 fn caster_pipeline(
     device: &wgpu::Device,
     module: &wgpu::ShaderModule,

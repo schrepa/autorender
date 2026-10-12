@@ -2,6 +2,11 @@
 //! unwinds it with the system's unwind tables, then resumes it. Opening a
 //! thread of one's own process for that needs no privilege.
 
+#![expect(
+    unsafe_code,
+    reason = "suspends threads, reads their registers and unwinds them"
+)]
+
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 use windows_sys::Win32::System::Diagnostics::Debug::{CONTEXT, GetThreadContext};
 use windows_sys::Win32::System::Threading::{
@@ -22,7 +27,6 @@ pub(super) struct Open(HANDLE);
 impl Drop for Open {
     fn drop(&mut self) {
         // SAFETY: the handle `open` returned, closed once.
-        #[allow(unsafe_code)]
         unsafe {
             CloseHandle(self.0);
         }
@@ -31,13 +35,11 @@ impl Drop for Open {
 
 // SAFETY: a thread handle works from any thread of its process, and the
 // sampler only reads the handle's thread through system calls.
-#[allow(unsafe_code)]
 unsafe impl Send for Open {}
 
 pub(super) fn current() -> Option<(Id, (u64, u64))> {
     let (mut low, mut high) = (0usize, 0usize);
     // SAFETY: plain calls about the calling thread.
-    #[allow(unsafe_code)]
     let id = unsafe {
         GetCurrentThreadStackLimits(&mut low, &mut high);
         GetCurrentThreadId()
@@ -47,7 +49,6 @@ pub(super) fn current() -> Option<(Id, (u64, u64))> {
 
 pub(super) fn open(Id(id): Id) -> Option<Open> {
     // SAFETY: opens a thread of this process by its ID.
-    #[allow(unsafe_code)]
     let handle = unsafe {
         OpenThread(
             THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_LIMITED_INFORMATION,
@@ -61,7 +62,6 @@ pub(super) fn open(Id(id): Id) -> Option<Open> {
 pub(super) fn cpu_ns(Open(handle): &Open) -> Option<u64> {
     let mut cycles = 0u64;
     // SAFETY: a thread handle opened above.
-    #[allow(unsafe_code)]
     let read = unsafe { QueryThreadCycleTime(*handle, &mut cycles) };
     (read != 0).then(|| (cycles as f64 * nanos_per_cycle()) as u64)
 }
@@ -74,7 +74,6 @@ fn nanos_per_cycle() -> f64 {
         let cycles = || {
             let mut cycles = 0u64;
             // SAFETY: the pseudo-handle of the calling thread.
-            #[allow(unsafe_code)]
             unsafe {
                 QueryThreadCycleTime(
                     windows_sys::Win32::System::Threading::GetCurrentThread(),
@@ -97,7 +96,6 @@ pub(super) fn sample(Open(handle): &Open, bounds: (u64, u64), frames: &mut [u64]
     // its stack unwound, reading only within its stack's bounds and the
     // loaded modules' unwind tables; nothing here allocates or locks what
     // the stopped thread could hold, but the system's function table lock.
-    #[allow(unsafe_code)]
     unsafe {
         if SuspendThread(*handle) == u32::MAX {
             return 0;
@@ -120,7 +118,6 @@ const FULL: u32 = windows_sys::Win32::System::Diagnostics::Debug::CONTEXT_FULL_A
 const FULL: u32 = windows_sys::Win32::System::Diagnostics::Debug::CONTEXT_FULL_ARM64;
 
 #[cfg(target_arch = "x86_64")]
-#[allow(unsafe_code)]
 unsafe fn unwind(context: &mut CONTEXT, (low, high): (u64, u64), frames: &mut [u64]) -> usize {
     use windows_sys::Win32::System::Diagnostics::Debug::{
         RtlLookupFunctionEntry, RtlVirtualUnwind, UNW_FLAG_NHANDLER,
@@ -163,7 +160,6 @@ unsafe fn unwind(context: &mut CONTEXT, (low, high): (u64, u64), frames: &mut [u
 
 /// Windows on Arm keeps frame records: the frame pointer chain.
 #[cfg(target_arch = "aarch64")]
-#[allow(unsafe_code)]
 unsafe fn unwind(context: &mut CONTEXT, (low, high): (u64, u64), frames: &mut [u64]) -> usize {
     // SAFETY: the register union's named view of a full context.
     let (pc, fp) = unsafe { (context.Pc, context.Anonymous.Anonymous.Fp) };
