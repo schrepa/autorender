@@ -254,11 +254,10 @@ impl Renderer {
             last_seconds: None,
             post: None,
             temporal: None,
-            transparent: None,
-            particles: None,
             features: RenderFeatures {
                 decals: Lazy::default(),
                 water: Eager::new(water),
+                transparency: Eager::new(crate::transparent::Transparency::default()),
             },
             graph: Default::default(),
             gpu_frame: false,

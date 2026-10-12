@@ -12,6 +12,7 @@ use crate::materials::MaterialStore;
 use crate::profiling::GpuProfiler;
 use crate::render_graph::{Clear, FrameShape, Load, Node, Ops, RenderGraph, Resource};
 use crate::targets::Targets;
+use crate::transparent::Transparency;
 use crate::water::WaterPass;
 
 /// A feature of the renderer.
@@ -140,6 +141,13 @@ impl<F> Ready<F> {
     }
 }
 
+/// The renderer's own mesh draws that a feature's pass takes in.
+pub(crate) trait MeshDraws {
+    /// The frame's transparent mesh batches, into the transparent
+    /// accumulation pass `pass`; returns their draws.
+    fn transparent(&self, pass: &mut wgpu::RenderPass<'_>) -> u32;
+}
+
 /// The views of a frame's attachments.
 pub(crate) trait AttachmentViews {
     /// The view of attachment `resource` this frame.
@@ -150,6 +158,8 @@ pub(crate) trait AttachmentViews {
 /// node's render pass.
 pub(crate) struct Encode<'f> {
     views: &'f dyn AttachmentViews,
+    /// The renderer's mesh draws features' passes take in.
+    pub(crate) meshes: &'f dyn MeshDraws,
     pub(crate) profiler: &'f GpuProfiler,
     /// The main passes' first group.
     pub(crate) camera: &'f wgpu::BindGroup,
@@ -164,7 +174,7 @@ pub(crate) struct Encode<'f> {
 
 impl<'f> Encode<'f> {
     pub(crate) fn new(
-        views: &'f dyn AttachmentViews,
+        (views, meshes): (&'f dyn AttachmentViews, &'f dyn MeshDraws),
         profiler: &'f GpuProfiler,
         (camera, materials, lights): (
             &'f wgpu::BindGroup,
@@ -175,6 +185,7 @@ impl<'f> Encode<'f> {
     ) -> Self {
         Self {
             views,
+            meshes,
             profiler,
             camera,
             materials,
@@ -345,4 +356,6 @@ render_features! {
     decals: Lazy<DecalPass> => [Decals],
     /// Terrains' lakes and rivers, and the sea, over the opaque scene.
     water: Eager<WaterPass> => [Water],
+    /// Transparent surfaces and particles, accumulated, then composited.
+    transparency: Eager<Transparency> => [Transparent, TransparentComposite],
 }

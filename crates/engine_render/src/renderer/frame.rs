@@ -6,7 +6,6 @@
 
 use super::*;
 use crate::gpu_presentation::{CullingView, GpuPrepared, PresentationInputs, RecordsKey, Staging};
-use crate::particles::ParticleFrame;
 use crate::render_graph::{self, Effects, FeaturePass, FrameShape, Node, Pass, Phase, Resource};
 use crate::shadows::{MapSources, ShadowFrame, ShadowInputs};
 
@@ -150,9 +149,6 @@ pub(super) struct Features<'s> {
     pub(super) light_frame: Option<LightFrame>,
     pub(super) post_frame: Option<Effects>,
     pub(super) refraction: bool,
-    pub(super) transparent_draws: bool,
-    pub(super) particle_frame: Option<ParticleFrame>,
-    pub(super) transparency: bool,
     /// What the features render_features! lists prepared.
     pub(super) frames: FeatureFrames,
 }

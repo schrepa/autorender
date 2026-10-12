@@ -4,12 +4,12 @@ use super::frame::{EncodeReport, FrameKind, FrameState};
 use super::*;
 use crate::decals::DecalPass;
 use crate::gpu_presentation::GpuPrepared;
+use crate::transparent::Transparency;
 use crate::water::WaterPass;
 
 use engine_core::{
-    Applied, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn, GroundCoverStats,
-    LightStats, OccupancyStats, ProbeStats, ShadowStats, SkyStats, TerrainRenderStats,
-    VirtualGeometryStats,
+    Applied, CloudStats, CullingStats, DeformationStats, DetailStats, GroundCoverStats, LightStats,
+    OccupancyStats, ProbeStats, ShadowStats, SkyStats, TerrainRenderStats, VirtualGeometryStats,
 };
 
 /// Records every number and flag of `stats` as the counter `render.<path>`,
@@ -83,7 +83,7 @@ impl Renderer {
             &features.light_frame,
             features.post_frame,
         );
-        let (particle_frame, refraction) = (&features.particle_frame, features.refraction);
+        let refraction = features.refraction;
         let dropped_probes = features.dropped_probes;
         let (water, ocean) =
             WaterPass::stats(features.frames.water.as_ref().map(Ready::frame), snapshot);
@@ -232,13 +232,10 @@ impl Renderer {
             reflections: Applied {
                 active: post_frame.is_some_and(|frame| frame.reflections),
             },
-            particles: Drawn {
-                drawn: particle_frame.as_ref().map_or(0, |frame| frame.total),
-                invalid: snapshot.particles.invalid.min(u32::MAX as usize) as u32,
-                dropped: (snapshot.particles.dropped as u64
-                    + particle_frame.as_ref().map_or(0, |frame| frame.dropped))
-                .min(u64::from(u32::MAX)) as u32,
-            },
+            particles: Transparency::stats(
+                features.frames.transparency.as_ref().map(Ready::frame),
+                snapshot,
+            ),
             refraction: Applied {
                 active: refraction && post_frame.is_some(),
             },
@@ -455,14 +452,7 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.gpu_transparent_bytes",
-            (self
-                .transparent
-                .as_ref()
-                .map_or(0, TransparentPass::capacity_bytes)
-                + self
-                    .particles
-                    .as_ref()
-                    .map_or(0, ParticlePass::capacity_bytes)
+            (self.features.transparency.get().capacity_bytes()
                 + self
                     .features
                     .decals

@@ -28,7 +28,6 @@ use crate::impostors::{
 use crate::lights::{LightFrame, LightPass};
 use crate::materials::MaterialStore;
 use crate::mesh_arena::{Bindings, MeshArena, MeshDraw, Placement};
-use crate::particles::ParticlePass;
 use crate::pipelines::PipelineCounts;
 use crate::post::PostPass;
 use crate::probes::{FACES, ProbePass, face_view_projection};
@@ -39,7 +38,7 @@ use crate::shadows::{CasterDraw, ShadowPass};
 use crate::staging::{self, StagingRing};
 use crate::targets::{FrameSize, ScreenTarget, Targets};
 use crate::temporal::{TemporalFrame, TemporalPass};
-use crate::transparent::{TransparentPass, accumulation_targets};
+use crate::transparent::accumulation_targets;
 use crate::uploads::UploadCache;
 use crate::virtual_geometry::{
     CameraTests, Cone, IdBuffers, MAX_VIEWS, SelectionFrame, VirtualBatch, VirtualGeometryPass,
@@ -269,11 +268,6 @@ pub struct Renderer {
     post: Option<PostPass>,
     // Temporal antialiasing of GPU-presented display frames.
     temporal: Option<TemporalPass>,
-    // Transparent surfaces and particles: targets, the
-    // composite and particle pipelines, created with the first frame that
-    // draws them.
-    transparent: Option<TransparentPass>,
-    particles: Option<ParticlePass>,
     // The features render_features! lists, each created with the first
     // frame needing it.
     features: RenderFeatures,

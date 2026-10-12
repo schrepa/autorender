@@ -266,9 +266,6 @@ pub(crate) enum Pass {
     OcclusionTest,
     /// A feature's pass, which the feature declares and encodes.
     Feature(FeaturePass),
-    /// Transparent surfaces and particles accumulated, then composited.
-    Transparent,
-    TransparentComposite,
     /// The screen effects.
     Effects,
     /// The screen effects' composite into the canvas.
@@ -346,8 +343,8 @@ passes! {
     water: Feature(FeaturePass::Water),
     cloud_march: CloudMarch,
     cloud_composite: CloudComposite,
-    transparent: Transparent,
-    transparent_composite: TransparentComposite,
+    transparent: Feature(FeaturePass::Transparent),
+    transparent_composite: Feature(FeaturePass::TransparentComposite),
     effects: Effects,
     composite: Composite,
     temporal_resolve: TemporalResolve,
@@ -721,9 +718,7 @@ pub(crate) struct FrameShape {
     pub(crate) lights: bool,
     /// The view's clouds march and cover the scene.
     pub(crate) clouds: bool,
-    /// Transparent draws or particles, and glass reading
-    /// the opaque scene.
-    pub(crate) transparency: bool,
+    /// Glass reads the opaque scene.
     pub(crate) refraction: bool,
     pub(crate) effects: Effects,
     /// Reflection probes capture faces after the frame.
@@ -758,8 +753,8 @@ impl FrameShape {
 /// The opaque scene's clear color in the effects' linear targets: the
 /// canvas's in linear light.
 pub(crate) const SCENE_CLEAR: [f64; 4] = [0.009, 0.015, 0.025, 1.0];
-const TRANSPARENT: [f64; 4] = [0.0, 0.0, 0.0, 0.0];
-const WHITE: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
+pub(crate) const TRANSPARENT: [f64; 4] = [0.0, 0.0, 0.0, 0.0];
+pub(crate) const WHITE: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 /// The far plane's depth (reversed): `gpu_data::FAR_DEPTH`.
 const FAR: f32 = 0.0;
@@ -920,30 +915,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(CloudView)
             .read(Depth)
             .color(scene, Access::Load);
-    }
-    if shape.transparency {
-        graph
-            .add(Pass::Transparent)
-            .read(Poses)
-            .read_if(gpu, Visible)
-            .read_if(shape.lights, Lights)
-            .read_if(shape.shadows, ShadowMaps)
-            .read_if(shape.refraction, Scene)
-            .read(Probes)
-            .color(Accumulated, Access::Clear(Clear::Color(TRANSPARENT)))
-            .color(Revealed, Access::Clear(Clear::Color(WHITE)))
-            .depth(Depth, Access::ReadOnly);
-        let composite = graph
-            .add(Pass::TransparentComposite)
-            .read(Accumulated)
-            .read(Revealed)
-            .color(scene, Access::Load);
-        let composite = if scene == Scene {
-            composite.color(Glow, Access::Load)
-        } else {
-            composite
-        };
-        composite.depth(Depth, Access::ReadOnly);
     }
     let effects = shape.effects;
     if shape.targets != Targets::Canvas && effects.any() {

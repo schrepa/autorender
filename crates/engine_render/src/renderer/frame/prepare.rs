@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::decals::{DecalFrame, DecalPass};
+use crate::transparent::TransparencyFrame;
 
 /// GPU presentation's preparation: occlusion culling's viewport and depth
 /// pyramid levels, and what presentation prepared.
@@ -626,7 +627,7 @@ impl Renderer {
         prelude.environment = environment;
         let light_frame = self.prepare_lights(frame, kind, temporal_frame);
         let (post_frame, refraction) = self.prepare_post(snapshot, temporal_frame);
-        let (transparent_draws, particle_frame, transparency) = self.prepare_transparency(
+        let transparency = self.prepare_transparency(
             snapshot,
             (frame.identity(), frame.emitters_revision()),
             temporal_frame,
@@ -642,11 +643,9 @@ impl Renderer {
             light_frame,
             post_frame,
             refraction,
-            transparent_draws,
-            particle_frame,
-            transparency,
             frames: FeatureFrames {
                 decals,
+                transparency,
                 ..FeatureFrames::default()
             },
         }
@@ -1081,66 +1080,43 @@ impl Renderer {
         (post_frame, refraction)
     }
 
-    /// Transparent surfaces and particles; returns whether
-    /// transparent batches draw, the particles, and whether either does.
-    /// `emitters` is the frame's stream identity and emitters revision.
+    /// Transparent surfaces and particles; `None` when nothing transparent
+    /// draws. `emitters` is the frame's stream identity and emitters
+    /// revision.
     fn prepare_transparency(
         &mut self,
         snapshot: &RenderSnapshot,
         emitters: (u64, u64),
         temporal_frame: &Option<TemporalFrame>,
         post_frame: Option<Effects>,
-    ) -> (bool, Option<ParticleFrame>, bool) {
-        // Transparent surfaces and particles. Particles
-        // sample the depth buffer for their soft edges.
-        let transparent_draws = self.plan.batches.iter().any(|batch| batch.transparent);
-        let particle_frame =
-            if snapshot.environment.particles.enabled && !snapshot.particles.list.is_empty() {
-                let device = &self.device;
-                let (camera_layout, format) = (&self.camera.layout, self.display.format());
-                let particles = self.particles.get_or_insert_with(|| {
-                    ParticlePass::new(
-                        device,
-                        camera_layout,
-                        format,
-                        DEPTH_FORMAT,
-                        &accumulation_targets(),
-                    )
-                });
-                let prepared = particles.prepare(
-                    device,
-                    &self.queue,
-                    snapshot,
-                    emitters,
-                    self.display.size(),
-                    &self.depth.view,
-                );
-                if prepared.is_some() {
-                    particles.ensure_additive(device, post_frame.is_some());
-                }
-                prepared
-            } else {
-                None
-            };
-        let transparency = transparent_draws || particle_frame.is_some();
-        if transparency {
-            let (device, format) = (&self.device, self.display.format());
-            let pass = self
-                .transparent
-                .get_or_insert_with(|| TransparentPass::new(device, format, DEPTH_FORMAT));
-            pass.begin(device, self.display.size());
-            pass.ensure_composite(device, post_frame.is_some());
-            if transparent_draws
-                && temporal_frame
-                    .as_ref()
-                    .is_some_and(|frame| frame.parity == 1)
-            {
-                self.instances.prepare_pose_group(device, 1);
-            }
-        } else if let Some(pass) = self.transparent.as_mut() {
-            pass.release_targets();
+    ) -> Option<Ready<TransparencyFrame>> {
+        // Transparent surfaces and particles.
+        let meshes = self.plan.batches.iter().any(|batch| batch.transparent);
+        let (device, queue) = (&self.device, &self.queue);
+        let inputs = (
+            (self.display.size(), &self.depth.view),
+            (&self.camera.layout, (self.display.format(), DEPTH_FORMAT)),
+        );
+        let transparency = self.features.transparency.prepare(|transparency| {
+            transparency.prepare(
+                device,
+                queue,
+                snapshot,
+                emitters,
+                inputs.0,
+                inputs.1,
+                (meshes, post_frame.is_some()),
+            )
+        });
+        if transparency.is_some()
+            && meshes
+            && temporal_frame
+                .as_ref()
+                .is_some_and(|frame| frame.parity == 1)
+        {
+            self.instances.prepare_pose_group(&self.device, 1);
         }
-        (transparent_draws, particle_frame, transparency)
+        transparency
     }
 
     /// Decals over the opaque surfaces.
@@ -1342,7 +1318,6 @@ impl Renderer {
             ],
             lights: features.light_frame.is_some() && self.lights.is_some(),
             clouds: false,
-            transparency: features.transparency && self.transparent.is_some(),
             refraction: features.refraction && post.is_some(),
             effects: post.unwrap_or_default(),
             probes: kind.gpu_mode && !features.probe_list.is_empty(),

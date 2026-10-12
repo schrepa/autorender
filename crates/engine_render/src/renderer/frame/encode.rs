@@ -3,7 +3,7 @@
 //! but the opaque ones (`opaque`).
 
 use super::*;
-use crate::render_features::{AttachmentViews, Encode, color_operations};
+use crate::render_features::{AttachmentViews, Encode, MeshDraws, color_operations};
 
 impl Renderer {
     /// Encodes `node`, a pass the frame's render graph kept,
@@ -87,12 +87,6 @@ impl Renderer {
                     .encode_view(&self.device, encoder, &self.depth.view, &self.profiler);
             }
             Pass::CloudComposite => self.encode_cloud_composite(state, encoder, view, node),
-            Pass::Transparent => {
-                report.draws += self.encode_transparent(state, encoder, view, node);
-            }
-            Pass::TransparentComposite => {
-                self.encode_transparent_composite(state, encoder, view, node);
-            }
             Pass::Effects => self.encode_screen_effects(state, encoder),
             Pass::Composite => self.encode_composite(encoder, view, node),
             Pass::TemporalResolve => self.encode_temporal_resolve(state, encoder, view, node),
@@ -138,11 +132,7 @@ impl Renderer {
                     .view
             }
             Resource::Accumulated | Resource::Revealed => {
-                let [accumulated, revealed] = self
-                    .transparent
-                    .as_ref()
-                    .expect("transparent frames create it")
-                    .views();
+                let [accumulated, revealed] = self.features.transparency.get().views();
                 if resource == Resource::Accumulated {
                     accumulated
                 } else {
@@ -206,6 +196,10 @@ impl Renderer {
             renderer: self,
             canvas: view,
         };
+        let meshes = FrameMeshes {
+            renderer: self,
+            state,
+        };
         let lights = state
             .features
             .light_frame
@@ -213,7 +207,7 @@ impl Renderer {
             .and(self.lights.as_ref())
             .map(LightPass::fragment_group);
         let encode = Encode::new(
-            &views,
+            (&views, &meshes),
             &self.profiler,
             (self.camera.group(), &self.materials, lights),
             (state.shape.targets, &self.depth.texture),
@@ -391,113 +385,6 @@ impl Renderer {
         }
     }
 
-    /// Transparent surfaces and alpha particles accumulated;
-    /// returns the surfaces' draws.
-    fn encode_transparent(
-        &self,
-        state: &FrameState<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        node: &Node,
-    ) -> u32 {
-        let FrameKind {
-            gpu_mode,
-            instance_count,
-            ..
-        } = state.kind;
-        let transparent_kind = state.passes.transparent_kind;
-        let temporal_frame = &state.packing.temporal_frame;
-        let features = &state.features;
-        let (light_frame, post_frame, particle_frame) = (
-            &features.light_frame,
-            features.post_frame,
-            &features.particle_frame,
-        );
-        let (transparent_draws, refraction) = (features.transparent_draws, features.refraction);
-        let lit = light_frame.as_ref().zip(self.lights.as_ref());
-        // Read-only depth: surfaces behind the opaque ones stay hidden, and
-        // particles sample it.
-        let mut pass = self.render_pass(
-            encoder,
-            node,
-            view,
-            "engine/transparent-accumulation",
-            self.profiler.span("transparent").map(Span::render),
-        );
-        let mut draws = 0;
-        if transparent_draws && instance_count > 0 {
-            // Glass reads the opaque color the pass draws over.
-            let camera_group = match self.camera.refraction_group() {
-                Some(group) if refraction && post_frame.is_some() => group,
-                _ => self.camera.group(),
-            };
-            pass.set_bind_group(0, camera_group, &[]);
-            if let Some((_, lights)) = lit {
-                pass.set_bind_group(3, lights.fragment_group(), &[]);
-            }
-            let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
-            pass.set_bind_group(2, self.instances.pose_group(parity), &[]);
-            if !gpu_mode {
-                pass.set_vertex_buffer(1, self.instances.slots().slice(..));
-            }
-            let mut binds = BatchBinds::default();
-            for (index, batch) in self.plan.batches.iter().enumerate() {
-                if !batch.transparent {
-                    continue;
-                }
-                let (_, draw) =
-                    self.bind_batch(&mut pass, &mut binds, (transparent_kind, false), batch);
-                if gpu_mode {
-                    let (ids, args, offset) = self.gpu_presentation.draw_source(batch, index, 0, 0);
-                    binds.bindings.ids(&mut pass, 1, ids);
-                    pass.draw_indexed_indirect(args, offset);
-                } else {
-                    pass.draw_indexed(
-                        draw.index_range(),
-                        draw.base_vertex,
-                        batch.instances.clone(),
-                    );
-                }
-                draws += 1;
-            }
-        }
-        if let (Some(frame), Some(particles)) = (particle_frame, self.particles.as_ref()) {
-            particles.draw_alpha(&mut pass, self.camera.group(), frame);
-        }
-        draws
-    }
-
-    /// The accumulated transparent surfaces composited over the frame's
-    /// color, then additive particles.
-    fn encode_transparent_composite(
-        &self,
-        state: &FrameState<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        node: &Node,
-    ) {
-        let transparent = self
-            .transparent
-            .as_ref()
-            .expect("planned with transparency");
-        let post = state.shape.targets != Targets::Canvas;
-        let mut pass = self.render_pass(
-            encoder,
-            node,
-            view,
-            "engine/transparent-composite",
-            self.profiler
-                .span("transparent_composite")
-                .map(Span::render),
-        );
-        transparent.composite(&mut pass, post);
-        if let (Some(frame), Some(particles)) =
-            (&state.features.particle_frame, self.particles.as_ref())
-        {
-            particles.draw_additive(&mut pass, self.camera.group(), frame, post);
-        }
-    }
-
     /// The screen effects: ambient occlusion, bloom,
     /// reflections and sun shafts after the opaque and transparent passes.
     fn encode_screen_effects(&self, state: &FrameState<'_>, encoder: &mut wgpu::CommandEncoder) {
@@ -580,6 +467,72 @@ impl Renderer {
                 .map(|frame| (frame, &snapshot.environment.local_lights)),
         );
         report.probe_faces = faces;
+    }
+}
+
+/// A frame's own mesh draws, which features' passes take in.
+struct FrameMeshes<'a> {
+    renderer: &'a Renderer,
+    state: &'a FrameState<'a>,
+}
+
+impl MeshDraws for FrameMeshes<'_> {
+    fn transparent(&self, pass: &mut wgpu::RenderPass<'_>) -> u32 {
+        let (renderer, state) = (self.renderer, self.state);
+        let FrameKind {
+            gpu_mode,
+            instance_count,
+            ..
+        } = state.kind;
+        if instance_count == 0 {
+            return 0;
+        }
+        let features = &state.features;
+        let lit = features.light_frame.as_ref().zip(renderer.lights.as_ref());
+        // Glass reads the opaque color the pass draws over.
+        let camera_group = match renderer.camera.refraction_group() {
+            Some(group) if features.refraction && features.post_frame.is_some() => group,
+            _ => renderer.camera.group(),
+        };
+        pass.set_bind_group(0, camera_group, &[]);
+        if let Some((_, lights)) = lit {
+            pass.set_bind_group(3, lights.fragment_group(), &[]);
+        }
+        let parity = state
+            .packing
+            .temporal_frame
+            .as_ref()
+            .map_or(0, |frame| frame.parity);
+        pass.set_bind_group(2, renderer.instances.pose_group(parity), &[]);
+        if !gpu_mode {
+            pass.set_vertex_buffer(1, renderer.instances.slots().slice(..));
+        }
+        let mut binds = BatchBinds::default();
+        let mut draws = 0;
+        for (index, batch) in renderer.plan.batches.iter().enumerate() {
+            if !batch.transparent {
+                continue;
+            }
+            let (_, draw) = renderer.bind_batch(
+                pass,
+                &mut binds,
+                (state.passes.transparent_kind, false),
+                batch,
+            );
+            if gpu_mode {
+                let (ids, args, offset) = renderer.gpu_presentation.draw_source(batch, index, 0, 0);
+                binds.bindings.ids(pass, 1, ids);
+                pass.draw_indexed_indirect(args, offset);
+            } else {
+                pass.draw_indexed(
+                    draw.index_range(),
+                    draw.base_vertex,
+                    batch.instances.clone(),
+                );
+            }
+            draws += 1;
+        }
+        draws
     }
 }
 
