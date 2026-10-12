@@ -500,9 +500,15 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &["apps/stress-lab/src/dense*"],
         checks: &[Cells(&["dense-views", "dense-visibility"])],
     },
+    // The city, and the shapes it builds (the metro builds with their
+    // polygon helpers).
     Rule {
-        paths: &["apps/stress-lab/src/city*"],
-        checks: &[Cells(&["city-views"])],
+        paths: &[
+            "apps/stress-lab/src/city*",
+            "apps/stress-lab/src/shapes*",
+            "apps/stress-lab/src/shapes/**",
+        ],
+        checks: &[Cells(&["city-views", "metro-views"])],
     },
     Rule {
         paths: &[
@@ -511,7 +517,6 @@ pub(crate) const MAP: &[Rule] = &[
             "apps/stress-lab/src/config*",
             "apps/stress-lab/src/catalog*",
             "apps/stress-lab/src/presets*",
-            "apps/stress-lab/src/shapes*",
         ],
         checks: &[Cells(&["field-views", "motion-views"])],
     },

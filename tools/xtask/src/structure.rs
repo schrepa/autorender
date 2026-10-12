@@ -17,8 +17,6 @@ const LONG_FILES: &[(&str, usize)] = &[
     ("apps/stress-lab/src/city.rs", 2093),
     ("apps/stress-lab/src/highlands.rs", 2176),
     ("apps/stress-lab/src/metro/mod.rs", 3577),
-    ("apps/stress-lab/src/metro/models.rs", 2305),
-    ("apps/stress-lab/src/shapes.rs", 1571),
     ("crates/engine_assets/src/simplify.rs", 2383),
     ("crates/engine_core/src/hierarchy.rs", 1714),
     ("crates/engine_core/src/retained_render.rs", 1669),

@@ -10,6 +10,11 @@ use engine::prelude::*;
 
 use crate::scene::hash;
 
+mod buildings;
+mod landmarks;
+mod nature;
+mod vehicles;
+
 /// A rectangle of texture coordinates; `v` grows downward.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Uv {
@@ -287,6 +292,17 @@ impl Builder {
     }
 }
 
+/// The point (`x`, `y`, `z`).
+fn v(x: f32, y: f32, z: f32) -> Vec3 {
+    Vec3::new(x, y, z)
+}
+
+/// An axis-aligned box closed below as well: its sides map `side`, its top
+/// and bottom `cap`.
+fn box_(b: &mut Builder, min: Vec3, max: Vec3, side: Uv, cap: Uv) {
+    b.cuboid(min, max, side, cap, true);
+}
+
 /// Every shape of the city; the first eight survive at `mesh_variety` 8,
 /// the first 32 at 32, and all at 64. Others fall back to a coarser shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -463,766 +479,55 @@ impl Shape {
         )
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     fn build(self) -> Result<Mesh, String> {
         use Shape::*;
         let mut b = Builder::default();
-        let v = Vec3::new;
-        let box_ = |b: &mut Builder, min: Vec3, max: Vec3, side: Uv, cap: Uv| {
-            b.cuboid(min, max, side, cap, true)
-        };
         match self {
             Block => return Ok(Mesh::cube()),
-            Tower => b.cuboid(
-                v(-0.5, -0.5, -0.5),
-                v(0.5, 0.5, 0.5),
-                facade(30.0),
-                ROOF,
-                false,
-            ),
-            House => b.cuboid(
-                v(-0.5, -0.5, -0.5),
-                v(0.5, 0.5, 0.5),
-                facade(3.0),
-                ROOF,
-                false,
-            ),
-            Midrise => b.cuboid(
-                v(-0.5, -0.5, -0.5),
-                v(0.5, 0.5, 0.5),
-                facade(12.0),
-                ROOF,
-                false,
-            ),
-            Round => b.lathe(
-                &[(0.5, -0.5), (0.5, 0.5)],
-                12,
-                0.0,
-                facade(30.0),
-                ROOF,
-                false,
-            ),
-            Hex => b.lathe(
-                &[(0.5, -0.5), (0.5, 0.5)],
-                6,
-                0.0,
-                facade(24.0),
-                ROOF,
-                false,
-            ),
-            Octa => b.lathe(
-                &[(0.5, -0.5), (0.5, 0.5)],
-                8,
-                PI / 8.0,
-                facade(30.0),
-                ROOF,
-                false,
-            ),
-            Crowned => b.lathe(
-                &[
-                    (0.42, -0.5),
-                    (0.42, 0.28),
-                    (0.5, 0.3),
-                    (0.5, 0.34),
-                    (0.3, 0.36),
-                    (0.3, 0.42),
-                    (0.0, 0.5),
-                ],
-                12,
-                0.0,
-                facade(30.0),
-                ROOF,
-                false,
-            ),
-            Roof => b.lathe(
-                &[(0.707, -0.5), (0.0, 0.5)],
-                4,
-                FRAC_PI_4,
-                Uv::FULL,
-                Uv::FULL,
-                false,
-            ),
-            Spire => b.lathe(
-                &[(0.5, -0.5), (0.0, 0.5)],
-                8,
-                0.0,
-                Uv::FULL,
-                Uv::FULL,
-                false,
-            ),
-            Obelisk => b.lathe(
-                &[(0.42, -0.5), (0.3, 0.3), (0.0, 0.5)],
-                4,
-                FRAC_PI_4,
-                Uv::FULL,
-                ROOF,
-                false,
-            ),
-            Tapered => b.lathe(
-                &[(0.707, -0.5), (0.42, 0.5)],
-                4,
-                FRAC_PI_4,
-                facade(30.0),
-                ROOF,
-                false,
-            ),
-            Dome => b.lathe(
-                &[
-                    (0.5, -0.5),
-                    (0.462, -0.117),
-                    (0.354, 0.207),
-                    (0.191, 0.424),
-                    (0.0, 0.5),
-                ],
-                12,
-                0.0,
-                Uv::FULL,
-                Uv::FULL,
-                false,
-            ),
-            Setback | Setback2 | Setback4 | Ziggurat => {
-                let tiers: &[(f32, f32, f32)] = match self {
-                    Setback => &[(0.5, -0.5, 0.0), (0.36, 0.0, 0.3), (0.22, 0.3, 0.5)],
-                    Setback2 => &[(0.5, -0.5, 0.2), (0.3, 0.2, 0.5)],
-                    Setback4 => &[
-                        (0.5, -0.5, -0.05),
-                        (0.38, -0.05, 0.2),
-                        (0.26, 0.2, 0.38),
-                        (0.14, 0.38, 0.5),
-                    ],
-                    _ => &[
-                        (0.5, -0.5, -0.3),
-                        (0.42, -0.3, -0.1),
-                        (0.34, -0.1, 0.1),
-                        (0.26, 0.1, 0.3),
-                        (0.18, 0.3, 0.5),
-                    ],
-                };
-                for &(half, y0, y1) in tiers {
-                    let floors = math::max((y1 - y0) * FLOORS, 1.0);
-                    b.cuboid(
-                        v(-half, y0, -half),
-                        v(half, y1, half),
-                        facade(floors),
-                        ROOF,
-                        false,
-                    );
-                }
-            }
-            Twisted | TwistedTall => {
-                let (slabs, twist) = if self == Twisted {
-                    (8, FRAC_PI_4)
-                } else {
-                    (12, FRAC_PI_2)
-                };
-                for slab in 0..slabs {
-                    let (y0, y1) = (
-                        slab as f32 / slabs as f32 - 0.5,
-                        (slab + 1) as f32 / slabs as f32 - 0.5,
-                    );
-                    let band = facade(30.0).band(
-                        1.0 - (slab + 1) as f32 / slabs as f32,
-                        1.0 - slab as f32 / slabs as f32,
-                    );
-                    let start = b.mark();
-                    b.cuboid(v(-0.35, y0, -0.35), v(0.35, y1, 0.35), band, ROOF, false);
-                    b.place(
-                        start,
-                        Mat4::from_rotation_y(twist * slab as f32 / (slabs - 1) as f32),
-                    );
-                }
-            }
-            Ell => {
-                b.cuboid(
-                    v(-0.5, -0.5, -0.5),
-                    v(0.5, 0.5, 0.0),
-                    facade(12.0),
-                    ROOF,
-                    false,
-                );
-                b.cuboid(
-                    v(-0.5, -0.5, 0.0),
-                    v(0.0, 0.2, 0.5),
-                    facade(7.0),
-                    ROOF,
-                    false,
-                );
-            }
-            Tee => {
-                b.cuboid(
-                    v(-0.5, -0.5, -0.5),
-                    v(0.5, 0.0, -0.1),
-                    facade(5.0),
-                    ROOF,
-                    false,
-                );
-                b.cuboid(
-                    v(-0.2, -0.5, -0.1),
-                    v(0.2, 0.5, 0.5),
-                    facade(20.0),
-                    ROOF,
-                    false,
-                );
-            }
-            Court => {
-                b.cuboid(
-                    v(-0.5, -0.5, -0.5),
-                    v(-0.2, 0.5, 0.5),
-                    facade(12.0),
-                    ROOF,
-                    false,
-                );
-                b.cuboid(
-                    v(0.2, -0.5, -0.5),
-                    v(0.5, 0.5, 0.5),
-                    facade(12.0),
-                    ROOF,
-                    false,
-                );
-                b.cuboid(
-                    v(-0.2, -0.5, -0.5),
-                    v(0.2, 0.3, -0.2),
-                    facade(9.0),
-                    ROOF,
-                    false,
-                );
-            }
-            Pagoda => b.lathe(
-                &[
-                    (0.354, -0.5),
-                    (0.354, -0.25),
-                    (0.707, -0.25),
-                    (0.283, -0.12),
-                    (0.283, 0.02),
-                    (0.566, 0.02),
-                    (0.212, 0.13),
-                    (0.212, 0.24),
-                    (0.424, 0.24),
-                    (0.1, 0.36),
-                    (0.0, 0.5),
-                ],
-                4,
-                FRAC_PI_4,
-                facade(8.0),
-                ROOF,
-                false,
-            ),
-            TvTower => b.lathe(
-                &[
-                    (0.12, -0.5),
-                    (0.08, 0.1),
-                    (0.3, 0.13),
-                    (0.4, 0.18),
-                    (0.32, 0.25),
-                    (0.06, 0.28),
-                    (0.03, 0.45),
-                    (0.0, 0.5),
-                ],
-                12,
-                0.0,
-                Uv::FULL,
-                Uv::FULL,
-                false,
-            ),
-            Tree | Pine | Poplar | Bush => {
-                if self != Bush {
-                    b.lathe(&[(0.1, -0.5), (0.07, -0.1)], 6, 0.0, BARK, BARK, false);
-                }
-                match self {
-                    Tree => b.lathe(
-                        &[(0.0, -0.2), (0.45, 0.05), (0.35, 0.3), (0.0, 0.5)],
-                        7,
-                        0.0,
-                        LEAVES,
-                        LEAVES,
-                        false,
-                    ),
-                    Pine => {
-                        b.lathe(&[(0.5, -0.3), (0.05, 0.1)], 8, 0.0, LEAVES, LEAVES, true);
-                        b.lathe(&[(0.4, -0.05), (0.03, 0.3)], 8, 0.3, LEAVES, LEAVES, true);
-                        b.lathe(&[(0.3, 0.15), (0.0, 0.5)], 8, 0.6, LEAVES, LEAVES, true);
-                    }
-                    Poplar => b.lathe(
-                        &[
-                            (0.0, -0.3),
-                            (0.3, -0.1),
-                            (0.35, 0.2),
-                            (0.2, 0.4),
-                            (0.0, 0.5),
-                        ],
-                        6,
-                        0.0,
-                        LEAVES,
-                        LEAVES,
-                        false,
-                    ),
-                    _ => b.lathe(
-                        &[(0.0, -0.5), (0.5, -0.2), (0.4, 0.2), (0.0, 0.5)],
-                        6,
-                        0.0,
-                        LEAVES,
-                        LEAVES,
-                        false,
-                    ),
-                }
-            }
-            Car => {
-                box_(&mut b, v(-0.5, -0.5, -0.5), v(0.5, 0.0, 0.5), BODY, BODY);
-                b.cuboid(
-                    v(-0.25, 0.0, -0.42),
-                    v(0.25, 0.45, 0.42),
-                    WINDOWS,
-                    BODY,
-                    false,
-                );
-            }
-            Bus => {
-                box_(
-                    &mut b,
-                    v(-0.5, -0.5, -0.5),
-                    v(0.5, 0.35, 0.5),
-                    WINDOWS,
-                    BODY,
-                );
-                b.cuboid(v(-0.48, 0.35, -0.4), v(0.48, 0.5, 0.4), BODY, BODY, false);
-            }
-            Wagon => {
-                box_(&mut b, v(-0.5, -0.5, -0.5), v(0.5, 0.3, 0.5), WINDOWS, BODY);
-                b.cuboid(v(-0.48, 0.3, -0.35), v(0.48, 0.5, 0.35), BODY, BODY, false);
-            }
-            Boat => {
-                // Hull with a pointed bow toward +x.
-                let (y0, y1) = (-0.5, -0.1);
-                box_(&mut b, v(-0.5, y0, -0.35), v(0.25, y1, 0.35), BODY, BODY);
-                let bow = [v(0.25, y0, -0.35), v(0.25, y0, 0.35), v(0.5, y0, 0.0)];
-                let top = [v(0.25, y1, -0.35), v(0.25, y1, 0.35), v(0.5, y1, 0.0)];
-                let uv = [[0.0, 1.0], [1.0, 1.0], [0.5, 0.6]];
-                b.face(&top, &uv, Vec3::Y);
-                b.face(&bow, &uv, Vec3::NEG_Y);
-                b.quad([bow[1], bow[2], top[2], top[1]], BODY, v(1.0, 0.0, 1.0));
-                b.quad([bow[2], bow[0], top[0], top[2]], BODY, v(1.0, 0.0, -1.0));
-                b.cuboid(v(-0.3, y1, -0.22), v(0.1, 0.3, 0.22), WINDOWS, BODY, false);
-                b.cuboid(v(-0.2, 0.3, -0.02), v(-0.16, 0.5, 0.02), BODY, BODY, false);
-            }
-            Drone => {
-                box_(
-                    &mut b,
-                    v(-0.18, -0.12, -0.18),
-                    v(0.18, 0.08, 0.18),
-                    BODY,
-                    BODY,
-                );
-                box_(
-                    &mut b,
-                    v(-0.36, -0.02, -0.03),
-                    v(0.36, 0.04, 0.03),
-                    BODY,
-                    BODY,
-                );
-                box_(
-                    &mut b,
-                    v(-0.03, -0.01, -0.36),
-                    v(0.03, 0.05, 0.36),
-                    BODY,
-                    BODY,
-                );
-                for (x, z) in [(0.35, 0.0), (-0.35, 0.0), (0.0, 0.35), (0.0, -0.35)] {
-                    let start = b.mark();
-                    b.lathe(
-                        &[(0.15, 0.05), (0.15, 0.08)],
-                        8,
-                        0.0,
-                        WINDOWS,
-                        WINDOWS,
-                        true,
-                    );
-                    b.place(start, Mat4::from_translation(v(x, 0.0, z)));
-                }
-            }
-            Helicopter => {
-                box_(
-                    &mut b,
-                    v(-0.2, -0.3, -0.18),
-                    v(0.25, 0.15, 0.18),
-                    WINDOWS,
-                    BODY,
-                );
-                box_(
-                    &mut b,
-                    v(-0.5, -0.05, -0.04),
-                    v(-0.2, 0.05, 0.04),
-                    BODY,
-                    BODY,
-                );
-                box_(
-                    &mut b,
-                    v(-0.5, 0.05, -0.02),
-                    v(-0.42, 0.25, 0.02),
-                    BODY,
-                    BODY,
-                );
-                box_(
-                    &mut b,
-                    v(-0.2, -0.5, -0.2),
-                    v(0.25, -0.45, -0.16),
-                    BODY,
-                    BODY,
-                );
-                box_(&mut b, v(-0.2, -0.5, 0.16), v(0.25, -0.45, 0.2), BODY, BODY);
-                box_(
-                    &mut b,
-                    v(-0.03, 0.15, -0.03),
-                    v(0.03, 0.22, 0.03),
-                    BODY,
-                    BODY,
-                );
-            }
-            Rotor => {
-                // Three flat blades about a shaft along Y.
-                b.lathe(&[(0.06, -0.5), (0.06, 0.5)], 8, 0.0, BODY, BODY, true);
-                for blade in 0..3 {
-                    let start = b.mark();
-                    box_(&mut b, v(0.04, 0.3, -0.07), v(0.49, 0.38, 0.07), BODY, BODY);
-                    b.place(start, Mat4::from_rotation_y(TAU * blade as f32 / 3.0));
-                }
-            }
-            Jib => {
-                // Arm and counter-arm about the pivot at the origin.
-                box_(
-                    &mut b,
-                    v(-0.5, 0.3, -0.06),
-                    v(0.5, 0.45, 0.06),
-                    Uv::FULL,
-                    Uv::FULL,
-                );
-                box_(
-                    &mut b,
-                    v(-0.48, 0.05, -0.12),
-                    v(-0.3, 0.3, 0.12),
-                    Uv::FULL,
-                    Uv::FULL,
-                );
-                box_(&mut b, v(-0.1, -0.5, -0.1), v(0.1, 0.3, 0.1), WINDOWS, BODY);
-                box_(
-                    &mut b,
-                    v(0.3, 0.2, -0.05),
-                    v(0.4, 0.3, 0.05),
-                    Uv::FULL,
-                    Uv::FULL,
-                );
-                b.lathe(
-                    &[(0.05, 0.45), (0.0, 0.5)],
-                    4,
-                    FRAC_PI_4,
-                    Uv::FULL,
-                    Uv::FULL,
-                    false,
-                );
-            }
-            Rim => {
-                // A wheel in the XY plane: rim segments, spokes and a hub.
-                let segments = 16;
-                for segment in 0..segments {
-                    let start = b.mark();
-                    box_(
-                        &mut b,
-                        v(0.42, -0.09, -0.05),
-                        v(0.48, 0.09, 0.05),
-                        Uv::FULL,
-                        Uv::FULL,
-                    );
-                    b.place(
-                        start,
-                        Mat4::from_rotation_z(TAU * segment as f32 / segments as f32),
-                    );
-                }
-                for spoke in 0..8 {
-                    let start = b.mark();
-                    box_(
-                        &mut b,
-                        v(0.0, -0.01, -0.01),
-                        v(0.45, 0.01, 0.01),
-                        Uv::FULL,
-                        Uv::FULL,
-                    );
-                    b.place(start, Mat4::from_rotation_z(TAU * spoke as f32 / 8.0));
-                }
-                let start = b.mark();
-                b.lathe(
-                    &[(0.05, -0.08), (0.05, 0.08)],
-                    8,
-                    0.0,
-                    Uv::FULL,
-                    Uv::FULL,
-                    true,
-                );
-                b.place(start, Mat4::from_rotation_x(FRAC_PI_2));
-            }
-            Cabin => {
-                box_(
-                    &mut b,
-                    v(-0.5, -0.5, -0.5),
-                    v(0.5, 0.25, 0.5),
-                    WINDOWS,
-                    BODY,
-                );
-                b.lathe(
-                    &[(0.707, 0.25), (0.0, 0.5)],
-                    4,
-                    FRAC_PI_4,
-                    BODY,
-                    BODY,
-                    false,
-                );
-            }
-            Lamp => {
-                b.lathe(&[(0.06, -0.5), (0.04, 0.42)], 6, 0.0, BODY, BODY, false);
-                box_(&mut b, v(0.0, 0.38, -0.03), v(0.4, 0.42, 0.03), BODY, BODY);
-                box_(
-                    &mut b,
-                    v(0.3, 0.33, -0.08),
-                    v(0.5, 0.39, 0.08),
-                    WINDOWS,
-                    WINDOWS,
-                );
-            }
-            Antenna => {
-                b.lathe(
-                    &[(0.25, -0.5), (0.05, 0.35)],
-                    4,
-                    FRAC_PI_4,
-                    Uv::FULL,
-                    Uv::FULL,
-                    false,
-                );
-                box_(
-                    &mut b,
-                    v(-0.3, -0.1, -0.02),
-                    v(0.3, -0.06, 0.02),
-                    Uv::FULL,
-                    Uv::FULL,
-                );
-                box_(
-                    &mut b,
-                    v(-0.02, 0.1, -0.22),
-                    v(0.02, 0.14, 0.22),
-                    Uv::FULL,
-                    Uv::FULL,
-                );
-                b.lathe(
-                    &[(0.0, 0.33), (0.1, 0.42), (0.0, 0.5)],
-                    6,
-                    0.0,
-                    WINDOWS,
-                    WINDOWS,
-                    false,
-                );
-            }
-            Beacon => {
-                b.lathe(&[(0.08, -0.5), (0.08, -0.05)], 6, 0.0, BODY, BODY, false);
-                box_(
-                    &mut b,
-                    v(-0.5, -0.05, -0.08),
-                    v(0.5, 0.05, 0.08),
-                    WINDOWS,
-                    WINDOWS,
-                );
-                box_(
-                    &mut b,
-                    v(-0.08, -0.04, -0.5),
-                    v(0.08, 0.06, 0.5),
-                    WINDOWS,
-                    WINDOWS,
-                );
-                b.lathe(
-                    &[(0.0, 0.05), (0.2, 0.25), (0.0, 0.5)],
-                    8,
-                    0.0,
-                    WINDOWS,
-                    WINDOWS,
-                    false,
-                );
-            }
-            Billboard => {
-                box_(
-                    &mut b,
-                    v(-0.5, 0.0, -0.04),
-                    v(0.5, 0.5, 0.04),
-                    Uv::FULL,
-                    BODY,
-                );
-                box_(
-                    &mut b,
-                    v(-0.33, -0.5, -0.03),
-                    v(-0.27, 0.0, 0.03),
-                    BODY,
-                    BODY,
-                );
-                box_(&mut b, v(0.27, -0.5, -0.03), v(0.33, 0.0, 0.03), BODY, BODY);
-            }
-            WaterTower => {
-                for (x, z) in [(0.25, 0.25), (-0.25, 0.25), (-0.25, -0.25), (0.25, -0.25)] {
-                    b.cuboid(
-                        v(x - 0.04, -0.5, z - 0.04),
-                        v(x + 0.04, 0.0, z + 0.04),
-                        BARK,
-                        BARK,
-                        false,
-                    );
-                }
-                b.lathe(
-                    &[(0.4, 0.0), (0.4, 0.3), (0.0, 0.5)],
-                    10,
-                    0.0,
-                    Uv::FULL,
-                    Uv::FULL,
-                    true,
-                );
-            }
-            Tank => b.lathe(
-                &[(0.5, -0.5), (0.5, 0.2), (0.35, 0.4), (0.0, 0.5)],
-                12,
-                0.0,
-                Uv::FULL,
-                Uv::FULL,
-                false,
-            ),
-            Chimney => b.lathe(
-                &[(0.5, -0.5), (0.35, 0.4), (0.5, 0.42), (0.5, 0.5)],
-                8,
-                0.0,
-                Uv::FULL,
-                ROOF,
-                false,
-            ),
-            Fountain => b.lathe(
-                &[
-                    (0.5, -0.5),
-                    (0.5, -0.4),
-                    (0.2, -0.4),
-                    (0.2, -0.2),
-                    (0.3, -0.2),
-                    (0.3, -0.15),
-                    (0.1, -0.15),
-                    (0.08, 0.2),
-                    (0.2, 0.25),
-                    (0.0, 0.3),
-                ],
-                10,
-                0.0,
-                Uv::FULL,
-                Uv::FULL,
-                false,
-            ),
-            // Roofs along X: one ridge, or steep teeth repeating along Z.
-            Wedge => b.ridge(-0.5, 0.5, [(-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)], Uv::FULL),
-            Sawtooth => {
-                for tooth in 0..4 {
-                    let (z0, z1) = (-0.5 + tooth as f32 * 0.25, -0.25 + tooth as f32 * 0.25);
-                    b.ridge(-0.5, 0.5, [(z0, -0.5), (z1, -0.5), (z0, 0.5)], Uv::FULL);
-                }
-            }
-            Pillar => {
-                b.cuboid(
-                    v(-0.15, -0.5, -0.15),
-                    v(0.15, 0.35, 0.15),
-                    Uv::FULL,
-                    Uv::FULL,
-                    false,
-                );
-                box_(
-                    &mut b,
-                    v(-0.5, 0.35, -0.25),
-                    v(0.5, 0.5, 0.25),
-                    Uv::FULL,
-                    Uv::FULL,
-                );
-            }
-            Deck => {
-                box_(
-                    &mut b,
-                    v(-0.5, -0.5, -0.5),
-                    v(0.5, 0.0, 0.5),
-                    Uv::FULL,
-                    Uv::FULL,
-                );
-                b.cuboid(v(-0.5, 0.0, 0.45), v(0.5, 0.5, 0.5), BODY, BODY, false);
-                b.cuboid(v(-0.5, 0.0, -0.5), v(0.5, 0.5, -0.45), BODY, BODY, false);
-            }
-            Arch => {
-                b.cuboid(
-                    v(-0.5, -0.5, -0.3),
-                    v(-0.3, 0.3, 0.3),
-                    facade(4.0),
-                    ROOF,
-                    false,
-                );
-                b.cuboid(
-                    v(0.3, -0.5, -0.3),
-                    v(0.5, 0.3, 0.3),
-                    facade(4.0),
-                    ROOF,
-                    false,
-                );
-                box_(
-                    &mut b,
-                    v(-0.5, 0.3, -0.3),
-                    v(0.5, 0.5, 0.3),
-                    facade(2.0),
-                    ROOF,
-                );
-            }
-            Stadium => {
-                // Outer wall, a rim and seating sloping down to the field.
-                let sides = 16;
-                for index in 0..sides {
-                    let angle = |step: f32| TAU * (index as f32 + step) / sides as f32;
-                    let at = |radius: f32, y: f32, step: f32| {
-                        let (sin, cos) = math::sin_cos(angle(step));
-                        v(radius * cos, y, radius * sin)
-                    };
-                    let (sin, cos) = math::sin_cos(angle(0.5));
-                    let radial = v(cos, 0.0, sin);
-                    b.quad(
-                        [
-                            at(0.5, -0.5, 1.0),
-                            at(0.5, -0.5, 0.0),
-                            at(0.5, 0.1, 0.0),
-                            at(0.5, 0.1, 1.0),
-                        ],
-                        facade(4.0),
-                        radial,
-                    );
-                    b.quad(
-                        [
-                            at(0.45, 0.1, 1.0),
-                            at(0.45, 0.1, 0.0),
-                            at(0.5, 0.1, 0.0),
-                            at(0.5, 0.1, 1.0),
-                        ],
-                        ROOF,
-                        Vec3::Y,
-                    );
-                    b.quad(
-                        [
-                            at(0.3, -0.4, 0.0),
-                            at(0.3, -0.4, 1.0),
-                            at(0.45, 0.1, 1.0),
-                            at(0.45, 0.1, 0.0),
-                        ],
-                        Uv::FULL,
-                        Vec3::Y - radial,
-                    );
-                    b.face(
-                        &[v(0.0, -0.4, 0.0), at(0.3, -0.4, 1.0), at(0.3, -0.4, 0.0)],
-                        &[[0.5, 0.5], [0.5, 0.9], [0.9, 0.9]],
-                        Vec3::Y,
-                    );
-                }
-            }
+            Tower => buildings::tower(&mut b),
+            House => buildings::house(&mut b),
+            Midrise => buildings::midrise(&mut b),
+            Round => buildings::round(&mut b),
+            Hex => buildings::hex(&mut b),
+            Octa => buildings::octa(&mut b),
+            Crowned => buildings::crowned(&mut b),
+            Roof => buildings::roof(&mut b),
+            Spire => buildings::spire(&mut b),
+            Obelisk => buildings::obelisk(&mut b),
+            Tapered => buildings::tapered(&mut b),
+            Dome => buildings::dome(&mut b),
+            Setback | Setback2 | Setback4 | Ziggurat => buildings::setback(&mut b, self),
+            Twisted | TwistedTall => buildings::twisted(&mut b, self),
+            Ell => buildings::ell(&mut b),
+            Tee => buildings::tee(&mut b),
+            Court => buildings::court(&mut b),
+            Pagoda => buildings::pagoda(&mut b),
+            TvTower => landmarks::tv_tower(&mut b),
+            Tree | Pine | Poplar | Bush => nature::tree(&mut b, self),
+            Car => vehicles::car(&mut b),
+            Bus => vehicles::bus(&mut b),
+            Wagon => vehicles::wagon(&mut b),
+            Boat => vehicles::boat(&mut b),
+            Drone => vehicles::drone(&mut b),
+            Helicopter => vehicles::helicopter(&mut b),
+            Rotor => vehicles::rotor(&mut b),
+            Jib => vehicles::jib(&mut b),
+            Rim => vehicles::rim(&mut b),
+            Cabin => vehicles::cabin(&mut b),
+            Lamp => landmarks::lamp(&mut b),
+            Antenna => landmarks::antenna(&mut b),
+            Beacon => landmarks::beacon(&mut b),
+            Billboard => landmarks::billboard(&mut b),
+            WaterTower => buildings::water_tower(&mut b),
+            Tank => buildings::tank(&mut b),
+            Chimney => buildings::chimney(&mut b),
+            Fountain => landmarks::fountain(&mut b),
+            Wedge => buildings::wedge(&mut b),
+            Sawtooth => buildings::sawtooth(&mut b),
+            Pillar => landmarks::pillar(&mut b),
+            Deck => landmarks::deck(&mut b),
+            Arch => landmarks::arch(&mut b),
+            Stadium => landmarks::stadium(&mut b),
         }
         b.finish()
     }
