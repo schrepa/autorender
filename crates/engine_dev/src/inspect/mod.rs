@@ -35,6 +35,34 @@ use crate::{
     },
 };
 
+/// The types describe answers itself, by name and kind, with what one
+/// is where its name does not say: no inspector may take their names.
+const DESCRIBED: &[(&str, &str, &str)] = &[
+    ("SceneDocument", "authoring", ""),
+    ("protocol", "protocol", ""),
+    ("BrowserControl", "protocol", ""),
+    ("FrameStats", "observation", ""),
+    (
+        "ErrorCodes",
+        "catalog",
+        "every error code replies answer with and what it means",
+    ),
+];
+
+/// The types development hosts' tooling adds to describe's listing (the
+/// agent sessions of web/scripts/agent-browser.mjs and agent-native.mjs):
+/// no inspector may take their names either.
+pub const TOOLING_TYPES: &[&str] = &["ProfileCapture", "GameControls", "PageParameters"];
+
+/// The names no inspector may take: describe's own types and the hosts'
+/// tooling's.
+pub fn reserved_names() -> impl Iterator<Item = &'static str> {
+    DESCRIBED
+        .iter()
+        .map(|&(name, _, _)| name)
+        .chain(TOOLING_TYPES.iter().copied())
+}
+
 /// Names address deliberate SDK projections, never Rust type names or pointers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -277,13 +305,18 @@ impl DevTools {
     pub(crate) fn insert(&mut self, inspector: Inspector) -> Result<(), DevError> {
         let name = &inspector.descriptor.name;
         validate_name(name, "$.name")?;
-        if ["SceneDocument", "protocol", "BrowserControl"].contains(&name.as_str())
-            || self.inspectors.contains_key(name)
-        {
+        if reserved_names().any(|reserved| reserved == name) {
+            return Err(DevError::new(
+                ErrorCode::ReservedInspector,
+                "$.name",
+                format!("describe answers {name} itself: choose another inspector name"),
+            ));
+        }
+        if self.inspectors.contains_key(name) {
             return Err(DevError::new(
                 ErrorCode::DuplicateInspector,
                 "$.name",
-                "inspector name is already registered or reserved",
+                "inspector name is already registered",
             ));
         }
         if let Some(builtins) = self.builtins
@@ -509,11 +542,13 @@ impl DevTools {
     fn describe(&self, name: Option<&str>, definition: Option<&str>) -> Result<Value, DevError> {
         let Some(name) = name else {
             let mut types: Vec<Value> = self.inspectors.values().map(|inspector| json!({"name": inspector.descriptor.name, "kind": inspector.kind, "description": inspector.descriptor.description, "feature": self.features.get(&inspector.descriptor.name).map(|feature| feature.name())})).collect();
-            types.push(json!({"name": "SceneDocument", "kind": "authoring"}));
-            types.push(json!({"name": "protocol", "kind": "protocol"}));
-            types.push(json!({"name": "BrowserControl", "kind": "protocol"}));
-            types.push(json!({"name": "FrameStats", "kind": "observation"}));
-            types.push(json!({"name": "ErrorCodes", "kind": "catalog", "description": "every error code replies answer with and what it means"}));
+            types.extend(DESCRIBED.iter().map(|&(name, kind, description)| {
+                let mut entry = json!({"name": name, "kind": kind});
+                if !description.is_empty() {
+                    entry["description"] = json!(description);
+                }
+                entry
+            }));
             return Ok(json!({"types": types}));
         };
         match name {

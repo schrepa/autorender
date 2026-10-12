@@ -42,6 +42,7 @@ export type ErrorCode =
   | "unknown_inspector"
   | "unknown_definition"
   | "duplicate_inspector"
+  | "reserved_inspector"
   | "inspector_limit"
   | "inspector_too_large"
   | "scan_limit"

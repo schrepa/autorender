@@ -161,6 +161,9 @@ error_codes! {
     UnknownDefinition => "unknown_definition",
     /// Two inspectors share a name.
     DuplicateInspector => "duplicate_inspector",
+    /// An inspector takes a name describe or the hosts' tooling answers
+    /// itself (SceneDocument, FrameStats, ErrorCodes...); choose another.
+    ReservedInspector => "reserved_inspector",
     /// The development tools hold their most inspectors.
     InspectorLimit => "inspector_limit",
     /// An inspector's description or schema exceeds its bounds.

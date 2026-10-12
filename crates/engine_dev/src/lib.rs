@@ -29,6 +29,7 @@ pub use engine_settings::ErrorCode;
 pub use error::DevError;
 pub use inspect::{
     Context, DevTools, InspectorDescriptor, InspectorKind, RenderedMesh, RendererFacts,
+    TOOLING_TYPES, reserved_names,
 };
 pub use protocol::bounds;
 pub use protocol::bounds::{MAX_DESCRIPTION_BYTES, MAX_PAGE_SIZE};

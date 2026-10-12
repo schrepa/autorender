@@ -138,6 +138,7 @@
     "render_failed": "Rendering after the command failed; simulation may have advanced.",
     "request_outcome_unknown": "Whether the request ran is unknown; inspect before retrying.",
     "request_too_large": "The request exceeds the request size limit.",
+    "reserved_inspector": "An inspector takes a name describe or the hosts' tooling answers itself (SceneDocument, FrameStats, ErrorCodes...); choose another.",
     "response_too_large": "The reply would exceed the reply size limit; ask for less.",
     "revision_conflict": "The saved source's revision is not the one expected.",
     "revision_exhausted": "The scene revision cannot advance further.",

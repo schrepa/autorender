@@ -64,6 +64,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     // The development protocol's: its inspectors', frame stats' and
     // scene's schemas, its ops and its summary.
     let development = engine_dev::schemas::generated()?;
+    tooling_types(root)?;
     let stats = &development.frame_stats;
     let mut files: Vec<(String, String)> = development
         .files
@@ -162,6 +163,47 @@ fn error_codes() -> String {
          return thrown instanceof Error && thrown.name === \"{name}\" ? thrown as EngineError : undefined;\n\
          }}\n"
     )
+}
+
+/// Fails unless every type the hosts' tooling adds to describe's listing
+/// (`name: "X", kind: "tooling"` in web/scripts) is one engine_dev reserves
+/// ([`engine_dev::TOOLING_TYPES`]), so no inspector can take its name.
+fn tooling_types(root: &Path) -> Result<(), String> {
+    const MARK: &str = "kind: \"tooling\"";
+    let folder = root.join("web/scripts");
+    let mut problems = Vec::new();
+    for entry in
+        fs::read_dir(&folder).map_err(|error| format!("cannot read web/scripts: {error}"))?
+    {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.extension().is_none_or(|extension| extension != "mjs") {
+            continue;
+        }
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        for (at, _) in text.match_indices(MARK) {
+            let named = text[..at]
+                .rsplit_once("name: \"")
+                .and_then(|(_, rest)| rest.split_once('"'))
+                .map(|(name, _)| name);
+            let script = path.file_name().unwrap_or_default().to_string_lossy();
+            match named {
+                Some(name) if engine_dev::TOOLING_TYPES.contains(&name) => {}
+                Some(name) => problems.push(format!(
+                    "web/scripts/{script} adds {name} to describe's types, which \
+                     engine_dev::TOOLING_TYPES does not reserve: list it there"
+                )),
+                None => problems.push(format!(
+                    "web/scripts/{script} adds a tooling type to describe without a name"
+                )),
+            }
+        }
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems.join("\n"))
+    }
 }
 
 /// Writes the generated files the web host and scripts read.

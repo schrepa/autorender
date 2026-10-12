@@ -91,6 +91,7 @@ pub fn generated() -> Result<Generated, String> {
         crate::features::schemas(all);
     }
     dev_features(&mut problems);
+    reserved_inspectors(&mut problems);
     let Some(described) = schemas.as_object() else {
         return Err("the inspectors' schemas are not an object".to_owned());
     };
@@ -277,6 +278,26 @@ fn frame_stats(problems: &mut Vec<String>) -> Value {
         }
     }
     schema
+}
+
+/// Adds to `problems` each name describe or the hosts' tooling answers
+/// that an inspector may take: a probe registered under each must be
+/// refused as reserved.
+fn reserved_inspectors(problems: &mut Vec<String>) {
+    let mut tools = crate::DevTools::default();
+    for name in crate::reserved_names() {
+        let probe = crate::InspectorDescriptor::new(name, "a probe", json!({"type": "object"}));
+        match tools.register_resource::<engine_core::FixedTime>(probe, |_| Value::Null) {
+            Err(error) if error.code == engine_settings::ErrorCode::ReservedInspector => {}
+            Err(error) => problems.push(format!(
+                "an inspector named {name}, which describe answers itself, is refused as {} instead of reserved_inspector",
+                error.code
+            )),
+            Ok(()) => problems.push(format!(
+                "an inspector may take the name {name}, which describe answers itself: refuse it as reserved"
+            )),
+        }
+    }
 }
 
 /// Checks that `dev_features!` lists features by name, sorted.
