@@ -181,7 +181,7 @@ try {
   const panic = replies["debug panic"];
   for (const reply of [panic.web, panic.native]) {
     assert.equal(reply.error?.code, "runtime_panicked", JSON.stringify(reply));
-    assert.match(reply.error.message, /^panicked at crates[\\/]engine[\\/]src[\\/]dev_host\.rs:\d+:\d+: debug_panic: /, reply.error.message);
+    assert.match(reply.error.message, /^panicked at crates[\\/]engine[\\/]src[\\/]dev_host[\\/]controls[\\/]mod\.rs:\d+:\d+: debug_panic: /, reply.error.message);
   }
   const errors = [];
   web.page.on("pageerror", error => errors.push(String(error)));
