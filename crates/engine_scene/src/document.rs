@@ -161,35 +161,23 @@ engine_settings::settings! {
     #[serde(default, deny_unknown_fields)]
     pub struct SceneCamera {
         /// Where the camera stands.
-        pub position: [f32; 3] = default_camera().position => range(-1.0e6, 1.0e6),
+        pub position: [f32; 3] = default_camera().position => same(Camera::rule_of("position")),
         /// What it looks at, at least 0.001 from its position.
-        pub target: [f32; 3] = default_camera().target => range(-1.0e6, 1.0e6),
+        pub target: [f32; 3] = default_camera().target => same(Camera::rule_of("target")),
         /// Vertical field of view in degrees.
-        pub fov_degrees: f32 = default_camera().fov_degrees => range(1.0, 179.0),
+        pub fov_degrees: f32 = default_camera().fov_degrees
+            => range(Camera::MIN_FOV_DEGREES, Camera::MAX_FOV_DEGREES),
         /// The near plane's distance.
-        pub near: f32 = default_camera().near => range(0.001, 1.0e6),
+        pub near: f32 = default_camera().near => same(Camera::rule_of("near")),
         /// The far plane's distance, at least 0.001 beyond the near plane's.
-        pub far: f32 = default_camera().far => range(0.001, 1.0e6),
+        pub far: f32 = default_camera().far => same(Camera::rule_of("far")),
     }
 }
 
 impl engine_settings::ExtraRules for SceneCamera {
-    /// It looks somewhere, through some depth.
+    /// It looks somewhere, through some depth: the camera's own rules.
     fn check_extra(&self) -> Result<(), engine_settings::InvalidSetting> {
-        let camera = self.camera();
-        if (camera.target - camera.position).length_squared() < 0.000_001 {
-            return Err(engine_settings::InvalidSetting::new(
-                "target",
-                "must be at least 0.001 units from the position",
-            ));
-        }
-        if self.far - self.near < 0.001 {
-            return Err(engine_settings::InvalidSetting::new(
-                "far",
-                "must be at least 0.001 beyond near",
-            ));
-        }
-        Ok(())
+        engine_settings::ExtraRules::check_extra(&self.camera())
     }
 }
 

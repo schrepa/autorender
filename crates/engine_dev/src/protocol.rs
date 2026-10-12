@@ -372,12 +372,34 @@ pub enum BrowserControl {
     Animation(AnimationControl),
     WorldChanges(WorldChangesControl),
     /// Set a complete temporary world-space camera and render while paused.
+    /// Its values keep the rules of scenes' cameras (`SceneCamera`), the
+    /// field of view in radians.
     Camera {
         version: u32,
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(transform = stated(engine_settings::rule::same(engine_core::Camera::rule_of("position"))))
+        )]
         position: [f32; 3],
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(transform = stated(engine_settings::rule::same(engine_core::Camera::rule_of("target"))))
+        )]
         target: [f32; 3],
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(transform = stated(engine_settings::rule::same(engine_core::Camera::rule_of("vertical_fov_radians"))))
+        )]
         vertical_fov_radians: f32,
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(transform = stated(engine_settings::rule::same(engine_core::Camera::rule_of("near"))))
+        )]
         near: f32,
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(transform = stated(engine_settings::rule::same(engine_core::Camera::rule_of("far"))))
+        )]
         far: f32,
     },
     /// RAF-paced host sampling, bounded to ten seconds; advances one tick per

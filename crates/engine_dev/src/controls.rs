@@ -158,7 +158,8 @@ pub fn validated_presentation_alpha(alpha: f64) -> Result<f32, DevError> {
 }
 
 /// Validates a temporary camera without invoking fallback behavior or mutating
-/// gameplay. Shared by browser controls and native contract checks.
+/// gameplay: the camera's rules, which scenes author too. Shared by browser
+/// controls and native contract checks.
 pub fn validated_camera(
     position: [f32; 3],
     target: [f32; 3],
@@ -166,33 +167,20 @@ pub fn validated_camera(
     near: f32,
     far: f32,
 ) -> Result<Camera, DevError> {
-    let position = Vec3::from_array(position);
-    let target = Vec3::from_array(target);
-    let fail = |path: &str, rule: &str| Err(DevError::new(ErrorCode::InvalidCamera, path, rule));
-    for (point, path) in [(position, "$.position"), (target, "$.target")] {
-        if !point.is_finite() || point.abs().max_element() > 1_000_000.0 {
-            return fail(path, "must be finite and within +/-1000000");
-        }
-    }
-    if (target - position).try_normalize().is_none() {
-        return fail("$.target", "must differ from position");
-    }
-    if !vertical_fov_radians.is_finite() || !(0.01..3.13).contains(&vertical_fov_radians) {
-        return fail("$.vertical_fov_radians", "must be in [0.01, 3.13)");
-    }
-    if !near.is_finite() || near <= 0.0 {
-        return fail("$.near", "must be finite and above 0");
-    }
-    if !far.is_finite() || far <= near || far > 10_000_000.0 {
-        return fail("$.far", "must be finite, above near and at most 10000000");
-    }
     let camera = Camera {
-        position,
-        target,
+        position: Vec3::from_array(position),
+        target: Vec3::from_array(target),
         vertical_fov_radians,
         near,
         far,
     };
+    camera.validate().map_err(|invalid| {
+        DevError::new(
+            ErrorCode::InvalidCamera,
+            format!("$.{}", invalid.field),
+            invalid.rule,
+        )
+    })?;
     if !camera.view_projection(1.0).is_finite() {
         return Err(DevError::new(
             ErrorCode::InvalidCamera,

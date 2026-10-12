@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::{Component, Resource};
 use engine_assets::{Material, MaterialHandle, Mesh, MeshHandle, Surface, Texture, TextureHandle};
+use engine_settings::{ExtraRules, InvalidSetting, settings};
 use glam::{BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 
 use crate::NodePose;
@@ -161,44 +162,96 @@ pub struct Mesh3d {
     pub material: MaterialHandle,
 }
 
-/// The scene's single perspective camera, in a right-handed Y-up world.
-#[derive(Resource, Debug, Clone, Copy)]
-pub struct Camera {
-    pub position: Vec3,
-    pub target: Vec3,
-    pub vertical_fov_radians: f32,
-    pub near: f32,
-    pub far: f32,
+settings! {
+    unauthored;
+    extra_rules;
+    /// The scene's single perspective camera, in a right-handed Y-up world.
+    /// Its rules are the ones scenes author and development controls
+    /// request; frames draw a camera breaking them as made to keep them
+    /// ([`Self::sanitized`]).
+    #[derive(Resource, Debug, Clone, Copy)]
+    pub struct Camera {
+        /// Where it stands.
+        pub position: Vec3 = Vec3::new(24.0, 19.0, 28.0) => range(-Camera::REACH, Camera::REACH),
+        /// What it looks at, at least [`Camera::MIN_DEPTH`] from its position.
+        pub target: Vec3 = Vec3::ZERO => range(-Camera::REACH, Camera::REACH),
+        /// The vertical field of view, radians.
+        pub vertical_fov_radians: f32 = 55.0_f32.to_radians()
+            => range(Camera::MIN_FOV_DEGREES.to_radians(), Camera::MAX_FOV_DEGREES.to_radians()),
+        /// The near plane's distance.
+        pub near: f32 = 0.1 => range(Camera::MIN_DEPTH, Camera::REACH),
+        /// The far plane's distance, at least [`Camera::MIN_DEPTH`] beyond
+        /// the near plane's.
+        pub far: f32 = 500.0 => range(Camera::MIN_DEPTH, Camera::REACH),
+    }
 }
 
-impl Default for Camera {
-    fn default() -> Self {
-        Self {
-            position: Vec3::new(24.0, 19.0, 28.0),
-            target: Vec3::ZERO,
-            vertical_fov_radians: 55.0_f32.to_radians(),
-            near: 0.1,
-            far: 500.0,
+impl ExtraRules for Camera {
+    /// It looks somewhere, through some depth.
+    fn check_extra(&self) -> Result<(), InvalidSetting> {
+        if (self.target - self.position).length_squared() < Self::MIN_DEPTH * Self::MIN_DEPTH {
+            return Err(InvalidSetting::new(
+                "target",
+                format!(
+                    "must be at least {} units from the position",
+                    Self::MIN_DEPTH
+                ),
+            ));
         }
+        if self.far - self.near < Self::MIN_DEPTH {
+            return Err(InvalidSetting::new(
+                "far",
+                format!("must be at least {} beyond near", Self::MIN_DEPTH),
+            ));
+        }
+        Ok(())
+    }
+
+    /// A target on the position moves a unit down -Z (up it at the edge of
+    /// reach); a far plane short of the near one lies the default's depth
+    /// beyond it, the near plane brought in where that would leave reach.
+    fn sanitize_extra(mut self) -> Self {
+        if (self.target - self.position).length_squared() < Self::MIN_DEPTH * Self::MIN_DEPTH {
+            let step = if self.position.z - 1.0 >= -Self::REACH {
+                Vec3::NEG_Z
+            } else {
+                Vec3::Z
+            };
+            self.target = self.position + step;
+        }
+        if self.far - self.near < Self::MIN_DEPTH {
+            let defaults = Self::default();
+            let depth = defaults.far - defaults.near;
+            self.far = crate::math::min(self.near + depth, Self::REACH);
+            self.near = crate::math::min(self.near, self.far - depth);
+        }
+        self
     }
 }
 
 impl Camera {
-    /// The position [`Self::view_projection`] looks from: `position`, or
-    /// the default position when it is not finite.
+    /// How far from the world's origin cameras stand and look, and their
+    /// planes reach: world units, on each axis.
+    pub const REACH: f32 = 1.0e6;
+    /// The nearest a near plane comes, and the least a far plane lies
+    /// beyond it and a target from its position: world units.
+    pub const MIN_DEPTH: f32 = 0.001;
+    /// The narrowest and widest vertical fields of view, in degrees.
+    pub const MIN_FOV_DEGREES: f32 = 1.0;
+    pub const MAX_FOV_DEGREES: f32 = 179.0;
+
+    /// The position [`Self::view_projection`] looks from: `position`, made
+    /// to keep its rule.
     pub fn eye(&self) -> Vec3 {
-        if self.position.is_finite() {
-            self.position
-        } else {
-            Self::default().position
-        }
+        self.sanitized().position
     }
 
     /// Builds a WebGPU-compatible projection with reversed depth:
     /// the near plane maps to depth 1 and the far plane to 0, which a
     /// floating-point depth buffer resolves about evenly at every distance.
-    /// Invalid aspect/lens values fall back to sensible defaults; a coincident
-    /// target looks down -Z and a vertical direction uses Z as the up axis.
+    /// A camera breaking its rules draws as made to keep them
+    /// ([`Self::sanitized`]), an invalid aspect as 1; a vertical direction
+    /// uses Z as the up axis.
     pub fn view_projection(&self, aspect: f32) -> Mat4 {
         let (projection, position, direction, up) = self.lens(aspect);
         projection * Mat4::look_to_rh(position, direction, up)
@@ -213,41 +266,21 @@ impl Camera {
     }
 
     /// The projection, eye, view direction and up axis of
-    /// [`Self::view_projection`], invalid values replaced.
+    /// [`Self::view_projection`], of the camera made to keep its rules.
     fn lens(&self, aspect: f32) -> (Mat4, Vec3, Vec3, Vec3) {
-        let defaults = Self::default();
         let aspect = if aspect.is_finite() && aspect > 0.0 {
             aspect
         } else {
             1.0
         };
-        let fov = if self.vertical_fov_radians.is_finite()
-            && self.vertical_fov_radians > 0.0
-            && self.vertical_fov_radians < std::f32::consts::PI
-        {
-            self.vertical_fov_radians
-        } else {
-            defaults.vertical_fov_radians
-        };
-        let near = if self.near.is_finite() && self.near > 0.0 {
-            self.near
-        } else {
-            defaults.near
-        };
-        let far = if self.far.is_finite() && self.far > near {
-            self.far
-        } else {
-            near + defaults.far
-        };
-        let position = if self.position.is_finite() {
-            self.position
-        } else {
-            defaults.position
-        };
-        let direction = (self.target - position)
-            .try_normalize()
-            .unwrap_or(Vec3::NEG_Z);
-        // `eye` repeats this fallback.
+        let Self {
+            position,
+            target,
+            vertical_fov_radians: fov,
+            near,
+            far,
+        } = self.sanitized();
+        let direction = (target - position).try_normalize().unwrap_or(Vec3::NEG_Z);
         let up = if direction.dot(Vec3::Y).abs() > 0.999 {
             Vec3::Z
         } else {
