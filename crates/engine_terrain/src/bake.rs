@@ -7,6 +7,14 @@
 //! them a point at a time, erosion a round at a time. A
 //! path's bake reads the ground along its line a point at a time. Terrains
 //! load no tiles until their bakes are done; tools bake at once.
+//!
+//! Every match on a layer, a bake's kind or what it found names each case:
+//! a new kind of bake that one forgot fails to build instead of never
+//! baking, or baking forever.
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -147,7 +155,7 @@ impl TerrainBake {
         };
         let (profile, step) = match &kind {
             BakeKind::Path(layer) => layer.profile_points(),
-            _ => (Vec::new(), 0.0),
+            BakeKind::Hydrology(_) | BakeKind::Erosion(_) => (Vec::new(), 0.0),
         };
         Self {
             index,
@@ -301,38 +309,51 @@ impl Layers {
     /// The first layer whose bake is not done, by index, and what it bakes:
     /// tiles wait for it.
     pub fn unbaked(&self) -> Option<(usize, BakeKind)> {
-        self.layers()
-            .iter()
-            .enumerate()
-            .find_map(|(index, layer)| match layer {
-                Layer::Hydrology(stage) if stage.baked.is_none() => {
-                    Some((index, BakeKind::Hydrology(stage.layer)))
-                }
-                Layer::Erosion(stage) if stage.baked.is_none() => {
-                    Some((index, BakeKind::Erosion(stage.layer)))
-                }
-                Layer::Path(stage) if stage.baked.is_none() => {
-                    Some((index, BakeKind::Path(stage.layer.clone())))
-                }
-                _ => None,
-            })
+        self.layers().iter().enumerate().find_map(|(index, layer)| {
+            let kind = match layer {
+                Layer::Hydrology(stage) => stage
+                    .baked
+                    .is_none()
+                    .then_some(BakeKind::Hydrology(stage.layer)),
+                Layer::Erosion(stage) => stage
+                    .baked
+                    .is_none()
+                    .then_some(BakeKind::Erosion(stage.layer)),
+                Layer::Path(stage) => stage
+                    .baked
+                    .is_none()
+                    .then(|| BakeKind::Path(stage.layer.clone())),
+                Layer::Noise(_) | Layer::Heightmap(_) | Layer::Stamp(_) => None,
+            };
+            kind.map(|kind| (index, kind))
+        })
     }
 
-    /// This stack with layer `index` baked as `baked` found.
+    /// This stack with layer `index` baked as `baked` found: the layer
+    /// [`Self::unbaked`] named, of the bake's kind.
     #[must_use]
     pub fn with_baked(&self, index: usize, baked: Baked) -> Self {
         let mut layers = self.clone();
-        match (layers.layer_mut(index), baked) {
-            (Some(Layer::Hydrology(stage)), Baked::Hydrology(found)) => {
+        let layer = layers
+            .layer_mut(index)
+            .expect("a bake's layer is in the stack it baked");
+        match (layer, baked) {
+            (Layer::Hydrology(stage), Baked::Hydrology(found)) => {
                 stage.baked = Some(Arc::new(found));
             }
-            (Some(Layer::Erosion(stage)), Baked::Erosion(found)) => {
+            (Layer::Erosion(stage), Baked::Erosion(found)) => {
                 stage.baked = Some(Arc::new(found));
             }
-            (Some(Layer::Path(stage)), Baked::Path(found)) => {
+            (Layer::Path(stage), Baked::Path(found)) => {
                 stage.baked = Some(Arc::new(found));
             }
-            _ => {}
+            (Layer::Hydrology(_), Baked::Erosion(_) | Baked::Path(_))
+            | (Layer::Erosion(_), Baked::Hydrology(_) | Baked::Path(_))
+            | (Layer::Path(_), Baked::Hydrology(_) | Baked::Erosion(_))
+            | (
+                Layer::Noise(_) | Layer::Heightmap(_) | Layer::Stamp(_),
+                Baked::Hydrology(_) | Baked::Erosion(_) | Baked::Path(_),
+            ) => unreachable!("a bake's result goes to the layer of its kind that it baked"),
         }
         layers
     }
