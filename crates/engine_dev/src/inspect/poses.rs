@@ -125,11 +125,16 @@ pub(super) fn transform_value(value: &Transform) -> Value {
 }
 
 pub(super) fn presentation_value(value: &PresentationState) -> Value {
+    json!(presentation_view(value))
+}
+
+/// What `value` presented, as replies observe it.
+pub(super) fn presentation_view(value: &PresentationState) -> PresentationStateView {
     let (mode, alpha) = match value.mode() {
         PresentationMode::Current => (PresentationModeView::Current, 1.0),
         PresentationMode::Interpolated { alpha } => (PresentationModeView::Interpolated, alpha),
     };
-    json!(PresentationStateView {
+    PresentationStateView {
         frame: value.frame().map(|frame| frame.to_string()),
         tick: value.tick().map(|tick| tick.to_string()),
         mode,
@@ -141,5 +146,5 @@ pub(super) fn presentation_value(value: &PresentationState) -> Value {
         presentation_scratch_bytes: value.presentation_scratch_bytes(),
         presented_nodes: value.presented_nodes(),
         presented_store_bytes: value.presented_store_bytes(),
-    })
+    }
 }

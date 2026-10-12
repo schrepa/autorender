@@ -53,8 +53,9 @@ fn scene_paths(directory: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// The files Rust generates for the web host, scripts and apps, by path
 /// from the repository root: the development protocol's summary, the
-/// browser clients, the frame stats', game surface's, shared host and
-/// error code types, and each app's own, which its `schema` binary prints.
+/// browser clients, the frame stats', game surface's, shared host, reply
+/// and error code types, and each app's own, which its `schema` binary
+/// prints.
 fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     let clients = serde_json::to_string_pretty(&crate::process::clients_json())
         .expect("the client list serializes")
@@ -82,6 +83,15 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         (
             "web/src/generated/host.ts".to_owned(),
             engine::host::typescript(),
+        ),
+        (
+            "web/src/generated/reply.ts".to_owned(),
+            engine::tooling::message_interfaces(
+                &engine_dev::schemas::reply(),
+                "Reply",
+                "engine_dev::Reply",
+                &[("ErrorCode", "./errors")],
+            ),
         ),
         ("web/src/generated/errors.ts".to_owned(), error_codes()),
         (

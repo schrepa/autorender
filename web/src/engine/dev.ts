@@ -1,9 +1,11 @@
 /** On-demand adapter, dynamically imported only by the Vite development host. */
 import { readDistribution, readStats, type Runtime } from "./host";
 import { adapterInfo } from "./adapter";
-import { BenchmarkError, type BenchmarkOptions, type Reply, sampleBenchmark } from "./benchmark.ts";
+import { BenchmarkError, type BenchmarkOptions, sampleBenchmark } from "./benchmark.ts";
 import { fatal } from "./panic";
 import type { ErrorCode } from "../generated/errors";
+import type { Reply } from "../generated/reply";
+import { parseJson } from "../generated/runtime";
 // The protocol's version, request limit and ops, generated from the engine
 // (`cargo xtask schema`).
 import protocol from "../generated/protocol.json";
@@ -57,7 +59,7 @@ export function connectDevelopment(host: Host): () => void {
   function invoke(command: Command): Reply {
     if (disposed || host.signal.aborted) throw new Error("Development session has been disposed.");
     const [width, height] = host.size();
-    return JSON.parse(runtime.dev_command!(JSON.stringify({ ...command, version: protocol.version }), width, height, host.paused()));
+    return parseJson(runtime.dev_command!(JSON.stringify({ ...command, version: protocol.version }), width, height, host.paused()));
   }
   /** The reply to every request once the engine's module stopped. */
   function panicked(message: string): Reply {
@@ -139,7 +141,7 @@ export function connectDevelopment(host: Host): () => void {
       const files = await host.source.files?.(source, host.signal);
       host.signal.throwIfAborted();
       if (disposed) return error("session_closed", "$", "runtime was disposed during scene fetch");
-      const reply = JSON.parse(runtime.dev_reload(source, control.expected_revision as string, control.revision as string, files)) as Reply;
+      const reply = parseJson(runtime.dev_reload(source, control.expected_revision as string, control.revision as string, files));
       if (reply.ok) {
         const rendered = invoke({ op: "render" });
         if (!rendered.ok) return rendered;

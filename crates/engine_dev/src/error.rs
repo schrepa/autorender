@@ -3,9 +3,13 @@ use serde::Serialize;
 
 /// Stable machine-readable code and affected field; messages are for people.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct DevError {
+    /// What failed, as the catalog names it.
     pub code: ErrorCode,
+    /// Where in the request: a JSON path such as `$.ticks`.
     pub path: String,
+    /// What failed, for people.
     pub message: String,
 }
 

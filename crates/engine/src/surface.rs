@@ -1,7 +1,9 @@
 //! The methods every exported game has: one table, which
 //! [`crate::export_game!`] turns into the game's `#[wasm_bindgen]` methods and
 //! `runtime_typescript` into the page's `Runtime` interface, so the two
-//! cannot differ. `PageHost` implements each, mostly as `GameHost`.
+//! cannot differ. A method returning JSON text names the type it carries
+//! (`-> String as Json<FrameStats>`), which the page reads with the
+//! generated `parseJson`. `PageHost` implements each, mostly as `GameHost`.
 
 /// Calls `$callback` with the game surface after `{ $context }`, in groups:
 /// methods taking `&mut self` or `&self`, in every build, development builds
@@ -60,7 +62,7 @@ macro_rules! __game_surface {
             }
             always_ref {
                 /// The last frame's statistics, as the JSON object `FrameStats` types.
-                fn stats() -> String;
+                fn stats() -> String as Json<FrameStats>;
                 /// Whether ordinary frames are presented on the GPU.
                 fn gpu_presentation() -> bool;
                 /// Whether fixed ticks are split across frames.
@@ -74,7 +76,7 @@ macro_rules! __game_surface {
                 /// The spread of measured `values`, as the JSON object
                 /// `Distribution` types; `null` without values, or with one
                 /// that is not a finite number of at least 0.
-                fn distribution(values: Vec<f64>) -> String;
+                fn distribution(values: Vec<f64>) -> String as Json<Option<Distribution>>;
                 /// The physical `[width, height]` a view `width` × `height`
                 /// CSS pixels across draws at, at `pixel_ratio` device pixels
                 /// per CSS pixel and the user's resolution `scale`, as every
@@ -85,10 +87,10 @@ macro_rules! __game_surface {
             dev_mut {
                 /// Runs development request `request` (JSON) on a `width` ×
                 /// `height` canvas; `paused` says whether the page is paused.
-                fn dev_command(request: &str, width: u32, height: u32, paused: bool) -> String;
+                fn dev_command(request: &str, width: u32, height: u32, paused: bool) -> String as Json<Reply>;
                 /// Reloads the authored scene's saved `source` when the active
                 /// revision is `expected_revision` and the saved one `revision`.
-                fn dev_reload(source: &str, expected_revision: &str, revision: &str, files: Option<$crate::browser::SceneFileSet>) -> String;
+                fn dev_reload(source: &str, expected_revision: &str, revision: &str, files: Option<$crate::browser::SceneFileSet>) -> String as Json<Reply>;
             }
             profiling_mut {
                 /// Starts a capture of at most `max_events` CPU events.
@@ -126,11 +128,11 @@ macro_rules! export_game {
 macro_rules! __export_game {
     (
         { $(#[$meta:meta])* $vis:vis $name:ident $game:ty }
-        always_mut { $( $(#[doc = $am_doc:literal])* fn $am:ident($($am_arg:ident: $am_ty:ty),*) $(-> $am_ret:ty)?; )* }
-        always_ref { $( $(#[doc = $ar_doc:literal])* fn $ar:ident($($ar_arg:ident: $ar_ty:ty),*) $(-> $ar_ret:ty)?; )* }
-        dev_mut { $( $(#[doc = $dm_doc:literal])* fn $dm:ident($($dm_arg:ident: $dm_ty:ty),*) $(-> $dm_ret:ty)?; )* }
-        profiling_mut { $( $(#[doc = $pm_doc:literal])* fn $pm:ident($($pm_arg:ident: $pm_ty:ty),*) $(-> $pm_ret:ty)?; )* }
-        profiling_ref { $( $(#[doc = $pr_doc:literal])* fn $pr:ident($($pr_arg:ident: $pr_ty:ty),*) $(-> $pr_ret:ty)?; )* }
+        always_mut { $( $(#[doc = $am_doc:literal])* fn $am:ident($($am_arg:ident: $am_ty:ty),*) $(-> $am_ret:ty $(as $am_json:ty)?)?; )* }
+        always_ref { $( $(#[doc = $ar_doc:literal])* fn $ar:ident($($ar_arg:ident: $ar_ty:ty),*) $(-> $ar_ret:ty $(as $ar_json:ty)?)?; )* }
+        dev_mut { $( $(#[doc = $dm_doc:literal])* fn $dm:ident($($dm_arg:ident: $dm_ty:ty),*) $(-> $dm_ret:ty $(as $dm_json:ty)?)?; )* }
+        profiling_mut { $( $(#[doc = $pm_doc:literal])* fn $pm:ident($($pm_arg:ident: $pm_ty:ty),*) $(-> $pm_ret:ty $(as $pm_json:ty)?)?; )* }
+        profiling_ref { $( $(#[doc = $pr_doc:literal])* fn $pr:ident($($pr_arg:ident: $pr_ty:ty),*) $(-> $pr_ret:ty $(as $pr_json:ty)?)?; )* }
     ) => {
         $(#[$meta])*
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
@@ -209,7 +211,7 @@ pub fn runtime_typescript() -> String {
 macro_rules! __surface_typescript {
     (
         {}
-        $( $group:ident { $( $(#[doc = $doc:literal])* fn $method:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty)?; )* } )*
+        $( $group:ident { $( $(#[doc = $doc:literal])* fn $method:ident($($arg:ident: $ty:ty),*) $(-> $ret:ty $(as $json:ty)?)?; )* } )*
     ) => {{
         let methods = [$( $(
             $crate::surface::SurfaceMethod {
@@ -218,6 +220,7 @@ macro_rules! __surface_typescript {
                 doc: &[$($doc),*],
                 arguments: &[$((stringify!($arg), stringify!($ty))),*],
                 returns: [$(stringify!($ret))?].first().copied(),
+                json: [$($(stringify!($json))?)?].first().copied(),
             },
         )* )*];
         $crate::surface::typescript(&methods)
@@ -233,6 +236,8 @@ pub struct SurfaceMethod {
     pub doc: &'static [&'static str],
     pub arguments: &'static [(&'static str, &'static str)],
     pub returns: Option<&'static str>,
+    /// The JSON type the method's text carries, as `Json<FrameStats>`.
+    pub json: Option<&'static str>,
 }
 
 /// `methods` as the TypeScript interface `Runtime`: methods of development
@@ -244,7 +249,16 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
     let mut output = String::from(
         "// Generated by `cargo xtask schema` from the engine's game surface\n\
          // (`engine::export_game!`); do not edit.\n\
-         import type { JobMessage } from \"../engine/jobs\";\n\n\
+         import type { JobMessage } from \"../engine/jobs\";\n\
+         import type { Distribution } from \"./host\";\n\
+         import type { Reply } from \"./reply\";\n\
+         import type { FrameStats } from \"./stats\";\n\n\
+         /** JSON text the engine wrote of a `T`, which `parseJson` reads. */\n\
+         export type Json<T> = string & { readonly json?: T };\n\n\
+         /** The value the engine wrote as `json`. */\n\
+         export function parseJson<T>(json: Json<T>): T {\n  \
+         return JSON.parse(json) as T;\n\
+         }\n\n\
          /** The methods every game the engine exports has; those of development\n \
          * and profiling builds are optional. */\n\
          export interface Runtime {\n",
@@ -272,13 +286,16 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
                 }
             })
             .collect();
-        let returns = method.returns.map_or("void".to_owned(), |ty| {
-            let ty = ty.replace(' ', "");
-            match ty.strip_prefix("Result<").and_then(|ty| ty.split_once(',')) {
-                Some((ok, _)) => typescript_type(ok),
-                None => typescript_type(&ty),
-            }
-        });
+        let returns = match method.json {
+            Some(json) => json_type(&json.replace(' ', "")),
+            None => method.returns.map_or("void".to_owned(), |ty| {
+                let ty = ty.replace(' ', "");
+                match ty.strip_prefix("Result<").and_then(|ty| ty.split_once(',')) {
+                    Some((ok, _)) => typescript_type(ok),
+                    None => typescript_type(&ty),
+                }
+            }),
+        };
         writeln!(
             output,
             "  {}{optional}({}): {returns};",
@@ -289,6 +306,24 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
     }
     output.push_str("  free(): void;\n}\n");
     output
+}
+
+/// The TypeScript type of the JSON text `json` (`Json<T>`, spaces removed)
+/// names: `Option<T>` is `T | null`; the payload types are the page's
+/// generated ones, which the interface's file imports.
+#[cfg(not(target_arch = "wasm32"))]
+fn json_type(json: &str) -> String {
+    let payload = json
+        .strip_prefix("Json<")
+        .and_then(|json| json.strip_suffix('>'))
+        .unwrap_or_else(|| panic!("a method's JSON type is Json<T>, not {json}"));
+    match payload
+        .strip_prefix("Option<")
+        .and_then(|payload| payload.strip_suffix('>'))
+    {
+        Some(inner) => format!("Json<{inner} | null>"),
+        None => format!("Json<{payload}>"),
+    }
 }
 
 /// The TypeScript type of Rust type `ty` (spaces removed) at the Wasm

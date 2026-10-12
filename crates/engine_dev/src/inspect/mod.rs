@@ -2,7 +2,7 @@ mod components;
 mod environment;
 mod poses;
 
-use poses::presentation_value;
+use poses::{presentation_value, presentation_view};
 
 use engine_settings::ErrorCode;
 use std::{collections::BTreeMap, io::Write};
@@ -23,6 +23,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::protocol::{Route, ToolsQuery};
+use crate::reply::{Observation, Reply, SceneObservation};
 use crate::{
     DevError, DevRequest, MAX_DESCRIPTION_BYTES, MAX_INSPECTOR_BYTES, MAX_INSPECTORS,
     MAX_PAGE_SIZE, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
@@ -316,24 +317,43 @@ impl DevTools {
     pub fn execute(&self, engine: &mut Engine, context: Context<'_>, source: &str) -> String {
         let scene = context.scene;
         let world = engine.app.world();
-        let observation = json!({
-            "frame": world.get_resource::<FrameTime>().map(|time| time.frame.to_string()),
-            "tick": world.get_resource::<FixedTime>().map(|time| time.tick.to_string()),
-            "scene": scene.map(|scene| json!({"id": scene.id(), "revision": scene.revision().to_string()})),
-            "presentation": presentation_value(engine.presentation()),
-        });
-        let result = self.parse_and_execute(engine, context, source);
-        let response = match result {
-            Ok(result) => {
-                json!({"version": PROTOCOL_VERSION, "ok": true, "observation": observation, "result": result})
-            }
-            Err(error) => {
-                json!({"version": PROTOCOL_VERSION, "ok": false, "observation": observation, "error": error})
-            }
+        // The state before the request.
+        let observation = Observation {
+            frame: world
+                .get_resource::<FrameTime>()
+                .map(|time| time.frame.to_string()),
+            tick: world
+                .get_resource::<FixedTime>()
+                .map(|time| time.tick.to_string()),
+            scene: scene.map(|scene| SceneObservation {
+                id: scene.id().to_owned(),
+                revision: scene.revision().to_string(),
+            }),
+            presentation: presentation_view(engine.presentation()),
         };
-        encode(&response, MAX_RESPONSE_BYTES).unwrap_or_else(|_| {
-            json!({"version": PROTOCOL_VERSION, "ok": false, "observation": observation,
-                "error": DevError::new(ErrorCode::ResponseTooLarge, "$", "response exceeds 65536 bytes; reduce limit or select one component")}).to_string()
+        let (result, error) = match self.parse_and_execute(engine, context, source) {
+            Ok(result) => (Some(result), None),
+            Err(error) => (None, Some(error)),
+        };
+        let reply = Reply {
+            version: Some(PROTOCOL_VERSION),
+            ok: error.is_none(),
+            observation: Some(observation),
+            result,
+            error,
+        };
+        encode(&reply, MAX_RESPONSE_BYTES).unwrap_or_else(|_| {
+            let refused = Reply {
+                ok: false,
+                result: None,
+                error: Some(DevError::new(
+                    ErrorCode::ResponseTooLarge,
+                    "$",
+                    "response exceeds 65536 bytes; reduce limit or select one component",
+                )),
+                ..reply
+            };
+            serde_json::to_string(&refused).expect("replies serialize")
         })
     }
 

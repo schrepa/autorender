@@ -1,16 +1,11 @@
 /** Bounded sampling for the opt-in development host. No ordinary-frame work. */
 import type { ErrorCode } from "../generated/errors";
 import { BENCHMARK_LIMIT_MS } from "../generated/host";
+import type { Observation, Reply } from "../generated/reply";
 import type { Distribution, FrameStats } from "./host";
 
 /** A benchmark control as the engine validated it, with its defaults. */
 export type BenchmarkOptions = { mode: "step" | "render" | "present"; warmup: number; samples: number };
-type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
-export type Reply = {
-  version?: number; ok: boolean; observation?: Observation;
-  result?: Record<string, unknown>;
-  error?: { code: ErrorCode; path: string; message: string };
-};
 export class BenchmarkError extends Error {
   code: ErrorCode;
   constructor(code: ErrorCode, message: string) { super(message); this.code = code; }
@@ -100,7 +95,7 @@ export async function sampleBenchmark(context: Context, options: BenchmarkOption
       measurements.push(stats);
     }
     previousTimestamp = timestamp;
-    end = reply.observation;
+    end = reply.observation ?? undefined;
   }
   const final = invoke({ op: "assets" });
   // Every stats path that reads a number in each sample.

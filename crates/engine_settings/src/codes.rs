@@ -58,6 +58,23 @@ impl serde::Serialize for ErrorCode {
     }
 }
 
+/// A code is its string, one of the catalog's.
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for ErrorCode {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ErrorCode".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let codes: Vec<&str> = Self::ALL.iter().map(|&(_, code, _)| code).collect();
+        schemars::json_schema!({
+            "description": "An error's code, as replies name it.",
+            "type": "string",
+            "enum": codes,
+        })
+    }
+}
+
 error_codes! {
     // Requests and sources.
     /// The request or source is not JSON.

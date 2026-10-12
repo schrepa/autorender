@@ -1,7 +1,7 @@
 import {
   BETWEEN_MARGIN_MS, type Distribution, FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING, PREPARE_LIMIT_MS, QUIET_FRAMES,
 } from "../generated/host";
-import type { Runtime } from "../generated/runtime";
+import { parseJson, type Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
 import { BrowserInput } from "./input";
 import { type JobPool, jobPool } from "./jobs";
@@ -10,16 +10,16 @@ import { HOST_PARAMETERS } from "./parameters";
 import "./style.css";
 
 export type { Distribution, FrameStats, Runtime };
-/** The last frame's statistics of `runtime`: the JSON `Runtime.stats`
- * returns, typed from Rust's `FrameStats`. */
-export function readStats(runtime: { stats(): string }): FrameStats {
-  return JSON.parse(runtime.stats()) as FrameStats;
+/** The last frame's statistics of `runtime`, typed from Rust's
+ * `FrameStats`. */
+export function readStats(runtime: Pick<Runtime, "stats">): FrameStats {
+  return parseJson(runtime.stats());
 }
 /** The spread of measured `values` as the engine computes it on every host
  * (`Runtime.distribution`, typed from Rust's `Distribution`): null without
  * values, or with one that is not a finite number of at least 0. */
 export function readDistribution(runtime: Pick<Runtime, "distribution">, values: readonly number[]): Distribution | null {
-  return JSON.parse(runtime.distribution(Float64Array.from(values))) as Distribution | null;
+  return parseJson(runtime.distribution(Float64Array.from(values)));
 }
 /** Controls for a game's own panels; mutations run between frames. */
 export interface HostControls<T extends Runtime> {

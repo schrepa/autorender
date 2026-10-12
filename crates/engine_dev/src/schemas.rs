@@ -23,6 +23,12 @@ pub struct Generated {
     pub frame_stats: Value,
 }
 
+/// The schema of every development reply ([`crate::Reply`]), which the
+/// page's reply types are generated from.
+pub fn reply() -> Value {
+    serde_json::to_value(schemars::schema_for!(crate::Reply)).expect("schemas serialize")
+}
+
 /// The generated files and values, or every rule the types break.
 pub fn generated() -> Result<Generated, String> {
     let mut problems = Vec::new();
