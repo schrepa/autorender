@@ -35,6 +35,10 @@ pub mod bounds {
     pub const SAMPLES: Rule = Rule::Range(1.0, 240.0);
     /// Fixed ticks a step advances.
     pub const TICKS: Rule = Rule::Range(1.0, engine_core::MAX_DEV_TICKS as f64);
+    /// Ordinary frames one `frames` control runs.
+    pub const FRAMES: Rule = Rule::Range(1.0, 240.0);
+    /// Milliseconds between the frames a `frames` control runs.
+    pub const FRAME_INTERVAL: Rule = Rule::Range(1.0, 1000.0);
     /// An input axis.
     pub const AXIS: Rule = Rule::Range(-1.0, 1.0);
     /// An input's look delta.
@@ -94,6 +98,7 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("camera", "Camera"),
     ("benchmark", ""),
     ("step", "PresentationState"),
+    ("frames", "PresentationState"),
     ("input", "Input"),
     ("render", ""),
     ("pause", "status"),
@@ -783,6 +788,21 @@ pub enum BrowserControl {
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TICKS)))]
         ticks: u32,
     },
+    /// Run `count` ordinary frames `interval_ms` apart while paused, as play
+    /// runs them after a pause: the first advances no time, each later one
+    /// `interval_ms`, without input (pending input is cleared), presented
+    /// and antialiased as play's are; then stay paused. With `capture`,
+    /// the host captures the last frame as it was drawn, without drawing
+    /// again, as `capture` keeps its files.
+    Frames {
+        version: u32,
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAMES)))]
+        count: u32,
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAME_INTERVAL)))]
+        interval_ms: f64,
+        #[serde(default)]
+        capture: bool,
+    },
     /// Replace the temporary batch applied on the next explicit step.
     Input {
         version: u32,
@@ -893,6 +913,7 @@ impl BrowserControl {
             | Self::Camera { .. }
             | Self::Benchmark { .. }
             | Self::Step { .. }
+            | Self::Frames { .. }
             | Self::Input { .. }
             | Self::Render { .. }
             | Self::Capture { .. }
@@ -918,6 +939,7 @@ impl BrowserControl {
             | Self::Camera { version, .. }
             | Self::Benchmark { version, .. }
             | Self::Step { version, .. }
+            | Self::Frames { version, .. }
             | Self::Input { version, .. }
             | Self::Render { version }
             | Self::Pause { version }

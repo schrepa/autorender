@@ -39,6 +39,8 @@ export interface Runtime {
   set_occlusion_culling(enabled: boolean): void;
   /** Sub-pixel culling of GPU-presented frames, over the world's setting in this and later engines. */
   set_subpixel_culling(enabled: boolean): void;
+  /** Terrain work timed by frames alone, each a slice of the terrain's `samples_per_frame` with none between frames, in place of the page's clock (the default), in this and later engines. */
+  set_terrain_frame_clock(enabled: boolean): void;
   /** The last frame's statistics, as the JSON object `FrameStats` types. */
   stats(): string;
   /** Whether ordinary frames are presented on the GPU. */

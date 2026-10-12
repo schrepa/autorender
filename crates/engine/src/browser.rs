@@ -285,6 +285,16 @@ impl<G: Game> PageHost<G> {
         Ok(self.host.reload_scene(source, files.files())?)
     }
 
+    /// [`GameHost::set_terrain_clock`]: frames alone where `enabled`, else
+    /// the page's clock.
+    pub fn set_terrain_frame_clock(&mut self, enabled: bool) {
+        self.host.set_terrain_clock(if enabled {
+            crate::host::TerrainClock::Frames
+        } else {
+            crate::host::TerrainClock::Wall
+        });
+    }
+
     /// [`crate::host::Distribution::of`] `values`, as JSON (`null` for none).
     pub fn distribution(&self, values: Vec<f64>) -> String {
         serde_json::to_string(&crate::host::Distribution::of(&values))

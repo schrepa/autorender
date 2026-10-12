@@ -13,4 +13,5 @@ export const HOST_PARAMETERS: Record<string, string> = {
   taa: "on or off: temporal antialiasing over the world's setting",
   occlusion: "on or off: occlusion culling over the world's setting",
   subpixel: "on or off: sub-pixel culling over the world's setting",
+  "terrain-clock": "wall (default) or frames: terrain works a slice a frame, not by the wall clock",
 };

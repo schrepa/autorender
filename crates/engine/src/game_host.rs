@@ -170,6 +170,11 @@ impl<G: Game> GameHost<G> {
         self.app.set_subpixel_culling(enabled);
     }
 
+    /// What terrain times its work by, in this and later engines.
+    pub fn set_terrain_clock(&mut self, clock: crate::host::TerrainClock) {
+        self.app.set_terrain_clock(clock);
+    }
+
     /// The GPU the game draws on.
     pub fn adapter(&self) -> &crate::AdapterInfo {
         self.app.renderer.adapter()

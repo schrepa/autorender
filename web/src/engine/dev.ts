@@ -18,6 +18,9 @@ interface Host {
   isBusy?(): boolean;
   size(): [number, number];
   poll(): void;
+  /** Runs one ordinary frame at `timestamp` without input, then hands its
+   * jobs to the workers. */
+  frame(timestamp: number): void;
   /** Stops the page for good: the engine's module stopped. */
   fail(error: unknown): void;
   /** Why the engine's module stopped (its panic's message), once it did. */
@@ -98,9 +101,22 @@ export function connectDevelopment(host: Host): () => void {
       }, options);
       return { ok: true, version: protocol.version, observation: benchmark.observation.end, result: { benchmark, temporary: true } };
     },
+    async frames(control) {
+      const count = control.count as number;
+      const interval = control.interval_ms as number;
+      // As play after a pause: the first frame advances no time.
+      runtime.suspend();
+      for (let index = 0; index < count; index++) {
+        await animationFrames(1, host.signal);
+        if (disposed) return error("session_closed", "$", "runtime was disposed during the frames");
+        host.frame(index * interval);
+      }
+      if (control.capture) await animationFrames(2, host.signal);
+      return { ...invoke({ op: "status" }), result: { frames: count, interval_ms: interval, temporary: true } };
+    },
     async capture(control) {
       const reply = invoke("alpha" in control ? { op: "present", alpha: control.alpha, ...(control.gpu ? { gpu: true } : {}) } : { op: "render" });
-      if (reply.ok) await presented(host.signal);
+      if (reply.ok) await animationFrames(2, host.signal);
       return reply;
     },
     async game(control) {
@@ -193,21 +209,26 @@ export function connectDevelopment(host: Host): () => void {
   return dispose;
 }
 
-function presented(signal: AbortSignal): Promise<void> {
+/** Resolves within the `count`th animation frame from now: two show what
+ * was drawn before. */
+function animationFrames(count: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    let first = 0;
-    let second = 0;
+    let request = 0;
+    let left = count;
     const timeout = setTimeout(() => finish(new Error("browser presentation timed out")), 5000);
     function finish(error?: Error) {
       clearTimeout(timeout);
-      cancelAnimationFrame(first);
-      cancelAnimationFrame(second);
+      cancelAnimationFrame(request);
       signal.removeEventListener("abort", aborted);
       if (error) reject(error); else resolve();
     }
     function aborted() { finish(new Error("session closed")); }
+    function next() {
+      if (--left <= 0) finish();
+      else request = requestAnimationFrame(next);
+    }
     signal.addEventListener("abort", aborted, { once: true });
     if (signal.aborted) { aborted(); return; }
-    first = requestAnimationFrame(() => { second = requestAnimationFrame(() => finish()); });
+    request = requestAnimationFrame(next);
   });
 }

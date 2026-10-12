@@ -540,6 +540,12 @@
       ]
     },
     {
+      "op": "frames",
+      "smokes": [
+        "host-parity"
+      ]
+    },
+    {
       "op": "input",
       "smokes": [
         "agent",

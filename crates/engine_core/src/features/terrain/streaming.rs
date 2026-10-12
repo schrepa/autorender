@@ -11,10 +11,11 @@ impl Terrains {
     }
 
     /// The clock frames time their terrain work by:
-    /// milliseconds, from any origin. Hosts without one work a slice of
-    /// `samples_per_frame` a frame.
-    pub fn set_clock(&mut self, clock: fn() -> f64) {
-        self.clock = Some(clock);
+    /// milliseconds, from any origin; or none (the default), where each
+    /// frame works one slice of `samples_per_frame` and nothing loads
+    /// between frames, so what streams depends on the frames alone.
+    pub fn set_clock(&mut self, clock: Option<fn() -> f64>) {
+        self.clock = clock;
     }
 
     /// Whether the camera's view has yet to load whole;

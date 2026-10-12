@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use engine::host::policy;
+use engine::host::{TerrainClock, policy};
 use engine::{Engine, Game, GpuPreference};
 use serde_json::json;
 
@@ -34,6 +34,11 @@ Native options:
                        MiB); verify runs every job anyway and compares
   --vsync on|off       whether window frames wait for the display's refresh
                        (default on); off measures as browsers' frame rates do
+  --terrain-clock wall|frames
+                       what terrain times its work by: the wall clock
+                       (default), or frames alone, each working one slice of
+                       samples_per_frame and none between them, so what
+                       streams depends on the frames drawn, not their time
   --frames N           measure N window frames after --settle-ms, then close
                        and print their rate and CPU times as JSON
   --settle-ms MS       with --frames: play before measuring (default 20000)
@@ -249,6 +254,7 @@ pub struct HostOptions {
     pub gpu: GpuPreference,
     pub jobs: JobOptions,
     pub vsync: bool,
+    pub terrain_clock: TerrainClock,
     /// Window frames to measure.
     pub frames: Option<u32>,
     pub settle_ms: u64,
@@ -275,6 +281,7 @@ impl Default for HostOptions {
             gpu: GpuPreference::HighPerformance,
             jobs: JobOptions::default(),
             vsync: true,
+            terrain_clock: TerrainClock::Wall,
             frames: None,
             settle_ms: 20_000,
             offscreen: None,
@@ -300,6 +307,10 @@ pub const PARAMETERS: &[(&str, &str)] = &[
     ("gpu", "discrete or integrated"),
     ("workers", "job worker threads, or off"),
     ("jobcache", "off, verify, or the kept outputs' MiB"),
+    (
+        "terrain-clock",
+        "wall (default) or frames: terrain works a slice a frame, not by the wall clock",
+    ),
     (
         "counters",
         "on, or counter names: each profile's per-pass hardware counters (profiling builds; Vulkan)",
@@ -380,6 +391,15 @@ impl HostOptions {
                 };
             }
             "--vsync" => self.vsync = arguments.switch(argument)?,
+            "--terrain-clock" => {
+                self.terrain_clock = match arguments.value(argument)?.as_str() {
+                    "wall" => TerrainClock::Wall,
+                    "frames" => TerrainClock::Frames,
+                    other => {
+                        return Err(format!("--terrain-clock is wall or frames, not {other}"));
+                    }
+                }
+            }
             "--frames" => self.frames = Some(arguments.count(argument)?),
             "--settle-ms" => {
                 let settle = arguments.value(argument)?;
@@ -493,7 +513,14 @@ impl HostOptions {
         }
         if let Some(method) = &self.measure {
             let size = self.size.unwrap_or((1280, 720));
-            return crate::measure::run(method, size, self.gpu, self.jobs, build);
+            return crate::measure::run(
+                method,
+                size,
+                self.gpu,
+                self.jobs,
+                self.terrain_clock,
+                build,
+            );
         }
         match self.offscreen {
             Some(frames) => self.run_offscreen(frames, build),
@@ -504,6 +531,7 @@ impl HostOptions {
                         gpu: self.gpu,
                         jobs: self.jobs,
                         vsync: self.vsync,
+                        terrain_clock: self.terrain_clock,
                         measure: self.frames.map(|frames| Measure {
                             settle: Duration::from_millis(self.settle_ms),
                             frames,
@@ -540,7 +568,8 @@ impl HostOptions {
         let size = self.size.unwrap_or((1280, 720));
         // PIX's capturer must be in the program before its D3D12 device.
         let pix = self.loads_pix().then(Pix::load).flatten();
-        let game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
+        let mut game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
+        game.host_mut().set_terrain_clock(self.terrain_clock);
         let artifacts = self
             .dev_artifacts
             .clone()
@@ -582,6 +611,7 @@ impl HostOptions {
         let pix = self.loads_pix().then(Pix::load).flatten();
         let started = Instant::now();
         let mut game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
+        game.host_mut().set_terrain_clock(self.terrain_clock);
         game.prepare(0.0)?;
         let prepared_ms = started.elapsed().as_secs_f64() * 1000.0;
         let record = Record {

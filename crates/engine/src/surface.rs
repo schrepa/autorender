@@ -53,6 +53,11 @@ macro_rules! __game_surface {
                 /// Sub-pixel culling of GPU-presented frames, over the world's
                 /// setting in this and later engines.
                 fn set_subpixel_culling(enabled: bool);
+                /// Terrain work timed by frames alone, each a slice of the
+                /// terrain's `samples_per_frame` with none between frames, in
+                /// place of the page's clock (the default), in this and later
+                /// engines.
+                fn set_terrain_frame_clock(enabled: bool);
             }
             always_ref {
                 /// The last frame's statistics, as the JSON object `FrameStats` types.

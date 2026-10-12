@@ -2,17 +2,18 @@
 //! JSON command a line in, one JSON reply a line out, run between frames as
 //! the page runs them (`web/src/engine/dev.ts`). The engine answers each
 //! command, or hands back a control the host carries out: pause and resume,
-//! benchmarks, captures (PNG files), the game's own controls and scene
-//! reloads. Profiling builds also take the agent's `profile`: a deep
-//! profile of the frames run meanwhile (`engine_profiler`'s), CPU samples
-//! of every thread included unless `cpu_samples` is false, each pass's
-//! hardware counters where the session counts them (`--counters`), and with
-//! `vendor: "pix"` the last frame's per-draw counters replayed through PIX
-//! where the session loaded it (`--vendor pix`), written as files.
-//! Sessions draw offscreen and start paused, as the page's development
-//! sessions do; a first line says the session is ready. A panic ends the
-//! session's process (`engine_panic`'s hook writes its report on standard
-//! error), and the program driving the session answers what follows.
+//! benchmarks, ordinary frames at timestamps of their own, captures (PNG
+//! files), the game's own controls and scene reloads. Profiling builds also
+//! take the agent's `profile`: a deep profile of the frames run meanwhile
+//! (`engine_profiler`'s), CPU samples of every thread included unless
+//! `cpu_samples` is false, each pass's hardware counters where the session
+//! counts them (`--counters`), and with `vendor: "pix"` the last frame's
+//! per-draw counters replayed through PIX where the session loaded it
+//! (`--vendor pix`), written as files. Sessions draw offscreen and start
+//! paused, as the page's development sessions do; a first line says the
+//! session is ready. A panic ends the session's process (`engine_panic`'s
+//! hook writes its report on standard error), and the program driving the
+//! session answers what follows.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -236,6 +237,7 @@ impl<G: Game> DevSession<G> {
                     self.invoke_op("status")
                 }
                 "benchmark" => self.benchmark(&control),
+                "frames" => self.frames(&control),
                 "capture" => self.capture(&control),
                 "game" => self.game_control(&control),
                 "reload" => self.reload(&control),
@@ -324,10 +326,45 @@ impl<G: Game> DevSession<G> {
                 command.insert("op".into(), json!("render"));
             }
         }
-        let mut reply = self.invoke(&command);
+        let reply = self.invoke(&command);
         if reply["ok"] != true {
             return reply;
         }
+        self.keep_frame(reply)
+    }
+
+    /// Runs `control.count` ordinary frames `control.interval_ms` apart, as
+    /// play runs them after a pause (the first advances no time), each once
+    /// the GPU drew it; with `control.capture`, writes the last as drawn as
+    /// a PNG file, which the reply names.
+    fn frames(&mut self, control: &Map<String, Value>) -> Value {
+        let count = control["count"]
+            .as_u64()
+            .and_then(|count| u32::try_from(count).ok())
+            .unwrap_or(1);
+        let interval = control["interval_ms"].as_f64().unwrap_or_default();
+        self.game.host_mut().suspend();
+        for index in 0..count {
+            if let Err(error) = self.game.frame(f64::from(index) * interval) {
+                return self.error(
+                    ErrorCode::RenderFailed,
+                    "$",
+                    &format!("frame {} of {count} failed: {error}", index + 1),
+                );
+            }
+        }
+        let status = self.invoke_op("status");
+        let reply = json!({"ok": true, "version": engine::dev::PROTOCOL_VERSION,
+            "observation": status["observation"],
+            "result": {"frames": count, "interval_ms": interval, "temporary": true}});
+        if control.get("capture") == Some(&json!(true)) {
+            return self.keep_frame(reply);
+        }
+        reply
+    }
+
+    /// `reply` with the last frame written as a PNG file, which it names.
+    fn keep_frame(&mut self, mut reply: Value) -> Value {
         self.captures += 1;
         let path = self
             .artifacts

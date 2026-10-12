@@ -64,6 +64,7 @@ const CASES = [
   ["present", { op: "present", alpha: 0.5 }],
   ["capture", { op: "capture" }],
   ["capture presented", { op: "capture", alpha: 0.5 }],
+  ["frames", { op: "frames", count: 3, interval_ms: 1000 / 60, capture: true }],
   ["benchmark", { op: "benchmark", mode: "render", warmup: 1, samples: 4 }],
   ["benchmark steps", { op: "benchmark", mode: "step", warmup: 0, samples: 2 }],
   ["culling", { op: "culling", enabled: true }],
@@ -82,6 +83,7 @@ const CASES = [
   ["invalid step", { op: "step", ticks: 0 }, "error"],
   ["invalid input", { op: "input", forward: 2 }, "error"],
   ["invalid benchmark", { op: "benchmark", samples: 0 }, "error"],
+  ["invalid frames", { op: "frames", count: 0, interval_ms: 1000 / 60 }, "error"],
   ["unknown game control", { op: "game", name: "weather", args: {} }, "error"],
   ["unknown look", { op: "game", name: "look", args: { name: "noon" } }, "error"],
   ["reload without source", { op: "reload", expected_revision: "1", revision: "2" }, "error"],
@@ -89,6 +91,7 @@ const CASES = [
   ["resume", { op: "resume" }],
   ["step while running", { op: "step", ticks: 1 }, "error"],
   ["capture while running", { op: "capture" }, "error"],
+  ["frames while running", { op: "frames", count: 1, interval_ms: 1000 / 60 }, "error"],
   ["pause", { op: "pause" }],
   // A panic stops the engine on both hosts, which then answer everything
   // with the panic's report: last, as nothing runs after it.

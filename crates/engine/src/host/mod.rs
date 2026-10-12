@@ -1,12 +1,12 @@
-//! What hosts wire: job workers, terrain tile fetches and the terrain's
-//! debug views; and what the page and the native host share instead of
+//! What hosts wire: job workers, terrain tile fetches, the clock terrain
+//! times its work by and the terrain's debug views; and what the page and the native host share instead of
 //! each keeping its own: their policies' values, the spread of measured
 //! values and what a panic reports.
 
 pub mod policy;
 mod statistics;
 
-pub use crate::app_host::{JobMessage, now_ms};
+pub use crate::app_host::{JobMessage, TerrainClock, now_ms};
 pub use engine_core::{
     FileHeader, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs, TerrainDebug,
     TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,

@@ -81,6 +81,7 @@ impl DevHost {
             control,
             BrowserControl::Input { .. }
                 | BrowserControl::Benchmark { .. }
+                | BrowserControl::Frames { .. }
                 | BrowserControl::Pause { .. }
                 | BrowserControl::Resume { .. }
                 | BrowserControl::Capture { .. }
@@ -504,6 +505,7 @@ impl DevHost {
             // The host runs these: it receives them validated, with their
             // defaults.
             control @ (BrowserControl::Benchmark { .. }
+            | BrowserControl::Frames { .. }
             | BrowserControl::Pause { .. }
             | BrowserControl::Resume { .. }
             | BrowserControl::Capture { .. }

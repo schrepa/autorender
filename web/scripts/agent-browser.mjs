@@ -216,7 +216,8 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
           response.result.types.push({ name: "GameControls", kind: "tooling", description: "The game's own controls, which the game control runs by name with args", controls });
           response.result.types.push({ name: "PageParameters", kind: "tooling", description: "The page URL's parameters the host and game read", parameters });
         }
-        if (command.op === "capture" && response.ok) {
+        // Captures, and frames that keep their last: the canvas as shown.
+        if ((command.op === "capture" || (command.op === "frames" && command.capture === true)) && response.ok) {
           if (response.result?.paused !== true) throw new AgentError("capture_requires_pause", "The browser must confirm it is paused before capture.");
           try {
             await mkdir(artifacts, { recursive: true });

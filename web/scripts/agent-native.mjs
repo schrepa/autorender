@@ -225,7 +225,7 @@ export async function launchNativeSession({ program, args = [], session = random
             if (typeof path === "string") response.result.artifacts[kind] = relative(workspace, path).split(sep).join("/");
           }
         }
-        if (command.op === "capture" && response.ok && response.result?.artifact) {
+        if (["capture", "frames"].includes(command.op) && response.ok && response.result?.artifact) {
           const artifact = response.result.artifact;
           artifact.path = relative(workspace, artifact.path).split(sep).join("/");
           const bytes = await readFile(resolve(workspace, artifact.path));

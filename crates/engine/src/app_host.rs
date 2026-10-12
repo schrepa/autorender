@@ -92,15 +92,37 @@ pub enum JobMessage {
     Run(JobRequest),
 }
 
+/// What terrain times its work by on a host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TerrainClock {
+    /// The host's clock: each frame works on terrain for the settings' work
+    /// time, and hosts load more in the time frames leave free.
+    #[default]
+    Wall,
+    /// Frames alone: each works one slice of the settings'
+    /// `samples_per_frame` and none loads between frames, so what streams
+    /// depends on the frames drawn, never on how long they took.
+    Frames,
+}
+
+impl TerrainClock {
+    /// The clock terrain reads: none for frames alone.
+    fn reading(self) -> Option<fn() -> f64> {
+        match self {
+            Self::Wall => Some(now_ms),
+            Self::Frames => None,
+        }
+    }
+}
+
 /// Wires `engine` to the host `renderer` draws for: terrain residency never
-/// exceeds the device's texture array layers and its work runs for the
-/// settings' time a frame by the host's clock; jobs run on the host's
-/// `workers`.
-fn wire(engine: &mut Engine, renderer: &Renderer, workers: u32) {
+/// exceeds the device's texture array layers and its work runs by `clock`;
+/// jobs run on the host's `workers`.
+fn wire(engine: &mut Engine, renderer: &Renderer, workers: u32, clock: TerrainClock) {
     let world = engine.app.world_mut();
     if let Some(mut terrains) = world.get_resource_mut::<engine_core::Terrains>() {
         terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
-        terrains.set_clock(now_ms);
+        terrains.set_clock(clock.reading());
     }
     if let Some(mut jobs) = world.get_resource_mut::<engine_core::Jobs>() {
         jobs.set_workers(workers);
@@ -127,6 +149,7 @@ pub(crate) struct AppHost {
     gpu_inputs_stale: bool,
     // Terrain tiles read by byte range.
     terrain_fetches: TerrainFetches,
+    terrain_clock: TerrainClock,
     // The host's culling and antialiasing choices over each engine's own
     // settings: unset, an engine keeps its own.
     overrides: Overrides,
@@ -184,7 +207,7 @@ impl AppHost {
     }
 
     fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
-        wire(&mut engine, &renderer, 0);
+        wire(&mut engine, &renderer, 0, TerrainClock::Wall);
         Self {
             engine,
             renderer,
@@ -195,6 +218,7 @@ impl AppHost {
             tick_pipelining: true,
             gpu_inputs_stale: false,
             terrain_fetches: TerrainFetches::default(),
+            terrain_clock: TerrainClock::Wall,
             overrides: Overrides::default(),
             #[cfg(feature = "profiling")]
             profile_frame: 0,
@@ -220,7 +244,7 @@ impl AppHost {
             .world()
             .get_resource::<engine_core::Jobs>()
             .map_or(0, engine_core::Jobs::workers);
-        wire(&mut engine, &self.renderer, workers);
+        wire(&mut engine, &self.renderer, workers, self.terrain_clock);
         // Tiles in flight belong to the replaced engine's terrains.
         self.terrain_fetches = TerrainFetches::default();
         self.gpu_inputs_stale = false;
@@ -247,6 +271,20 @@ impl AppHost {
         }
         if let Some(enabled) = subpixel_culling {
             world.insert_resource(engine_core::SubpixelCulling { enabled });
+        }
+    }
+
+    /// What terrain times its work by, in this and later engines: the
+    /// host's clock (the default), or frames alone.
+    pub fn set_terrain_clock(&mut self, clock: TerrainClock) {
+        self.terrain_clock = clock;
+        if let Some(mut terrains) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Terrains>()
+        {
+            terrains.set_clock(clock.reading());
         }
     }
 

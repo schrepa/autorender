@@ -54,9 +54,10 @@ function ensurePage() {
   }
 }
 
-/** Sets the game's presentation, pipelining, antialiasing and culling from
- * the page's `?presentation=gpu|cpu`, `?pipeline=on|off`, `?taa=on|off`,
- * `?occlusion=on|off` and `?subpixel=on|off`; another value fails. */
+/** Sets the game's presentation, pipelining, antialiasing, culling and
+ * terrain clock from the page's `?presentation=gpu|cpu`, `?pipeline=on|off`,
+ * `?taa=on|off`, `?occlusion=on|off`, `?subpixel=on|off` and
+ * `?terrain-clock=frames|wall`; another value fails. */
 function applySwitches(game: Runtime) {
   const params = new URLSearchParams(location.search);
   const switches: [string, [string, string], (enabled: boolean) => void][] = [
@@ -65,6 +66,7 @@ function applySwitches(game: Runtime) {
     ["taa", ["on", "off"], enabled => game.set_temporal_antialiasing(enabled)],
     ["occlusion", ["on", "off"], enabled => game.set_occlusion_culling(enabled)],
     ["subpixel", ["on", "off"], enabled => game.set_subpixel_culling(enabled)],
+    ["terrain-clock", ["frames", "wall"], enabled => game.set_terrain_frame_clock(enabled)],
   ];
   for (const [name, [on, off], set] of switches) {
     const value = params.get(name);
@@ -522,6 +524,10 @@ async function start() {
       setPaused, setBusy: value => { developmentBusy = value; },
       isBusy: () => developmentBusy,
       size: () => [pixelWidth, pixelHeight], poll: () => options.poll?.(created),
+      frame(timestamp) {
+        created.frame(timestamp, pixelWidth, pixelHeight, 0, 0, 0, 0, 0, 0, 0, 0);
+        jobs?.exchange();
+      },
       source: options.source,
       fail, stopped: () => stopped,
       controls: Object.fromEntries(Object.entries(options.controls ?? {}).map(([name, control]) => [name, {

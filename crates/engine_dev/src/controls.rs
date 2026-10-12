@@ -6,9 +6,9 @@ use engine_settings::ErrorCode;
 impl BrowserControl {
     /// Checks what deserialization does not: the protocol version, and the
     /// ranges and revision strings of the controls the browser host runs
-    /// (benchmark, capture and reload), which it receives back validated
-    /// with their defaults. Controls the engine runs check their values
-    /// where they apply.
+    /// (benchmark, frames, capture and reload), which it receives back
+    /// validated with their defaults. Controls the engine runs check their
+    /// values where they apply.
     pub fn validate(&self) -> Result<(), DevError> {
         if self.version() != PROTOCOL_VERSION {
             return Err(DevError::new(
@@ -32,6 +32,17 @@ impl BrowserControl {
                     bounds::SAMPLES,
                     ErrorCode::InvalidBenchmark,
                     "$.samples",
+                )?;
+            }
+            Self::Frames {
+                count, interval_ms, ..
+            } => {
+                bounded(*count, bounds::FRAMES, ErrorCode::OutOfRange, "$.count")?;
+                bounded(
+                    *interval_ms,
+                    bounds::FRAME_INTERVAL,
+                    ErrorCode::OutOfRange,
+                    "$.interval_ms",
                 )?;
             }
             Self::Capture { alpha, gpu, .. } => match alpha {
