@@ -160,6 +160,16 @@ fn options(arguments: &[String]) -> Result<Options, String> {
     Ok(options)
 }
 
+/// Every cell of the matrix, as read, and its tier: what `cargo xtask
+/// verify` selects from (the matrix's own check reports its problems).
+pub(crate) fn tiers(root: &Path) -> Result<Vec<(String, String)>, String> {
+    let (cells, _) = matrix::read_matrix(root)?;
+    Ok(cells
+        .into_iter()
+        .map(|cell| (cell.name, cell.tier))
+        .collect())
+}
+
 /// The merge-base of `rev` with origin/main: the default base.
 fn default_base(root: &Path, rev: &str) -> Result<String, String> {
     git(root, &["merge-base", rev, "origin/main"]).map_err(|error| {

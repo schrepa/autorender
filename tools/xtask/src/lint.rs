@@ -22,8 +22,9 @@ pub(crate) struct Stage {
 
 /// What `cargo xtask lint` runs, in order: the repository policy,
 /// formatting, the web host's text checks, the drift checks (scene sources,
-/// generated files, bench/ and its equivalence matrix, smoke coverage,
-/// feature layering, the facade's exports), the structure ratchet (file
+/// generated files, bench/ and its equivalence matrix, smoke coverage, the
+/// path map `cargo xtask verify` selects checks by, feature layering, the
+/// facade's exports), the structure ratchet (file
 /// lengths, struct widths), shaders against their Rust layouts, the pure
 /// checks' corpora, Clippy (the workspace, the native host's tools, the
 /// browser clients, the app template), rustdoc, the browser clients the web
@@ -78,6 +79,11 @@ pub(crate) const LINT: &[Stage] = &[
         name: "coverage",
         needs: &[],
         run: crate::coverage::check,
+    },
+    Stage {
+        name: "path map",
+        needs: &[],
+        run: crate::verify::check,
     },
     Stage {
         name: "features",
