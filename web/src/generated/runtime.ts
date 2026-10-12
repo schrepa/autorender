@@ -51,6 +51,8 @@ export interface Runtime {
   occlusion_culling(): boolean;
   /** Whether GPU-presented frames are sub-pixel culled. */
   subpixel_culling(): boolean;
+  /** The spread of measured `values`, as the JSON object `Distribution` types; `null` without values, or with one that is not a finite number of at least 0. */
+  distribution(values: Float64Array): string;
   /** Runs development request `request` (JSON) on a `width` × `height` canvas; `paused` says whether the page is paused. */
   dev_command?(request: string, width: number, height: number, paused: boolean): string;
   /** Reloads the authored scene's saved `source` when the active revision is `expected_revision` and the saved one `revision`. */

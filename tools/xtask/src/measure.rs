@@ -37,6 +37,9 @@ const PROFILE_FRAMES: u32 = 60;
 /// Frames the GPU may still draw when the next is submitted, in the
 /// pipelined timing (`frame_ms_pipelined_mean`).
 const FRAMES_IN_FLIGHT: u32 = 2;
+/// Metrics this command takes from the runs' raw times, never from what a
+/// run's program computed: both arms' then come from the same code.
+const TOOLS_STATISTICS: &[&str] = &["frame_ms_p95"];
 /// What is measured, and how it is built: a profiling build, whose engine
 /// times its GPU passes and CPU spans when asked and otherwise not.
 const PACKAGE: &str = "stress-lab";
@@ -832,11 +835,29 @@ fn measure_run(
     };
     let mut metrics = Map::new();
     for (name, value) in report["metrics"].as_object().into_iter().flatten() {
+        if TOOLS_STATISTICS.contains(&name.as_str()) {
+            continue;
+        }
         if catalogued(catalog, name, false) {
             metrics.insert(name.clone(), value.clone());
         } else {
             eprintln!("Left out {name}: bench/metrics.json at the tools' commit lacks it.");
         }
+    }
+    // The spread of the serialized frames' times, taken here from each one's
+    // time, so both arms' come from the same code.
+    let frame_ms: Option<Vec<f64>> = report["frame_ms"]
+        .as_array()
+        .map(|times| times.iter().filter_map(Value::as_f64).collect());
+    let mut unavailable: Vec<Value> = Vec::new();
+    match frame_ms.as_deref().and_then(engine::host::Distribution::of) {
+        Some(spread) => {
+            metrics.insert("frame_ms_p95".into(), json!(spread.p95));
+        }
+        None => unavailable.push(json!({
+            "metric": "frame_ms_p95",
+            "reason": reason("the run reported no frame times to take their spread from"),
+        })),
     }
     metrics.insert(
         "wall:frame_ms_mean".into(),
@@ -891,17 +912,18 @@ fn measure_run(
         "conditions": conditions,
         "capture": capture.display().to_string(),
     });
-    let unavailable = report["unavailable"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|entry| {
-            json!({
-                "metric": entry["metric"],
-                "reason": reason(entry["reason"].as_str().unwrap_or_default()),
-            })
-        })
-        .collect();
+    unavailable.extend(
+        report["unavailable"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|entry| {
+                json!({
+                    "metric": entry["metric"],
+                    "reason": reason(entry["reason"].as_str().unwrap_or_default()),
+                })
+            }),
+    );
     Ok((record, unavailable))
 }
 
@@ -1421,13 +1443,12 @@ fn print_summary(report: &Value) {
     for workload in report["workloads"].as_array().into_iter().flatten() {
         let runs = workload["runs"].as_array().cloned().unwrap_or_default();
         let median = |role: &str, metric: &str| {
-            let mut values: Vec<f64> = runs
+            let values: Vec<f64> = runs
                 .iter()
                 .filter(|run| run["arm"] == role && run["conditions"]["settled"]["held"] == true)
                 .filter_map(|run| run["metrics"][metric].as_f64())
                 .collect();
-            values.sort_by(f64::total_cmp);
-            (!values.is_empty()).then(|| values[values.len() / 2])
+            engine::host::median(&values)
         };
         let mut line = format!(
             "{} ({}): {} runs, settle {}",

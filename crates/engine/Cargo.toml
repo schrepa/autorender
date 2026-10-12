@@ -10,8 +10,9 @@ default = []
 dev = ["dep:engine_dev", "engine_core/dev"]
 profiling = ["engine_profile/enabled", "engine_core/profiling", "engine_collision/profiling", "engine_render/profiling"]
 attribution = ["engine_core/attribution", "engine_collision/attribution"]
-# JSON schemas of settings apps declare (`engine::settings`), for their tooling.
-schema = ["engine_settings/schema"]
+# JSON schemas of settings apps declare (`engine::settings`), and of the
+# types hosts share (`engine::host`), for their tooling.
+schema = ["engine_settings/schema", "dep:schemars"]
 
 [dependencies]
 engine_core.workspace = true
@@ -21,7 +22,9 @@ engine_scene.workspace = true
 engine_dev = { workspace = true, optional = true }
 engine_settings.workspace = true
 engine_render.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+schemars = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true

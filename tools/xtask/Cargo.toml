@@ -15,8 +15,9 @@ sha2.workspace = true
 engine_assetc.workspace = true
 # What other programs did while a measured run was timed.
 engine_profiler = { workspace = true, features = ["load"] }
-# The game surface's types and the TypeScript generator.
-engine.workspace = true
+# The game surface's types, the types hosts share and the TypeScript
+# generator.
+engine = { workspace = true, features = ["schema"] }
 # The repository policy lint checks first.
 policy.workspace = true
 # Numbers read back exactly: an extended report copies its earlier runs

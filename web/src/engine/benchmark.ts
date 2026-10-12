@@ -1,6 +1,5 @@
 /** Bounded sampling for the opt-in development host. No ordinary-frame work. */
-import type { FrameStats } from "./host";
-import { percentiles } from "./statistics.ts";
+import type { Distribution, FrameStats } from "./host";
 
 /** A benchmark control as the engine validated it, with its defaults. */
 export type BenchmarkOptions = { mode: "step" | "render" | "present"; warmup: number; samples: number };
@@ -22,24 +21,25 @@ function numbers(stats: object, prefix = ""): [string, number][] {
       : value && typeof value === "object" && !Array.isArray(value) ? numbers(value, `${prefix}${key}.`) : []);
 }
 
-/** Percentiles of measured `values`; counts describe actual samples. */
-function distribution(values: number[]) {
-  if (!values.length || values.some(value => !Number.isFinite(value) || value < 0)) {
-    throw new BenchmarkError("invalid_measurement", "measurements must be nonempty, finite and nonnegative");
-  }
-  return percentiles(values);
-}
-
 type Context = {
   signal: AbortSignal;
   invoke(command: Record<string, unknown>): Reply;
   stats(): FrameStats;
+  /** The engine's spread of `values`; null without values or with one
+   * that is not a finite number of at least 0. */
+  distribution(values: number[]): Distribution | null;
   size(): [number, number];
   interrupted(): boolean;
 };
 
 /** A request owns the host's busy boundary throughout all awaited frames. */
 export async function sampleBenchmark(context: Context, options: BenchmarkOptions) {
+  /** The spread of measured `values`; counts describe actual samples. */
+  function distribution(values: number[]): Distribution {
+    const spread = context.distribution(values);
+    if (!spread) throw new BenchmarkError("invalid_measurement", "measurements must be nonempty, finite and nonnegative");
+    return spread;
+  }
   const startTime = performance.now();
   const deadline = startTime + 10_000;
   const initialSize = context.size();

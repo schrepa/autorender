@@ -1,3 +1,4 @@
+import type { Distribution } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
 import { BrowserInput } from "./input";
@@ -5,17 +6,26 @@ import { type JobPool, jobPool } from "./jobs";
 import { HOST_PARAMETERS } from "./parameters";
 import "./style.css";
 
-export type { FrameStats, Runtime };
+export type { Distribution, FrameStats, Runtime };
 /** The last frame's statistics of `runtime`: the JSON `Runtime.stats`
  * returns, typed from Rust's `FrameStats`. */
 export function readStats(runtime: { stats(): string }): FrameStats {
   return JSON.parse(runtime.stats()) as FrameStats;
+}
+/** The spread of measured `values` as the engine computes it on every host
+ * (`Runtime.distribution`, typed from Rust's `Distribution`): null without
+ * values, or with one that is not a finite number of at least 0. */
+export function readDistribution(runtime: Pick<Runtime, "distribution">, values: readonly number[]): Distribution | null {
+  return JSON.parse(runtime.distribution(Float64Array.from(values))) as Distribution | null;
 }
 /** Controls for a game's own panels; mutations run between frames. */
 export interface HostControls<T extends Runtime> {
   mutate(action: (game: T) => void): void;
   setResolutionScale(scale: number): void;
   setInputEnabled(enabled: boolean): void;
+  /** The spread of measured `values` (`readDistribution`); null without
+   * values or once the engine stopped. */
+  distribution(values: readonly number[]): Distribution | null;
   size(): [number, number];
   paused(): boolean;
   busy(): boolean;
@@ -448,6 +458,7 @@ async function start() {
       resolutionScale = scale; resize();
     },
     setInputEnabled(enabled) { inputEnabled = enabled; clearInput(); },
+    distribution: values => disposed || failed || !game ? null : readDistribution(game, values),
     size: () => [pixelWidth, pixelHeight], paused: () => paused,
     busy: () => disposed || failed || developmentBusy,
   });

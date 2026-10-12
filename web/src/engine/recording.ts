@@ -2,7 +2,7 @@
  * Call abort when configuration, camera, resolution, visibility or pause changes.
  * sample copies primitive values; callers still own/free any Wasm stats binding.
  */
-import { type Distribution, percentiles } from "./statistics.ts";
+import type { Distribution } from "../generated/host";
 
 type RecordingJson = null | boolean | number | string | RecordingJson[] | { [key: string]: RecordingJson };
 type RecordingMetadata = Record<string, unknown>;
@@ -76,11 +76,6 @@ function values<T extends number | boolean>(input: Record<string, T> | undefined
   return Object.fromEntries(entries);
 }
 
-/** The development benchmark's percentiles, or null without samples. */
-function distribution(input: number[]): Distribution | null {
-  return input.length ? percentiles(input) : null;
-}
-
 /** No adapter request/device allocation: pass the runtime's existing adapter info
  * in start metadata if available. Browser hints do not prove physical GPU use.
  */
@@ -124,7 +119,10 @@ export class Recorder {
   private counterKeys: string | undefined;
   private phaseKeys: string | undefined;
 
-  constructor(private readonly onComplete: (report: RecordingReport) => void) {}
+  /** A recorder reporting to `onComplete`, its spreads `spread`'s: the
+   * engine's (`HostControls.distribution`), null without values. */
+  constructor(private readonly spread: (values: number[]) => Distribution | null,
+    private readonly onComplete: (report: RecordingReport) => void) {}
   get active(): boolean { return this.running; }
 
   start(metadata: RecordingMetadata, options: RecordingOptions = {}): void {
@@ -215,6 +213,7 @@ export class Recorder {
     this.running = false;
     clearTimeout(this.timer); this.timer = undefined; this.previous = undefined;
     const phaseNames = Object.keys(this.frames[0]?.phases_ms ?? {});
+    const distribution = (values: number[]) => values.length ? this.spread(values) : null;
     const report: RecordingReport = {
       version: 2, kind: "frame_recording", complete, reason,
       started_at: this.startedAt, metadata: this.metadata, environment: this.browser, options: this.options,

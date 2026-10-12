@@ -67,6 +67,10 @@ macro_rules! __game_surface {
                 fn occlusion_culling() -> bool;
                 /// Whether GPU-presented frames are sub-pixel culled.
                 fn subpixel_culling() -> bool;
+                /// The spread of measured `values`, as the JSON object
+                /// `Distribution` types; `null` without values, or with one
+                /// that is not a finite number of at least 0.
+                fn distribution(values: Vec<f64>) -> String;
             }
             dev_mut {
                 /// Runs development request `request` (JSON) on a `width` ×

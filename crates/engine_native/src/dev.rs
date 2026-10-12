@@ -737,31 +737,17 @@ fn numbers(value: &Value, prefix: &str, out: &mut Vec<(String, f64)>) {
     }
 }
 
-/// The spread of measured `values`, as the page's percentiles: linear
-/// interpolation between sorted values.
+/// The spread of measured `values`, as the engine computes it on every
+/// host.
 fn distribution(values: &[f64]) -> Result<Value, (String, String)> {
-    if values.is_empty()
-        || values
-            .iter()
-            .any(|value| !value.is_finite() || *value < 0.0)
-    {
-        return Err((
-            "invalid_measurement".into(),
-            "measurements must be nonempty, finite and nonnegative".into(),
-        ));
-    }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(f64::total_cmp);
-    let quantile = |fraction: f64| {
-        let index = (sorted.len() - 1) as f64 * fraction;
-        let lower = index.floor() as usize;
-        let upper = index.ceil() as usize;
-        sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower as f64)
-    };
-    Ok(
-        json!({"min": sorted[0], "median": quantile(0.5), "p95": quantile(0.95),
-        "p99": quantile(0.99), "max": sorted[sorted.len() - 1]}),
-    )
+    engine::host::Distribution::of(values)
+        .map(|distribution| json!(distribution))
+        .ok_or_else(|| {
+            (
+                "invalid_measurement".into(),
+                "measurements must be nonempty, finite and nonnegative".into(),
+            )
+        })
 }
 
 /// The GPU `host` draws on, as replies name it.

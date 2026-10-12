@@ -21,6 +21,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use engine::host::median;
 use engine::{Game, GameHost};
 use fxprof_processed_profile::{
     CategoryColor, CategoryHandle, CpuDelta, Frame, FrameFlags, FrameInfo, MarkerFieldFlags,
@@ -487,14 +488,6 @@ fn ranked(counts: HashMap<String, u64>, total: u64, limit: usize) -> Vec<Value> 
         .collect()
 }
 
-fn median(values: &mut [f64]) -> Option<f64> {
-    if values.is_empty() {
-        return None;
-    }
-    values.sort_by(f64::total_cmp);
-    Some(values[values.len() / 2])
-}
-
 /// A hot function's samples, and its sampled instructions' samples by
 /// address.
 type Hot = (u64, BTreeMap<u64, u64>);
@@ -586,7 +579,7 @@ fn summary(
     }
     let mut passes: Vec<(String, f64, usize)> = passes
         .into_iter()
-        .filter_map(|(name, mut values)| Some((name, median(&mut values)?, values.len())))
+        .filter_map(|(name, values)| Some((name, median(&values)?, values.len())))
         .collect();
     passes.sort_by(|a, b| b.1.total_cmp(&a.1));
     let mut draws: BTreeMap<String, (Vec<f64>, Option<Value>)> = BTreeMap::new();
@@ -608,9 +601,7 @@ fn summary(
     }
     let mut draws: Vec<(String, f64, Option<Value>)> = draws
         .into_iter()
-        .filter_map(|(label, (mut values, statistics))| {
-            Some((label, median(&mut values)?, statistics))
-        })
+        .filter_map(|(label, (values, statistics))| Some((label, median(&values)?, statistics)))
         .collect();
     draws.sort_by(|a, b| b.1.total_cmp(&a.1));
     let sampled = samples.is_some();

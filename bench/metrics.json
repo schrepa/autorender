@@ -14,7 +14,7 @@
     {
       "name": "frame_ms_p95",
       "kind": "timing",
-      "statistic": "the 95th percentile (nearest rank) of the same frames",
+      "statistic": "the 95th percentile of the same frames, interpolated linearly between the two sorted frame times around its rank (engine::host::Distribution): the measure command takes it from each frame's time the run reports, so both arms' come from the tools' code",
       "runtimes": [
         "native"
       ],

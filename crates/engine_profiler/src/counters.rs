@@ -883,10 +883,8 @@ impl Counting {
         let medians = |instances: &[Vec<f64>]| -> Vec<f64> {
             (0..counters.len())
                 .map(|counter| {
-                    let mut values: Vec<f64> =
-                        instances.iter().map(|values| values[counter]).collect();
-                    values.sort_by(f64::total_cmp);
-                    values[values.len() / 2]
+                    let values: Vec<f64> = instances.iter().map(|values| values[counter]).collect();
+                    engine::host::median(&values).unwrap_or(f64::NAN)
                 })
                 .collect()
         };

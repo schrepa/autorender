@@ -614,7 +614,7 @@ impl HostOptions {
             "frames": recorded.frames,
             "prepare_ms": prepared_ms,
             "frame_ms": recorded.elapsed_ms / f64::from(recorded.frames.max(1)),
-            "cpu_ms": percentiles(recorded.cpu_ms),
+            "cpu_ms": distribution(&recorded.cpu_ms),
             "capture": self.capture.as_ref().map(|path| path.display().to_string()),
             "profile": recorded.profile,
             "vendor": recorded.pix_counters.map(|summary| json!({
@@ -688,14 +688,10 @@ fn program() -> String {
         .unwrap_or_default()
 }
 
-/// The median and 95th percentile of `values`.
-fn percentiles(mut values: Vec<f64>) -> serde_json::Value {
-    if values.is_empty() {
-        return serde_json::Value::Null;
-    }
-    values.sort_by(f64::total_cmp);
-    let at = |share: f64| values[((values.len() - 1) as f64 * share).round() as usize];
-    json!({"median": at(0.5), "p95": at(0.95)})
+/// The spread of `values`, as the engine computes it on every host; null
+/// without values.
+fn distribution(values: &[f64]) -> serde_json::Value {
+    json!(engine::host::Distribution::of(values))
 }
 
 /// A measured window's frames as JSON: their rate, interval and CPU times.
@@ -707,7 +703,7 @@ fn window_report(report: &WindowReport) -> serde_json::Value {
         "frames": report.frames,
         "fps": f64::from(report.frames) * 1000.0 / report.elapsed_ms,
         "frame_ms": report.elapsed_ms / f64::from(report.frames),
-        "cpu_ms": percentiles(report.cpu_ms.clone()),
+        "cpu_ms": distribution(&report.cpu_ms),
         "adapter": {"name": report.adapter.name, "backend": report.adapter.backend},
         "main_stack_peak_bytes": engine_profiler::stack::peak(),
         "stats": stats,

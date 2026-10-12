@@ -162,7 +162,7 @@ function lock() {
   el("profile").textContent = profiler?.active ? "Stop profile" : profiler?.busy ? "Collecting GPU results…" : "Detailed profile · 5 seconds";
   el<HTMLButtonElement>("profile-export").disabled = !detailedReport || value;
 }
-const recorder = new Recorder(value => {
+const recorder = new Recorder(values => controls?.distribution(values) ?? null, value => {
   report = value; lock();
   el<HTMLButtonElement>("export").disabled = false;
   const total = value.cpu_ms.total, cadence = value.frame_interval_ms;
@@ -287,10 +287,8 @@ function poll(runtime: StressGame) {
   const largest = labels[stages.indexOf(Math.max(...stages))];
   el("pressure").textContent = limited ? "Collision work reached a limit or failed. Inspect the exported counters before comparing timings."
     : `${largest} is the largest sampled CPU stage. ${cpu > 16.67 ? "CPU work exceeds a 60 Hz frame budget." : "CPU work is currently within a 60 Hz frame budget."}`;
-  if (intervals.length) {
-    const sorted = [...intervals].sort((a, b) => a - b);
-    el("live-cadence").textContent = `${sorted[Math.floor(sorted.length / 2)].toFixed(1)} ms median interval`;
-  }
+  const cadence = controls?.distribution(intervals);
+  if (cadence) el("live-cadence").textContent = `${cadence.median.toFixed(1)} ms median interval`;
   drawChart(stats);
   if (recorder.active) el("record-status").textContent = `Recording · ${((performance.now() - recordStarted) / 1000).toFixed(1)} s including warm-up · camera locked`;
   if (profiler?.active) el("profile-status").textContent = `Capturing CPU, collision, allocator and browser events · ${((Number(profiler.status().elapsed_ms) || 0) / 1000).toFixed(1)} / 5 seconds · camera locked`;

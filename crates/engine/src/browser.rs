@@ -285,6 +285,12 @@ impl<G: Game> PageHost<G> {
     pub fn reload_scene(&mut self, source: &str, files: SceneFileSet) -> Result<(), JsValue> {
         Ok(self.host.reload_scene(source, files.files())?)
     }
+
+    /// [`crate::host::Distribution::of`] `values`, as JSON (`null` for none).
+    pub fn distribution(&self, values: Vec<f64>) -> String {
+        serde_json::to_string(&crate::host::Distribution::of(&values))
+            .expect("distributions serialize")
+    }
 }
 
 #[cfg(feature = "dev")]

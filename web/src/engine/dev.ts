@@ -1,5 +1,5 @@
 /** On-demand adapter, dynamically imported only by the Vite development host. */
-import { readStats, type Runtime } from "./host";
+import { readDistribution, readStats, type Runtime } from "./host";
 import { adapterInfo } from "./adapter";
 import { BenchmarkError, type BenchmarkOptions, type Reply, sampleBenchmark } from "./benchmark.ts";
 // The protocol's version, request limit and ops, generated from the engine
@@ -92,6 +92,7 @@ export function connectDevelopment(host: Host): () => void {
       const options = control as unknown as BenchmarkOptions;
       const benchmark = await sampleBenchmark({
         signal: host.signal, invoke, stats: () => readStats(runtime), size: host.size,
+        distribution: values => readDistribution(runtime, values),
         interrupted: () => disposed || !host.paused() || (globalThis.document?.hidden ?? false),
       }, options);
       return { ok: true, version: protocol.version, observation: benchmark.observation.end, result: { benchmark, temporary: true } };

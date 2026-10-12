@@ -811,6 +811,8 @@ dependencies = [
  "engine_scene",
  "engine_settings",
  "js-sys",
+ "schemars",
+ "serde",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",

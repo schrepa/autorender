@@ -6,8 +6,9 @@
 //! builds once more with the engine's capture, for each GPU pass's and CPU
 //! span's time. Lines on standard output mark where the timed frames start
 //! and end, so the program that runs this one times them with its own
-//! clock; the last line is the report. One method file, which the measuring
-//! tool writes from the workload, says how.
+//! clock; the last line is the report, which holds each sampled frame's
+//! time for the measuring tool to take their spread from. One method file,
+//! which the measuring tool writes from the workload, says how.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
@@ -213,7 +214,6 @@ pub fn run<G: Game, E: Into<engine::Error>>(
     mark("pipelined-end");
     let mut metrics = Map::new();
     metrics.insert("frame_ms_mean".into(), json!(mean(&times)));
-    metrics.insert("frame_ms_p95".into(), json!(percentile(&mut times, 0.95)));
     metrics.insert("load:prepare_ms".into(), json!(prepare_ms));
     if let Some(bytes) = engine_profiler::stack::peak() {
         metrics.insert("mem:main_stack_peak_bytes".into(), json!(bytes));
@@ -228,6 +228,8 @@ pub fn run<G: Game, E: Into<engine::Error>>(
             "frames": method.frames,
             "settled": {"held": held, "after_ms": after_ms},
             "metrics": metrics,
+            // Each serialized sampled frame's milliseconds, in order.
+            "frame_ms": times,
             "work": work,
             "capture": capture,
             "gpu_timestamps": gpu_timestamps,
@@ -414,14 +416,14 @@ fn timings<G: Game>(
     }
     let mut metrics = Map::new();
     let gpu = !passes.is_empty();
-    for (name, mut durations) in passes {
-        metrics.insert(name, json!(median(&mut durations)));
+    for (name, durations) in passes {
+        metrics.insert(name, json!(engine::host::median(&durations)));
     }
     for (name, per_frame) in spans {
         let mut durations: Vec<f64> = per_frame.into_values().collect();
         // Frames the span did not run in count as none of it.
         durations.resize(durations.len().max(frames as usize), 0.0);
-        metrics.insert(name, json!(median(&mut durations)));
+        metrics.insert(name, json!(engine::host::median(&durations)));
     }
     for (metric, bytes) in memory {
         metrics.insert(metric.into(), json!(bytes));
@@ -462,23 +464,6 @@ fn timings<G: Game>(_: &mut Offscreen<G>, _: u32, _: &mut u32) -> engine::Result
     })
 }
 
-/// The middle of `values` sorted, or the mean of the two middle ones.
-#[cfg(feature = "profiling")]
-fn median(values: &mut [f64]) -> f64 {
-    values.sort_by(f64::total_cmp);
-    let middle = values.len().saturating_sub(1) as f64 / 2.0;
-    (values[middle.floor() as usize] + values[middle.ceil() as usize]) / 2.0
-}
-
 fn mean(values: &[f64]) -> f64 {
     values.iter().sum::<f64>() / values.len().max(1) as f64
-}
-
-/// The value at `share` of `values` sorted, the nearest rank's.
-fn percentile(values: &mut [f64], share: f64) -> f64 {
-    values.sort_by(f64::total_cmp);
-    values
-        .get(((values.len().saturating_sub(1)) as f64 * share).round() as usize)
-        .copied()
-        .unwrap_or(f64::NAN)
 }
