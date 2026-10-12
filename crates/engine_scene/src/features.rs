@@ -8,7 +8,7 @@ use engine_settings::ErrorCode;
 use crate::{SceneDocument, SceneEnvironment, SceneError, SceneObject, SectionVisitor};
 
 /// This module's part of `entity_components!`: the features an object
-/// needs for the components listed, after its navigation agent's.
+/// needs for the components listed, after its terrain's.
 macro_rules! object_features {
     ($(
         $(#[$doc:meta])*
@@ -18,18 +18,20 @@ macro_rules! object_features {
             /// The features this object authors, by field.
             fn features(&self) -> impl Iterator<Item = (&'static str, Feature)> {
                 [
-                    ("terrain", self.terrain.is_some(), Feature::Terrain),
-                    ("prefetch", self.prefetch.is_some(), Feature::Terrain),
-                    ("nav_agent", self.nav_agent.is_some(), Feature::Navigation),
-                    $((stringify!($field), self.$field.is_some(), Feature::$feature),)*
-                    ("deformer", self.deformer.is_some(), Feature::Deformation),
-                    ("animation", self.animation.is_some(), Feature::Animation),
-                    ("skin", self.skin.is_some(), Feature::Animation),
-                    ("collider", self.collider.is_some(), Feature::Collision),
+                    ("terrain", self.terrain.is_some(), Some(Feature::Terrain)),
+                    $((
+                        stringify!($field),
+                        self.$field.is_some(),
+                        crate::components::component_feature!($feature),
+                    ),)*
+                    ("animation", self.animation.is_some(), Some(Feature::Animation)),
+                    ("skin", self.skin.is_some(), Some(Feature::Animation)),
+                    ("collider", self.collider.is_some(), Some(Feature::Collision)),
                 ]
                 .into_iter()
-                .filter(|&(_, authored, _)| authored)
-                .map(|(field, _, feature)| (field, feature))
+                .filter_map(|(field, authored, feature)| {
+                    feature.filter(|_| authored).map(|feature| (field, feature))
+                })
             }
         }
     };

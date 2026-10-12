@@ -187,31 +187,8 @@ fn expand_list(
                 format!("expanded entity ID '{}' is already used", entity.source.id),
             ));
         }
-        // Agents walk unparented.
-        if entity.source.nav_agent.is_some() && entity.source.parent.is_some() {
-            return Err(SceneError::new(
-                ErrorCode::InvalidNavAgent,
-                format!("{}.nav_agent", entity.path),
-                "only roots walk; give the placement or root the agent instead",
-            ));
-        }
-        // Grounded objects stand on the ground
-        // themselves.
-        if entity.source.grounded.is_some() && entity.source.parent.is_some() {
-            return Err(SceneError::new(
-                ErrorCode::InvalidGrounded,
-                format!("{}.grounded", entity.path),
-                "only roots stand on the ground; ground the placement or root instead",
-            ));
-        }
-        // Floating objects ride the sea themselves.
-        if entity.source.floating.is_some() && entity.source.parent.is_some() {
-            return Err(SceneError::new(
-                ErrorCode::InvalidFloating,
-                format!("{}.floating", entity.path),
-                "only roots ride the sea; float the placement or root instead",
-            ));
-        }
+        // Components only roots author.
+        entity.source.check_placement(&entity.path)?;
     }
     validate_graph(
         entities

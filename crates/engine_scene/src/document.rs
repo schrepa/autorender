@@ -600,20 +600,6 @@ macro_rules! scene_object {
                     #[serde(default, skip_serializing_if = "Option::is_none")]
                     pub $field: Option<$type> = None => any,
                 )*
-                /// Presses tracks into deformable ground.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub deformer: Option<engine_core::Deformer> = None => any,
-                /// Walks over the terrain to a destination. Roots only.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub nav_agent: Option<engine_core::NavAgent> = None => any,
-                /// Stands on the terrain: its translation's y becomes
-                /// `offset` meters above the ground under it. Roots only.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub grounded: Option<engine_core::Grounded> = None => any,
-                /// Names it a place the camera may be sent to, whose
-                /// terrain workers generate ahead of need.
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub prefetch: Option<engine_core::TerrainPrefetch> = None => any,
                 #[serde(default)]
                 pub transform: SceneTransform = SceneTransform::default() => any,
                 /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

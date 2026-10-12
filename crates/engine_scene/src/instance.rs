@@ -621,19 +621,6 @@ fn spawn_entity(
         entity.insert(decal.runtime(lookups.owned_materials[decal.material]));
     }
     source.spawn_components(&mut entity);
-    if let Some(deformer) = source.deformer {
-        entity.insert(deformer);
-    }
-    if let Some(prefetch) = source.prefetch {
-        entity.insert(prefetch);
-    }
-    if let Some(grounded) = source.grounded {
-        entity.insert(grounded);
-    }
-    // Agents move each tick: they present smoothly.
-    if let Some(agent) = source.nav_agent {
-        entity.insert((agent, InterpolateTransform));
-    }
     if let Some(spline) = &source.spline {
         entity.insert(spline.runtime(
             lookups.meshes[spline.mesh.as_str()],

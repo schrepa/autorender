@@ -338,10 +338,6 @@ const AUTHORED: &[(&str, &str)] = &[
     ("reflection_probe", "ReflectionProbe"),
     ("terrain", "Terrain.terrain"),
     ("spline", "SplineMesh"),
-    ("deformer", "Deformer"),
-    ("nav_agent", "NavAgent.agent"),
-    ("grounded", "Grounded"),
-    ("prefetch", "TerrainPrefetch"),
     ("transform", "Transform"),
 ];
 

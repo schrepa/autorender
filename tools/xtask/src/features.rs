@@ -245,8 +245,11 @@ pub fn check(root: &Path) -> Result<(), String> {
 
 /// Adds to `violations` each development file of a feature that
 /// `dev_features!` (engine_dev/src/features/mod.rs) does not list, which
-/// would be no module, and each query a feature answers (`impl EngineQuery
-/// for T`) that no `DevRequest` variant holds, which no request would reach.
+/// would be no module, each query a feature answers (`impl EngineQuery
+/// for T`) that no `DevRequest` variant holds, which no request would
+/// reach, and each scene component (`impl SceneComponent for T`) that
+/// `entity_components!` (engine_scene/src/components.rs) does not list,
+/// which no scene would author.
 fn listed(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
     let folder = root.join("crates/engine_dev/src/features");
     let read = |path: &Path| {
@@ -290,6 +293,36 @@ fn listed(root: &Path, violations: &mut Vec<String>) -> Result<(), String> {
                         "{name}'s query {query} is held by no DevRequest variant: add one"
                     ));
                 }
+            }
+        }
+    }
+    let scene = root.join("crates/engine_scene/src");
+    let components = read(&scene.join("components.rs"))?;
+    let list = components
+        .split_once("macro_rules! entity_components")
+        .and_then(|(_, rest)| rest.split_once("$then!"))
+        .map(|(_, rest)| rest)
+        .ok_or("engine_scene/src/components.rs declares no entity_components! list")?;
+    // Each entry's type, `field: path::Type {`, by its last segment.
+    let listed: Vec<&str> = list
+        .lines()
+        .filter_map(|line| line.trim().split_once(": "))
+        .filter(|(field, _)| field.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+        .filter_map(|(_, rest)| rest.split_once(" {"))
+        .map(|(path, _)| path.rsplit("::").next().unwrap_or(path))
+        .collect();
+    for (_, path) in entries(&scene)? {
+        let text = read(&path)?;
+        for (at, _) in text.match_indices("SceneComponent for ") {
+            let component: String = text[at + "SceneComponent for ".len()..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == ':')
+                .collect();
+            let component = component.rsplit("::").next().unwrap_or_default();
+            if !component.starts_with('$') && !listed.contains(&component) {
+                violations.push(format!(
+                    "scene component {component} is in no entity_components! entry: list it"
+                ));
             }
         }
     }
