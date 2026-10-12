@@ -39,8 +39,8 @@ export interface Runtime {
   set_occlusion_culling(enabled: boolean): void;
   /** Sub-pixel culling of GPU-presented frames, over the world's setting in this and later engines. */
   set_subpixel_culling(enabled: boolean): void;
-  /** Terrain work timed by frames alone, each a slice of the terrain's `samples_per_frame` with none between frames, in place of the page's clock (the default), in this and later engines. */
-  set_terrain_frame_clock(enabled: boolean): void;
+  /** Applies the engine switches the page's URL search part `query` names (`engine::host::SETTINGS`), in this and later engines; a value a switch does not take fails. */
+  apply_host_settings(query: string): void;
   /** The last frame's statistics, as the JSON object `FrameStats` types. */
   stats(): string;
   /** Whether ordinary frames are presented on the GPU. */
@@ -55,6 +55,8 @@ export interface Runtime {
   subpixel_culling(): boolean;
   /** The spread of measured `values`, as the JSON object `Distribution` types; `null` without values, or with one that is not a finite number of at least 0. */
   distribution(values: Float64Array): string;
+  /** The physical `[width, height]` a view `width` × `height` CSS pixels across draws at, at `pixel_ratio` device pixels per CSS pixel and the user's resolution `scale`, as every host sizes views (`engine::host::view_size`); empty for a view with no area. */
+  view_size(width: number, height: number, pixel_ratio: number, scale: number): Uint32Array;
   /** Runs development request `request` (JSON) on a `width` × `height` canvas; `paused` says whether the page is paused. */
   dev_command?(request: string, width: number, height: number, paused: boolean): string;
   /** Reloads the authored scene's saved `source` when the active revision is `expected_revision` and the saved one `revision`. */

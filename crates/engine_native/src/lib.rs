@@ -31,7 +31,7 @@ pub use job_cache::JobCache;
 pub use jobs::{CacheOptions, JobOptions, JobPool};
 pub use measure::{Method, Settle};
 pub use offscreen::{Frames, Offscreen, PixRecord, ProfileRecord, Record, Recorded};
-pub use options::{Argument, Arguments, HostOptions, PARAMETERS, USAGE, Vendor};
+pub use options::{Argument, Arguments, HostOptions, PARAMETERS, Vendor, usage};
 pub use window::{Measure, Window, WindowReport, run};
 
 /// A native game's `main`: the host's options from `arguments` (`--help`
@@ -46,17 +46,13 @@ pub fn main<G: engine::Game, E: Into<engine::Error>>(
 ) -> ExitCode {
     let arguments: Vec<String> = arguments.collect();
     if arguments.iter().any(|argument| argument == "--help") {
-        println!("{USAGE}");
+        println!("{}", usage());
         return ExitCode::SUCCESS;
     }
     match HostOptions::parse(arguments) {
         Ok(options) => exit(options.run(title, build)),
         Err(message) => {
-            eprintln!(
-                "{message}
-
-{USAGE}"
-            );
+            eprintln!("{message}\n\n{}", usage());
             ExitCode::from(2)
         }
     }

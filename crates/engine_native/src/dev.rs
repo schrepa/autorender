@@ -112,11 +112,14 @@ impl<G: Game> DevSession<G> {
     /// The session with more of the options the program read, with what
     /// each does.
     #[must_use]
-    pub fn parameters(mut self, parameters: &[(&str, &str)]) -> Self {
+    pub fn parameters(
+        mut self,
+        parameters: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
+    ) -> Self {
         self.parameters.extend(
             parameters
-                .iter()
-                .map(|&(name, what)| (name.to_owned(), what.to_owned())),
+                .into_iter()
+                .map(|(name, what)| (name.into(), what.into())),
         );
         self
     }

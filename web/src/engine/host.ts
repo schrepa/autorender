@@ -54,28 +54,6 @@ function ensurePage() {
   }
 }
 
-/** Sets the game's presentation, pipelining, antialiasing, culling and
- * terrain clock from the page's `?presentation=gpu|cpu`, `?pipeline=on|off`,
- * `?taa=on|off`, `?occlusion=on|off`, `?subpixel=on|off` and
- * `?terrain-clock=frames|wall`; another value fails. */
-function applySwitches(game: Runtime) {
-  const params = new URLSearchParams(location.search);
-  const switches: [string, [string, string], (enabled: boolean) => void][] = [
-    ["presentation", ["gpu", "cpu"], enabled => game.set_gpu_presentation(enabled)],
-    ["pipeline", ["on", "off"], enabled => game.set_tick_pipelining(enabled)],
-    ["taa", ["on", "off"], enabled => game.set_temporal_antialiasing(enabled)],
-    ["occlusion", ["on", "off"], enabled => game.set_occlusion_culling(enabled)],
-    ["subpixel", ["on", "off"], enabled => game.set_subpixel_culling(enabled)],
-    ["terrain-clock", ["frames", "wall"], enabled => game.set_terrain_frame_clock(enabled)],
-  ];
-  for (const [name, [on, off], set] of switches) {
-    const value = params.get(name);
-    if (value === null) continue;
-    if (value !== on && value !== off) throw new Error(`?${name} must be ${on} or ${off}, not ${value}.`);
-    set(value === on);
-  }
-}
-
 function element<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
   if (!found) throw new Error(`Missing element #${id}`);
@@ -263,15 +241,12 @@ function suspendGame() {
   if (!failed) game?.suspend();
 }
 
+/** Sizes the view as the engine's resolution policy does on every host;
+ * frames need no size before the game exists, which sizes it at start. */
 function resize() {
-  if (disposed) return;
+  if (disposed || failed || !game) return;
   const bounds = canvas.getBoundingClientRect();
-  if (bounds.width <= 0 || bounds.height <= 0) { interrupt("resize"); pixelWidth = 0; pixelHeight = 0; return; }
-  const dpr = Math.min(window.devicePixelRatio || 1, 1.5) * resolutionScale;
-  // A resolution budget controls fill cost independently of entity count.
-  const scale = Math.min(dpr, 2560 / Math.max(bounds.width, 1), 1440 / Math.max(bounds.height, 1));
-  const width = Math.max(1, Math.round(bounds.width * scale));
-  const height = Math.max(1, Math.round(bounds.height * scale));
+  const [width = 0, height = 0] = game.view_size(bounds.width, bounds.height, window.devicePixelRatio, resolutionScale);
   if (width !== pixelWidth || height !== pixelHeight) interrupt("resize");
   pixelWidth = width;
   pixelHeight = height;
@@ -481,7 +456,8 @@ async function start() {
   // GPU initialization may finish after teardown even when fetch was aborted.
   if (disposed) { created.free(); return; }
   game = created;
-  applySwitches(created);
+  // The engine switches the page's parameters name.
+  created.apply_host_settings(location.search);
   // The game's jobs run on the page's workers; a module of theirs or the
   // game's that stops stops the page.
   jobs = jobPool();

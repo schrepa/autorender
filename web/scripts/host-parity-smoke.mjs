@@ -33,7 +33,6 @@ const KNOWN = [
   ["describe PageParameters: web only prepare", "host", "a page's development session may start as players' do"],
   ["describe PageParameters: web only engine_build", "host", "a watched page is pinned to a build"],
   ["describe PageParameters: web only between", "hosts 7", "the page's between-frames loading switch"],
-  ["describe PageParameters: web only {presentation,pipeline,taa,occlusion,subpixel}", "hosts 4", "engine switches only the page reads"],
   ["describe PageParameters: native only {size,gpu}", "host", "a native host picks its view's size and GPU; a page has its canvas and browser"],
   ["describe PageParameters: native only {counters,vendor}", "host", "native profiling tools"],
   ["describe PageParameters: native only {view,assets,rocks}", "app", "the Stress Lab's own native options"],

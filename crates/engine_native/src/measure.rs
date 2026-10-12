@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use engine::host::TerrainClock;
+use engine::host::HostSettings;
 use engine::{Engine, Game};
 use serde_json::{Map, Value, json};
 
@@ -144,19 +144,19 @@ fn mark(name: &str) {
 }
 
 /// Runs the game `build` makes as `method` says, `size` pixels on the `gpu`
-/// preferred, its terrain timed by `terrain_clock`, and prints the marks and
+/// preferred under the engine switches `settings`, and prints the marks and
 /// the report.
 pub fn run<G: Game, E: Into<engine::Error>>(
     method: &Method,
     size: (u32, u32),
     gpu: engine::GpuPreference,
     jobs: JobOptions,
-    terrain_clock: TerrainClock,
+    settings: HostSettings,
     build: impl FnOnce() -> Result<(Engine, G), E>,
 ) -> engine::Result<()> {
     let launched = Instant::now();
     let mut game = Offscreen::launch(size, gpu, jobs, build)?;
-    game.host_mut().set_terrain_clock(terrain_clock);
+    settings.apply(game.host_mut());
     game.prepare(0.0)?;
     let prepare_ms = launched.elapsed().as_secs_f64() * 1000.0;
     let (held, after_ms) = settle(&mut game, &method.settle, launched)?;

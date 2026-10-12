@@ -1,9 +1,12 @@
 //! What hosts wire: job workers, terrain tile fetches, the clock terrain
-//! times its work by and the terrain's debug views; and what the page and the native host share instead of
-//! each keeping its own: their policies' values, the spread of measured
-//! values and what a panic reports.
+//! times its work by and the terrain's debug views; and what the page and
+//! the native host share instead of each keeping its own: the engine
+//! switches they take, the size views draw at, their policies' values, the
+//! spread of measured values and what a panic reports.
 
 pub mod policy;
+mod resolution;
+mod settings;
 mod statistics;
 
 pub use crate::app_host::{JobMessage, TerrainClock, now_ms};
@@ -12,6 +15,8 @@ pub use engine_core::{
     TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
 };
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
+pub use resolution::view_size;
+pub use settings::{HostSettings, SETTINGS, Setting};
 pub use statistics::{Distribution, median};
 
 /// The types and values the web host shares with the engine, in
@@ -46,5 +51,14 @@ pub fn typescript() -> String {
     for (name, doc, value) in policy::constants() {
         output.push_str(&constant(name, &doc, &value));
     }
+    let settings: serde_json::Map<String, serde_json::Value> = SETTINGS
+        .iter()
+        .map(|setting| (setting.name.to_owned(), setting.described().into()))
+        .collect();
+    output.push_str(&constant(
+        "HOST_SETTINGS",
+        "The engine switches every host takes (Rust's `engine::host::SETTINGS`),\nwhich the engine reads from the page's parameters: each one's values and\nwhat it does.",
+        &settings.into(),
+    ));
     output
 }

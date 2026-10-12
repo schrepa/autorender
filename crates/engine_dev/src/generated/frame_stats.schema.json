@@ -935,6 +935,12 @@
       "format": "double",
       "type": "number"
     },
+    "dropped_view_pixels": {
+      "description": "Pixels of the view the host asked for that the device's largest\ntexture left out.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
     "extraction_ms": {
       "description": "Milliseconds the frame spent extracting the render snapshot.",
       "format": "double",
@@ -1157,6 +1163,18 @@
       "minimum": 0,
       "type": "integer"
     },
+    "view_height": {
+      "description": "The view's height in physical pixels, as the frame drew it.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "view_width": {
+      "description": "The view's width in physical pixels, as the frame drew it: the\nhost's, unless the device's largest texture holds less, which the\nview then fits within at its aspect.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
     "virtual_geometry": {
       "$ref": "#/$defs/VirtualGeometryStats",
       "description": "Virtual geometry."
@@ -1193,6 +1211,9 @@
     "dropped_seconds",
     "pipelines_compiling",
     "loading",
+    "view_width",
+    "view_height",
+    "dropped_view_pixels",
     "jobs",
     "navigation",
     "draw_calls",

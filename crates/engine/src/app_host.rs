@@ -710,6 +710,7 @@ impl AppHost {
                 snapshot.dropped_instances.min(u32::MAX as usize) as u32,
             )
         };
+        let (view_width, view_height) = self.renderer.view_size().unwrap_or((0, 0));
         self.stats = FrameStats {
             frame: frame_number,
             tick,
@@ -727,6 +728,10 @@ impl AppHost {
             dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
             pipelines_compiling: false,
             loading: false,
+            view_width,
+            view_height,
+            dropped_view_pixels: (u64::from(width) * u64::from(height))
+                .saturating_sub(u64::from(view_width) * u64::from(view_height)),
             jobs: engine_core::JobStats::default(),
             navigation: engine_core::NavStats::default(),
             render: rendered,

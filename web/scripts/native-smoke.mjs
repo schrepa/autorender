@@ -1,6 +1,7 @@
 /** The native host: the Stress Lab built natively serves the development
  * protocol over standard input and output, drawing offscreen (status names
- * its GPU, captures write PNGs, the game's controls, benchmarks and
+ * its GPU, the engine switches it was given apply, captures write PNGs,
+ * the game's controls, benchmarks and
  * profiling captures with per-draw GPU times run, the agent's A/B
  * harness measures in it, and digests of the same ticks of a workload
  * agree), and its job workers' outputs match those its
@@ -18,7 +19,7 @@ import { workspace, workspacePath } from "./workspace.mjs";
 await holdHeavyRun("smoke native-smoke.mjs");
 const program = nativeProgram("stress-lab", { profiling: true });
 
-const session = await launchNativeSession({ program, args: ["--preset=visual", "--size=640x400", "--workers=2"] });
+const session = await launchNativeSession({ program, args: ["--preset=visual", "--size=640x400", "--workers=2", "--taa=on"] });
 try {
   const run = async command => {
     const reply = await session.execute(command);
@@ -33,11 +34,20 @@ try {
   assert.deepEqual(status.build.features, ["dev", "profiling"]);
   assert.ok(status.adapter.backend, "status names the GPU interface");
 
-  // The game's own controls and the program's options are discoverable.
+  // The game's own controls and the program's options, the engine
+  // switches every host takes among them, are discoverable.
   const types = (await run({ op: "describe" })).types;
   const controls = types.find(type => type.name === "GameControls").controls;
   assert.deepEqual(Object.keys(controls).sort(), ["effects", "look", "view", "workload"]);
-  assert.ok("preset" in types.find(type => type.name === "PageParameters").parameters);
+  const parameters = types.find(type => type.name === "PageParameters").parameters;
+  for (const name of ["preset", "taa", "occlusion", "subpixel", "presentation", "pipeline", "terrain-clock"]) assert.ok(name in parameters, name);
+
+  // --taa=on set the world's temporal antialiasing, which ordinary frames
+  // then resolve, at the size asked for.
+  assert.equal((await run({ op: "inspect", component: "TemporalAntialiasing" })).value.enabled, true);
+  const ordinary = (await run({ op: "frames", count: 4, interval_ms: 1000 / 60 })).rendering;
+  assert.equal(ordinary.temporal_antialiasing.active, true, "ordinary frames resolve temporally");
+  assert.deepEqual([ordinary.view_width, ordinary.view_height, ordinary.dropped_view_pixels], [640, 400, 0]);
 
   // Captures write PNG files of the offscreen frame; the same frame twice
   // compares the same to itself.

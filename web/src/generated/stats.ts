@@ -33,6 +33,11 @@ export interface FrameStats {
   dropped_instances: number;
   /** Total simulation time discarded by the fixed-step budget in this session. */
   dropped_seconds: number;
+  /**
+   * Pixels of the view the host asked for that the device's largest
+   * texture left out.
+   */
+  dropped_view_pixels: number;
   /** Milliseconds the frame spent extracting the render snapshot. */
   extraction_ms: number;
   /** Fixed simulation ticks this frame ran. */
@@ -159,6 +164,14 @@ export interface FrameStats {
    * texture.
    */
   upload_bytes: number;
+  /** The view's height in physical pixels, as the frame drew it. */
+  view_height: number;
+  /**
+   * The view's width in physical pixels, as the frame drew it: the
+   * host's, unless the device's largest texture holds less, which the
+   * view then fits within at its aspect.
+   */
+  view_width: number;
   /** Virtual geometry. */
   virtual_geometry: VirtualGeometryStats;
   /**

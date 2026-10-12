@@ -96,3 +96,22 @@ export const LOOK_LIMIT = 1000.0;
 
 /** Milliseconds a development benchmark may take. */
 export const BENCHMARK_LIMIT_MS = 10000;
+
+/**
+ * The most physical pixels a view draws per logical pixel, however
+ * dense the display.
+ */
+export const MAX_PIXEL_RATIO = 1.5;
+
+/** The widest a view draws, in physical pixels. */
+export const MAX_VIEW_WIDTH = 2560;
+
+/** The tallest a view draws, in physical pixels. */
+export const MAX_VIEW_HEIGHT = 1440;
+
+/**
+ * The engine switches every host takes (Rust's `engine::host::SETTINGS`),
+ * which the engine reads from the page's parameters: each one's values and
+ * what it does.
+ */
+export const HOST_SETTINGS = {"occlusion":"scene (default), on or off: occlusion culling of GPU-presented frames, over the scene's setting","pipeline":"on (default) or off: fixed ticks split across the frames around their due time, on GPU-presented frames","presentation":"gpu (default) or cpu: how ordinary frames are presented: blended, composed and culled on the GPU, or exactly on the CPU","subpixel":"scene (default), on or off: sub-pixel culling of GPU-presented frames, over the scene's setting","taa":"scene (default), on or off: temporal antialiasing of GPU-presented frames, over the scene's setting","terrain-clock":"wall (default) or frames: what terrain times its work by: the host's clock, or frames alone, each a slice of samples_per_frame with none between them"};

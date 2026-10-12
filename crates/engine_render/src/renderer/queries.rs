@@ -15,6 +15,13 @@ impl Renderer {
         self.display.max_layers
     }
 
+    /// The size frames draw at, in physical pixels: the size asked for,
+    /// fitted within the device's largest texture; `None` while a view
+    /// without area suspends drawing.
+    pub fn view_size(&self) -> Option<(u32, u32)> {
+        (!self.display.suspended).then(|| self.display.size())
+    }
+
     /// Start a bounded GPU capture. Allocate its reusable storage outside frame work.
     /// The caller supplies the matching CPU capture ID.
     #[cfg(feature = "profiling")]

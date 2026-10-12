@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use engine::host::{TerrainClock, policy};
+use engine::host::{HostSettings, SETTINGS, policy};
 use engine::{Engine, Game, GpuPreference};
 use serde_json::json;
 
@@ -21,8 +21,8 @@ use crate::{
     Record, Window, WindowReport,
 };
 
-/// The host's options, as `--help` lists them.
-pub const USAGE: &str = "\
+/// The host's options before the engine switches, as `--help` lists them.
+const USAGE_HOST: &str = "\
 Native options:
   --size WxH           window or offscreen size in physical pixels
   --gpu discrete|integrated
@@ -33,12 +33,10 @@ Native options:
                        keep job outputs beside the program (default 1024
                        MiB); verify runs every job anyway and compares
   --vsync on|off       whether window frames wait for the display's refresh
-                       (default on); off measures as browsers' frame rates do
-  --terrain-clock wall|frames
-                       what terrain times its work by: the wall clock
-                       (default), or frames alone, each working one slice of
-                       samples_per_frame and none between them, so what
-                       streams depends on the frames drawn, not their time
+                       (default on); off measures as browsers' frame rates do";
+
+/// The host's options after the engine switches, as `--help` lists them.
+const USAGE_TOOLS: &str = "\
   --frames N           measure N window frames after --settle-ms, then close
                        and print their rate and CPU times as JSON
   --settle-ms MS       with --frames: play before measuring (default 20000)
@@ -95,6 +93,51 @@ Native options:
 GPU interface; by default the one browsers use on the platform: on Windows
 D3D12 where DXC (dxcompiler.dll, which Chrome and Firefox ship) is beside
 the program or on the path, else Vulkan.";
+
+/// The host's options, as `--help` lists them: the engine switches every
+/// host takes among them, from their table.
+pub fn usage() -> String {
+    let mut text = format!("{USAGE_HOST}\n");
+    for setting in SETTINGS {
+        let head = format!("  --{} {}", setting.name, setting.values.join("|"));
+        let what = format!("{} (default {})", setting.what, setting.values[0]);
+        text.push_str(&option_lines(&head, &what));
+    }
+    text.push_str(USAGE_TOOLS);
+    text
+}
+
+/// Option `head`'s lines of the usage text: `what` in a column of its own,
+/// beside the head where it fits, wrapped within 78 columns.
+fn option_lines(head: &str, what: &str) -> String {
+    const COLUMN: usize = 23;
+    const WIDTH: usize = 78;
+    let mut text = String::new();
+    let mut line = if head.len() < COLUMN - 1 {
+        format!("{head:COLUMN$}")
+    } else {
+        text.push_str(head);
+        text.push('\n');
+        " ".repeat(COLUMN)
+    };
+    let mut words = 0;
+    for word in what.split_whitespace() {
+        if words > 0 && line.len() + 1 + word.len() > WIDTH {
+            text.push_str(&line);
+            text.push('\n');
+            line = " ".repeat(COLUMN);
+            words = 0;
+        }
+        if words > 0 {
+            line.push(' ');
+        }
+        line.push_str(word);
+        words += 1;
+    }
+    text.push_str(&line);
+    text.push('\n');
+    text
+}
 
 /// One option of a command line: `--name value`, `--name=value`, or a
 /// switch without a value.
@@ -254,7 +297,8 @@ pub struct HostOptions {
     pub gpu: GpuPreference,
     pub jobs: JobOptions,
     pub vsync: bool,
-    pub terrain_clock: TerrainClock,
+    /// The engine switches given (`--taa on`...), as every host takes them.
+    pub settings: HostSettings,
     /// Window frames to measure.
     pub frames: Option<u32>,
     pub settle_ms: u64,
@@ -281,7 +325,7 @@ impl Default for HostOptions {
             gpu: GpuPreference::HighPerformance,
             jobs: JobOptions::default(),
             vsync: true,
-            terrain_clock: TerrainClock::Wall,
+            settings: HostSettings::default(),
             frames: None,
             settle_ms: 20_000,
             offscreen: None,
@@ -307,10 +351,6 @@ pub const PARAMETERS: &[(&str, &str)] = &[
     ("gpu", "discrete or integrated"),
     ("workers", "job worker threads, or off"),
     ("jobcache", "off, verify, or the kept outputs' MiB"),
-    (
-        "terrain-clock",
-        "wall (default) or frames: terrain works a slice a frame, not by the wall clock",
-    ),
     (
         "counters",
         "on, or counter names: each profile's per-pass hardware counters (profiling builds; Vulkan)",
@@ -391,14 +431,11 @@ impl HostOptions {
                 };
             }
             "--vsync" => self.vsync = arguments.switch(argument)?,
-            "--terrain-clock" => {
-                self.terrain_clock = match arguments.value(argument)?.as_str() {
-                    "wall" => TerrainClock::Wall,
-                    "frames" => TerrainClock::Frames,
-                    other => {
-                        return Err(format!("--terrain-clock is wall or frames, not {other}"));
-                    }
-                }
+            switch if switch.strip_prefix("--").is_some_and(HostSettings::takes) => {
+                let value = arguments.value(argument)?;
+                self.settings
+                    .set(&switch[2..], &value)
+                    .map_err(|error| format!("--{error}"))?;
             }
             "--frames" => self.frames = Some(arguments.count(argument)?),
             "--settle-ms" => {
@@ -513,14 +550,7 @@ impl HostOptions {
         }
         if let Some(method) = &self.measure {
             let size = self.size.unwrap_or((1280, 720));
-            return crate::measure::run(
-                method,
-                size,
-                self.gpu,
-                self.jobs,
-                self.terrain_clock,
-                build,
-            );
+            return crate::measure::run(method, size, self.gpu, self.jobs, self.settings, build);
         }
         match self.offscreen {
             Some(frames) => self.run_offscreen(frames, build),
@@ -531,7 +561,7 @@ impl HostOptions {
                         gpu: self.gpu,
                         jobs: self.jobs,
                         vsync: self.vsync,
-                        terrain_clock: self.terrain_clock,
+                        settings: self.settings,
                         measure: self.frames.map(|frames| Measure {
                             settle: Duration::from_millis(self.settle_ms),
                             frames,
@@ -569,14 +599,19 @@ impl HostOptions {
         // PIX's capturer must be in the program before its D3D12 device.
         let pix = self.loads_pix().then(Pix::load).flatten();
         let mut game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
-        game.host_mut().set_terrain_clock(self.terrain_clock);
+        self.settings.apply(game.host_mut());
         let artifacts = self
             .dev_artifacts
             .clone()
             .unwrap_or_else(|| std::env::temp_dir().join("engine-captures"));
         Ok(crate::dev::DevSession::new(game, artifacts)
             .pix(pix)
-            .parameters(PARAMETERS))
+            .parameters(PARAMETERS.iter().copied())
+            .parameters(
+                SETTINGS
+                    .iter()
+                    .map(|setting| (setting.name, setting.described())),
+            ))
     }
 
     /// Whether the options capture through PIX.
@@ -611,7 +646,7 @@ impl HostOptions {
         let pix = self.loads_pix().then(Pix::load).flatten();
         let started = Instant::now();
         let mut game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
-        game.host_mut().set_terrain_clock(self.terrain_clock);
+        self.settings.apply(game.host_mut());
         game.prepare(0.0)?;
         let prepared_ms = started.elapsed().as_secs_f64() * 1000.0;
         let record = Record {

@@ -285,14 +285,26 @@ impl<G: Game> PageHost<G> {
         Ok(self.host.reload_scene(source, files.files())?)
     }
 
-    /// [`GameHost::set_terrain_clock`]: frames alone where `enabled`, else
-    /// the page's clock.
-    pub fn set_terrain_frame_clock(&mut self, enabled: bool) {
-        self.host.set_terrain_clock(if enabled {
-            crate::host::TerrainClock::Frames
-        } else {
-            crate::host::TerrainClock::Wall
-        });
+    /// Applies the engine switches `query` (a URL's search part) names, as
+    /// [`crate::host::HostSettings::set`] reads them.
+    pub fn apply_host_settings(&mut self, query: &str) -> Result<(), JsValue> {
+        let parameters = web_sys::UrlSearchParams::new_with_str(query)?;
+        let mut settings = crate::host::HostSettings::default();
+        for setting in crate::host::SETTINGS {
+            if let Some(value) = parameters.get(setting.name) {
+                settings
+                    .set(setting.name, &value)
+                    .map_err(|error| JsValue::from_str(&format!("?{error}.")))?;
+            }
+        }
+        settings.apply(&mut self.host);
+        Ok(())
+    }
+
+    /// [`crate::host::view_size`] as `[width, height]`; empty for no area.
+    pub fn view_size(&self, width: f64, height: f64, pixel_ratio: f64, scale: f64) -> Vec<u32> {
+        crate::host::view_size(width, height, pixel_ratio, scale)
+            .map_or_else(Vec::new, |(width, height)| vec![width, height])
     }
 
     /// [`crate::host::Distribution::of`] `values`, as JSON (`null` for none).

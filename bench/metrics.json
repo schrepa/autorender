@@ -267,6 +267,17 @@
       "direction": "lower"
     },
     {
+      "name": "dropped_view_pixels",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "fixed_steps",
       "kind": "work",
       "rule": "shown",
@@ -1397,6 +1408,28 @@
         "native"
       ],
       "unit": "bytes",
+      "direction": null
+    },
+    {
+      "name": "view_height",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "view_width",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
       "direction": null
     },
     {

@@ -52,7 +52,7 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl
 wasm-bindgen = "=0.2.127"
 js-sys = "=0.3.104"
 wasm-bindgen-futures = "=0.4.77"
-web-sys = { version = "=0.3.104", features = ["HtmlCanvasElement", "Window", "Performance", "console", "Headers", "Request", "RequestInit", "Response"] }
+web-sys = { version = "=0.3.104", features = ["HtmlCanvasElement", "Window", "Performance", "console", "Headers", "Request", "RequestInit", "Response", "UrlSearchParams"] }
 # Native hosts: windows, blocking on GPU startup, JPEG images.
 winit = "=0.30.13"
 pollster = "=0.4.0"

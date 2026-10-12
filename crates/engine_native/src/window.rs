@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use engine::host::{TerrainClock, policy};
+use engine::host::{HostSettings, policy};
 use engine::{Engine, Game, GameHost, GpuPreference, InputState, RenderTarget};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
@@ -32,8 +32,8 @@ pub struct Window {
     /// Frames wait for the display's refresh (the default), or show as they
     /// finish, for measurements.
     pub vsync: bool,
-    /// What terrain times its work by.
-    pub terrain_clock: TerrainClock,
+    /// The engine switches given, as every host takes them.
+    pub settings: HostSettings,
     /// Frames to measure, after which the window closes and [`run`]
     /// reports them; none keeps it open until closed.
     pub measure: Option<Measure>,
@@ -71,7 +71,7 @@ impl Window {
             gpu: GpuPreference::default(),
             jobs: JobOptions::default(),
             vsync: true,
-            terrain_clock: TerrainClock::Wall,
+            settings: HostSettings::default(),
             measure: None,
         }
     }
@@ -162,7 +162,7 @@ impl<'a, G: Game> App<'a, G> {
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
             target, build,
         )))?);
-        host.set_terrain_clock(self.options.terrain_clock);
+        self.options.settings.apply(&mut host);
         let mut jobs = self.options.jobs.pool();
         if let Some(pool) = &mut jobs {
             pool.attach(&mut host);

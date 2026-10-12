@@ -86,13 +86,13 @@ struct Options {
 pub fn main(arguments: impl Iterator<Item = String>) -> ExitCode {
     let arguments: Vec<String> = arguments.collect();
     if arguments.iter().any(|argument| argument == "--help") {
-        println!("{USAGE}\n\n{}", engine_native::USAGE);
+        println!("{USAGE}\n\n{}", engine_native::usage());
         return ExitCode::SUCCESS;
     }
     match Options::parse(arguments) {
         Ok(options) => engine_native::exit(options.run()),
         Err(message) => {
-            eprintln!("{message}\n\n{USAGE}\n\n{}", engine_native::USAGE);
+            eprintln!("{message}\n\n{USAGE}\n\n{}", engine_native::usage());
             ExitCode::from(2)
         }
     }
@@ -197,7 +197,7 @@ impl Options {
         let mut session = self
             .host
             .dev_session(build)?
-            .parameters(&parameters())
+            .parameters(parameters())
             .control(
                 "workload",
                 "Runs preset {preset: NAME} or configuration {config: {...}} (fields over the current one) in place of the workload",

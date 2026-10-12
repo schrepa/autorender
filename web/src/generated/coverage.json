@@ -300,6 +300,7 @@
         "jobs",
         "lod",
         "meshes",
+        "native",
         "plugins",
         "spline",
         "streaming",
@@ -542,7 +543,8 @@
     {
       "op": "frames",
       "smokes": [
-        "host-parity"
+        "host-parity",
+        "native"
       ]
     },
     {
@@ -900,6 +902,7 @@
       "inspector": "TemporalAntialiasing",
       "section": "temporal_antialiasing",
       "smokes": [
+        "native",
         "taa"
       ],
       "stats": true

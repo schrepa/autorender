@@ -60,6 +60,13 @@ policy! {
     pub const LOOK_LIMIT: f32 = 1000.0;
     /// Milliseconds a development benchmark may take.
     pub const BENCHMARK_LIMIT_MS: u64 = 10_000;
+    /// The most physical pixels a view draws per logical pixel, however
+    /// dense the display.
+    pub const MAX_PIXEL_RATIO: f64 = 1.5;
+    /// The widest a view draws, in physical pixels.
+    pub const MAX_VIEW_WIDTH: u32 = 2560;
+    /// The tallest a view draws, in physical pixels.
+    pub const MAX_VIEW_HEIGHT: u32 = 1440;
 }
 
 /// The job workers a host runs by default on `cores` logical processors:

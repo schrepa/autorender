@@ -53,6 +53,15 @@ pub struct FrameStats {
     /// Whether terrains have yet to load the camera's view whole, read
     /// when the stats are: hosts keep preparing meanwhile.
     pub loading: bool,
+    /// The view's width in physical pixels, as the frame drew it: the
+    /// host's, unless the device's largest texture holds less, which the
+    /// view then fits within at its aspect.
+    pub view_width: u32,
+    /// The view's height in physical pixels, as the frame drew it.
+    pub view_height: u32,
+    /// Pixels of the view the host asked for that the device's largest
+    /// texture left out.
+    pub dropped_view_pixels: u64,
     /// The host's workers and their jobs, read when the stats are.
     pub jobs: crate::JobStats,
     /// Navigation agents at the last fixed tick, read when the stats are.

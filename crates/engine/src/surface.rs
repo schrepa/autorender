@@ -53,11 +53,10 @@ macro_rules! __game_surface {
                 /// Sub-pixel culling of GPU-presented frames, over the world's
                 /// setting in this and later engines.
                 fn set_subpixel_culling(enabled: bool);
-                /// Terrain work timed by frames alone, each a slice of the
-                /// terrain's `samples_per_frame` with none between frames, in
-                /// place of the page's clock (the default), in this and later
-                /// engines.
-                fn set_terrain_frame_clock(enabled: bool);
+                /// Applies the engine switches the page's URL search part
+                /// `query` names (`engine::host::SETTINGS`), in this and later
+                /// engines; a value a switch does not take fails.
+                fn apply_host_settings(query: &str) -> Result<(), $crate::__private::JsValue>;
             }
             always_ref {
                 /// The last frame's statistics, as the JSON object `FrameStats` types.
@@ -76,6 +75,12 @@ macro_rules! __game_surface {
                 /// `Distribution` types; `null` without values, or with one
                 /// that is not a finite number of at least 0.
                 fn distribution(values: Vec<f64>) -> String;
+                /// The physical `[width, height]` a view `width` × `height`
+                /// CSS pixels across draws at, at `pixel_ratio` device pixels
+                /// per CSS pixel and the user's resolution `scale`, as every
+                /// host sizes views (`engine::host::view_size`); empty for a
+                /// view with no area.
+                fn view_size(width: f64, height: f64, pixel_ratio: f64, scale: f64) -> Vec<u32>;
             }
             dev_mut {
                 /// Runs development request `request` (JSON) on a `width` ×
@@ -299,6 +304,7 @@ fn typescript_type(ty: &str) -> String {
         "String" | "&str" => "string",
         "Vec<u8>" => "Uint8Array",
         "Vec<f64>" => "Float64Array",
+        "Vec<u32>" => "Uint32Array",
         "Array" => "JobMessage[]",
         // Scene files are the page's bindings' own class.
         "SceneFileSet" => "unknown",
