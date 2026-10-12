@@ -16,8 +16,8 @@ use crate::scatter::{
     GroupLayout, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, RANK_MAX, RANK_SHIFT, Record,
     STATE_FRESH, SnapSources, TERRAIN_INDEX, TerrainInfo,
 };
-use engine_core::TileKey;
 use engine_core::glam::{Mat4, Vec3};
+use engine_core::{Tile, TileKey};
 
 /// Levels of an automatic chain the camera draws: the mesh and its first
 /// simplification. Deeper ones prune whole parts, such as foliage cards,
@@ -132,25 +132,25 @@ impl Renderer {
             if !draws.pool.tiles_changed(terrain.id, terrain.tiles_revision) {
                 continue;
             }
-            let current: HashMap<TileKey, usize> = terrain
+            let current: HashMap<TileKey, &Arc<Tile>> = terrain
                 .tiles
                 .iter()
                 .filter(|tile| !tile.placed().is_empty())
-                .map(|tile| (tile.key(), Arc::as_ptr(tile) as usize))
+                .map(|tile| (tile.key(), tile))
                 .collect();
-            draws.pool.retain(terrain.id, |key, identity| {
-                current.get(&key) == Some(&identity)
+            draws.pool.retain(terrain.id, |key, held| {
+                current
+                    .get(&key)
+                    .is_some_and(|tile| Arc::ptr_eq(tile, held))
             });
             for tile in terrain.tiles.iter() {
                 if tile.placed().is_empty() || draws.pool.contains(terrain.id, tile.key()) {
                     continue;
                 }
                 let objects = tile_objects(draws, terrain, tile);
-                draws.pool.insert(
-                    (terrain.id, tile.key()),
-                    Arc::as_ptr(tile) as usize,
-                    objects,
-                );
+                draws
+                    .pool
+                    .insert((terrain.id, tile.key()), Arc::clone(tile), objects);
             }
         }
         // Objects stand on the finest heights resident this frame.

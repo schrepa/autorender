@@ -6,9 +6,10 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 
-use engine_core::TileKey;
 use engine_core::glam::Vec3;
+use engine_core::{Tile, TileKey};
 
 use crate::gpu_data::{ColorData, GroundData, PoseData};
 use crate::scatter::{DEAD, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, Record, STATE_ADOPT, STATE_FRESH};
@@ -28,9 +29,9 @@ pub(super) struct ScatterPool {
     /// Live objects of each draw group, and of those standing far away.
     pub(super) counts: Vec<u32>,
     pub(super) far: u32,
-    // Each resident tile's identity (its pointer) and slots, by terrain and
-    // key.
-    tiles: HashMap<(u64, TileKey), (usize, Range<u32>)>,
+    // Each resident tile, held so no other tile takes its address while
+    // the pool tells tiles apart by it, and its slots, by terrain and key.
+    tiles: HashMap<(u64, TileKey), (Arc<Tile>, Range<u32>)>,
     // Free slot ranges, in order, none adjacent.
     free: Vec<Range<u32>>,
     // The tiles revision of each terrain last synchronized.
@@ -63,11 +64,11 @@ impl ScatterPool {
     }
 
     /// Frees the tiles of terrain `id` that `keep` refuses, given each
-    /// one's key and identity.
-    pub(super) fn retain(&mut self, id: u64, keep: impl Fn(TileKey, usize) -> bool) {
+    /// one's key and the tile.
+    pub(super) fn retain(&mut self, id: u64, keep: impl Fn(TileKey, &Arc<Tile>) -> bool) {
         let mut freed = Vec::new();
-        self.tiles.retain(|&(terrain, key), (identity, slots)| {
-            if terrain != id || keep(key, *identity) {
+        self.tiles.retain(|&(terrain, key), (tile, slots)| {
+            if terrain != id || keep(key, tile) {
                 return true;
             }
             freed.push(slots.clone());
@@ -85,12 +86,11 @@ impl ScatterPool {
         self.tiles.contains_key(&(id, key))
     }
 
-    /// Gives terrain `id`'s tile `key`, of identity `identity`, slots for
-    /// `objects`.
+    /// Gives terrain `id`'s tile `key`, `tile`, slots for `objects`.
     pub(super) fn insert(
         &mut self,
         (id, key): (u64, TileKey),
-        identity: usize,
+        tile: Arc<Tile>,
         objects: TileObjects,
     ) {
         let (poses, colors, records, grounds) = objects;
@@ -121,7 +121,7 @@ impl ScatterPool {
         self.moved.extend(bounds(&records));
         self.counts_changed = true;
         self.mark(slots.clone());
-        self.tiles.insert((id, key), (identity, slots));
+        self.tiles.insert((id, key), (tile, slots));
     }
 
     /// Slots written since the last call, and whether group counts changed.

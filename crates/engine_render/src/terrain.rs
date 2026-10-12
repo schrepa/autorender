@@ -23,7 +23,9 @@ use std::ops::Range;
 
 use bytemuck::Zeroable;
 use engine_core::glam::{DVec3, Mat4, Vec3, Vec4};
+use engine_core::terrain_data::gpu::SurfaceData;
 use engine_core::{RenderTerrain, RenderTerrains, TileKey};
+use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::bindings::{SHADOW_VIEW, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS};
@@ -285,11 +287,11 @@ pub(crate) struct TerrainPass {
     normal_jobs: Vec<(u32, f32)>,
     normal_pass: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
     // Control values the GPU gives tiles uploaded this frame,
-    // the pass giving them, and each terrain's surface data there
-    // (by the data's address, which changes with it).
+    // the pass giving them, and each terrain's surface data there with
+    // the data it holds, which changes when the data does.
     control_jobs: Vec<ControlJob>,
     control_pass: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
-    surfaces: HashMap<u64, (usize, wgpu::Buffer)>,
+    surfaces: HashMap<u64, (Arc<SurfaceData>, wgpu::Buffer)>,
     normal_sampler: wgpu::Sampler,
     control_sampler: wgpu::Sampler,
     // Every terrain's levels and their resident tiles' layers, and where
@@ -817,12 +819,11 @@ impl TerrainPass {
         self.arrivals.retain(|key, _| listed.contains_key(key));
         self.surfaced.retain(|key, _| listed.contains_key(key));
         // Terrains whose tiles' control values the GPU gives.
-        let surfaces: HashMap<u64, &std::sync::Arc<engine_core::terrain_data::gpu::SurfaceData>> =
-            terrains
-                .terrains
-                .iter()
-                .filter_map(|terrain| Some((terrain.id, terrain.gpu_surface.as_ref()?)))
-                .collect();
+        let surfaces: HashMap<u64, &Arc<SurfaceData>> = terrains
+            .terrains
+            .iter()
+            .filter_map(|terrain| Some((terrain.id, terrain.gpu_surface.as_ref()?)))
+            .collect();
         self.sync_surfaces(device, queue, &surfaces);
         // Tiles replaced under their keys upload again into their layers; one
         // whose surface materials arrive with it takes them over gradually,
@@ -1118,15 +1119,14 @@ impl TerrainPass {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        surfaces: &HashMap<u64, &std::sync::Arc<engine_core::terrain_data::gpu::SurfaceData>>,
+        surfaces: &HashMap<u64, &Arc<SurfaceData>>,
     ) {
         self.surfaces.retain(|id, _| surfaces.contains_key(id));
         for (&id, &surface) in surfaces {
-            let address = std::sync::Arc::as_ptr(surface) as usize;
             if self
                 .surfaces
                 .get(&id)
-                .is_some_and(|&(held, _)| held == address)
+                .is_some_and(|(held, _)| Arc::ptr_eq(held, surface))
             {
                 continue;
             }
@@ -1138,7 +1138,7 @@ impl TerrainPass {
                 wgpu::BufferUsages::empty(),
             );
             queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&surface.words));
-            self.surfaces.insert(id, (address, buffer));
+            self.surfaces.insert(id, (Arc::clone(surface), buffer));
         }
     }
 
