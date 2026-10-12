@@ -20,7 +20,6 @@ const LONG_FILES: &[(&str, usize)] = &[
     ("apps/stress-lab/src/metro/models.rs", 2305),
     ("apps/stress-lab/src/shapes.rs", 1571),
     ("crates/engine_assets/src/simplify.rs", 2383),
-    ("crates/engine_core/src/features/terrain/mod.rs", 4442),
     ("crates/engine_core/src/hierarchy.rs", 1714),
     ("crates/engine_core/src/retained_render.rs", 1705),
     ("crates/engine_dev/src/inspect.rs", 1738),
@@ -34,7 +33,7 @@ const LONG_FILES: &[(&str, usize)] = &[
 /// name: each one's most fields.
 const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
     (
-        "crates/engine_core/src/features/terrain/mod.rs",
+        "crates/engine_core/src/features/terrain/residency.rs",
         "TerrainState",
         42,
     ),
