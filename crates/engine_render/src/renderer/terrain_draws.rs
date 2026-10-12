@@ -123,7 +123,7 @@ impl Renderer {
         }
         for &holes in variants {
             if let Some(targets) = opaque_kind.targets() {
-                self.terrain.ensure_pipeline(
+                self.terrain.pipelines.ensure_pipeline(
                     &self.device,
                     &self.mesh_shader,
                     layouts,
@@ -134,7 +134,7 @@ impl Renderer {
                 );
             }
             if probes {
-                self.terrain.ensure_probe_pipeline(
+                self.terrain.pipelines.ensure_probe_pipeline(
                     &self.device,
                     &self.mesh_shader,
                     layouts,
@@ -145,7 +145,7 @@ impl Renderer {
             }
         }
         if !maps.is_empty() {
-            self.terrain.ensure_shadow_pipeline(&self.device);
+            self.terrain.pipelines.ensure_shadow_pipeline(&self.device);
         }
         true
     }
@@ -173,7 +173,7 @@ impl Renderer {
         let variants: &[bool] = if holes { &[false, true] } else { &[false] };
         for &holes in variants {
             if let Some(targets) = opaque_kind.targets() {
-                self.terrain.ensure_pipeline(
+                self.terrain.pipelines.ensure_pipeline(
                     &self.device,
                     &self.mesh_shader,
                     layouts,
@@ -184,7 +184,7 @@ impl Renderer {
                 );
             }
             if probes {
-                self.terrain.ensure_probe_pipeline(
+                self.terrain.pipelines.ensure_probe_pipeline(
                     &self.device,
                     &self.mesh_shader,
                     layouts,
@@ -195,7 +195,7 @@ impl Renderer {
             }
         }
         if snapshot.environment.shadows.enabled {
-            self.terrain.ensure_shadow_pipeline(&self.device);
+            self.terrain.pipelines.ensure_shadow_pipeline(&self.device);
         }
         let cover = snapshot.environment.ground_cover.sanitized();
         let grows = cover.enabled
@@ -294,7 +294,7 @@ impl Renderer {
                 &self.device,
                 "engine/terrain-resolve-group",
                 &crate::bindings::TERRAIN_RESOLVE,
-                &self.terrain.resolve_layout,
+                &self.terrain.pipelines.resolve_layout,
                 &[("terrain_ids_texture", crate::pipelines::view(&view))],
             );
             self.terrain_ids = Some(TerrainIds {
@@ -312,12 +312,15 @@ impl Renderer {
     /// target ready.
     pub(super) fn terrain_deferred(&self, terrain: bool, kind: PassKind) -> bool {
         terrain
-            && self.terrain.frame.shaded
+            && self.terrain.patches.frame.shaded
             && self.terrain_ids.is_some()
-            && kind
-                .targets()
-                .is_some_and(|targets| self.terrain.resolves.contains_key(&(targets, kind.lit)))
-            && !self.terrain.frame.terrains.is_empty()
+            && kind.targets().is_some_and(|targets| {
+                self.terrain
+                    .pipelines
+                    .resolves
+                    .contains_key(&(targets, kind.lit))
+            })
+            && !self.terrain.patches.frame.terrains.is_empty()
     }
 
     /// The camera's terrain patches into terrain's visibility target;
@@ -326,11 +329,11 @@ impl Renderer {
         pass.set_bind_group(0, &self.camera.group, &[]);
         let mut draws = 0;
         for holes in [false, true] {
-            let Some(pipeline) = self.terrain.deferred_ids.get(&holes) else {
+            let Some(pipeline) = self.terrain.pipelines.deferred_ids.get(&holes) else {
                 continue;
             };
             pass.set_pipeline(pipeline);
-            for terrain in &self.terrain.frame.terrains {
+            for terrain in &self.terrain.patches.frame.terrains {
                 let range =
                     &FrameTerrain::split(&terrain.camera, terrain.camera_holes)[usize::from(holes)];
                 draws += self.terrain.draw(pass, range, 0, terrain.uniform);
@@ -351,7 +354,7 @@ impl Renderer {
         else {
             return 0;
         };
-        let Some(pipeline) = self.terrain.resolves.get(&(targets, kind.lit)) else {
+        let Some(pipeline) = self.terrain.pipelines.resolves.get(&(targets, kind.lit)) else {
             return 0;
         };
         pass.set_pipeline(pipeline);
@@ -367,7 +370,7 @@ impl Renderer {
         // read the visibility target and discard.
         let size = self.depth.texture.size();
         let mut draws = 0;
-        for terrain in &self.terrain.frame.terrains {
+        for terrain in &self.terrain.patches.frame.terrains {
             if terrain.camera.is_empty() {
                 continue;
             }
@@ -426,12 +429,14 @@ impl Renderer {
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
         let mut draws = 0;
-        for (holes, pipeline) in [false, true]
-            .into_iter()
-            .filter_map(|holes| Some((holes, self.terrain.pipeline(targets, kind.lit, holes)?)))
-        {
+        for (holes, pipeline) in [false, true].into_iter().filter_map(|holes| {
+            Some((
+                holes,
+                self.terrain.pipelines.pipeline(targets, kind.lit, holes)?,
+            ))
+        }) {
             pass.set_pipeline(pipeline);
-            for terrain in &self.terrain.frame.terrains {
+            for terrain in &self.terrain.patches.frame.terrains {
                 let range =
                     &FrameTerrain::split(&terrain.camera, terrain.camera_holes)[usize::from(holes)];
                 draws += self.terrain.draw(pass, range, 0, terrain.uniform);
@@ -449,7 +454,7 @@ impl Renderer {
         center: engine_core::glam::Vec3,
         lit: bool,
     ) {
-        if self.terrain.frame.terrains.is_empty() {
+        if self.terrain.patches.frame.terrains.is_empty() {
             return;
         }
         let view = self.terrain.write_probe_view(
@@ -463,11 +468,11 @@ impl Renderer {
             pass.set_bind_group(2, &self.mesh_pipelines.empty_group, &[]);
         }
         for holes in [false, true] {
-            let Some(pipeline) = self.terrain.probe_pipeline(lit, holes) else {
+            let Some(pipeline) = self.terrain.pipelines.probe_pipeline(lit, holes) else {
                 continue;
             };
             pass.set_pipeline(pipeline);
-            for terrain in &self.terrain.frame.terrains {
+            for terrain in &self.terrain.patches.frame.terrains {
                 let range =
                     &FrameTerrain::split(&terrain.all, terrain.all_holes)[usize::from(holes)];
                 self.terrain.draw(pass, range, view, terrain.uniform);

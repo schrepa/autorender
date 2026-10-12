@@ -21,7 +21,6 @@ const LONG_FILES: &[(&str, usize)] = &[
     ("crates/engine_core/src/hierarchy.rs", 1714),
     ("crates/engine_core/src/retained_render.rs", 1669),
     ("crates/engine_render/src/meshes/terrain.wgsl", 1843),
-    ("crates/engine_render/src/terrain.rs", 2338),
     ("crates/engine_terrain/src/layers.rs", 1603),
     ("tools/assetc/src/bin/terrain_materials.rs", 1530),
 ];
@@ -48,7 +47,6 @@ const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
     ("crates/engine_render/src/clouds.rs", "CloudPass", 48),
     ("crates/engine_render/src/renderer.rs", "Renderer", 50),
     ("crates/engine_render/src/scatter.rs", "ScatterPass", 40),
-    ("crates/engine_render/src/terrain.rs", "TerrainPass", 65),
     (
         "crates/engine_render/src/terrain_vt.rs",
         "VirtualTexture",

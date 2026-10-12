@@ -305,11 +305,15 @@ impl Renderer {
                 },
                 // Terrain: the camera's patches in this map.
                 terrain_draw: &|pass, map| {
-                    let Some(pipeline) = terrain.shadow_pipeline().filter(|_| terrain_frame) else {
+                    let Some(pipeline) = terrain
+                        .pipelines
+                        .shadow_pipeline()
+                        .filter(|_| terrain_frame)
+                    else {
                         return 0;
                     };
                     let mut draws = 0;
-                    for frame_terrain in &terrain.frame.terrains {
+                    for frame_terrain in &terrain.patches.frame.terrains {
                         let Some((_, range)) = frame_terrain
                             .maps
                             .iter()
