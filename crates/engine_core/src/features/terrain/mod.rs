@@ -129,14 +129,14 @@ impl bevy_app::Plugin for TerrainPlugin {
             })
             .add_systems(
                 crate::ViewSync,
-                stream_terrains.in_set(crate::ViewSyncSystems::StreamTerrains),
+                stream_terrains.in_set(crate::ViewSyncSystems::Stream),
             )
             .add_systems(
                 crate::WorldSync,
-                (
-                    bridges::sync.in_set(crate::WorldSyncSystems::Bridges),
-                    waterfalls::sync.in_set(crate::WorldSyncSystems::Waterfalls),
-                ),
+                // Bridges spawn before waterfalls.
+                (bridges::sync, waterfalls::sync)
+                    .chain()
+                    .in_set(crate::WorldSyncSystems::Spawn),
             );
     }
 }

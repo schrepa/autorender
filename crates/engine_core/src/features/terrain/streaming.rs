@@ -847,7 +847,7 @@ impl FromWorld for TerrainStreaming {
 }
 
 /// Streams terrains toward the frame's camera and focus entities:
-/// [`crate::ViewSyncSystems::StreamTerrains`].
+/// [`crate::ViewSyncSystems::Stream`].
 pub(crate) fn stream_terrains(world: &mut World, mut streaming: Local<TerrainStreaming>) {
     streaming.update(world);
 }

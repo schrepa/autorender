@@ -706,7 +706,7 @@ pub(crate) struct DeformationFrame {
 }
 
 /// Lays the frame's deformation map around the camera and lists the stamps
-/// it presses: [`crate::ViewSyncSystems::FollowDeformation`].
+/// it presses: [`crate::ViewSyncSystems::Follow`].
 pub(crate) fn follow_camera(
     settings: Option<Res<Deformation>>,
     camera: Option<Res<Camera>>,
@@ -786,7 +786,7 @@ impl bevy_app::Plugin for DeformationPlugin {
             .init_resource::<DeformationFrame>()
             .add_systems(
                 crate::ViewSync,
-                follow_camera.in_set(crate::ViewSyncSystems::FollowDeformation),
+                follow_camera.in_set(crate::ViewSyncSystems::Follow),
             )
             .add_systems(
                 crate::FixedTickEnd,

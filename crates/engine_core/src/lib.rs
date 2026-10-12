@@ -143,18 +143,19 @@ pub struct Presentation;
 pub struct TransformPropagation;
 
 /// Once per rendered frame before its transforms refresh: the world follows
-/// the camera. Streamed cells load and unload, grounded entities stand on
-/// the ground, and bridges, waterfalls and spline meshes spawn and build, in
-/// [`WorldSyncSystems`] order; game systems order against those sets. Paused
+/// the camera. Streamed content loads and unloads, grounded entities stand
+/// on the ground, features spawn what their content places (bridges and
+/// waterfalls) and spline meshes build, in [`WorldSyncSystems`] order; game
+/// systems order against those phases. Paused
 /// frames run it too; GPU frames presenting the interval before a tick in
 /// flight do not.
 #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WorldSync;
 
 /// Once per rendered frame after its transforms refresh, before extraction:
-/// what follows the camera's view. Terrains stream toward it and the
-/// deformation map follows it, in [`ViewSyncSystems`] order. Transforms
-/// changed here propagate at the next boundary.
+/// what follows the camera's view. Features stream toward it (terrains),
+/// then what follows it does (the deformation map), in [`ViewSyncSystems`]
+/// order. Transforms changed here propagate at the next boundary.
 #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ViewSync;
 
@@ -176,21 +177,26 @@ pub enum FixedSimulationSystems {
     Pose,
 }
 
-/// The engine's work in [`WorldSync`], in this order.
+/// The phases of [`WorldSync`], in this order.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorldSyncSystems {
-    StreamCells,
+    /// Streamed content loads near the camera and unloads far from it.
+    Stream,
+    /// Grounded entities stand on the ground.
     Ground,
-    Bridges,
-    Waterfalls,
-    Splines,
+    /// Features spawn the entities their content places.
+    Spawn,
+    /// Spline meshes build.
+    Build,
 }
 
-/// The engine's work in [`ViewSync`], in this order.
+/// The phases of [`ViewSync`], in this order.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ViewSyncSystems {
-    StreamTerrains,
-    FollowDeformation,
+    /// Features stream toward the view.
+    Stream,
+    /// What follows the view moves with it.
+    Follow,
 }
 
 /// The engine's work in [`FixedTickEnd`].
@@ -328,27 +334,22 @@ impl Engine {
                 WorldSync,
                 (
                     grounded::settle.in_set(WorldSyncSystems::Ground),
-                    spline_mesh::build.in_set(WorldSyncSystems::Splines),
+                    spline_mesh::build.in_set(WorldSyncSystems::Build),
                 ),
             )
             .configure_sets(
                 WorldSync,
                 (
-                    WorldSyncSystems::StreamCells,
+                    WorldSyncSystems::Stream,
                     WorldSyncSystems::Ground,
-                    WorldSyncSystems::Bridges,
-                    WorldSyncSystems::Waterfalls,
-                    WorldSyncSystems::Splines,
+                    WorldSyncSystems::Spawn,
+                    WorldSyncSystems::Build,
                 )
                     .chain(),
             )
             .configure_sets(
                 ViewSync,
-                (
-                    ViewSyncSystems::StreamTerrains,
-                    ViewSyncSystems::FollowDeformation,
-                )
-                    .chain(),
+                (ViewSyncSystems::Stream, ViewSyncSystems::Follow).chain(),
             )
             // The features' work in a tick, in one order.
             .configure_sets(

@@ -534,7 +534,7 @@ pub fn remove_streamed(world: &mut World, set: StreamSet) {
 pub(crate) type FocusQuery = QueryState<Entity, With<StreamingFocus>>;
 
 /// Loads cells streaming sources came near and unloads those they left,
-/// before transforms refresh: [`crate::WorldSyncSystems::StreamCells`].
+/// before transforms refresh: [`crate::WorldSyncSystems::Stream`].
 pub(crate) fn stream_cells(world: &mut World, focus: &mut FocusQuery) {
     if !world.contains_resource::<WorldCells>() {
         return;
@@ -690,7 +690,7 @@ impl bevy_app::Plugin for WorldStreamingPlugin {
             .init_resource::<WorldChanges>()
             .add_systems(
                 crate::WorldSync,
-                stream_cells.in_set(crate::WorldSyncSystems::StreamCells),
+                stream_cells.in_set(crate::WorldSyncSystems::Stream),
             );
     }
 }
