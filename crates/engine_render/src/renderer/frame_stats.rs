@@ -19,6 +19,7 @@ use engine_core::{
 /// its path in the JSON hosts read: no list to keep. Fields reading `null`
 /// record nothing.
 #[cfg(feature = "profiling")]
+#[expect(clippy::expect_used, reason = "render stats always serialize")]
 fn stat_counters(stats: &RenderStats) {
     use engine_core::collections::HashMap;
     thread_local! {

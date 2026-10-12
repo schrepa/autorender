@@ -16,6 +16,8 @@
 //! each frame's selection storage and uniform (`selection`), the counts and
 //! group feedback read back (`feedback`), and the pipelines (`layouts`).
 
+#![expect(clippy::expect_used, reason = "bound groups build their buffers")]
+
 mod arena;
 mod feedback;
 mod layouts;

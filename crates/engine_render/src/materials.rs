@@ -2,6 +2,11 @@
 //! maps read them in, cached samplers, and one bind group per material with
 //! maps. Materials without maps share a default group of white textures.
 
+#![expect(
+    clippy::expect_used,
+    reason = "extraction validated every material's textures"
+)]
+
 use engine_core::collections::HashMap;
 use std::collections::BTreeMap;
 

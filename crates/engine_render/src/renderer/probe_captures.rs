@@ -1,6 +1,11 @@
 //! Reflection probe captures: still opaque meshes and the
 //! sky's haze drawn into probe cube faces after the frame.
 
+#![expect(
+    clippy::expect_used,
+    reason = "captures read the lights checked before them"
+)]
+
 use super::*;
 
 impl Renderer {

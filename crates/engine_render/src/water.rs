@@ -23,6 +23,11 @@
 //! vertices move by the waves longer than a few of their cells, and pixels
 //! shade every wave longer than a few pixels.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a terrain's water is inserted before it is read"
+)]
+
 use engine_core::collections::HashMap;
 use std::collections::BTreeMap;
 use std::ops::Range;

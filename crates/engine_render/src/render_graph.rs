@@ -13,6 +13,11 @@
 //! [`FrameShape`], and each feature (`crate::render_features`) its own
 //! passes.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a node holds at most four color attachments"
+)]
+
 pub(crate) use crate::render_features::FeaturePass;
 pub(crate) use crate::screen_effects::Effects;
 

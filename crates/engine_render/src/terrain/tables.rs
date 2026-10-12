@@ -4,6 +4,8 @@
 //! tables after it; every terrain's surface materials and their covers;
 //! and each terrain's uniform.
 
+#![expect(clippy::expect_used, reason = "holed tiles have hole bits")]
+
 use super::atlas::{Synced, TileAtlas};
 use super::*;
 

@@ -2,6 +2,11 @@
 //! material variants over their layouts, the sky, and the
 //! opaque drawing order.
 
+#![expect(
+    clippy::expect_used,
+    reason = "pipelines exist in the frames that draw with them"
+)]
+
 use super::*;
 use crate::bindings::EMPTY;
 use crate::entries::{self, Slots};

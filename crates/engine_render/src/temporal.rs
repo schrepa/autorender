@@ -7,6 +7,11 @@
 //! next history. Culling alternates between two pose buffers, so the previous
 //! frame's displayed poses stay readable for motion vectors without copies.
 
+#![expect(
+    clippy::expect_used,
+    reason = "the resolve reads the targets and groups its frame prepared"
+)]
+
 use crate::shaders::entry::temporal;
 use engine_core::{Applied, RenderFrame, RenderSnapshot, glam::Mat4};
 

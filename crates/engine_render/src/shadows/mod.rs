@@ -27,6 +27,11 @@
 //! each map's casters (`selection`) and the depth pipelines (`pipelines`).
 //! What the kept map holds is `shadow_fit::KeptMap`.
 
+#![expect(
+    clippy::expect_used,
+    reason = "the pipelines are created before they draw"
+)]
+
 mod casters;
 mod maps;
 mod pipelines;

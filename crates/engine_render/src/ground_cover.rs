@@ -10,6 +10,11 @@
 //! farthest tend to drop first. Nothing here exists until a frame has cover
 //! to grow.
 
+#![expect(
+    clippy::expect_used,
+    reason = "growth reads the sources checked before it"
+)]
+
 use crate::shaders::entry::cover_grow;
 use engine_core::collections::HashMap;
 use std::cell::Cell;

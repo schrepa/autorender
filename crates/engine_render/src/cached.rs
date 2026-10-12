@@ -5,6 +5,11 @@
 //! [`GroupCache`] keys its group by the generations of exactly what it
 //! binds, so no key leaves a bound resource out.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a cached value is built before it is read"
+)]
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The next generation of any resource: unique among every resource the

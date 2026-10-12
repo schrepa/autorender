@@ -1,5 +1,10 @@
 //! CPU-only draw planning. Storage is reused for mesh/material batches.
 
+#![expect(
+    clippy::expect_used,
+    reason = "materials' textures are validated before they are ranked"
+)]
+
 use std::{fmt, ops::Range};
 
 use engine_core::collections::HashMap;

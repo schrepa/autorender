@@ -2,6 +2,11 @@
 //! objects: the light-space basis, the regions each map covers and their
 //! orthographic projections.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a level's regions hold their first tile"
+)]
+
 use engine_core::{
     glam::{Mat4, Vec3, Vec4},
     math,

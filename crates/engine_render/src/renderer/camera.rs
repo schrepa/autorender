@@ -5,6 +5,11 @@
 //! binds, so it rebuilds when the shadow maps, environment maps, reflection
 //! probe grid, horizon maps or occupancy maps are replaced.
 
+#![expect(
+    clippy::expect_used,
+    reason = "groups are built with their bindings before captures read them"
+)]
+
 use super::*;
 use crate::bindings::CAMERA;
 use crate::cached::GroupCache;

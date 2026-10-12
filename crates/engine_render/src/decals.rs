@@ -2,6 +2,11 @@
 //! boxes after the opaque meshes, a feature of the renderer
 //! (`crate::render_features`) created with the first frame that has decals.
 
+#![expect(
+    clippy::expect_used,
+    reason = "drawing reads the group this frame prepared"
+)]
+
 use std::ops::Range;
 
 use engine_core::{DecalBlend, MaterialHandle, RenderDecal};

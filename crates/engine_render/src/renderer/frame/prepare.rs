@@ -2,6 +2,11 @@
 //! residency, asset uploads, instance packing and writes, each feature's
 //! preparation, the pipelines it draws with, and its render graph's shape.
 
+#![expect(
+    clippy::expect_used,
+    reason = "temporal frames create the temporal pass"
+)]
+
 use super::*;
 use crate::clouds::CloudFrame;
 use crate::decals::{DecalFrame, DecalPass};

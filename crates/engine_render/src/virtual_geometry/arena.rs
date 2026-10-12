@@ -8,6 +8,11 @@
 //! first, and pages unused for a while make room under a budget or the
 //! device's limits.
 
+#![expect(
+    clippy::expect_used,
+    reason = "pages are placed into an arena that exists"
+)]
+
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use engine_core::collections::HashMap;

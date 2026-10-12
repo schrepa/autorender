@@ -39,6 +39,11 @@
 //! path takes from each point's distance to the eye they bake from) the
 //! eye has turned by more than [`STALE_SHADING`] of a level.
 
+#![expect(
+    clippy::expect_used,
+    reason = "pages are asked for and textured before they are read"
+)]
+
 use crate::shaders::entry::meshes;
 use engine_core::collections::HashMap;
 use std::cell::RefCell;

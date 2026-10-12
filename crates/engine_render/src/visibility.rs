@@ -5,6 +5,11 @@
 //! each bin's resolve (`fs_resolve*`) shades its pixels once, however many
 //! triangles overlapped them or however small they were.
 
+#![expect(
+    clippy::expect_used,
+    reason = "drawing reads the targets its preparation sized"
+)]
+
 use crate::bindings::VISIBILITY_CLASSIFY;
 use crate::buffers::{storage, uniform};
 use crate::cached::{Bound, GroupCache, Versioned};

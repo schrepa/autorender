@@ -2,6 +2,8 @@
 //! work, the attachments the graph derived operations for, and every pass
 //! but the opaque ones (`opaque`).
 
+#![expect(clippy::expect_used, reason = "passes read what their frames created")]
+
 use super::*;
 use crate::render_features::{AttachmentViews, Encode, MeshDraws};
 

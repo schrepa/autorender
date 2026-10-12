@@ -4,6 +4,8 @@
 //! composite pass. Everything here is created with the first frame that has
 //! emitters.
 
+#![expect(clippy::expect_used, reason = "drawing reads what this frame prepared")]
+
 use crate::shaders::entry::particles;
 use engine_core::{ParticleBlend, RenderEmitter};
 

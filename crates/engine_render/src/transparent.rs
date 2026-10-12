@@ -7,6 +7,11 @@
 //! draw something transparent. With the particles, transparency is a
 //! feature of the renderer (`crate::render_features`).
 
+#![expect(
+    clippy::expect_used,
+    reason = "the composite reads the targets and pipelines its frame made"
+)]
+
 use engine_core::{Drawn, RenderSnapshot};
 
 use crate::bindings::TRANSPARENT_COMPOSITE;

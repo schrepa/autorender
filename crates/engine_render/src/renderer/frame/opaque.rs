@@ -3,6 +3,11 @@
 //! phase or two around occlusion culling's test, and the visibility
 //! buffer's triangle IDs, tiles and resolves.
 
+#![expect(
+    clippy::expect_used,
+    reason = "the opaque passes read what the frame built"
+)]
+
 use super::*;
 
 /// What the opaque passes draw.

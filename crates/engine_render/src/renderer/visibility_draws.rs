@@ -1,6 +1,11 @@
 //! The visibility buffer: which camera bins it resolves, and
 //! the pipelines and groups of its pass and resolves.
 
+#![expect(
+    clippy::expect_used,
+    reason = "resolve layouts are created before their pipelines"
+)]
+
 use super::*;
 use crate::bindings::{VISIBILITY_PASS, VISIBILITY_RESOLVE};
 use crate::cached::GroupCache;

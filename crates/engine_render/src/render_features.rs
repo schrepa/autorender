@@ -5,6 +5,11 @@
 //! holds. `render_features!` lists them; the renderer dispatches to each
 //! statically.
 
+#![expect(
+    clippy::expect_used,
+    reason = "only a holder's preparation makes a Ready, with its feature"
+)]
+
 use engine_core::RenderSnapshot;
 
 use crate::clouds::CloudPass;

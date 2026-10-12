@@ -11,6 +11,11 @@
 //! mesh's own shadows would. The GPU side is created with
 //! the first bake.
 
+#![expect(
+    clippy::expect_used,
+    reason = "the atlas arrays grow before they are read"
+)]
+
 pub(crate) use crate::gpu_layouts::constants::IMPOSTOR_FRAMES;
 pub(crate) use crate::gpu_layouts::constants::IMPOSTOR_HEMISPHERE as HEMISPHERE;
 use engine_core::glam::Vec3;

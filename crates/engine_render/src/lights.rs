@@ -9,6 +9,11 @@
 //! grows to what a frame read back needed. Everything here is created with
 //! the first frame that has lights.
 
+#![expect(
+    clippy::expect_used,
+    reason = "shading reads the group this frame prepared"
+)]
+
 use crate::gpu_layouts::constants::GROUP_LIGHTS as LIGHTS;
 pub(crate) use crate::gpu_layouts::constants::LIGHT_BYTES;
 use crate::gpu_layouts::constants::NO_SLOT;

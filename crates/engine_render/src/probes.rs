@@ -3,6 +3,11 @@
 //! after frames draw and blurred like the sky's; a grid over the ground plane
 //! lists which probes surfaces in each of its cells read.
 
+#![expect(
+    clippy::expect_used,
+    reason = "the depth target is created before it is read"
+)]
+
 use engine_core::{
     RenderReflectionProbe,
     glam::{Mat4, Vec3, Vec4},

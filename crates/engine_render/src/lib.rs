@@ -5,7 +5,8 @@
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants,
-    clippy::iter_over_hash_type
+    clippy::iter_over_hash_type,
+    clippy::expect_used
 )]
 
 pub use engine_core::RenderStats;

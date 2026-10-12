@@ -2,6 +2,11 @@
 //! views, the selection's bindings, and the pipelines and pose groups
 //! drawing the selected clusters.
 
+#![expect(
+    clippy::expect_used,
+    reason = "virtual geometry's frames create what they draw with"
+)]
+
 use super::*;
 use crate::bindings::VIRTUAL_POSES;
 use crate::cached::GroupCache;

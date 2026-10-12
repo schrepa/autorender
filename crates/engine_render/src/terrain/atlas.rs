@@ -3,6 +3,11 @@
 //! holds, when it arrived, and the layers free; the GPU's normal maps and
 //! control values of tiles uploaded each frame.
 
+#![expect(
+    clippy::expect_used,
+    reason = "the arrays are allocated before tiles upload"
+)]
+
 use super::*;
 use crate::shaders::entry::{terrain_control, terrain_normals};
 use std::collections::BTreeMap;

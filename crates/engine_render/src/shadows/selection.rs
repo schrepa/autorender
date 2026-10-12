@@ -5,6 +5,8 @@
 //! kept map and levels, read back a few frames later with
 //! the caster totals.
 
+#![expect(clippy::expect_used, reason = "the frame binds a pose buffer")]
+
 use std::{cell::Cell, rc::Rc};
 
 use super::casters::CasterGroups;

@@ -18,6 +18,11 @@
 //! while the camera is in or above the layer, and the view's sky shows no
 //! dome then; under it, the dome shows the sky's clouds as before.
 
+#![expect(
+    clippy::expect_used,
+    reason = "the sky's group is built each frame before it is read"
+)]
+
 use crate::shaders::entry::{clouds, meshes};
 use engine_core::collections::HashMap;
 

@@ -4,6 +4,11 @@
 //! alternate with. Storage grows with the frame's slots up to
 //! what one binding holds.
 
+#![expect(
+    clippy::expect_used,
+    reason = "pose buffers exist in the frames that bind them"
+)]
+
 use super::*;
 use crate::bindings::RETAINED_POSES;
 use crate::cached::GroupCache;

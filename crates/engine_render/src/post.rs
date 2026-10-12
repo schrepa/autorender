@@ -13,6 +13,11 @@
 //! apply them in their resolve, other frames in a composite
 //! that writes the canvas.
 
+#![expect(
+    clippy::expect_used,
+    reason = "encoding reads the targets the frame's preparation sized"
+)]
+
 use crate::shaders::entry::{post, shafts};
 use engine_core::{Applied, RenderSnapshot, glam::Mat4};
 
