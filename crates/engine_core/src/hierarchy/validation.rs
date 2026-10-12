@@ -5,15 +5,10 @@
 use glam::{Mat3, Mat4, Vec3A, Vec4};
 
 use super::MAX_NORMAL_INVERSE_NORM;
+use crate::presentation_bounds::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN, MIN_LINEAR_SCALE};
 use crate::{Transform, math};
 
-/// The largest coefficient the common admission path proves (2^20).
-pub const COEFFICIENT_LIMIT: f32 = 1_048_576.0;
-/// The smallest linear scale the common admission path proves (2^-10).
-pub const MIN_LINEAR_SCALE: f32 = 1.0 / 1024.0;
 const DETERMINANT_MARGIN: f32 = 1.0 / 4096.0; // 2^-12
-/// The determinant margin of the common admission path (2^-9).
-pub const COMMON_DETERMINANT_MARGIN: f32 = 1.0 / 512.0;
 const PROVEN_NORMAL_INVERSE_NORM: f32 = 6200.0;
 
 const MARGIN_UP: f32 = 1.0 + 1.0 / 4096.0; // 1 + 2^-12

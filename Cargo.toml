@@ -75,6 +75,10 @@ toml_edit = { version = "=0.25.15", default-features = false, features = ["parse
 # and are listed, each with its reason, in tools/policy/src/sources.rs.
 [workspace.lints.rust]
 unsafe_code = "deny"
+# Crate roots export their modules with `pub use module::*`: two modules
+# exporting one name, or a private name hiding an exported one, fail.
+ambiguous_glob_reexports = "deny"
+hidden_glob_reexports = "deny"
 
 [workspace.lints.clippy]
 dbg_macro = "deny"

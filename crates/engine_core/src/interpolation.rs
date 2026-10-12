@@ -14,6 +14,7 @@ use bevy_ecs::prelude::*;
 use glam::{Mat4, Quat};
 
 use crate::entity_indices::EntityIndices;
+use crate::presentation_bounds::LINEAR_ROTATION_DOT_THRESHOLD;
 
 use crate::{
     FixedTime, FrameTime, GlobalTransform, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, Parent,
@@ -1084,13 +1085,6 @@ fn compatible_scales(previous: &NodePose, current: &NodePose) -> bool {
         compatible & (a << 1 != 0) & (b << 1 != 0) & ((a ^ b) >> 31 == 0)
     })
 }
-
-/// The rotation dot product above which interpolation blends linearly:
-/// about 3.624 degrees of physical rotation. Normalized lerp removes the three
-/// sine evaluations on ordinary small fixed-step motion. The ideal angular
-/// deviation is below 1.1e-6 rad. This is an explicit interpolation policy,
-/// not bit-equivalent SLERP.
-pub const LINEAR_ROTATION_DOT_THRESHOLD: f32 = 0.9995;
 
 fn blend_rotation(previous: Quat, current: Quat, alpha: f32) -> Quat {
     let previous = previous.normalize();

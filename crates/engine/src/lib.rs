@@ -27,61 +27,57 @@ pub use surface::runtime_typescript;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tooling;
 
-// The ECS and math the engine is built on, and its deterministic
-// trigonometry (`math::sin`, not `f32::sin`).
-pub use engine_core::{bevy_ecs, glam, math};
+// The ECS and math the engine is built on.
+pub use engine_core::{bevy_ecs, glam};
 // Every environment section, for code listing them (`environment_sections!(callback)`).
 pub use engine_core::environment_sections;
 
-// What games use: the engine and its schedules, time, input, transforms,
-// objects, assets, the look's settings and the stores gameplay reads.
+/// What games use, at the root and in the [`prelude`] alike: the engine and
+/// its schedules, time, input, transforms, objects and assets, the look's
+/// settings, the engine's features and their plugins, the ground, the
+/// stores gameplay reads and the deterministic trigonometry (`math::sin`,
+/// not `f32::sin`).
+mod games {
+    pub use engine_core::{
+        Aabb, ActionId, ActionInput, AlphaMode, AmbientOcclusion, AnimatedProperty,
+        AnimationChannel, AnimationClip, AnimationPlayer, AnimationPlugin, AnimationSystems, App,
+        AssetBudget, AssetError, AssetLibrary, Atmosphere, Bloom, Camera, ClipHandle, Clouds,
+        ContactShadows, Cover, Cube, Decal, DecalBlend, DecalSettings, Deformation,
+        DeformationPlugin, Deformer, Engine, EngineConfig, EngineEntityCommands, Environment,
+        Feature, Filter, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
+        FixedSimulationSystems, FixedTickEnd, FixedTickEndSystems, FixedTime, Floating,
+        FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Ground, GroundCover,
+        GroundSample, Grounded, Grounding, HeightHeld, HierarchyError, InputState, Interior,
+        InterpolateTransform, InterpolationError, KeyInterpolation, Keyframes, LevelOfDetail,
+        LocalLight, LocalLightSettings, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle,
+        MeshVertex, NavAgent, NavAgents, NavStatus, NavSystems, NavWalk, Navigation,
+        NavigationPlugin, OcclusionCulling, Occupancy, Ocean, OceanPlugin, OceanSystems, Parent,
+        ParticleBlend, ParticleEmitter, ParticleSettings, Plugin, PluginGroup, Presentation,
+        PresentationState, PresentedTime, PresentedTransform, PresentedTransforms, ReflectionProbe,
+        ReflectionProbeSettings, Reflections, Refraction, Sampler, Shadows, Skin, Sky, SplineMesh,
+        Spot, StreamSet, Streamed, StreamedId, StreamedItem, StreamingFocus, SubpixelCulling,
+        SunShafts, Surface, TemporalAntialiasing, Terrain, TerrainPlugin, TerrainSample,
+        TerrainSettings, Terrains, Texture, TextureHandle, TextureRef, TimeOfDay, TimeOfDayPlugin,
+        Tint, TopLayer, Track, TrackDepth, Tracks, Transform, TransformEditError, Transmission,
+        UvTransform, ViewSync, ViewSyncSystems, VirtualGeometry, Water, Wind, WorldCells,
+        WorldChanges, WorldStreaming, WorldStreamingPlugin, WorldSync, WorldSyncSystems, Wrap,
+        edit_transform, math, remove_streamed, reset_all_interpolation, reset_interpolation,
+        set_parent, set_parents,
+    };
+}
+pub use games::*;
+
+// Lower-level names, at the root only: asset, animation and mesh details,
+// the bounds settings and components validate against, the fallback mesh
+// size `Mesh::from_virtual` takes by default, and what hosts and tools read.
 pub use engine_core::{
-    Aabb, AlphaMode, AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample,
-    AssetBudget, AssetError, AssetLibrary, ClipHandle, Filter, Grounding, KeyInterpolation,
-    Keyframes, LodLevel, Material, MaterialHandle, Mesh, MeshHandle, MeshLods, MeshVertex, Sampler,
-    Surface, Texture, TextureFormat, TextureHandle, TextureRef, TopLayer, Transmission,
-    UvTransform, VirtualMesh, Wrap, mesh_lods,
-};
-pub use engine_core::{
-    ActionId, ActionInput, AnimationPlayer, AnimationSystems, App, Atmosphere, Camera, Cube,
-    Engine, EngineConfig, ErrorCode, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
-    FixedSimulationSystems, FixedTickEnd, FixedTickEndSystems, FixedTime, FrameReport, FrameTime,
-    InputState, Plugin, PluginGroup, PluginGroupBuilder, Presentation, PresentedTime, ViewSync,
-    ViewSyncSystems, WorldSync, WorldSyncSystems,
-};
-// The engine's features, each a plugin of `EnginePlugins`, and the ground
-// what stands on it reads.
-pub use engine_core::{
-    AmbientOcclusion, Bloom, Clouds, ContactShadows, DecalSettings, Deformation, Environment,
-    EnvironmentSection, GroundCover, InvalidSetting, LevelOfDetail, LocalLightSettings, Navigation,
-    OcclusionCulling, Occupancy, Ocean, ParticleSettings, ReflectionProbeSettings, Reflections,
-    Refraction, Shadows, Sky, SubpixelCulling, SunShafts, TemporalAntialiasing, TerrainSettings,
-    TimeOfDay, VirtualGeometry, Water, Wind, WorldStreaming,
-};
-pub use engine_core::{
-    AnimationPlugin, DeformationPlugin, Feature, Features, Ground, GroundSample, HeightHeld,
-    NavigationPlugin, OceanPlugin, TerrainPlugin, TimeOfDayPlugin, WorldStreamingPlugin,
-    has_feature,
-};
-// The fallback mesh size `Mesh::from_virtual` takes by default.
-pub use engine_core::DEFAULT_FALLBACK_TRIANGLES;
-pub use engine_core::{
-    Cover, Decal, DecalBlend, Deformer, EngineEntityCommands, Floating, GlobalTransform,
-    GlobalTransforms, Grounded, HierarchyError, HierarchyReport, Interior, InterpolateTransform,
-    InterpolationError, LocalLight, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, Mesh3d, NavAgent,
-    NavAgents, NavStatus, NavSystems, NavWalk, OceanPoint, OceanSurface, OceanSystems, OceanWave,
-    OceanWaves, Parent, ParticleBlend, ParticleEmitter, PresentationState, PresentedTransform,
-    PresentedTransforms, ReflectionProbe, Skin, SplineChunks, SplineMesh, Spot, StreamSet,
-    Streamed, StreamedId, StreamedItem, StreamingFocus, Terrain, TerrainSample, Terrains, Tint,
-    Track, TrackDepth, Tracks, Transform, TransformEditError, TransformNodeLimit, Viewport,
-    WorldCells, WorldChanges, edit_transform, remove_streamed, reset_all_interpolation,
-    reset_interpolation, set_parent, set_parents,
-};
-// The bounds settings and components validate against.
-pub use engine_core::{
-    MAX_EMITTER_PARTICLES, MAX_KEPT_LEVELS, MAX_LIGHT_RANGE, MAX_OCEAN_WAVES, MAX_SHADOW_CASCADES,
-    MAX_SPLINE_POINTS, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION,
-    MAX_TRACK_DEPTH, MIN_SPOT_DEGREES,
+    AnimationSample, DEFAULT_FALLBACK_TRIANGLES, EnvironmentSection, ErrorCode, Features,
+    HierarchyReport, InvalidSetting, LodLevel, MAX_EMITTER_PARTICLES, MAX_HIERARCHY_DEPTH,
+    MAX_KEPT_LEVELS, MAX_LIGHT_RANGE, MAX_OCEAN_WAVES, MAX_SHADOW_CASCADES, MAX_SPLINE_POINTS,
+    MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION, MAX_TRACK_DEPTH,
+    MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MeshLods, OceanPoint, OceanSurface, OceanWave,
+    OceanWaves, PluginGroupBuilder, SplineChunks, TextureFormat, TransformNodeLimit, Viewport,
+    VirtualMesh, has_feature, mesh_lods,
 };
 
 /// Terrain authoring: layer stacks, masks, stamps, bakes, placement and
@@ -99,10 +95,9 @@ pub mod terrain {
         MIN_COLLIDER_EXTENT, Mask, MotionDetail, NoiseLayer, NoiseMask, Patch, PathLayer,
         PathProfile, PathStage, Placed, PlacedCollider, PlacedShape, PlacementAsset,
         PlacementChoice, PlacementLayer, PlacementLod, Pyramid, PyramidError, Remap, Route,
-        RouteOptions, Stamp, StampOp, StreamingFocus, SurfaceMaterial, SurfaceProjection,
-        Surroundings, SurroundingsStatus, Terrain, TerrainBakes, TerrainEdit, TerrainPrefetch,
-        TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains, Tile, TileKey,
-        WaterGrid,
+        RouteOptions, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Surroundings,
+        SurroundingsStatus, TerrainBakes, TerrainEdit, TerrainPrefetch, TerrainSource,
+        TerrainSurface, Tile, TileKey, WaterGrid,
     };
 }
 
@@ -204,42 +199,8 @@ macro_rules! __if_profiling {
 /// fly camera, the parts of Bevy the engine runs and glam's types.
 pub mod prelude {
     pub use crate::camera::{CameraSystems, FlyCameraController, FlyCameraPlugin};
-    pub use crate::{
-        Aabb, AlphaMode, AnimatedProperty, AnimationChannel, AnimationClip, AssetBudget,
-        AssetError, AssetLibrary, ClipHandle, Filter, Grounding, KeyInterpolation, Keyframes,
-        Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Sampler, Surface, Texture,
-        TextureHandle, TextureRef, TopLayer, Transmission, UvTransform, Wrap,
-    };
-    pub use crate::{
-        ActionId, ActionInput, AnimationPlayer, AnimationSystems, App, Atmosphere, Camera, Cube,
-        Engine, EngineConfig, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
-        FixedSimulationSystems, FixedTickEnd, FixedTickEndSystems, FixedTime, FrameReport,
-        FrameTime, Game, InputState, Inspectors, Plugin, PluginGroup, Presentation, PresentedTime,
-        ViewSync, ViewSyncSystems, WorldSync, WorldSyncSystems, math,
-    };
-    pub use crate::{
-        AmbientOcclusion, Bloom, Clouds, ContactShadows, DecalSettings, Deformation, Environment,
-        GroundCover, LevelOfDetail, LocalLightSettings, Navigation, OcclusionCulling, Occupancy,
-        Ocean, ParticleSettings, ReflectionProbeSettings, Reflections, Refraction, Shadows, Sky,
-        SubpixelCulling, SunShafts, TemporalAntialiasing, TerrainSettings, TimeOfDay,
-        VirtualGeometry, Water, Wind, WorldStreaming,
-    };
-    pub use crate::{
-        AnimationPlugin, DeformationPlugin, EnginePlugins, Feature, Ground, GroundSample,
-        HeightHeld, NavigationPlugin, OceanPlugin, TerrainPlugin, TimeOfDayPlugin,
-        WorldStreamingPlugin,
-    };
-    pub use crate::{
-        Cover, Decal, DecalBlend, Deformer, EngineEntityCommands, Floating, GlobalTransform,
-        GlobalTransforms, Grounded, HierarchyError, Interior, InterpolateTransform,
-        InterpolationError, LocalLight, Mesh3d, NavAgent, NavAgents, NavStatus, NavSystems,
-        NavWalk, OceanSystems, Parent, ParticleBlend, ParticleEmitter, PresentationState,
-        PresentedTransform, PresentedTransforms, ReflectionProbe, Skin, SplineMesh, Spot,
-        StreamSet, Streamed, StreamedId, StreamedItem, StreamingFocus, Terrain, TerrainSample,
-        Terrains, Tint, Track, TrackDepth, Tracks, Transform, TransformEditError, WorldCells,
-        WorldChanges, edit_transform, remove_streamed, reset_all_interpolation,
-        reset_interpolation, set_parent, set_parents,
-    };
+    pub use crate::games::*;
+    pub use crate::{EnginePlugins, Game, Inspectors};
     pub use engine_collision::{
         Collider, ColliderShape, CollisionLayers, CollisionPlugin, CollisionRay, CollisionSystems,
         CollisionWorld, QueryFilter, SensorFilter, ShapeCastOptions, refresh_collision_world,

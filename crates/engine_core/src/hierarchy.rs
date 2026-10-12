@@ -13,7 +13,6 @@ mod validation;
 pub use global::GlobalTransform;
 pub(crate) use global::ValueIds;
 use validation::Certificate;
-pub use validation::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN, MIN_LINEAR_SCALE};
 
 /// Maximum parent edges from a root to a transformed entity.
 pub const MAX_HIERARCHY_DEPTH: usize = 64;

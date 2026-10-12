@@ -173,7 +173,7 @@ macro_rules! core_sections {
         /// renderer's own for None) that is on unless a scene turns it off:
         /// all but the opt-in ones. Feature plugins insert theirs as they
         /// build.
-        pub fn init_sections(world: &mut World, feature: Option<crate::Feature>) {
+        pub(crate) fn init_sections(world: &mut World, feature: Option<crate::Feature>) {
             $(if !$opt_in && section_feature!($feature) == feature {
                 world.init_resource::<crate::$settings>();
             })*

@@ -6,6 +6,7 @@ mod bench;
 mod checks;
 mod coverage;
 mod development;
+mod exports;
 mod features;
 mod formats;
 mod gpu;

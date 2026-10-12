@@ -7,7 +7,7 @@
 //! seconds, without compiling the engine.
 
 mod manifests;
-mod rust;
+pub mod rust;
 mod sources;
 
 use std::path::{Path, PathBuf};

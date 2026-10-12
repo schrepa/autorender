@@ -1,15 +1,8 @@
 use engine_assets::Aabb;
 use glam::{Mat4, Vec3, Vec3A, Vec4};
 
-// Outside this broad range, finite assets remain renderable but culling fails
-// open. It bounds amplification of f32 subnormal flushing below the absolute
-// margin, without double-precision arithmetic in the extraction loop.
-/// The largest matrix coefficient culling tests.
-pub const MAX_COEFFICIENT: f32 = 1.0e15;
-/// The relative rounding margin of culling's plane tests.
-pub const ROUNDING_MARGIN: f32 = 32.0 * f32::EPSILON;
-/// The largest product culling's plane tests form.
-pub const MAX_PRODUCT_BOUND: f32 = f32::MAX / 8.0;
+use crate::presentation_bounds::{MAX_COEFFICIENT, MAX_PRODUCT_BOUND, ROUNDING_MARGIN};
+
 // The interior test evaluates doubled distances, so it doubles this margin too.
 const INTERIOR_MARGIN: f32 = 2.0 * ROUNDING_MARGIN;
 

@@ -36,6 +36,7 @@ mod occupancy;
 mod ocean;
 mod packed;
 mod particles;
+pub mod presentation_bounds;
 mod probes;
 mod retained_render;
 mod scene;
@@ -51,28 +52,19 @@ mod water;
 mod waterfalls;
 mod wind;
 
-pub use animation::{AnimationPlayer, AnimationPlugin, AnimationSystems};
-pub use antialiasing::TemporalAntialiasing;
-pub use atmosphere::Atmosphere;
-#[cfg(feature = "schema")]
-pub use atmosphere::state_atmosphere_rules;
+pub use animation::*;
+pub use antialiasing::*;
+pub use atmosphere::*;
 pub use bevy_app::{App, Plugin, PluginGroup, PluginGroupBuilder};
 pub use bevy_ecs;
-pub use bridges::{DECK_DEPTH, DECK_MARGIN, DECK_RISE};
-pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime, PresentedTime};
-pub use clouds::Clouds;
-pub use commands::EngineEntityCommands;
-pub use contact_shadows::ContactShadows;
-pub use decals::{Decal, DecalBlend, DecalSettings, RenderDecal};
-pub use deformation::DeformationPlugin;
-pub use deformation::{
-    DEFORMATION_GRAIN, Deformation, DeformationMap, Deformer, MAX_TRACK_DEPTH, RIM_REACH,
-    RIM_START, RenderDeformation, Track, TrackDepth, Tracks, carve_profile, rim_profile,
-};
-pub use effects::{
-    AmbientOcclusion, Bloom, MAX_KEPT_LEVELS, MAX_SHADOW_CASCADES, Reflections, Refraction,
-    Shadows, SunShafts,
-};
+pub use bridges::*;
+pub use clock::*;
+pub use clouds::*;
+pub use commands::*;
+pub use contact_shadows::*;
+pub use decals::*;
+pub use deformation::*;
+pub use effects::*;
 pub use engine_assets::{
     Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding, LodLevel,
     MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshLods,
@@ -99,78 +91,36 @@ pub use engine_terrain::{
     PathProfile, PathStage, PathStats, Placed, PlacementChoice, PlacementLayer, Pyramid,
     PyramidError, Remap, Route, RouteOptions, Stamp, StampOp, Tile, TileKey, WaterGrid,
 };
-pub use environment::{Environment, EnvironmentSection, InvalidSetting};
-pub use features::{
-    Feature, Features, Ground, GroundSample, HeightHeld, StreamingFocus, has_feature, install,
-};
-pub use frame_stats::{
-    Applied, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn, FrameStats,
-    GroundCoverStats, LightStats, OccupancyStats, OceanStats, ProbeStats, RenderPasses,
-    RenderStats, ShadowStats, SkyStats, TerrainRenderStats, VirtualGeometryStats, WaterStats,
-};
+pub use environment::*;
+pub use features::*;
+pub use frame_stats::*;
 pub use glam;
-pub use gpu_culling::{OcclusionCulling, SubpixelCulling};
-pub use ground_cover::{Cover, GroundCover};
-pub use grounded::{Grounded, GroundedAt};
-pub use hierarchy::{
-    GlobalTransform, GlobalTransforms, HierarchyError, HierarchyReport, MAX_HIERARCHY_DEPTH,
-    MAX_NORMAL_INVERSE_NORM, MAX_TRANSFORM_NODES, Parent, TransformIndex, TransformNodeLimit,
-    propagate_transforms, set_parent, set_parents, valid_global_matrix,
-};
-pub use input::{ActionId, ActionInput};
-pub use interpolation::{
-    GpuCurrent, GpuPresentation, InterpolateTransform, InterpolationError, NO_PARENT, NODE_ACTIVE,
-    NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo, NodePose, PresentationMode,
-    PresentationState, PresentedTransform, PresentedTransforms, reset_all_interpolation,
-    reset_interpolation,
-};
-pub use jobs::{
-    GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, JobStats, Jobs, URGENT_JOBS, VIEW_JOBS,
-    content_hash, job_class, job_priority,
-};
-pub use level_of_detail::LevelOfDetail;
-pub use lights::{
-    LocalLight, LocalLightSettings, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES,
-    RenderLight, Spot,
-};
-pub use navigation::{
-    NavAgent, NavAgents, NavStats, NavStatus, NavSystems, NavWalk, Navigation, NavigationPlugin,
-};
-pub use occupancy::Occupancy;
-pub use ocean::{
-    Floating, MAX_OCEAN_WAVES, Ocean, OceanPlugin, OceanPoint, OceanSurface, OceanSystems,
-    OceanWave, OceanWaves,
-};
-pub use particles::{
-    MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter, ParticleSettings,
-    RenderEmitter,
-};
-pub use probes::{Interior, ReflectionProbe, ReflectionProbeSettings, RenderReflectionProbe};
-pub use retained_render::{PoseRows, RenderFrame};
-pub use scene::{
-    Camera, Cube, InputState, Mesh3d, RenderInstance, RenderJoint, RenderMaterial, RenderMesh,
-    RenderSnapshot, RenderTexture, Tint, Transform,
-};
-pub use skin::Skin;
-pub use sky::Sky;
-pub use spline_mesh::{CHUNK_LENGTH, MAX_SPLINE_POINTS, SplineChunks, SplineMesh};
-pub use streaming::{
-    CellStats, CellView, STREAMING_GRIDS, StreamSet, Streamed, StreamedId, StreamedItem,
-    StreamingGrid, WorldCells, WorldChanges, WorldStreaming, WorldStreamingPlugin, remove_streamed,
-};
-pub use terrain::{
-    MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS, MIN_COLLIDER_EXTENT, MotionDetail, PlacedCollider,
-    PlacedShape, PlacementAsset, PlacementLod, RenderPlacementAsset, RenderSurfaceMaps,
-    RenderTerrain, RenderTerrains, SurfaceMaterial, SurfaceProjection, Surroundings,
-    SurroundingsStatus, Terrain, TerrainBakes, TerrainDebug, TerrainEdit, TerrainPlugin,
-    TerrainPrefetch, TerrainSample, TerrainSettings, TerrainSource, TerrainStats, TerrainSurface,
-    TerrainView, Terrains, TileRequest, Viewport,
-};
-pub use time_of_day::{TimeOfDay, TimeOfDayPlugin};
-pub use transform_edits::{TransformEditError, edit_transform};
-pub use virtual_geometry::VirtualGeometry;
-pub use water::Water;
-pub use wind::Wind;
+pub use gpu_culling::*;
+pub use ground_cover::*;
+pub use grounded::*;
+pub use hierarchy::*;
+pub use input::*;
+pub use interpolation::*;
+pub use jobs::*;
+pub use level_of_detail::*;
+pub use lights::*;
+pub use navigation::*;
+pub use occupancy::*;
+pub use ocean::*;
+pub use particles::*;
+pub use probes::*;
+pub use retained_render::*;
+pub use scene::*;
+pub use skin::*;
+pub use sky::*;
+pub use spline_mesh::*;
+pub use streaming::*;
+pub use terrain::*;
+pub use time_of_day::*;
+pub use transform_edits::*;
+pub use virtual_geometry::*;
+pub use water::*;
+pub use wind::*;
 
 use bevy_app::PluginsState;
 use bevy_ecs::{
@@ -1080,14 +1030,4 @@ impl Default for Engine {
     fn default() -> Self {
         Self::new(EngineConfig::default())
     }
-}
-
-/// The bounds GPU presentation's shaders share with the CPU reference
-/// (`presentation.wgsl`): culling's coefficient and rounding limits, the
-/// hierarchy validator's common admission path and interpolation's linear
-/// rotation threshold.
-pub mod presentation_bounds {
-    pub use crate::culling::{MAX_COEFFICIENT, MAX_PRODUCT_BOUND, ROUNDING_MARGIN};
-    pub use crate::hierarchy::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MARGIN, MIN_LINEAR_SCALE};
-    pub use crate::interpolation::LINEAR_ROTATION_DOT_THRESHOLD;
 }
