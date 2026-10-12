@@ -459,10 +459,7 @@ pub struct NavigationPlugin;
 
 impl bevy_app::Plugin for NavigationPlugin {
     fn build(&self, app: &mut bevy_app::App) {
-        app.world_mut()
-            .resource_mut::<crate::Features>()
-            .insert(crate::Feature::Navigation);
-        crate::environment::init_sections(app.world_mut(), Some(crate::Feature::Navigation));
+        crate::install(app, crate::Feature::Navigation);
         app.init_resource::<NavAgents>()
             .add_systems(
                 crate::FixedSimulation,
@@ -472,13 +469,6 @@ impl bevy_app::Plugin for NavigationPlugin {
                 crate::FixedSimulation,
                 NavSystems::Walk.in_set(crate::FixedSimulationSystems::Move),
             );
-    }
-
-    fn finish(&self, app: &mut bevy_app::App) {
-        assert!(
-            crate::has_feature(app.world(), crate::Feature::Terrain),
-            "NavigationPlugin walks over terrain: add TerrainPlugin too, or leave navigation out"
-        );
     }
 }
 

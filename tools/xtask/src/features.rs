@@ -8,12 +8,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-/// Each feature's modules (files and directories of engine_core/src), and
-/// the features it may use.
-const FEATURES: &[(&str, &[&str], &[&str])] = &[
-    (
-        "terrain",
-        &[
+use engine::Feature;
+
+/// `feature`'s modules (files and directories of engine_core/src); its name
+/// and the features it may use come from the engine's one list of features
+/// (`engine_features!`). Collision lives in engine_collision.
+fn modules(feature: Feature) -> &'static [&'static str] {
+    match feature {
+        Feature::Terrain => &[
             "terrain",
             "bridges",
             "waterfalls",
@@ -22,15 +24,15 @@ const FEATURES: &[(&str, &[&str], &[&str])] = &[
             "wind",
             "occupancy",
         ],
-        &[],
-    ),
-    ("world_streaming", &["streaming"], &[]),
-    ("navigation", &["navigation"], &["terrain"]),
-    ("ocean", &["ocean"], &[]),
-    ("animation", &["animation", "skin"], &[]),
-    ("time_of_day", &["time_of_day"], &[]),
-    ("deformation", &["deformation"], &[]),
-];
+        Feature::WorldStreaming => &["streaming"],
+        Feature::Navigation => &["navigation"],
+        Feature::Ocean => &["ocean"],
+        Feature::Animation => &["animation", "skin"],
+        Feature::TimeOfDay => &["time_of_day"],
+        Feature::Deformation => &["deformation"],
+        Feature::Collision => &[],
+    }
+}
 
 /// Core modules that may name features' types: the crate root exporting
 /// them, the sections list, and extraction handing renderers what each
@@ -47,7 +49,7 @@ const BRIDGES: &[&str] = &[
 
 /// engine_core's modules: each top-level module's name and its source text,
 /// directories' files joined, comments and strings left out.
-fn modules(root: &Path) -> Result<BTreeMap<String, String>, String> {
+fn sources(root: &Path) -> Result<BTreeMap<String, String>, String> {
     let source = root.join("crates/engine_core/src");
     let mut modules = BTreeMap::new();
     for entry in
@@ -141,15 +143,14 @@ fn declared(code: &str) -> BTreeSet<String> {
 
 /// Fails at the first module using a feature it may not.
 pub fn check(root: &Path) -> Result<(), String> {
-    let modules = modules(root)?;
+    let sources = sources(root)?;
     let owner = |module: &str| {
-        FEATURES
-            .iter()
-            .find(|(_, owned, _)| owned.contains(&module))
-            .map(|(feature, _, _)| *feature)
+        Feature::ALL
+            .into_iter()
+            .find(|&feature| modules(feature).contains(&module))
     };
-    let mut types: BTreeMap<String, &str> = BTreeMap::new();
-    for (module, code) in &modules {
+    let mut types: BTreeMap<String, Feature> = BTreeMap::new();
+    for (module, code) in &sources {
         if let Some(feature) = owner(module) {
             for name in declared(code) {
                 types.insert(name, feature);
@@ -157,27 +158,25 @@ pub fn check(root: &Path) -> Result<(), String> {
         }
     }
     let mut violations = Vec::new();
-    for (module, code) in &modules {
+    for (module, code) in &sources {
         if BRIDGES.contains(&module.as_str()) {
             continue;
         }
         let own = owner(module);
-        let allowed: &[&str] = own
-            .and_then(|feature| FEATURES.iter().find(|(name, _, _)| *name == feature))
-            .map_or(&[], |(_, _, needs)| needs);
+        let allowed = own.map_or(&[][..], Feature::needs);
         let mut used: BTreeSet<String> = BTreeSet::new();
         for word in identifiers(code) {
             if let Some(&feature) = types.get(word)
                 && Some(feature) != own
                 && !allowed.contains(&feature)
             {
-                used.insert(format!("{word} ({feature})"));
+                used.insert(format!("{word} ({})", feature.name()));
             }
         }
         if !used.is_empty() {
             violations.push(format!(
                 "{module} ({}) uses {}",
-                own.unwrap_or("core"),
+                own.map_or("core", Feature::name),
                 used.into_iter().collect::<Vec<_>>().join(", ")
             ));
         }
@@ -187,7 +186,8 @@ pub fn check(root: &Path) -> Result<(), String> {
     }
     Err(format!(
         "engine features must stay composable: a feature uses the core and the features it \
-         declares needing (tools/xtask/src/features.rs), the core no feature:\n{}",
+         needs (engine_features! in engine_core/src/features/mod.rs; its modules are in \
+         tools/xtask/src/features.rs), the core no feature:\n{}",
         violations.join("\n")
     ))
 }

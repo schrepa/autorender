@@ -4391,10 +4391,7 @@ pub struct TerrainPlugin;
 
 impl bevy_app::Plugin for TerrainPlugin {
     fn build(&self, app: &mut bevy_app::App) {
-        app.world_mut()
-            .resource_mut::<crate::Features>()
-            .insert(crate::Feature::Terrain);
-        crate::environment::init_sections(app.world_mut(), Some(crate::Feature::Terrain));
+        crate::install(app, crate::Feature::Terrain);
         app.init_resource::<Terrains>()
             .insert_resource(crate::Ground {
                 sample: ground_sample,

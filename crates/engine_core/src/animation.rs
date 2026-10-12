@@ -116,9 +116,7 @@ pub struct AnimationPlugin;
 
 impl bevy_app::Plugin for AnimationPlugin {
     fn build(&self, app: &mut bevy_app::App) {
-        app.world_mut()
-            .resource_mut::<crate::Features>()
-            .insert(crate::Feature::Animation);
+        crate::install(app, crate::Feature::Animation);
         app.add_systems(
             crate::FixedSimulation,
             animate.in_set(AnimationSystems::Animate),

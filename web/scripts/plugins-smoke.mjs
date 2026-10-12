@@ -4,16 +4,19 @@
  * leaves it out of status, answers `missing_plugin` to requests about it
  * and refuses scenes authoring it at their path; an engine with that
  * feature alone (and what it needs) loads a scene authoring it and answers
- * about it; one with every feature loads them all; and navigation without
- * terrain refuses to start.
+ * about it; one with every feature loads them all; and a feature without
+ * one it needs (navigation without terrain) refuses to start. The features,
+ * their plugins and needs come from the engine's one list of them
+ * (protocol.json's `features`).
  */
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
-import { commander, developmentReady, launch, routedScene, sceneUrl } from "./harness.mjs";
+import { commander, developmentReady, launch, protocol, routedScene, sceneUrl } from "./harness.mjs";
 
-const features = ["terrain", "world_streaming", "navigation", "ocean", "animation", "time_of_day", "deformation", "collision"];
+const features = protocol.features.map(feature => feature.name);
 // What a feature needs, and so what leaving it out leaves out too.
-const needs = { navigation: ["terrain"] };
+const needs = Object.fromEntries(protocol.features.map(feature => [feature.name, feature.needs]));
+const plugin = name => protocol.features.find(feature => feature.name === name).plugin;
 const core = () => ({
   version: 9, id: "plugins-fixture", revision: 1,
   camera: { position: [0, 6, 12], target: [0, 0, 0], fov_degrees: 55, near: 0.1, far: 1000 },
@@ -69,6 +72,11 @@ const refusals = {
   collision: ["raycast", ray],
 };
 const leftOut = name => features.filter(other => other === name || (needs[other] ?? []).includes(name));
+// Every feature has its authored scene, a request it answers and one its
+// absence refuses.
+for (const name of features) {
+  assert.ok(authoring[name] && requests[name] && refusals[name], `plugins-smoke needs ${name}'s authoring, request and refusal`);
+}
 
 const { browser, page, errors } = await launch({ width: 640, height: 400 });
 const command = commander(page);
@@ -121,15 +129,22 @@ try {
   await command("render");
   assert.deepEqual((await command("status")).result.features, features);
 
-  // Navigation needs terrain: an engine with one and not the other does
+  // A feature needing another: an engine with it and not the other does
   // not start.
-  const before = errors.length;
-  await page.unrouteAll();
-  await routedScene(page, core()).route();
-  await page.goto(String(sceneUrl({ without: "terrain" })), { waitUntil: "domcontentloaded" });
-  for (let attempt = 0; attempt < 100 && !errors.slice(before).some(error => error.includes("NavigationPlugin walks over terrain")); attempt++) await delay(100);
-  assert.ok(errors.slice(before).some(error => error.includes("NavigationPlugin walks over terrain")), `navigation without terrain refuses: ${errors.slice(before).join(" | ")}`);
-  errors.splice(before);
+  for (const name of features) {
+    for (const need of needs[name]) {
+      const message = `${plugin(name)} needs ${need}: add ${plugin(need)} too, or leave ${name} out`;
+      const before = errors.length;
+      await page.unrouteAll();
+      await routedScene(page, core()).route();
+      // Other features needing it go too, so this one is refused.
+      const without = features.filter(other => other === need || (other !== name && needs[other].includes(need)));
+      await page.goto(String(sceneUrl({ without: without.join(",") })), { waitUntil: "domcontentloaded" });
+      for (let attempt = 0; attempt < 100 && !errors.slice(before).some(error => error.includes(message)); attempt++) await delay(100);
+      assert.ok(errors.slice(before).some(error => error.includes(message)), `${name} without ${need} refuses: ${errors.slice(before).join(" | ")}`);
+      errors.splice(before);
+    }
+  }
 
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ ok: true, checks }));

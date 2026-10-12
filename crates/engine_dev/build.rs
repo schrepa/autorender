@@ -149,6 +149,16 @@ pub const {name}: [&str; {}] = {:?};
         "profile_max_events": engine_profile::MAX_EVENTS,
         "queries": queries,
         "controls": controls,
+        // The engine's features in its bundle's order: each one's name, the
+        // plugin adding it and the features it needs.
+        "features": engine_core::Feature::ALL
+            .iter()
+            .map(|feature| serde_json::json!({
+                "name": feature.name(),
+                "plugin": feature.plugin(),
+                "needs": feature.needs().iter().map(|need| need.name()).collect::<Vec<_>>(),
+            }))
+            .collect::<Vec<_>>(),
         // Every error code replies answer with and what it means.
         "errors": engine_settings::ErrorCode::ALL
             .iter()

@@ -444,7 +444,6 @@
     {
       "op": "terrain",
       "smokes": [
-        "plugins",
         "streaming",
         "terrain"
       ]

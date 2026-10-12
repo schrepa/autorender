@@ -28,9 +28,7 @@ pub enum CollisionSystems {
 
 impl Plugin for CollisionPlugin {
     fn build(&self, app: &mut App) {
-        if let Some(mut features) = app.world_mut().get_resource_mut::<engine_core::Features>() {
-            features.insert(engine_core::Feature::Collision);
-        }
+        engine_core::install(app, engine_core::Feature::Collision);
         app.init_resource::<CollisionConfig>()
             .init_resource::<CollisionWorld>()
             .init_resource::<SensorEvents>()

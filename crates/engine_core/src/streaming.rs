@@ -685,10 +685,7 @@ pub struct WorldStreamingPlugin;
 
 impl bevy_app::Plugin for WorldStreamingPlugin {
     fn build(&self, app: &mut bevy_app::App) {
-        app.world_mut()
-            .resource_mut::<crate::Features>()
-            .insert(crate::Feature::WorldStreaming);
-        crate::environment::init_sections(app.world_mut(), Some(crate::Feature::WorldStreaming));
+        crate::install(app, crate::Feature::WorldStreaming);
         app.init_resource::<WorldCells>()
             .init_resource::<WorldChanges>()
             .add_systems(

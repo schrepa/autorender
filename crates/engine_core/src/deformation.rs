@@ -781,10 +781,7 @@ pub struct DeformationPlugin;
 
 impl bevy_app::Plugin for DeformationPlugin {
     fn build(&self, app: &mut bevy_app::App) {
-        app.world_mut()
-            .resource_mut::<crate::Features>()
-            .insert(crate::Feature::Deformation);
-        crate::environment::init_sections(app.world_mut(), Some(crate::Feature::Deformation));
+        crate::install(app, crate::Feature::Deformation);
         app.init_resource::<Tracks>()
             .init_resource::<DeformationFrame>()
             .add_systems(

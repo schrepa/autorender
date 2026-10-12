@@ -101,7 +101,7 @@ pub use engine_terrain::{
 };
 pub use environment::{Environment, EnvironmentSection, InvalidSetting};
 pub use features::{
-    Feature, Features, Ground, GroundSample, HeightHeld, StreamingFocus, has_feature,
+    Feature, Features, Ground, GroundSample, HeightHeld, StreamingFocus, has_feature, install,
 };
 pub use frame_stats::{
     Applied, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn, FrameStats,
@@ -1023,16 +1023,20 @@ impl Engine {
             return;
         }
         self.refuse_unrun_schedules();
-        match self.app.plugins_state() {
-            PluginsState::Adding => {
-                panic!("engine plugins must be ready before the first frame")
-            }
+        let state = self.app.plugins_state();
+        assert!(
+            !matches!(state, PluginsState::Adding),
+            "engine plugins must be ready before the first frame"
+        );
+        // Every feature's plugin came with those of the features it needs.
+        features::check_needs(self.app.world());
+        match state {
             PluginsState::Ready => {
                 self.app.finish();
                 self.app.cleanup();
             }
             PluginsState::Finished => self.app.cleanup(),
-            PluginsState::Cleaned => {}
+            PluginsState::Adding | PluginsState::Cleaned => {}
         }
         self.plugins_finalized = true;
     }

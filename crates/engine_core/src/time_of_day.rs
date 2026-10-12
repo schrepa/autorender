@@ -94,10 +94,7 @@ pub struct TimeOfDayPlugin;
 
 impl bevy_app::Plugin for TimeOfDayPlugin {
     fn build(&self, app: &mut bevy_app::App) {
-        app.world_mut()
-            .resource_mut::<crate::Features>()
-            .insert(crate::Feature::TimeOfDay);
-        crate::environment::init_sections(app.world_mut(), Some(crate::Feature::TimeOfDay));
+        crate::install(app, crate::Feature::TimeOfDay);
         app.add_systems(crate::Presentation, advance_time_of_day);
     }
 }

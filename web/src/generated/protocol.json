@@ -176,6 +176,50 @@
     "watch_locked": "The watch is already running.",
     "wrong_world": "The scene instance belongs to another engine's world."
   },
+  "features": [
+    {
+      "name": "terrain",
+      "needs": [],
+      "plugin": "TerrainPlugin"
+    },
+    {
+      "name": "world_streaming",
+      "needs": [],
+      "plugin": "WorldStreamingPlugin"
+    },
+    {
+      "name": "navigation",
+      "needs": [
+        "terrain"
+      ],
+      "plugin": "NavigationPlugin"
+    },
+    {
+      "name": "ocean",
+      "needs": [],
+      "plugin": "OceanPlugin"
+    },
+    {
+      "name": "animation",
+      "needs": [],
+      "plugin": "AnimationPlugin"
+    },
+    {
+      "name": "time_of_day",
+      "needs": [],
+      "plugin": "TimeOfDayPlugin"
+    },
+    {
+      "name": "deformation",
+      "needs": [],
+      "plugin": "DeformationPlugin"
+    },
+    {
+      "name": "collision",
+      "needs": [],
+      "plugin": "CollisionPlugin"
+    }
+  ],
   "max_request_bytes": 16384,
   "profile_max_events": 65536,
   "queries": [

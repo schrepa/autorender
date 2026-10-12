@@ -420,10 +420,7 @@ pub struct OceanPlugin;
 
 impl bevy_app::Plugin for OceanPlugin {
     fn build(&self, app: &mut bevy_app::App) {
-        app.world_mut()
-            .resource_mut::<crate::Features>()
-            .insert(crate::Feature::Ocean);
-        crate::environment::init_sections(app.world_mut(), Some(crate::Feature::Ocean));
+        crate::install(app, crate::Feature::Ocean);
         app.add_systems(crate::FixedSimulation, float.in_set(OceanSystems::Float))
             .configure_sets(
                 crate::FixedSimulation,
