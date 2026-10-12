@@ -1479,29 +1479,14 @@ fn reaches(center: [f32; 2], radius: f32, min: Vec2, max: Vec2) -> bool {
 }
 
 // Binary encoding.
-use crate::codec::{Codec, CodecError, Reader, Writer, record};
+use crate::codec::{Codec, CodecError, Reader, Writer, record, tagged};
 
-impl Codec for Blend {
-    fn write(&self, out: &mut Writer) {
-        let tag: u8 = match self {
-            Self::Add => 0,
-            Self::Max => 1,
-            Self::Min => 2,
-            Self::Replace => 3,
-        };
-        out.put(&tag);
-    }
-
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
-        Ok(match input.get::<u8>()? {
-            0 => Self::Add,
-            1 => Self::Max,
-            2 => Self::Min,
-            3 => Self::Replace,
-            _ => return Err(CodecError("invalid blend")),
-        })
-    }
-}
+tagged!(Blend, "invalid blend" {
+    0 => Add,
+    1 => Max,
+    2 => Min,
+    3 => Replace,
+});
 
 record!(NoiseLayer {
     seed,
@@ -1517,26 +1502,12 @@ record!(NoiseLayer {
     blend,
 });
 
-impl Codec for StampOp {
-    fn write(&self, out: &mut Writer) {
-        match self {
-            Self::Raise(meters) => out.put(&0_u8).put(meters),
-            Self::Lower(meters) => out.put(&1_u8).put(meters),
-            Self::Flatten(height) => out.put(&2_u8).put(height),
-            Self::Hole => out.put(&3_u8),
-        };
-    }
-
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
-        Ok(match input.get::<u8>()? {
-            0 => Self::Raise(input.get()?),
-            1 => Self::Lower(input.get()?),
-            2 => Self::Flatten(input.get()?),
-            3 => Self::Hole,
-            _ => return Err(CodecError("invalid stamp")),
-        })
-    }
-}
+tagged!(StampOp, "invalid stamp" {
+    0 => Raise(meters),
+    1 => Lower(meters),
+    2 => Flatten(height),
+    3 => Hole,
+});
 
 record!(Stamp {
     center,
@@ -1572,30 +1543,14 @@ record!(ErosionStage { layer, baked });
 record!(HydrologyStage { layer, baked });
 record!(Fade { low, high, blend });
 
-impl Codec for Layer {
-    fn write(&self, out: &mut Writer) {
-        match self {
-            Self::Noise(layer) => out.put(&0_u8).put(layer),
-            Self::Heightmap(layer) => out.put(&1_u8).put(layer),
-            Self::Stamp(layer) => out.put(&2_u8).put(layer),
-            Self::Hydrology(stage) => out.put(&3_u8).put(stage),
-            Self::Erosion(stage) => out.put(&4_u8).put(stage),
-            Self::Path(stage) => out.put(&5_u8).put(stage),
-        };
-    }
-
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
-        Ok(match input.get::<u8>()? {
-            0 => Self::Noise(input.get()?),
-            1 => Self::Heightmap(input.get()?),
-            2 => Self::Stamp(input.get()?),
-            3 => Self::Hydrology(input.get()?),
-            4 => Self::Erosion(input.get()?),
-            5 => Self::Path(input.get()?),
-            _ => return Err(CodecError("invalid layer")),
-        })
-    }
-}
+tagged!(Layer, "invalid layer" {
+    0 => Noise(layer),
+    1 => Heightmap(layer),
+    2 => Stamp(layer),
+    3 => Hydrology(stage),
+    4 => Erosion(stage),
+    5 => Path(stage),
+});
 
 /// The stack's layers with their bakes, its offset and its fade; reading
 /// validates the layers as [`Layers::new`] does and rebuilds the noise

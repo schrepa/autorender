@@ -38,24 +38,11 @@ pub const PLACE_JOB: &str = "terrain_place";
 pub const WALK_JOB: &str = "terrain_walk";
 pub const BAKE_JOB: &str = "terrain_bake";
 
-impl codec::Codec for Placing {
-    fn write(&self, out: &mut Writer) {
-        out.put(&match self {
-            Placing::All => 0_u8,
-            Placing::Near => 1,
-            Placing::Far => 2,
-        });
-    }
-
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
-        match input.get::<u8>()? {
-            0 => Ok(Placing::All),
-            1 => Ok(Placing::Near),
-            2 => Ok(Placing::Far),
-            _ => Err(CodecError("invalid placing")),
-        }
-    }
-}
+codec::tagged!(Placing, "invalid placing" {
+    0 => All,
+    1 => Near,
+    2 => Far,
+});
 
 /// How a terrain's surroundings see a stack: as
 /// [`Layers::surroundings`] takes them.

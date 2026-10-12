@@ -316,3 +316,36 @@ macro_rules! record {
 }
 
 pub(crate) use record;
+
+/// Implements [`Codec`] for an enum as a tag byte then its variant's field,
+/// from one table of each variant with its tag: writing matches every
+/// variant, so one without a tag does not compile, and reading refuses an
+/// unknown tag with `$invalid`.
+macro_rules! tagged {
+    ($type:ident, $invalid:literal { $($tag:literal => $variant:ident $(($field:ident))?,)* }) => {
+        impl $crate::codec::Codec for $type {
+            fn write(&self, out: &mut $crate::codec::Writer) {
+                match self {
+                    $(Self::$variant $(($field))? => {
+                        out.put::<u8>(&$tag);
+                        $(out.put($field);)?
+                    })*
+                }
+            }
+
+            fn read(
+                input: &mut $crate::codec::Reader<'_>,
+            ) -> Result<Self, $crate::codec::CodecError> {
+                Ok(match input.get::<u8>()? {
+                    $($tag => Self::$variant $(({
+                        let $field = input.get()?;
+                        $field
+                    }))?,)*
+                    _ => return Err($crate::codec::CodecError($invalid)),
+                })
+            }
+        }
+    };
+}
+
+pub(crate) use tagged;
