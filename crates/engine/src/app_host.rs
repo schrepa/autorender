@@ -37,15 +37,24 @@ pub fn now_ms() -> f64 {
     }
 }
 
-/// Terrain tiles in flight: read by byte range from their files and handed
-/// back to the engine's terrains the next frame.
+/// Terrain tiles in flight: read by byte range from their files (the
+/// page's fetches; natively an I/O thread's reads, handed back in the order
+/// asked) and handed back to the engine's terrains a later frame.
 #[derive(Default)]
 struct TerrainFetches {
+    #[cfg(target_arch = "wasm32")]
     inbox: std::rc::Rc<std::cell::RefCell<Vec<TerrainArrival>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    reads: Option<crate::range_reads::RangeReads<TileAsked>>,
     requests: Vec<engine_core::TileRequest>,
 }
 
+/// A tile asked: its terrain and key.
+#[cfg(not(target_arch = "wasm32"))]
+type TileAsked = (engine_core::bevy_ecs::entity::Entity, engine_core::TileKey);
+
 /// A read tile: its terrain, key and bytes, `None` when the read failed.
+#[cfg(target_arch = "wasm32")]
 type TerrainArrival = (
     engine_core::bevy_ecs::entity::Entity,
     engine_core::TileKey,
@@ -54,8 +63,10 @@ type TerrainArrival = (
 
 impl TerrainFetches {
     /// Hands arrived tiles to `engine`'s terrains and starts reading the
-    /// tiles they request.
-    fn exchange(&mut self, engine: &mut Engine) {
+    /// tiles they request; with `wait` (terrain's frame clock), every tile
+    /// asked before arrives first, natively, so what arrives when is the
+    /// same every run.
+    fn exchange(&mut self, engine: &mut Engine, wait: bool) {
         let Some(mut terrains) = engine
             .app
             .world_mut()
@@ -63,18 +74,36 @@ impl TerrainFetches {
         else {
             return;
         };
-        for (terrain, key, bytes) in self.inbox.borrow_mut().drain(..) {
-            terrains.deliver(terrain, key, bytes);
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Pages' fetches arrive as they finish.
+            let _ = wait;
+            for (terrain, key, bytes) in self.inbox.borrow_mut().drain(..) {
+                terrains.deliver(terrain, key, bytes);
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(reads) = &mut self.reads {
+            reads.take(wait, |(terrain, key), bytes| {
+                terrains.deliver(terrain, key, bytes);
+            });
         }
         terrains.take_requests(&mut self.requests);
         for request in self.requests.drain(..) {
             let range = request.offset..request.offset + u64::from(request.length);
-            let inbox = std::rc::Rc::clone(&self.inbox);
-            engine_render::read_range(&request.url, range, move |bytes| {
-                inbox
-                    .borrow_mut()
-                    .push((request.terrain, request.key, bytes.ok()));
-            });
+            #[cfg(target_arch = "wasm32")]
+            {
+                let inbox = std::rc::Rc::clone(&self.inbox);
+                engine_render::read_range(&request.url, range, move |bytes| {
+                    inbox
+                        .borrow_mut()
+                        .push((request.terrain, request.key, bytes.ok()));
+                });
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            self.reads
+                .get_or_insert_with(crate::range_reads::RangeReads::new)
+                .ask(&request.url, range, (request.terrain, request.key));
         }
     }
 }
@@ -380,7 +409,8 @@ impl AppHost {
         if world.get_resource::<engine_core::Viewport>() != Some(&viewport) {
             world.insert_resource(viewport);
         }
-        self.terrain_fetches.exchange(&mut self.engine);
+        self.terrain_fetches
+            .exchange(&mut self.engine, self.terrain_clock == TerrainClock::Frames);
         self.engine.stream_terrain();
     }
 
@@ -392,7 +422,8 @@ impl AppHost {
         if !milliseconds.is_finite() || milliseconds <= 0.0 {
             return false;
         }
-        self.terrain_fetches.exchange(&mut self.engine);
+        self.terrain_fetches
+            .exchange(&mut self.engine, self.terrain_clock == TerrainClock::Frames);
         self.engine.work_terrain(milliseconds)
     }
 
@@ -661,7 +692,8 @@ impl AppHost {
                 });
         }
         // Tiles that arrived stream in with this frame's extraction.
-        self.terrain_fetches.exchange(&mut self.engine);
+        self.terrain_fetches
+            .exchange(&mut self.engine, self.terrain_clock == TerrainClock::Frames);
         let (frame_number, tick) = {
             let world = self.engine.app.world();
             (

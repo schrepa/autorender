@@ -387,6 +387,7 @@
         "jobs",
         "streaming",
         "terrain",
+        "terrain-files",
         "terrain-water-sky"
       ]
     },
@@ -564,7 +565,8 @@
       "op": "frames",
       "smokes": [
         "host-parity",
-        "native"
+        "native",
+        "terrain-files"
       ]
     },
     {

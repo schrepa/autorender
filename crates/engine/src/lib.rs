@@ -145,6 +145,8 @@ mod app_host;
 #[cfg(feature = "dev")]
 mod dev_host;
 mod game_host;
+#[cfg(not(target_arch = "wasm32"))]
+mod range_reads;
 /// The renderer's shader modules by name, with their sources, as it
 /// composes them: what tools compile and hash.
 pub use engine_render::shaders::MODULES as SHADER_MODULES;

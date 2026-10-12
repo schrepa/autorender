@@ -115,6 +115,11 @@ pub(crate) const MAP: &[Rule] = &[
             Smoke("plugins"),
         ],
     },
+    // Native range reads, which terrain files stream by.
+    Rule {
+        paths: &["crates/engine/src/range_reads*"],
+        checks: &[Smoke("terrain-files"), Smoke("native")],
+    },
     Rule {
         paths: &[
             "crates/engine/src/**/browser*",

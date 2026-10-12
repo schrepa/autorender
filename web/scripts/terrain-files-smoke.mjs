@@ -2,7 +2,8 @@
  * The terrain tools' files: an ETR1 bake streams, and an import loads.
  *
  * engine_assetc's `terrain_bake` bakes the fixture's layers into an ETR1
- * file, which streams by byte range with the heights generating gives;
+ * file, which streams by byte range with the heights generating gives, on
+ * the page and on the native host (its reads on an I/O thread);
  * `terrain_import` brings the dome in as a RAW heightmap of its own, and
  * the scene it writes loads with the dome's summit, its source and its
  * attribution. Both tools are built with the quick profile by the cargo on
@@ -13,10 +14,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFile, rm, writeFile } from "node:fs/promises";
+import { launchNativeSession } from "./agent-native.mjs";
 import { cargoBinaries } from "./harness.mjs";
 import { fast, fixture, folder, openTerrain, overview, scenes, terrain } from "./terrain-fixture.mjs";
 
 const tools = cargoBinaries(["-p", "engine_assetc", "--profile", "quick", "--bin", "terrain_bake", "--bin", "terrain_import"]);
+// The native Stress Lab with its development tools.
+const natives = cargoBinaries(["-p", "stress-lab", "--bin", "stress-lab-native", "--profile", "quick", "--features", "dev"]);
 // The fixture as a file, which the bake reads.
 const source = `${scenes}terrain-smoke.scene.json`;
 const opened = await openTerrain("terrain-files");
@@ -56,6 +60,39 @@ try {
     }
   }
   checks.push({ check: "ETR1 file streaming", tiles: streamed.terrain.tiles });
+
+  // Natively the same file streams, read on the host's I/O thread: the
+  // same points stand at the same heights.
+  const filedPath = `${scenes}terrain-smoke-filed.scene.json`;
+  await writeFile(filedPath, JSON.stringify(filed));
+  const native = await launchNativeSession({ program: (await natives)["stress-lab-native"], args: ["--source", filedPath, "--size=320x200"] });
+  try {
+    const run = async command => {
+      const reply = await native.execute(command);
+      assert.ok(reply.ok, `${command.op} natively: ${JSON.stringify(reply.error)}`);
+      return reply.result;
+    };
+    await run({ op: "environment", terrain: fast });
+    await run({ op: "camera", ...overview });
+    let natively;
+    for (let attempt = 0; attempt < 300 && !natively; attempt++) {
+      const { rendering } = await run({ op: "frames", count: 4, interval_ms: 1000 / 60 });
+      if (rendering.terrain.tiles > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_patches === 0) {
+        natively = { tiles: rendering.terrain.tiles, samples: (await run({ op: "terrain_height", points: [[10, -7], [-200, 150], [300, -310]] })).samples };
+      }
+    }
+    assert.ok(natively, "file tiles arrive natively");
+    for (const [index, sample] of natively.samples.entries()) {
+      assert.ok(sample, `point ${index} resident natively`);
+      if (sample.level === read[index].level) {
+        assert.ok(Math.abs(sample.height - read[index].height) < 2e-3, `native file height ${sample.height} vs ${read[index].height}`);
+      }
+    }
+    checks.push({ check: "ETR1 file streaming natively", tiles: natively.tiles });
+  } finally {
+    await native.close();
+    await rm(filedPath, { force: true });
+  }
 
   // The import tool reads the dome as a RAW heightmap of its
   // own, centered on its middle without detail noise, and the scene it
