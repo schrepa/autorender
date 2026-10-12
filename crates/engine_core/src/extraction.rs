@@ -1,11 +1,65 @@
-//! What the per-feature extractions (lights, particles, decals and
-//! reflection probes) share: where a frame reads world poses, and their
-//! nearest-wins budgets.
+//! The per-feature extractions, each filling its feature's part of a
+//! frame, in one order ([`Extractions`]), and what they share: where a
+//! frame reads world poses, and their nearest-wins budgets.
 
 use bevy_ecs::prelude::{Entity, World};
 use glam::Mat4;
 
-use crate::{GlobalTransforms, PresentedTransforms, TransformIndex};
+use crate::retained_render::RetainedRender;
+use crate::{
+    GlobalTransforms, PresentedTransforms, SkinExtraction, TransformIndex, WorldCells, decals,
+    lights, particles, probes,
+};
+
+/// What each feature's extraction keeps between frames, its fields in the
+/// order [`Self::extract`] runs them: local lights and particle emitters,
+/// skins' joint palettes, then decals, whose poses the joints list after
+/// the skins', then reflection probes.
+pub(crate) struct Extractions {
+    lights: lights::LightExtraction,
+    particles: particles::ParticleExtraction,
+    skins: SkinExtraction,
+    decals: decals::DecalExtraction,
+    probes: probes::ProbeExtraction,
+}
+
+impl Extractions {
+    pub(crate) fn new(world: &mut World) -> Self {
+        Self {
+            lights: lights::LightExtraction::new(world),
+            particles: particles::ParticleExtraction::new(world),
+            skins: SkinExtraction::new(world),
+            decals: decals::DecalExtraction::new(world),
+            probes: probes::ProbeExtraction::new(world),
+        }
+    }
+
+    /// Fills each feature's part of `retained`'s frame, after its
+    /// instances, from `world` seen at `aspect`: deformation's, then this
+    /// struct's in their order, then terrains' and world streaming's,
+    /// which keep nothing between frames. `gpu` frames leave poses to the
+    /// GPU.
+    pub(crate) fn extract(
+        &mut self,
+        retained: &mut RetainedRender,
+        world: &World,
+        aspect: f32,
+        gpu: bool,
+    ) {
+        retained.extract_deformation(world);
+        retained.extract_lights_and_particles(world, &mut self.lights, &mut self.particles, gpu);
+        retained.extract_skins(world, &mut self.skins, gpu);
+        retained.extract_decals(world, &mut self.decals, gpu);
+        retained.extract_probes(world, &mut self.probes);
+        retained.extract_terrain(world, aspect);
+        retained.set_cells(
+            world
+                .get_resource::<WorldCells>()
+                .map(WorldCells::stats)
+                .unwrap_or_default(),
+        );
+    }
+}
 
 /// Where an extraction reads entities' world matrices: the poses prepared
 /// for the frame or, on GPU-presented frames, which prepare none, the

@@ -259,13 +259,7 @@ pub struct Engine {
     clock: FixedClock,
     render_query: RenderQuery,
     retained: retained_render::RetainedRender,
-    // Local lights and particle emitters of
-    // each extraction.
-    lights: lights::LightExtraction,
-    particles: particles::ParticleExtraction,
-    skins: SkinExtraction,
-    decals: decals::DecalExtraction,
-    probes: probes::ProbeExtraction,
+    extractions: extraction::Extractions,
     plugins_finalized: bool,
     tick_ahead: TickAhead,
 }
@@ -414,11 +408,7 @@ impl Engine {
             Option<Ref<Mesh3d>>,
             Option<Ref<Tint>>,
         ), Or<(With<Cube>, With<Mesh3d>)>>();
-        let lights = lights::LightExtraction::new(app.world_mut());
-        let particles = particles::ParticleExtraction::new(app.world_mut());
-        let skins = SkinExtraction::new(app.world_mut());
-        let decals = decals::DecalExtraction::new(app.world_mut());
-        let probes = probes::ProbeExtraction::new(app.world_mut());
+        let extractions = extraction::Extractions::new(app.world_mut());
         let mut retained = retained_render::RetainedRender::new(
             cube_mesh,
             config.frustum_culling,
@@ -430,11 +420,7 @@ impl Engine {
             clock,
             render_query,
             retained,
-            lights,
-            particles,
-            skins,
-            decals,
-            probes,
+            extractions,
             plugins_finalized: false,
             tick_ahead: TickAhead::None,
         }
@@ -904,25 +890,10 @@ impl Engine {
     /// nothing structural changed.
     fn extract_retained(&mut self, aspect: f32, gpu: bool) -> RenderFrame<'_> {
         let world = self.app.world();
-        self.retained.extract_deformation(world);
         self.retained
             .prepare(world, &mut self.render_query, aspect, gpu);
-        self.retained.extract_lights_and_particles(
-            world,
-            &mut self.lights,
-            &mut self.particles,
-            gpu,
-        );
-        self.retained.extract_skins(world, &mut self.skins, gpu);
-        self.retained.extract_decals(world, &mut self.decals, gpu);
-        self.retained.extract_probes(world, &mut self.probes);
-        self.retained.extract_terrain(world, aspect);
-        self.retained.set_cells(
-            world
-                .get_resource::<WorldCells>()
-                .map(WorldCells::stats)
-                .unwrap_or_default(),
-        );
+        self.extractions
+            .extract(&mut self.retained, world, aspect, gpu);
         if gpu {
             // Later source edits must be newer than the stamp window just
             // consumed.
