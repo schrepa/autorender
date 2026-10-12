@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 
 use super::EngineControl;
 use crate::inspect::Inspector;
+use crate::results::result;
 use crate::views::{AnimationPlayerView, ClipView, SkinView};
 use crate::{DevError, DevTools, InspectorDescriptor, InspectorKind};
 
@@ -191,12 +192,14 @@ fn animate(
     let mut player = world
         .get_mut::<AnimationPlayer>(entity)
         .expect("checked above");
-    let values = |player: &AnimationPlayer| {
-        let clip = scene
+    let values = |player: &AnimationPlayer| PlayerValues {
+        clip: scene
             .clips()
             .find(|&(_, handle)| handle == player.clip)
-            .map(|(id, _)| id.to_owned());
-        json!({"clip": clip, "time": player.time, "speed": player.speed, "looping": player.looping})
+            .map(|(id, _)| id.to_owned()),
+        time: player.time,
+        speed: player.speed,
+        looping: player.looping,
     };
     let before = values(&player);
     if let Some(clip) = clip {
@@ -211,5 +214,35 @@ fn animate(
     if let Some(looping) = change.looping {
         player.looping = looping;
     }
-    Ok(json!({"temporary": true, "before": before, "after": values(&player)}))
+    Ok(result::animation(AnimationResult {
+        temporary: true,
+        before,
+        after: values(&player),
+    }))
+}
+
+/// What `animation` answers: the player before and after.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct AnimationResult {
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+    /// The player before the control.
+    pub before: PlayerValues,
+    /// And after.
+    pub after: PlayerValues,
+}
+
+/// An animation player's clip, time, speed and looping.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct PlayerValues {
+    /// Its clip's authored ID, where the scene names it.
+    pub clip: Option<String>,
+    /// Seconds into the clip.
+    pub time: f32,
+    /// Playback rate.
+    pub speed: f32,
+    /// Whether it loops.
+    pub looping: bool,
 }

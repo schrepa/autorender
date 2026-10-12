@@ -14,35 +14,27 @@ use crate::{InspectorDescriptor, InspectorKind};
 /// Ops whose results are still built as untyped JSON, sorted. The list only
 /// shrinks: a new op's result is typed, in `results!` below.
 pub const UNTYPED_RESULTS: &[&str] = &[
-    "animation",
     "benchmark",
     "camera",
     "capture",
     "culling",
     "debug_panic",
-    "deform",
-    "deformation_query",
     "environment",
     "frames",
     "game",
     "input",
-    "nav_go",
-    "nav_path",
     "pause",
     "present",
     "reload",
     "render",
     "resume",
     "step",
-    "terrain",
     "terrain_edit",
     "terrain_height",
     "terrain_redo",
     "terrain_route",
     "terrain_sweep",
     "terrain_undo",
-    "water_query",
-    "world_changes",
 ];
 
 /// Declares each typed op's result type, `op: Type`: handlers hand a result
@@ -81,6 +73,14 @@ results! {
     overlap: crate::features::collision::OverlapResult,
     shape_cast: crate::features::collision::ShapeCastResult,
     collision_events: crate::features::collision::CollisionEventsResult,
+    nav_path: crate::features::navigation::NavPathResult,
+    nav_go: crate::features::navigation::NavGoResult,
+    water_query: crate::features::ocean::WaterQueryResult,
+    deformation_query: crate::features::deformation::DeformationQueryResult,
+    deform: crate::features::deformation::DeformResult,
+    animation: crate::features::animation::AnimationResult,
+    world_changes: crate::features::world_streaming::WorldChangesResult,
+    terrain: crate::features::terrain::TerrainControlResult,
 }
 
 /// The engine as a session finds it: the world's size, the inspectors,

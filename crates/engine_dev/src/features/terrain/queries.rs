@@ -25,9 +25,29 @@ const PLACED_RAY_HITS: usize = 16;
 
 /// A terrain's authored ID, or its entity bits outside scenes.
 pub(crate) fn terrain_id(world: &World, entity: engine_core::bevy_ecs::prelude::Entity) -> Value {
+    json!(terrain_key(world, entity))
+}
+
+/// A terrain as replies name it: its authored ID, or its entity's bits
+/// outside scenes.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum TerrainKey {
+    /// Its authored ID.
+    Authored(String),
+    /// Its entity's bits, outside scenes.
+    Entity(u64),
+}
+
+/// The terrain `entity` as replies name it.
+pub(crate) fn terrain_key(
+    world: &World,
+    entity: engine_core::bevy_ecs::prelude::Entity,
+) -> TerrainKey {
     world.get::<SceneEntity>(entity).map_or_else(
-        || json!(entity.to_bits()),
-        |source| json!(source.authored_id),
+        || TerrainKey::Entity(entity.to_bits()),
+        |source| TerrainKey::Authored(source.authored_id.clone()),
     )
 }
 

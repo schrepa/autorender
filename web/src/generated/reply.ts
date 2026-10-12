@@ -23,6 +23,16 @@ export interface Reply {
   version?: number | null;
 }
 
+/** What `animation` answers: the player before and after. */
+export interface AnimationResult {
+  /** And after. */
+  after: PlayerValues;
+  /** The player before the control. */
+  before: PlayerValues;
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
+}
+
 /** A file a host wrote for a request. */
 export interface Artifact {
   /** Its size in bytes. */
@@ -144,6 +154,46 @@ export interface CollisionWorldView {
   /** Cache revision and source clocks are decimal strings, not runtime handles. */
   revision: string;
   tick: string;
+}
+
+/** What `deform` answers: the track pressed and the log after. */
+export interface DeformResult {
+  /** Tracks the log's budget left out. */
+  dropped: number;
+  /** Whether deformation draws. */
+  enabled: boolean;
+  /** Tracks the log holds. */
+  stamps: number;
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
+  /** The track pressed. */
+  track: Track;
+}
+
+/** What `deformation_query` answers: the tracks under each point. */
+export interface DeformationQueryResult {
+  /** Tracks the log's budget left out. */
+  dropped: number;
+  /** Each point's. */
+  samples: DepthSample[];
+  /** The simulation time sampled. */
+  seconds: number;
+  /** Tracks the log holds. */
+  stamps: number;
+}
+
+/** The tracks and ground under one point. */
+export interface DepthSample {
+  /** Meters the terrain's deformation map sinks it, where resident. */
+  deform?: number | null;
+  /** The depth drawn: the shallower of both, where resident. */
+  depth?: number | null;
+  /** The ground's height, where a tile is resident. */
+  ground?: number | null;
+  /** Meters their rims raise it. */
+  rim: number;
+  /** Meters the tracks sink the ground. */
+  track: number;
 }
 
 /** What `describe` answers: every type it describes, or one of them. */
@@ -304,6 +354,43 @@ export interface InspectorDescriptor {
   schema: unknown;
 }
 
+/** What `nav_go` answers: where the agent now walks. */
+export interface NavGoResult {
+  /** Where it walks (world x and z); null where it stopped. */
+  destination?: number[] | null;
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
+}
+
+/** How an agent walks. */
+export interface NavOptions {
+  /** The finest pyramid level it walks. */
+  level?: number;
+  /** The meters around the walk's ends it may stray. */
+  margin?: number;
+  /**
+   * The most samples a walk searches, beyond which it walks a coarser
+   * level.
+   */
+  max_samples?: number;
+  /** The steepest step it climbs: rise per meter. */
+  max_slope?: number;
+  /** The deepest water it wades, meters. */
+  max_water?: number;
+  /** Its radius, by which obstacles widen, meters. */
+  radius?: number;
+}
+
+/** What `nav_path` answers: the walk found, if one reaches. */
+export interface NavPathResult {
+  /** How the walk weighed the ground. */
+  options: NavOptions;
+  /** The terrain walked. */
+  terrain: TerrainKey;
+  /** The walk; null where none reaches. */
+  walk?: WalkResult | null;
+}
+
 /**
  * The engine's state a reply observed. Counters and revisions are decimal
  * strings, which keep 64-bit values exact in JavaScript.
@@ -319,18 +406,40 @@ export interface Observation {
   tick?: string | null;
 }
 
+/**
+ * One Gerstner wave: its wave vector (radians per meter along x and z,
+ * pointing where it runs), its height above the still sea (meters), how
+ * far its surface points move along it (meters), its angular frequency
+ * (radians per second) and its phase at time zero at the origin.
+ */
+export interface OceanWave {
+  amplitude: number;
+  frequency: number;
+  phase: number;
+  reach: number;
+  vector: number[];
+}
+
 /** Each op's result where it is typed, by op: what a successful reply's `result` holds besides what hosts add. */
 export interface OpResults {
+  animation: AnimationResult;
   assets: AssetsResult;
   collision_events: CollisionEventsResult;
+  deform: DeformResult;
+  deformation_query: DeformationQueryResult;
   describe: DescribeResult;
   digest: DigestResult;
   distribution: DistributionResult;
   inspect: InspectResult;
+  nav_go: NavGoResult;
+  nav_path: NavPathResult;
   overlap: OverlapResult;
   raycast: RaycastResult;
   shape_cast: ShapeCastResult;
   status: StatusResult;
+  terrain: TerrainControlResult;
+  water_query: WaterQueryResult;
+  world_changes: WorldChangesResult;
 }
 
 /** How a host's effect went: each [`Effect`] says what it sets. */
@@ -370,6 +479,18 @@ export interface PlacedHit {
   asset: number;
   /** The placement layer's index. */
   layer: number;
+}
+
+/** An animation player's clip, time, speed and looping. */
+export interface PlayerValues {
+  /** Its clip's authored ID, where the scene names it. */
+  clip?: string | null;
+  /** Whether it loops. */
+  looping: boolean;
+  /** Playback rate. */
+  speed: number;
+  /** Seconds into the clip. */
+  time: number;
 }
 
 export type PresentationModeView = "current" | "interpolated";
@@ -444,6 +565,21 @@ export interface SceneObservation {
   revision: string;
 }
 
+/** The sea's surface over a point. */
+export interface SeaSurface {
+  /** How much its waves compress it there. */
+  compression: number;
+  /** Its height, to the millimeter. */
+  height: number;
+  /** Its normal. */
+  normal: number[];
+  /**
+   * Where the surface point there rests on the still sea (world x
+   * and z).
+   */
+  still: number[];
+}
+
 /** Whether a pair began or stopped overlapping. */
 export type SensorEventKindView = "enter" | "exit";
 
@@ -512,6 +648,32 @@ export interface StatusResult {
  */
 export type Step = { reply: Reply } | { effect: Effect };
 
+/** What `terrain` answers: terrain's view and level of detail after. */
+export interface TerrainControlResult {
+  /** Where streaming stays frozen, where it does (world space). */
+  frozen_at?: number[] | null;
+  /** The settings' pixel error, where terrain settings exist. */
+  pixel_error?: number | null;
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
+  /** Always true: terrain draws as asked. */
+  terrain_changed: boolean;
+  /** The view terrain shows, where the control named one. */
+  view?: TerrainView | null;
+}
+
+/**
+ * A terrain as replies name it: its authored ID, or its entity's bits
+ * outside scenes.
+ */
+export type TerrainKey = string | number;
+
+/**
+ * What terrain shows: its material, or for development its
+ * levels of detail, normals or tiles and patches.
+ */
+export type TerrainView = "shaded" | "levels" | "normals" | "tiles" | "materials" | "sky" | "detail";
+
 /**
  * One texture the authored scene names: its ID, whether the library holds
  * it, its size and whether the GPU holds it.
@@ -534,5 +696,68 @@ export interface TextureAsset {
 /** Whether the library holds a texture's pixels. */
 export type TextureState = "cpu_ready" | "missing";
 
+/**
+ * One stamp: a capsule over the ground from world `from` to `to` (x and
+ * z) of `radius` meters (0.01 to 50), sinking ground as deformable as that
+ * `depth` meters along its middle line (0 to 10), round (`flatness` 0) to
+ * flat (1), pressed at simulation time `seconds`.
+ */
+export interface Track {
+  depth: number;
+  flatness: number;
+  from: number[];
+  radius: number;
+  seconds: number;
+  to: number[];
+}
+
 /** What a type `describe` answers for is. */
 export type TypeKind = "component" | "resource" | "authoring" | "protocol" | "observation" | "catalog";
+
+/** A walk over the terrain. */
+export interface WalkResult {
+  /** Its length, meters. */
+  length: number;
+  /** The pyramid level walked. */
+  level: number;
+  /** Its points, world space, rounded to centimeters. */
+  points: number[][];
+  /** Samples searched. */
+  searched: number;
+}
+
+/** What `water_query` answers: the sea and ground under each point. */
+export interface WaterQueryResult {
+  /** Its waves' heights summed. */
+  amplitude?: number | null;
+  /** The sea's still level, where there is a sea. */
+  level?: number | null;
+  /** Each point's. */
+  samples: WaterSample[];
+  /** The simulation time sampled. */
+  seconds: number;
+  /** Its waves, longest first. */
+  waves?: OceanWave[] | null;
+}
+
+/** The sea and ground under one point. */
+export interface WaterSample {
+  /** The water's depth, where both are. */
+  depth?: number | null;
+  /** The ground's height, where a tile is resident. */
+  ground?: number | null;
+  /** The sea's surface, where there is a sea. */
+  ocean?: SeaSurface | null;
+}
+
+/** What `world_changes` answers: what it changed and what stays removed. */
+export interface WorldChangesResult {
+  /** Items it removed that were not. */
+  newly_removed: number;
+  /** Items removed now. */
+  removed: number;
+  /** Items it restored. */
+  restored: number;
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
+}

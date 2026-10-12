@@ -19,10 +19,12 @@ use super::EngineControl;
 use crate::inspect::Inspector;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::protocol::stamp_rule;
+use crate::results::result;
 use crate::views::TerrainDebugView;
 use crate::{Context, DevError, DevTools, InspectorDescriptor, InspectorKind};
 use controls::{TerrainEditing, edit_terrain};
-pub(crate) use queries::terrain_id;
+pub use queries::TerrainKey;
+pub(crate) use queries::terrain_key;
 pub use queries::{TerrainHeightQuery, TerrainRouteQuery, TerrainSweepQuery};
 
 /// Registers terrain's inspectors.
@@ -285,14 +287,32 @@ impl EngineControl for TerrainControl {
             debug.view = view;
         }
         world.insert_resource(debug);
-        Ok(json!({
-            "temporary": true,
-            "terrain_changed": true,
-            "frozen_at": debug.freeze.map(|eye| eye.to_array()),
-            "view": self.view.map(|_| debug.view),
-            "pixel_error": world.get_resource::<engine_core::TerrainSettings>().map(|settings| settings.pixel_error),
+        Ok(result::terrain(TerrainControlResult {
+            temporary: true,
+            terrain_changed: true,
+            frozen_at: debug.freeze.map(|eye| eye.to_array()),
+            view: self.view.map(|_| debug.view),
+            pixel_error: world
+                .get_resource::<engine_core::TerrainSettings>()
+                .map(|settings| settings.pixel_error),
         }))
     }
+}
+
+/// What `terrain` answers: terrain's view and level of detail after.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct TerrainControlResult {
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+    /// Always true: terrain draws as asked.
+    pub terrain_changed: bool,
+    /// Where streaming stays frozen, where it does (world space).
+    pub frozen_at: Option<[f32; 3]>,
+    /// The view terrain shows, where the control named one.
+    pub view: Option<engine_core::TerrainView>,
+    /// The settings' pixel error, where terrain settings exist.
+    pub pixel_error: Option<f32>,
 }
 
 /// Temporarily edit a generated terrain over its layers and bakes

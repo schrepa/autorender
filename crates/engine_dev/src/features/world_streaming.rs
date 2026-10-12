@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use super::{EngineControl, feature_mut};
 use crate::protocol::bounds;
+use crate::results::result;
 use crate::{DevError, DevTools, InspectorDescriptor};
 
 /// Registers world streaming's inspectors.
@@ -156,10 +157,24 @@ fn change_world(
     }
     let removed = remove.iter().filter(|id| changes.remove(id)).count();
     let restored = restore.iter().filter(|id| changes.restore(id)).count();
-    Ok(json!({
-        "temporary": true,
-        "newly_removed": removed,
-        "restored": restored,
-        "removed": changes.removed().len(),
+    Ok(result::world_changes(WorldChangesResult {
+        temporary: true,
+        newly_removed: removed,
+        restored,
+        removed: changes.removed().len(),
     }))
+}
+
+/// What `world_changes` answers: what it changed and what stays removed.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct WorldChangesResult {
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+    /// Items it removed that were not.
+    pub newly_removed: usize,
+    /// Items it restored.
+    pub restored: usize,
+    /// Items removed now.
+    pub removed: usize,
 }

@@ -100,6 +100,7 @@ impl ExtraRules for Ocean {
 /// far its surface points move along it (meters), its angular frequency
 /// (radians per second) and its phase at time zero at the origin.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct OceanWave {
     pub vector: [f32; 2],
     pub amplitude: f32,

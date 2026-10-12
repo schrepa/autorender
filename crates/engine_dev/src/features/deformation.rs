@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 use super::{EngineControl, EngineQuery, feature, feature_mut};
 use crate::protocol::bounds::MAX_POINTS;
+use crate::results::result;
 use crate::{DevError, DevTools, InspectorDescriptor, bounded, coordinate};
 
 /// Registers deformation's inspectors.
@@ -123,13 +124,59 @@ fn press_track(engine: &mut Engine, press: &DeformControl) -> Result<Value, DevE
         tracks.clear();
     }
     tracks.press(track, &settings);
-    Ok(json!({
-        "temporary": true,
-        "track": track,
-        "stamps": tracks.len(),
-        "dropped": tracks.dropped(),
-        "enabled": resource.is_some_and(|settings| settings.enabled),
+    Ok(result::deform(DeformResult {
+        temporary: true,
+        track,
+        stamps: tracks.len(),
+        dropped: tracks.dropped(),
+        enabled: resource.is_some_and(|settings| settings.enabled),
     }))
+}
+
+/// What `deform` answers: the track pressed and the log after.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct DeformResult {
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+    /// The track pressed.
+    pub track: Track,
+    /// Tracks the log holds.
+    pub stamps: usize,
+    /// Tracks the log's budget left out.
+    pub dropped: u64,
+    /// Whether deformation draws.
+    pub enabled: bool,
+}
+
+/// What `deformation_query` answers: the tracks under each point.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct DeformationQueryResult {
+    /// The simulation time sampled.
+    pub seconds: f64,
+    /// Each point's.
+    pub samples: Vec<DepthSample>,
+    /// Tracks the log holds.
+    pub stamps: usize,
+    /// Tracks the log's budget left out.
+    pub dropped: u64,
+}
+
+/// The tracks and ground under one point.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct DepthSample {
+    /// Meters the tracks sink the ground.
+    pub track: f64,
+    /// Meters their rims raise it.
+    pub rim: f64,
+    /// Meters the terrain's deformation map sinks it, where resident.
+    pub deform: Option<f64>,
+    /// The depth drawn: the shallower of both, where resident.
+    pub depth: Option<f64>,
+    /// The ground's height, where a tile is resident.
+    pub ground: Option<f64>,
 }
 
 /// The tracks deformers and agents pressed at world points
@@ -200,19 +247,19 @@ fn tracks(
             let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
             let depth = tracks.at(Vec2::new(x, z), seconds, &settings);
             let deform = terrains.deform_at(x, z);
-            Ok(json!({
-                "track": round(depth.track),
-                "rim": round(depth.rim),
-                "deform": deform.map(round),
-                "depth": deform.map(|deform| round(engine_core::math::min(depth.track, deform))),
-                "ground": terrains.height_at(x, z).map(round),
-            }))
+            Ok(DepthSample {
+                track: round(depth.track),
+                rim: round(depth.rim),
+                deform: deform.map(round),
+                depth: deform.map(|deform| round(engine_core::math::min(depth.track, deform))),
+                ground: terrains.height_at(x, z).map(round),
+            })
         })
         .collect::<Result<Vec<_>, DevError>>()?;
-    Ok(json!({
-        "seconds": seconds,
-        "samples": samples,
-        "stamps": tracks.len(),
-        "dropped": tracks.dropped(),
+    Ok(result::deformation_query(DeformationQueryResult {
+        seconds,
+        samples,
+        stamps: tracks.len(),
+        dropped: tracks.dropped(),
     }))
 }

@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use super::EngineQuery;
 use crate::protocol::bounds::MAX_POINTS;
+use crate::results::result;
 use crate::{DevError, DevTools, InspectorDescriptor, coordinate};
 
 /// Registers the sea's inspectors.
@@ -89,26 +90,69 @@ impl EngineQuery for WaterQuery {
                 let ground = Ground::sample_in(world, x, z).map(|sample| sample.height);
                 // Millimeters and ten-thousandths keep responses small.
                 let round = |value: f64, step: f64| (value / step).round() * step;
-                Ok(json!({
-                    "ocean": surface.map(|surface| json!({
-                        "height": round(f64::from(surface.height), 1.0e-3),
-                        "normal": surface.normal.map(|value| round(f64::from(value), 1.0e-4)),
-                        "compression": round(f64::from(surface.compression), 1.0e-4),
-                        "still": surface.still.map(|value| round(value, 1.0e-3)),
-                    })),
-                    "ground": ground.map(|ground| round(f64::from(ground), 1.0e-3)),
-                    "depth": surface
+                Ok(WaterSample {
+                    ocean: surface.map(|surface| SeaSurface {
+                        height: round(f64::from(surface.height), 1.0e-3),
+                        normal: surface.normal.map(|value| round(f64::from(value), 1.0e-4)),
+                        compression: round(f64::from(surface.compression), 1.0e-4),
+                        still: surface.still.map(|value| round(value, 1.0e-3)),
+                    }),
+                    ground: ground.map(|ground| round(f64::from(ground), 1.0e-3)),
+                    depth: surface
                         .zip(ground)
                         .map(|(surface, ground)| round(f64::from(surface.height - ground), 1.0e-3)),
-                }))
+                })
             })
             .collect::<Result<Vec<_>, DevError>>()?;
-        Ok(json!({
-            "seconds": seconds,
-            "samples": samples,
-            "level": waves.as_ref().map(|waves| waves.level),
-            "amplitude": waves.as_ref().map(|waves| waves.amplitude()),
-            "waves": waves.as_ref().map(|waves| waves.waves().to_vec()),
+        Ok(result::water_query(WaterQueryResult {
+            seconds,
+            samples,
+            level: waves.as_ref().map(|waves| waves.level),
+            amplitude: waves.as_ref().map(|waves| waves.amplitude()),
+            waves: waves.as_ref().map(|waves| waves.waves().to_vec()),
         }))
     }
+}
+
+/// What `water_query` answers: the sea and ground under each point.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct WaterQueryResult {
+    /// The simulation time sampled.
+    pub seconds: f64,
+    /// Each point's.
+    pub samples: Vec<WaterSample>,
+    /// The sea's still level, where there is a sea.
+    pub level: Option<f32>,
+    /// Its waves' heights summed.
+    pub amplitude: Option<f32>,
+    /// Its waves, longest first.
+    pub waves: Option<Vec<engine_core::OceanWave>>,
+}
+
+/// The sea and ground under one point.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct WaterSample {
+    /// The sea's surface, where there is a sea.
+    pub ocean: Option<SeaSurface>,
+    /// The ground's height, where a tile is resident.
+    pub ground: Option<f64>,
+    /// The water's depth, where both are.
+    pub depth: Option<f64>,
+}
+
+/// The sea's surface over a point.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct SeaSurface {
+    /// Its height, to the millimeter.
+    pub height: f64,
+    /// Its normal.
+    pub normal: [f64; 3],
+    /// How much its waves compress it there.
+    pub compression: f64,
+    /// Where the surface point there rests on the still sea (world x
+    /// and z).
+    pub still: [f64; 2],
 }

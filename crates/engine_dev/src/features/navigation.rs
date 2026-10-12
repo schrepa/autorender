@@ -10,9 +10,10 @@ use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::terrain::terrain_id;
+use super::terrain::{TerrainKey, terrain_key};
 use super::{EngineControl, EngineQuery, missing};
 use crate::inspect::Inspector;
+use crate::results::result;
 use crate::{DevError, DevTools, InspectorDescriptor, InspectorKind, coordinate};
 
 /// Registers navigation's inspectors.
@@ -174,7 +175,46 @@ fn nav_go(
         .get_mut::<engine_core::NavAgent>(entity)
         .expect("checked above");
     agent.destination = destination;
-    Ok(json!({ "temporary": true, "destination": destination }))
+    Ok(result::nav_go(NavGoResult {
+        temporary: true,
+        destination,
+    }))
+}
+
+/// What `nav_go` answers: where the agent now walks.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct NavGoResult {
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+    /// Where it walks (world x and z); null where it stopped.
+    pub destination: Option<[f32; 2]>,
+}
+
+/// What `nav_path` answers: the walk found, if one reaches.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct NavPathResult {
+    /// The terrain walked.
+    pub terrain: TerrainKey,
+    /// How the walk weighed the ground.
+    pub options: engine_core::terrain_data::NavOptions,
+    /// The walk; null where none reaches.
+    pub walk: Option<WalkResult>,
+}
+
+/// A walk over the terrain.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct WalkResult {
+    /// Its points, world space, rounded to centimeters.
+    pub points: Vec<[f64; 3]>,
+    /// Its length, meters.
+    pub length: f32,
+    /// The pyramid level walked.
+    pub level: u32,
+    /// Samples searched.
+    pub searched: usize,
 }
 
 /// The shortest walk over a generated terrain from world `from` to `to`
@@ -236,14 +276,14 @@ fn walk(
         .ok_or_else(|| missing(Feature::Terrain))?
         .walk(entity, from, to, &options);
     let round = |value: f32| (f64::from(value) * 100.0).round() / 100.0;
-    Ok(json!({
-        "terrain": terrain_id(world, entity),
-        "options": options,
-        "walk": walk.map(|walk| json!({
-            "points": walk.points.iter().map(|point| point.map(round)).collect::<Vec<_>>(),
-            "length": walk.length,
-            "level": walk.level,
-            "searched": walk.searched,
-        })),
+    Ok(result::nav_path(NavPathResult {
+        terrain: terrain_key(world, entity),
+        options,
+        walk: walk.map(|walk| WalkResult {
+            points: walk.points.iter().map(|point| point.map(round)).collect(),
+            length: walk.length,
+            level: walk.level,
+            searched: walk.searched,
+        }),
     }))
 }
