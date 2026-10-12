@@ -10,7 +10,8 @@ pub(super) const METHOD: Option<&str> = Some("suspend, read registers, follow fr
 #[derive(Clone, Copy)]
 pub(super) struct Id(mach2::port::mach_port_t);
 
-// A Mach port name of this process's thread.
+// SAFETY: a Mach port name of this process's thread, which any thread of the
+// process may suspend, resume and read.
 #[allow(unsafe_code)]
 unsafe impl Send for Id {}
 

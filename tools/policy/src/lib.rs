@@ -1,7 +1,8 @@
 //! Repository policy that needs no build: manifests (one lint table for
 //! every crate, inherited package keys and dependencies, exact pins, an
-//! exact toolchain) and sources (unsafe code only in the listed files, no
-//! crate-wide allow of a workspace lint, no work-left markers).
+//! exact toolchain) and sources (unsafe code only in the listed files, a
+//! `SAFETY:` comment on every unsafe block and impl, no crate-wide allow of
+//! a workspace lint, no work-left markers).
 //! `cargo xtask lint` runs it first; `cargo policy` runs it alone, in
 //! seconds, without compiling the engine.
 

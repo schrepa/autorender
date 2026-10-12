@@ -13,16 +13,81 @@ pub struct Split {
     pub comments: Vec<String>,
 }
 
+impl Split {
+    /// Whether a `SAFETY:` comment stands above line `line` (from 0): the
+    /// comment lines and attributes above it are walked upward, up to code
+    /// or a blank line.
+    pub fn safety_comment_above(&self, line: usize) -> bool {
+        let mut above = line;
+        while above > 0 {
+            above -= 1;
+            if self.comments[above].contains("SAFETY:") {
+                return true;
+            }
+            let code = self.code[above].trim();
+            let attribute = code.starts_with("#[") && code.ends_with(']');
+            let comment = code.is_empty() && !self.comments[above].trim().is_empty();
+            if !(attribute || comment) {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// The first line of the statement line `line` (from 0) belongs to:
+    /// lines above it whose code ends without `;`, `{` or `}` continue onto
+    /// it, up to a blank line, a comment or an attribute.
+    pub fn statement_start(&self, line: usize) -> usize {
+        let mut start = line;
+        while start > 0 {
+            let above = self.code[start - 1].trim();
+            let attribute = above.starts_with("#[") && above.ends_with(']');
+            if above.is_empty() || attribute || above.ends_with([';', '{', '}']) {
+                break;
+            }
+            start -= 1;
+        }
+        start
+    }
+
+    /// The token after byte `end` of line `line`'s code, across lines: a
+    /// word, or a single other character (`{`).
+    pub fn token_after(&self, line: usize, end: usize) -> String {
+        let rest = std::iter::once(&self.code[line][end..])
+            .chain(self.code[line + 1..].iter().map(String::as_str))
+            .flat_map(str::chars)
+            .skip_while(|c| c.is_whitespace());
+        let mut token = String::new();
+        for c in rest {
+            if identifier(c) {
+                token.push(c);
+            } else {
+                if token.is_empty() {
+                    token.push(c);
+                }
+                break;
+            }
+        }
+        token
+    }
+}
+
 fn identifier(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
 /// Whether `word` occurs in `text` whole: not inside a longer identifier.
 pub fn has_word(text: &str, word: &str) -> bool {
-    text.match_indices(word).any(|(at, _)| {
+    words(text, word).next().is_some()
+}
+
+/// The byte offset just past each whole occurrence of `word` in `text`.
+pub fn words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
+    text.match_indices(word).filter_map(move |(at, _)| {
         let before = text[..at].chars().next_back();
-        let after = text[at + word.len()..].chars().next();
-        !before.is_some_and(identifier) && !after.is_some_and(identifier)
+        let end = at + word.len();
+        let after = text[end..].chars().next();
+        (!before.is_some_and(identifier) && !after.is_some_and(identifier)).then_some(end)
     })
 }
 

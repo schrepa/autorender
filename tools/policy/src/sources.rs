@@ -1,6 +1,7 @@
-//! Source rules: unsafe code stays in the files the list names, crate roots
-//! allow no workspace lint crate-wide, and no file leaves work for later
-//! behind a marker.
+//! Source rules: unsafe code stays in the files the list names and every
+//! unsafe block and impl says why it is sound (in files Clippy does not
+//! build on this platform too), crate roots allow no workspace lint
+//! crate-wide, and no file leaves work for later behind a marker.
 
 use crate::{Problems, rust};
 
@@ -142,6 +143,28 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
             "listed in UNSAFE_FILES (tools/policy/src/sources.rs) but has no unsafe code: \
              remove it from the list",
         );
+    }
+    for (index, code) in split.code.iter().enumerate() {
+        for end in rust::words(code, "unsafe") {
+            let kind = match split.token_after(index, end).as_str() {
+                "{" => "block",
+                "impl" => "impl",
+                _ => continue,
+            };
+            // Above the block, or above the statement it is part of.
+            if !split.safety_comment_above(index)
+                && !split.safety_comment_above(split.statement_start(index))
+            {
+                problems.at(
+                    path,
+                    index + 1,
+                    &format!(
+                        "unsafe {kind} without a `// SAFETY:` comment above it saying why it is \
+                         sound"
+                    ),
+                );
+            }
+        }
     }
 }
 

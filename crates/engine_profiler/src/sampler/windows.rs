@@ -29,7 +29,8 @@ impl Drop for Open {
     }
 }
 
-// The sampler only reads the handle's thread through system calls.
+// SAFETY: a thread handle works from any thread of its process, and the
+// sampler only reads the handle's thread through system calls.
 #[allow(unsafe_code)]
 unsafe impl Send for Open {}
 

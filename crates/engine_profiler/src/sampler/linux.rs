@@ -15,8 +15,8 @@ pub(super) const METHOD: Option<&str> =
 #[derive(Clone, Copy)]
 pub(super) struct Id(libc::pthread_t);
 
-// A pthread handle names a thread for signalling and clocks; the sampler
-// uses it for nothing else.
+// SAFETY: a pthread handle names a thread for signalling and clocks, which
+// any thread of the process may use; the sampler uses it for nothing else.
 #[allow(unsafe_code)]
 unsafe impl Send for Id {}
 
