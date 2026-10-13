@@ -224,6 +224,14 @@ type Arrived = Rc<RefCell<Vec<(u64, Vec<u32>)>>>;
 /// `vt_scale` and `vt_layout` of `TerrainUniform`.
 pub(crate) type VtUniform = ([u32; 4], [f32; 4], [u32; 4]);
 
+/// A frame's page bakes: by sheet and terrain, their records as the bakes'
+/// buffer takes them (kept from frame to frame), and that buffer.
+struct Bakes {
+    list: Vec<(u32, u64, BakeRecord)>,
+    records: Vec<BakeRecord>,
+    buffer: crate::buffers::Growable,
+}
+
 pub(crate) struct VirtualTexture {
     enabled: bool,
     bakes_per_frame: u32,
@@ -262,9 +270,8 @@ pub(crate) struct VirtualTexture {
     readbacks: ReadbackRing<u64>,
     snapshots: HashMap<u64, Snapshot>,
     arrived: Arrived,
-    // This frame's bakes by sheet and terrain, and their buffer.
-    bakes: Vec<(u32, u64, BakeRecord)>,
-    bake_buffer: crate::buffers::Growable,
+    // This frame's bakes by sheet and terrain, their records and buffer.
+    bakes: Bakes,
     // Bakes' and feedback's layouts and pipelines.
     bake_layout: crate::pipelines::GroupLayout,
     bake_pipeline: Option<wgpu::RenderPipeline>,
@@ -306,13 +313,16 @@ impl VirtualTexture {
             readbacks: ReadbackRing::new("engine/terrain-vt-readback"),
             snapshots: HashMap::default(),
             arrived: Rc::new(RefCell::new(Vec::new())),
-            bakes: Vec::new(),
-            bake_buffer: crate::buffers::Growable::new(
-                device,
-                "engine/terrain-vt-bakes",
-                16,
-                wgpu::BufferUsages::empty(),
-            ),
+            bakes: Bakes {
+                list: Vec::new(),
+                records: Vec::new(),
+                buffer: crate::buffers::Growable::new(
+                    device,
+                    "engine/terrain-vt-bakes",
+                    16,
+                    wgpu::BufferUsages::empty(),
+                ),
+            },
             bake_layout: crate::pipelines::layout(device, &TERRAIN_VT_BAKE),
             bake_pipeline: None,
             feedback_layouts: [
@@ -392,7 +402,7 @@ impl VirtualTexture {
         (directory, base, generation): (&wgpu::Buffer, u32, u64),
     ) -> Vec<VtUniform> {
         self.stats = VtStats::default();
-        self.bakes.clear();
+        self.bakes.list.clear();
         self.frame += 1;
         self.bakes_per_frame = settings.virtual_texture_bakes;
         let per_row = maps.size.0 / SLOT_TEXELS;
@@ -695,7 +705,7 @@ impl VirtualTexture {
             textured.dirty[mip] = true;
             self.bake(slot, key, eye);
         }
-        let room = (self.bakes_per_frame as usize).saturating_sub(self.bakes.len());
+        let room = (self.bakes_per_frame as usize).saturating_sub(self.bakes.list.len());
         if room > 0 {
             let levels: HashMap<u64, Levels> = terrains
                 .terrains
@@ -739,13 +749,13 @@ impl VirtualTexture {
                 self.bake(slot, key, eye);
             }
         }
-        self.stats.bakes = self.bakes.len() as u32;
+        self.stats.bakes = self.bakes.list.len() as u32;
     }
 
     /// Bakes `key`'s page into `slot` from `eye` this frame.
     fn bake(&mut self, slot: u32, key: PageKey, eye: Vec3) {
         self.baked_from[slot as usize] = Some(eye);
-        self.bakes.push((
+        self.bakes.list.push((
             slot / self.per_sheet,
             key.terrain,
             BakeRecord {
@@ -816,20 +826,25 @@ impl VirtualTexture {
                 terrain.dirty[mip] = false;
             }
         }
-        self.bakes
+        let bakes = &mut self.bakes;
+        bakes
+            .list
             .sort_unstable_by_key(|(sheet, terrain, record)| (*sheet, *terrain, record.slot));
-        let records: Vec<BakeRecord> = self.bakes.iter().map(|(_, _, record)| *record).collect();
-        if records.is_empty() {
+        bakes.records.clear();
+        bakes
+            .records
+            .extend(bakes.list.iter().map(|(_, _, record)| *record));
+        if bakes.records.is_empty() {
             return;
         }
-        let bytes = std::mem::size_of_val(records.as_slice()) as u64;
-        self.bake_buffer.grow(device, bytes);
-        queue.write_buffer(&self.bake_buffer, 0, bytemuck::cast_slice(&records));
+        let bytes = std::mem::size_of_val(bakes.records.as_slice()) as u64;
+        bakes.buffer.grow(device, bytes);
+        queue.write_buffer(&bakes.buffer, 0, bytemuck::cast_slice(&bakes.records));
     }
 
     /// Whether this frame bakes pages.
     pub(crate) fn baking(&self) -> bool {
-        !self.bakes.is_empty()
+        !self.bakes.list.is_empty()
     }
 
     /// Whether any terrain is textured this frame, which asks for pages.
@@ -853,7 +868,7 @@ impl VirtualTexture {
         maps: &crate::terrain_maps::TerrainMaps,
         uniform_of: impl Fn(u64) -> Option<u32>,
     ) {
-        if self.bakes.is_empty() {
+        if self.bakes.list.is_empty() {
             return;
         }
         let pipeline = self.bake_pipeline.get_or_insert_with(|| {
@@ -888,15 +903,15 @@ impl VirtualTexture {
             &TERRAIN_VT_BAKE,
             &self.bake_layout,
             &[
-                crate::buffers::entry("terrain_vt_bakes", &self.bake_buffer),
+                crate::buffers::entry("terrain_vt_bakes", &self.bakes.buffer),
                 ("terrain_vt_heights", crate::pipelines::view(heights)),
             ],
         );
         let mut start = 0;
-        while start < self.bakes.len() {
-            let sheet = self.bakes[start].0;
+        while start < self.bakes.list.len() {
+            let sheet = self.bakes.list[start].0;
             let end = start
-                + self.bakes[start..]
+                + self.bakes.list[start..]
                     .iter()
                     .take_while(|(other, _, _)| *other == sheet)
                     .count();
@@ -925,9 +940,9 @@ impl VirtualTexture {
             pass.set_bind_group(2, &group, &[]);
             let mut first = start;
             while first < end {
-                let terrain = self.bakes[first].1;
+                let terrain = self.bakes.list[first].1;
                 let last = first
-                    + self.bakes[first..end]
+                    + self.bakes.list[first..end]
                         .iter()
                         .take_while(|(_, other, _)| *other == terrain)
                         .count();
@@ -1071,6 +1086,6 @@ impl VirtualTexture {
 
     /// Bytes of its buffers (the sheets count with the material maps).
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.wanted.size() * 4 + self.bake_buffer.size()
+        self.wanted.size() * 4 + self.bakes.buffer.size()
     }
 }

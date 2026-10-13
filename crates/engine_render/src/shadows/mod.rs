@@ -235,6 +235,15 @@ struct Caster<'m> {
     index: usize,
 }
 
+/// `storage` emptied, as a vector of `U`, which is `T` but for lifetimes:
+/// collecting an emptied vector's items into one of the same layout keeps
+/// its allocation, so frames list items borrowing their own data in storage
+/// kept from frame to frame.
+fn recycle<T, U>(mut storage: Vec<T>) -> Vec<U> {
+    storage.clear();
+    storage.into_iter().filter_map(|_| None).collect()
+}
+
 /// One frame's shadow work, from [`ShadowPass::prepare`].
 pub(crate) struct ShadowFrame {
     candidates: u32,
@@ -309,6 +318,9 @@ pub(crate) struct ShadowPass {
     // The view matrices and cull uniform last written.
     written_views: Option<Vec<f32>>,
     written_cull: Option<ShadowCullUniform>,
+    // The storage each frame lists its mesh casters in, which borrow the
+    // frame's meshes and materials, kept from frame to frame.
+    caster_storage: Cell<Vec<Caster<'static>>>,
 }
 
 impl ShadowPass {
@@ -337,6 +349,7 @@ impl ShadowPass {
             template_key: None,
             written_views: None,
             written_cull: None,
+            caster_storage: Cell::default(),
         }
     }
 
@@ -797,31 +810,32 @@ impl ShadowPass {
         // order changes no texel. Virtual geometry draws its casters'
         // clusters, and masked materials without bindings
         // draw nothing.
-        let mut casters: Vec<Caster<'_>> = if pose_group.is_some() {
-            groups
-                .iter()
-                .enumerate()
-                .filter(|(_, group)| !group.virtual_geometry)
-                .filter_map(|(index, group)| {
-                    let (draw, skinned) = meshes(group.mesh)?;
-                    let material = match group.material.map(materials) {
-                        Some(None) => return None,
-                        Some(Some(material)) => Some(material),
-                        None => None,
-                    };
-                    let skin = draw.skin.filter(|_| skinned);
-                    Some(Caster {
-                        choice: usize::from(material.is_some()) + 2 * usize::from(skin.is_some()),
-                        draw,
-                        skin,
-                        material,
-                        index,
-                    })
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let mut casters: Vec<Caster<'_>> = recycle(self.caster_storage.take());
+        if pose_group.is_some() {
+            casters.extend(
+                groups
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, group)| !group.virtual_geometry)
+                    .filter_map(|(index, group)| {
+                        let (draw, skinned) = meshes(group.mesh)?;
+                        let material = match group.material.map(materials) {
+                            Some(None) => return None,
+                            Some(Some(material)) => Some(material),
+                            None => None,
+                        };
+                        let skin = draw.skin.filter(|_| skinned);
+                        Some(Caster {
+                            choice: usize::from(material.is_some())
+                                + 2 * usize::from(skin.is_some()),
+                            draw,
+                            skin,
+                            material,
+                            index,
+                        })
+                    }),
+            );
+        }
         casters.sort_unstable_by_key(|caster| {
             (
                 caster.choice,
@@ -963,6 +977,7 @@ impl ShadowPass {
             pass.draw(0..3, 0..1);
             draw_selected(&mut pass, KEPT_LEVELS);
         }
+        self.caster_storage.set(recycle(casters));
         draws.get()
     }
 

@@ -50,7 +50,7 @@ const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
     (
         "crates/engine_render/src/terrain_vt.rs",
         "VirtualTexture",
-        32,
+        31,
     ),
     ("crates/engine_terrain/src/tile.rs", "Generator", 33),
 ];

@@ -158,14 +158,25 @@ pub(crate) struct ScatterPass {
     // camera's fading objects: the one after the last.
     ids_per_view: u32,
     fading_view: usize,
-    // The shadow map each view after the camera's draws into.
-    maps: Vec<usize>,
+    // The frame's views: the shadow map each one after the camera's draws
+    // into, what culling reads of each, and their card arguments.
+    frame_views: FrameViews,
     // Advances when the terrains' buffer is replaced.
     terrains_generation: u64,
     // What the device's storage bindings leave out of the objects.
     left_out: LeftOut,
     /// Objects resident.
     pub(crate) resident: u32,
+}
+
+/// A frame's views: the shadow map each one after the camera's draws into,
+/// what culling reads of each, and their card arguments, then the count of
+/// entries lists left out; kept from frame to frame.
+#[derive(Default)]
+struct FrameViews {
+    maps: Vec<usize>,
+    data: Vec<ViewData>,
+    card_args: Vec<[u32; 4]>,
 }
 
 /// Each draw's arguments with no instances, and every list's, rewritten
@@ -254,7 +265,7 @@ impl ScatterPass {
             group_count: 0,
             ids_per_view: 0,
             fading_view: 0,
-            maps: Vec::new(),
+            frame_views: FrameViews::default(),
             left_out: LeftOut {
                 objects: 0,
                 lists: false,
@@ -478,16 +489,18 @@ impl ScatterPass {
         (pixel_error, height, impostors, fade): (Option<f32>, f32, bool, f32),
         (maps, kept, level, resolution): ShadowViews<'_>,
     ) -> bool {
-        self.maps.clear();
+        self.frame_views.maps.clear();
         if self.resident == 0 {
             return false;
         }
         let y_row = view_projection.row(1).truncate().length();
         let pixels = pixel_error.map_or(0.0, |error| y_row * height * 0.5 / error);
-        let mut views = vec![ViewData {
+        let mut views = std::mem::take(&mut self.frame_views.data);
+        views.clear();
+        views.push(ViewData {
             planes: crate::ground_cover::planes(view_projection),
             limits: [0.0; 4],
-        }];
+        });
         let half_texel = |clip: Mat4| {
             let texels = clip.row(0).truncate().length() * resolution as f32;
             1.0 / engine_core::math::max(texels, 1.0e-12)
@@ -508,7 +521,7 @@ impl ScatterPass {
                 planes,
                 limits: [half_texel, 2.0 * half_texel, 0.0, cascade],
             });
-            self.maps.push(map);
+            self.frame_views.maps.push(map);
         }
         for (map, refresh) in [
             (crate::shadows::KEPT_MAP, kept),
@@ -519,7 +532,7 @@ impl ScatterPass {
                     planes: refresh.planes,
                     limits: [0.5 * refresh.texel, refresh.texel, 1.0, 0.0],
                 });
-                self.maps.push(map);
+                self.frame_views.maps.push(map);
             }
         }
         let view_count = views.len() as u32;
@@ -540,10 +553,17 @@ impl ScatterPass {
             fade: [fade, FADE_MARGIN, 0.0, 0.0],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
-        let mut card_args = [CARD_VERTICES, 0, 0, 0].repeat(view_count as usize);
-        card_args.extend([0; 4]);
-        queue.write_buffer(&self.card_args, 0, bytemuck::cast_slice(&card_args));
+        let card_args = &mut self.frame_views.card_args;
+        card_args.clear();
+        card_args.resize(view_count as usize, [CARD_VERTICES, 0, 0, 0]);
+        card_args.push([0; 4]);
+        queue.write_buffer(
+            &self.card_args,
+            0,
+            bytemuck::cast_slice(card_args.as_slice()),
+        );
         queue.write_buffer(&self.views, 0, bytemuck::cast_slice(&views));
+        self.frame_views.data = views;
         self.args.lists.clear();
         for _ in 0..lists {
             self.args.lists.extend_from_slice(&self.args.template);
@@ -722,7 +742,8 @@ impl ScatterPass {
     /// The view shadow map `map` reads its lists from this frame, if it
     /// draws objects.
     pub(crate) fn map_view(&self, map: usize) -> Option<usize> {
-        self.maps
+        self.frame_views
+            .maps
             .iter()
             .position(|&drawn| drawn == map)
             .map(|index| index + 1)

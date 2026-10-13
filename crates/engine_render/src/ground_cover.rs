@@ -65,6 +65,10 @@ pub(crate) struct GroundCoverPass {
     grow_group: Cached<(u64, u64, u64, u64, u64), wgpu::BindGroup>,
     draw_group: Cached<u64, wgpu::BindGroup>,
     growths: Vec<Growth>,
+    // The growths' uniforms, and their bytes as written, each at its slot,
+    // kept from frame to frame.
+    grow_uniforms: Vec<GrowUniform>,
+    grow_bytes: Vec<u8>,
     // Last frame's presentation time, which blades swayed at then.
     previous_time: Option<f32>,
     readbacks: ReadbackRing<u32>,
@@ -107,6 +111,8 @@ impl GroundCoverPass {
             grow_group: Cached::default(),
             draw_group: Cached::default(),
             growths: Vec::new(),
+            grow_uniforms: Vec::new(),
+            grow_bytes: Vec::new(),
             previous_time: None,
             readbacks: ReadbackRing::new("engine/cover-readback"),
             totals: Rc::new(Cell::new(None)),
@@ -186,7 +192,8 @@ impl GroundCoverPass {
         let radius = settings.radius;
         let pixels_per_meter = pixels_per_meter(culling, height);
         let shading = sources.shading;
-        let mut uniforms = Vec::new();
+        let mut uniforms = std::mem::take(&mut self.grow_uniforms);
+        uniforms.clear();
         let mut most = 0.0;
         for (index, render) in terrains.terrains.iter().enumerate() {
             let (directory, palette, [densest, blade], sky) = terrain.cover_terrain(index);
@@ -207,22 +214,24 @@ impl GroundCoverPass {
                     ranges[level / 4][level % 4] = *range;
                 }
             }
-            let mut tiers = vec![(0.0, radius, 1.0)];
-            while reach > 0.0 && tiers.len() < MAX_TIERS {
-                let (_, outer, scale) = tiers[tiers.len() - 1];
+            let mut tiers = [(0.0, radius, 1.0); MAX_TIERS];
+            let mut count = 1;
+            while reach > 0.0 && count < MAX_TIERS {
+                let (_, outer, scale) = tiers[count - 1];
                 if outer >= reach {
                     break;
                 }
-                tiers.push((
+                tiers[count] = (
                     outer,
                     engine_core::math::min(2.0 * outer, reach),
                     2.0 * scale,
-                ));
+                );
+                count += 1;
             }
-            let reached = tiers[tiers.len() - 1].1;
+            let reached = tiers[count - 1].1;
             self.reach = engine_core::math::max(self.reach, reached);
-            self.tiers = self.tiers.max(tiers.len() as u32);
-            for (inner, outer, scale) in tiers {
+            self.tiers = self.tiers.max(count as u32);
+            for &(inner, outer, scale) in &tiers[..count] {
                 // Each tier past the radius tries the finest cells'
                 // candidates its nearest blades' share reaches.
                 let tried = if scale > 1.0 {
@@ -260,6 +269,7 @@ impl GroundCoverPass {
             most += cover_area(radius, reach) * density;
         }
         if self.growths.is_empty() {
+            self.grow_uniforms = uniforms;
             return false;
         }
         // Room for the most blades the discs can grow, or the budget, within
@@ -275,11 +285,13 @@ impl GroundCoverPass {
             self.blades_generation += 1;
         }
         self.capacity = capacity;
-        let mut bytes = vec![0_u8; uniforms.len() * SLOT as usize];
-        for (index, mut uniform) in uniforms.into_iter().enumerate() {
+        let mut bytes = std::mem::take(&mut self.grow_bytes);
+        bytes.clear();
+        bytes.resize(uniforms.len() * SLOT as usize, 0);
+        for (index, uniform) in uniforms.iter_mut().enumerate() {
             uniform.counts[3] = capacity;
             let at = index * SLOT as usize;
-            bytes[at..at + size_of::<GrowUniform>()].copy_from_slice(bytemuck::bytes_of(&uniform));
+            bytes[at..at + size_of::<GrowUniform>()].copy_from_slice(bytemuck::bytes_of(uniform));
         }
         if bytes.len() as u64 > self.uniforms.size() {
             self.uniforms = crate::buffers::uniform(
@@ -290,6 +302,8 @@ impl GroundCoverPass {
             self.blades_generation += 1;
         }
         queue.write_buffer(&self.uniforms, 0, &bytes);
+        self.grow_uniforms = uniforms;
+        self.grow_bytes = bytes;
         let frame = FrameUniform {
             wind: [wind[0], wind[1], time, previous],
         };

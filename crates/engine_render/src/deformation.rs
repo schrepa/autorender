@@ -74,6 +74,9 @@ pub(crate) struct DeformationPass {
     records: Vec<StampRecord>,
     stamps: crate::buffers::Growable,
     uniforms: wgpu::Buffer,
+    // The jobs' uniforms as written, each at its slot, kept from frame to
+    // frame.
+    uniform_bytes: Vec<u8>,
     buffers_generation: u64,
     group: Cached<(u64, u64), wgpu::BindGroup>,
     shading: DeformationShading,
@@ -96,6 +99,7 @@ impl DeformationPass {
             refill: 0.0,
             jobs: Vec::new(),
             records: Vec::new(),
+            uniform_bytes: Vec::new(),
             stamps: crate::buffers::Growable::new(
                 device,
                 "engine/deformation-stamps",
@@ -326,13 +330,15 @@ impl DeformationPass {
             );
             self.buffers_generation += 1;
         }
-        let mut bytes = vec![0_u8; uniform_bytes as usize];
+        let bytes = &mut self.uniform_bytes;
+        bytes.clear();
+        bytes.resize(uniform_bytes as usize, 0);
         for (index, job) in self.jobs.iter().enumerate() {
             let at = index * SLOT as usize;
             bytes[at..at + size_of::<JobUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&job.uniform));
         }
-        queue.write_buffer(&self.uniforms, 0, &bytes);
+        queue.write_buffer(&self.uniforms, 0, bytes);
         let pipelines = self
             .pipelines
             .get_or_insert_with(|| pipelines(device, &self.layout));
