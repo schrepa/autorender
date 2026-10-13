@@ -634,6 +634,10 @@ struct Topology {
 }
 
 /// `classifyVertices`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn classify_vertices(
     adjacency: &EdgeAdjacency,
     remap: Vec<u32>,

@@ -229,6 +229,10 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
 
 /// The steps of `level` for what `selection` calls for, comparing with
 /// `base`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn steps<'a>(
     root: &'a Path,
     level: Level,

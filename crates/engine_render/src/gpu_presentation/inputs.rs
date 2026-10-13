@@ -248,6 +248,10 @@ impl NodeInputs {
 
     /// Uploads `gpu`'s records stamped after gather `since` (every record
     /// without one), its parents and its depth levels.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn upload(
         &mut self,
         device: &wgpu::Device,

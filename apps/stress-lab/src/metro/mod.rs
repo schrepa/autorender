@@ -672,6 +672,10 @@ fn block(city: &mut Metro, bx: i32, bz: i32, rho: f32) {
 
 /// Street furniture around a block: lamps with lights, a traffic light,
 /// trees along busy streets and a few fixtures.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn street(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, busy: bool) {
     let edge = HALF_BLOCK - 0.6;
     // Lamps at two corners, and halfway along busy streets, their arms
@@ -1420,6 +1424,10 @@ fn midtown(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, scale: f32) {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn residential(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
     for row in 0..4 {
         for column in 0..4 {
@@ -1970,6 +1978,10 @@ fn park_block(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
     city.spots.push((*anchor, v(3.0, LOT, -3.0)));
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn plaza_block(city: &mut Metro, anchor: &Anchor, rng: &mut Rng) {
     match rng.below(4) {
         0 => {

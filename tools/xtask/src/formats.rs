@@ -25,6 +25,10 @@ fn type_of(value: &Value) -> &'static str {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn check(root: &Value, schema: &Value, value: &Value, at: &str, out: &mut Vec<String>) {
     if let Some(reference) = schema["$ref"].as_str() {
         let name = reference.rsplit('/').next().unwrap_or_default();

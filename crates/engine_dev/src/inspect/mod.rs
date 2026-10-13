@@ -642,6 +642,10 @@ impl DevTools {
         })
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn inspect(
         &self,
         world: &World,

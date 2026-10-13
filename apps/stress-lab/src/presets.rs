@@ -42,6 +42,10 @@ fn baseline() -> StressConfig {
 }
 
 /// Every preset, the default first.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub fn presets() -> Vec<Preset> {
     let base = baseline();
     vec![

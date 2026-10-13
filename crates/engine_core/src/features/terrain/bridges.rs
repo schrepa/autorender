@@ -270,6 +270,10 @@ fn tube_section(width: f32) -> Mesh {
 }
 
 /// Spawns and despawns bridge entities to match terrains' bridges.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(crate) fn sync(world: &mut World) {
     let wanted: Vec<BridgeSet> = match world.get_resource::<Terrains>() {
         Some(terrains) => terrains.bridge_sets().collect(),

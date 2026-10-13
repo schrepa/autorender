@@ -398,6 +398,10 @@ pub(crate) fn drainage(heights: &[f32], width: usize, spacing: f32) -> Drainage 
 /// row along z, at least two each way), whose samples lie `spacing` meters
 /// apart; with its rivers' lines, whose water the finest ground sets
 /// (`rivers::profile`), and no rivers yet.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(crate) fn bake(
     heights: &[f32],
     width: usize,

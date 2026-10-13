@@ -902,6 +902,10 @@ fn upload(
 /// and half its width; stretches without water (falls) left out; chunks of
 /// `RIBBON_CHUNK` points, each drawn at every one of `RIBBON_STRIDES`.
 /// `None` without any water to draw.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> Option<RiverMesh> {
     let mut vertices: Vec<RiverVertex> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();

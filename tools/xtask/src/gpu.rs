@@ -320,6 +320,10 @@ fn covers(stages: Stages, stage: Stages) -> bool {
 /// groups it serves: each binding declared by one of them, under its
 /// number and name, of a matching kind and size; and every entry point's
 /// resources in one table serving their group, visible to its stage.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn check_bindings(modules: &[Checked]) -> Result<usize, String> {
     let mut errors = Vec::new();
     let module = |name: &str| modules.iter().find(|checked| checked.name == name);

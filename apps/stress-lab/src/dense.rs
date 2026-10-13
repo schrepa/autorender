@@ -35,6 +35,10 @@ const TILE: f32 = 64.0;
 const AREA_PER_OBJECT: f32 = 36.0;
 
 /// Builds the scene from `files`, returning its moving nodes and bounds.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(crate) fn populate(
     world: &mut World,
     config: &StressConfig,

@@ -592,6 +592,10 @@ impl VirtualTexture {
     /// Takes the pages pixels asked for, keeping those resident and baking
     /// up to the frame's budget of the absent, coarsest and nearest first,
     /// then of the stale, stalest first.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn ask(&mut self, terrains: &RenderTerrains, eye: Vec3) {
         let arrived = std::mem::take(&mut *self.arrived.borrow_mut());
         let mut wanted: Vec<PageKey> = Vec::new();

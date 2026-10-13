@@ -78,6 +78,10 @@ impl PatchDraws {
     /// reflection probe faces and the shadow maps of `views`, writing their
     /// records and the camera's view; returns every terrain's uniform, a
     /// slot each.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn lay_out(
         &mut self,
         device: &wgpu::Device,

@@ -7,6 +7,10 @@ use std::{fs, path::Path};
 
 use crate::process::{clients, run};
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub fn new(root: &Path, options: &[String]) -> Result<(), String> {
     let [kind, name] = options else {
         return Err("usage: cargo xtask new app NAME".into());

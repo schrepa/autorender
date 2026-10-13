@@ -498,6 +498,10 @@ fn ranked(counts: HashMap<String, u64>, total: u64, limit: usize) -> Vec<Value> 
 type Hot = (u64, BTreeMap<u64, u64>);
 
 /// The summary of a capture.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn summary(
     report: &Value,
     samples: Option<&Samples>,

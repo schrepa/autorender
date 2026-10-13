@@ -384,6 +384,10 @@ impl VirtualMesh {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn validate_hierarchy(&self) -> Result<(), AssetError> {
         let (levels, node_count, group_count, cluster_count) = (
             self.levels() as usize,

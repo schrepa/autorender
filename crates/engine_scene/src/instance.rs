@@ -337,6 +337,10 @@ impl SceneDocument {
 
     /// [`Self::instantiate`] with the contents of the files the document
     /// references; a missing or invalid one fails first.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub fn instantiate_with(
         &self,
         world: &mut World,

@@ -230,6 +230,10 @@ impl DrawGroups {
 
     /// Rebuilds the groups of `inputs`' plan when its candidate structure,
     /// node space or record choices changed; returns the bytes uploaded.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn rebuild(
         &mut self,
         device: &wgpu::Device,

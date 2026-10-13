@@ -248,6 +248,10 @@ impl Renderer {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn render_inner(
         &mut self,
         frame: RenderFrame<'_>,

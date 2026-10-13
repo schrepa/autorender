@@ -99,6 +99,10 @@ pub fn check(root: &Path) -> Result<(), String> {
 /// the checks build use that cargo profile (`dev`: debug assertions on).
 /// Fails with exit code 3 when a check's assertion failed, 1 when one
 /// stopped otherwise.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
     let usage = "usage: smoke --list | [--serve] [--keep-going] [--native-profile PROFILE] (--all | NAME...)";
     let smokes = smokes(root)?;

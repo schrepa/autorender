@@ -472,6 +472,10 @@ impl GpuPresentationPass {
 
     /// Builds the groups this frame binds that storage replaced since, or
     /// that `poses` has not bound yet.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn bind(&mut self, device: &wgpu::Device, poses: &FramePoses<'_>) {
         let Self {
             shaders,

@@ -316,6 +316,10 @@ impl VirtualGeometryPass {
 
     /// Binds this frame's slot poses, the IDs and draw arguments of both
     /// sources, the shadow maps' views and the depth pyramid.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn bind(&mut self, device: &wgpu::Device, frame: &SelectionFrame<'_>) {
         let poses = &frame.poses;
         self.poses = Some((poses.current().clone(), poses.key()));

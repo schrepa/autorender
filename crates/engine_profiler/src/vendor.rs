@@ -127,6 +127,10 @@ pub fn pix_counters(capture: &Path, folder: &Path, counters: &[String]) -> Resul
 /// event list `table`, of the counters `wanted`: counts summed, and shares
 /// (activity, stalls, occupancy, busy, bottleneck) weighted by the events'
 /// clocks.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn summarize_events(table: &str, wanted: &[String]) -> Value {
     let mut lines = table.lines();
     let header = lines.next().map(split_csv).unwrap_or_default();

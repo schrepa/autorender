@@ -824,6 +824,10 @@ impl Counting {
     /// and rates weighted by time), with each pass's: medians over the
     /// node's instances (once a frame, for the renderer's nodes), the
     /// costliest first where a counter is a time.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn report(&self) -> Value {
         let mut state = self.state();
         self.collect(&mut state, true);

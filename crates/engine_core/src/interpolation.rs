@@ -525,6 +525,10 @@ impl PresentedTransforms {
     /// scan, so tick boundaries and presentation never query every history.
     /// Runs before the hierarchy reindexes: it reads the previous sources, then
     /// clears node hints for the rebuild to re-establish.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn reconcile(&mut self, world: &World, hierarchy: &HierarchyScratch) {
         self.revision += 1;
         let count = self

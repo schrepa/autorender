@@ -743,6 +743,10 @@ impl PostPass {
         pass.draw(0..3, 0..1);
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn create_targets(
         &self,
         device: &wgpu::Device,

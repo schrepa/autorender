@@ -90,6 +90,10 @@ pub fn reply() -> Value {
 }
 
 /// The generated files and values, or every rule the types break.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub fn generated() -> Result<Generated, String> {
     let mut problems = Vec::new();
     let mut schemas = json!({

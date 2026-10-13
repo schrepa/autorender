@@ -249,6 +249,10 @@ impl PathProfile {
     /// The profile of `layer` from the ground `raw` read at its profile
     /// points, `step` meters apart, and the surface of any water standing
     /// there.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn new(layer: &PathLayer, step: f32, raw: &[f32], water: &[Option<f32>]) -> Self {
         // Averaged over the smoothing distance, twice: a tent along the road.
         let radius = if step > 0.0 {
@@ -892,6 +896,10 @@ const HAIRPIN_GRADE: f32 = 1.0;
 /// as steep as `HAIRPIN_GRADE`. It searches samples and the way the step
 /// reaching each ran together (A*), 32 states a sample. `None` when no route
 /// keeps within the limits.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub fn route(
     layers: &Layers,
     pyramid: &Pyramid,

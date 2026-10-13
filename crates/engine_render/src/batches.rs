@@ -282,6 +282,10 @@ impl BatchPlan {
 
     /// Plans the `selected` slots of `snapshot`, keeping their draw groups
     /// with `reuse_slot_mapping`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn prepare_inner(
         &mut self,
         snapshot: &RenderSnapshot,

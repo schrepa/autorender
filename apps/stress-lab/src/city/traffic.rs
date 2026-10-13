@@ -15,6 +15,10 @@ use crate::kit::random::{Rng, hash};
 
 /// Every moving renderable: assemblies at the sites the blocks offered, then
 /// trains, boats, aircraft, rooftop parts, buses and cars for the rest.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(super) fn traffic(city: &mut City, config: &StressConfig) {
     let total = city.moving_left;
     let mut rng = Rng::new(config.seed ^ 0x7a11, 0, 0);

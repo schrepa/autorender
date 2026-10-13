@@ -84,6 +84,10 @@ impl PlacedShapes {
         had || !self.objects.is_empty()
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn collect(&mut self, terrains: &Terrains) {
         // Bridges' decks: a box a segment, as the deck's slab and road stand.
         for (entity, origin, bridges) in terrains.colliding_bridges() {

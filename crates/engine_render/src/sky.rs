@@ -210,6 +210,10 @@ impl SkyPass {
     /// changed, the sky-view table when the sun, the camera's height or the
     /// air changed, then the light it gives, copied by `copies`. Timed by
     /// `profiler` (`sky`).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn encode(
         &mut self,
         device: &wgpu::Device,

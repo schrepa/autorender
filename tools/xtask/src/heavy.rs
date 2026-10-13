@@ -44,6 +44,10 @@ impl HeavyRun {
     /// Takes the lock as `label`, waiting while another process holds it,
     /// then while another program's headless Chrome runs; nothing to take
     /// where a parent holds it (`ENGINE_HEAVY_LOCK_HELD=1`).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub fn hold(label: &str) -> Result<Self, String> {
         if std::env::var(HELD.0).is_ok_and(|held| held == HELD.1) {
             return Ok(Self { taken: None });

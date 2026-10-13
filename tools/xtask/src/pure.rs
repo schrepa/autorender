@@ -107,6 +107,10 @@ pub(crate) fn hash(bytes: &[u8]) -> String {
 /// every one, and fails (exit 3) when a promise broke or an observation
 /// differs from its golden; `--bless` writes the run's observations as the
 /// goldens instead, unless a promise broke.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
     let usage = || {
         format!(

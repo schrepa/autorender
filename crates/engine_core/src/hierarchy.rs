@@ -1087,6 +1087,10 @@ impl GlobalTransforms {
         scan
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     fn scan_changed_rows(
         &mut self,
         changed_query: &mut ChangedTransforms,

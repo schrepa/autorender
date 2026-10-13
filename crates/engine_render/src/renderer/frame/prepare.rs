@@ -169,6 +169,10 @@ impl Renderer {
     /// virtual geometry) and textures, bakes new impostors, and orders the
     /// opaque draws. New textures' mip levels and impostor bakes record into
     /// `mips`, the prelude's.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn upload_assets(
         &mut self,
         snapshot: &RenderSnapshot,

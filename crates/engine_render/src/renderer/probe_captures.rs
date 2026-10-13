@@ -15,6 +15,10 @@ impl Renderer {
     /// alternate pose buffer when `odd`) and the sky's haze, in linear light,
     /// then a probe's blurred cube once its last face is drawn. Returns the
     /// faces drawn.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn encode_probe_captures(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,

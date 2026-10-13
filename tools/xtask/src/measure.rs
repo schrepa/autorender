@@ -765,6 +765,10 @@ struct Machine {
 
 /// One measured run of `side`, from its commit's checkout, its files in
 /// `folder` as `stem`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn measure_run(
     side: &Side,
     workload: &Workload,

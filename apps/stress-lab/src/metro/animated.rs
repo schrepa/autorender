@@ -15,6 +15,10 @@ use crate::kit::random::Rng;
 
 /// The moving parts of a keyframed prop at `site`, under its own root.
 /// Every animated model turns about its build-space origin.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(super) fn animated_prop(city: &mut Metro, rng: &mut Rng, prop: Prop, site: &Site) {
     let frame = Transform {
         translation: site.at,

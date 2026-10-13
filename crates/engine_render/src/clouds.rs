@@ -168,6 +168,10 @@ pub(crate) struct CloudPass {
 }
 
 impl CloudPass {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let noise = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("engine/cloud-noise"),

@@ -748,6 +748,10 @@ impl Walk<'_> {
 /// inactive with unchanged authority rows. A sparse gather whose distinct
 /// seeds exceed its bound walks every node instead. Returns the stamps per
 /// stream.
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn walk(
     gpu: &mut GpuInputs,
     records: &Records<'_>,

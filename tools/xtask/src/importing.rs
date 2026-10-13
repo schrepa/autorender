@@ -231,6 +231,10 @@ impl Options {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 fn merge(
     mut current: SceneDocument,
     mut imported: SceneDocument,

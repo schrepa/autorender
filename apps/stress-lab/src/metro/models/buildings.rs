@@ -255,6 +255,10 @@ fn building_frame(b: &mut Builder) {
     b.uv1 = Uv1::Span;
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(super) fn tower(b: &mut Builder, style: Style, floors: u32) {
     building_frame(b);
     let height = FLOOR * floors as f32;
