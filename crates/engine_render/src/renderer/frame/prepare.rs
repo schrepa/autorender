@@ -54,7 +54,11 @@ impl Renderer {
         }
         self.gpu_frame = gpu_mode;
         self.apply_temporal_antialiasing(snapshot.environment.temporal_antialiasing.enabled);
-        let temporal = display && gpu_mode && self.features.temporal.get().is_some();
+        // Temporal frames resolve through the screen effects' targets.
+        let temporal = display
+            && gpu_mode
+            && self.features.temporal.get().is_some()
+            && !self.features.post.disabled();
         if !temporal && let Some(pass) = self.features.temporal.get_mut() {
             pass.reset();
         }
@@ -135,9 +139,9 @@ impl Renderer {
     }
 
     /// Follows the `TemporalAntialiasing` settings: enabling creates the
-    /// pipelines of temporally antialiased display frames, disabling releases
-    /// their targets and pose buffer. Frame targets follow the surface size,
-    /// 16 bytes per pixel.
+    /// pipelines of temporally antialiased display frames, unless the pass
+    /// is disabled, disabling releases their targets and pose buffer. Frame
+    /// targets follow the surface size, 16 bytes per pixel.
     fn apply_temporal_antialiasing(&mut self, enabled: bool) {
         if enabled == self.features.temporal.get().is_some() {
             return;
@@ -145,24 +149,29 @@ impl Renderer {
         if enabled {
             let (device, camera) = (&self.device, &self.camera.layout);
             let (materials, format) = (self.materials.layout(), self.display.format());
-            self.features
-                .temporal
-                .create(|| TemporalPass::new(device, camera, materials, format));
+            self.features.temporal.create(device, || {
+                TemporalPass::new(device, camera, materials, format)
+            });
         } else {
             self.features.temporal.release();
-            // Pipelines over the temporal pass's layouts go with it.
-            let current =
-                |&(kind, _): &(PassKind, Variant)| kind.targets() != Some(Targets::Temporal);
-            self.mesh_pipelines.variants.retain(|key, _| current(key));
-            self.virtual_draws.pipelines.retain(|key, _| current(key));
-            self.visibility
-                .resolve_pipelines
-                .retain(|key, _| current(key));
-            self.impostors.pipelines.forget_pipelines(Targets::Temporal);
-            self.mesh_pipelines
-                .forget_sky(SkyTargets::Frame(Targets::Temporal));
-            self.instances.release_alternate();
+            self.forget_temporal();
         }
+    }
+
+    /// Forgets what other parts keep for temporal frames once the temporal
+    /// pass goes: the pipelines over its layouts and the alternate pose
+    /// buffers.
+    pub(in crate::renderer) fn forget_temporal(&mut self) {
+        let current = |&(kind, _): &(PassKind, Variant)| kind.targets() != Some(Targets::Temporal);
+        self.mesh_pipelines.variants.retain(|key, _| current(key));
+        self.virtual_draws.pipelines.retain(|key, _| current(key));
+        self.visibility
+            .resolve_pipelines
+            .retain(|key, _| current(key));
+        self.impostors.pipelines.forget_pipelines(Targets::Temporal);
+        self.mesh_pipelines
+            .forget_sky(SkyTargets::Frame(Targets::Temporal));
+        self.instances.release_alternate();
     }
 
     /// Uploads the frame's new meshes (with their levels of detail and
@@ -1044,7 +1053,7 @@ impl Renderer {
         let temporal_pass = &mut self.features.temporal;
         let instances = &self.instances;
         self.features.lights.prepare(
-            needs,
+            (device, needs),
             || LightPass::new(device),
             |lights| {
                 if temporal && let Some(pass) = temporal_pass.get_mut() {
@@ -1087,7 +1096,7 @@ impl Renderer {
         let (format, camera_layout) = (self.display.format(), &self.camera.layout);
         let (size, depth) = (self.display.size(), &self.depth.view);
         let post = self.features.post.prepare(
-            needs,
+            (device, needs),
             || PostPass::new(device, format, camera_layout),
             |post| {
                 Some(post.begin(
@@ -1175,7 +1184,7 @@ impl Renderer {
             .map(LightPass::fragment_layout);
         let (device, format) = (&self.device, self.display.format());
         self.features.decals.prepare(
-            DecalPass::wanted(snapshot),
+            (device, DecalPass::wanted(snapshot)),
             || DecalPass::new(device, format),
             |decals| {
                 let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);

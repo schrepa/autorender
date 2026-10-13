@@ -357,8 +357,8 @@ impl Pass {
 
 /// The passes in `mask`, such as a frame's [`RenderGraph::kept`], as the
 /// stats report them: by name, in frame order.
-pub(crate) fn render_passes(mask: u64) -> engine_core::RenderPasses {
-    engine_core::RenderPasses {
+pub(crate) fn render_passes(mask: u64) -> engine_core::Names {
+    engine_core::Names {
         bits: mask,
         names: PASS_NAMES,
     }

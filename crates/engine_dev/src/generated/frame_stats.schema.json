@@ -932,6 +932,13 @@
       "$ref": "#/$defs/DeformationStats",
       "description": "Runtime deformation."
     },
+    "disabled_features": {
+      "description": "The renderer's features it disabled for good, by name: one whose\ncreation failed validation, or that an uncaptured GPU error named\nby its objects' labels. Frames render without them.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
     "draw_calls": {
       "description": "Draw commands of the camera's mesh passes, each counted once however\nmany occlusion phases issue it: each opaque mesh group's, one per\nlevel of detail on GPU-presented frames, the impostors', virtual\ngeometry's forward bins and the transparent groups'. `shadows.draws`\ncounts the shadow maps'.",
       "format": "uint32",
@@ -1230,6 +1237,7 @@
     "dropped_view_pixels",
     "jobs",
     "navigation",
+    "disabled_features",
     "draw_calls",
     "upload_bytes",
     "instances",

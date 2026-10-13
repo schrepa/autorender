@@ -73,6 +73,7 @@ pub(super) fn run(
         Control::Host(HostControl::DebugPanic) => {
             panic!("debug_panic: a development session asked the engine to panic")
         }
+        Control::Host(HostControl::DebugFault { feature }) => view::fault(app, &feature, size),
         // The host's loop runs these: it receives them validated, with
         // their defaults.
         Control::Host(HostControl::Loop(control)) => Ok(json!({ "control": control })),

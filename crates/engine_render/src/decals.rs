@@ -273,6 +273,8 @@ mod gpu {
         type Frame = DecalFrame;
         type Stats = Drawn;
 
+        const LABELS: &'static [&'static str] = &["engine/decal-", "engine/decals"];
+
         /// Decals draw over the opaque surfaces whose depth they sample,
         /// shading local lights in frames binning them.
         fn declare(_frame: &DecalFrame, shape: &FrameShape, graph: &mut RenderGraph) {

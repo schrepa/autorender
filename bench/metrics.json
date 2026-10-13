@@ -234,6 +234,17 @@
       "direction": null
     },
     {
+      "name": "disabled_features",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the number of the renderer's features the last sampled frame found disabled for good",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "draw_calls",
       "kind": "work",
       "rule": "shown",

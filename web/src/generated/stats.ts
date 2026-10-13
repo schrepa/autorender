@@ -22,6 +22,12 @@ export interface FrameStats {
   /** Runtime deformation. */
   deformation: DeformationStats;
   /**
+   * The renderer's features it disabled for good, by name: one whose
+   * creation failed validation, or that an uncaptured GPU error named
+   * by its objects' labels. Frames render without them.
+   */
+  disabled_features: string[];
+  /**
    * Draw commands of the camera's mesh passes, each counted once however
    * many occlusion phases issue it: each opaque mesh group's, one per
    * level of detail on GPU-presented frames, the impostors', virtual

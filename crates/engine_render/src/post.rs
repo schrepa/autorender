@@ -961,6 +961,8 @@ impl RenderFeature for PostPass {
     type Frame = Effects;
     type Stats = EffectStats;
 
+    const LABELS: &'static [&'static str] = &["engine/post-", "engine/post.", "engine/shafts."];
+
     /// The effects that run read what they need into their results, which
     /// the composite (frames drawing into the effects' targets without
     /// temporal antialiasing) lays with the scene over the canvas.

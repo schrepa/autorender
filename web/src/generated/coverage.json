@@ -686,6 +686,12 @@
       "smokes": [
         "host-parity"
       ]
+    },
+    {
+      "op": "debug_fault",
+      "smokes": [
+        "host-parity"
+      ]
     }
   ],
   "sections": [

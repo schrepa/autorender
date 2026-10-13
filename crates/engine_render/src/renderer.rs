@@ -50,6 +50,7 @@ mod camera;
 mod display;
 mod frame;
 mod frame_stats;
+mod health;
 mod impostor_draws;
 mod instances;
 mod meshes;
@@ -259,8 +260,8 @@ pub struct Renderer {
     graph: crate::render_graph::RenderGraph,
     // Whether the previous frame was GPU-presented; its poses were GPU-written.
     gpu_frame: bool,
-    // The only callback-shared state is a rare error message, never ECS data.
-    failure: Arc<Mutex<Option<String>>>,
+    // What the device's callbacks report, which each frame reads first.
+    health: Arc<Mutex<health::Reports>>,
     // Times the frame's passes during profiling captures (a stand-in that
     // records nothing in other builds).
     profiler: GpuProfiler,

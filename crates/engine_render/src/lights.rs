@@ -552,6 +552,8 @@ mod gpu {
         type Frame = LightFrame;
         type Stats = LightStats;
 
+        const LABELS: &'static [&'static str] = &["engine/light-", "engine/lights"];
+
         /// Binning reads the poses lights ride on and writes their lists.
         fn declare(_frame: &LightFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
             graph

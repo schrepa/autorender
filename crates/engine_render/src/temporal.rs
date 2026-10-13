@@ -423,6 +423,8 @@ impl RenderFeature for TemporalPass {
     type Frame = ResolveFrame;
     type Stats = Applied;
 
+    const LABELS: &'static [&'static str] = &["engine/taa-", "engine/temporal"];
+
     /// The resolve reads the scene, the motion and the history (and the
     /// effects that run), and writes the canvas and the next history.
     fn declare(_frame: &ResolveFrame, shape: &FrameShape, graph: &mut RenderGraph) {

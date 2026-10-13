@@ -1,5 +1,5 @@
-//! Controls of the view: presentation previews, culling, the camera and
-//! plain renders.
+//! Controls of the view: presentation previews, culling, the camera,
+//! plain renders and faults injected into the renderer.
 
 use serde_json::Value;
 
@@ -7,7 +7,9 @@ use super::{rendered, then_render};
 use crate::app_host::AppHost;
 use engine_core::ErrorCode;
 use engine_dev::DevError;
-use engine_dev::results::{CameraResult, CullingResult, PresentResult, RenderResult, result};
+use engine_dev::results::{
+    CameraResult, CullingResult, DebugFaultResult, PresentResult, RenderResult, result,
+};
 
 /// Presents fixed-tick poses at `alpha`, through the GPU path with `gpu`.
 pub(super) fn present(
@@ -75,4 +77,18 @@ pub(super) fn render(app: &mut AppHost, (width, height): (u32, u32)) -> Result<V
     app.dev_render(width, height)
         .map_err(|error| DevError::new(ErrorCode::RenderFailed, "$", error.to_string()))?;
     Ok(result::render(RenderResult { rendered: true }))
+}
+
+/// Injects a fault into the renderer's lazily created feature `feature`,
+/// then renders.
+pub(super) fn fault(app: &mut AppHost, feature: &str, size: (u32, u32)) -> Result<Value, DevError> {
+    app.renderer
+        .inject_fault(feature)
+        .map_err(|error| DevError::new(ErrorCode::InvalidValue, "$.feature", error.to_string()))?;
+    then_render(
+        app,
+        size,
+        "the fault",
+        result::debug_fault(DebugFaultResult { injected: true }),
+    )
 }

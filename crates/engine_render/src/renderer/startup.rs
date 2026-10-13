@@ -111,21 +111,17 @@ impl Renderer {
             .map_err(|error| render_error("Could not initialize the WebGPU device", error))?;
         let queue = crate::gpu_calls::Queue::new(wgpu_queue);
 
-        let failure = Arc::new(Mutex::new(None));
-        let lost_failure = Arc::clone(&failure);
+        let health = Arc::new(Mutex::new(health::Reports::default()));
+        let lost = Arc::clone(&health);
         device.set_device_lost_callback(move |reason, message| {
-            if let Ok(mut slot) = lost_failure.lock() {
-                *slot = Some(format!(
-                    "GPU device lost ({reason:?}): {message}. Reload to recreate the engine."
-                ));
+            if let Ok(mut reports) = lost.lock() {
+                reports.lost(reason, &message);
             }
         });
-        let uncaptured_failure = Arc::clone(&failure);
+        let uncaptured = Arc::clone(&health);
         device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
-            if let Ok(mut slot) = uncaptured_failure.lock() {
-                *slot = Some(format!(
-                    "WebGPU rendering failed: {error}. Reload to recreate the engine."
-                ));
+            if let Ok(mut reports) = uncaptured.lock() {
+                reports.uncaptured(&error);
             }
         }));
 
@@ -263,7 +259,7 @@ impl Renderer {
             },
             graph: Default::default(),
             gpu_frame: false,
-            failure,
+            health,
             profiler,
         };
         crate::platform::yield_now().await;

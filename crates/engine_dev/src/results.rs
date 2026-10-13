@@ -63,6 +63,7 @@ results! {
     culling: crate::results::CullingResult,
     camera: crate::results::CameraResult,
     render: crate::results::RenderResult,
+    debug_fault: crate::results::DebugFaultResult,
     input: crate::results::InputResult,
     step: crate::results::StepResult,
     environment: crate::results::EnvironmentResult,
@@ -422,6 +423,15 @@ pub struct CameraResult {
 pub struct RenderResult {
     /// Always true: the frame rendered.
     pub rendered: bool,
+}
+
+/// What `debug_fault` answers once it rendered.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct DebugFaultResult {
+    /// Always true: the fault waits for the feature's next creation or
+    /// frame.
+    pub injected: bool,
 }
 
 /// What `input` answers: the batch waits for the next step.

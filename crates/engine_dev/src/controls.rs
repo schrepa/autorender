@@ -132,7 +132,8 @@ impl BrowserControl {
             | Self::Render { .. }
             | Self::Pause { .. }
             | Self::Resume { .. }
-            | Self::DebugPanic { .. } => {}
+            | Self::DebugPanic { .. }
+            | Self::DebugFault { .. } => {}
         }
         Ok(())
     }

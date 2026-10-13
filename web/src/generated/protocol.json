@@ -22,7 +22,8 @@
     "capture",
     "game",
     "reload",
-    "debug_panic"
+    "debug_panic",
+    "debug_fault"
   ],
   "errors": {
     "activation_committed": "The build was already activated.",

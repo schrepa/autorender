@@ -66,6 +66,10 @@ pub struct FrameStats {
     pub jobs: crate::JobStats,
     /// Navigation agents at the last fixed tick, read when the stats are.
     pub navigation: crate::NavStats,
+    /// The renderer's features it disabled for good, by name: one whose
+    /// creation failed validation, or that an uncaptured GPU error named
+    /// by its objects' labels. Frames render without them.
+    pub disabled_features: Names,
     /// The renderer's report of the frame.
     #[serde(flatten)]
     pub render: RenderStats,
@@ -134,7 +138,7 @@ pub struct RenderStats {
     /// compiled.
     pub pipelines_created: u32,
     /// The passes this frame ran, in order.
-    pub render_passes: RenderPasses,
+    pub render_passes: Names,
     /// Sun shadows.
     pub shadows: ShadowStats,
     /// Ambient occlusion.
@@ -187,16 +191,17 @@ pub struct RenderStats {
     pub temporal_antialiasing: Applied,
 }
 
-/// The render passes a frame ran, in order, serialized by their names.
+/// A set of names, such as the render passes a frame ran, serialized as
+/// the names of its bits, in order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RenderPasses {
-    /// One bit per pass, by its index in `names`.
+pub struct Names {
+    /// One bit per name, by its index in `names`.
     pub bits: u64,
-    /// Every pass's name, in order.
+    /// Every name the set may hold, in order.
     pub names: &'static [&'static str],
 }
 
-impl Serialize for RenderPasses {
+impl Serialize for Names {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.collect_seq(
             self.names
@@ -209,13 +214,13 @@ impl Serialize for RenderPasses {
 }
 
 #[cfg(feature = "schema")]
-impl schemars::JsonSchema for RenderPasses {
+impl schemars::JsonSchema for Names {
     fn inline_schema() -> bool {
         true
     }
 
     fn schema_name() -> std::borrow::Cow<'static, str> {
-        "RenderPasses".into()
+        "Names".into()
     }
 
     fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {

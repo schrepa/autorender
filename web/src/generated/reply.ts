@@ -188,6 +188,15 @@ export interface CullingResult {
   temporary: boolean;
 }
 
+/** What `debug_fault` answers once it rendered. */
+export interface DebugFaultResult {
+  /**
+   * Always true: the fault waits for the feature's next creation or
+   * frame.
+   */
+  injected: boolean;
+}
+
 /** What `deform` answers: the track pressed and the log after. */
 export interface DeformResult {
   /** Tracks the log's budget left out. */
@@ -560,6 +569,7 @@ export interface OpResults {
   capture: CaptureResult;
   collision_events: CollisionEventsResult;
   culling: CullingResult;
+  debug_fault: DebugFaultResult;
   deform: DeformResult;
   deformation_query: DeformationQueryResult;
   describe: DescribeResult;

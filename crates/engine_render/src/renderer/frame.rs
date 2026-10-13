@@ -209,7 +209,8 @@ pub(super) struct EncodeReport {
 impl Renderer {
     /// Renders a borrowed core frame using its retained structural and pose
     /// revisions. Lost or outdated surfaces recover on a later frame; device
-    /// loss and validation errors permanently fail this renderer, and frame
+    /// loss and validation errors permanently fail this renderer, but for
+    /// errors in one lazily created feature, which disable it alone, and frame
     /// source errors return before uploads or cache changes. The frame is
     /// exact: never jittered or blended with earlier frames.
     pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, RenderError> {
@@ -259,11 +260,7 @@ impl Renderer {
     ) -> Result<RenderStats, RenderError> {
         let snapshot = frame.snapshot();
         let _profile = engine_profile::span("render", "render_snapshot");
-        if let Ok(failure) = self.failure.lock()
-            && let Some(message) = failure.as_ref()
-        {
-            return Err(RenderError(message.to_string()));
-        }
+        self.check_health()?;
         let (kind, gpu) = self.plan_frame(frame, display)?;
         if self.display.suspended {
             return Ok(self.residency_stats());

@@ -113,6 +113,7 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("game", "GameControls"),
     ("reload", "status"),
     ("debug_panic", "status"),
+    ("debug_fault", "status"),
 ];
 
 /// A query, as the handler it runs in takes it: [`DevRequest::route`].
@@ -191,6 +192,9 @@ pub enum HostControl {
     },
     Render,
     DebugPanic,
+    DebugFault {
+        feature: String,
+    },
     /// The ones the host's loop runs, as the request named them:
     /// benchmarks, frames, pausing, resuming, captures, the game's controls
     /// and reloads.
@@ -550,6 +554,16 @@ pub enum BrowserControl {
     /// then: the engine stops for good, and every later request answers
     /// `runtime_panicked` with the panic's message and where it happened.
     DebugPanic {},
+    /// Fails the renderer's lazily created feature `feature` as a GPU error
+    /// would: its next creation makes an invalid object, which its first
+    /// frame uses. The renderer disables it alone; then renders.
+    DebugFault {
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(regex(pattern = r"^[a-z_]{1,64}$"))
+        )]
+        feature: String,
+    },
 }
 
 impl BrowserControl {
@@ -604,6 +618,7 @@ impl BrowserControl {
             }),
             Self::Render {} => Control::Host(HostControl::Render),
             Self::DebugPanic {} => Control::Host(HostControl::DebugPanic),
+            Self::DebugFault { feature } => Control::Host(HostControl::DebugFault { feature }),
             control @ (Self::Benchmark { .. }
             | Self::Frames { .. }
             | Self::Pause { .. }
@@ -638,7 +653,8 @@ impl BrowserControl {
             | Self::Capture { .. }
             | Self::Game { .. }
             | Self::Reload { .. }
-            | Self::DebugPanic { .. } => true,
+            | Self::DebugPanic { .. }
+            | Self::DebugFault { .. } => true,
             Self::Pause { .. } | Self::Resume { .. } => false,
         }
     }

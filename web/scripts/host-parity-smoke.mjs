@@ -7,7 +7,9 @@
  * but for the known divergences listed here, each tagged with the hosts
  * step that removes it (`host`: a difference of the transports, which
  * stays). A divergence that no longer shows fails the check until its entry
- * goes. Last, `debug_panic` stops the engine on both: each answers
+ * goes. A fault injected into the screen effects (`debug_fault`) disables
+ * them alone on both, which render on without them. Last, `debug_panic`
+ * stops the engine on both: each answers
  * `runtime_panicked` with the same report, and the page shows it stopped
  * and calls into its module no more. Builds `stress-lab` natively
  * (`--profile quick --features dev`) and opens the development server's
@@ -94,6 +96,13 @@ const CASES = [
   ["capture while running", { op: "capture" }, "error"],
   ["frames while running", { op: "frames", count: 1, interval_ms: 1000 / 60 }, "error"],
   ["pause", { op: "pause" }],
+  // A fault in the screen effects, which bloom needs, disables them alone:
+  // the next frames find it, as browsers report GPU errors later.
+  ["bloom before the fault", { op: "environment", bloom: { intensity: 0.5 } }],
+  ["debug fault", { op: "debug_fault", feature: "post" }],
+  ["frames after the fault", { op: "frames", count: 30, interval_ms: 1000 / 60 }],
+  ["status after the fault", { op: "status" }],
+  ["fault in no lazy feature", { op: "debug_fault", feature: "water" }, "error"],
   // A panic stops the engine on both hosts, which then answer everything
   // with the panic's report: last, as nothing runs after it.
   ["debug panic", { op: "debug_panic" }, "error"],
@@ -178,6 +187,11 @@ try {
   }, null, 1));
   assert.deepEqual(unknown, [], `the hosts diverge where no known divergence says so:\n${unknown.join("\n")}`);
   assert.deepEqual(gone, [], `known divergences that no longer show; delete their entries:\n${gone.join("\n")}`);
+  // The fault disabled the screen effects alone, on both hosts.
+  const fault = replies["status after the fault"];
+  for (const reply of [fault.web, fault.native]) {
+    assert.deepEqual(reply.result?.rendering?.disabled_features, ["post"], JSON.stringify(reply.result?.rendering));
+  }
   // Both report the engine's own panic, where it happened; the page says the
   // engine stopped and calls into its module no more (nothing fails after).
   const panic = replies["debug panic"];

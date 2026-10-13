@@ -778,6 +778,7 @@ impl AppHost {
                 .saturating_sub(u64::from(view_width) * u64::from(view_height)),
             jobs: engine_core::JobStats::default(),
             navigation: engine_core::NavStats::default(),
+            disabled_features: self.renderer.disabled_features(),
             render: rendered,
         };
         Ok(())
