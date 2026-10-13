@@ -22,7 +22,7 @@
 //! Captures compare by SHA-256, then pixel by pixel within the cell's
 //! tolerance (0 unless it says). Work counters whose rule in
 //! `bench/metrics.json` is `equal`, `not-above` or `false` fail on a change;
-//! `shown` ones are listed. An unstable capture carries its reason in the
+//! `shown` ones, and counters the base lacks, are listed. An unstable capture carries its reason in the
 //! matrix and passes when a candidate run matches one of the base's over
 //! `--repeat` runs, or lies no farther from the nearest than the base's own
 //! images lie from each other; its work counters fail only where they fail

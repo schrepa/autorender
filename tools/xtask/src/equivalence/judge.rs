@@ -167,6 +167,7 @@ fn rule<'a>(catalog: &'a [Value], name: &str) -> Option<&'a str> {
 }
 
 /// The work counters of one capture that changed, each judged by its rule.
+/// A counter the base lacks fails only by its own `false` rule.
 fn compare_work(
     key: &str,
     base: &Map<String, Value>,
@@ -184,7 +185,12 @@ fn compare_work(
             candidate.get(name).cloned().unwrap_or(Value::Null),
         );
         let fails = match rule {
-            "false" => after != Value::Bool(false) || before != Value::Bool(false),
+            "false" => {
+                after != Value::Bool(false)
+                    || (base.contains_key(name) && before != Value::Bool(false))
+            }
+            // A counter the base lacks is new: listed, not judged.
+            _ if !base.contains_key(name) => false,
             _ if before == after => false,
             "equal" => true,
             "not-above" => match (before.as_f64(), after.as_f64()) {
