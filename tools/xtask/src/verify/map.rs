@@ -168,7 +168,7 @@ pub(crate) const MAP: &[Rule] = &[
             TERRAIN_SMOKES[2],
             TERRAIN_SMOKES[3],
             Smoke("jobs"),
-            Cells(&["highlands", "highlands-views"]),
+            Cells(&["highlands", "highlands-views", "terrain-frames"]),
         ],
     },
     Rule {
