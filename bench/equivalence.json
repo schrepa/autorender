@@ -165,7 +165,11 @@
       "scene": "city",
       "ticks": 30,
       "views": ["close", "away"],
-      "captures": ["exact", "gpu:0.5"]
+      "captures": ["exact", "gpu:0.5"],
+      "unstable": {
+        "close exact": "Two images in 8-session A/As (2026-10-13: 0c01a25c, 4+4 sessions; 533de47 and 224699f, 4 runs each), the world's digest equal every time: two mid-distance buildings (the round tower, the spire) shade up to 16 levels apart over 185k pixels. GPU timing (what levels of detail, impostors or probes reach the capture), not the simulation.",
+        "close gpu:0.5": "Two images in 8-session A/As (2026-10-13: 0c01a25c, 4+4 sessions; 533de47 and 224699f, 4 runs each), the world's digest equal every time: two mid-distance buildings (the round tower, the spire) shade up to 16 levels apart over 185k pixels. GPU timing (what levels of detail, impostors or probes reach the capture), not the simulation."
+      }
     },
     {
       "name": "metro-views",
