@@ -396,7 +396,7 @@ impl Builder {
     /// The mesh, moved so its bounds center on the origin when `center`
     /// (renderables are placed by their centers) and with the attributes the
     /// build used, and the build-space point that became its origin.
-    pub(crate) fn finish(mut self, center: bool) -> Result<(Mesh, Vec3), String> {
+    pub(crate) fn finish(mut self, center: bool) -> engine::Result<(Mesh, Vec3)> {
         let (min, max) = self.vertices.iter().fold(
             (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
             |(min, max), vertex| {
@@ -433,20 +433,16 @@ impl Builder {
                 })
                 .collect::<Vec<_>>()
         });
-        let mut mesh = Mesh::new(self.vertices, self.indices).map_err(|error| error.to_string())?;
+        let mut mesh = Mesh::new(self.vertices, self.indices)?;
         if self.colored {
-            mesh = mesh
-                .with_colors(self.colors)
-                .map_err(|error| error.to_string())?;
+            mesh = mesh.with_colors(self.colors)?;
         }
         if let Some(uv1) = uv1 {
-            mesh = mesh.with_uv1(uv1).map_err(|error| error.to_string())?;
+            mesh = mesh.with_uv1(uv1)?;
         }
         if self.skinned {
             let (joints, weights) = self.skin.into_iter().unzip();
-            mesh = mesh
-                .with_skin(joints, weights)
-                .map_err(|error| error.to_string())?;
+            mesh = mesh.with_skin(joints, weights)?;
         }
         Ok((mesh, middle))
     }

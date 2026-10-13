@@ -190,11 +190,15 @@ pub fn run<G: Game, E: Into<engine::Error>>(
     let capture = match &method.capture {
         Some((timestamp, path)) => {
             if *timestamp < at(frame) {
-                return Err(engine::Error::from(format!(
-                    "capture.timestamp_ms {timestamp} falls before the end of the warm-up and \
+                return Err(engine::Error::new(
+                    engine::ErrorCode::InvalidMeasurement,
+                    "$.capture.timestamp_ms",
+                    format!(
+                        "capture.timestamp_ms {timestamp} falls before the end of the warm-up and \
                      sampled frames, {} ms",
-                    at(frame)
-                )));
+                        at(frame)
+                    ),
+                ));
             }
             while at(frame + 1) <= *timestamp {
                 game.frame(at(frame))?;
@@ -297,9 +301,14 @@ fn stat<'a>(stats: &'a Value, path: &str) -> Option<&'a Value> {
 #[cfg(feature = "profiling")]
 fn spans_of_frame<G: Game>(game: &mut Offscreen<G>) -> engine::Result<BTreeMap<String, f64>> {
     game.host_mut()
-        .profiling_start(engine::profiling::MAX_EVENTS)?;
+        .profiling_start(engine::profiling::MAX_EVENTS)
+        .map_err(|reason| {
+            engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
+        })?;
     let frame = game.frame(0.0);
-    let report = game.host_mut().profiling_stop()?;
+    let report = game.host_mut().profiling_stop().map_err(|reason| {
+        engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
+    })?;
     frame?;
     let mut spans = BTreeMap::new();
     for (name, durations) in cpu_spans(&report) {
@@ -369,7 +378,9 @@ fn timings<G: Game>(
     let (mut left, mut capture, mut complete) = (frames, FIRST_CAPTURE, true);
     while left > 0 {
         let count = capture.min(left);
-        game.host_mut().profiling_start(budget)?;
+        game.host_mut().profiling_start(budget).map_err(|reason| {
+            engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
+        })?;
         let mut drawn = Ok(());
         for _ in 0..count {
             drawn = game.frame(at(*frame));
@@ -378,7 +389,9 @@ fn timings<G: Game>(
                 break;
             }
         }
-        let mut report = game.host_mut().profiling_stop()?;
+        let mut report = game.host_mut().profiling_stop().map_err(|reason| {
+            engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
+        })?;
         drawn?;
         // GPU read-backs of the last frames finish once the GPU did.
         game.host().wait_for_gpu()?;

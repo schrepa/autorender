@@ -39,43 +39,45 @@ pub(crate) fn populate(
     world: &mut World,
     config: &StressConfig,
     files: &HashMap<String, StressFile>,
-) -> Result<(u32, (Vec3, Vec3)), String> {
+) -> engine::Result<(u32, (Vec3, Vec3))> {
     let mut assets = world.resource_mut::<AssetLibrary>();
-    let mut mesh = |name: &str| -> Result<MeshHandle, String> {
+    let mut mesh = |name: &str| -> engine::Result<MeshHandle> {
         let file = files.get(name).ok_or_else(|| {
-            format!(
-                "the dense scene needs {name}: run `cargo run -p engine_vgbuild --release --bin dense_assets`"
+            engine::Error::new(
+                engine::ErrorCode::MissingFile,
+                name,
+                format!(
+                    "the dense scene needs {name}: run `cargo run -p engine_vgbuild --release --bin dense_assets`"
+                ),
             )
         })?;
         // A prefix streams its other pages from the file's URL.
-        let geometry =
-            VirtualMesh::decode(&file.bytes).map_err(|error| format!("{name}: {error}"))?;
+        let geometry = VirtualMesh::decode(&file.bytes)
+            .map_err(|error| engine::Error::from(error).context(name))?;
         let geometry = Arc::new(match &file.url {
             Some(url) => geometry.with_source(url),
             None => geometry,
         });
         let mesh = Mesh::from_virtual(geometry, engine::DEFAULT_FALLBACK_TRIANGLES)
-            .map_err(|error| format!("{name}: {error}"))?;
-        assets.insert_mesh(mesh).map_err(|error| error.to_string())
+            .map_err(|error| engine::Error::from(error).context(name))?;
+        assets.insert_mesh(mesh).map_err(engine::Error::from)
     };
     let boulders = [mesh(FILES[0])?, mesh(FILES[1])?];
     let column = mesh(FILES[2])?;
     let terrain = mesh(FILES[3])?;
     let mut material =
-        |color: [f32; 4], roughness: f32, metalness: f32| -> Result<MaterialHandle, String> {
-            let material = Material::new(color)
-                .and_then(|material| {
-                    material.with_surface(Surface {
-                        roughness,
-                        metalness,
-                        emission: 0.0,
-                        ripples: 0.0,
-                    })
+        |color: [f32; 4], roughness: f32, metalness: f32| -> engine::Result<MaterialHandle> {
+            let material = Material::new(color).and_then(|material| {
+                material.with_surface(Surface {
+                    roughness,
+                    metalness,
+                    emission: 0.0,
+                    ripples: 0.0,
                 })
-                .map_err(|error| error.to_string())?;
+            })?;
             assets
                 .insert_material(material)
-                .map_err(|error| error.to_string())
+                .map_err(engine::Error::from)
         };
     let rock = material([0.46, 0.43, 0.40, 1.0], 0.85, 0.0)?;
     let dark_rock = material([0.30, 0.29, 0.30, 1.0], 0.7, 0.0)?;
@@ -192,7 +194,7 @@ impl StressWorld for DenseWorld {
         world: &mut World,
         config: &StressConfig,
         files: &HashMap<String, StressFile>,
-    ) -> Result<(u32, (Vec3, Vec3)), String> {
+    ) -> engine::Result<(u32, (Vec3, Vec3))> {
         populate(world, config, files)
     }
 

@@ -100,7 +100,7 @@ fn outfit(variant: u8) -> [[f32; 3]; 5] {
 }
 
 /// The skinned mesh of outfit `variant`, in bind space.
-pub(crate) fn mesh(variant: u8) -> Result<Mesh, String> {
+pub(crate) fn mesh(variant: u8) -> engine::Result<Mesh> {
     let [skin, hair, top, bottom, shoes] = outfit(variant);
     let mut b = Builder::default();
     let map = Map::Rect(0.0, 0.0, 1.0, 1.0);
@@ -193,7 +193,7 @@ fn clip(
     keys: u32,
     angle: impl Fn(u16, f32) -> f32,
     hips: impl Fn(f32) -> Vec3,
-) -> Result<AnimationClip, String> {
+) -> engine::Result<AnimationClip> {
     let times: Vec<f32> = (0..=keys)
         .map(|key| duration * key as f32 / keys as f32)
         .collect();
@@ -211,34 +211,28 @@ fn clip(
                 }
             })
             .collect();
-        channels.push(
-            AnimationChannel::new(
-                u32::from(joint),
-                AnimatedProperty::Rotation,
-                KeyInterpolation::Linear,
-                times.clone(),
-                Keyframes::Rotations(rotations.into_boxed_slice()),
-            )
-            .map_err(|error| error.to_string())?,
-        );
+        channels.push(AnimationChannel::new(
+            u32::from(joint),
+            AnimatedProperty::Rotation,
+            KeyInterpolation::Linear,
+            times.clone(),
+            Keyframes::Rotations(rotations.into_boxed_slice()),
+        )?);
     }
     let positions: Vec<Vec3> = phases.iter().map(|&phase| hips(phase)).collect();
-    channels.push(
-        AnimationChannel::new(
-            u32::from(HIPS),
-            AnimatedProperty::Translation,
-            KeyInterpolation::Linear,
-            times,
-            Keyframes::Vectors(positions.into_boxed_slice()),
-        )
-        .map_err(|error| error.to_string())?,
-    );
-    AnimationClip::new(channels).map_err(|error| error.to_string())
+    channels.push(AnimationChannel::new(
+        u32::from(HIPS),
+        AnimatedProperty::Translation,
+        KeyInterpolation::Linear,
+        times,
+        Keyframes::Vectors(positions.into_boxed_slice()),
+    )?);
+    AnimationClip::new(channels).map_err(engine::Error::from)
 }
 
 /// One stride cycle a second: legs swing, knees bend on the way forward,
 /// arms swing against the legs and the hips bob twice.
-pub(crate) fn walk() -> Result<AnimationClip, String> {
+pub(crate) fn walk() -> engine::Result<AnimationClip> {
     let rest = Vec3::from(SKELETON[0].1);
     clip(
         1.0,
@@ -264,7 +258,7 @@ pub(crate) fn walk() -> Result<AnimationClip, String> {
 }
 
 /// Standing: a slow sway, breathing and a glance around.
-pub(crate) fn idle() -> Result<AnimationClip, String> {
+pub(crate) fn idle() -> engine::Result<AnimationClip> {
     let rest = Vec3::from(SKELETON[0].1);
     clip(
         4.0,

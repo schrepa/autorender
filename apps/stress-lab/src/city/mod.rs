@@ -1605,7 +1605,7 @@ pub(crate) struct Spawned {
 }
 
 /// Builds and spawns the city of `config` into `world`.
-pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawned, String> {
+pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Result<Spawned> {
     let city = build(config);
     let mut assets = world.resource_mut::<AssetLibrary>();
     let mut library = Library::new(&mut assets, config.mesh_variety, config.textured)?;
@@ -1677,8 +1677,7 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawn
                     Collider::sphere(0.5)
                 } else {
                     Collider::cuboid(Vec3::splat(0.5))
-                }
-                .map_err(|error| error.to_string())?
+                }?
                 .with_sensor(sensor);
                 entity.insert(shape);
                 probes.push(entity.id());
@@ -1692,7 +1691,7 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawn
         }
         entities.push(id);
     }
-    set_parents(world, &parents).map_err(|error| error.to_string())?;
+    set_parents(world, &parents)?;
     // The outermost block ring, one ring of margin for streets and traffic,
     // and the tallest spires.
     let ring = city

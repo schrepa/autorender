@@ -3348,7 +3348,7 @@ pub(crate) struct Spawned {
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
-pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawned, String> {
+pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Result<Spawned> {
     let mut city = build(config);
     let mut assets = world.resource_mut::<AssetLibrary>();
     let mut library = Library::new(
@@ -3450,8 +3450,7 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawn
                     Collider::sphere(math::max(math::max(size.x, size.y), size.z) * 0.5)
                 } else {
                     Collider::cuboid(size.max(Vec3::splat(0.02)) * 0.5)
-                }
-                .map_err(|error| error.to_string())?
+                }?
                 .with_sensor(sensor);
                 entity.insert(shape);
                 probes.push(entity.id());
@@ -3465,7 +3464,7 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawn
         }
         entities.push(id);
     }
-    set_parents(world, &parents).map_err(|error| error.to_string())?;
+    set_parents(world, &parents)?;
     // Components naming other nodes, once every node exists.
     for (node, extra) in &city.extras {
         let entity = entities[*node as usize];

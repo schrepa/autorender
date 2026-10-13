@@ -30,7 +30,7 @@ impl StressWorld for MetroWorld {
         world: &mut World,
         config: &StressConfig,
         _files: &HashMap<String, StressFile>,
-    ) -> Result<(u32, (Vec3, Vec3)), String> {
+    ) -> engine::Result<(u32, (Vec3, Vec3))> {
         let city = populate(world, config)?;
         world.insert_resource(Workload {
             transform_nodes: city.transform_nodes,

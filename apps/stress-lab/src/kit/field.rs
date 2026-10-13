@@ -22,7 +22,7 @@ pub(crate) struct Motion {
 /// The tower field: a grid of towers `lift` above the ground, optionally
 /// grouped under parents of 32, with the first `colliders` carrying
 /// colliders. Returns the moving node count.
-pub(crate) fn field(world: &mut World, config: &StressConfig, lift: f32) -> Result<u32, String> {
+pub(crate) fn field(world: &mut World, config: &StressConfig, lift: f32) -> engine::Result<u32> {
     let meshes = create_assets(&mut world.resource_mut::<AssetLibrary>(), config)?;
     let mut parent_changes = Vec::with_capacity(if config.hierarchy {
         config.renderables as usize
@@ -88,8 +88,7 @@ pub(crate) fn field(world: &mut World, config: &StressConfig, lift: f32) -> Resu
                 Collider::sphere(0.5)
             } else {
                 Collider::cuboid(Vec3::splat(0.5))
-            }
-            .map_err(|error| error.to_string())?
+            }?
             .with_sensor(sensor);
             entity.insert(collider);
             probes.push(entity.id());
@@ -99,7 +98,7 @@ pub(crate) fn field(world: &mut World, config: &StressConfig, lift: f32) -> Resu
             parent_changes.push((entity.id(), Some(parent)));
         }
     }
-    set_parents(world, &parent_changes).map_err(|error| error.to_string())?;
+    set_parents(world, &parent_changes)?;
     world.insert_resource(Workload {
         transform_nodes: config.renderables + parent_count,
         moving_nodes,
@@ -131,7 +130,7 @@ pub(crate) fn position_for_index(index: u32, config: &StressConfig) -> Vec3 {
     )
 }
 
-fn create_assets(assets: &mut AssetLibrary, config: &StressConfig) -> Result<Vec<Mesh3d>, String> {
+fn create_assets(assets: &mut AssetLibrary, config: &StressConfig) -> engine::Result<Vec<Mesh3d>> {
     let colors = [
         [0.09, 0.88, 0.78, 1.0],
         [0.10, 0.49, 1.0, 1.0],
@@ -159,12 +158,7 @@ fn create_assets(assets: &mut AssetLibrary, config: &StressConfig) -> Result<Vec
                 vertex.normal[0] /= scale_x;
                 vertex.normal[2] /= scale_z;
             }
-            let mesh = assets
-                .insert_mesh(
-                    Mesh::new(vertices, source.indices().to_vec())
-                        .map_err(|error| error.to_string())?,
-                )
-                .map_err(|error| error.to_string())?;
+            let mesh = assets.insert_mesh(Mesh::new(vertices, source.indices().to_vec())?)?;
             let color = colors[index as usize % colors.len()];
             // Surfaces from glossy metal to matte; every
             // fourth tower's bright stripes light up.
@@ -196,20 +190,13 @@ fn create_assets(assets: &mut AssetLibrary, config: &StressConfig) -> Result<Vec
                         ]);
                     }
                 }
-                let texture = assets
-                    .insert_texture(
-                        Texture::from_rgba(64, 64, pixels).map_err(|error| error.to_string())?,
-                    )
-                    .map_err(|error| error.to_string())?;
+                let texture = assets.insert_texture(Texture::from_rgba(64, 64, pixels)?)?;
                 Material::textured(color, texture)
             } else {
                 Material::new(color)
             }
-            .and_then(|material| material.with_surface(surface))
-            .map_err(|error| error.to_string())?;
-            let material = assets
-                .insert_material(material)
-                .map_err(|error| error.to_string())?;
+            .and_then(|material| material.with_surface(surface))?;
+            let material = assets.insert_material(material)?;
             Ok(Mesh3d { mesh, material })
         })
         .collect()

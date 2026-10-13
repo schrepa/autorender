@@ -34,7 +34,7 @@ pub(crate) trait StressWorld: Sync {
         world: &mut World,
         config: &StressConfig,
         files: &HashMap<String, StressFile>,
-    ) -> Result<(u32, (Vec3, Vec3)), String>;
+    ) -> engine::Result<(u32, (Vec3, Vec3))>;
 
     /// Changes what every world's environment holds, once populated.
     fn environment(&self, _world: &mut World) {}

@@ -17,7 +17,7 @@ pub(crate) struct Workload {
 
 /// Creates an independently owned world. Failed configuration leaves the
 /// running engine untouched. Distinct AssetLibrary identities prevent GPU aliasing.
-pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
+pub fn create_workload(config: StressConfig) -> engine::Result<Engine> {
     create_workload_with(config, &HashMap::default())
 }
 
@@ -36,8 +36,8 @@ pub struct StressFile {
 pub fn create_workload_with(
     config: StressConfig,
     files: &HashMap<String, StressFile>,
-) -> Result<Engine, String> {
-    config.validate().map_err(|error| error.to_string())?;
+) -> engine::Result<Engine> {
+    config.validate()?;
     let mut engine = Engine::new(EngineConfig {
         frustum_culling: config.culling,
         ..EngineConfig::default()
@@ -75,7 +75,7 @@ pub fn create_workload_with(
         ..LocalLightSettings::default()
     });
     if collision_enabled {
-        refresh_collision_world(world).map_err(|error| error.to_string())?;
+        refresh_collision_world(world)?;
     }
     set_view(&mut engine, "overview")?;
     engine.app.add_plugins(FlyCameraPlugin);
@@ -249,7 +249,7 @@ pub fn apply_sky(world: &mut World, scene: StressScene, name: &str) {
 /// The lighting preset `name` and its street lamp brightness: `golden`,
 /// `dusk`, `night` or `day`, or `scene` for the scene's own (night over the
 /// tower field, golden hour over the city, day over dense geometry).
-pub fn look(scene: StressScene, name: &str) -> Result<(Atmosphere, f32), String> {
+pub fn look(scene: StressScene, name: &str) -> engine::Result<(Atmosphere, f32)> {
     let name = resolve(scene, name);
     LOOKS
         .iter()
@@ -259,7 +259,7 @@ pub fn look(scene: StressScene, name: &str) -> Result<(Atmosphere, f32), String>
             let names: Vec<&str> = std::iter::once(SCENE_LOOK.0)
                 .chain(LOOKS.iter().map(|(name, ..)| *name))
                 .collect();
-            format!("look must be one of {}", names.join(", "))
+            engine::Error::game_rule(format!("look must be one of {}", names.join(", ")))
         })
 }
 
@@ -271,7 +271,7 @@ fn resolve(scene: StressScene, name: &str) -> &str {
     scene.world().look()
 }
 
-pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {
+pub fn set_view(engine: &mut Engine, view: &str) -> engine::Result<()> {
     let config = engine.app.world().resource::<StressConfig>();
     let span = (config.renderables as f32).sqrt().ceil() * SPACING;
     let content = config.scene.world();
@@ -302,7 +302,10 @@ pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {
             }
             _ => {
                 let names: Vec<&str> = VIEWS.iter().map(|(name, _)| *name).collect();
-                return Err(format!("view must be one of {}", names.join(", ")));
+                return Err(engine::Error::game_rule(format!(
+                    "view must be one of {}",
+                    names.join(", ")
+                )));
             }
         },
     };

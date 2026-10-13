@@ -352,16 +352,14 @@ impl Library {
         &mut self,
         assets: &mut AssetLibrary,
         model: Model,
-    ) -> Result<(MeshHandle, Vec3), String> {
+    ) -> engine::Result<(MeshHandle, Vec3)> {
         let model = model.resolve(self.variety);
         if let Some(found) = self.meshes.get(&model) {
             return Ok(*found);
         }
         let mesh = model.build()?;
         let bounds = mesh.bounds();
-        let handle = assets
-            .insert_mesh(mesh)
-            .map_err(|error| error.to_string())?;
+        let handle = assets.insert_mesh(mesh)?;
         let entry = (handle, bounds.max() - bounds.min());
         self.meshes.insert(model, entry);
         Ok(entry)
@@ -372,7 +370,7 @@ impl Library {
         assets: &mut AssetLibrary,
         set: Set,
         slot: Slot,
-    ) -> Result<Option<TextureRef>, String> {
+    ) -> engine::Result<Option<TextureRef>> {
         if let Some(texture) = self.textures.get(&(set, slot)) {
             return Ok(Some(self.reference(set, *texture)));
         }
@@ -397,11 +395,8 @@ impl Library {
                 height,
                 levels,
             } => Texture::compressed(engine::TextureFormat::Bc7, width, height, levels),
-        }
-        .map_err(|error| error.to_string())?;
-        let handle = assets
-            .insert_texture(texture)
-            .map_err(|error| error.to_string())?;
+        }?;
+        let handle = assets.insert_texture(texture)?;
         self.textures.insert((set, slot), handle);
         Ok(Some(self.reference(set, handle)))
     }
@@ -423,14 +418,12 @@ impl Library {
         &mut self,
         assets: &mut AssetLibrary,
         mat: Mat,
-    ) -> Result<MaterialHandle, String> {
+    ) -> engine::Result<MaterialHandle> {
         if let Some(handle) = self.materials.get(&mat) {
             return Ok(*handle);
         }
         let material = self.describe(assets, mat, None)?;
-        let handle = assets
-            .insert_material(material)
-            .map_err(|error| error.to_string())?;
+        let handle = assets.insert_material(material)?;
         self.materials.insert(mat, handle);
         Ok(handle)
     }
@@ -441,7 +434,7 @@ impl Library {
         assets: &mut AssetLibrary,
         slot: u8,
         ad: u8,
-    ) -> Result<Material, String> {
+    ) -> engine::Result<Material> {
         self.describe(assets, Mat::Ad(slot), Some(ad))
     }
 
@@ -450,8 +443,7 @@ impl Library {
         assets: &mut AssetLibrary,
         mat: Mat,
         ad: Option<u8>,
-    ) -> Result<Material, String> {
-        let error = |error: AssetError| error.to_string();
+    ) -> engine::Result<Material> {
         let set = match (mat, ad) {
             (Mat::Ad(_), Some(ad)) => Some(Set::Ad(ad)),
             (Mat::Ad(slot), None) => Some(Set::Ad(slot)),
@@ -464,34 +456,23 @@ impl Library {
         } else {
             mat.untextured()
         };
-        let mut material = Material::new(color)
-            .map_err(error)?
-            .with_surface(surface)
-            .map_err(error)?;
+        let mut material = Material::new(color)?.with_surface(surface)?;
         material = match mat {
             Mat::Leaves | Mat::Fronds | Mat::Lattice | Mat::Fence => material
-                .with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 })
-                .map_err(error)?
+                .with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 })?
                 .with_double_sided(true),
             Mat::Canvas => material.with_double_sided(true),
-            Mat::ClearGlass => material
-                .with_transmission(Transmission {
-                    factor: 0.95,
-                    ior: 1.5,
-                    thickness: 0.4,
-                })
-                .map_err(error)?,
-            Mat::FrostedGlass => material
-                .with_transmission(Transmission {
-                    factor: 0.85,
-                    ior: 1.45,
-                    thickness: 0.2,
-                })
-                .map_err(error)?,
-            Mat::Pane => material
-                .with_opacity(0.35)
-                .map_err(error)?
-                .with_double_sided(true),
+            Mat::ClearGlass => material.with_transmission(Transmission {
+                factor: 0.95,
+                ior: 1.5,
+                thickness: 0.4,
+            })?,
+            Mat::FrostedGlass => material.with_transmission(Transmission {
+                factor: 0.85,
+                ior: 1.45,
+                thickness: 0.2,
+            })?,
+            Mat::Pane => material.with_opacity(0.35)?.with_double_sided(true),
             _ => material,
         };
         let Some(set) = set else {
@@ -499,29 +480,27 @@ impl Library {
             return match mat {
                 Mat::Neon(color) => material
                     .with_emissive(NEON_COLORS[color as usize % NEON_COLORS.len()].map(|c| c * 2.0))
-                    .map_err(error),
-                Mat::Ad(_) => material.with_emissive([1.2; 3]).map_err(error),
+                    .map_err(engine::Error::from),
+                Mat::Ad(_) => material
+                    .with_emissive([1.2; 3])
+                    .map_err(engine::Error::from),
                 _ => Ok(material),
             };
         };
         if let Some(base) = self.texture(assets, set, Slot::Base)? {
-            material = material.with_base_color_texture(base).map_err(error)?;
+            material = material.with_base_color_texture(base)?;
         }
         if let Some(mr) = self.texture(assets, set, Slot::Mr)? {
-            material = material
-                .with_metallic_roughness_texture(mr)
-                .map_err(error)?;
+            material = material.with_metallic_roughness_texture(mr)?;
         }
         if let Some(normal) = self.texture(assets, set, Slot::Normal)? {
             let scale = if mat == Mat::Water { 0.6 } else { 1.0 };
-            material = material.with_normal_texture(normal, scale).map_err(error)?;
+            material = material.with_normal_texture(normal, scale)?;
         }
         if mat.facade() {
             // Grime spans each building through its second coordinates.
             if let Some(grime) = self.texture(assets, Set::Grime, Slot::Mr)? {
-                material = material
-                    .with_occlusion_texture(grime.with_tex_coord(1), 1.0)
-                    .map_err(error)?;
+                material = material.with_occlusion_texture(grime.with_tex_coord(1), 1.0)?;
             }
         } else if matches!(
             mat,
@@ -529,7 +508,7 @@ impl Library {
         ) {
             // Occlusion packed in the metallic-roughness texture's red.
             if let Some(mr) = self.texture(assets, set, Slot::Mr)? {
-                material = material.with_occlusion_texture(mr, 1.0).map_err(error)?;
+                material = material.with_occlusion_texture(mr, 1.0)?;
             }
         }
         if let Some(glow) = self.texture(assets, set, Slot::Emissive)? {
@@ -542,10 +521,8 @@ impl Library {
                 _ => [1.6; 3],
             };
             material = material
-                .with_emissive(factor)
-                .map_err(error)?
-                .with_emissive_texture(glow)
-                .map_err(error)?;
+                .with_emissive(factor)?
+                .with_emissive_texture(glow)?;
         }
         Ok(material)
     }
@@ -554,7 +531,7 @@ impl Library {
         &mut self,
         assets: &mut AssetLibrary,
         clip: Clip,
-    ) -> Result<ClipHandle, String> {
+    ) -> engine::Result<ClipHandle> {
         if let Some(handle) = self.clips.get(&clip) {
             return Ok(*handle);
         }
@@ -563,9 +540,7 @@ impl Library {
             Clip::Idle => people::idle()?,
             _ => super::props::clip(clip)?,
         };
-        let handle = assets
-            .insert_clip(built)
-            .map_err(|error| error.to_string())?;
+        let handle = assets.insert_clip(built)?;
         self.clips.insert(clip, handle);
         Ok(handle)
     }

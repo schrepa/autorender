@@ -88,7 +88,7 @@ pub(crate) const CONIFER_ERRORS: [f32; 3] = [0.08, 0.2, 0.45];
 /// Conifer `seed` built at `detail` (0 the full tree, up to 3): 13 to 17
 /// meters tall before placement scales it, its base half a meter into the
 /// ground.
-pub(crate) fn conifer(seed: u32, detail: usize) -> Result<Mesh, String> {
+pub(crate) fn conifer(seed: u32, detail: usize) -> engine::Result<Mesh> {
     let random = |index: u32| unit(golden_hash(seed.wrapping_mul(0x9e37_79b9) ^ index));
     let build = &DETAILS[detail];
     let height = 13.0 + 4.0 * random(1);
@@ -168,7 +168,9 @@ pub(crate) fn conifer(seed: u32, detail: usize) -> Result<Mesh, String> {
     } = parts;
     Mesh::new(vertices, indices)
         .and_then(|mesh| mesh.with_colors(colors))
-        .map_err(|error| format!("conifer {seed} at detail {detail}: {error}"))
+        .map_err(|error| {
+            engine::Error::from(error).context(format!("conifer {seed} at detail {detail}"))
+        })
 }
 
 /// A mesh being built: its vertices, their colors and its triangles.

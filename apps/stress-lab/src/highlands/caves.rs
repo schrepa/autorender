@@ -20,11 +20,13 @@ const TILING: f32 = 4.0;
 /// The cave through world `points`, `radius` meters across and up from
 /// the centerline, roughened by `seed`'s noise, as a mesh around
 /// `points[0]`.
-pub(crate) fn cave(points: &[Vec3], radius: [f32; 2], seed: u32) -> Result<Mesh, String> {
+pub(crate) fn cave(points: &[Vec3], radius: [f32; 2], seed: u32) -> engine::Result<Mesh> {
     let (centers, tangents) = centerline(points);
     let rings = centers.len();
     if rings < 2 {
-        return Err("a cave needs a centerline at least a ring long".into());
+        return Err(engine::Error::game_rule(
+            "a cave needs a centerline at least a ring long",
+        ));
     }
     let origin = points[0];
     let offset = Vec3::new(
@@ -107,7 +109,7 @@ pub(crate) fn cave(points: &[Vec3], radius: [f32; 2], seed: u32) -> Result<Mesh,
             }
         })
         .collect();
-    Mesh::new(vertices, indices).map_err(|error| format!("cave: {error}"))
+    Mesh::new(vertices, indices).map_err(|error| engine::Error::from(error).context("cave"))
 }
 
 /// Points every [`RING_STEP`] meters along a Catmull-Rom curve through

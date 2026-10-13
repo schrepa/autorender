@@ -218,7 +218,7 @@ impl Shape {
         )
     }
 
-    fn build(self) -> Result<Mesh, String> {
+    fn build(self) -> engine::Result<Mesh> {
         use Shape::*;
         let mut b = Builder::default();
         match self {
@@ -339,7 +339,7 @@ impl Tex {
         }
     }
 
-    fn build(self) -> Result<Texture, String> {
+    fn build(self) -> engine::Result<Texture> {
         let facade = matches!(
             self,
             Tex::Office | Tex::Glass | Tex::Residential | Tex::Industrial
@@ -354,7 +354,7 @@ impl Tex {
                 pixels.extend_from_slice(&[rgb[0], rgb[1], rgb[2], if emits { 255 } else { 0 }]);
             }
         }
-        Texture::from_rgba(width as u32, height as u32, pixels).map_err(|error| error.to_string())
+        Texture::from_rgba(width as u32, height as u32, pixels).map_err(engine::Error::from)
     }
 
     /// A texel's color and whether it emits.
@@ -532,27 +532,18 @@ impl Library {
         assets: &mut AssetLibrary,
         variety: u32,
         textured: bool,
-    ) -> Result<Self, String> {
+    ) -> engine::Result<Self> {
         let mut meshes = HashMap::default();
         for shape in Shape::ALL {
             let shape = shape.resolve(variety);
             if let std::collections::hash_map::Entry::Vacant(entry) = meshes.entry(shape) {
-                entry.insert(
-                    assets
-                        .insert_mesh(shape.build()?)
-                        .map_err(|error| error.to_string())?,
-                );
+                entry.insert(assets.insert_mesh(shape.build()?)?);
             }
         }
         let mut textures = HashMap::default();
         if textured {
             for tex in Tex::ALL {
-                textures.insert(
-                    tex,
-                    assets
-                        .insert_texture(tex.build()?)
-                        .map_err(|error| error.to_string())?,
-                );
+                textures.insert(tex, assets.insert_texture(tex.build()?)?);
             }
         }
         Ok(Self {
@@ -583,7 +574,7 @@ impl Library {
         assets: &mut AssetLibrary,
         shape: Shape,
         paint: Paint,
-    ) -> Result<Mesh3d, String> {
+    ) -> engine::Result<Mesh3d> {
         let mesh = self.meshes[&shape.resolve(self.variety)];
         // Glass domes are see-through.
         let opacity: f32 = if shape == Shape::Dome && paint.tex == Tex::Glass {
@@ -601,11 +592,8 @@ impl Library {
                     None => Material::new(color),
                 }
                 .and_then(|material| material.with_surface(self.surface(paint.tex)))
-                .and_then(|material| material.with_opacity(opacity))
-                .map_err(|error| error.to_string())?;
-                let handle = assets
-                    .insert_material(material)
-                    .map_err(|error| error.to_string())?;
+                .and_then(|material| material.with_opacity(opacity))?;
+                let handle = assets.insert_material(material)?;
                 self.materials.insert(key, handle);
                 handle
             }

@@ -294,13 +294,13 @@ impl Model {
         )
     }
 
-    pub(crate) fn build(self) -> Result<Mesh, String> {
+    pub(crate) fn build(self) -> engine::Result<Mesh> {
         self.assemble().map(|(mesh, _)| mesh)
     }
 
     /// The mesh and the build-space point at its origin: pivots of animated
     /// parts and light positions are given in build space.
-    pub(crate) fn assemble(self) -> Result<(Mesh, Vec3), String> {
+    pub(crate) fn assemble(self) -> engine::Result<(Mesh, Vec3)> {
         let mut b = Builder::default();
         match self {
             Model::Tower(style, class) => {

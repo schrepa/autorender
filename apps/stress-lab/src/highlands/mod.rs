@@ -551,12 +551,12 @@ pub(crate) fn populate(
     config: &StressConfig,
     hamlet: f32,
     files: &HashMap<String, StressFile>,
-) -> Result<((Vec3, Vec3), f32), String> {
+) -> engine::Result<((Vec3, Vec3), f32)> {
     let half = SIZE * 0.5;
     // Terrain-local: the terrain's first corner is at -half.
     let local = |point: [f32; 2]| [point[0] + half, point[1] + half];
     let plateau = local(PLATEAU);
-    let pyramid = Pyramid::new([TILES, TILES], SPACING).map_err(|error| error.to_string())?;
+    let pyramid = Pyramid::new([TILES, TILES], SPACING)?;
     let mountains = Layer::Noise(NoiseLayer {
         seed: config.seed,
         height: 1500.0,
@@ -570,9 +570,7 @@ pub(crate) fn populate(
         ..NoiseLayer::default()
     });
     // Leveled where the mountains already stand there.
-    let level = Layers::new(vec![mountains.clone()])
-        .map_err(|error| error.to_string())?
-        .height_at(&pyramid, Vec2::from(plateau));
+    let level = Layers::new(vec![mountains.clone()])?.height_at(&pyramid, Vec2::from(plateau));
     world.insert_resource(Plateau(level));
     // The hamlet's plateau, wide enough for the field's grid: leveled
     // before erosion, which then wears around it, and again after, so it
@@ -587,8 +585,7 @@ pub(crate) fn populate(
     // slope within reach of the plateau, as the mountains and the plateau
     // shape it before the bakes wear it a little.
     let cave_mouth = {
-        let shaped = Layers::new(vec![mountains.clone(), plateau_stamp.clone()])
-            .map_err(|error| error.to_string())?;
+        let shaped = Layers::new(vec![mountains.clone(), plateau_stamp.clone()])?;
         steepest_hillside(&shaped, &pyramid, Vec2::from(plateau), hamlet)
     };
     let layers = Layers::new(vec![
@@ -678,8 +675,7 @@ pub(crate) fn populate(
             falloff: 0.0,
             op: StampOp::Hole,
         }),
-    ])
-    .map_err(|error| error.to_string())?;
+    ])?;
     world.insert_resource(CaveMouth(Vec2::new(
         cave_mouth[0] - half,
         cave_mouth[1] - half,
@@ -756,7 +752,7 @@ const HIKER_REST: f32 = 10.0;
 /// A hiker in a red jacket walking from `road`'s start (terrain-local, the
 /// terrain's corner at `-half`) to the first of its points 350 meters away
 /// and back.
-fn hiker(world: &mut World, road: &[[f32; 2]], half: f32) -> Result<(), String> {
+fn hiker(world: &mut World, road: &[[f32; 2]], half: f32) -> engine::Result<()> {
     let world_point = |[x, z]: [f32; 2]| [x - half, z - half];
     let start = world_point(road[0]);
     let far = road
@@ -764,12 +760,9 @@ fn hiker(world: &mut World, road: &[[f32; 2]], half: f32) -> Result<(), String> 
         .map(|&point| world_point(point))
         .find(|point| Vec2::from(*point).distance(Vec2::from(start)) > 350.0)
         .unwrap_or(world_point(road[road.len() - 1]));
-    let error = |error: AssetError| error.to_string();
     let mut assets = world.resource_mut::<AssetLibrary>();
-    let mesh = assets.insert_mesh(Mesh::cube()).map_err(error)?;
-    let material = assets
-        .insert_material(Material::new([0.62, 0.1, 0.07, 1.0]).map_err(error)?)
-        .map_err(error)?;
+    let mesh = assets.insert_mesh(Mesh::cube())?;
+    let material = assets.insert_material(Material::new([0.62, 0.1, 0.07, 1.0])?)?;
     // A body 1.75 meters tall, its origin at its middle.
     let offset = 0.875;
     world.spawn((
@@ -890,25 +883,17 @@ impl Streamed for Lantern {
 /// Registers lanterns along `road` (terrain-local, the terrain's corner at
 /// `-half`) as streamed items, every
 /// [`LANTERN_SPACING`] meters on its left.
-fn lanterns(world: &mut World, road: &[[f32; 2]], half: f32) -> Result<(), String> {
-    let error = |error: AssetError| error.to_string();
+fn lanterns(world: &mut World, road: &[[f32; 2]], half: f32) -> engine::Result<()> {
     let mut assets = world.resource_mut::<AssetLibrary>();
-    let cube = assets.insert_mesh(Mesh::cube()).map_err(error)?;
-    let wood = assets
-        .insert_material(Material::new([0.09, 0.06, 0.04, 1.0]).map_err(error)?)
-        .map_err(error)?;
-    let glow = assets
-        .insert_material(
-            Material::new([1.0, 0.72, 0.42, 1.0])
-                .and_then(|material| {
-                    material.with_surface(Surface {
-                        emission: 3.0,
-                        ..Surface::MATTE
-                    })
-                })
-                .map_err(error)?,
-        )
-        .map_err(error)?;
+    let cube = assets.insert_mesh(Mesh::cube())?;
+    let wood = assets.insert_material(Material::new([0.09, 0.06, 0.04, 1.0])?)?;
+    let glow =
+        assets.insert_material(Material::new([1.0, 0.72, 0.42, 1.0]).and_then(|material| {
+            material.with_surface(Surface {
+                emission: 3.0,
+                ..Surface::MATTE
+            })
+        })?)?;
     let mut items = Vec::new();
     let mut next = LANTERN_SPACING * 0.5;
     let mut walked = 0.0;
@@ -988,7 +973,7 @@ fn surface(
     world: &mut World,
     files: &HashMap<String, StressFile>,
     authored: Vec<AuthoredPlacement>,
-) -> Result<TerrainSurface, String> {
+) -> engine::Result<TerrainSurface> {
     let mut assets = world.resource_mut::<AssetLibrary>();
     let mut materials = Vec::with_capacity(LOOKS.len());
     let mut loaded = HashMap::default();
@@ -1010,15 +995,12 @@ fn surface(
     // them: lighter than the cliffs' and gentler in relief, as weathered
     // stones are.
     let boulder_scan = scanned(&mut assets, files, "boulder", BOULDER_SCAN_TILING, MOSS)?;
-    let base = Material::new([0.8, 0.77, 0.72, 1.0])
-        .and_then(|material| {
-            material.with_surface(Surface {
-                roughness: 0.85,
-                ..Surface::MATTE
-            })
+    let base = Material::new([0.8, 0.77, 0.72, 1.0]).and_then(|material| {
+        material.with_surface(Surface {
+            roughness: 0.85,
+            ..Surface::MATTE
         })
-        .map_err(|error| error.to_string())?;
-    let error = |error: AssetError| error.to_string();
+    })?;
     let terrain_rock = materials[4]
         .material
         .and_then(|rock| assets.material(rock).copied());
@@ -1027,41 +1009,35 @@ fn surface(
         (None, Some(rock)) => {
             let mut material = base;
             if let Some(map) = rock.base_color_texture() {
-                material = material.with_base_color_texture(map).map_err(error)?;
+                material = material.with_base_color_texture(map)?;
             }
             if let Some(map) = rock.normal_texture() {
-                material = material.with_normal_texture(map, 0.8).map_err(error)?;
+                material = material.with_normal_texture(map, 0.8)?;
             }
             if let Some(map) = rock.metallic_roughness_texture() {
                 material = material
                     .with_metallic_roughness_texture(map)
-                    .and_then(|material| material.with_occlusion_texture(map, 1.0))
-                    .map_err(error)?;
+                    .and_then(|material| material.with_occlusion_texture(map, 1.0))?;
             }
             // Laid from the world's axes, a repeat every three meters, and
             // mossed on top.
             material
                 .with_world_mapping(3.0)
-                .and_then(|material| material.with_top_layer(MOSS))
-                .map_err(error)?
+                .and_then(|material| material.with_top_layer(MOSS))?
         }
         (None, None) => Material::new([0.3, 0.28, 0.26, 1.0])
             .and_then(|material| material.with_surface(base.surface()))
-            .and_then(|material| material.with_top_layer(MOSS))
-            .map_err(error)?,
+            .and_then(|material| material.with_top_layer(MOSS))?,
     };
     let rock = material
         .with_grounding(SOIL)
-        .and_then(|material| assets.insert_material(material))
-        .map_err(|error| error.to_string())?;
+        .and_then(|material| assets.insert_material(material))?;
     let mut placed = Vec::with_capacity(BOULDERS + SPRUCES);
     for seed in 0..BOULDERS as u32 {
         let mut mesh = |detail| {
             rocks::boulder(seed, detail).and_then(|(mesh, error)| {
                 Ok(PlacementLod {
-                    mesh: assets
-                        .insert_mesh(mesh)
-                        .map_err(|error| error.to_string())?,
+                    mesh: assets.insert_mesh(mesh)?,
                     error,
                 })
             })
@@ -1085,8 +1061,7 @@ fn surface(
     // Spruces of a few shapes over one bark and needle atlas, their needles
     // cut out by its alpha.
     let atlas = Texture::from_rgba(trees::ATLAS, trees::ATLAS, trees::atlas())
-        .and_then(|texture| assets.insert_texture(texture))
-        .map_err(error)?;
+        .and_then(|texture| assets.insert_texture(texture))?;
     let needles = Material::new([1.0, 1.0, 1.0, 1.0])
         .and_then(|material| {
             material.with_surface(Surface {
@@ -1096,11 +1071,11 @@ fn surface(
         })
         .and_then(|material| material.with_base_color_texture(TextureRef::new(atlas)))
         .and_then(|material| material.with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 }))
-        .and_then(|material| assets.insert_material(material))
-        .map_err(error)?;
+        .and_then(|material| assets.insert_material(material))?;
     for seed in 0..SPRUCES as u32 {
         let mut mesh = |detail| {
-            trees::conifer(seed, detail).and_then(|mesh| assets.insert_mesh(mesh).map_err(error))
+            trees::conifer(seed, detail)
+                .and_then(|mesh| assets.insert_mesh(mesh).map_err(engine::Error::from))
         };
         let full = mesh(0)?;
         let mut lods = Vec::with_capacity(trees::CONIFER_ERRORS.len());
@@ -1137,38 +1112,33 @@ fn surface(
     let cliff_rock = match (cliff_scan, terrain_rock) {
         (Some(scan), _) => scan
             .with_grounding(FOOT)
-            .and_then(|material| assets.insert_material(material))
-            .map_err(error)?,
+            .and_then(|material| assets.insert_material(material))?,
         (None, Some(terrain_rock)) => {
             let [red, green, blue] = LOOKS[4].tint;
-            let mut material = Material::new([red, green, blue, 1.0])
-                .and_then(|material| {
-                    material.with_surface(Surface {
-                        roughness: 0.9,
-                        ..Surface::MATTE
-                    })
+            let mut material = Material::new([red, green, blue, 1.0]).and_then(|material| {
+                material.with_surface(Surface {
+                    roughness: 0.9,
+                    ..Surface::MATTE
                 })
-                .map_err(error)?;
+            })?;
             if let Some(map) = terrain_rock.base_color_texture() {
-                material = material.with_base_color_texture(map).map_err(error)?;
+                material = material.with_base_color_texture(map)?;
             }
             if let Some(map) = terrain_rock.normal_texture() {
-                material = material.with_normal_texture(map, 0.8).map_err(error)?;
+                material = material.with_normal_texture(map, 0.8)?;
             }
             if let Some(map) = terrain_rock.metallic_roughness_texture() {
                 material = material
                     .with_metallic_roughness_texture(map)
-                    .and_then(|material| material.with_occlusion_texture(map, 1.0))
-                    .map_err(error)?;
+                    .and_then(|material| material.with_occlusion_texture(map, 1.0))?;
             }
             // As the terrain's rock lies: a repeat every four
             // meters whatever a block's size, lichen on its ledges.
             let material = material
                 .with_world_mapping(4.0)
                 .and_then(|material| material.with_top_layer(LICHEN))
-                .and_then(|material| material.with_grounding(FOOT))
-                .map_err(error)?;
-            assets.insert_material(material).map_err(error)?
+                .and_then(|material| material.with_grounding(FOOT))?;
+            assets.insert_material(material)?
         }
         (None, None) => rock,
     };
@@ -1176,9 +1146,7 @@ fn surface(
         let mut mesh = |detail| {
             rocks::cliff(seed, detail).and_then(|(mesh, error)| {
                 Ok(PlacementLod {
-                    mesh: assets
-                        .insert_mesh(mesh)
-                        .map_err(|error| error.to_string())?,
+                    mesh: assets.insert_mesh(mesh)?,
                     error,
                 })
             })
@@ -1205,8 +1173,8 @@ fn surface(
         .material(cliff_rock)
         .copied()
         .map(|material| material.with_double_sided(true))
-        .ok_or("the cliffs' rock is resident")?;
-    let cave_wall = assets.insert_material(cave_wall).map_err(error)?;
+        .ok_or_else(|| engine::Error::game_rule("the cliffs' rock is resident"))?;
+    let cave_wall = assets.insert_material(cave_wall)?;
     world.insert_resource(CaveRock {
         meshes: cave_rocks,
         material: cliff_rock,
@@ -1225,7 +1193,7 @@ fn surface(
         bridge: Some(rock),
         ..surface
     })
-    .map_err(|error| error.to_string())
+    .map_err(engine::Error::from)
 }
 
 /// The cave's mouth: the world point at its center, and the
@@ -1701,7 +1669,7 @@ fn maps(
     files: &HashMap<String, StressFile>,
     look: &Look,
     loaded: &mut HashMap<String, TextureHandle>,
-) -> Result<Option<MaterialHandle>, String> {
+) -> engine::Result<Option<MaterialHandle>> {
     let mut textures = Vec::with_capacity(3);
     for map in ["albedo", "normal", "orm"] {
         let file_name = format!("{}_{map}.ktx2", look.maps);
@@ -1716,10 +1684,8 @@ fn maps(
             return Ok(None);
         };
         let texture = Texture::from_rgba(width, height, file.bytes.clone())
-            .map_err(|error| format!("{file_name}: {error}"))?;
-        let texture = assets
-            .insert_texture(texture)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| engine::Error::from(error).context(&file_name))?;
+        let texture = assets.insert_texture(texture)?;
         loaded.insert(file_name, texture);
         textures.push(texture);
     }
@@ -1734,12 +1700,11 @@ fn maps(
         .and_then(|material| material.with_base_color_texture(TextureRef::new(textures[0])))
         .and_then(|material| material.with_normal_texture(TextureRef::new(textures[1]), 1.0))
         .and_then(|material| material.with_metallic_roughness_texture(TextureRef::new(textures[2])))
-        .and_then(|material| material.with_occlusion_texture(TextureRef::new(textures[2]), 1.0))
-        .map_err(|error| error.to_string())?;
+        .and_then(|material| material.with_occlusion_texture(TextureRef::new(textures[2]), 1.0))?;
     assets
         .insert_material(material)
         .map(Some)
-        .map_err(|error| error.to_string())
+        .map_err(engine::Error::from)
 }
 
 /// The scanned rock set `name`'s material from `files` (`ROCK_FILES`,
@@ -1753,7 +1718,7 @@ fn scanned(
     name: &str,
     tiling: f32,
     top: TopLayer,
-) -> Result<Option<Material>, String> {
+) -> engine::Result<Option<Material>> {
     let mut textures = Vec::with_capacity(3);
     for map in ["albedo", "normal", "orm"] {
         let file_name = format!("rocks/{name}_{map}.ktx2");
@@ -1764,12 +1729,8 @@ fn scanned(
             return Ok(None);
         };
         let texture = Texture::from_rgba(width, height, file.bytes.clone())
-            .map_err(|error| format!("{file_name}: {error}"))?;
-        textures.push(
-            assets
-                .insert_texture(texture)
-                .map_err(|error| error.to_string())?,
-        );
+            .map_err(|error| engine::Error::from(error).context(&file_name))?;
+        textures.push(assets.insert_texture(texture)?);
     }
     Material::new([1.0; 4])
         .and_then(|material| {
@@ -1785,7 +1746,7 @@ fn scanned(
         .and_then(|material| material.with_world_mapping(tiling))
         .and_then(|material| material.with_top_layer(top))
         .map(Some)
-        .map_err(|error| error.to_string())
+        .map_err(engine::Error::from)
 }
 
 /// Where each material lies: meadow everywhere, dry grass in broad patches

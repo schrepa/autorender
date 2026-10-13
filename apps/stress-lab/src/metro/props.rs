@@ -15,9 +15,9 @@ fn channel(
     keys: Keyframes,
     property: AnimatedProperty,
     interpolation: KeyInterpolation,
-) -> Result<AnimationChannel, String> {
+) -> engine::Result<AnimationChannel> {
     AnimationChannel::new(target, property, interpolation, times.to_vec(), keys)
-        .map_err(|error| error.to_string())
+        .map_err(engine::Error::from)
 }
 
 fn turns(
@@ -25,7 +25,7 @@ fn turns(
     times: &[f32],
     rotations: Vec<Quat>,
     interpolation: KeyInterpolation,
-) -> Result<AnimationChannel, String> {
+) -> engine::Result<AnimationChannel> {
     channel(
         target,
         times,
@@ -35,7 +35,7 @@ fn turns(
     )
 }
 
-fn moves(target: u32, times: &[f32], positions: Vec<Vec3>) -> Result<AnimationChannel, String> {
+fn moves(target: u32, times: &[f32], positions: Vec<Vec3>) -> engine::Result<AnimationChannel> {
     channel(
         target,
         times,
@@ -46,7 +46,7 @@ fn moves(target: u32, times: &[f32], positions: Vec<Vec3>) -> Result<AnimationCh
 }
 
 /// A full turn about `axis` in `period` seconds, keyed every quarter.
-fn spin(target: u32, axis: Vec3, period: f32) -> Result<AnimationChannel, String> {
+fn spin(target: u32, axis: Vec3, period: f32) -> engine::Result<AnimationChannel> {
     let times: Vec<f32> = (0..=4).map(|key| period * key as f32 / 4.0).collect();
     let rotations = (0..=4)
         .map(|key| Quat::from_axis_angle(axis, TAU * key as f32 / 4.0))
@@ -59,7 +59,7 @@ pub(crate) fn gondola_reach(class: u8) -> f32 {
     TOWER_FLOORS[class as usize] as f32 * FLOOR - 3.0
 }
 
-pub(crate) fn clip(clip: Clip) -> Result<AnimationClip, String> {
+pub(crate) fn clip(clip: Clip) -> engine::Result<AnimationClip> {
     let channels = match clip {
         Clip::Flag => {
             // Flapping on the pole: smooth cubic swings.
@@ -170,7 +170,9 @@ pub(crate) fn clip(clip: Clip) -> Result<AnimationClip, String> {
                 )?,
             ]
         }
-        Clip::Walk | Clip::Idle => return Err("people clips come from people.rs".into()),
+        Clip::Walk | Clip::Idle => {
+            return Err(engine::Error::game_rule("people clips come from people.rs"));
+        }
     };
-    AnimationClip::new(channels).map_err(|error| error.to_string())
+    AnimationClip::new(channels).map_err(engine::Error::from)
 }

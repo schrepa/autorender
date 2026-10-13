@@ -40,7 +40,7 @@ impl StressWorld for HighlandsWorld {
         world: &mut World,
         config: &StressConfig,
         files: &HashMap<String, StressFile>,
-    ) -> Result<(u32, (Vec3, Vec3)), String> {
+    ) -> engine::Result<(u32, (Vec3, Vec3))> {
         let (bounds, plateau) = populate(world, config, hamlet_radius(config), files)?;
         Ok((field(world, config, plateau)?, bounds))
     }

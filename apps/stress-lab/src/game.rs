@@ -37,7 +37,7 @@ impl StressLab {
     pub fn workload(
         config: StressConfig,
         files: HashMap<String, StressFile>,
-    ) -> Result<(Engine, Self), String> {
+    ) -> engine::Result<(Engine, Self)> {
         let engine = create_workload_with(config, &files)?;
         Ok((engine, Self::new(files, None)))
     }
@@ -47,9 +47,8 @@ impl StressLab {
         source: &str,
         files: &SceneFiles,
         without: &[Feature],
-    ) -> Result<(Engine, Self), String> {
-        let (engine, authored) =
-            AuthoredScene::new(source, files, without).map_err(|error| error.to_string())?;
+    ) -> engine::Result<(Engine, Self)> {
+        let (engine, authored) = AuthoredScene::new(source, files, without)?;
         Ok((engine, Self::new(HashMap::default(), Some(authored))))
     }
 
@@ -77,14 +76,14 @@ impl StressLab {
         &mut self,
         config: StressConfig,
         files: HashMap<String, StressFile>,
-    ) -> Result<Engine, String> {
+    ) -> engine::Result<Engine> {
         self.files.extend(files);
         create_workload_with(config, &self.files)
     }
 
     /// Applies the kept look, effects and world settings to the engine
     /// [`Self::configure`] built, which replaced an authored scene too.
-    pub fn configured(&mut self, engine: &mut Engine) -> Result<(), String> {
+    pub fn configured(&mut self, engine: &mut Engine) -> engine::Result<()> {
         self.authored = None;
         self.generation = self.generation.saturating_add(1);
         self.set_look(engine, &self.look.clone())?;
@@ -95,7 +94,7 @@ impl StressLab {
 
     /// Rendering effects: `all`, `none`, or comma-separated `no-<effect>`
     /// exclusions.
-    pub fn set_effects(&mut self, engine: &mut Engine, name: &str) -> Result<(), String> {
+    pub fn set_effects(&mut self, engine: &mut Engine, name: &str) -> engine::Result<()> {
         let mut on = [true; EFFECTS.len()];
         match name {
             "all" => {}
@@ -108,10 +107,10 @@ impl StressLab {
                     match excluded {
                         Some(index) => on[index] = false,
                         None => {
-                            return Err(format!(
+                            return Err(engine::Error::game_rule(format!(
                                 "effects must be all, none or comma-separated no-<effect> for {}",
                                 EFFECTS.map(|(name, _)| name).join(", ")
-                            ));
+                            )));
                         }
                     }
                 }
@@ -176,7 +175,7 @@ impl StressLab {
 
     /// Lighting preset: `scene` (the scene's own), `golden`, `dusk`,
     /// `night` or `day`.
-    pub fn set_look(&mut self, engine: &mut Engine, name: &str) -> Result<(), String> {
+    pub fn set_look(&mut self, engine: &mut Engine, name: &str) -> engine::Result<()> {
         let scene = engine.app.world().resource::<StressConfig>().scene;
         let (atmosphere, lamps) = look(scene, name)?;
         engine.app.insert_resource(atmosphere);

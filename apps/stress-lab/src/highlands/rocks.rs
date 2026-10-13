@@ -44,7 +44,7 @@ const LEDGE_CREASE: f32 = 0.87;
 /// Boulder `seed`'s mesh at `detail` (0 the finest, up to [`COARSER`]) and
 /// the most it strays from the finest: about a meter across before its
 /// stretch, its base flattened just below its origin.
-pub(crate) fn boulder(seed: u32, detail: u32) -> Result<(Mesh, f32), String> {
+pub(crate) fn boulder(seed: u32, detail: u32) -> engine::Result<(Mesh, f32)> {
     let random = |index: u32| unit(golden_hash(seed.wrapping_mul(0x9e37_79b9) ^ index));
     let stretch = Vec3::new(
         0.9 + 0.6 * random(1),
@@ -86,7 +86,7 @@ pub(crate) fn boulder(seed: u32, detail: u32) -> Result<(Mesh, f32), String> {
     Mesh::new(vertices, indices)
         .and_then(|mesh| mesh.with_colors(colors))
         .map(|mesh| (mesh, error))
-        .map_err(|error| format!("boulder {seed}: {error}"))
+        .map_err(|error| engine::Error::from(error).context(format!("boulder {seed}")))
 }
 
 /// Planes each cliff is split along.
@@ -103,7 +103,7 @@ const CLIFF_TILING: f32 = 0.2;
 /// ledges where each tilted stratum ends, its faces fluted by ridges
 /// running down them and split along a few upright planes, and its bottom
 /// flattened below its origin, where it sinks into the ground.
-pub(crate) fn cliff(seed: u32, detail: u32) -> Result<(Mesh, f32), String> {
+pub(crate) fn cliff(seed: u32, detail: u32) -> engine::Result<(Mesh, f32)> {
     let random = |index: u32| unit(golden_hash(seed.wrapping_mul(0x632b_e5ab) ^ index));
     // Wide across the slope it faces down (x), shallower into it (z).
     let stretch = Vec3::new(
@@ -165,7 +165,7 @@ pub(crate) fn cliff(seed: u32, detail: u32) -> Result<(Mesh, f32), String> {
     Mesh::new(vertices, indices)
         .and_then(|mesh| mesh.with_colors(colors))
         .map(|mesh| (mesh, error))
-        .map_err(|error| format!("cliff {seed}: {error}"))
+        .map_err(|error| engine::Error::from(error).context(format!("cliff {seed}")))
 }
 
 /// How far `excess` reaches past 0, rounded over `width` around it: none

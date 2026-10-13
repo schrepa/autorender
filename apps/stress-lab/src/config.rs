@@ -129,12 +129,12 @@ fn mesh_varieties(schema: &mut schemars::Schema) {
 }
 
 impl StressConfig {
-    pub fn from_json(source: &str) -> Result<Self, String> {
+    pub fn from_json(source: &str) -> engine::Result<Self> {
         if source.len() > 4096 {
-            return Err("configuration exceeds 4096 bytes".into());
+            return Err(engine::Error::game_rule("configuration exceeds 4096 bytes"));
         }
-        let config: Self = serde_json::from_str(source).map_err(|error| error.to_string())?;
-        config.validate().map_err(|error| error.to_string())?;
+        let config: Self = engine::scene::parse_json(source)?;
+        config.validate()?;
         Ok(config)
     }
 }

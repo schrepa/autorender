@@ -67,6 +67,14 @@ impl Error {
     pub fn game_rule(message: impl Into<String>) -> Self {
         Self::new(ErrorCode::GameRule, "$", message)
     }
+
+    /// The error with `what` it was doing before its message (`what:
+    /// message`); its code and path stay.
+    #[must_use]
+    pub fn context(mut self, what: impl fmt::Display) -> Self {
+        self.message = format!("{what}: {}", self.message);
+        self
+    }
 }
 
 impl fmt::Display for Error {
@@ -80,19 +88,6 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
-
-/// A game's own refusal, with its message.
-impl From<String> for Error {
-    fn from(message: String) -> Self {
-        Self::new(ErrorCode::GameRule, "$", message)
-    }
-}
-
-impl From<&str> for Error {
-    fn from(message: &str) -> Self {
-        Self::from(message.to_owned())
-    }
-}
 
 impl From<engine_scene::SceneError> for Error {
     fn from(error: engine_scene::SceneError) -> Self {

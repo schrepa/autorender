@@ -629,7 +629,9 @@ impl HostOptions {
                 "on" => Selection::First,
                 names => Selection::Named(names.split(',').map(str::to_owned).collect()),
             };
-            engine_profiler::counters::enable(selection)?;
+            engine_profiler::counters::enable(selection).map_err(|reason| {
+                engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
+            })?;
         }
         Ok(())
     }
@@ -727,7 +729,9 @@ impl HostOptions {
             arguments.extend(["--frames".to_owned(), "120".to_owned()]);
         }
         let trace = engine_profiler::vendor::nsight_trace(&arguments, self.settle_ms, 5, folder)
-            .map_err(engine::Error::from)?;
+            .map_err(|reason| {
+                engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
+            })?;
         println!("{trace:#}");
         Ok(())
     }

@@ -205,16 +205,22 @@ impl<G: Game> Offscreen<G> {
         let pix_counters = match (&record.pix_counters, &gpu_capture) {
             (Some(dive), Some(path)) if failed.is_none() => {
                 if captured != Some("pix") {
-                    return Err(engine::Error::from(format!(
-                        "PIX's counters replay D3D12 frames PIX captured, where it is installed; \
+                    return Err(engine::Error::new(
+                        engine::ErrorCode::PixUnavailable,
+                        "$",
+                        format!(
+                            "PIX's counters replay D3D12 frames PIX captured, where it is installed; \
                          this one drew on {} ({})",
-                        self.host.adapter().backend,
-                        captured.unwrap_or("no capture"),
-                    )));
+                            self.host.adapter().backend,
+                            captured.unwrap_or("no capture"),
+                        ),
+                    ));
                 }
                 Some(
                     engine_profiler::vendor::pix_counters(path, &dive.folder, &dive.counters)
-                        .map_err(engine::Error::from)?,
+                        .map_err(|reason| {
+                            engine::Error::new(engine::ErrorCode::PixUnavailable, "$", reason)
+                        })?,
                 )
             }
             _ => None,

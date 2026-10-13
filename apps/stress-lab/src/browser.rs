@@ -203,6 +203,8 @@ impl StressGame {
     }
 }
 
-fn js_error(message: String) -> JsValue {
-    JsValue::from_str(&message)
+/// What the page receives of a refusal: the engine's error, with its code
+/// and path.
+fn js_error(error: engine::Error) -> JsValue {
+    error.into()
 }

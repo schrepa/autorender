@@ -263,7 +263,7 @@ impl Builder {
         self.vertices.len()
     }
 
-    pub(crate) fn finish(self) -> Result<Mesh, String> {
-        Mesh::new(self.vertices, self.indices).map_err(|error| error.to_string())
+    pub(crate) fn finish(self) -> engine::Result<Mesh> {
+        Mesh::new(self.vertices, self.indices).map_err(engine::Error::from)
     }
 }

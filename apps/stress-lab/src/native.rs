@@ -167,11 +167,16 @@ impl Options {
                 .split(',')
                 .filter(|name| !name.is_empty())
                 .map(|name| {
-                    Feature::from_name(name)
-                        .ok_or_else(|| Error::from(format!("no feature is named {name}")))
+                    Feature::from_name(name).ok_or_else(|| {
+                        Error::new(
+                            ErrorCode::InvalidArguments,
+                            "$.without",
+                            format!("no feature is named {name}"),
+                        )
+                    })
                 })
                 .collect::<engine::Result<Vec<_>>>()?;
-            return Ok(StressLab::authored(&source, &files, &without)?);
+            return StressLab::authored(&source, &files, &without);
         }
         let config = self.config()?;
         let files = stress_files(&self.assets, config.scene, self.rocks)?;
@@ -227,17 +232,15 @@ impl Options {
                             {
                                 fields.extend(over.clone());
                             }
-                            let config = StressConfig::from_json(&config.to_string())
-                                .map_err(|error| error.to_string())?;
+                            let config = StressConfig::from_json(&config.to_string()).map_err(|error| error.to_string())?;
                             (config, "AGENT WORKLOAD")
                         }
                     };
-                    let files = stress_files(&assets, config.scene, rocks)
-                        .map_err(|error| error.to_string())?;
-                    let engine = host.game_mut().configure(config.clone(), files)?;
+                    let files = stress_files(&assets, config.scene, rocks).map_err(|error| error.to_string())?;
+                    let engine = host.game_mut().configure(config.clone(), files).map_err(|error| error.to_string())?;
                     host.replace_engine(engine);
                     let (engine, lab) = host.parts_mut();
-                    lab.configured(engine)?;
+                    lab.configured(engine).map_err(|error| error.to_string())?;
                     Ok(serde_json::json!({"config": config, "title": title}))
                 },
             )
@@ -250,7 +253,7 @@ impl Options {
                 |host, args| {
                     let name = args.get("name").and_then(|name| name.as_str()).unwrap_or_default();
                     let (engine, lab) = host.parts_mut();
-                    lab.set_look(engine, name)?;
+                    lab.set_look(engine, name).map_err(|error| error.to_string())?;
                     Ok(serde_json::json!({"look": name}))
                 },
             )
@@ -269,7 +272,7 @@ impl Options {
                 |host, args| {
                     let name = args.get("name").and_then(|name| name.as_str()).unwrap_or_default();
                     let (engine, lab) = host.parts_mut();
-                    lab.set_effects(engine, name)?;
+                    lab.set_effects(engine, name).map_err(|error| error.to_string())?;
                     Ok(serde_json::json!({"effects": name}))
                 },
             )
@@ -281,7 +284,7 @@ impl Options {
                 ),
                 |host, args| {
                     let name = args.get("name").and_then(|name| name.as_str()).unwrap_or_default();
-                    set_view(host.engine_mut(), name)?;
+                    set_view(host.engine_mut(), name).map_err(|error| error.to_string())?;
                     Ok(serde_json::json!({"view": name}))
                 },
             );
@@ -307,11 +310,15 @@ impl Options {
     fn config(&self) -> engine::Result<StressConfig> {
         let preset = preset(&self.preset).ok_or_else(|| {
             let names: Vec<&str> = presets().iter().map(|preset| preset.value).collect();
-            Error::from(format!(
-                "no preset {}; presets are {}",
-                self.preset,
-                names.join(", ")
-            ))
+            Error::new(
+                ErrorCode::InvalidArguments,
+                "$.preset",
+                format!(
+                    "no preset {}; presets are {}",
+                    self.preset,
+                    names.join(", ")
+                ),
+            )
         })?;
         let Some(fields) = &self.config else {
             return Ok(preset.config);
@@ -329,7 +336,7 @@ impl Options {
             ));
         };
         config_fields.extend(fields);
-        Ok(StressConfig::from_json(&config.to_string())?)
+        StressConfig::from_json(&config.to_string())
     }
 }
 
