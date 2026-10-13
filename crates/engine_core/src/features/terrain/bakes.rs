@@ -54,7 +54,7 @@ pub(super) fn bake(
         && slots.jobs.workers() > 0
         && !state.bake_inline
     {
-        bake_on_worker(state, slots.jobs, layers, &pyramid);
+        bake_on_worker(state, slots, layers, &pyramid);
         return true;
     }
     // A bake handed to workers that stopped runs here.
@@ -88,29 +88,39 @@ pub(super) fn bake(
 }
 
 /// Bakes `layers` over `pyramid` on a worker: hands it every
-/// bake at once, then makes what it baked the layers tiles generate from. A
-/// bake that failed there runs in place instead.
+/// bake at once, once `slots` has a slot free, then makes what it baked the
+/// layers tiles generate from. A bake that failed there runs in place
+/// instead.
 pub(super) fn bake_on_worker(
     state: &mut TerrainState,
-    jobs: &mut Jobs,
+    slots: &mut JobBudget<'_>,
     layers: &Layers,
     pyramid: &Pyramid,
 ) {
     let Some(id) = state.bake_job else {
+        let priority = job_priority(URGENT_JOBS, 0);
+        // Admitted as every owner's jobs are; tiles wait
+        // for the bake meanwhile.
+        if !slots.take(priority) {
+            return;
+        }
         let input = BakeJob {
             layers: layers.clone(),
             pyramid: *pyramid,
         }
         .input();
-        let priority = job_priority(URGENT_JOBS, 0);
         // Hosts may keep the baked layers, by the input's
         // hash.
         let identity = content_hash(&input).to_le_bytes().to_vec();
-        state.bake_job =
-            Some(jobs.submit_cacheable(BakeJob::KIND.name(), input, priority, identity));
+        state.bake_job = Some(slots.jobs.submit_cacheable(
+            BakeJob::KIND.name(),
+            input,
+            priority,
+            identity,
+        ));
         return;
     };
-    let Some(output) = jobs.take(id) else {
+    let Some(output) = slots.jobs.take(id) else {
         return;
     };
     state.bake_job = None;

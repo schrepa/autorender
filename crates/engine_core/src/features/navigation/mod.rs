@@ -18,7 +18,7 @@ use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::math::{clamp, max};
-use crate::{FixedTime, JobId, Jobs, Parent, Terrains, Transform};
+use crate::{FixedTime, JobBudget, JobId, Jobs, Parent, Terrains, Transform};
 use engine_settings::settings;
 
 settings! {
@@ -206,7 +206,8 @@ pub(crate) fn walk_agents(
         return;
     }
     // New destinations start searches from where agents stand: on workers
-    // where they run.
+    // where the jobs' one admission rule leaves a slot, else here.
+    let mut slots = jobs.as_deref_mut().map(JobBudget::of);
     for (entity, agent, mut walk, transform) in &mut agents {
         let agent = agent.sanitized();
         if walk.destination == agent.destination {
@@ -215,9 +216,9 @@ pub(crate) fn walk_agents(
         navigation.searches.retain(|(owner, ..)| *owner != entity);
         navigation.walks.retain(|&(owner, _, id)| {
             if owner == entity
-                && let Some(jobs) = jobs.as_deref_mut()
+                && let Some(slots) = slots.as_mut()
             {
-                jobs.cancel(id);
+                slots.jobs.cancel(id);
             }
             owner != entity
         });
@@ -231,18 +232,23 @@ pub(crate) fn walk_agents(
         let from = Vec2::new(transform.translation.x, transform.translation.z);
         let to = Vec2::from(destination);
         let options = agent.options();
-        let handed = jobs
-            .as_deref_mut()
-            .filter(|jobs| jobs.workers() > 0)
-            .and_then(|jobs| {
+        let handed = slots
+            .as_mut()
+            .filter(|slots| slots.jobs.workers() > 0)
+            .and_then(|slots| {
                 let (_, origin, input) = terrains.walk_job(from, to, &options)?;
                 let priority = crate::job_priority(crate::GAMEPLAY_JOBS, 0);
+                if !slots.take(priority) {
+                    return None;
+                }
                 // Hosts may keep walks: their input names
                 // the recipe by its content.
                 let identity = input.clone();
                 Some((
                     origin,
-                    jobs.submit_cacheable(WalkJob::KIND.name(), input, priority, identity),
+                    slots
+                        .jobs
+                        .submit_cacheable(WalkJob::KIND.name(), input, priority, identity),
                 ))
             });
         if let Some((origin, id)) = handed {
