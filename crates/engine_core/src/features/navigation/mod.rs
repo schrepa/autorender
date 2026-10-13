@@ -18,7 +18,9 @@ use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::math::{clamp, max};
-use crate::{FixedTime, JobBudget, JobId, Jobs, Parent, Terrains, Transform};
+use crate::{
+    FixedTime, JobBudget, JobFailures, JobId, Jobs, Parent, Terrains, Transform, job_output,
+};
 use engine_settings::settings;
 
 settings! {
@@ -149,12 +151,21 @@ pub struct NavAgents {
     // Where the next tick's searches start, round robin.
     turn: usize,
     stats: NavStats,
+    // Walks that failed on workers, by fixed tick.
+    failures: JobFailures,
 }
 
 impl NavAgents {
     /// What navigation did at the last fixed tick.
     pub fn stats(&self) -> NavStats {
         self.stats
+    }
+
+    /// The walks that failed on workers since navigation started, and the
+    /// latest one's error.
+    pub fn job_failures(&self) -> (u64, Option<&str>) {
+        let last = self.failures.last.as_ref();
+        (self.failures.count, last.map(|(_, error)| error.as_str()))
     }
 }
 
@@ -266,7 +277,7 @@ pub(crate) fn walk_agents(
     }
     search(&settings, &mut navigation, &mut agents);
     if let Some(jobs) = jobs {
-        take_walks(jobs, &terrains, &mut navigation, &mut agents);
+        take_walks(jobs, &terrains, &mut navigation, &mut agents, time.tick);
     }
     // Walkers move along their walks, on the ground.
     let seconds = time.delta_seconds;
@@ -316,12 +327,13 @@ fn search(settings: &Navigation, navigation: &mut NavAgents, agents: &mut Agents
 }
 
 /// Gives agents the walks workers found; a walk that failed
-/// there is searched here instead.
+/// there is counted at fixed tick `tick` and searched here instead.
 fn take_walks(
     jobs: &mut Jobs,
     terrains: &Terrains,
     navigation: &mut NavAgents,
     agents: &mut Agents,
+    tick: u64,
 ) {
     for (entity, origin, id) in std::mem::take(&mut navigation.walks) {
         let Some(output) = jobs.take(id) else {
@@ -331,15 +343,17 @@ fn take_walks(
         let Ok((_, agent, mut walk, transform)) = agents.get_mut(entity) else {
             continue;
         };
-        match output
-            .ok()
-            .and_then(|bytes| engine_terrain::jobs::walk_output(&bytes).ok())
-        {
-            Some(found) => {
+        match job_output(
+            WalkJob::KIND.name(),
+            output,
+            engine_terrain::jobs::walk_output,
+        ) {
+            Ok(found) => {
                 let searched = found.as_ref().map_or(0, |path| path.searched);
                 give(&mut walk, origin, found, searched);
             }
-            None => {
+            Err(error) => {
+                navigation.failures.record(tick, error);
                 let agent = agent.sanitized();
                 let from = Vec2::new(transform.translation.x, transform.translation.z);
                 let search = agent.destination.and_then(|destination| {

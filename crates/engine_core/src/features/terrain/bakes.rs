@@ -44,6 +44,7 @@ pub(super) fn bake(
     layers: &Arc<Layers>,
     work: &Work,
     budget: &mut u64,
+    frame: u64,
     mut slots: Option<&mut JobBudget<'_>>,
 ) -> bool {
     let Some(unbaked) = layers.unbaked() else {
@@ -54,7 +55,7 @@ pub(super) fn bake(
         && slots.jobs.workers() > 0
         && !state.bake_inline
     {
-        bake_on_worker(state, slots, layers, &pyramid);
+        bake_on_worker(state, slots, layers, &pyramid, frame);
         return true;
     }
     // A bake handed to workers that stopped runs here.
@@ -89,13 +90,14 @@ pub(super) fn bake(
 
 /// Bakes `layers` over `pyramid` on a worker: hands it every
 /// bake at once, once `slots` has a slot free, then makes what it baked the
-/// layers tiles generate from. A bake that failed there runs in place
-/// instead.
+/// layers tiles generate from. A bake that failed there is counted as the
+/// owner's failed job at `frame` and runs in place instead.
 pub(super) fn bake_on_worker(
     state: &mut TerrainState,
     slots: &mut JobBudget<'_>,
     layers: &Layers,
     pyramid: &Pyramid,
+    frame: u64,
 ) {
     let Some(id) = state.bake_job else {
         let priority = job_priority(URGENT_JOBS, 0);
@@ -124,12 +126,17 @@ pub(super) fn bake_on_worker(
         return;
     };
     state.bake_job = None;
-    let Some(baked) = output
-        .ok()
-        .and_then(|bytes| engine_terrain::jobs::bake_output(&bytes).ok())
-    else {
-        state.bake_inline = true;
-        return;
+    let baked = match job_output(
+        BakeJob::KIND.name(),
+        output,
+        engine_terrain::jobs::bake_output,
+    ) {
+        Ok(baked) => baked,
+        Err(error) => {
+            state.failures.record(frame, error);
+            state.bake_inline = true;
+            return;
+        }
     };
     for layer in baked.layers() {
         match layer {

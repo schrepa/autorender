@@ -60,7 +60,10 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
             kind: InspectorKind::Resource,
             has: Box::new(|world, _| world.get_resource::<engine_core::NavAgents>().is_some()),
             read: Box::new(|world, _, _| {
-                let stats = world.get_resource::<engine_core::NavAgents>()?.stats();
+                let navigation = world.get_resource::<engine_core::NavAgents>()?;
+                let stats = navigation.stats();
+                let (failed_jobs, latest_job_failure) = navigation.job_failures();
+                let latest_job_failure = latest_job_failure.map(str::to_owned);
                 let mut query = world.try_query::<(
                     Entity,
                     &engine_core::NavAgent,
@@ -95,6 +98,8 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
                     arrived: stats.arrived,
                     unreachable: stats.unreachable,
                     work: stats.work,
+                    failed_jobs,
+                    latest_job_failure,
                     first,
                 }))
             }),

@@ -89,7 +89,7 @@ pub(super) fn load_tiles(
     match state.terrain.source.clone() {
         TerrainSource::Generated(authored) => {
             let layers = state.baked.clone().unwrap_or(authored);
-            if bake(state, &layers, work, budget, slots.as_deref_mut()) {
+            if bake(state, &layers, work, budget, frame, slots.as_deref_mut()) {
                 return true;
             }
             // Edits stand over every bake.

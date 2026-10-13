@@ -186,8 +186,10 @@ pub struct NavAgentView {
 
 /// What navigation did at the last fixed tick: agents, those searching,
 /// walking, arrived and unable to reach their destination, the samples of
-/// search work the tick did, and the first 16 agents with their status,
-/// position, destination and meters left. Settings: the navigation environment
+/// search work the tick did, the walks that failed on workers since
+/// navigation started (each then searched on the engine's thread) and why
+/// the latest did, and the first 16 agents with their status, position,
+/// destination and meters left. Settings: the navigation environment
 /// section.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
@@ -198,6 +200,8 @@ pub struct NavAgentsView {
     pub arrived: u32,
     pub unreachable: u32,
     pub work: u64,
+    pub failed_jobs: u64,
+    pub latest_job_failure: Option<String>,
     pub first: Vec<NavAgentRow>,
 }
 

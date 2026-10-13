@@ -78,6 +78,7 @@ async function session(name, query, walk) {
   if (walk) {
     assert.equal(agents.walking, 1, `${name}: the hiker walks: ${JSON.stringify(agents)}`);
     assert.equal(agents.work, 0, `${name}: no tick searched on the page: ${JSON.stringify(agents)}`);
+    assert.equal(agents.failed_jobs, 0, `${name}: no walk failed on a worker: ${agents.latest_job_failure}`);
   }
   await command("pause");
   const [ground] = (await command("terrain_height", { points: [[view.position[0], view.position[2]]] })).result.samples;
