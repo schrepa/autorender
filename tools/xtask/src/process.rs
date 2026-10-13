@@ -5,6 +5,16 @@ use std::{
 
 pub const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
+/// The target folder of the native programs a check builds and runs (the
+/// core smoke, the scene schema printers), apart from xtask's own: the job
+/// worker library is a cdylib too, whose files Cargo names without a hash,
+/// so a build of it with other dependency features in xtask's folder
+/// replaces xtask's, which then relinks, and on Windows a running xtask
+/// cannot be relinked.
+pub fn tools_target(root: &Path) -> PathBuf {
+    root.join("target").join("tools")
+}
+
 #[cfg(windows)]
 pub const NPM: &str = "npm.cmd";
 #[cfg(not(windows))]

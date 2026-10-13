@@ -12,10 +12,12 @@ import { cargoBinaries, strictStats } from "./harness.mjs";
 import { workspace } from "./workspace.mjs";
 
 const executeFile = promisify(execFile);
-// `cargo xtask scene`'s program, built once while the bridge starts: each
-// call then runs it without Cargo, whose rebuild after an engine change
-// would count against the call's timeout.
-const xtask = cargoBinaries(["-p", "xtask"]);
+// `cargo xtask scene`'s program: the one running the checks
+// (`ENGINE_XTASK_BIN`), else built once while the bridge starts. Each call
+// then runs it without Cargo, whose rebuild after an engine change would
+// count against the call's timeout, and which cannot replace an xtask that
+// runs (a lint beside the checks).
+const xtask = process.env.ENGINE_XTASK_BIN ? Promise.resolve({ xtask: process.env.ENGINE_XTASK_BIN }) : cargoBinaries(["-p", "xtask"]);
 const script = join(workspace, "web/scripts/agent.mjs");
 const fixtureName = `agent-smoke-${randomUUID()}.scene.json`;
 // Local scenes are not tracked, so a fresh checkout has no folder for them.

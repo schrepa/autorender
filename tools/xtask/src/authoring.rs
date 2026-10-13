@@ -115,6 +115,8 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
                 "schema",
             ])
             .args(["--features", &format!("{}/schema", client.package)])
+            .arg("--target-dir")
+            .arg(crate::process::tools_target(root))
             .current_dir(root)
             .output()
             .map_err(|error| format!("cannot run {}'s schema binary: {error}", client.package))?;

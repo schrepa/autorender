@@ -22,7 +22,9 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let trace = root.join(TRACE).display().to_string();
     println!("Running the core smoke (cargo run -p coresmoke)");
     let output = Command::new("cargo")
-        .args(["run", "-q", "--locked", "-p", "coresmoke", "--"])
+        .args(["run", "-q", "--locked", "-p", "coresmoke", "--target-dir"])
+        .arg(crate::process::tools_target(root))
+        .arg("--")
         .args(["--assets", &folder, "--trace", &trace])
         .current_dir(root)
         .output()

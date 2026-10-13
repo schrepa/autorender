@@ -3,7 +3,8 @@
 //! that says what it checks. They drive a running development server
 //! (`DEMO_URL`, Vite's default otherwise; see `web/scripts/harness.mjs`), or
 //! with `--serve` one of this checkout that the run starts and stops, and
-//! build, run and write in this checkout (`ENGINE_WORKSPACE`). A run holds
+//! build, run and write in this checkout (`ENGINE_WORKSPACE`), running
+//! this program where they need xtask (`ENGINE_XTASK_BIN`). A run holds
 //! the machine's heavy-run lock throughout ([`crate::heavy`]); each check
 //! exits 0, 3 for a failed assertion or 1 for anything else that stopped
 //! it, and so does the run. What each check sent the engine is recorded
@@ -161,6 +162,11 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
     } else {
         None
     };
+    // A check runs this program rather than building xtask again, which
+    // fails on Windows while an xtask runs (this one, or a lint beside it):
+    // Cargo cannot replace a running program.
+    let program = std::env::current_exe()
+        .map_err(|error| format!("cannot name the running program: {error}"))?;
     let _heavy = HeavyRun::hold(&format!("cargo xtask smoke {}", names.join(" ")))?;
     let mut results: Vec<(&str, Option<i32>, Duration)> = Vec::new();
     for name in &names {
@@ -180,6 +186,7 @@ pub fn smoke(root: &Path, options: &[String]) -> Result<(), Failure> {
             .current_dir(root.join("web"))
             .env("ENGINE_WORKSPACE", root)
             .env("ENGINE_SMOKE_SENT", &sent)
+            .env("ENGINE_XTASK_BIN", &program)
             .env(HELD.0, HELD.1);
         if let Some(server) = &server {
             command.env("DEMO_URL", &server.url);
