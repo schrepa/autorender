@@ -228,13 +228,6 @@ pub struct Renderer {
     culling: Culling,
     // Sun shadows.
     shadows: ShadowPass,
-    // The environment maps surfaces reflect, redrawn when the
-    // sky changes, and the reflection probes holding their cubes after the
-    // sky's.
-    environment: Environment,
-    probes: ProbePass,
-    // The physically based sky.
-    sky: crate::sky::SkyPass,
     // Virtual geometry and the visibility buffer resolving
     // its clusters.
     virtual_draws: VirtualDraws,

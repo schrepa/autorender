@@ -12,6 +12,8 @@ use engine_core::{
 use crate::cached::{Bound, Cached};
 use crate::gpu_data::STILL_FRAMES;
 use crate::gpu_layouts::constants::PROBE_ENTRY_WORDS;
+use crate::render_features::{Encode, RenderFeature};
+use crate::render_graph::{FrameShape, Node, RenderGraph};
 
 /// Cube faces, in the order WebGPU samples them: +X, -X, +Y, -Y, +Z, -Z.
 pub(crate) const FACES: usize = 6;
@@ -239,6 +241,10 @@ pub(crate) struct ProbePass {
     // The grid words surfaces read (`meshes/declarations.wgsl`'s `probe_words`).
     words: crate::buffers::Growable,
     staging: Vec<[u32; 4]>,
+    /// Faces the frame captured, and the probes past the GPU's arrays or
+    /// the frame's list.
+    pub(crate) faces: u32,
+    pub(crate) dropped: u32,
 }
 
 impl ProbePass {
@@ -260,6 +266,8 @@ impl ProbePass {
                 wgpu::BufferUsages::empty(),
             ),
             staging: Vec::new(),
+            faces: 0,
+            dropped: 0,
         }
     }
 
@@ -414,5 +422,45 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
             ],
         ];
         words.extend(entry);
+    }
+}
+
+/// Reflection probes are planned before the frame, in its prelude, and
+/// captured by the renderer's own probe-captures pass after it, which draws
+/// the scene's parts into each face: they declare no nodes of their own.
+impl RenderFeature for ProbePass {
+    type Frame = ();
+    type Stats = engine_core::ProbeStats;
+
+    fn declare(_frame: &(), _shape: &FrameShape, _graph: &mut RenderGraph) {}
+
+    fn encode(
+        &self,
+        _frame: &(),
+        _node: &Node,
+        _encode: &Encode<'_>,
+        _encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        0
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        ProbePass::capacity_bytes(self)
+    }
+
+    /// The probes ready, the faces this frame captured and the probes past
+    /// the GPU's arrays or the frame's list.
+    fn stats(
+        this: Option<&Self>,
+        _frame: Option<&()>,
+        _snapshot: &engine_core::RenderSnapshot,
+    ) -> engine_core::ProbeStats {
+        this.map_or_else(engine_core::ProbeStats::default, |probes| {
+            engine_core::ProbeStats {
+                ready: probes.slots.ready(),
+                faces: probes.faces,
+                dropped: probes.dropped,
+            }
+        })
     }
 }

@@ -8,6 +8,8 @@
 //! pass reads them. The sky's passes and the environment maps sample the
 //! sky-view and transmittance tables.
 
+use crate::render_features::{Encode, RenderFeature};
+use crate::render_graph::{FrameShape, Node, RenderGraph};
 use crate::shaders::entry::sky;
 use engine_core::Sky;
 use glam::Vec3;
@@ -422,5 +424,39 @@ fn passes(
             group([transmittance, multiple, blank], view),
             group([transmittance, multiple, view], blank_out),
         ],
+    }
+}
+
+/// The sky works before the frame, in its prelude ([`SkyPass::encode`]):
+/// it declares no nodes, so the graph encodes none of its.
+impl RenderFeature for SkyPass {
+    type Frame = ();
+    type Stats = engine_core::SkyStats;
+
+    fn declare(_frame: &(), _shape: &FrameShape, _graph: &mut RenderGraph) {}
+
+    fn encode(
+        &self,
+        _frame: &(),
+        _node: &Node,
+        _encode: &Encode<'_>,
+        _encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        0
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        SkyPass::capacity_bytes(self)
+    }
+
+    /// The tables this frame built.
+    fn stats(
+        this: Option<&Self>,
+        _frame: Option<&()>,
+        _snapshot: &engine_core::RenderSnapshot,
+    ) -> engine_core::SkyStats {
+        engine_core::SkyStats {
+            tables: this.map_or(0, |sky| sky.built),
+        }
     }
 }

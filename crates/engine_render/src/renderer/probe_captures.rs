@@ -35,8 +35,8 @@ impl Renderer {
             &self.device,
             &camera::GroupSources {
                 shadows: &self.shadows,
-                environment: &self.environment,
-                probes: &self.probes,
+                environment: self.features.environment.get(),
+                probes: self.features.probes.get(),
                 horizons: &self.terrain.horizons,
                 occupancy: self.features.occupancy.get(),
             },
@@ -49,7 +49,8 @@ impl Renderer {
         // Profiling captures time every face captured as one span.
         let mut timed = false;
         while drawn < faces {
-            let Some((cube, face, probe)) = self.probes.slots.next_face(probes) else {
+            let Some((cube, face, probe)) = self.features.probes.get_mut().slots.next_face(probes)
+            else {
                 break;
             };
             if used[face] {
@@ -65,17 +66,20 @@ impl Renderer {
                 view_projection,
                 probe.center,
                 seconds,
-                self.environment.size(),
+                self.features.environment.get().size(),
             );
-            self.queue
-                .write_buffer(self.probes.camera(face), 0, bytemuck::bytes_of(&camera));
+            self.queue.write_buffer(
+                self.features.probes.get().camera(face),
+                0,
+                bytemuck::bytes_of(&camera),
+            );
             let poses = self.instances.frame_poses(usize::from(odd));
             if !self.gpu_presentation.encode_probe_face(
                 &self.device,
                 &self.queue,
                 encoder,
                 face,
-                self.environment.size(),
+                self.features.environment.get().size(),
                 view_projection,
                 poses.current(),
             ) {
@@ -90,7 +94,7 @@ impl Renderer {
                     encoder,
                     face,
                     view_projection,
-                    self.environment.size(),
+                    self.features.environment.get().size(),
                     settings,
                     frame,
                     poses,
@@ -98,14 +102,20 @@ impl Renderer {
                 );
             }
             let depth = self
+                .features
                 .probes
-                .depth(&self.device, self.environment.size(), DEPTH_FORMAT)
+                .get_mut()
+                .depth(
+                    &self.device,
+                    self.features.environment.get().size(),
+                    DEPTH_FORMAT,
+                )
                 .clone();
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("engine/probe-face"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: self.environment.radiance_face(face),
+                        view: self.features.environment.get().radiance_face(face),
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
@@ -157,8 +167,8 @@ impl Renderer {
                 pass.draw(0..3, 0..1);
             }
             drawn += 1;
-            if self.probes.slots.face_drawn() {
-                self.environment.finish(encoder, cube);
+            if self.features.probes.get_mut().slots.face_drawn() {
+                self.features.environment.get_mut().finish(encoder, cube);
             }
         }
         if timed && let Some(span) = self.profiler.span("probe_captures") {

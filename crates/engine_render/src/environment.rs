@@ -10,6 +10,8 @@ use crate::bindings::{ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY};
 use crate::cached::{Bound, Versioned};
 use crate::gpu_data::{ENVIRONMENT_SHADER, LightingUniform, mip_levels};
 use crate::probes::FACES;
+use crate::render_features::{Encode, RenderFeature};
+use crate::render_graph::{FrameShape, Node, RenderGraph};
 use crate::shaders::entry::environment;
 
 /// Linear radiance: the sky and what reflects it exceed 1.
@@ -539,4 +541,30 @@ fn sky_group(
             ),
         ],
     )
+}
+
+/// The environment maps redraw before the frame, in its prelude
+/// ([`Environment::encode_sky`]), and take the reflection probes' captures
+/// after it: they declare no nodes, so the graph encodes none of theirs.
+impl RenderFeature for Environment {
+    type Frame = ();
+    type Stats = ();
+
+    fn declare(_frame: &(), _shape: &FrameShape, _graph: &mut RenderGraph) {}
+
+    fn encode(
+        &self,
+        _frame: &(),
+        _node: &Node,
+        _encode: &Encode<'_>,
+        _encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        0
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        Environment::capacity_bytes(self)
+    }
+
+    fn stats(_this: Option<&Self>, _frame: Option<&()>, _snapshot: &engine_core::RenderSnapshot) {}
 }

@@ -45,7 +45,7 @@ const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
         37,
     ),
     ("crates/engine_render/src/clouds.rs", "CloudPass", 48),
-    ("crates/engine_render/src/renderer.rs", "Renderer", 40),
+    ("crates/engine_render/src/renderer.rs", "Renderer", 37),
     ("crates/engine_render/src/scatter.rs", "ScatterPass", 40),
     (
         "crates/engine_render/src/terrain_vt.rs",

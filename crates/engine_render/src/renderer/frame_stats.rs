@@ -11,8 +11,8 @@ use crate::transparent::Transparency;
 use crate::water::WaterPass;
 
 use engine_core::{
-    Applied, CullingStats, DeformationStats, DetailStats, ProbeStats, ShadowStats, SkyStats,
-    TerrainRenderStats, VirtualGeometryStats,
+    Applied, CullingStats, DeformationStats, DetailStats, ShadowStats, TerrainRenderStats,
+    VirtualGeometryStats,
 };
 
 /// Records every number and flag of `stats` as the counter `render.<path>`,
@@ -80,7 +80,7 @@ impl Renderer {
         } = state.kind;
         let (snapshot, frame) = (state.snapshot, state.frame);
         let (virtual_frame, resolving) = (state.virtual_frame, state.resolving);
-        let (shadow_draws, probe_faces) = (report.shadow_draws, report.probe_faces);
+        let shadow_draws = report.shadow_draws;
         let features = &state.features;
         let (shadow_frame, post_frame) = (&features.shadow_frame, features.post_frame());
         let effects = PostPass::stats(
@@ -89,7 +89,6 @@ impl Renderer {
             snapshot,
         );
         let refraction = features.refraction;
-        let dropped_probes = features.dropped_probes;
         let (water, ocean) = WaterPass::stats(
             Some(self.features.water.get()),
             features.frames.water.as_ref().map(Ready::frame),
@@ -229,11 +228,7 @@ impl Renderer {
                 features.frames.decals.as_ref().map(Ready::frame),
                 snapshot,
             ),
-            reflection_probes: ProbeStats {
-                ready: self.probes.slots.ready(),
-                faces: probe_faces,
-                dropped: dropped_probes.min(u64::from(u32::MAX)) as u32,
-            },
+            reflection_probes: ProbePass::stats(Some(self.features.probes.get()), None, snapshot),
             virtual_geometry: VirtualGeometryStats {
                 clusters: virtual_stats.map_or(0, |stats| stats.clusters),
                 triangles: virtual_stats.map_or(0, |stats| stats.triangles),
@@ -304,9 +299,7 @@ impl Renderer {
                 snapshot,
             ),
             world_streaming: snapshot.cells,
-            sky: SkyStats {
-                tables: self.sky.built,
-            },
+            sky: crate::sky::SkyPass::stats(Some(self.features.sky.get()), None, snapshot),
             occlusion_culling: CullingStats {
                 active: gpu_mode && self.gpu_presentation.occlusion(),
                 instances: if gpu_mode && snapshot.environment.occlusion_culling.enabled {
@@ -420,10 +413,10 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.gpu_environment_bytes",
-            (self.environment.capacity_bytes()
-                + self.probes.capacity_bytes()
+            (self.features.environment.get().capacity_bytes()
+                + self.features.probes.get().capacity_bytes()
                 + self.features.clouds.get().capacity_bytes()
-                + self.sky.capacity_bytes()) as f64,
+                + self.features.sky.get().capacity_bytes()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_virtual_bytes",

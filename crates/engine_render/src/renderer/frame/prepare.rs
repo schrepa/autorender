@@ -648,12 +648,13 @@ impl Renderer {
         self.features
             .clouds
             .get_mut()
-            .prepare_sky_group(&self.device, self.sky.bindings());
-        self.environment
+            .prepare_sky_group(&self.device, self.features.sky.get().bindings());
+        self.features
+            .environment
+            .get_mut()
             .set_clouds(&self.device, self.features.clouds.get().dome());
         prelude.sky = self.prepare_sky(snapshot);
-        let (environment, probe_list, dropped_probes) =
-            self.prepare_environment(snapshot, lighting);
+        let (environment, probe_list) = self.prepare_environment(snapshot, lighting);
         prelude.environment = environment;
         let lights = self.prepare_lights(frame, kind, temporal_frame);
         let lit = lights.is_some();
@@ -675,7 +676,6 @@ impl Renderer {
             gpu_prepared,
             shadow_frame,
             probe_list,
-            dropped_probes,
             refraction,
             frames: FeatureFrames {
                 lights,
@@ -793,7 +793,7 @@ impl Renderer {
                 // counted while captures wait.
                 stillness: (snapshot.environment.reflection_probes.enabled
                     && !snapshot.reflection_probes.list.is_empty())
-                .then(|| self.probes.slots.waiting()),
+                .then(|| self.features.probes.get().slots.waiting()),
                 fade: self.switch_fades.share,
             };
             // Temporal frames alternate pose buffers; the other keeps the
@@ -942,7 +942,7 @@ impl Renderer {
             ),
         ];
         copies.extend(self.features.clouds.get().sky_copies());
-        self.sky.encode(
+        self.features.sky.get_mut().encode(
             &self.device,
             &self.queue,
             (
@@ -958,8 +958,9 @@ impl Renderer {
     }
 
     /// Environment maps and reflection probes, and the camera
-    /// group binding them; returns the environment's encoder, the probes the
-    /// frame keeps and those beyond the GPU's arrays.
+    /// group binding them; returns the environment's encoder and the probes
+    /// the frame keeps, and counts those beyond the GPU's arrays in the
+    /// probes feature.
     fn prepare_environment<'s>(
         &mut self,
         snapshot: &'s RenderSnapshot,
@@ -967,7 +968,6 @@ impl Renderer {
     ) -> (
         Option<wgpu::CommandEncoder>,
         &'s [engine_core::RenderReflectionProbe],
-        u64,
     ) {
         // Environment maps: as many cubes as the reflection
         // probes kept need (the nearest first, as many as the GPU's texture
@@ -983,18 +983,20 @@ impl Renderer {
         let wanted_cubes = 1 + (probe_list.len() as u32).min(most_cubes - 1);
         let cubes = if wanted_cubes == 1 {
             1
-        } else if wanted_cubes > self.environment.cubes() {
+        } else if wanted_cubes > self.features.environment.get().cubes() {
             wanted_cubes.next_power_of_two().min(most_cubes)
         } else {
-            self.environment.cubes()
+            self.features.environment.get().cubes()
         };
         // Frames whose maps and sky stand record nothing here.
         let keys = (
             self.features.clouds.get().environment_key(),
-            self.sky.environment_key(),
+            self.features.sky.get().environment_key(),
         );
         let mut environment_encoder = self
+            .features
             .environment
+            .get()
             .needs_encoding(probe_settings.resolution, cubes, lighting, keys)
             .then(|| {
                 self.device
@@ -1004,20 +1006,32 @@ impl Renderer {
             });
         let (lost, sky_changed) = match environment_encoder.as_mut() {
             Some(encoder) => (
-                self.environment
-                    .ensure(&self.device, encoder, probe_settings.resolution, cubes),
-                self.environment.encode_sky(encoder, lighting, keys).1,
+                self.features.environment.get_mut().ensure(
+                    &self.device,
+                    encoder,
+                    probe_settings.resolution,
+                    cubes,
+                ),
+                self.features
+                    .environment
+                    .get_mut()
+                    .encode_sky(encoder, lighting, keys)
+                    .1,
             ),
             None => (false, false),
         };
-        self.probes
+        let probes = self.features.probes.get_mut();
+        probes
             .slots
             .plan(probe_list, (cubes - 1) as usize, lost, sky_changed);
-        self.probes.upload(&self.device, &self.queue);
-        let dropped_probes = snapshot.reflection_probes.dropped as u64
-            + (probe_list.len() as u64).saturating_sub(u64::from(most_cubes - 1));
+        probes.upload(&self.device, &self.queue);
+        // Faces count as the frame's probe captures draw them.
+        probes.faces = 0;
+        probes.dropped = (snapshot.reflection_probes.dropped as u64
+            + (probe_list.len() as u64).saturating_sub(u64::from(most_cubes - 1)))
+        .min(u64::from(u32::MAX)) as u32;
         self.refresh_camera_group();
-        (environment_encoder, probe_list, dropped_probes)
+        (environment_encoder, probe_list)
     }
 
     /// Rebuilds the main passes' first group when what it binds was
@@ -1027,8 +1041,8 @@ impl Renderer {
             &self.device,
             &camera::GroupSources {
                 shadows: &self.shadows,
-                environment: &self.environment,
-                probes: &self.probes,
+                environment: self.features.environment.get(),
+                probes: self.features.probes.get(),
                 horizons: &self.terrain.horizons,
                 occupancy: self.features.occupancy.get(),
             },
@@ -1409,8 +1423,8 @@ impl Renderer {
                 post.scene(),
                 &camera::GroupSources {
                     shadows: &self.shadows,
-                    environment: &self.environment,
-                    probes: &self.probes,
+                    environment: self.features.environment.get(),
+                    probes: self.features.probes.get(),
                     horizons: &self.terrain.horizons,
                     occupancy: self.features.occupancy.get(),
                 },

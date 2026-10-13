@@ -146,7 +146,6 @@ pub(super) struct Features<'s> {
     pub(super) gpu_prepared: Option<GpuPrepared>,
     pub(super) shadow_frame: Option<ShadowFrame>,
     pub(super) probe_list: &'s [engine_core::RenderReflectionProbe],
-    pub(super) dropped_probes: u64,
     pub(super) refraction: bool,
     /// What the features render_features! lists prepared.
     pub(super) frames: FeatureFrames,
@@ -196,13 +195,12 @@ pub(super) struct FrameState<'s> {
     pub(super) shape: FrameShape,
 }
 
-/// What encoding counted: the opaque passes' draws, shadow draws,
-/// reflection probe faces, and the render graph's passes.
+/// What encoding counted: the opaque passes' draws, shadow draws and the
+/// render graph's passes (the probes feature counts its faces).
 #[derive(Default)]
 pub(super) struct EncodeReport {
     pub(super) draws: u32,
     pub(super) shadow_draws: u32,
-    pub(super) probe_faces: u32,
     pub(super) passes: u64,
 }
 

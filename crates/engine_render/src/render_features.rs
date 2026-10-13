@@ -19,14 +19,17 @@ use engine_core::RenderSnapshot;
 
 use crate::clouds::CloudPass;
 use crate::decals::DecalPass;
+use crate::environment::Environment;
 use crate::ground_cover::GroundCoverPass;
 use crate::lights::LightPass;
 use crate::materials::MaterialStore;
 use crate::occupancy::OccupancyPass;
 use crate::post::PostPass;
+use crate::probes::ProbePass;
 use crate::profiling::GpuProfiler;
 use crate::render_graph::{Clear, FrameShape, Load, Node, Ops, RenderGraph, Resource};
 use crate::scatter::ScatterPass;
+use crate::sky::SkyPass;
 use crate::targets::Targets;
 use crate::temporal::TemporalPass;
 use crate::transparent::Transparency;
@@ -528,17 +531,18 @@ fn store_operation(ops: Ops) -> wgpu::StoreOp {
 
 /// Builds the renderer's features from one list: each one's field, its
 /// holder ([`Lazy`] or [`Eager`]) and type, and the render graph passes it
-/// owns, which become [`FeaturePass`]es the feature declares and encodes.
+/// owns, which become [`FeaturePass`]es the feature declares and encodes; a
+/// feature owning none works before the frame, in its prelude.
 macro_rules! render_features {
     ($(
         $(#[$doc:meta])*
-        $field:ident: $holder:ident<$feature:ty> => [$($pass:ident),+ $(,)?],
+        $field:ident: $holder:ident<$feature:ty> => [$($pass:ident),* $(,)?],
     )*) => {
         /// The render graph passes features own (`Pass::Feature`), each
         /// declared and encoded by its feature.
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub(crate) enum FeaturePass {
-            $($($pass,)+)*
+            $($($pass,)*)*
         }
 
         /// The features, in their holders.
@@ -577,7 +581,7 @@ macro_rules! render_features {
                 encoder: &mut wgpu::CommandEncoder,
             ) -> u32 {
                 match pass {
-                    $($(FeaturePass::$pass)|+ => {
+                    $($(FeaturePass::$pass => {
                         let ready = frames
                             .$field
                             .as_ref()
@@ -585,7 +589,7 @@ macro_rules! render_features {
                         #[cfg(feature = "dev")]
                         self.$field.encode_fault(encoder);
                         self.$field.ready(ready).encode(ready.frame(), node, encode, encoder)
-                    })*
+                    })*)*
                 }
             }
 
@@ -697,4 +701,14 @@ render_features! {
     /// Temporal antialiasing's resolve into the canvas, created while the
     /// setting is on.
     temporal: Lazy<TemporalPass> => [TemporalResolve],
+    /// The physically based sky: its tables and the light it gives, built
+    /// before the frame, in its prelude.
+    sky: Eager<SkyPass> => [],
+    /// Environment maps: the sky's cube, redrawn before the frame when the
+    /// sky changes, and the reflection probes' cubes after it.
+    environment: Eager<Environment> => [],
+    /// Reflection probes: which probe holds each environment cube after the
+    /// sky's, the capture in progress and the grid surfaces read; the
+    /// renderer's probe-captures pass draws the scene into their faces.
+    probes: Eager<ProbePass> => [],
 }

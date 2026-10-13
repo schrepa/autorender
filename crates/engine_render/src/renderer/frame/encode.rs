@@ -63,7 +63,7 @@ impl Renderer {
             Pass::Feature(pass) => {
                 report.draws += self.encode_feature(pass, state, encoder, view, node);
             }
-            Pass::ProbeCaptures => self.encode_probes(state, encoder, report),
+            Pass::ProbeCaptures => self.encode_probes(state, encoder),
         }
     }
 
@@ -337,16 +337,11 @@ impl Renderer {
 
     /// Reflection probe captures after the frame's own
     /// drawing, once their slots stand still.
-    fn encode_probes(
-        &mut self,
-        state: &FrameState<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        report: &mut EncodeReport,
-    ) {
+    fn encode_probes(&mut self, state: &FrameState<'_>, encoder: &mut wgpu::CommandEncoder) {
         let snapshot = state.snapshot;
         let temporal_frame = &state.packing.temporal_frame;
         let (probe_list, light_frame) = (state.features.probe_list, state.features.light_frame());
-        self.probes.slots.tick();
+        self.features.probes.get_mut().slots.tick();
         if !self.gpu_presentation.stillness_settled() {
             return;
         }
@@ -361,7 +356,7 @@ impl Renderer {
             snapshot.elapsed_seconds,
             light_frame.map(|frame| (frame, &snapshot.environment.local_lights)),
         );
-        report.probe_faces = faces;
+        self.features.probes.get_mut().faces = faces;
     }
 }
 
