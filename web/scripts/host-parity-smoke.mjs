@@ -21,6 +21,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { crc32, deflateSync } from "node:zlib";
 import { launchBrowserSession } from "./agent-browser.mjs";
 import { launchNativeSession } from "./agent-native.mjs";
+import { expectDisabledFeatures } from "./exercised.mjs";
 import { cargoBinaries, devUrl, protocol } from "./harness.mjs";
 import { workspacePath } from "./workspace.mjs";
 
@@ -167,6 +168,7 @@ try {
   const found = [];
   const replies = {};
   for (const [name, command, expected] of CASES) {
+    if (name === "debug fault") expectDisabledFeatures();
     const pair = { web: await answer(web, command), native: await answer(native, command) };
     replies[name] = pair;
     found.push(...divergences(name, expected === "error", pair.web, pair.native));

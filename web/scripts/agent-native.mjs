@@ -14,7 +14,7 @@ import { inflateSync } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { PANIC_PREFIX } from "../src/generated/host.ts";
 import { AgentError } from "./agent-protocol.mjs";
-import { recordSent } from "./exercised.mjs";
+import { recordReceived, recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
 
 // Sessions' captures stay under artifacts/agent/SESSION, as browser
@@ -197,6 +197,9 @@ export async function launchNativeSession({ program, args = [], session = random
     return new Promise((resolveReply, rejectReply) => {
       waiting.push({ resolve: resolveReply, reject: rejectReply });
       child.stdin.write(`${JSON.stringify(command)}\n`);
+    }).then(reply => {
+      recordReceived(reply);
+      return reply;
     });
   }
   try {

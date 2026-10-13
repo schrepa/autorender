@@ -28,7 +28,7 @@ import { constants, setPriority } from "node:os";
 import { basename, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { launchContext } from "./browser-launch.mjs";
-import { recordSent } from "./exercised.mjs";
+import { recordReceived, recordSent } from "./exercised.mjs";
 import { holdHeavyRun } from "./heavy-run.mjs";
 import { workspace, workspacePath } from "./workspace.mjs";
 
@@ -145,6 +145,7 @@ export function commander(page, { deadline = 30_000 } = {}) {
         }),
       ]).finally(() => { answered = true; clearTimeout(timer); });
       if (reply?.error?.code === "command_busy" && Date.now() < until) { await delay(25); continue; }
+      recordReceived(reply);
       assert.equal(reply.ok, expectedOk, `${op}: ${JSON.stringify(reply).slice(0, 4000)}`);
       if (reply.result?.rendering) reply.result.rendering = strictStats(reply.result.rendering);
       return reply;

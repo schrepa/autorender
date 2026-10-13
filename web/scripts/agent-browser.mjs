@@ -6,7 +6,7 @@ import { resolve, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgentError, loopbackUrl } from "./agent-protocol.mjs";
 import { launchContext } from "./browser-launch.mjs";
-import { recordSent } from "./exercised.mjs";
+import { recordReceived, recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
 
 /** How many pixels of two captures under artifacts/agent differ by more
@@ -129,6 +129,7 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
       return api.request(command);
     }, { expected: instance, expectedBuild: build, command });
     if (response?.error?.code === "runtime_replaced") invalidate();
+    recordReceived(response);
     return response;
   }
   async function readyRequest(command) {

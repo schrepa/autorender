@@ -2,7 +2,7 @@
 // @ts-check
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { recordSent } from "./exercised.mjs";
+import { recordReceived, recordSent } from "./exercised.mjs";
 import { artifacts, commander, sceneUrl, differentPixels, launch, near, openPaused, protocol, routedScene } from "./harness.mjs";
 
 const url = sceneUrl(process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
@@ -213,6 +213,8 @@ try {
     await window.__engineDev.request({ op: "pause" }),
   ]);
   assert.ok(resumed.ok && paused.ok, `resume/pause failed: ${JSON.stringify([resumed, paused])}`);
+  recordReceived(resumed);
+  recordReceived(paused);
   await command("present", { alpha: 0 });
   await presentedMatches("player", movedAgain.after.playerGlobal.matrix, "pause transition resets history");
   await page.locator("#reset").click();
