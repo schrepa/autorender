@@ -213,7 +213,7 @@ impl Renderer {
             meshes: BTreeMap::new(),
             mesh_arena,
             mesh_layout: 0,
-            vertex_staging: Vec::new(),
+            mesh_uploads: MeshUploads::default(),
             materials,
             plan: BatchPlan::with_instance_limit(instances.limit),
             draw_order: DrawOrder::default(),

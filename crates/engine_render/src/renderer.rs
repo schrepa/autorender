@@ -100,6 +100,16 @@ struct GpuMesh {
     lods: Vec<(u32, u32, f32)>,
 }
 
+/// What uploading new meshes keeps from one to the next.
+#[derive(Default)]
+struct MeshUploads {
+    // The vertices of the mesh being uploaded, as the GPU reads them.
+    staging: Vec<Vertex>,
+    // Meshes whose levels of detail simplification refused, and why the
+    // latest was.
+    lod_failures: (u32, Option<String>),
+}
+
 /// A mesh's own buffers: positions, extras, joints and indices.
 struct OwnMesh {
     vertices: wgpu::Buffer,
@@ -142,9 +152,18 @@ fn lod_levels(batch: &DrawBatch, mesh: &GpuMesh, virtual_geometry: bool) -> usiz
 
 /// `source`'s indices followed by `levels` levels of detail at most,
 /// and each level's first index in them, index count and
-/// error.
-fn lod_chain(source: &engine_core::Mesh, levels: usize) -> (Vec<u32>, Vec<(u32, u32, f32)>) {
+/// error. A mesh simplification refused, which has the levels made before,
+/// counts in `failures`: how many, and why the latest was.
+fn lod_chain(
+    source: &engine_core::Mesh,
+    levels: usize,
+    failures: &mut (u32, Option<String>),
+) -> (Vec<u32>, Vec<(u32, u32, f32)>) {
     let lods = engine_core::mesh_lods(source, levels);
+    if let Some(refused) = lods.refused {
+        failures.0 = failures.0.saturating_add(1);
+        failures.1 = Some(refused.to_string());
+    }
     let levels = lods
         .levels
         .iter()
@@ -207,7 +226,7 @@ pub struct Renderer {
     meshes: BTreeMap<MeshHandle, GpuMesh>,
     mesh_arena: MeshArena,
     mesh_layout: u64,
-    vertex_staging: Vec<Vertex>,
+    mesh_uploads: MeshUploads,
     // Material textures, samplers and bind groups.
     materials: MaterialStore,
     // The frame's draw batches, and the opaque ones' drawing order.

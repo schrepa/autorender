@@ -261,6 +261,13 @@ export interface DetailStats {
    * because a budget or the GPU's texture array layers left them none.
    */
   dropped_impostors: number;
+  /**
+   * Meshes whose levels of detail simplification refused since the
+   * renderer started, each drawn with the levels made before (none when
+   * it refused the first): only meshes beyond what 32-bit indices
+   * address; the renderer's `latest_lod_failure` says why the latest was.
+   */
+  failed_meshes: number;
   /** Instances drawn as impostors, read back like `lod0_instances`. */
   impostor_instances: number | null;
   /** Impostors baked and resident. */

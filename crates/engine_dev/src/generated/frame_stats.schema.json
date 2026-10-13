@@ -145,6 +145,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "failed_meshes": {
+          "description": "Meshes whose levels of detail simplification refused since the\nrenderer started, each drawn with the levels made before (none when\nit refused the first): only meshes beyond what 32-bit indices\naddress; the renderer's `latest_lod_failure` says why the latest was.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "impostor_instances": {
           "description": "Instances drawn as impostors, read back like `lod0_instances`.",
           "format": "uint32",
@@ -190,7 +196,8 @@
       },
       "required": [
         "impostors",
-        "dropped_impostors"
+        "dropped_impostors",
+        "failed_meshes"
       ],
       "type": "object"
     },

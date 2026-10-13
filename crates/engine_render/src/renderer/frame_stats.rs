@@ -250,6 +250,7 @@ impl Renderer {
                 impostor_instances: lod_instances.map(|levels| levels[3]),
                 impostors: self.impostors.live(),
                 dropped_impostors: self.impostors.dropped,
+                failed_meshes: self.mesh_uploads.lod_failures.0,
             },
             terrain: TerrainRenderStats {
                 patches: self.terrain.patches.frame.patches,
@@ -485,7 +486,7 @@ impl Renderer {
             "memory.render_staging_capacity_bytes",
             (self.instances.color_staging.capacity() * size_of::<ColorData>()
                 + self.instances.slot_staging.capacity() * size_of::<u32>()
-                + self.vertex_staging.capacity() * size_of::<Vertex>()) as f64,
+                + self.mesh_uploads.staging.capacity() * size_of::<Vertex>()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_pose_staging_bytes",

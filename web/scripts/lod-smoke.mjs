@@ -92,6 +92,8 @@ try {
   assert.ok(gpu.rendering.level_of_detail.impostors > 0 && gpu.rendering.level_of_detail.impostor_instances > 0,
     `impostors draw: ${JSON.stringify(gpu.rendering)}`);
   assert.equal(gpu.rendering.level_of_detail.dropped_impostors, 0);
+  // Simplification made every mesh's levels: it refuses none of the scene's.
+  assert.equal(gpu.rendering.level_of_detail.failed_meshes, 0);
   const pixels = await differentPixels(page, [cpu.png, gpu.png], { tolerance: 8 });
   differs("impostor difference", pixels, "with mesh levels and impostors");
 

@@ -7,7 +7,7 @@
 
 use crate::Mesh;
 use crate::simplify::{
-    SimplifyInput, SimplifyOptions, VertexFlags, protect_attribute_seams, simplify,
+    SimplifyError, SimplifyInput, SimplifyOptions, VertexFlags, protect_attribute_seams, simplify,
 };
 
 /// The empty level's error over the error at which pruning removes the
@@ -42,16 +42,21 @@ pub struct LodLevel {
 pub struct MeshLods {
     pub indices: Vec<u32>,
     pub levels: Vec<LodLevel>,
+    /// Why simplification refused the mesh, which then has the levels made
+    /// before (none when it refused the first): only a mesh beyond what
+    /// 32-bit indices address.
+    pub refused: Option<SimplifyError>,
 }
 
 /// `mesh`'s levels of detail, at most `max_levels` of them, the last empty:
 /// none for meshes with joints (which move their vertices) or virtual
-/// geometry (which has its own). The indices always start with the mesh's
-/// own.
+/// geometry (which has its own), and fewer where simplification refused the
+/// mesh, saying why. The indices always start with the mesh's own.
 pub fn mesh_lods(mesh: &Mesh, max_levels: usize) -> MeshLods {
     let mut lods = MeshLods {
         indices: mesh.indices().to_vec(),
         levels: Vec::new(),
+        refused: None,
     };
     if mesh.joint_count() != 0 || mesh.virtual_geometry().is_some() || max_levels == 0 {
         return lods;
@@ -91,7 +96,8 @@ pub fn mesh_lods(mesh: &Mesh, max_levels: usize) -> MeshLods {
     // Faceted meshes split every edge by its normals: collapses may cross
     // those seams, but not texture seams, which would stretch the texture.
     let mut flags = vec![VertexFlags::NONE; vertices.len()];
-    if protect_attribute_seams(&positions, &attributes, 5, 0b11000, &mut flags).is_err() {
+    if let Err(error) = protect_attribute_seams(&positions, &attributes, 5, 0b11000, &mut flags) {
+        lods.refused = Some(refused(error));
         return lods;
     }
     let options = SimplifyOptions {
@@ -113,8 +119,12 @@ pub fn mesh_lods(mesh: &Mesh, max_levels: usize) -> MeshLods {
         // projects within its pixel budget. Low-poly props built of closed
         // parts have no edge to collapse, so pruning whole parts is how
         // their levels shrink.
-        let Ok(simplified) = simplify(&input, target, f32::INFINITY, options) else {
-            break;
+        let simplified = match simplify(&input, target, f32::INFINITY, options) {
+            Ok(simplified) => simplified,
+            Err(error) => {
+                lods.refused = Some(refused(error));
+                break;
+            }
         };
         let triangles = simplified.indices.len() / 3;
         if triangles == 0 || triangles as f32 > (current.len() / 3) as f32 * LEVEL_KEEP_LIMIT {
@@ -129,18 +139,37 @@ pub fn mesh_lods(mesh: &Mesh, max_levels: usize) -> MeshLods {
         lods.indices.extend_from_slice(&simplified.indices);
         current = simplified.indices;
     }
-    // The empty level, past the error at which pruning removes every part.
+    // The empty level, past the error at which pruning removes every part;
+    // none where pruning keeps a part.
     let input = SimplifyInput::new(&current, &positions)
         .with_attributes(&attributes, 5, &weights)
         .with_vertex_flags(&flags);
-    if let Ok(gone) = simplify(&input, 0, f32::INFINITY, options)
-        && gone.indices.is_empty()
-    {
-        lods.levels.push(LodLevel {
+    match simplify(&input, 0, f32::INFINITY, options) {
+        Ok(gone) if gone.indices.is_empty() => lods.levels.push(LodLevel {
             first_index: lods.indices.len() as u32,
             index_count: 0,
             error: engine_math::max(error * ERROR_GROWTH, gone.error * EMPTY_ERROR_SCALE),
-        });
+        }),
+        Ok(_) => {}
+        Err(error) => lods.refused = Some(refused(error)),
     }
     lods
+}
+
+/// What simplification refused of a mesh [`mesh_lods`] passes it: its own
+/// validated triangles or simplified ones over the same vertices, five
+/// values with finite weights and a flag per vertex, and no error limit,
+/// leave only a mesh beyond what 32-bit indices address to refuse.
+fn refused(error: SimplifyError) -> SimplifyError {
+    match error {
+        SimplifyError::TooLarge { .. } => error,
+        SimplifyError::TriangleCount { .. }
+        | SimplifyError::IndexOutOfBounds { .. }
+        | SimplifyError::AttributeLayout { .. }
+        | SimplifyError::InvalidWeight { .. }
+        | SimplifyError::VertexFlagCount { .. }
+        | SimplifyError::InvalidTargetError => unreachable!(
+            "levels of detail simplify a validated mesh's triangles with five weighted values and a flag per vertex: {error}"
+        ),
+    }
 }

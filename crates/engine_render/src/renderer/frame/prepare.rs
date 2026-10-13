@@ -227,15 +227,19 @@ impl Renderer {
             .filter(|_| mesh_uploads);
         for (handle, source) in sources {
             if let std::collections::btree_map::Entry::Vacant(entry) = self.meshes.entry(handle) {
-                self.vertex_staging.clear();
-                self.vertex_staging.reserve_exact(source.vertices().len());
-                self.vertex_staging
+                self.mesh_uploads.staging.clear();
+                self.mesh_uploads
+                    .staging
+                    .reserve_exact(source.vertices().len());
+                self.mesh_uploads
+                    .staging
                     .extend(source.vertices().iter().map(Vertex::from));
                 // The arena holds the mesh in its streams' class; the device's
                 // limits alone leave a mesh buffers of its own.
                 let extras = ExtraVertex::stream(source);
                 let skin = SkinVertex::stream(source);
-                let mut streams: Vec<&[u8]> = vec![bytemuck::cast_slice(&self.vertex_staging)];
+                let mut streams: Vec<&[u8]> =
+                    vec![bytemuck::cast_slice(&self.mesh_uploads.staging)];
                 if let Some(extras) = &extras {
                     streams.push(bytemuck::cast_slice(extras));
                 }
@@ -251,14 +255,15 @@ impl Renderer {
                 } else {
                     LOD_LEVELS - 1
                 };
-                let (indices, lods) = lod_chain(source, levels);
+                let (indices, lods) =
+                    lod_chain(source, levels, &mut self.mesh_uploads.lod_failures);
                 let placement = self
                     .mesh_arena
                     .insert(
                         &self.device,
                         &self.queue,
                         &streams,
-                        self.vertex_staging.len() as u32,
+                        self.mesh_uploads.staging.len() as u32,
                         &indices,
                     )
                     .ok_or_else(|| {

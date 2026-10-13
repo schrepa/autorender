@@ -531,6 +531,17 @@
       "direction": "lower"
     },
     {
+      "name": "level_of_detail.failed_meshes",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "level_of_detail.impostor_instances",
       "kind": "work",
       "rule": "shown",

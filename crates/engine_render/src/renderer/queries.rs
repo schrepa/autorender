@@ -98,6 +98,13 @@ impl Renderer {
         self.virtual_draws.pass.page_failure()
     }
 
+    /// Why simplification refused the latest mesh whose levels of detail it
+    /// left out, if it refused any (frame statistics'
+    /// `level_of_detail.failed_meshes` counts them).
+    pub fn latest_lod_failure(&self) -> Option<&str> {
+        self.mesh_uploads.lod_failures.1.as_deref()
+    }
+
     /// Whether pipelines created by earlier frames may still be compiling:
     /// the GPU has not yet completed the last frame that created some.
     pub fn pipelines_compiling(&self) -> bool {

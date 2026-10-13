@@ -374,6 +374,11 @@ pub struct DetailStats {
     /// Opaque draw groups that qualified for impostors but draw their meshes
     /// because a budget or the GPU's texture array layers left them none.
     pub dropped_impostors: u32,
+    /// Meshes whose levels of detail simplification refused since the
+    /// renderer started, each drawn with the levels made before (none when
+    /// it refused the first): only meshes beyond what 32-bit indices
+    /// address; the renderer's `latest_lod_failure` says why the latest was.
+    pub failed_meshes: u32,
 }
 
 /// Terrains.
