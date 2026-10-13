@@ -34,7 +34,8 @@ impl Renderer {
             [frame.camera.jitter[0], frame.camera.jitter[1]]
         });
         let culling = terrains.relative_view_projection;
-        let maps = self.shadows.drawn_maps().to_vec();
+        let maps = self.shadows.drawn_maps();
+        let casts = !maps.is_empty();
         // Runtime deformation's map before the terrain's
         // uniforms, which shade with it.
         self.terrain.deformation.prepare(
@@ -58,7 +59,7 @@ impl Renderer {
                 camera: crate::gpu_data::jittered(culling, jitter),
                 culling,
                 eye: snapshot.camera_position,
-                maps: &maps,
+                maps,
                 probes,
                 settings: snapshot.environment.terrain.sanitized(),
                 shadows: snapshot.environment.shadows.enabled,
@@ -143,7 +144,7 @@ impl Renderer {
                 );
             }
         }
-        if !maps.is_empty() {
+        if casts {
             self.terrain.pipelines.ensure_shadow_pipeline(&self.device);
         }
         if opaque_kind.targets().is_some() {

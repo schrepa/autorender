@@ -155,7 +155,7 @@ impl PatchDraws {
             let start = self.records.len() as u32;
             let mut all = Vec::new();
             for patch in &terrain.patches {
-                let Some(record) = record(parts, terrain, patch, &anchors, views.fades) else {
+                let Some(record) = record(parts, terrain, patch, anchors, views.fades) else {
                     continue;
                 };
                 all.push((record, patch.min, patch.max));
@@ -315,7 +315,7 @@ fn record(
     parts: &Layout<'_>,
     terrain: &RenderTerrain,
     patch: &engine_core::Patch,
-    anchors: &[i64],
+    anchors: Anchors,
     fades: bool,
 ) -> Option<PatchRecord> {
     let atlas = parts.atlas;
@@ -323,9 +323,10 @@ fn record(
     let level = u32::from(key.level);
     let layer = *atlas.slots.get(&(terrain.id, key))?;
     let spacing = terrain.pyramid.spacing(level);
+    let anchor = anchors.at(level);
     let first = [
-        i64::from(key.x) * 256 + i64::from(patch.x) * 16 - anchors[level as usize * 2],
-        i64::from(key.z) * 256 + i64::from(patch.z) * 16 - anchors[level as usize * 2 + 1],
+        i64::from(key.x) * 256 + i64::from(patch.x) * 16 - anchor[0],
+        i64::from(key.z) * 256 + i64::from(patch.z) * 16 - anchor[1],
     ];
     let (parent_layer, parent_texel) = match terrain.pyramid.parent(key) {
         Some(parent) => {
@@ -462,27 +463,40 @@ fn grid_indices() -> Vec<u16> {
     indices
 }
 
-/// A terrain's uniform for a view from `eye`, and each level's anchor
-/// sample (x, z): a point on every level's grid near the eye, from which
-/// patches count their samples.
+/// Each level's anchor sample (x, z): a point on every level's grid near
+/// the eye, from which patches count their samples.
+#[derive(Clone, Copy)]
+struct Anchors {
+    // The eye's cell on the top level's grid.
+    cells: [i64; 2],
+    levels: u32,
+}
+
+impl Anchors {
+    /// Level `level`'s anchor sample.
+    fn at(self, level: u32) -> [i64; 2] {
+        let scale = 1_i64 << (self.levels - 1 - level);
+        [self.cells[0] * scale, self.cells[1] * scale]
+    }
+}
+
+/// A terrain's uniform for a view from `eye`, and its levels' anchors.
 fn terrain_uniform(
     terrain: &RenderTerrain,
     eye: DVec3,
     (view, directory, relief): (f32, [u32; 4], [f32; 4]),
     deformation: crate::deformation::DeformationShading,
-) -> (TerrainUniform, Vec<i64>) {
+) -> (TerrainUniform, Anchors) {
     let pyramid = &terrain.pyramid;
     let levels = pyramid.levels();
     let top = f64::from(pyramid.spacing(levels - 1));
     let origin = terrain.origin.as_dvec3();
     let cells = ((eye - origin) / top).round();
     let anchor = origin + DVec3::new(cells.x * top, 0.0, cells.z * top);
-    let anchors = (0..levels)
-        .flat_map(|level| {
-            let scale = 1_i64 << (levels - 1 - level);
-            [cells.x as i64 * scale, cells.z as i64 * scale]
-        })
-        .collect();
+    let anchors = Anchors {
+        cells: [cells.x as i64, cells.z as i64],
+        levels,
+    };
     let relative = (anchor - eye).as_vec3();
     let uniform = TerrainUniform {
         anchor: [relative.x, relative.y, relative.z, pyramid.spacing(0)],
