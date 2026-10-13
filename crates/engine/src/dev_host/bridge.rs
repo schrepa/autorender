@@ -9,6 +9,7 @@
 //! ([`BenchmarkRun`]).
 
 use engine_core::ErrorCode;
+use engine_dev::results::{CaptureResult, FramesResult, GameResult, KeptArtifact, result};
 use engine_dev::{Effect, HostContext, Outcome, Step};
 use engine_scene::SceneFiles;
 use serde_json::{Map, Value, json};
@@ -258,8 +259,12 @@ impl<G: Game> GameHost<G> {
                     return self.dev_effect(pending, Effect::Frame { timestamp });
                 }
                 let mut reply = self.dev_invoke(&json!({"op": "status"}), context);
-                reply["result"] =
-                    json!({"frames": count, "interval_ms": interval, "temporary": true});
+                reply["result"] = result::frames(FramesResult {
+                    frames: count,
+                    interval_ms: interval,
+                    temporary: true,
+                    artifact: None,
+                });
                 if show {
                     return self.dev_effect(Pending::Shown { reply }, Effect::Show);
                 }
@@ -271,12 +276,16 @@ impl<G: Game> GameHost<G> {
                 }
                 if let Some(artifact) = outcome.artifact {
                     let observation = &reply["observation"];
-                    let kept = json!({
-                        "path": artifact.path, "mime_type": artifact.mime_type,
-                        "bytes": artifact.bytes, "sha256": artifact.sha256,
-                        "frame": observation["frame"], "tick": observation["tick"],
-                    });
-                    reply["result"]["artifact"] = kept;
+                    let kept = KeptArtifact {
+                        path: artifact.path,
+                        mime_type: artifact.mime_type,
+                        bytes: artifact.bytes,
+                        sha256: artifact.sha256,
+                        frame: observation["frame"].as_str().map(str::to_owned),
+                        tick: observation["tick"].as_str().map(str::to_owned),
+                    };
+                    reply["result"]["artifact"] =
+                        serde_json::to_value(kept).expect("results serialize");
                 }
                 self.dev_done(reply, context)
             }
@@ -298,8 +307,10 @@ impl<G: Game> GameHost<G> {
                 }
                 let mut rendered = self.dev_invoke(&json!({"op": "render"}), context);
                 if rendered["ok"] == true {
-                    rendered["result"] =
-                        json!({"game": name, "result": outcome.result.unwrap_or(Value::Null)});
+                    rendered["result"] = result::game(GameResult {
+                        game: name,
+                        result: outcome.result.unwrap_or(Value::Null),
+                    });
                 }
                 self.dev_done(rendered, context)
             }
@@ -426,10 +437,15 @@ impl<G: Game> GameHost<G> {
                     Some(alpha) => json!({"op": "present", "alpha": alpha}),
                     None => json!({"op": "render"}),
                 };
-                let reply = self.dev_invoke(&command, context);
+                let mut reply = self.dev_invoke(&command, context);
                 if reply["ok"] != true {
                     return self.dev_done(reply, context);
                 }
+                reply["result"] = result::capture(CaptureResult {
+                    temporary: control.get("alpha").map(|_| true),
+                    rendered: true,
+                    artifact: None,
+                });
                 self.dev_effect(Pending::Shown { reply }, Effect::Show)
             }
             "game" => {

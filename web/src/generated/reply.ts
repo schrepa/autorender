@@ -85,6 +85,22 @@ export interface CameraResult {
   temporary: boolean;
 }
 
+/**
+ * What `capture` answers: the frame rendered, or previewed at an alpha,
+ * and the file the host kept of it.
+ */
+export interface CaptureResult {
+  /**
+   * The file the host kept, where it keeps one (the page shows the
+   * frame instead).
+   */
+  artifact?: KeptArtifact | null;
+  /** Always true: the frame rendered. */
+  rendered: boolean;
+  /** A preview's: it changes no clock or gameplay state. */
+  temporary?: boolean | null;
+}
+
 /** Where a cast shape hit. */
 export interface CastHit {
   /** How far it travelled. */
@@ -327,6 +343,29 @@ export interface EnvironmentResult {
   temporary: boolean;
 }
 
+/**
+ * What `frames` answers once its frames ran, and with `capture` the file
+ * the host kept of the last.
+ */
+export interface FramesResult {
+  /** The file the host kept of the last frame, with `capture`. */
+  artifact?: KeptArtifact | null;
+  /** Frames run. */
+  frames: number;
+  /** Milliseconds between them. */
+  interval_ms: number;
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
+}
+
+/** What `game` answers: the game's control and what it returned. */
+export interface GameResult {
+  /** The control's name. */
+  game: string;
+  /** What it returned, null where nothing. */
+  result: unknown;
+}
+
 /** The ground under one point. */
 export interface HeightSample {
   /** The ground's world height. */
@@ -428,6 +467,25 @@ export interface InspectorDescriptor {
   schema: unknown;
 }
 
+/**
+ * A file a host kept of a frame: where it is, its type, size and hash, and
+ * the frame and tick it shows.
+ */
+export interface KeptArtifact {
+  /** Its size in bytes. */
+  bytes: number;
+  /** The frame it shows, as `FrameTime` counts it. */
+  frame?: string | null;
+  /** Its MIME type, such as `image/png`. */
+  mime_type: string;
+  /** Where it is. */
+  path: string;
+  /** Its SHA-256, in lowercase hexadecimal. */
+  sha256: string;
+  /** The fixed tick it shows. */
+  tick?: string | null;
+}
+
 /** What `nav_go` answers: where the agent now walks. */
 export interface NavGoResult {
   /** Where it walks (world x and z); null where it stopped. */
@@ -499,6 +557,7 @@ export interface OpResults {
   animation: AnimationResult;
   assets: AssetsResult;
   camera: CameraResult;
+  capture: CaptureResult;
   collision_events: CollisionEventsResult;
   culling: CullingResult;
   deform: DeformResult;
@@ -507,14 +566,18 @@ export interface OpResults {
   digest: DigestResult;
   distribution: DistributionResult;
   environment: EnvironmentResult;
+  frames: FramesResult;
+  game: GameResult;
   input: InputResult;
   inspect: InspectResult;
   nav_go: NavGoResult;
   nav_path: NavPathResult;
   overlap: OverlapResult;
+  pause: StatusResult;
   present: PresentResult;
   raycast: RaycastResult;
   render: RenderResult;
+  resume: StatusResult;
   shape_cast: ShapeCastResult;
   status: StatusResult;
   step: StepResult;

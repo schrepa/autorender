@@ -13,16 +13,7 @@ use crate::{InspectorDescriptor, InspectorKind};
 
 /// Ops whose results are still built as untyped JSON, sorted. The list only
 /// shrinks: a new op's result is typed, in `results!` below.
-pub const UNTYPED_RESULTS: &[&str] = &[
-    "benchmark",
-    "capture",
-    "debug_panic",
-    "frames",
-    "game",
-    "pause",
-    "reload",
-    "resume",
-];
+pub const UNTYPED_RESULTS: &[&str] = &["benchmark", "debug_panic", "reload"];
 
 /// Declares each typed op's result type, `op: Type`: handlers hand a result
 /// on through `result::op`, which takes nothing else.
@@ -81,6 +72,11 @@ results! {
     terrain_edit: crate::features::terrain::TerrainEdited,
     terrain_undo: crate::features::terrain::TerrainEdited,
     terrain_redo: crate::features::terrain::TerrainEdited,
+    frames: crate::results::FramesResult,
+    capture: crate::results::CaptureResult,
+    game: crate::results::GameResult,
+    pause: crate::results::StatusResult,
+    resume: crate::results::StatusResult,
 }
 
 /// The engine as a session finds it: the world's size, the inspectors,
@@ -460,6 +456,67 @@ pub struct EnvironmentResult {
     pub before: serde_json::Map<String, Value>,
     /// Each after.
     pub after: serde_json::Map<String, Value>,
+}
+
+/// What `frames` answers once its frames ran, and with `capture` the file
+/// the host kept of the last.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct FramesResult {
+    /// Frames run.
+    pub frames: u32,
+    /// Milliseconds between them.
+    pub interval_ms: f64,
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+    /// The file the host kept of the last frame, with `capture`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<KeptArtifact>,
+}
+
+/// What `capture` answers: the frame rendered, or previewed at an alpha,
+/// and the file the host kept of it.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct CaptureResult {
+    /// A preview's: it changes no clock or gameplay state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temporary: Option<bool>,
+    /// Always true: the frame rendered.
+    pub rendered: bool,
+    /// The file the host kept, where it keeps one (the page shows the
+    /// frame instead).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<KeptArtifact>,
+}
+
+/// A file a host kept of a frame: where it is, its type, size and hash, and
+/// the frame and tick it shows.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct KeptArtifact {
+    /// Where it is.
+    pub path: String,
+    /// Its MIME type, such as `image/png`.
+    pub mime_type: String,
+    /// Its size in bytes.
+    pub bytes: u64,
+    /// Its SHA-256, in lowercase hexadecimal.
+    pub sha256: String,
+    /// The frame it shows, as `FrameTime` counts it.
+    pub frame: Option<String>,
+    /// The fixed tick it shows.
+    pub tick: Option<String>,
+}
+
+/// What `game` answers: the game's control and what it returned.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct GameResult {
+    /// The control's name.
+    pub game: String,
+    /// What it returned, null where nothing.
+    pub result: Value,
 }
 
 /// The spread of the values a `distribution` request named.
