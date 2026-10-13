@@ -626,8 +626,8 @@ impl Renderer {
                 self.impostors.pipelines.pipeline(targets, lit),
                 self.impostors.placed.group(),
             )
+            && let Some((cards, args, offset)) = self.features.scatter.get().card_source(0)
         {
-            let (cards, args, offset) = self.features.scatter.get().card_source(0);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
             pass.set_vertex_buffer(0, cards);
@@ -688,8 +688,9 @@ impl Renderer {
             }
             draws += self.draw_scatter_levels(pass, (index, draw), view, false);
         }
-        if let (Some(pipeline), Some(group)) = (cards, self.impostors.placed.group()) {
-            let (cards, args, offset) = self.features.scatter.get().card_source(view);
+        if let (Some(pipeline), Some(group)) = (cards, self.impostors.placed.group())
+            && let Some((cards, args, offset)) = self.features.scatter.get().card_source(view)
+        {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(2, group, &[]);
             pass.set_vertex_buffer(0, cards);
@@ -714,17 +715,19 @@ impl Renderer {
             let Some(mesh) = self.meshes.get(handle) else {
                 continue;
             };
+            let Some((ids, args, offset)) = self.features.scatter.get().draw_source(
+                view,
+                (index, draw.ids + level as u32 * draw.count),
+                level,
+            ) else {
+                continue;
+            };
             let source = mesh.draw(&self.mesh_arena);
             pass.set_vertex_buffer(0, source.vertices.slice(..));
             if extras && let Some(stream) = source.extras.filter(|_| mesh.extended) {
                 pass.set_vertex_buffer(2, stream.slice(..));
             }
             pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
-            let (ids, args, offset) = self.features.scatter.get().draw_source(
-                view,
-                (index, draw.ids + level as u32 * draw.count),
-                level,
-            );
             pass.set_vertex_buffer(1, ids);
             pass.draw_indexed_indirect(args, offset);
             draws += 1;

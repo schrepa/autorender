@@ -1147,6 +1147,17 @@
       "direction": "lower"
     },
     {
+      "name": "terrain.dropped_placed_objects",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "terrain.dropped_tiles",
       "kind": "work",
       "rule": "not-above",

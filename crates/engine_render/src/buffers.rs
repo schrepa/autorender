@@ -163,6 +163,18 @@ impl<T: Copy + 'static> ReadbackRing<T> {
         bytes: u64,
         tag: T,
     ) -> bool {
+        self.record_at(device, encoder, (source, 0), bytes, tag)
+    }
+
+    /// [`Self::record`] of `bytes` from byte `offset` of `source`.
+    pub(crate) fn record_at(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        (source, offset): (&wgpu::Buffer, u64),
+        bytes: u64,
+        tag: T,
+    ) -> bool {
         let mut slots = self.slots.borrow_mut();
         let index = match slots
             .iter()
@@ -185,7 +197,7 @@ impl<T: Copy + 'static> ReadbackRing<T> {
             None => return false,
         };
         let slot = &mut slots[index];
-        encoder.copy_buffer_to_buffer(source, 0, &slot.buffer, 0, bytes);
+        encoder.copy_buffer_to_buffer(source, offset, &slot.buffer, 0, bytes);
         slot.state.set(State::Recorded);
         slot.tag = tag;
         true

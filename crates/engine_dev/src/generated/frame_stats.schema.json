@@ -629,6 +629,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "dropped_placed_objects": {
+          "description": "Placed objects the device's storage bindings left out: those past\nwhat the objects' buffers hold, and entries past what the views'\nlists hold, once each view and level leaving them out, read back a\nfew frames late.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "dropped_tiles": {
           "description": "Tiles the tile budget or the device's texture array layers dropped.",
           "format": "uint32",
@@ -785,7 +791,8 @@
         "vt_evictions",
         "placed_objects",
         "placed_far_objects",
-        "placed_impostors"
+        "placed_impostors",
+        "dropped_placed_objects"
       ],
       "type": "object"
     },

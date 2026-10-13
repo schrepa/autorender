@@ -202,17 +202,36 @@ fn shown_at(record: Record, group: Group, thinning: bool, thin: vec4<f32>, rank:
 }
 
 // Appends `entry` to view `view`'s list of level `level` of `record`'s draw
-// group `group`, counting it in the list's draw.
+// group `group`, counting it in the list's draw. A list reaching past what
+// the IDs' binding holds leaves it out, counted.
 fn list(view: u32, record: Record, group: Group, level: u32, entry: u32) {
     let draw = view * frame.strides.y + record.group * frame.counts.z + level;
+    let start = view * frame.strides.x + group.ids + level * group.count;
+    if start + group.count > arrayLength(&ids) {
+        left_out();
+        return;
+    }
     let slot = atomicAdd(&draws[draw].instance_count, 1u);
-    ids[view * frame.strides.x + group.ids + level * group.count + slot] = entry;
+    ids[start + slot] = entry;
 }
 
-// Appends object `id`'s card with batch word `word` to view `view`'s cards.
+// Appends object `id`'s card with batch word `word` to view `view`'s cards,
+// unless they reach past what the cards' binding holds: then it is left
+// out, counted.
 fn card(view: u32, id: u32, word: u32) {
+    let start = view * frame.strides.w;
+    if start + frame.strides.w > arrayLength(&cards) {
+        left_out();
+        return;
+    }
     let index = atomicAdd(&card_args[view].instance_count, 1u);
-    cards[view * frame.strides.w + index] = vec2<u32>(id, word);
+    cards[start + index] = vec2<u32>(id, word);
+}
+
+// Counts an entry its list left out, in the instances of the card
+// arguments after the views' (`scatter.rs` reads them back).
+fn left_out() {
+    atomicAdd(&card_args[frame.counts.w].instance_count, 1u);
 }
 
 // Shows object `id` to the camera as `way`, steadily.

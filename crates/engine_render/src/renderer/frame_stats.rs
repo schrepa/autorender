@@ -280,6 +280,7 @@ impl Renderer {
                 placed_objects: self.features.scatter.get().resident,
                 placed_far_objects: self.scatter_draws.far_objects(),
                 placed_impostors: self.impostors.placed.live(),
+                dropped_placed_objects: self.features.scatter.get().left_out(),
             },
             ground_cover: GroundCoverPass::stats(
                 Some(self.features.ground_cover.get()),

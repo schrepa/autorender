@@ -14,11 +14,14 @@
 //! the camera sees them, cards cast facing the sun, and the
 //! moving map without the camera's cards. They are never occlusion culled.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use crate::shaders::entry::{scatter_cull, scatter_snap};
 use engine_core::glam::{Mat4, Vec3};
 
 use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, TEMPORAL_POSES};
-use crate::buffers::Growable;
+use crate::buffers::{Growable, ReadbackRing};
 use crate::cached::Cached;
 use crate::gpu_data::{ColorData, GroundData, PoseData};
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -148,8 +151,7 @@ pub(crate) struct ScatterPass {
     shadow_group: Cached<u64, wgpu::BindGroup>,
     // Each draw's arguments with no instances, and every view's, rewritten
     // every frame.
-    template: Vec<DrawArgs>,
-    args: Vec<DrawArgs>,
+    args: DrawArgsLists,
     objects: u32,
     group_count: u32,
     // The IDs each view's lists take, and the view whose lists hold the
@@ -160,8 +162,29 @@ pub(crate) struct ScatterPass {
     maps: Vec<usize>,
     // Advances when the terrains' buffer is replaced.
     terrains_generation: u64,
+    // What the device's storage bindings leave out of the objects.
+    left_out: LeftOut,
     /// Objects resident.
     pub(crate) resident: u32,
+}
+
+/// Each draw's arguments with no instances, and every list's, rewritten
+/// every frame.
+#[derive(Default)]
+struct DrawArgsLists {
+    template: Vec<DrawArgs>,
+    lists: Vec<DrawArgs>,
+}
+
+/// What the device's storage bindings leave out of placed objects: those
+/// past what the objects' buffers hold, and, while the views' lists may
+/// reach past what theirs hold, the entries culling left out, read back a
+/// few frames late.
+struct LeftOut {
+    objects: u32,
+    lists: bool,
+    entries: Rc<Cell<u32>>,
+    readback: ReadbackRing<()>,
 }
 
 impl ScatterPass {
@@ -218,7 +241,7 @@ impl ScatterPass {
                 device,
                 "engine/scatter-card-args",
                 16,
-                wgpu::BufferUsages::INDIRECT,
+                wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
             ),
             generation: 0,
             thins: growable("engine/scatter-thins", 16),
@@ -226,15 +249,32 @@ impl ScatterPass {
             cull_group: Cached::default(),
             pose_groups: Cached::default(),
             shadow_group: Cached::default(),
-            template: Vec::new(),
-            args: Vec::new(),
+            args: DrawArgsLists::default(),
             objects: 0,
             group_count: 0,
             ids_per_view: 0,
             fading_view: 0,
             maps: Vec::new(),
+            left_out: LeftOut {
+                objects: 0,
+                lists: false,
+                entries: Rc::new(Cell::new(0)),
+                readback: ReadbackRing::new("engine/scatter-readback"),
+            },
             resident: 0,
         }
+    }
+
+    /// Placed objects the device's storage bindings left out: those past
+    /// what the objects' buffers hold, and the entries the views' lists left
+    /// out, each once a view and level, read back a few frames late.
+    pub(crate) fn left_out(&self) -> u32 {
+        let entries = if self.left_out.lists {
+            self.left_out.entries.get()
+        } else {
+            0
+        };
+        self.left_out.objects.saturating_add(entries)
     }
 
     /// Bytes of the objects' buffers.
@@ -264,7 +304,7 @@ impl ScatterPass {
         counts: &[u32],
     ) {
         let mut data = Vec::with_capacity(groups.len());
-        self.template.clear();
+        self.args.template.clear();
         let mut ids = 0;
         for (group, &count) in groups.iter().zip(counts) {
             data.push(GroupData {
@@ -280,7 +320,7 @@ impl ScatterPass {
             for level in 0..LEVELS as usize {
                 let (index_count, first_index, base_vertex) =
                     group.levels.get(level).copied().unwrap_or((0, 0, 0));
-                self.template.push(DrawArgs {
+                self.args.template.push(DrawArgs {
                     index_count,
                     instance_count: 0,
                     first_index,
@@ -312,6 +352,31 @@ impl ScatterPass {
         (poses, colors, records, grounds): (&[PoseData], &[ColorData], &[Record], &[GroundData]),
         dirty: Option<std::ops::Range<u32>>,
     ) -> Option<std::ops::Range<u32>> {
+        // Objects past what one storage binding of any of their buffers
+        // holds are left out, counted.
+        let room = [
+            (&self.poses, size_of::<PoseData>()),
+            (&self.colors, size_of::<ColorData>()),
+            (&self.records, size_of::<Record>()),
+            (&self.grounds, size_of::<GroundData>()),
+        ]
+        .into_iter()
+        .map(|(buffer, stride)| buffer.room() / stride as u64)
+        .min()
+        .unwrap_or(0);
+        let held = [poses.len(), colors.len(), records.len(), grounds.len()]
+            .into_iter()
+            .min()
+            .unwrap_or(0)
+            .min(usize::try_from(room).unwrap_or(usize::MAX))
+            .min(u32::MAX as usize);
+        self.left_out.objects = (records.len() - held).min(u32::MAX as usize) as u32;
+        let (poses, colors, records, grounds) = (
+            &poses[..held],
+            &colors[..held],
+            &records[..held],
+            &grounds[..held],
+        );
         let mut grown = false;
         for (buffer, bytes) in [
             (&mut self.poses, size_of_val(poses)),
@@ -327,7 +392,7 @@ impl ScatterPass {
         let range = if grown {
             Some(0..records.len())
         } else {
-            dirty.map(|range| range.start as usize..range.end as usize)
+            dirty.map(|range| (range.start as usize).min(held)..(range.end as usize).min(held))
         };
         let written = range
             .clone()
@@ -462,24 +527,7 @@ impl ScatterPass {
         // The camera's fading objects list after the last view's.
         self.fading_view = views.len();
         let lists = view_count + 1;
-        let mut replaced = false;
-        replaced |= self
-            .views
-            .grow(device, (views.len() * size_of::<ViewData>()) as u64);
-        replaced |= self
-            .ids
-            .grow(device, u64::from(self.ids_per_view) * u64::from(lists) * 4);
-        replaced |= self.draws.grow(
-            device,
-            u64::from(draws_per_view) * u64::from(lists) * size_of::<DrawArgs>() as u64,
-        );
-        replaced |= self
-            .cards
-            .grow(device, u64::from(self.objects) * u64::from(view_count) * 8);
-        replaced |= self.card_args.grow(device, u64::from(view_count) * 16);
-        if replaced {
-            self.generation += 1;
-        }
+        self.grow_views(device, view_count);
         let frame = FrameUniform {
             eye: eye.extend(pixels).to_array(),
             counts: [self.objects, self.group_count, LEVELS, view_count],
@@ -492,14 +540,15 @@ impl ScatterPass {
             fade: [fade, FADE_MARGIN, 0.0, 0.0],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
-        let card_args = [CARD_VERTICES, 0, 0, 0].repeat(view_count as usize);
+        let mut card_args = [CARD_VERTICES, 0, 0, 0].repeat(view_count as usize);
+        card_args.extend([0; 4]);
         queue.write_buffer(&self.card_args, 0, bytemuck::cast_slice(&card_args));
         queue.write_buffer(&self.views, 0, bytemuck::cast_slice(&views));
-        self.args.clear();
+        self.args.lists.clear();
         for _ in 0..lists {
-            self.args.extend_from_slice(&self.template);
+            self.args.lists.extend_from_slice(&self.args.template);
         }
-        queue.write_buffer(&self.draws, 0, bytemuck::cast_slice(&self.args));
+        queue.write_buffer(&self.draws, 0, bytemuck::cast_slice(&self.args.lists));
         self.pipeline
             .get_or_insert_with(|| pipeline(device, &self.layout));
         if self.cull_group.stale(&self.generation) {
@@ -679,9 +728,40 @@ impl ScatterPass {
             .map(|index| index + 1)
     }
 
-    /// Records this frame's culling, timed by `profiler` (`scatter`).
+    /// Grows the buffers culling writes to hold `view_count` views' lists
+    /// (the camera's fading objects' after them), cards and card arguments
+    /// (then the count of entries lists left out), and notes whether the
+    /// lists may reach past what their bindings hold, which leaves entries
+    /// out that culling counts and frames read back.
+    fn grow_views(&mut self, device: &wgpu::Device, view_count: u32) {
+        let lists = u64::from(view_count) + 1;
+        let ids = u64::from(self.ids_per_view) * lists * 4;
+        let draws = u64::from(self.group_count * LEVELS) * lists * size_of::<DrawArgs>() as u64;
+        let cards = u64::from(self.objects) * u64::from(view_count) * 8;
+        let mut replaced = self
+            .views
+            .grow(device, u64::from(view_count) * size_of::<ViewData>() as u64);
+        replaced |= self.ids.grow(device, ids);
+        replaced |= self.draws.grow(device, draws);
+        replaced |= self.cards.grow(device, cards);
+        replaced |= self
+            .card_args
+            .grow(device, (u64::from(view_count) + 1) * 16);
+        if replaced {
+            self.generation += 1;
+        }
+        self.left_out.lists = ids > self.ids.room() || cards > self.cards.room();
+        if !self.left_out.lists {
+            self.left_out.entries.set(0);
+        }
+    }
+
+    /// Records this frame's culling on `device`, timed by `profiler`
+    /// (`scatter`), and the read-back of the entries its lists left out
+    /// while they may.
     fn encode_culling(
         &self,
+        device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         profiler: &crate::profiling::GpuProfiler,
     ) {
@@ -705,32 +785,52 @@ impl ScatterPass {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, group, &[]);
         pass.dispatch_workgroups(self.objects.div_ceil(SCATTER_GROUP), 1, 1);
+        drop(pass);
+        if self.left_out.lists {
+            self.left_out.readback.record_at(
+                device,
+                encoder,
+                (&self.card_args, self.fading_view as u64 * 16),
+                16,
+                (),
+            );
+        }
     }
 
     /// `view`'s impostor cards (0 the camera's), each one's slot and
     /// impostor record as instance attributes: the slice to bind and the
-    /// indirect buffer and offset of their draw.
-    pub(crate) fn card_source(&self, view: usize) -> (wgpu::BufferSlice<'_>, &wgpu::Buffer, u64) {
+    /// indirect buffer and offset of their draw; none where they start past
+    /// what the cards' binding holds, which culling left them out of.
+    pub(crate) fn card_source(
+        &self,
+        view: usize,
+    ) -> Option<(wgpu::BufferSlice<'_>, &wgpu::Buffer, u64)> {
         let start = view as u64 * u64::from(self.objects) * 8;
-        (self.cards.slice(start..), &self.card_args, view as u64 * 16)
+        let args: &wgpu::Buffer = &self.card_args;
+        (start < self.cards.size()).then(|| (self.cards.slice(start..), args, view as u64 * 16))
     }
 
     /// Group `group`'s list of level `level` in `view` (0 the camera's) and
     /// its draw's arguments: the visible-ID slice to bind and the indirect
-    /// buffer and offset; its lists start at `ids_base`.
+    /// buffer and offset; its lists start at `ids_base`. None where the list
+    /// starts past what the IDs' binding holds, which culling left it out
+    /// of (a list reaching past it draws no instances).
     pub(crate) fn draw_source(
         &self,
         view: usize,
         (group, ids_base): (usize, u32),
         level: usize,
-    ) -> (wgpu::BufferSlice<'_>, &wgpu::Buffer, u64) {
+    ) -> Option<(wgpu::BufferSlice<'_>, &wgpu::Buffer, u64)> {
         let start = (view as u64 * u64::from(self.ids_per_view) + u64::from(ids_base)) * 4;
         let draw = (view * self.group_count as usize + group) * LEVELS as usize + level;
-        (
-            self.ids.slice(start..),
-            &self.draws,
-            (draw * size_of::<DrawArgs>()) as u64,
-        )
+        let args: &wgpu::Buffer = &self.draws;
+        (start < self.ids.size()).then(|| {
+            (
+                self.ids.slice(start..),
+                args,
+                (draw * size_of::<DrawArgs>()) as u64,
+            )
+        })
     }
 }
 
@@ -799,8 +899,17 @@ impl RenderFeature for ScatterPass {
         encode: &Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        self.encode_culling(encoder, encode.profiler);
+        self.encode_culling(encode.device, encoder, encode.profiler);
         0
+    }
+
+    /// Requests the map of the entries this frame's lists left out, where
+    /// it read them back.
+    fn after_submit(&mut self, _frame: Option<&ScatterFrame>) {
+        let entries = Rc::clone(&self.left_out.entries);
+        self.left_out
+            .readback
+            .after_submit(move |words, ()| entries.set(words.get(1)));
     }
 
     fn capacity_bytes(&self) -> u64 {

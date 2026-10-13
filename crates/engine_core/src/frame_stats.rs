@@ -434,6 +434,11 @@ pub struct TerrainRenderStats {
     /// Placed objects' impostors baked, which the camera draws far away and
     /// shadow maps cast as cards; counted in `level_of_detail.impostors` too.
     pub placed_impostors: u32,
+    /// Placed objects the device's storage bindings left out: those past
+    /// what the objects' buffers hold, and entries past what the views'
+    /// lists hold, once each view and level leaving them out, read back a
+    /// few frames late.
+    pub dropped_placed_objects: u32,
 }
 
 /// Ground cover.

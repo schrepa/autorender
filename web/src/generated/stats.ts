@@ -461,6 +461,13 @@ export interface TerrainRenderStats {
    * material's), which show a plain color instead.
    */
   dropped_materials: number;
+  /**
+   * Placed objects the device's storage bindings left out: those past
+   * what the objects' buffers hold, and entries past what the views'
+   * lists hold, once each view and level leaving them out, read back a
+   * few frames late.
+   */
+  dropped_placed_objects: number;
   /** Tiles the tile budget or the device's texture array layers dropped. */
   dropped_tiles: number;
   /**
