@@ -270,12 +270,16 @@ try {
   await settle();
   checks.push({ check: "aerial perspective", pixels: air.changed });
 
-  // Running frames capture the probe's faces with terrain in them.
+  // Running frames capture the probe's faces with terrain in them, once
+  // the pipelines they draw with have compiled: polls while the page
+  // compiles do not count against the capture's, up to three minutes.
   await command("resume");
   let probes;
-  for (let attempt = 0; attempt < 50 && !(probes?.reflection_probes?.ready > 0); attempt++) {
+  const resumed = Date.now();
+  for (let attempt = 0; attempt < 50 && !(probes?.reflection_probes?.ready > 0) && Date.now() - resumed < 180_000;) {
     await new Promise(resolve => setTimeout(resolve, 200));
     probes = (await command("status")).result.rendering;
+    if (!probes.pipelines_compiling) attempt++;
   }
   await command("pause");
   assert.ok(probes.reflection_probes.ready > 0, `probe captured: ${JSON.stringify(probes)}`);
