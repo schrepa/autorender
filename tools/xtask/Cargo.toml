@@ -34,9 +34,7 @@ engine = { workspace = true, features = ["schema"] }
 policy.workspace = true
 # Systems' and components' names, which schedule ambiguities report.
 bevy_ecs = { workspace = true, features = ["debug"] }
-# Numbers read back exactly: an extended report copies its earlier runs
-# as they were measured.
-serde_json = { workspace = true, features = ["float_roundtrip"] }
+serde_json.workspace = true
 
 [lints]
 workspace = true

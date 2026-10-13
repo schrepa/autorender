@@ -37,7 +37,10 @@ png = "=0.17.16"
 tiff = { version = "=0.11.3", default-features = false, features = ["deflate", "lzw"] }
 sha2 = "=0.10.9"
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
+# Numbers parse exactly, the same in every build: a scene or request reads
+# as the page's JSON.parse reads it, and an extended report keeps its earlier
+# runs as they were measured.
+serde_json = { version = "=1.0.151", features = ["float_roundtrip"] }
 # Where in a JSON request or scene a value breaks its type.
 serde_path_to_error = "=0.1.20"
 schemars = "=1.2.2"
