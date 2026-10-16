@@ -54,7 +54,7 @@ function fixture(size, cutoff, { opacity = 1, texture = sourceMask.texture, map 
   // edges. Pixel centers then address source/mip texel centers at powers of two.
   const unit = 8 / height;
   return { roi, document: {
-    version: 9, id: "alpha-coverage-fixture", revision: 1,
+    id: "alpha-coverage-fixture", revision: 1,
     camera: { position: [0, 0, 4], target: [0, 0, 0], fov_degrees: 90, near: 0.1, far: 100 },
     textures: [texture],
     materials: [material(cutoff, opacity, { texture: { id: "mask", ...map },
@@ -255,7 +255,7 @@ try {
   // Masked source meshes large enough to receive impostor bakes, both with
   // and without a vertex-color stream, are also terrain-placed casters.
   const placed = {
-    version: 9, id: "alpha-coverage-fixture", revision: 1,
+    id: "alpha-coverage-fixture", revision: 1,
     camera: { position: [10, 12, 40], target: [10, 3, 0], fov_degrees: 55, near: 0.1, far: 5000 },
     textures: [sourceMask.texture], materials: [material(0.5, 1, { emissive: [0, 0, 0], color: [0.5, 0.8, 0.2, 1] }),
       { id: "receiver", color: [0.7, 0.7, 0.7, 1] }],
@@ -294,7 +294,8 @@ try {
 
   // Default compressed Metro is a control; unchanged Highlands is visual
   // review material. Timing comparisons run separately without this fixture.
-  const generated = spawnSync("cargo", ["xtask", "bench", "assets"], { cwd: fileURLToPath(new URL("../../", import.meta.url)),
+  const xtask = process.env.ENGINE_XTASK_BIN;
+  const generated = spawnSync(xtask ?? "cargo", [...(xtask ? [] : ["xtask"]), "bench", "assets"], { cwd: fileURLToPath(new URL("../../", import.meta.url)),
     encoding: "utf8", windowsHide: true });
   await writeFile(`${output}/assets.log`, `${generated.stdout ?? ""}${generated.stderr ?? ""}`);
   assert.equal(generated.status, 0, `default assets prepare: ${generated.error ?? generated.status}`);
@@ -333,8 +334,12 @@ try {
   }
   assert.deepEqual(errors, [], "clean browser and GPU diagnostics");
   await writeFile(`${output}/results.json`, JSON.stringify({ ok: true, ...results }, null, 2));
+  const measurements = results.coverage.flatMap(({ cutoff, mip, error, old_error }) => [
+    { name: `coverage-error-T${cutoff}-mip${mip}`, value: error, unit: "fraction" },
+    { name: `legacy-coverage-error-T${cutoff}-mip${mip}`, value: old_error, unit: "fraction" },
+  ]);
   console.log(JSON.stringify({ ok: true, output, target: sourceMask.fraction, coverage: results.coverage,
-    fallback_cases: results.fallbacks.length, shared_cycles: results.shared.length, placed_views: results.draws.length }));
+    fallback_cases: results.fallbacks.length, shared_cycles: results.shared.length, placed_views: results.draws.length, measurements }));
 } catch (error) {
   await writeFile(`${output}/failure.json`, JSON.stringify({ ok: false, error: String(error), stack: error.stack, errors, ...results }, null, 2));
   console.error(error);

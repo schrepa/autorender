@@ -19,6 +19,7 @@
       "inspector": "Camera",
       "kind": "resource",
       "smokes": [
+        "alpha-coverage",
         "input",
         "surfaces"
       ]
@@ -279,6 +280,7 @@
       "smokes": [
         "agent",
         "agent-lifecycle",
+        "alpha-coverage",
         "collision",
         "culling",
         "frame-loop",
@@ -296,6 +298,7 @@
       "op": "inspect",
       "smokes": [
         "agent",
+        "alpha-coverage",
         "collision",
         "gpu-presentation",
         "hierarchy",
@@ -322,6 +325,7 @@
       "op": "assets",
       "smokes": [
         "agent",
+        "alpha-coverage",
         "culling",
         "hierarchy",
         "host-parity",
@@ -430,6 +434,7 @@
     {
       "op": "present",
       "smokes": [
+        "alpha-coverage",
         "collision",
         "gpu-presentation",
         "host-parity",
@@ -520,6 +525,7 @@
     {
       "op": "camera",
       "smokes": [
+        "alpha-coverage",
         "culling",
         "gpu-presentation",
         "host-parity",
@@ -583,6 +589,7 @@
     {
       "op": "render",
       "smokes": [
+        "alpha-coverage",
         "collision",
         "culling",
         "gpu-presentation",
@@ -607,6 +614,7 @@
       "op": "pause",
       "smokes": [
         "agent",
+        "alpha-coverage",
         "collision",
         "gpu-presentation",
         "host-parity",
@@ -624,6 +632,7 @@
       "op": "resume",
       "smokes": [
         "agent",
+        "alpha-coverage",
         "collision",
         "gpu-presentation",
         "host-parity",
@@ -640,6 +649,7 @@
       "op": "capture",
       "smokes": [
         "agent",
+        "alpha-coverage",
         "collision",
         "culling",
         "gpu-presentation",
@@ -660,6 +670,7 @@
     {
       "op": "game",
       "smokes": [
+        "alpha-coverage",
         "host-parity",
         "jobs",
         "lod",
@@ -700,6 +711,7 @@
       "section": "shadows",
       "smokes": [
         "agent",
+        "alpha-coverage",
         "culling",
         "gpu-presentation",
         "terrain-surface",
@@ -711,7 +723,8 @@
       "inspector": "AmbientOcclusion",
       "section": "ambient_occlusion",
       "smokes": [
-        "agent"
+        "agent",
+        "alpha-coverage"
       ],
       "stats": true
     },
@@ -720,6 +733,7 @@
       "section": "bloom",
       "smokes": [
         "agent",
+        "alpha-coverage",
         "host-parity"
       ],
       "stats": true
@@ -793,6 +807,7 @@
       "inspector": "LevelOfDetail",
       "section": "level_of_detail",
       "smokes": [
+        "alpha-coverage",
         "lod",
         "terrain"
       ],
@@ -803,6 +818,7 @@
       "section": "terrain",
       "smokes": [
         "agent",
+        "alpha-coverage",
         "jobs",
         "native",
         "plugins",
@@ -843,6 +859,7 @@
       "inspector": "ContactShadows",
       "section": "contact_shadows",
       "smokes": [
+        "alpha-coverage",
         "terrain-surface"
       ],
       "stats": true
@@ -939,6 +956,7 @@
       "inspector": "TemporalAntialiasing",
       "section": "temporal_antialiasing",
       "smokes": [
+        "alpha-coverage",
         "native",
         "taa"
       ],

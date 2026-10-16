@@ -245,7 +245,7 @@ impl MaterialStore {
                     let source = snapshot
                         .textures
                         .iter()
-                        .chain(&snapshot.decal_textures)
+                        .chain(&snapshot.decals.textures)
                         .chain(placed_textures(snapshot))
                         .find(|source| source.handle == handle)
                         .expect("uploaded source texture");
