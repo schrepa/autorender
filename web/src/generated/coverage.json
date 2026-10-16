@@ -306,6 +306,7 @@
         "lod",
         "meshes",
         "native",
+        "reflection-classification",
         "spline",
         "streaming",
         "surfaces",
@@ -456,6 +457,7 @@
         "gpu-presentation",
         "host-parity",
         "lod",
+        "reflection-classification",
         "streaming",
         "surfaces",
         "taa",
@@ -592,6 +594,7 @@
         "jobs",
         "meshes",
         "plugins",
+        "reflection-classification",
         "spline",
         "streaming",
         "surfaces",
@@ -616,6 +619,7 @@
         "meshes",
         "native",
         "plugins",
+        "reflection-classification",
         "taa",
         "terrain-water-sky"
       ]
@@ -632,6 +636,7 @@
         "jobs",
         "meshes",
         "native",
+        "reflection-classification",
         "taa",
         "terrain-water-sky"
       ]
@@ -744,7 +749,8 @@
       "inspector": "Reflections",
       "section": "reflections",
       "smokes": [
-        "agent"
+        "agent",
+        "reflection-classification"
       ],
       "stats": true
     },
@@ -940,6 +946,7 @@
       "section": "temporal_antialiasing",
       "smokes": [
         "native",
+        "reflection-classification",
         "taa"
       ],
       "stats": true

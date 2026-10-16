@@ -85,7 +85,7 @@ export async function checkReflectionGpu({ sources, plans }) {
     const depthUploadPipeline = device.createRenderPipeline({ layout: "auto", vertex: { module: depthUploadModule, entryPoint: "vs_fullscreen" },
       fragment: { module: depthUploadModule, entryPoint: "depth_value", targets: [] }, depthStencil: { format: "depth32float", depthWriteEnabled: true, depthCompare: "always" } });
     const measured = { cases: 0, active: 0, bytes: [], phases: [0, 0, 0, 0], hierarchy: [], adapter: adapter.info.description,
-      raw_differences: 0, raw_max_error: 0, state_rays: 0, indeterminate: 0, steps: {}, ray_signs: [0, 0, 0] };
+      raw_differences: 0, raw_max_error: 0, state_rays: 0, indeterminate: 0, steps: {}, ray_signs: [0, 0, 0], export_boundary_samples: 0 };
     for (const plan of plans) {
       const [fw, fh] = plan.full, [width, height, tx, ty] = plan.size;
       const owned = [];
@@ -158,7 +158,7 @@ export async function checkReflectionGpu({ sources, plans }) {
         device.queue.submit([encoder.finish()]);
       }
       const phases = [[0, 0], [1, 1], [1, 0], [0, 1]];
-      const patterns = ["all", "zero", "bin0", "bin1", "bin2", "bin3", "checker", "sparse", "threshold", "exhaustion", "zero"];
+      const patterns = ["all", "zero", "bin0", "bin1", "bin2", "bin3", "checker", "sparse", "threshold", "exhaustion", "stationary", "tiny", "zero"];
       for (let phase = 0; phase < 4; phase++) for (const pattern of patterns) {
         const label = `${fw}x${fh} phase ${phase} ${pattern}`;
         for (let y = 0; y < fh; y++) for (let x = 0; x < fw; x++) {
@@ -177,7 +177,7 @@ export async function checkReflectionGpu({ sources, plans }) {
         const uniform = new Float32Array(68);
         [0, 5, 10, 15, 16, 21, 26, 31].forEach(i => uniform[i] = 1);
         uniform.set([0, 0, 3, fh * 0.5], 32); uniform.set([fw, fh, 1 / fw, 1 / fh], 36);
-        uniform.set([4, 1, 1, phase], 48); device.queue.writeBuffer(post, 0, uniform);
+        uniform.set([pattern === "stationary" ? 1e-12 : pattern === "tiny" ? 1e-6 : 4, 1, 1, phase], 48); device.queue.writeBuffer(post, 0, uniform);
         const tileCounts = Array.from({ length: tx * ty }, () => [0, 0, 0, 0]), expected = [[], [], [], []];
         const tags = new Uint32Array(plan.pixels).fill(0xffffffff);
         for (let tile = 0; tile < tx * ty; tile++) for (let lane = 0; lane < 64; lane++) {
@@ -239,7 +239,7 @@ export async function checkReflectionGpu({ sources, plans }) {
           need(images[1][i] === images[2][i], `${label}: extracted fallback byte ${i}: ${images[2][i]} vs unchanged-main ${images[1][i]}`);
           need(images[0][i] === images[1][i], `${label}: compute/export byte ${i}: ${images[0][i]} vs unchanged-main ${images[1][i]}`);
         }
-        if (["all", "threshold", "exhaustion"].includes(pattern)) {
+        if (["all", "threshold", "exhaustion", "stationary", "tiny"].includes(pattern)) {
           const encoder = device.createCommandEncoder();
           draw(encoder, baseRawPipeline, fragmentGroup, stateTargets[0]);
           const statePass = encoder.beginRenderPass({ colorAttachments: stateTargets.slice(1).map(target => ({ view: target.createView(), clearValue: [0, 0, 0, 0], loadOp: "clear", storeOp: "store" })) });
@@ -268,10 +268,39 @@ export async function checkReflectionGpu({ sources, plans }) {
         need(errors.length === 0, `${label}: GPU errors ${errors.join("; ")}`);
         measured.cases++; measured.active += totals.reduce((a, b) => a + b, 0); measured.phases[phase]++;
       }
+      if (fw === 128 && fh === 128) {
+        // Independent constant-output fragment reference around sRGB and alpha
+        // quantization boundaries. A half-float intermediate cannot pass this.
+        const colors = Array.from({ length: 32 }, (_, i) => {
+          const encoded = (32 + i * 5 + 0.5) / 255;
+          const linear = ((encoded + 0.055) / 1.055) ** 2.4;
+          const d = 2 ** -24;
+          return [Math.fround(linear - d), Math.fround(linear), Math.fround(linear + d), Math.fround((i * 7 + 0.5) / 255)];
+        });
+        const values = new Float32Array(plan.pixels * 4);
+        for (let i = 0; i < plan.pixels; i++) values.set(colors[i & 31], i * 4);
+        device.queue.writeBuffer(buffers[3], 0, values);
+        const referenceModule = await module("sRGB quantization boundary reference", sources.fullscreen + `
+          const colors = array<vec4<f32>,32>(${colors.map(color => `vec4<f32>(${color.map(v => `${v}f`).join(",")})`).join(",")});
+          @fragment fn boundary(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+            return colors[(u32(p.y) * ${width}u + u32(p.x)) & 31u];
+          }`);
+        const referencePipeline = render(referenceModule, "boundary", "auto");
+        const encoder = device.createCommandEncoder();
+        draw(encoder, exportPipeline, exportGroup, outputs[0], [0]);
+        const pass = encoder.beginRenderPass({ colorAttachments: [{ view: outputs[1].createView(), clearValue: [0, 0, 0, 0], loadOp: "clear", storeOp: "store" }] });
+        pass.setPipeline(referencePipeline); pass.draw(3); pass.end();
+        for (let i = 0; i < 2; i++) encoder.copyTextureToBuffer({ texture: outputs[i] }, { buffer: outputBuffers[i], bytesPerRow: pitch }, [width, height]);
+        const images = (await readBuffers(encoder, outputBuffers.slice(0, 2))).map(bytes => new Uint8Array(bytes));
+        need(images[0].every((v, i) => v === images[1][i]), "full-f32 export preserves hardware sRGB and alpha quantization boundaries");
+        measured.export_boundary_samples += plan.pixels;
+      }
       for (const object of owned) object.destroy();
     }
     await device.queue.onSubmittedWorkDone();
     need(errors.length === 0, `GPU errors: ${errors.join("; ")}`);
+    need(measured.steps[95] > 0 && measured.steps[96] > 0, "95/96-step exhaustion was actually exercised");
+    need(measured.ray_signs[0] > 0 && measured.ray_signs[2] > 0, "both ray-depth signs were actually exercised");
     return { ok: true, ...measured };
   } catch (error) { return { ok: false, error: error.stack ?? String(error) }; }
   finally { device?.destroy(); }

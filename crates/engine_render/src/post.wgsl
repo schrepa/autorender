@@ -7,9 +7,6 @@
 // composite applies them to the scene target and writes the canvas.
 // Temporally antialiased frames apply them in their resolve instead.
 
-// The scene target: linear color, and the ambient share of its light in alpha.
-// Glow weight of each pixel: its exposed brightness above the bloom
-// threshold, as x / (1 + x).
 // The level a bloom pass reads.
 @group(0) @binding(4) var source: texture_2d<f32>;
 // The filtered ambient occlusion's visibility and the sun shafts' light at
@@ -21,16 +18,11 @@
 // Sun shafts at quarter resolution: scattered light, and the
 // length of the ray that gathered it.
 @group(0) @binding(9) var shafts: texture_2d<f32>;
-// Reflections: the nearest depth of each 2x2 block of the
-// depth buffer, then of each block of the level below, which rays skip
-// across; and the traced reflections the filter smooths.
+// The traced reflections the filter smooths.
 @group(0) @binding(11) var traced: texture_2d<f32>;
 // Ambient occlusion before its filter: visibility, and the distance from
 // the eye (0 where only sky is).
 @group(0) @binding(12) var raw_occlusion: texture_2d<f32>;
-// Reflections: the surface the opaque pass shaded (its
-// shading normal, octahedral in [0, 1], and roughness), and the scene
-// blurred down half-resolution levels for rough surfaces.
 // The bloom level a pass halving both chains reads beside the scene level
 // in `source`.
 @group(0) @binding(15) var bloom_source: texture_2d<f32>;

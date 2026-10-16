@@ -61,6 +61,21 @@ fn main() {
         "pixel count overflow"
     );
     assert!(Plan::new(0, 1, &limits).is_none(), "zero full width");
+    let largest =
+        Plan::new(8192, 4096, &limits).expect("full storage binding capacity is supported");
+    assert_eq!(
+        largest.bytes[3], limits.max_storage_buffer_binding_size,
+        "derived raw storage reaches the device limit exactly"
+    );
+    assert_eq!(
+        grid(largest.pixels, limits.max_compute_workgroups_per_dimension),
+        Some([32768, 4]),
+        "large trace spans dispatch rows"
+    );
+    assert!(
+        Plan::new(8192, 4098, &limits).is_none(),
+        "one row over storage capacity falls back without allocation"
+    );
     let sizes = [
         [1, 1],
         [1, 17],

@@ -453,6 +453,17 @@ impl PostPass {
                 [("post", post()), ("depth_texture", depth.bound())],
             );
         }
+        self.write_uniform(queue, snapshot, size, frame);
+        frame
+    }
+
+    fn write_uniform(
+        &mut self,
+        queue: &wgpu::Queue,
+        snapshot: &RenderSnapshot,
+        size: FrameSize,
+        frame: Effects,
+    ) {
         let (width, height) = (size.width as f32, size.height as f32);
         let view_projection = snapshot.view_projection;
         // Row y of a perspective view-projection is the focal scale times a
@@ -494,7 +505,6 @@ impl PostPass {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
             self.written = Some(uniform);
         }
-        frame
     }
 
     // A group of the shared layout binding `resources` by name, filled
