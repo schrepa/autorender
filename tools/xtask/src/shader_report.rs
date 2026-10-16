@@ -37,6 +37,10 @@ const RGA_ARCHIVE: Option<(&str, &str)> = None;
 /// RDNA 4.
 const TARGETS: [&str; 3] = ["gfx1100", "gfx1150", "gfx1201"];
 
+/// RGA runs started by this process: each one's temp folder is named after
+/// its number.
+static RGA_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Runs `gpu --report DIR [--no-rga]`.
 pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
     let (folder, rga) = match options {
@@ -290,6 +294,17 @@ fn amd_report(program: &Path, spirv: &Path, stage: &str, folder: &Path, stem: &s
     for target in TARGETS {
         let isa = out.join(format!("{stem}.{target}.isa"));
         let analysis = out.join(format!("{stem}.{target}.csv"));
+        // RGA leaves a log in its temp folder on every run and reads that
+        // whole folder when it starts, so a machine's runs slow down without
+        // end: each run gets an empty temp folder of its own, removed after.
+        // It sits in the system's temp folder under a short name, as RGA
+        // fails on paths past Windows' 260 characters.
+        let temp = std::env::temp_dir().join(format!(
+            "rga-{}-{}",
+            std::process::id(),
+            RGA_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::create_dir_all(&temp);
         let output = Command::new(program)
             .args(["-s", "vk-spv-offline", "-c", target, "--isa"])
             .arg(&isa)
@@ -297,7 +312,11 @@ fn amd_report(program: &Path, spirv: &Path, stage: &str, folder: &Path, stem: &s
             .arg(&analysis)
             .arg(flag)
             .arg(spirv)
+            .env("TEMP", &temp)
+            .env("TMP", &temp)
+            .env("TMPDIR", &temp)
             .output();
+        let _ = std::fs::remove_dir_all(&temp);
         let result = match output {
             Ok(output) => {
                 // RGA names its outputs after the target and stage.
