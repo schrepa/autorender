@@ -5,7 +5,6 @@
 #![expect(clippy::expect_used, reason = "passes read what their frames created")]
 
 use super::*;
-use crate::profiling::Span;
 use crate::render_features::{AttachmentViews, Encode, MeshDraws};
 
 impl Renderer {
@@ -61,17 +60,6 @@ impl Renderer {
                 self.encode_visibility_resolve(state, encoder, view, node, phase.index());
             }
             Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
-            Pass::Grade => {
-                let mut pass = self.render_pass(
-                    encoder,
-                    node,
-                    view,
-                    "engine/grade",
-                    self.profiler.span("grade").map(Span::render),
-                );
-                self.radiance
-                    .draw(&mut pass, state.shape.targets != Targets::Canvas);
-            }
             Pass::Feature(pass) => {
                 report.draws += self.encode_feature(pass, state, encoder, view, node);
             }
@@ -95,7 +83,7 @@ impl Renderer {
         };
         match resource {
             Resource::Canvas => canvas,
-            Resource::Radiance => self.radiance.view(),
+            Resource::Radiance => self.features.radiance.get().view(),
             Resource::Depth => &self.depth.view,
             Resource::Scene => post().0,
             Resource::Glow => post().1,

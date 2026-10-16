@@ -186,4 +186,6 @@ pipeline_layouts! {
 /// Distinct pipeline layouts the renderer may build: one more costs every
 /// Firefox start about 150 ms, so raising it is a decision, not a side
 /// effect.
-pub const LAYOUT_BUDGET: usize = 70;
+// The radiance grade adds one standalone layout before display-domain effects.
+// Its extra pipeline startup is part of the radiance composition cost.
+pub const LAYOUT_BUDGET: usize = 71;

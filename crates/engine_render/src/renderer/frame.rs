@@ -276,7 +276,7 @@ impl Renderer {
         let packing = self.pack_instances(frame, kind);
         let profile_writes = engine_profile::span("render", "queue_writes");
         let mut writes = self.write_frame_data(frame, kind, &packing, &mut prelude.poses);
-        writes.camera_bytes += self.radiance.begin(
+        writes.camera_bytes += self.features.radiance.get_mut().begin(
             &self.device,
             &self.queue,
             self.display.size(),
@@ -375,7 +375,7 @@ impl Renderer {
             passes: graph.kept(),
             ..EncodeReport::default()
         };
-        self.radiance.clear_limits(&mut encoder);
+        self.features.radiance.get().clear_limits(&mut encoder);
         for node in graph.kept_passes() {
             // Profiling captures time every pass whole, with whatever it
             // records.
@@ -402,7 +402,10 @@ impl Renderer {
                 let _ = self.profiler.span(span);
             }
         }
-        self.radiance.read_back(&self.device, &mut encoder);
+        self.features
+            .radiance
+            .get_mut()
+            .read_back(&self.device, &mut encoder);
         self.profiler.end_frame(&mut encoder);
         drop(profile_encoding);
         self.submit_frame(&mut state, surface, encoder);

@@ -36,7 +36,7 @@ const quad = { id: "panel", source: { kind: "inline", vertices: [
 ], indices: [0, 1, 2, 0, 2, 3] } };
 function fixture(layers = [], background = B) {
   return {
-    version: 9, id: "linear-light-fixture", revision: 1,
+    id: "linear-light-fixture", revision: 1,
     camera: { position: [0, 0, 6], target: [0, 0, 0], fov_degrees: 55, near: 0.01, far: 100 },
     environment: structuredClone(environment), meshes: [structuredClone(quad)],
     materials: [{ id: "back", color: [0, 0, 0, 1], emissive: background }, ...layers.map((layer, i) => ({

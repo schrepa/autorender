@@ -686,6 +686,7 @@ impl Renderer {
                 lights,
                 decals,
                 transparency,
+                radiance: self.features.radiance.prepare(|_| Some(())),
                 post,
                 temporal,
                 ..FeatureFrames::default()
@@ -1175,7 +1176,7 @@ impl Renderer {
                 inputs.0,
                 inputs.1,
                 (meshes, post_frame.is_some()),
-                self.radiance.limits(),
+                self.features.radiance.get().limits(),
             )
         });
         if transparency.is_some()
@@ -1429,7 +1430,7 @@ impl Renderer {
         if refraction && self.features.post.get().is_some() {
             self.camera.prepare_refraction(
                 &self.device,
-                self.radiance.bound(),
+                self.features.radiance.get().bound(),
                 &camera::GroupSources {
                     shadows: &self.shadows,
                     environment: self.features.environment.get(),

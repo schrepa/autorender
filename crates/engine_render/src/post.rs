@@ -506,12 +506,6 @@ impl PostPass {
         (&targets.scene, &targets.glow, &targets.surface)
     }
 
-    /// The scene color as a group binds it, for glass refracting it.
-    pub(crate) fn scene(&self) -> Bound<'_> {
-        let targets = self.targets.get().expect("sized in begin");
-        Bound::of(targets, pipelines::view(&targets.scene))
-    }
-
     /// What the temporal resolve reads, as its group binds them: the scene,
     /// occlusion with shafts, bloom and reflections, and the settings
     /// uniform.

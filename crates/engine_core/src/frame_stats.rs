@@ -187,6 +187,15 @@ pub struct RenderStats {
     pub occlusion_culling: CullingStats,
     /// Sub-pixel culling.
     pub subpixel_culling: CullingStats,
+    /// Color composition and presentation, flattened into the frame's observations.
+    #[serde(flatten)]
+    pub color: ColorStats,
+}
+
+/// Color composition and presentation observations.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ColorStats {
     /// Temporal antialiasing.
     pub temporal_antialiasing: Applied,
     /// The finite-range guard at transparency resolve and the final grade.

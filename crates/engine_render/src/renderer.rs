@@ -268,7 +268,6 @@ pub struct Renderer {
     // The features render_features! lists, each created with the first
     // frame needing it.
     features: RenderFeatures,
-    radiance: crate::radiance::RadiancePass,
     // The frame's passes, declared anew each frame.
     graph: crate::render_graph::RenderGraph,
     // Whether the previous frame was GPU-presented; its poses were GPU-written.

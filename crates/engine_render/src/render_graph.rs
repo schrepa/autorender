@@ -261,8 +261,6 @@ pub(crate) enum Pass {
     },
     /// The depth pyramid and occlusion test between the opaque phases.
     OcclusionTest,
-    /// The single display grade after all spatial scene composition.
-    Grade,
     /// A feature's pass, which the feature declares and encodes.
     Feature(FeaturePass),
     /// Reflection probe faces captured after the frame.
@@ -334,7 +332,7 @@ passes! {
     cloud_composite: Feature(FeaturePass::CloudComposite),
     transparent: Feature(FeaturePass::Transparent),
     transparent_composite: Feature(FeaturePass::TransparentComposite),
-    grade: Grade,
+    grade: Feature(FeaturePass::Grade),
     effects: Feature(FeaturePass::Effects),
     composite: Feature(FeaturePass::Composite),
     temporal_resolve: Feature(FeaturePass::TemporalResolve),
@@ -863,14 +861,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             resolve.depth(Depth, Access::ReadOnly);
         }
     }
-    graph.add(Pass::Grade).read(Radiance).color(
-        if shape.targets == Targets::Canvas {
-            Canvas
-        } else {
-            Scene
-        },
-        Access::Clear(Clear::Color(BLACK)),
-    );
     if shape.probes {
         graph
             .add(Pass::ProbeCaptures)

@@ -317,12 +317,14 @@ impl Renderer {
                     None
                 },
             },
-            temporal_antialiasing: TemporalPass::stats(
-                self.features.temporal.get(),
-                features.frames.temporal.as_ref().map(Ready::frame),
-                snapshot,
-            ),
-            radiance: self.radiance.stats(),
+            color: engine_core::ColorStats {
+                temporal_antialiasing: TemporalPass::stats(
+                    self.features.temporal.get(),
+                    features.frames.temporal.as_ref().map(Ready::frame),
+                    snapshot,
+                ),
+                radiance: self.features.radiance.get().stats(),
+            },
         };
         // Counted every frame, recorded while a capture runs.
         let immediate = self.queue.take_immediate();
@@ -412,7 +414,7 @@ impl Renderer {
         engine_profile::counter(
             "memory.gpu_post_bytes",
             (self.features.post.get().map_or(0, PostPass::capacity_bytes)
-                + self.radiance.capacity_bytes()) as f64,
+                + self.features.radiance.get().capacity_bytes()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_environment_bytes",

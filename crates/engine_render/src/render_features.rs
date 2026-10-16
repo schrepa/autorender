@@ -27,6 +27,7 @@ use crate::occupancy::OccupancyPass;
 use crate::post::PostPass;
 use crate::probes::ProbePass;
 use crate::profiling::GpuProfiler;
+use crate::radiance::RadiancePass;
 use crate::render_graph::{Clear, FrameShape, Load, Node, Ops, RenderGraph, Resource};
 use crate::scatter::ScatterPass;
 use crate::sky::SkyPass;
@@ -695,6 +696,8 @@ render_features! {
     water: Eager<WaterPass> => [Water],
     /// Transparent surfaces and particles, accumulated, then composited.
     transparency: Eager<Transparency> => [Transparent, TransparentComposite],
+    /// Composed radiance and its single grade into display color.
+    radiance: Eager<RadiancePass> => [Grade],
     /// The screen effects, then their composite into the canvas, created
     /// with the first frame drawing into their targets.
     post: Lazy<PostPass> => [Effects, Composite],

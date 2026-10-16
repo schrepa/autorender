@@ -7,12 +7,17 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use engine_core::{Atmosphere, RadianceStats};
+use engine_core::{Atmosphere, RadianceStats, RenderSnapshot};
 
 use crate::bindings::GRADE;
 use crate::buffers::ReadbackRing;
 use crate::cached::Bound;
 use crate::gpu_data::{GRADE_SHADER, GradeUniform};
+use crate::profiling::Span;
+use crate::render_features::{Encode, FeaturePass, RenderFeature};
+use crate::render_graph::{
+    Access, BLACK, Clear, FrameShape, Node, Pass, RenderGraph, Resource, Targets,
+};
 use crate::shaders::entry::grade;
 use crate::targets::{FrameSize, ScreenTarget};
 
@@ -184,7 +189,7 @@ impl RadiancePass {
             .record(device, encoder, &self.limits, 4, self.source_frame);
     }
 
-    pub(crate) fn after_submit(&self) {
+    fn complete_readback(&self) {
         let completed = Rc::clone(&self.completed);
         self.readbacks.after_submit(move |words, source_frame| {
             if completed
@@ -211,5 +216,59 @@ impl RadiancePass {
             + self.uniform.size()
             + self.limits.size()
             + self.readbacks.capacity_bytes()
+    }
+}
+
+impl RenderFeature for RadiancePass {
+    type Frame = ();
+    type Stats = RadianceStats;
+
+    fn declare(_frame: &(), shape: &FrameShape, graph: &mut RenderGraph) {
+        graph
+            .add(Pass::Feature(FeaturePass::Grade))
+            .read(Resource::Radiance)
+            .color(
+                if shape.targets == Targets::Canvas {
+                    Resource::Canvas
+                } else {
+                    Resource::Scene
+                },
+                Access::Clear(Clear::Color(BLACK)),
+            );
+    }
+
+    fn encode(
+        &self,
+        _frame: &(),
+        node: &Node,
+        encode: &Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        let mut pass = encode.render_pass(
+            encoder,
+            node,
+            "engine/grade",
+            encode.profiler.span("grade").map(Span::render),
+        );
+        self.draw(&mut pass, encode.targets != Targets::Canvas);
+        0
+    }
+
+    fn after_submit(&mut self, frame: Option<&()>) {
+        if frame.is_some() {
+            self.complete_readback();
+        }
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        RadiancePass::capacity_bytes(self)
+    }
+
+    fn stats(
+        this: Option<&Self>,
+        _frame: Option<&()>,
+        _snapshot: &RenderSnapshot,
+    ) -> RadianceStats {
+        this.map_or_else(RadianceStats::default, RadiancePass::stats)
     }
 }
