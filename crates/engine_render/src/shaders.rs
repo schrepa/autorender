@@ -162,7 +162,21 @@ shaders! {
         "color.wgsl",
         "fullscreen.wgsl",
         "effects.wgsl",
+        "reflection_inputs.wgsl",
+        "reflection.wgsl",
         "post.wgsl",
+    ];
+    /// Stable roughness queues, their indirect trace and full-f32 export.
+    REFLECTION_WORK_SHADER = [
+        "effects.wgsl", "reflection_inputs.wgsl", "reflection.wgsl",
+        "reflection_queue_params.wgsl", "reflection_work.wgsl",
+    ];
+    REFLECTION_TRACE_SHADER = [
+        "effects.wgsl", "reflection_inputs.wgsl", "reflection.wgsl",
+        "reflection_queue_params.wgsl", "reflection_trace.wgsl",
+    ];
+    REFLECTION_EXPORT_SHADER = [
+        "fullscreen.wgsl", "reflection_queue_params.wgsl", "reflection_export.wgsl",
     ];
     /// Environment maps after the scene declarations.
     ENVIRONMENT_SHADER = [
@@ -363,6 +377,16 @@ entry_points! {
             fs_occlusion, fs_effects_filter, fs_reflections, fs_reflections_filter, fs_bloom_first,
             fs_bloom_down, fs_levels_first, fs_levels_down, fs_bloom_up, fs_composite
         ],
+    }
+    reflection_work = REFLECTION_WORK_SHADER {
+        compute: [classify, scan_up, scan_down, finalize, scatter],
+    }
+    reflection_trace = REFLECTION_TRACE_SHADER {
+        compute: [trace],
+    }
+    reflection_export = REFLECTION_EXPORT_SHADER {
+        vertex: [vs_fullscreen],
+        fragment: [export_reflections],
     }
     environment = ENVIRONMENT_SHADER {
         vertex: [vs_environment],

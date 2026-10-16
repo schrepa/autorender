@@ -50,6 +50,8 @@ mod occupancy;
 mod platform;
 mod post;
 mod profiling;
+mod reflection_queue;
+mod reflection_queue_plan;
 mod renderer;
 mod scatter;
 mod screen_effects;

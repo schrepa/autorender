@@ -59,7 +59,7 @@ fn bloom_format(device: &wgpu::Device) -> wgpu::TextureFormat {
 /// The scene's blurred levels: averages of the 8-bit sRGB scene.
 const SCENE_LEVEL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Reflected color, from the scene and its levels, and weight.
-const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+pub(super) const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Scattered sunlight and the length of the ray that
 /// gathered it, at quarter resolution.
 const SHAFT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
@@ -121,6 +121,7 @@ pub(crate) struct PostPass {
     // Filters occlusion and brings shafts to half resolution in one pass.
     effects_filter: wgpu::RenderPipeline,
     reflections: wgpu::RenderPipeline,
+    reflection_queue: crate::reflection_queue::ReflectionQueue,
     reflections_filter: wgpu::RenderPipeline,
     // Nearest depths the reflection rays walk, created with the first frame
     // that reflects.
@@ -285,6 +286,7 @@ impl PostPass {
                 REFLECTION_FORMAT,
                 None,
             ),
+            reflection_queue: crate::reflection_queue::ReflectionQueue::default(),
             nearest: DepthPyramid::new(device, Reduction::Nearest),
             trace_index: 0,
             shafts,
@@ -338,6 +340,7 @@ impl PostPass {
         self.reflections_group.clear();
         self.filter_group.clear();
         self.nearest.release();
+        self.reflection_queue.release();
     }
 
     /// Target bytes: scene (4), glow (2) and surface (4) per pixel, at half
@@ -351,6 +354,7 @@ impl PostPass {
             let pixels = u64::from(size.width) * u64::from(size.height);
             pixels * 10 + pixels / 4 * 24 + pixels / 16 * 4 + pixels / 4 * 8 * 4 / 3 * 2
         }) + self.nearest.capacity_bytes()
+            + self.reflection_queue.capacity_bytes()
     }
 
     /// Sizes the targets to `size` and writes this frame's settings: the
@@ -371,6 +375,8 @@ impl PostPass {
             self.targets.set(size, targets);
         }
         let frame = Effects::of(&snapshot.environment);
+        self.reflection_queue
+            .prepare(device, queue, size, frame.reflections);
         let targets = self.targets.get().expect("sized above");
         let post = || Bound::fixed(self.uniform.as_entire_binding());
         let target = |view| Bound::of(targets, pipelines::view(view));
@@ -409,20 +415,22 @@ impl PostPass {
         if frame.reflections
             && let Some(nearest) = self.nearest.view()
         {
+            let inputs = [
+                ("post", post()),
+                ("depth_texture", depth.bound()),
+                ("scene", target(&targets.scene)),
+                ("glow", target(&targets.glow)),
+                ("linear", Bound::fixed(pipelines::sampler(&self.sampler))),
+                ("nearest_depth", nearest.bound()),
+                ("surface_texture", target(&targets.surface)),
+                ("scene_levels", target(&targets.scene_levels)),
+            ];
+            self.reflection_queue.bind(device, inputs.clone());
             self.reflections_group.bind_filled(
                 device,
                 "engine/post-reflections-group",
                 shared,
-                [
-                    ("post", post()),
-                    ("depth_texture", depth.bound()),
-                    ("scene", target(&targets.scene)),
-                    ("glow", target(&targets.glow)),
-                    ("linear", Bound::fixed(pipelines::sampler(&self.sampler))),
-                    ("nearest_depth", nearest.bound()),
-                    ("surface_texture", target(&targets.surface)),
-                    ("scene_levels", target(&targets.scene_levels)),
-                ],
+                inputs,
                 &self.fillers,
             );
             self.filter_group.bind_filled(
@@ -593,7 +601,7 @@ impl PostPass {
                 pass.set_bind_group(0, group, &[]);
                 pass.draw(0..3, 0..1);
             }
-            {
+            if !self.reflection_queue.encode(encoder, &targets.traced) {
                 let mut pass = fullscreen_pass(
                     encoder,
                     "engine/post-reflections",
@@ -923,7 +931,7 @@ fn inverse_or_identity(matrix: Mat4) -> Mat4 {
     }
 }
 
-fn fullscreen_pass<'e>(
+pub(super) fn fullscreen_pass<'e>(
     encoder: &'e mut wgpu::CommandEncoder,
     label: &str,
     view: &wgpu::TextureView,

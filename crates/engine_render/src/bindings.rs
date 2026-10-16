@@ -11,7 +11,7 @@ pub(crate) use crate::gpu_layouts::constants::PYRAMID_EXTENT_BYTES;
 use crate::gpu_layouts::impostors::{ImpostorBakeUniform, ImpostorRecord};
 use crate::gpu_layouts::scene::{
     CameraUniform, ColorData, GroundData, LightingUniform, MaterialUniform, PoseData, PostUniform,
-    ResolveUniform, ShadowCullUniform, ShadowUniform,
+    QueueParams, ResolveUniform, ShadowCullUniform, ShadowUniform,
 };
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::gpu_layouts::{
@@ -1147,6 +1147,47 @@ tables! {
             // Scene levels and a bloom level halved beside them.
             texture(14, "scene_levels", Float, D2, F),
             texture(15, "bloom_source", Float, D2, F),
+        ],
+    };
+
+    /// Immutable compute inputs retain the original post binding slots.
+    const REFLECTION_INPUTS: Table = Table {
+        label: "engine/reflection-inputs",
+        serves: [REFLECTION_WORK_SHADER @ 0, REFLECTION_TRACE_SHADER @ 0],
+        bindings: &[
+            uniform_of(0, "post", size_of::<PostUniform>(), C),
+            texture(1, "depth_texture", Depth, D2, C),
+            texture(2, "scene", Float, D2, C),
+            texture(3, "glow", Float, D2, C),
+            sampler(7, "linear", Filtering, C),
+            texture(10, "nearest_depth", Unfilterable, D2, C),
+            texture(13, "surface_texture", Unfilterable, D2, C),
+            texture(14, "scene_levels", Float, D2, C),
+        ],
+    };
+    const REFLECTION_WORK: Table = Table {
+        label: "engine/reflection-work",
+        serves: [REFLECTION_WORK_SHADER @ 1],
+        bindings: &[
+            dynamic_uniform(0, "params", size_of::<QueueParams>(), C),
+            write(1, "tags", C), write(2, "prefixes", C), write(3, "rays", C),
+            write(4, "raw", C), write(5, "metadata", C), write(6, "arguments", C),
+        ],
+    };
+    const REFLECTION_TRACE: Table = Table {
+        label: "engine/reflection-trace",
+        serves: [REFLECTION_TRACE_SHADER @ 1],
+        bindings: &[
+            dynamic_uniform(0, "params", size_of::<QueueParams>(), C),
+            read(1, "rays", C), read(2, "metadata", C), write(3, "raw", C),
+        ],
+    };
+    const REFLECTION_EXPORT: Table = Table {
+        label: "engine/reflection-export",
+        serves: [REFLECTION_EXPORT_SHADER @ 0],
+        bindings: &[
+            dynamic_uniform(0, "params", size_of::<QueueParams>(), F),
+            read(1, "raw", F),
         ],
     };
 
