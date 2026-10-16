@@ -20,6 +20,7 @@
       "kind": "resource",
       "smokes": [
         "input",
+        "reflection-classification",
         "surfaces"
       ]
     },
@@ -527,6 +528,7 @@
         "host-parity",
         "interpolation",
         "jobs",
+        "reflection-classification",
         "streaming",
         "surfaces",
         "terrain",
@@ -669,6 +671,7 @@
         "jobs",
         "lod",
         "native",
+        "reflection-classification",
         "surfaces"
       ]
     },

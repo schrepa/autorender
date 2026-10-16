@@ -84,7 +84,8 @@ export async function checkReflectionGpu({ sources, plans }) {
       }`);
     const depthUploadPipeline = device.createRenderPipeline({ layout: "auto", vertex: { module: depthUploadModule, entryPoint: "vs_fullscreen" },
       fragment: { module: depthUploadModule, entryPoint: "depth_value", targets: [] }, depthStencil: { format: "depth32float", depthWriteEnabled: true, depthCompare: "always" } });
-    const measured = { cases: 0, active: 0, bytes: [], phases: [0, 0, 0, 0], hierarchy: [], adapter: adapter.info.description,
+    const measured = { cases: 0, active: 0, bytes: [], phases: [0, 0, 0, 0], hierarchy: [],
+      adapter: { vendor: adapter.info.vendor, architecture: adapter.info.architecture, device: adapter.info.device, description: adapter.info.description },
       raw_differences: 0, raw_max_error: 0, state_rays: 0, indeterminate: 0, steps: {}, ray_signs: [0, 0, 0], export_boundary_samples: 0 };
     for (const plan of plans) {
       const [fw, fh] = plan.full, [width, height, tx, ty] = plan.size;

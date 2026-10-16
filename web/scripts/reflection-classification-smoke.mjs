@@ -28,9 +28,16 @@ const sources = { work: await moduleSource("REFLECTION_WORK_SHADER"), trace: awa
 sources.baseState = reflectionStateSource(sources.base, true);
 sources.traceState = reflectionStateSource(sources.trace, false);
 const binaries = await cargoBinaries(["-p", "engine_render", "--example", "reflection_queue_plan", "--profile", "quick"]);
-const host = JSON.parse(execFileSync(binaries.reflection_queue_plan, [], { encoding: "utf8", windowsHide: true }));
+let host;
+try { host = JSON.parse(execFileSync(binaries.reflection_queue_plan, [], { encoding: "utf8", windowsHide: true })); }
+catch (error) { if (error.status === 101) assert.fail(String(error.stderr)); throw error; }
 assert.ok(host.rejections >= 19, "the actual host planner rejects unsupported requests");
 const { browser, page, errors } = await launch({ timeout: 120_000 });
+const clearCaptures = () => page.evaluate(async () => {
+  await Promise.all(window.__reflectionProbe.pending);
+  for (const capture of window.__reflectionProbe.captures) for (const object of capture.owned) object.destroy();
+  window.__reflectionProbe.captures = []; window.__reflectionProbe.pending = [];
+});
 try {
   const url = "http://127.0.0.1:18667/reflection-gpu-diagnostic";
   await page.route(url, route => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Reflection GPU check</title>" }));
@@ -60,13 +67,14 @@ try {
       if (workload === "metro") assert.ok(frames.every(f => f.active > 0), "unchanged Metro has nonzero original ray work in every phase");
       const orders = workload === "metro" ? await page.evaluate(compareReflectionOrders, { sources }) : [];
       await writeFile(`${output}/${workload}-orders.json`, JSON.stringify(orders, null, 2));
-      await page.evaluate(() => { for (const c of window.__reflectionProbe.captures) for (const object of c.owned) object.destroy(); window.__reflectionProbe.captures = []; window.__reflectionProbe.pending = []; });
+      await clearCaptures();
       await command("environment", { temporal_antialiasing: { enabled: true } });
       await page.evaluate(() => window.__reflectionProbe.armed = 4);
       await command("resume"); await waitFrames(command, 8); await command("pause");
       const temporal = await page.evaluate(inspectLiveReflections, { sources });
       assert.deepEqual([...new Set(temporal.map(f => f.phase))].sort(), [0, 1, 2, 3], "ordinary temporal four-phase cadence");
       live.push({ workload, frames, orders, temporal });
+      await clearCaptures();
       for (const enabled of [false, true, false, true]) {
         await command("environment", { merge: true, reflections: { intensity: enabled ? 1 : 0 } });
         await command("render");
@@ -78,6 +86,27 @@ try {
           assert.equal(await page.evaluate(() => window.__reflectionProbe.traces), before, "ordinary disabled frames do no queue work");
         }
       }
+      const camera = (await command("inspect", { component: "Camera" })).result.value;
+      const moved = structuredClone(camera);
+      moved.position[0] += workload === "metro" ? 5 : 25;
+      moved.target[0] += workload === "metro" ? 5 : 25;
+      await command("camera", moved);
+      await page.evaluate(() => window.__reflectionProbe.armed = 4);
+      await command("resume"); await waitFrames(command, 8); await command("pause");
+      const motion = await page.evaluate(inspectLiveReflections, { sources });
+      assert.equal(motion.length, 4, "camera motion preserves complete queues across four frames");
+      live.at(-1).motion = motion;
+      await page.locator("canvas").screenshot({ path: `${output}/${workload}-motion.png` });
+      await clearCaptures();
+      await command("camera", camera);
+      await command("game", { name: "workload", args: { config: scene.options.config } });
+      await page.evaluate(() => window.__reflectionProbe.armed = 4);
+      await command("resume"); await waitFrames(command, 8); await command("pause");
+      const reloaded = await page.evaluate(inspectLiveReflections, { sources });
+      assert.equal(reloaded.length, 4, "same-page workload reload rebinds valid reflection inputs");
+      assert.equal(await page.evaluate(() => window.__reflectionProbe.live.size), 7, "scene reload retains one complete scratch bundle");
+      live.at(-1).reloaded = reloaded;
+      await clearCaptures();
       const beforeResize = await page.evaluate(() => window.__reflectionProbe.created);
       await page.setViewportSize(workload === "metro" ? { width: 1027, height: 769 } : { width: 1201, height: 901 });
       await command("resume"); await waitFrames(command, 5); await command("pause");
@@ -91,4 +120,7 @@ try {
   assert.deepEqual(errors, [], "no GPU validation or page errors");
   await writeFile(`${output}/live.json`, JSON.stringify(live, null, 2));
   console.log(JSON.stringify({ ok: true, output, base: baseCommit, host, gpu, live }));
+} catch (error) {
+  if (error.message?.includes("REFLECTION_ASSERTION:")) assert.fail(error.message);
+  throw error;
 } finally { await browser.close(); }

@@ -2,7 +2,7 @@
  * Only diagnostic shader copies change; production and workloads stay untouched. */
 export async function compareReflectionOrders({ sources }) {
   const state = window.__reflectionProbe, device = state.device;
-  const need = (ok, message) => { if (!ok) throw new Error(message); };
+  const need = (ok, message) => { if (!ok) throw new Error(`REFLECTION_ASSERTION: ${message}`); };
   await Promise.all(state.pending);
   const capture = state.captures[0];
   need(capture, "a real unchanged frame must be captured before the ablation");

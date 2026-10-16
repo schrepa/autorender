@@ -103,7 +103,7 @@ export function installReflectionProbe() {
  * those immutable textures. Durations are local diagnostics, not factory evidence. */
 export async function inspectLiveReflections({ sources }) {
   const state = window.__reflectionProbe, device = state.device, U = GPUBufferUsage, S = GPUShaderStage;
-  const need = (value, message) => { if (!value) throw new Error(message); };
+  const need = (value, message) => { if (!value) throw new Error(`REFLECTION_ASSERTION: ${message}`); };
   await Promise.all(state.pending);
   const read = async buffer => {
     const copy = device.createBuffer({ size: buffer.size, usage: U.COPY_DST | U.MAP_READ });
