@@ -28,6 +28,8 @@ pub struct StressLab {
     level_of_detail: bool,
     impostors: bool,
     visibility_buffer: bool,
+    // Without a page/native override, authored scenes keep their setting.
+    depth_occupancy: Option<bool>,
     // An authored scene in place of a workload, when the page loads one.
     authored: Option<AuthoredScene>,
 }
@@ -61,6 +63,7 @@ impl StressLab {
             level_of_detail: true,
             impostors: true,
             visibility_buffer: false,
+            depth_occupancy: None,
             authored,
         }
     }
@@ -212,6 +215,13 @@ impl StressLab {
         self.apply_world_settings(engine);
     }
 
+    /// Whether forward opaque meshes filter their selected light lists by
+    /// current depth occupancy, in this and later worlds.
+    pub fn set_depth_occupancy(&mut self, engine: &mut Engine, enabled: bool) {
+        self.depth_occupancy = Some(enabled);
+        self.apply_world_settings(engine);
+    }
+
     /// The authored scene's ID, revision, frame, player position and asset
     /// counts, as a JSON object (`null` for workloads).
     pub fn scene_progress(&self, engine: &Engine) -> serde_json::Value {
@@ -232,6 +242,11 @@ impl StressLab {
         }
         if let Some(mut settings) = world.get_resource_mut::<VirtualGeometry>() {
             settings.visibility_buffer = self.visibility_buffer;
+        }
+        if let Some(enabled) = self.depth_occupancy
+            && let Some(mut settings) = world.get_resource_mut::<LocalLightSettings>()
+        {
+            settings.depth_occupancy = enabled;
         }
     }
 }

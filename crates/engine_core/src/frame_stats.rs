@@ -305,6 +305,69 @@ pub struct LightStats {
     /// Cluster entries beyond the clusters' budget or the storage still
     /// growing, read back like `visible`.
     pub cluster_overflow: Option<u32>,
+    /// Optional current-depth filtering, absent when the setting is off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth_occupancy: Option<DepthOccupancyStats>,
+}
+
+/// Current-view depth occupancy filtering of forward opaque light lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DepthOccupancyStats {
+    /// Each phase's last completed copy, with its own age and generation.
+    pub phases: [Option<DepthOccupancyPhaseStats>; 2],
+    /// The game enabled the optimization.
+    pub enabled: bool,
+    /// This view records collection and filtering work.
+    pub active: bool,
+    /// Why this view uses full lists, or why its counters are not ready yet.
+    pub fallback: Option<&'static str>,
+    /// Retained world identity.
+    pub view: u64,
+    /// Nonzero tag of the phase whose counters were read back.
+    pub generation: u32,
+    /// Opaque phase, zero for the first and one after occlusion testing.
+    pub phase: u32,
+    /// Frames since the submitted phase whose counters were read back.
+    pub readback_age: u64,
+    /// Ordinary forward opaque draw batches eligible for collection.
+    pub eligible_draws: u32,
+    /// Occupied clusters, summed over phases from the latest completed frame.
+    pub occupied_clusters: u32,
+    /// Occupied fine bins across the original clusters.
+    pub occupied_bits: u32,
+    /// Selected full-list entries in occupied clusters only.
+    pub original_entries: u32,
+    /// Selected entries retained in occupied clusters.
+    pub kept_entries: u32,
+    /// Selected entries removed from occupied clusters.
+    pub rejected_entries: u32,
+    /// Empty clusters whose fragments must use full lists.
+    pub empty_clusters: u32,
+    /// Additional GPU storage, including scratch depth, uniforms and readbacks.
+    pub allocated_bytes: u64,
+}
+
+/// One submitted opaque phase's depth-occupancy counters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DepthOccupancyPhaseStats {
+    /// Nonzero submitted generation.
+    pub generation: u32,
+    /// Frames since this phase was submitted.
+    pub readback_age: u64,
+    /// Occupied original clusters.
+    pub occupied_clusters: u32,
+    /// Occupied fine bins.
+    pub occupied_bits: u32,
+    /// Original selected entries in occupied clusters.
+    pub original_entries: u32,
+    /// Selected entries retained in occupied clusters.
+    pub kept_entries: u32,
+    /// Selected entries rejected in occupied clusters.
+    pub rejected_entries: u32,
+    /// Clusters whose empty mask selects full fallback.
+    pub empty_clusters: u32,
 }
 
 /// Reflection probes.

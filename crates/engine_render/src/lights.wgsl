@@ -9,23 +9,6 @@
 // cluster's list. Bounds are conservative, so a cluster may list a light that
 // cannot reach it; fragments test the range again.
 
-struct Clusters {
-    view_projection: mat4x4<f32>,
-    // Depth along the view of point p: dot(xyz, p) + w.
-    depth: vec4<f32>,
-    // x and y projection scales, clustered depth range start and end.
-    projection: vec4<f32>,
-    // Tile width and height in pixels; slice = log2(depth) * z + w.
-    grid: vec4<f32>,
-    // Tiles across and down, depth slices, and the per-cluster budget
-    // (0xffffffff without one).
-    counts: vec4<u32>,
-    // Lights, an unused word, the entries `indices` holds, and 1 when only
-    // lights without a slot or on still slots are binned (reflection probe
-    // faces).
-    lights: vec4<u32>,
-}
-
 // A light as extracted: world position or slot model space.
 struct Input {
     position: vec3<f32>,
@@ -36,15 +19,6 @@ struct Input {
     cos_inner: f32,
     cos_outer: f32,
     pad: array<f32, 3>,
-}
-
-struct Light {
-    position: vec3<f32>,
-    range: f32,
-    color: vec3<f32>,
-    cos_outer: f32,
-    direction: vec3<f32>,
-    cos_inner: f32,
 }
 
 // Transposed top three rows of an affine slot pose.

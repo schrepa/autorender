@@ -177,6 +177,9 @@ mod gpu {
         // or the storage, and the entries the lists needed, read back a few
         // frames late.
         totals_read: Rc<Cell<Option<[u32; 3]>>>,
+        depth: Option<crate::light_depth::DepthPass>,
+        depth_tag: u32,
+        depth_fallback: Option<&'static str>,
     }
 
     impl LightPass {
@@ -231,6 +234,9 @@ mod gpu {
                 buffers_generation: 0,
                 readbacks: ReadbackRing::new("engine/light-totals-readback"),
                 totals_read: Rc::new(Cell::new(None)),
+                depth: None,
+                depth_tag: 0,
+                depth_fallback: None,
             }
         }
 
@@ -258,7 +264,100 @@ mod gpu {
             ]
             .iter()
             .map(|buffer| buffer.size())
-            .sum()
+            .sum::<u64>()
+                + self
+                    .depth
+                    .as_ref()
+                    .map_or(0, crate::light_depth::DepthPass::extra_bytes)
+        }
+
+        pub(crate) fn depth(&self) -> Option<&crate::light_depth::DepthPass> {
+            self.depth.as_ref()
+        }
+
+        fn release_depth(&mut self, device: &wgpu::Device) {
+            if self.depth.take().is_some() {
+                self.ranges = storage(
+                    device,
+                    "engine/light-cluster-ranges",
+                    CLUSTERS * 8,
+                    wgpu::BufferUsages::empty(),
+                );
+                self.buffers_generation += 1;
+                self.compute_groups.clear();
+                self.fragment_group = Cached::default();
+                self.probe_groups.clear();
+            }
+        }
+
+        /// Configures the optional arena only after the frame knows its actual
+        /// ordinary forward batches. Call `prepare` again if bindings changed.
+        pub(crate) fn configure_depth(
+            &mut self,
+            device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            size: crate::targets::FrameSize,
+            (view, eligible): (u64, u32),
+            enabled: bool,
+        ) -> bool {
+            let before = self.buffers_generation;
+            self.depth_fallback = None;
+            let Some(uniform) = self.written.filter(|_| enabled && eligible != 0) else {
+                self.depth_fallback = Some(if enabled {
+                    "no_eligible_draws"
+                } else {
+                    "inactive"
+                });
+                self.release_depth(device);
+                return self.buffers_generation != before;
+            };
+            let Some(table) = crate::light_depth::thresholds(&uniform) else {
+                self.depth_fallback = Some("unsupported_view");
+                self.release_depth(device);
+                return self.buffers_generation != before;
+            };
+            let limits = device.limits();
+            let limit = limits
+                .max_buffer_size
+                .min(u64::from(limits.max_storage_buffer_binding_size));
+            let Some(bytes) = crate::light_depth::arena_bytes(self.index_capacity(), limit) else {
+                self.depth_fallback = Some("arena_binding_limit");
+                self.release_depth(device);
+                return self.buffers_generation != before;
+            };
+            if self.depth.as_ref().is_none_or(|depth| {
+                depth.storage_generation != self.buffers_generation || depth.size != size
+            }) {
+                self.ranges = storage(
+                    device,
+                    "engine/light-depth-arena",
+                    bytes,
+                    wgpu::BufferUsages::COPY_SRC,
+                );
+                self.buffers_generation += 1;
+                self.depth = Some(crate::light_depth::DepthPass::new(
+                    device,
+                    size,
+                    self.buffers_generation,
+                    crate::light_depth::DepthBuffers {
+                        arena: &self.ranges,
+                        lights: &self.lights,
+                        indices: &self.indices,
+                        shading: &self.fragment_layout,
+                    },
+                ));
+                self.compute_groups.clear();
+                self.fragment_group = Cached::default();
+                self.probe_groups.clear();
+            }
+            let tags = std::array::from_fn(|_| {
+                self.depth_tag = self.depth_tag.wrapping_add(1).max(1);
+                self.depth_tag
+            });
+            if let Some(depth) = &mut self.depth {
+                depth.prepare(queue, (view, uniform), table, tags, eligible);
+            }
+            self.buffers_generation != before
         }
 
         /// Uploads `snapshot`'s lights when their `revision` (retained stream
@@ -584,6 +683,9 @@ mod gpu {
             self.readbacks.after_submit(move |words, ()| {
                 totals.set(Some([words.get(0), words.get(1), words.get(2)]));
             });
+            if let Some(depth) = &self.depth {
+                depth.after_submit();
+            }
         }
 
         fn capacity_bytes(&self) -> u64 {
@@ -613,6 +715,22 @@ mod gpu {
                 invalid: snapshot.lights.invalid.min(u32::MAX as usize) as u32,
                 visible: totals.map(|totals| totals[0]),
                 cluster_overflow: totals.map(|totals| totals[1]),
+                depth_occupancy: snapshot.environment.local_lights.depth_occupancy.then(|| {
+                    if let Some(depth) = this.and_then(|pass| pass.depth.as_ref()).filter(|_| lit) {
+                        depth.stats()
+                    } else {
+                        engine_core::DepthOccupancyStats {
+                            enabled: true,
+                            fallback: Some(if lit {
+                                this.and_then(|pass| pass.depth_fallback)
+                                    .unwrap_or("inactive")
+                            } else {
+                                "no_local_lights"
+                            }),
+                            ..Default::default()
+                        }
+                    }
+                }),
             }
         }
     }

@@ -11,6 +11,7 @@ use crate::render_graph::{self, Effects, FeaturePass, FrameShape, Node, Pass, Ph
 use crate::shadows::{MapSources, ShadowFrame, ShadowInputs};
 
 mod encode;
+mod light_depth;
 mod opaque;
 mod prepare;
 mod submit;
@@ -303,6 +304,7 @@ impl Renderer {
             features.occlusion,
             passes.opaque_kind,
         );
+        self.prepare_light_depth(frame, &packing, &mut features, passes.opaque_kind);
         let terrain = self.prepare_terrain(
             snapshot,
             &packing.temporal_frame,

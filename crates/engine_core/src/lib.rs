@@ -29,6 +29,7 @@ mod input;
 mod interpolation;
 mod jobs;
 mod level_of_detail;
+mod light_depth_diagnostics;
 mod lights;
 pub mod math;
 /// Hash maps and sets with a fixed hasher: the same order every run.
@@ -95,6 +96,7 @@ pub use input::*;
 pub use interpolation::*;
 pub use jobs::*;
 pub use level_of_detail::*;
+pub use light_depth_diagnostics::*;
 pub use lights::*;
 pub use particles::*;
 pub use probes::*;

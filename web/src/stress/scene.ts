@@ -22,7 +22,9 @@ startGame({
     const source = await loadScene(signal);
     const files = await loadFiles(source, signal);
     signal.throwIfAborted();
-    return StressGame.create_scene(canvas, source, files, params.get("without") ?? "");
+    const game = await StressGame.create_scene(canvas, source, files, params.get("without") ?? "");
+    if (params.has("depth-occupancy")) game.set_depth_occupancy(params.get("depth-occupancy") === "on");
+    return game;
   },
   async reload(game, signal) {
     const source = await loadScene(signal);

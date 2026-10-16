@@ -226,27 +226,6 @@ struct VisibilityDraw {
 @group(2) @binding(12) var<storage, read> resolve_tiles: array<u32>;
 
 // Local lights, binned into view clusters by lights.wgsl.
-struct Clusters {
-    view_projection: mat4x4<f32>,
-    // Depth along the view of point p: dot(xyz, p) + w.
-    depth: vec4<f32>,
-    // x and y projection scales, clustered depth range start and end.
-    projection: vec4<f32>,
-    // Tile width and height in pixels; slice = log2(depth) * z + w.
-    grid: vec4<f32>,
-    // Tiles across and down, depth slices, and the per-cluster budget.
-    counts: vec4<u32>,
-    // Lights, an unused word, and the listed entries' capacity.
-    lights: vec4<u32>,
-}
-struct Light {
-    position: vec3<f32>,
-    range: f32,
-    color: vec3<f32>,
-    cos_outer: f32,
-    direction: vec3<f32>,
-    cos_inner: f32,
-}
 @group(3) @binding(0) var<uniform> clusters: Clusters;
 @group(3) @binding(1) var<storage, read> lights: array<Light>;
 // Per cluster: the first entry of its list in `cluster_lights` and its

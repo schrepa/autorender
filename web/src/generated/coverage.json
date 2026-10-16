@@ -293,6 +293,10 @@
       ]
     },
     {
+      "op": "light_depth",
+      "smokes": []
+    },
+    {
       "op": "inspect",
       "smokes": [
         "agent",

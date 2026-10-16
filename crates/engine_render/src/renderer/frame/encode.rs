@@ -46,6 +46,12 @@ impl Renderer {
                     report.draws += draws;
                 }
             }
+            Pass::LightDepthCollect { phase } => {
+                self.encode_light_depth_collect(state, encoder, phase.index());
+            }
+            Pass::LightDepthFilter { phase } => {
+                self.encode_light_depth_filter(encoder, phase.index());
+            }
             Pass::TerrainIds => report.draws += self.encode_terrain_ids(encoder, view, node),
             Pass::TerrainResolve => {
                 report.draws += self.encode_terrain_resolve(state, encoder, view, node);
@@ -124,6 +130,8 @@ impl Renderer {
             | Resource::ShadowMaps
             | Resource::Clusters
             | Resource::Lights
+            | Resource::LightDepthMask
+            | Resource::LightDepthLists
             | Resource::Pyramid
             | Resource::Effects
             | Resource::Probes

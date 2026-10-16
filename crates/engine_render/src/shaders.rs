@@ -26,8 +26,13 @@ shaders! {
         "color.wgsl",
         "math.wgsl",
         "wind.wgsl",
+        "light_types.wgsl",
         "meshes/declarations.wgsl",
         "meshes/vertex.wgsl",
+        "light_depth_interval.wgsl",
+        "light_depth_layout.wgsl",
+        "light_depth_atomic.wgsl",
+        "meshes/light_depth.wgsl",
         "meshes/shading.wgsl",
         "meshes/forward.wgsl",
         "meshes/resolve.wgsl",
@@ -127,7 +132,17 @@ shaders! {
     ];
     /// Local light binning into view clusters.
     LIGHT_SHADER = [
+        "light_types.wgsl",
         "lights.wgsl",
+    ];
+    /// Current opaque depth occupancy and stable selected-list filtering.
+    LIGHT_DEPTH_SHADER = [
+        "light_types.wgsl",
+        "light_depth_interval.wgsl",
+        "light_depth_layout.wgsl",
+        "light_depth_atomic.wgsl",
+        "light_depth_filter.wgsl",
+        "light_depth_debug.wgsl",
     ];
     /// Stateless particles after the shared scene declarations.
     PARTICLE_SHADER = [
@@ -250,6 +265,7 @@ entry_points! {
             vs_ocean_temporal
         ],
         fragment: [
+            fs_light_depth,
             fs_visibility, fs_main, fs_main_lit, fs_post, fs_post_lit, fs_temporal, fs_temporal_lit,
             fs_transparent, fs_transparent_lit, fs_probe, fs_probe_lit, fs_main_extended,
             fs_main_lit_extended, fs_probe_extended, fs_probe_lit_extended, fs_post_extended,
@@ -336,6 +352,9 @@ entry_points! {
     }
     lights = LIGHT_SHADER {
         compute: [count_lights, bin_lights, scan_clusters],
+    }
+    light_depth = LIGHT_DEPTH_SHADER {
+        compute: [reset_light_depth, filter_light_depth, inspect_light_depth],
     }
     particles = PARTICLE_SHADER {
         vertex: [vs_particle],

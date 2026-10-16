@@ -292,6 +292,7 @@ function poll(runtime: StressGame) {
 // The page's parameters, which STRESS_PARAMETERS describes.
 const params = new URLSearchParams(location.search);
 const visibility = params.get("visibility") === "on" ? "on" : "off";
+const depthOccupancy = params.get("depth-occupancy") === "on";
 const lod = params.get("lod") === "off" ? "off" : "on";
 const impostors = params.get("impostors") === "off" ? "off" : "on";
 // The engine refuses unknown looks and effects: the page fails with why.
@@ -374,6 +375,7 @@ startGame({
   ready(runtime, host) {
     game = runtime; controls = host;
     runtime.set_visibility_buffer(visibility === "on");
+    runtime.set_depth_occupancy(depthOccupancy);
     runtime.set_level_of_detail(lod === "on");
     runtime.set_impostors(impostors === "on");
     runtime.set_look(initialLook);

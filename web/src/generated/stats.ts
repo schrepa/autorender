@@ -254,6 +254,62 @@ export interface DeformationStats {
   texels: number;
 }
 
+/** One submitted opaque phase's depth-occupancy counters. */
+export interface DepthOccupancyPhaseStats {
+  /** Clusters whose empty mask selects full fallback. */
+  empty_clusters: number;
+  /** Nonzero submitted generation. */
+  generation: number;
+  /** Selected entries retained in occupied clusters. */
+  kept_entries: number;
+  /** Occupied fine bins. */
+  occupied_bits: number;
+  /** Occupied original clusters. */
+  occupied_clusters: number;
+  /** Original selected entries in occupied clusters. */
+  original_entries: number;
+  /** Frames since this phase was submitted. */
+  readback_age: number;
+  /** Selected entries rejected in occupied clusters. */
+  rejected_entries: number;
+}
+
+/** Current-view depth occupancy filtering of forward opaque light lists. */
+export interface DepthOccupancyStats {
+  /** This view records collection and filtering work. */
+  active: boolean;
+  /** Additional GPU storage, including scratch depth, uniforms and readbacks. */
+  allocated_bytes: number;
+  /** Ordinary forward opaque draw batches eligible for collection. */
+  eligible_draws: number;
+  /** Empty clusters whose fragments must use full lists. */
+  empty_clusters: number;
+  /** The game enabled the optimization. */
+  enabled: boolean;
+  /** Why this view uses full lists, or why its counters are not ready yet. */
+  fallback: string | null;
+  /** Nonzero tag of the phase whose counters were read back. */
+  generation: number;
+  /** Selected entries retained in occupied clusters. */
+  kept_entries: number;
+  /** Occupied fine bins across the original clusters. */
+  occupied_bits: number;
+  /** Occupied clusters, summed over phases from the latest completed frame. */
+  occupied_clusters: number;
+  /** Selected full-list entries in occupied clusters only. */
+  original_entries: number;
+  /** Opaque phase, zero for the first and one after occlusion testing. */
+  phase: number;
+  /** Each phase's last completed copy, with its own age and generation. */
+  phases: DepthOccupancyPhaseStats | null[];
+  /** Frames since the submitted phase whose counters were read back. */
+  readback_age: number;
+  /** Selected entries removed from occupied clusters. */
+  rejected_entries: number;
+  /** Retained world identity. */
+  view: number;
+}
+
 /** Levels of detail and impostors. */
 export interface DetailStats {
   /**
@@ -354,6 +410,8 @@ export interface LightStats {
    * growing, read back like `visible`.
    */
   cluster_overflow: number | null;
+  /** Optional current-depth filtering, absent when the setting is off. */
+  depth_occupancy: DepthOccupancyStats | null;
   /** Usable lights beyond the budget or without a valid pose. */
   dropped: number;
   /** Lights breaking their rules, which no frame draws. */

@@ -16,7 +16,7 @@ gpu_structs! {
         /// Tiles across and down, depth slices, and the per-cluster budget
         /// ([`NO_BUDGET`](crate::lights::NO_BUDGET) without one).
         pub counts: [u32; 4],
-        /// Lights, an unused word, the entries the cluster lists' storage holds,
+        /// Lights, a depth-occupancy tag (zero for full lists), the entries the cluster lists' storage holds,
         /// and 1 when only lights without a slot or on still slots are binned
         /// (reflection probe faces).
         pub lights: [u32; 4],

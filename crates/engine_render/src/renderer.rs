@@ -53,6 +53,7 @@ mod frame_stats;
 mod health;
 mod impostor_draws;
 mod instances;
+mod light_depth;
 mod meshes;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
@@ -82,7 +83,7 @@ const INITIAL_CAPACITY: usize = 1_024;
 // Reversed depth: nearer surfaces keep larger values, which
 // floating-point depth resolves about evenly at every distance. The buffer
 // clears to the far plane's 0 and depth tests keep the greater value.
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 struct GpuMesh {
     // Where the mesh arena holds it, or the buffers of its own when the

@@ -201,6 +201,12 @@ impl StressGame {
         let (engine, lab) = self.host_mut().parts_mut();
         lab.set_visibility_buffer(engine, enabled);
     }
+
+    /// Whether forward opaque meshes use current depth occupancy for lights.
+    pub fn set_depth_occupancy(&mut self, enabled: bool) {
+        let (engine, lab) = self.host_mut().parts_mut();
+        lab.set_depth_occupancy(engine, enabled);
+    }
 }
 
 /// What the page receives of a refusal: the engine's error, with its code

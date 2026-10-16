@@ -128,6 +128,14 @@ type ReadInspector =
 /// report beside them. Hosts with a renderer answer it; without one, replies
 /// say None where it would.
 pub trait RendererFacts {
+    /// Requests a bounded page of the last named opaque phase's light lists.
+    fn light_depth(
+        &self,
+        phase: u32,
+        cluster: u32,
+        offset: u32,
+        allowed_bytes: Option<u64>,
+    ) -> Option<engine_core::DepthOccupancyPage>;
     /// Whether `texture` is resident on the GPU.
     fn texture_resident(&self, texture: TextureHandle) -> bool;
     /// `mesh` as uploaded; None before it uploads.
@@ -461,6 +469,23 @@ impl DevTools {
         };
         let world = engine.app.world();
         match query {
+            ToolsQuery::LightDepth {
+                phase,
+                cluster,
+                offset,
+                allowed_bytes,
+            } => {
+                if phase > 1 || cluster >= 16 * 9 * 24 {
+                    return Err(DevError::new(
+                        ErrorCode::OutOfRange,
+                        "$.cluster",
+                        "phase must be 0..1 and cluster 0..3455",
+                    ));
+                }
+                Ok(result::light_depth(context.renderer.and_then(|renderer| {
+                    renderer.light_depth(phase, cluster, offset, allowed_bytes)
+                })))
+            }
             ToolsQuery::Status => Ok(result::status(self.status(engine, scene))),
             ToolsQuery::Assets => assets(world, context).map(result::assets),
             // The world's own state: neither what a renderer made of it nor

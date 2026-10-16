@@ -265,33 +265,34 @@ impl Renderer {
         }
     }
 
-    /// The opaque meshes of `phase` (GPU-presented frames draw each level of
-    /// detail's visible slots), the impostors' cards,
-    /// and virtual geometry's bins the visibility buffer leaves to
-    /// forward drawing; returns the draws.
-    fn draw_opaque(
+    /// The same ordinary draw lists and vertex inputs for coverage and shading.
+    pub(super) fn draw_ordinary(
         &self,
         state: &FrameState<'_>,
         pass: &mut wgpu::RenderPass<'_>,
         phase: usize,
-        virtual_first: Option<usize>,
+        depth: Option<super::super::light_depth::DepthMeshKind>,
     ) -> u32 {
         let gpu_mode = state.kind.gpu_mode;
-        let Passes {
-            opaque_kind,
-            impostor_pass,
-            ..
-        } = state.passes;
+        let opaque_kind = state.passes.opaque_kind;
         let temporal_pass = state
             .packing
             .temporal_frame
             .as_ref()
             .zip(self.features.temporal.get());
-        // Lit frames shade with the lit pipelines and the lights' group.
         let lit = state.features.light_frame().zip(self.features.lights.get());
         pass.set_bind_group(0, self.camera.group(), &[]);
         if let Some((_, lights)) = lit {
-            pass.set_bind_group(3, lights.fragment_group(), &[]);
+            let group = match depth.zip(lights.depth()) {
+                Some((super::super::light_depth::DepthMeshKind::Collect, depth)) => {
+                    depth.collection_group(phase)
+                }
+                Some((super::super::light_depth::DepthMeshKind::Filtered, depth)) => {
+                    depth.shading_group(phase)
+                }
+                None => lights.fragment_group(),
+            };
+            pass.set_bind_group(3, group, &[]);
         }
         pass.set_bind_group(
             2,
@@ -314,7 +315,8 @@ impl Renderer {
             if self.virtual_draws.drawn.get(index) == Some(&true) {
                 continue;
             }
-            let (mesh, draw) = self.bind_batch(pass, &mut binds, (opaque_kind, false), batch);
+            let (mesh, draw) =
+                self.bind_mesh_batch(pass, &mut binds, (opaque_kind, false), batch, depth);
             if gpu_mode {
                 // Visible slots of this group, compacted and counted
                 // on the GPU, each level of detail
@@ -347,6 +349,38 @@ impl Renderer {
                 self.profiler.end_draw(pass, timed);
                 draws += 1;
             }
+        }
+        draws
+    }
+
+    /// Ordinary meshes, then impostors and virtual geometry on full light lists.
+    fn draw_opaque(
+        &self,
+        state: &FrameState<'_>,
+        pass: &mut wgpu::RenderPass<'_>,
+        phase: usize,
+        virtual_first: Option<usize>,
+    ) -> u32 {
+        let gpu_mode = state.kind.gpu_mode;
+        let Passes {
+            opaque_kind,
+            impostor_pass,
+            ..
+        } = state.passes;
+        let temporal_pass = state
+            .packing
+            .temporal_frame
+            .as_ref()
+            .zip(self.features.temporal.get());
+        // Lit frames shade with the lit pipelines and the lights' group.
+        let lit = state.features.light_frame().zip(self.features.lights.get());
+        let depth = lit
+            .and_then(|(_, lights)| lights.depth())
+            .map(|_| super::super::light_depth::DepthMeshKind::Filtered);
+        let mut draws = self.draw_ordinary(state, pass, phase, depth);
+        // Every other consumer uses the original uniform and its zero tag.
+        if let Some((_, lights)) = lit {
+            pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
         // Impostors: every draw group's cards in one
         // draw, over the pose and light groups the meshes bound.

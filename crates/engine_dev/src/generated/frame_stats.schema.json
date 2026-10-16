@@ -136,6 +136,196 @@
       ],
       "type": "object"
     },
+    "DepthOccupancyPhaseStats": {
+      "description": "One submitted opaque phase's depth-occupancy counters.",
+      "properties": {
+        "empty_clusters": {
+          "description": "Clusters whose empty mask selects full fallback.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "generation": {
+          "description": "Nonzero submitted generation.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kept_entries": {
+          "description": "Selected entries retained in occupied clusters.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "occupied_bits": {
+          "description": "Occupied fine bins.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "occupied_clusters": {
+          "description": "Occupied original clusters.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "original_entries": {
+          "description": "Original selected entries in occupied clusters.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "readback_age": {
+          "description": "Frames since this phase was submitted.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rejected_entries": {
+          "description": "Selected entries rejected in occupied clusters.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "generation",
+        "readback_age",
+        "occupied_clusters",
+        "occupied_bits",
+        "original_entries",
+        "kept_entries",
+        "rejected_entries",
+        "empty_clusters"
+      ],
+      "type": "object"
+    },
+    "DepthOccupancyStats": {
+      "description": "Current-view depth occupancy filtering of forward opaque light lists.",
+      "properties": {
+        "active": {
+          "description": "This view records collection and filtering work.",
+          "type": "boolean"
+        },
+        "allocated_bytes": {
+          "description": "Additional GPU storage, including scratch depth, uniforms and readbacks.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "eligible_draws": {
+          "description": "Ordinary forward opaque draw batches eligible for collection.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "empty_clusters": {
+          "description": "Empty clusters whose fragments must use full lists.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "enabled": {
+          "description": "The game enabled the optimization.",
+          "type": "boolean"
+        },
+        "fallback": {
+          "description": "Why this view uses full lists, or why its counters are not ready yet.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generation": {
+          "description": "Nonzero tag of the phase whose counters were read back.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kept_entries": {
+          "description": "Selected entries retained in occupied clusters.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "occupied_bits": {
+          "description": "Occupied fine bins across the original clusters.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "occupied_clusters": {
+          "description": "Occupied clusters, summed over phases from the latest completed frame.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "original_entries": {
+          "description": "Selected full-list entries in occupied clusters only.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phase": {
+          "description": "Opaque phase, zero for the first and one after occlusion testing.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phases": {
+          "description": "Each phase's last completed copy, with its own age and generation.",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DepthOccupancyPhaseStats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "readback_age": {
+          "description": "Frames since the submitted phase whose counters were read back.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rejected_entries": {
+          "description": "Selected entries removed from occupied clusters.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "view": {
+          "description": "Retained world identity.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "phases",
+        "enabled",
+        "active",
+        "view",
+        "generation",
+        "phase",
+        "readback_age",
+        "eligible_draws",
+        "occupied_clusters",
+        "occupied_bits",
+        "original_entries",
+        "kept_entries",
+        "rejected_entries",
+        "empty_clusters",
+        "allocated_bytes"
+      ],
+      "type": "object"
+    },
     "DetailStats": {
       "description": "Levels of detail and impostors.",
       "properties": {
@@ -383,6 +573,17 @@
             "integer",
             "null"
           ]
+        },
+        "depth_occupancy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DepthOccupancyStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional current-depth filtering, absent when the setting is off."
         },
         "dropped": {
           "description": "Usable lights beyond the budget or without a valid pose.",

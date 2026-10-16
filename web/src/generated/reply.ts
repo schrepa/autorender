@@ -223,6 +223,54 @@ export interface DeformationQueryResult {
   stamps: number;
 }
 
+/** One selected light, with its final GPU placement as exact binary32 bits. */
+export interface DepthLightEntry {
+  /** Index in the original selected light buffer. */
+  id: number;
+  /** World position after applying its displayed pose. */
+  position_bits: number[];
+  /** Original range, also for spot lights. */
+  range_bits: number;
+}
+
+/** A page of one opaque phase's production masks and selected light lists. */
+export interface DepthOccupancyPage {
+  /** The normal allocation helper's answer for that budget. */
+  allocation_fits: boolean;
+  /** Device binding/buffer limit, or the diagnostic budget supplied. */
+  allowed_bytes: number;
+  /** Bytes required by the ranges arena at the unchanged capacity. */
+  arena_bytes: number;
+  /** Original three-dimensional cluster. */
+  cluster: number;
+  /** The filtered indices at this offset, from the same submitted phase. */
+  filtered: number[];
+  /** Length of the filtered selected list. */
+  filtered_length: number;
+  /** The full-list uniform's tag. Zero prevents reading a filtered tail. */
+  full_generation: number;
+  /** Nonzero tag copied from that submitted phase's arena. */
+  generation: number;
+  /** Unchanged capacity of the original index allocation, in entries. */
+  index_capacity: number;
+  /** Occupied fine-depth bits. */
+  mask: number;
+  /** Page offset in each list; pages hold at most 32 entries. */
+  offset: number;
+  /** The original selected entries at this offset. */
+  original: DepthLightEntry[];
+  /** Lengths before and after stable filtering. */
+  original_length: number;
+  /** Opaque phase, zero or one. */
+  phase: number;
+  /** Frames since the submitted phase. */
+  readback_age: number;
+  /** The slice's 31 binary32 thresholds, as their exact bits. */
+  threshold_bits: number[];
+  /** Retained world identity. */
+  view: number;
+}
+
 /** The tracks and ground under one point. */
 export interface DepthSample {
   /** Meters the terrain's deformation map sinks it, where resident. */
@@ -532,6 +580,8 @@ export interface NavPathResult {
   walk?: WalkResult | null;
 }
 
+export type Nullable_DepthOccupancyPage = DepthOccupancyPage | null;
+
 /**
  * The engine's state a reply observed. Counters and revisions are decimal
  * strings, which keep 64-bit values exact in JavaScript.
@@ -580,6 +630,7 @@ export interface OpResults {
   game: GameResult;
   input: InputResult;
   inspect: InspectResult;
+  light_depth: Nullable_DepthOccupancyPage;
   nav_go: NavGoResult;
   nav_path: NavPathResult;
   overlap: OverlapResult;

@@ -101,6 +101,12 @@ pub fn switches() -> Vec<Switch> {
             what: "on: shade virtual geometry through the visibility buffer",
         },
         Switch {
+            name: "depth-occupancy",
+            values: on_off(),
+            default: "off",
+            what: "on: filter forward opaque light lists by current depth occupancy",
+        },
+        Switch {
             name: "lod",
             values: on_off(),
             default: "on",

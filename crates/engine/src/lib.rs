@@ -128,7 +128,8 @@ pub mod render {
 /// agents read it.
 pub mod stats {
     pub use engine_core::{
-        Applied, CellStats, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn,
+        Applied, CellStats, CloudStats, CullingStats, DeformationStats, DepthLightEntry,
+        DepthOccupancyPage, DepthOccupancyPhaseStats, DepthOccupancyStats, DetailStats, Drawn,
         ErosionStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats, Names,
         NavStats, OccupancyStats, OceanStats, PathStats, ProbeStats, RenderStats, ShadowStats,
         SkyStats, TerrainRenderStats, TerrainStats, VirtualGeometryStats, WaterStats,

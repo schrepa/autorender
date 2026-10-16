@@ -142,20 +142,19 @@ settings! {
     )]
     #[serde(default, deny_unknown_fields)]
     pub struct LocalLightSettings {
-        /// Whether frames shade local lights.
+        /// Shade local lights.
         pub enabled: bool = true => any,
-        /// An optional budget of lights a frame shades; beyond it the nearest to
-        /// the camera win. Omitted, every light shades.
+        /// Depth occupancy filtering of opaque light lists.
+        pub depth_occupancy: bool = false => any,
+        /// Optional frame light budget; nearest lights win. Omitted, every light shades.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_lights: Option<u32> = None => budget,
-        /// An optional budget of lights one view cluster lists. Omitted, every
-        /// light reaching a cluster shades there.
+        /// Optional per-cluster light budget. Omitted, every reaching light shades.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub lights_per_cluster: Option<u32> = None => budget,
-        /// Scales every light's intensity, e.g. to dim lamps by day.
+        /// Local light intensity multiplier.
         pub intensity: f32 = 1.0 => range(0.0, 100.0),
-        /// View distance beyond which local light fades out: distant lights
-        /// cost no shading.
+        /// Distance in meters beyond which local lights cost no shading.
         pub distance: f32 = 250.0 => range(1.0, 100_000.0),
     }
 }

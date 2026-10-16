@@ -21,6 +21,7 @@ use crate::pipelines::vertex_attributes;
 pub(super) struct MeshPipelines {
     pub(super) layouts: [Option<wgpu::PipelineLayout>; 2],
     pub(super) variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
+    pub(super) depth: Option<super::light_depth::DepthMeshPipelines>,
     sky: [Option<wgpu::RenderPipeline>; 4],
     pub(super) empty_layout: crate::pipelines::GroupLayout,
     pub(super) empty_group: wgpu::BindGroup,
@@ -53,6 +54,7 @@ impl MeshPipelines {
         Self {
             layouts: Default::default(),
             variants: HashMap::default(),
+            depth: None,
             sky: Default::default(),
             empty_layout,
             empty_group,
@@ -171,12 +173,32 @@ impl Renderer {
         (kind, uber): (PassKind, bool),
         batch: &DrawBatch,
     ) -> (&GpuMesh, MeshDraw<'_>) {
+        self.bind_mesh_batch(pass, binds, (kind, uber), batch, None)
+    }
+
+    pub(super) fn bind_mesh_batch(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        binds: &mut BatchBinds,
+        (kind, uber): (PassKind, bool),
+        batch: &DrawBatch,
+        depth: Option<super::light_depth::DepthMeshKind>,
+    ) -> (&GpuMesh, MeshDraw<'_>) {
         // Every planned source was validated and uploaded above.
         let mesh = &self.meshes[&batch.mesh];
         let (group, variant) = self.batch_binding(batch, Some(mesh));
         let variant = if uber { variant.uber() } else { variant };
         if binds.variant != Some(variant) {
-            pass.set_pipeline(&self.mesh_pipelines.variants[&(kind, variant)]);
+            let pipeline = match depth {
+                None => &self.mesh_pipelines.variants[&(kind, variant)],
+                Some(depth) => self
+                    .mesh_pipelines
+                    .depth
+                    .as_ref()
+                    .expect("prepared for eligible opaque draws")
+                    .pipeline(depth, kind, variant),
+            };
+            pass.set_pipeline(pipeline);
             binds.variant = Some(variant);
         }
         let bindings = &mut binds.bindings;
@@ -293,6 +315,15 @@ impl Renderer {
 
     /// The pipeline of `kind` shading materials of `variant`.
     pub(super) fn create_variant(&self, kind: PassKind, variant: Variant) -> wgpu::RenderPipeline {
+        self.create_shading_variant(kind, variant, false)
+    }
+
+    pub(super) fn create_shading_variant(
+        &self,
+        kind: PassKind,
+        variant: Variant,
+        depth_occupancy: bool,
+    ) -> wgpu::RenderPipeline {
         let canvas = self.display.format();
         let layout = if kind.slots() == Slots::Temporal {
             let temporal = self
@@ -330,6 +361,7 @@ impl Renderer {
             kind,
             &fragment,
             variant,
+            depth_occupancy,
         )
     }
 
@@ -461,8 +493,16 @@ fn mesh_pipeline(
     kind: PassKind,
     fragment: &MeshFragment,
     variant: Variant,
+    depth_occupancy: bool,
 ) -> wgpu::RenderPipeline {
     let constants = variant.constants();
+    let mut filtered_constants = [("DEPTH_OCCUPANCY", 1.0); 15];
+    filtered_constants[..14].copy_from_slice(&constants);
+    let fragment_constants: &[_] = if depth_occupancy {
+        &filtered_constants
+    } else {
+        &constants
+    };
     // Extended meshes read a third vertex buffer through
     // their own entry points; skinned meshes a fourth.
     let extended = variant.extended();
@@ -518,7 +558,7 @@ fn mesh_pipeline(
             }),
             fragment: Some(crate::pipelines::Fragment {
                 entry: fragment_entry,
-                constants: &constants,
+                constants: fragment_constants,
                 targets: &fragment.targets,
             }),
         },

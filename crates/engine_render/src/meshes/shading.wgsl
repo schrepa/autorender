@@ -799,17 +799,25 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
     if depth >= end {
         return vec3<f32>(0.0);
     }
-    let counts = clusters.counts;
-    let tile = min(vec2<u32>(max(pixel, vec2<f32>(0.0)) / clusters.grid.xy),
-        counts.xy - vec2<u32>(1u));
-    let slice = u32(clamp(floor(log2(max(depth, 1.0e-6)) * clusters.grid.z + clusters.grid.w),
-        0.0, f32(counts.z - 1u)));
-    let cluster = (slice * counts.y + tile.y) * counts.x + tile.x;
-    let range = cluster_ranges[cluster];
+    let cluster = light_cluster(depth, pixel);
+    var range = cluster_ranges[cluster];
+    var filtered = false;
+    if DEPTH_OCCUPANCY {
+        filtered = depth_shading_guard(point.world, cluster);
+        if filtered {
+            range = cluster_ranges[depth_clusters() + cluster];
+        }
+    }
     let specular = lighting.sun_color.w;
     var sum = vec3<f32>(0.0);
     for (var n = 0u; n < range.y; n++) {
-        let light = lights[cluster_lights[range.x + n]];
+        var index = 0u;
+        if DEPTH_OCCUPANCY && filtered {
+            index = depth_shading_word(depth_indices() + range.x + n);
+        } else {
+            index = cluster_lights[range.x + n];
+        }
+        let light = lights[index];
         let to_light = light.position - point.world;
         let d2 = dot(to_light, to_light);
         let r2 = light.range * light.range;

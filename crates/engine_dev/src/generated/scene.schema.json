@@ -2970,8 +2970,13 @@
       "description": "Local lighting settings.",
       "type": "object",
       "properties": {
+        "depth_occupancy": {
+          "description": "Depth occupancy filtering of opaque light lists.",
+          "type": "boolean",
+          "default": false
+        },
         "distance": {
-          "description": "View distance beyond which local light fades out: distant lights\ncost no shading.",
+          "description": "Distance in meters beyond which local lights cost no shading.",
           "type": "number",
           "format": "float",
           "default": 250.0,
@@ -2979,12 +2984,12 @@
           "minimum": 1.0
         },
         "enabled": {
-          "description": "Whether frames shade local lights.",
+          "description": "Shade local lights.",
           "type": "boolean",
           "default": true
         },
         "intensity": {
-          "description": "Scales every light's intensity, e.g. to dim lamps by day.",
+          "description": "Local light intensity multiplier.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -2992,7 +2997,7 @@
           "minimum": 0.0
         },
         "lights_per_cluster": {
-          "description": "An optional budget of lights one view cluster lists. Omitted, every\nlight reaching a cluster shades there.",
+          "description": "Optional per-cluster light budget. Omitted, every reaching light shades.",
           "type": [
             "integer",
             "null"
@@ -3001,7 +3006,7 @@
           "minimum": 1
         },
         "max_lights": {
-          "description": "An optional budget of lights a frame shades; beyond it the nearest to\nthe camera win. Omitted, every light shades.",
+          "description": "Optional frame light budget; nearest lights win. Omitted, every light shades.",
           "type": [
             "integer",
             "null"

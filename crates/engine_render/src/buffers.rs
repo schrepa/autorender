@@ -233,4 +233,13 @@ impl<T: Copy + 'static> ReadbackRing<T> {
     pub(crate) fn clear(&mut self) {
         self.slots.get_mut().clear();
     }
+
+    /// GPU bytes currently allocated for this ring, including pending maps.
+    pub(crate) fn capacity_bytes(&self) -> u64 {
+        self.slots
+            .borrow()
+            .iter()
+            .map(|slot| slot.buffer.size())
+            .sum()
+    }
 }

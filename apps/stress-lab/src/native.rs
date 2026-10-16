@@ -28,6 +28,7 @@ The page's parameters:
   --look NAME          lighting preset over the scene's own
   --effects NAME       all, none, or comma-separated no-<effect> exclusions
   --visibility on|off  shade virtual geometry through the visibility buffer
+  --depth-occupancy on|off  filter forward opaque light lists by depth occupancy
   --lod on|off         off: draw every instance as its mesh
   --impostors on|off   off: draw no impostors
   --view NAME          camera view
@@ -74,6 +75,7 @@ struct Options {
     look: String,
     effects: String,
     visibility: bool,
+    depth_occupancy: Option<bool>,
     lod: bool,
     impostors: bool,
     view: Option<String>,
@@ -108,6 +110,7 @@ impl Options {
             look: "scene".into(),
             effects: "all".into(),
             visibility: false,
+            depth_occupancy: None,
             lod: true,
             impostors: true,
             view: None,
@@ -129,6 +132,9 @@ impl Options {
                 "--look" => options.look = arguments.value(&argument)?,
                 "--effects" => options.effects = arguments.value(&argument)?,
                 "--visibility" => options.visibility = arguments.switch(&argument)?,
+                "--depth-occupancy" => {
+                    options.depth_occupancy = Some(arguments.switch(&argument)?);
+                }
                 "--lod" => options.lod = arguments.switch(&argument)?,
                 "--impostors" => options.impostors = arguments.switch(&argument)?,
                 "--view" => options.view = Some(arguments.value(&argument)?),
@@ -176,7 +182,11 @@ impl Options {
                     })
                 })
                 .collect::<engine::Result<Vec<_>>>()?;
-            return StressLab::authored(&source, &files, &without);
+            let (mut engine, mut lab) = StressLab::authored(&source, &files, &without)?;
+            if let Some(enabled) = self.depth_occupancy {
+                lab.set_depth_occupancy(&mut engine, enabled);
+            }
+            return Ok((engine, lab));
         }
         let config = self.config()?;
         let files = stress_files(&self.assets, config.scene, self.rocks)?;
@@ -184,6 +194,9 @@ impl Options {
         lab.set_visibility_buffer(&mut engine, self.visibility);
         lab.set_level_of_detail(&mut engine, self.lod);
         lab.set_impostors(&mut engine, self.impostors);
+        if let Some(enabled) = self.depth_occupancy {
+            lab.set_depth_occupancy(&mut engine, enabled);
+        }
         lab.set_look(&mut engine, &self.look)?;
         lab.set_effects(&mut engine, &self.effects)?;
         if let Some(view) = &self.view {

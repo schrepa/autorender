@@ -16,6 +16,16 @@ use serde_json::{Value, json};
 struct Facts<'a>(&'a engine_render::Renderer);
 
 impl RendererFacts for Facts<'_> {
+    fn light_depth(
+        &self,
+        phase: u32,
+        cluster: u32,
+        offset: u32,
+        allowed_bytes: Option<u64>,
+    ) -> Option<engine_core::DepthOccupancyPage> {
+        self.0
+            .light_depth_page(phase, cluster, offset, allowed_bytes)
+    }
     fn texture_resident(&self, texture: engine_core::TextureHandle) -> bool {
         self.0.is_texture_resident(texture)
     }

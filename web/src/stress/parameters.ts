@@ -8,6 +8,7 @@ export const STRESS_PARAMETERS: Record<string, string> = {
   look: "lighting preset over the scene's own",
   effects: "all, none, or comma-separated no-<effect> exclusions",
   visibility: "on: shade virtual geometry through the visibility buffer",
+  "depth-occupancy": "on: filter forward opaque light lists by current depth occupancy",
   lod: "off: draw every instance as its mesh",
   impostors: "off: draw no impostors",
 };

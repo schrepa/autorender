@@ -42,6 +42,15 @@
       "what": "on: shade virtual geometry through the visibility buffer"
     },
     {
+      "default": "off",
+      "name": "depth-occupancy",
+      "values": [
+        "on",
+        "off"
+      ],
+      "what": "on: filter forward opaque light lists by current depth occupancy"
+    },
+    {
       "default": "on",
       "name": "lod",
       "values": [

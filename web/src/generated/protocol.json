@@ -226,6 +226,7 @@
   "profile_max_events": 65536,
   "queries": [
     "status",
+    "light_depth",
     "inspect",
     "assets",
     "digest",

@@ -128,6 +128,12 @@ pub(crate) enum Route {
 /// them).
 pub(crate) enum ToolsQuery {
     Status,
+    LightDepth {
+        phase: u32,
+        cluster: u32,
+        offset: u32,
+        allowed_bytes: Option<u64>,
+    },
     Inspect {
         entity: Option<String>,
         parent: Option<String>,
@@ -212,6 +218,15 @@ pub enum HostControl {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DevRequest {
     Status {},
+    /// Requests a production light-depth page; null until its GPU copy completes.
+    LightDepth {
+        phase: u32,
+        cluster: u32,
+        #[serde(default)]
+        offset: u32,
+        #[serde(default)]
+        allowed_bytes: Option<u64>,
+    },
     Inspect {
         #[serde(default)]
         entity: Option<String>,
@@ -338,6 +353,17 @@ impl DevRequest {
     pub(crate) fn route(self) -> Route {
         match self {
             Self::Status {} => Route::Tools(ToolsQuery::Status),
+            Self::LightDepth {
+                phase,
+                cluster,
+                offset,
+                allowed_bytes,
+            } => Route::Tools(ToolsQuery::LightDepth {
+                phase,
+                cluster,
+                offset,
+                allowed_bytes,
+            }),
             Self::Inspect {
                 entity,
                 parent,

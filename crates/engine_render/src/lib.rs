@@ -26,6 +26,7 @@ mod entries;
 pub mod gpu_layouts;
 mod gpu_uploads;
 mod impostors;
+mod light_depth;
 mod lights;
 mod particles;
 mod pipelines;

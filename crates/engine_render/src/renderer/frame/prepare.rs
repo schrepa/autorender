@@ -1382,6 +1382,13 @@ impl Renderer {
                 resolving && phases == 2 && self.virtual_draws.phase_two.is_some(),
             ],
             lights: features.light_frame().is_some(),
+            light_depth: features.light_frame().is_some()
+                && self
+                    .features
+                    .lights
+                    .get()
+                    .and_then(LightPass::depth)
+                    .is_some(),
             refraction: features.refraction && post.is_some(),
             effects: post.unwrap_or_default(),
             probes: kind.gpu_mode && !features.probe_list.is_empty(),

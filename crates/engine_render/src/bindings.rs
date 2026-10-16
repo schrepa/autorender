@@ -460,6 +460,16 @@ tables! {
         ],
     };
 
+    /// Current-phase opaque coverage writes only the optional ranges arena.
+    const LIGHT_DEPTH_COLLECTION: Table = Table {
+        label: "engine/light-depth-collection-layout",
+        serves: [SHADER @ 3],
+        bindings: &[
+            uniform(0, "clusters", F),
+            write(4, "light_depth_arena", F),
+        ],
+    };
+
     /// Group 2 of decals beside the mesh poses' bindings: the
     /// joint palette holds retained frames' decal poses.
     const DECALS: Table = Table {
@@ -1121,6 +1131,28 @@ tables! {
         ],
     };
 
+    /// Filtering reads the original selected indices and never replaces them.
+    const LIGHT_DEPTH_FILTER: Table = Table {
+        label: "engine/light-depth-filter-layout",
+        serves: [LIGHT_DEPTH_SHADER @ 0],
+        bindings: &[
+            uniform(0, "clusters", C),
+            read(1, "lights", C),
+            read(2, "full_indices", C),
+            write(3, "light_depth_arena", C),
+        ],
+    };
+
+    /// Allocated only when a development query requests a bounded page.
+    const LIGHT_DEPTH_DIAGNOSTIC: Table = Table {
+        label: "engine/light-depth-diagnostic-layout",
+        serves: [LIGHT_DEPTH_SHADER @ 1],
+        bindings: &[
+            uniform(0, "depth_request", C),
+            write(1, "depth_page", C),
+        ],
+    };
+
     /// The screen effects (`post.wgsl`), whose passes each read
     /// some of these. Textures the passes sample with the linear sampler
     /// filter; the others only load.
@@ -1381,6 +1413,6 @@ shared_groups! {
         virtual_texture: 19..22 [terrain_vt_wanted, terrain_vt_bakes, terrain_vt_heights],
     }
     SHADER @ 3 {
-        lights: 0..4 [clusters, lights, cluster_ranges, cluster_lights],
+        lights: 0..5 [clusters, lights, cluster_ranges, cluster_lights, light_depth_arena],
     }
 }

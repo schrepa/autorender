@@ -41,6 +41,7 @@ macro_rules! results {
 }
 
 results! {
+    light_depth: Option<engine_core::DepthOccupancyPage>,
     status: crate::results::StatusResult,
     assets: crate::results::AssetsResult,
     digest: crate::results::DigestResult,

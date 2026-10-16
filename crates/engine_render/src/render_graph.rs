@@ -80,6 +80,9 @@ resources! {
     Clusters: Kept,
     /// Local lights binned into view clusters.
     Lights: Frame,
+    /// Current-phase opaque coverage and its selected light subsequences.
+    LightDepthMask: Frame,
+    LightDepthLists: Frame,
     /// The depth pyramid occlusion culling tests against, which the next
     /// frame's cluster selection retests with.
     Pyramid: Kept,
@@ -232,6 +235,12 @@ pub(crate) enum Pass {
     Deformation,
     /// The runtime virtual texture's pages baked.
     VtBakes,
+    LightDepthCollect {
+        phase: Phase,
+    },
+    LightDepthFilter {
+        phase: Phase,
+    },
     /// The opaque pass of `phase`.
     Opaque {
         phase: Phase,
@@ -311,6 +320,8 @@ passes! {
     deformation: Deformation,
     vt_bakes: VtBakes,
     ground_cover: Feature(FeaturePass::GroundCover),
+    light_depth_collect: LightDepthCollect { phase: Phase::One },
+    light_depth_filter: LightDepthFilter { phase: Phase::One },
     opaque: Opaque { phase: Phase::One },
     terrain_ids: TerrainIds,
     terrain_resolve: TerrainResolve,
@@ -320,6 +331,8 @@ passes! {
     visibility_tiles: Classify { phase: Phase::One },
     visibility_resolve: Resolve { phase: Phase::One },
     occlusion_test: OcclusionTest,
+    light_depth_collect_phase_two: LightDepthCollect { phase: Phase::Two },
+    light_depth_filter_phase_two: LightDepthFilter { phase: Phase::Two },
     opaque_phase_two: Opaque { phase: Phase::Two },
     visibility_phase_two: VisibilityIds { phase: Phase::Two },
     visibility_tiles_phase_two: Classify { phase: Phase::Two },
@@ -696,6 +709,7 @@ pub(crate) struct FrameShape {
     pub(crate) shadow_clusters: bool,
     pub(crate) resolves: [bool; 2],
     pub(crate) lights: bool,
+    pub(crate) light_depth: bool,
     /// Glass reads the opaque scene.
     pub(crate) refraction: bool,
     pub(crate) effects: Effects,
@@ -815,6 +829,19 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
         }
         // Terrain, its cover and placed objects draw in the first phase,
         // after the meshes where terrain shades deferred.
+        if shape.light_depth {
+            graph
+                .add(Pass::LightDepthCollect { phase })
+                .read(Poses)
+                .read_if(gpu, Visible)
+                .read(Lights)
+                .write(LightDepthMask);
+            graph
+                .add(Pass::LightDepthFilter { phase })
+                .read(Lights)
+                .read(LightDepthMask)
+                .write(LightDepthLists);
+        }
         let first = phase == Phase::One;
         let forward = first && !shape.deferred;
         let mut opaque = graph
@@ -825,6 +852,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(Occupancy)
             .read_if(shape.shadows, ShadowMaps)
             .read_if(shape.lights, Lights)
+            .read_if(shape.light_depth, LightDepthLists)
             .read_if(shape.clusters, Clusters)
             .read(Probes)
             .read(Horizons)
