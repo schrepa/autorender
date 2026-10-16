@@ -286,6 +286,7 @@
         "hierarchy",
         "host-parity",
         "interpolation",
+        "linear-light-atmosphere",
         "linear-light-transparency",
         "native",
         "plugins",
@@ -304,6 +305,7 @@
         "input",
         "interpolation",
         "jobs",
+        "linear-light-atmosphere",
         "lod",
         "meshes",
         "native",
@@ -456,6 +458,7 @@
         "culling",
         "gpu-presentation",
         "host-parity",
+        "linear-light-atmosphere",
         "linear-light-transparency",
         "lod",
         "streaming",
@@ -471,6 +474,7 @@
     {
       "op": "terrain",
       "smokes": [
+        "linear-light-atmosphere",
         "terrain",
         "terrain-surface",
         "terrain-water-sky"
@@ -527,6 +531,7 @@
         "host-parity",
         "interpolation",
         "jobs",
+        "linear-light-atmosphere",
         "streaming",
         "surfaces",
         "terrain",
@@ -592,6 +597,7 @@
         "host-parity",
         "interpolation",
         "jobs",
+        "linear-light-atmosphere",
         "linear-light-transparency",
         "meshes",
         "plugins",
@@ -708,6 +714,7 @@
         "agent",
         "culling",
         "gpu-presentation",
+        "linear-light-atmosphere",
         "linear-light-transparency",
         "terrain-surface",
         "terrain-water-sky"
@@ -842,6 +849,7 @@
       "inspector": "Wind",
       "section": "wind",
       "smokes": [
+        "linear-light-atmosphere",
         "terrain-surface",
         "terrain-water-sky"
       ],
@@ -869,6 +877,7 @@
       "section": "water",
       "smokes": [
         "jobs",
+        "linear-light-atmosphere",
         "terrain-water-sky"
       ],
       "stats": true
@@ -877,6 +886,7 @@
       "inspector": "Ocean",
       "section": "ocean",
       "smokes": [
+        "linear-light-atmosphere",
         "plugins",
         "terrain-water-sky"
       ],
@@ -895,6 +905,7 @@
       "inspector": "Clouds",
       "section": "clouds",
       "smokes": [
+        "linear-light-atmosphere",
         "linear-light-transparency",
         "terrain-water-sky"
       ],
@@ -914,6 +925,7 @@
       "section": "sky",
       "smokes": [
         "host-parity",
+        "linear-light-atmosphere",
         "linear-light-transparency",
         "terrain-water-sky"
       ],
@@ -923,6 +935,7 @@
       "inspector": "TimeOfDay",
       "section": "time_of_day",
       "smokes": [
+        "linear-light-atmosphere",
         "plugins",
         "terrain-water-sky"
       ],

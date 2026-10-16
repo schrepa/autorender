@@ -80,7 +80,10 @@ pub(crate) const MAP: &[Rule] = &[
     },
     Rule {
         paths: &["crates/engine_render/src/**", "web/scripts/linear-light-*"],
-        checks: &[Smoke("linear-light-transparency")],
+        checks: &[
+            Smoke("linear-light-transparency"),
+            Smoke("linear-light-atmosphere"),
+        ],
     },
     // Shaders, wherever they are.
     Rule {
