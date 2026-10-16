@@ -41,7 +41,7 @@ macro_rules! results {
 }
 
 results! {
-    light_depth: Option<engine_core::DepthOccupancyPage>,
+    light_depth: crate::results::LightDepthResult,
     status: crate::results::StatusResult,
     assets: crate::results::AssetsResult,
     digest: crate::results::DigestResult,
@@ -79,6 +79,14 @@ results! {
     game: crate::results::GameResult,
     pause: crate::results::StatusResult,
     resume: crate::results::StatusResult,
+}
+
+/// A requested production light-depth page, pending until its GPU copy arrives.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct LightDepthResult {
+    /// None when inactive or before the requested copy completes.
+    pub page: Option<engine_core::DepthOccupancyPage>,
 }
 
 /// The engine as a session finds it: the world's size, the inspectors,

@@ -294,13 +294,16 @@
     },
     {
       "op": "light_depth",
-      "smokes": []
+      "smokes": [
+        "depth-occupancy-light-culling"
+      ]
     },
     {
       "op": "inspect",
       "smokes": [
         "agent",
         "collision",
+        "depth-occupancy-light-culling",
         "gpu-presentation",
         "hierarchy",
         "host-parity",
@@ -435,6 +438,7 @@
       "op": "present",
       "smokes": [
         "collision",
+        "depth-occupancy-light-culling",
         "gpu-presentation",
         "host-parity",
         "interpolation",
@@ -457,6 +461,7 @@
       "smokes": [
         "agent",
         "culling",
+        "depth-occupancy-light-culling",
         "gpu-presentation",
         "host-parity",
         "lod",
@@ -589,6 +594,7 @@
       "smokes": [
         "collision",
         "culling",
+        "depth-occupancy-light-culling",
         "gpu-presentation",
         "hierarchy",
         "host-parity",
@@ -646,6 +652,7 @@
         "agent",
         "collision",
         "culling",
+        "depth-occupancy-light-culling",
         "gpu-presentation",
         "hierarchy",
         "host-parity",
@@ -732,7 +739,8 @@
       "inspector": "LocalLightSettings",
       "section": "local_lights",
       "smokes": [
-        "agent"
+        "agent",
+        "depth-occupancy-light-culling"
       ],
       "stats": true
     },
@@ -926,6 +934,7 @@
       "inspector": "OcclusionCulling",
       "section": "occlusion_culling",
       "smokes": [
+        "depth-occupancy-light-culling",
         "gpu-presentation",
         "lod"
       ],

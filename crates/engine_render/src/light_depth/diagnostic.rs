@@ -5,8 +5,9 @@ use std::cell::RefCell;
 use super::*;
 use engine_core::{DepthLightEntry, DepthOccupancyPage};
 
-const WORDS: usize = 239;
-const BYTES: u64 = 960;
+const PAGE_ENTRIES: usize = 128;
+const WORDS: usize = 47 + PAGE_ENTRIES * 6;
+const BYTES: u64 = (WORDS as u64 * 4).div_ceil(16) * 16;
 type Sample = (u64, [u32; WORDS]);
 
 pub(super) struct Diagnostic {
@@ -15,7 +16,6 @@ pub(super) struct Diagnostic {
     group: wgpu::BindGroup,
     pipeline: wgpu::ComputePipeline,
     key: [u32; 3],
-    recorded: Cell<bool>,
     ring: ReadbackRing<u64>,
     sample: Rc<RefCell<Option<Sample>>>,
 }
@@ -63,7 +63,6 @@ impl Diagnostic {
             group,
             pipeline,
             key: [u32::MAX; 3],
-            recorded: Cell::new(false),
             ring: ReadbackRing::new("engine/light-depth-page"),
             sample: Rc::new(RefCell::new(None)),
         }
@@ -74,7 +73,6 @@ impl Diagnostic {
             return;
         }
         self.key = key;
-        self.recorded.set(false);
         self.ring.clear();
         self.sample = Rc::new(RefCell::new(None));
         queue.write_buffer(
@@ -92,7 +90,7 @@ impl Diagnostic {
         group: &wgpu::BindGroup,
         frame: u64,
     ) {
-        if phase as u32 != self.key[0] || self.recorded.get() {
+        if phase as u32 != self.key[0] {
             return;
         }
         {
@@ -105,18 +103,17 @@ impl Diagnostic {
             pass.set_bind_group(1, &self.group, &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
-        if self
-            .ring
-            .record(device, encoder, &self.output, BYTES, frame)
-        {
-            self.recorded.set(true);
-        }
+        self.ring
+            .record(device, encoder, &self.output, BYTES, frame);
     }
 
     pub(super) fn after_submit(&self) {
         let sample = Rc::clone(&self.sample);
         self.ring.after_submit(move |words, frame| {
-            *sample.borrow_mut() = Some((frame, std::array::from_fn(|index| words.get(index))));
+            let mut latest = sample.borrow_mut();
+            if latest.as_ref().is_none_or(|(old, _)| *old <= frame) {
+                *latest = Some((frame, std::array::from_fn(|index| words.get(index))));
+            }
         });
     }
 
@@ -141,7 +138,7 @@ impl DepthPass {
         let diagnostic = diagnostic.get_or_insert_with(|| Diagnostic::new(device));
         diagnostic.request(queue, key);
         let (frame, words) = (*diagnostic.sample.borrow())?;
-        let original = (0..32)
+        let original = (0..PAGE_ENTRIES)
             .filter_map(|lane| {
                 let start = 47 + lane * 6;
                 (words[start] != u32::MAX).then(|| DepthLightEntry {
@@ -151,14 +148,34 @@ impl DepthPass {
                 })
             })
             .collect();
-        let filtered = (0..32)
+        let filtered = (0..PAGE_ENTRIES)
             .map(|lane| words[48 + lane * 6])
             .filter(|&id| id != u32::MAX)
             .collect();
-        let limit = u64::from(device.limits().max_storage_buffer_binding_size)
+        let limit = device
+            .limits()
+            .max_storage_buffer_binding_size
             .min(device.limits().max_buffer_size);
         let allowed_bytes = allowed_bytes.unwrap_or(limit).min(limit);
         Some(DepthOccupancyPage {
+            full_routes: [
+                "transparent",
+                "terrain",
+                "decals",
+                "impostors",
+                "ground_cover",
+                "visibility_resolve",
+                "probes",
+                "water",
+                "particles",
+            ]
+            .into_iter()
+            .map(|consumer| engine_core::DepthFullRoute {
+                consumer,
+                occupancy_override: false,
+                generation: uniform.lights[1],
+            })
+            .collect(),
             view,
             phase: words[1],
             generation: words[0],

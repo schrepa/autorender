@@ -182,7 +182,7 @@ export async function checkPrimitives(page) {
     readback.unmap();
     const error = await device.popErrorScope();
     if (error) throw new Error(error.message);
-    const gpu = { ...adapter.info };
+    const gpu = { vendor: adapter.info.vendor, architecture: adapter.info.architecture, device: adapter.info.device, description: adapter.info.description };
     for (const resource of [...buffers, readback]) resource.destroy();
     device.destroy();
     return { words, gpu };

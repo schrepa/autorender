@@ -150,6 +150,27 @@ pub trait RendererFacts {
     fn drawn_level(&self, slot: u32) -> Option<u32>;
 }
 
+fn light_depth_page(
+    context: Context<'_>,
+    phase: u32,
+    cluster: u32,
+    offset: u32,
+    allowed_bytes: Option<u64>,
+) -> Result<Value, DevError> {
+    if phase > 1 || cluster >= 16 * 9 * 24 {
+        return Err(DevError::new(
+            ErrorCode::OutOfRange,
+            "$.cluster",
+            "phase must be 0..1 and cluster 0..3455",
+        ));
+    }
+    Ok(result::light_depth(crate::results::LightDepthResult {
+        page: context
+            .renderer
+            .and_then(|renderer| renderer.light_depth(phase, cluster, offset, allowed_bytes)),
+    }))
+}
+
 /// A mesh as a renderer uploaded it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderedMesh {
@@ -474,18 +495,7 @@ impl DevTools {
                 cluster,
                 offset,
                 allowed_bytes,
-            } => {
-                if phase > 1 || cluster >= 16 * 9 * 24 {
-                    return Err(DevError::new(
-                        ErrorCode::OutOfRange,
-                        "$.cluster",
-                        "phase must be 0..1 and cluster 0..3455",
-                    ));
-                }
-                Ok(result::light_depth(context.renderer.and_then(|renderer| {
-                    renderer.light_depth(phase, cluster, offset, allowed_bytes)
-                })))
-            }
+            } => light_depth_page(context, phase, cluster, offset, allowed_bytes),
             ToolsQuery::Status => Ok(result::status(self.status(engine, scene))),
             ToolsQuery::Assets => assets(world, context).map(result::assets),
             // The world's own state: neither what a renderer made of it nor

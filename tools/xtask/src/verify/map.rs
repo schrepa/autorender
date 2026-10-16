@@ -56,6 +56,21 @@ const TERRAIN_SMOKES: [Check; 4] = [
 
 /// Every rule; a path's checks are those of every rule it matches.
 pub(crate) const MAP: &[Rule] = &[
+    Rule {
+        paths: &[
+            "crates/engine_core/src/light_depth*",
+            "crates/engine_core/src/lights.rs",
+            "crates/engine_render/src/**/light_depth*",
+            "crates/engine_render/src/light_depth/**",
+            "crates/engine_render/src/lights.rs",
+            "web/scripts/depth-occupancy-*.mjs",
+        ],
+        checks: &[
+            Smoke("depth-occupancy-light-culling"),
+            Smoke("surfaces"),
+            Smoke("gpu-presentation"),
+        ],
+    },
     // What every build reads: the toolchain, the workspace, its
     // dependencies and their vendored sources.
     Rule {

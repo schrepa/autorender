@@ -811,12 +811,7 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
     let specular = lighting.sun_color.w;
     var sum = vec3<f32>(0.0);
     for (var n = 0u; n < range.y; n++) {
-        var index = 0u;
-        if DEPTH_OCCUPANCY && filtered {
-            index = depth_shading_word(depth_indices() + range.x + n);
-        } else {
-            index = cluster_lights[range.x + n];
-        }
+        let index = depth_selected_light(range.x + n, filtered);
         let light = lights[index];
         let to_light = light.position - point.world;
         let d2 = dot(to_light, to_light);

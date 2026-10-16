@@ -14,10 +14,24 @@ pub struct DepthLightEntry {
     pub range_bits: u32,
 }
 
+/// A full-list consumer's pipeline and uniform contract.
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DepthFullRoute {
+    /// Production consumer; this is a contract, not a claim it drew this frame.
+    pub consumer: &'static str,
+    /// The occupancy override used by this consumer's pipelines.
+    pub occupancy_override: bool,
+    /// The full-list uniform generation, always zero.
+    pub generation: u32,
+}
+
 /// A page of one opaque phase's production masks and selected light lists.
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DepthOccupancyPage {
+    /// Full-list contracts, including consumers absent from the current fixture.
+    pub full_routes: Vec<DepthFullRoute>,
     /// Retained world identity.
     pub view: u64,
     /// Opaque phase, zero or one.
@@ -36,7 +50,7 @@ pub struct DepthOccupancyPage {
     pub original_length: u32,
     /// Length of the filtered selected list.
     pub filtered_length: u32,
-    /// Page offset in each list; pages hold at most 32 entries.
+    /// Page offset in each list; pages hold at most 128 entries.
     pub offset: u32,
     /// The original selected entries at this offset.
     pub original: Vec<DepthLightEntry>,

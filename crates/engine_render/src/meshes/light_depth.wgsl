@@ -10,6 +10,13 @@ fn depth_shading_word(index: u32) -> u32 {
     return cluster_ranges[index >> 1u][index & 1u];
 }
 
+fn depth_selected_light(offset: u32, filtered: bool) -> u32 {
+    if DEPTH_OCCUPANCY && filtered {
+        return depth_shading_word(depth_indices() + offset);
+    }
+    return cluster_lights[offset];
+}
+
 fn depth_shading_bin(value: f32, slice: u32) -> u32 {
     let base = depth_thresholds() + slice * 31u;
     var low = 0u;

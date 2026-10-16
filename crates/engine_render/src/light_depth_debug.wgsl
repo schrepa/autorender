@@ -24,7 +24,7 @@ fn inspect_light_depth(@builtin(local_invocation_index) lane: u32) {
         depth_page[8] = offset;
         depth_page[9] = clusters.lights.z;
         depth_page[10] = count;
-        depth_page[11] = 32u;
+        depth_page[11] = 128u;
         depth_page[12] = atomicLoad(&light_depth_arena[depth_header() + 2u]);
         depth_page[13] = atomicLoad(&light_depth_arena[depth_header() + 4u]);
         depth_page[14] = atomicLoad(&light_depth_arena[depth_header() + 5u]);
@@ -33,12 +33,12 @@ fn inspect_light_depth(@builtin(local_invocation_index) lane: u32) {
     if lane < 31u {
         depth_page[16u + lane] = atomicLoad(&light_depth_arena[depth_thresholds() + depth_slice(cluster) * 31u + lane]);
     }
-    if lane < 32u {
-        let destination = 47u + lane * 6u;
+    for (var item = lane; item < 128u; item += 64u) {
+        let destination = 47u + item * 6u;
         depth_page[destination] = 0xffffffffu;
         depth_page[destination + 1u] = 0xffffffffu;
-        if offset < length && lane < length - offset {
-            let index = full_indices[start + offset + lane];
+        if offset < length && item < length - offset {
+            let index = full_indices[start + offset + item];
             let light = lights[index];
             depth_page[destination] = index;
             depth_page[destination + 2u] = bitcast<u32>(light.position.x);
@@ -46,8 +46,8 @@ fn inspect_light_depth(@builtin(local_invocation_index) lane: u32) {
             depth_page[destination + 4u] = bitcast<u32>(light.position.z);
             depth_page[destination + 5u] = bitcast<u32>(light.range);
         }
-        if offset < filtered_length && lane < filtered_length - offset {
-            depth_page[destination + 1u] = atomicLoad(&light_depth_arena[depth_indices() + filtered_start + offset + lane]);
+        if offset < filtered_length && item < filtered_length - offset {
+            depth_page[destination + 1u] = atomicLoad(&light_depth_arena[depth_indices() + filtered_start + offset + item]);
         }
     }
 }

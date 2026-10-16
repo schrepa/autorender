@@ -619,6 +619,182 @@
       "direction": "lower"
     },
     {
+      "name": "local_lights.depth_occupancy.active",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.allocated_bytes",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "bytes",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.eligible_draws",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.empty_clusters",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.enabled",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.fallback",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "state",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.generation",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.kept_entries",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.occupied_bits",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.occupied_clusters",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.original_entries",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.phase",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.phases",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "state",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.readback_age",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.rejected_entries",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.depth_occupancy.view",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the optional depth-occupancy observation; counts name occupied clusters only, with per-phase generation and readback age",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "local_lights.dropped",
       "kind": "work",
       "rule": "not-above",

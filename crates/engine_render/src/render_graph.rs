@@ -817,31 +817,9 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
         ],
     };
     for phase in Phase::first(shape.phases) {
-        if phase == Phase::Two {
-            graph
-                .add(Pass::OcclusionTest)
-                .read(Depth)
-                .read(Poses)
-                .read_if(shape.clusters, Clusters)
-                .write(Pyramid)
-                .write(Visible)
-                .write_if(shape.clusters, Clusters);
-        }
+        opaque_inputs(graph, shape, phase);
         // Terrain, its cover and placed objects draw in the first phase,
         // after the meshes where terrain shades deferred.
-        if shape.light_depth {
-            graph
-                .add(Pass::LightDepthCollect { phase })
-                .read(Poses)
-                .read_if(gpu, Visible)
-                .read(Lights)
-                .write(LightDepthMask);
-            graph
-                .add(Pass::LightDepthFilter { phase })
-                .read(Lights)
-                .read(LightDepthMask)
-                .write(LightDepthLists);
-        }
         let first = phase == Phase::One;
         let forward = first && !shape.deferred;
         let mut opaque = graph
@@ -897,6 +875,35 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(Visible)
             .write(Probes);
     }
+}
+
+/// Current-phase masks follow the phase's latest visibility and pose inputs.
+fn opaque_inputs(graph: &mut RenderGraph, shape: &FrameShape, phase: Phase) {
+    use Resource::*;
+    if phase == Phase::Two {
+        graph
+            .add(Pass::OcclusionTest)
+            .read(Depth)
+            .read(Poses)
+            .read_if(shape.clusters, Clusters)
+            .write(Pyramid)
+            .write(Visible)
+            .write_if(shape.clusters, Clusters);
+    }
+    if !shape.light_depth {
+        return;
+    }
+    graph
+        .add(Pass::LightDepthCollect { phase })
+        .read(Poses)
+        .read_if(shape.gpu, Visible)
+        .read(Lights)
+        .write(LightDepthMask);
+    graph
+        .add(Pass::LightDepthFilter { phase })
+        .read(Lights)
+        .read(LightDepthMask)
+        .write(LightDepthLists);
 }
 
 /// Declares terrain shaded deferred after the first phase's meshes, drawing

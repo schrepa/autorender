@@ -332,7 +332,7 @@ impl Renderer {
                     binds.bindings.ids(pass, 1, ids);
                     let timed = self
                         .profiler
-                        .begin_draw(pass, || draw_label(batch, phase, Some(level)));
+                        .begin_draw(pass, || ordinary_label(batch, phase, Some(level), depth));
                     pass.draw_indexed_indirect(args, offset);
                     self.profiler.end_draw(pass, timed);
                     draws += 1;
@@ -340,7 +340,7 @@ impl Renderer {
             } else {
                 let timed = self
                     .profiler
-                    .begin_draw(pass, || draw_label(batch, phase, None));
+                    .begin_draw(pass, || ordinary_label(batch, phase, None, depth));
                 pass.draw_indexed(
                     draw.index_range(),
                     draw.base_vertex,
@@ -561,5 +561,22 @@ fn draw_label(batch: &DrawBatch, phase: usize, level: Option<usize>) -> String {
     match level {
         Some(level) => format!("mesh {mesh} material {material} phase {phase} level {level}"),
         None => format!("mesh {mesh} material {material} phase {phase}"),
+    }
+}
+
+fn ordinary_label(
+    batch: &DrawBatch,
+    phase: usize,
+    level: Option<usize>,
+    depth: Option<super::super::light_depth::DepthMeshKind>,
+) -> String {
+    let label = draw_label(batch, phase, level);
+    if matches!(
+        depth,
+        Some(super::super::light_depth::DepthMeshKind::Collect)
+    ) {
+        format!("light_depth_collect {label}")
+    } else {
+        label
     }
 }

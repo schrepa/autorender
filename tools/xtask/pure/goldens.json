@@ -567,7 +567,7 @@
     },
     "refusal unknown_variant at $.op": {
       "code": "unknown_variant",
-      "message": "unknown variant `weather`, expected one of `status`, `inspect`, `assets`, `digest`, `distribution`, `describe`, `raycast`, `overlap`, `shape_cast`, `terrain_height`, `nav_path`, `water_query`, `deformation_query`, `terrain_sweep`, `terrain_route`, `collision_events`",
+      "message": "unknown variant `weather`, expected one of `status`, `light_depth`, `inspect`, `assets`, `digest`, `distribution`, `describe`, `raycast`, `overlap`, `shape_cast`, `terrain_height`, `nav_path`, `water_query`, `deformation_query`, `terrain_sweep`, `terrain_route`, `collision_events`",
       "path": "$.op"
     },
     "refusal unsupported_version at $.version": {

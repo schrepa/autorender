@@ -319,7 +319,7 @@ mod gpu {
             let limits = device.limits();
             let limit = limits
                 .max_buffer_size
-                .min(u64::from(limits.max_storage_buffer_binding_size));
+                .min(limits.max_storage_buffer_binding_size);
             let Some(bytes) = crate::light_depth::arena_bytes(self.index_capacity(), limit) else {
                 self.depth_fallback = Some("arena_binding_limit");
                 self.release_depth(device);

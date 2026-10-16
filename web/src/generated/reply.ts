@@ -223,6 +223,16 @@ export interface DeformationQueryResult {
   stamps: number;
 }
 
+/** A full-list consumer's pipeline and uniform contract. */
+export interface DepthFullRoute {
+  /** Production consumer; this is a contract, not a claim it drew this frame. */
+  consumer: string;
+  /** The full-list uniform generation, always zero. */
+  generation: number;
+  /** The occupancy override used by this consumer's pipelines. */
+  occupancy_override: boolean;
+}
+
 /** One selected light, with its final GPU placement as exact binary32 bits. */
 export interface DepthLightEntry {
   /** Index in the original selected light buffer. */
@@ -249,13 +259,15 @@ export interface DepthOccupancyPage {
   filtered_length: number;
   /** The full-list uniform's tag. Zero prevents reading a filtered tail. */
   full_generation: number;
+  /** Full-list contracts, including consumers absent from the current fixture. */
+  full_routes: DepthFullRoute[];
   /** Nonzero tag copied from that submitted phase's arena. */
   generation: number;
   /** Unchanged capacity of the original index allocation, in entries. */
   index_capacity: number;
   /** Occupied fine-depth bits. */
   mask: number;
-  /** Page offset in each list; pages hold at most 32 entries. */
+  /** Page offset in each list; pages hold at most 128 entries. */
   offset: number;
   /** The original selected entries at this offset. */
   original: DepthLightEntry[];
@@ -543,6 +555,12 @@ export interface KeptArtifact {
   tick?: string | null;
 }
 
+/** A requested production light-depth page, pending until its GPU copy arrives. */
+export interface LightDepthResult {
+  /** None when inactive or before the requested copy completes. */
+  page?: DepthOccupancyPage | null;
+}
+
 /** What `nav_go` answers: where the agent now walks. */
 export interface NavGoResult {
   /** Where it walks (world x and z); null where it stopped. */
@@ -579,8 +597,6 @@ export interface NavPathResult {
   /** The walk; null where none reaches. */
   walk?: WalkResult | null;
 }
-
-export type Nullable_DepthOccupancyPage = DepthOccupancyPage | null;
 
 /**
  * The engine's state a reply observed. Counters and revisions are decimal
@@ -630,7 +646,7 @@ export interface OpResults {
   game: GameResult;
   input: InputResult;
   inspect: InspectResult;
-  light_depth: Nullable_DepthOccupancyPage;
+  light_depth: LightDepthResult;
   nav_go: NavGoResult;
   nav_path: NavPathResult;
   overlap: OverlapResult;
