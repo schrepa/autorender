@@ -18,9 +18,9 @@ mod settings;
 pub use crate::app_host::{TerrainClock, now_ms};
 pub use adapter::{AdapterStatus, vendor};
 pub use engine_core::{
-    Distribution, FileHeader, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs,
-    TerrainDebug, TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash, job_class,
-    job_priority, median,
+    BasinFogDeviceLimit, Distribution, FileHeader, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest,
+    JobShare, Jobs, TerrainDebug, TerrainView, TileRequest, URGENT_JOBS, VIEW_JOBS, content_hash,
+    job_class, job_priority, median,
 };
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub use environment::{HostEnvironment, KNOWN_DIFFERENCES};

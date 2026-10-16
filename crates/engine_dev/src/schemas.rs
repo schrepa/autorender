@@ -123,7 +123,6 @@ pub fn generated() -> Result<Generated, String> {
         crate::features::schemas(all);
     }
     dev_features(&mut problems);
-    reserved_inspectors(&mut problems);
     let Some(described) = schemas.as_object() else {
         return Err("the inspectors' schemas are not an object".to_owned());
     };
@@ -172,6 +171,7 @@ pub fn generated() -> Result<Generated, String> {
     if let Some(all) = schemas.as_object_mut() {
         all.extend(sections.schemas);
     }
+    reserved_inspectors(&schemas, &mut problems);
     let scene_schema = engine_scene::SceneDocument::schema_json();
     // The ops of queries and controls, from their schemas: no list to keep.
     let queries = ops(&schemas["protocol"], &mut problems);
@@ -342,8 +342,8 @@ fn frame_stats(problems: &mut Vec<String>) -> Value {
 /// Adds to `problems` each name describe or the hosts' tooling answers
 /// that an inspector may take: a probe registered under each must be
 /// refused as reserved.
-fn reserved_inspectors(problems: &mut Vec<String>) {
-    let mut tools = crate::DevTools::default();
+fn reserved_inspectors(schemas: &Value, problems: &mut Vec<String>) {
+    let mut tools = crate::DevTools::with_schemas(schemas);
     for name in crate::reserved_names() {
         let probe = crate::InspectorDescriptor::new(name, "a probe", json!({"type": "object"}));
         match tools.register_resource::<engine_core::FixedTime>(probe, |_| Value::Null) {

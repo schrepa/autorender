@@ -56,7 +56,7 @@ impl BasinPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         snapshot: &RenderSnapshot,
         cloud_shadows: &wgpu::Buffer,
     ) -> Result<bool, crate::RenderError> {
@@ -76,6 +76,7 @@ impl BasinPass {
             return Ok(switched);
         }
         let key: Vec<_> = snapshot
+            .terrain
             .basin_fog
             .iter()
             .map(|t| MapKey {
@@ -105,6 +106,7 @@ impl BasinPass {
         }
         let error = || crate::RenderError("basin fog exceeds checked storage capacity".into());
         let cells = snapshot
+            .terrain
             .basin_fog
             .iter()
             .try_fold(0usize, |n, t| n.checked_add(t.grid.floors.len()))
@@ -124,7 +126,7 @@ impl BasinPass {
             settings.extinction_per_m.to_bits(),
             settings.top_fade_m.to_bits(),
         ]);
-        for terrain in &snapshot.basin_fog {
+        for terrain in &snapshot.terrain.basin_fog {
             let _ = append(&mut words, terrain, [0, 0], terrain.grid.size).ok_or_else(error)?;
         }
         words[0] = (PREFIX + words.len()) as u32;
@@ -137,7 +139,7 @@ impl BasinPass {
             self.settings = Some(settings);
             self.bytes = 0;
             self.nodes = 0;
-            for terrain in &snapshot.basin_fog {
+            for terrain in &snapshot.terrain.basin_fog {
                 terrain.uploaded.store(terrain.revision, Ordering::Relaxed);
             }
             return Ok(switched);
@@ -161,21 +163,18 @@ impl BasinPass {
                 label: Some("engine/basin-cloud-prefix"),
             });
             self.copy_prefix(&mut prefix, cloud_shadows);
-            queue.submit([prefix.finish()]);
+            queue.submit_now([prefix.finish()]);
         }
-        queue.write_buffer(
-            self.buffer.as_ref().expect("allocated"),
-            (PREFIX * 4) as u64,
-            bytemuck::cast_slice(&words),
-        );
-        self.bytes = self.buffer.as_ref().expect("allocated").size();
+        let buffer = self.buffer.as_ref().ok_or_else(error)?;
+        queue.write_buffer(buffer, (PREFIX * 4) as u64, bytemuck::cast_slice(&words));
+        self.bytes = buffer.size();
         self.upload_bytes = (words.len() * 4) as u64;
         self.nodes = u64::from(words[1]);
         self.key = key;
         self.settings = Some(settings);
         // The queue write is ordered before this frame's submission. Published
         // maps are immutable, so the revision acknowledged is exactly this one.
-        for terrain in &snapshot.basin_fog {
+        for terrain in &snapshot.terrain.basin_fog {
             terrain.uploaded.store(terrain.revision, Ordering::Relaxed);
         }
         Ok(switched)

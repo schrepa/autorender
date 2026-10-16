@@ -6,7 +6,9 @@ use super::*;
 
 impl Renderer {
     /// Bytes available to optional fog after the shared cloud-shadow prefix.
-    pub fn basin_fog_capacity(&self) -> u64 { crate::basin_fog::capacity(&self.device) }
+    pub fn basin_fog_capacity(&self) -> u64 {
+        crate::basin_fog::capacity(&self.device)
+    }
 
     /// The GPU the renderer draws on.
     pub fn adapter(&self) -> &crate::AdapterInfo {

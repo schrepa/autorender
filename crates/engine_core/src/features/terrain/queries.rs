@@ -95,9 +95,6 @@ impl Terrains {
             .map(|state| &state.terrain)
     }
 
-    /// The layers `entity`'s tiles generate from: its own, with their
-    /// hydrology baked once it is and its edits over them;
-    /// `None` for terrains read from files.
     /// Stable completed generation layers for optional whole-terrain jobs,
     /// even when no camera requests a tile of this terrain this frame.
     pub(crate) fn completed_layers(&mut self, entity: Entity) -> Option<Arc<Layers>> {
@@ -117,6 +114,9 @@ impl Terrains {
         Some(state.generation(base))
     }
 
+    /// The layers `entity`'s tiles generate from: its own, with their
+    /// hydrology baked once it is and its edits over them;
+    /// `None` for terrains read from files.
     pub fn layers(&self, entity: Entity) -> Option<Arc<Layers>> {
         let state = self
             .entries

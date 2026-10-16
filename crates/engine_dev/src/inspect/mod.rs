@@ -194,15 +194,22 @@ impl Default for DevTools {
     fn default() -> Self {
         let schemas: Value = serde_json::from_str(include_str!("../generated/inspectors.json"))
             .expect("generated schemas are valid JSON");
+        Self::with_schemas(&schemas)
+    }
+}
+
+impl DevTools {
+    /// Builds the registry from current schemas, including during regeneration.
+    pub(crate) fn with_schemas(schemas: &Value) -> Self {
         let mut tools = Self {
             inspectors: BTreeMap::new(),
             builtins: None,
             features: BTreeMap::new(),
         };
-        tools.register_poses(&schemas);
-        tools.register_components(&schemas);
-        tools.register_environment(&schemas);
-        crate::features::register(&mut tools, &schemas);
+        tools.register_poses(schemas);
+        tools.register_components(schemas);
+        tools.register_environment(schemas);
+        crate::features::register(&mut tools, schemas);
         tools.builtins = Some(tools.inspectors.len());
         tools
     }

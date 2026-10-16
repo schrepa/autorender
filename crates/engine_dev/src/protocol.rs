@@ -69,8 +69,8 @@ use crate::features::{
     navigation::{NavGoControl, NavPathQuery},
     ocean::WaterQuery,
     terrain::{
-        BasinFogSampleQuery, TerrainControl, TerrainEditControl, TerrainHeightQuery, TerrainRedoControl,
-        TerrainRouteQuery, TerrainSweepQuery, TerrainUndoControl,
+        BasinFogSampleQuery, TerrainControl, TerrainEditControl, TerrainHeightQuery,
+        TerrainRedoControl, TerrainRouteQuery, TerrainSweepQuery, TerrainUndoControl,
     },
     world_streaming::WorldChangesControl,
 };

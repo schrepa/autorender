@@ -5,7 +5,9 @@ use super::*;
 
 impl Terrains {
     /// Clock available to incremental whole-terrain jobs.
-    pub(crate) fn work_clock(&self) -> Option<fn() -> f64> { self.clock }
+    pub(crate) fn work_clock(&self) -> Option<fn() -> f64> {
+        self.clock
+    }
 
     /// Tiles the device holds, which renderers report: residency never
     /// exceeds it. `None` for no limit.

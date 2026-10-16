@@ -60,7 +60,7 @@
           "hash": "cec8a534d0550bf0"
         }
       },
-      "entities": 10756,
+      "entities": 10757,
       "hash": "108aa48c9db5e4db"
     },
     "content dense": {
@@ -108,7 +108,7 @@
           "hash": "71d2976ae2d9972e"
         }
       },
-      "entities": 10159,
+      "entities": 10160,
       "hash": "d1a13d5c91035c99"
     },
     "content field": {
@@ -160,7 +160,7 @@
           "hash": "857359c078750dcd"
         }
       },
-      "entities": 10372,
+      "entities": 10373,
       "hash": "6a7032a82d969f38"
     },
     "content highlands": {
@@ -224,7 +224,7 @@
           "hash": "cdd1696b966b996a"
         }
       },
-      "entities": 10378,
+      "entities": 10379,
       "hash": "7e23dbfc35b31fb6"
     },
     "content metro": {
@@ -300,7 +300,7 @@
           "hash": "47123809d28c1818"
         }
       },
-      "entities": 15331,
+      "entities": 15332,
       "hash": "bd6d3fcb1a3679fc"
     },
     "terrain frames": 400,
@@ -567,7 +567,7 @@
     },
     "refusal unknown_variant at $.op": {
       "code": "unknown_variant",
-      "message": "unknown variant `weather`, expected one of `status`, `inspect`, `assets`, `digest`, `distribution`, `describe`, `raycast`, `overlap`, `shape_cast`, `terrain_height`, `nav_path`, `water_query`, `deformation_query`, `terrain_sweep`, `terrain_route`, `collision_events`",
+      "message": "unknown variant `weather`, expected one of `status`, `inspect`, `assets`, `digest`, `distribution`, `describe`, `raycast`, `overlap`, `shape_cast`, `terrain_height`, `basin_fog_sample`, `nav_path`, `water_query`, `deformation_query`, `terrain_sweep`, `terrain_route`, `collision_events`",
       "path": "$.op"
     },
     "refusal unsupported_version at $.version": {

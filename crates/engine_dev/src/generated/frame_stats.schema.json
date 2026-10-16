@@ -13,6 +13,35 @@
       ],
       "type": "object"
     },
+    "BasinFogStats": {
+      "description": "Optional view fog's retained GPU storage and current uploads.",
+      "properties": {
+        "gpu_bytes": {
+          "description": "Bytes of optional GPU storage, including its shared cloud prefix.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nodes": {
+          "description": "Nonempty hierarchy nodes traversed by enabled view shaders.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "upload_bytes": {
+          "description": "Bytes of fog header and hierarchy uploaded this frame.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "gpu_bytes",
+        "upload_bytes",
+        "nodes"
+      ],
+      "type": "object"
+    },
     "CellStats": {
       "description": "World streaming's state after the last extraction.",
       "properties": {
@@ -630,6 +659,10 @@
     "TerrainRenderStats": {
       "description": "Terrains.",
       "properties": {
+        "basin_fog": {
+          "$ref": "#/$defs/BasinFogStats",
+          "description": "Optional terrain basin medium."
+        },
         "dropped_materials": {
           "description": "Surface materials past the palette's capacity, or whose maps the\nshared arrays cannot hold (block compressed, or sized unlike the first\nmaterial's), which show a plain color instead.",
           "format": "uint32",
@@ -776,6 +809,7 @@
         }
       },
       "required": [
+        "basin_fog",
         "patches",
         "triangles",
         "shadow_patches",

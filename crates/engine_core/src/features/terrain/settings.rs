@@ -33,89 +33,53 @@ settings! {
     pub struct TerrainSettings {
         /// Whether terrains draw.
         pub enabled: bool = true => any,
-        /// Pixels a level's samples span before the next coarser level takes
-        /// over; smaller draws more triangles.
+        /// Pixels per sample before coarsening; smaller values draw more triangles.
         pub pixel_error: f32 = 6.0 => range(1.0, 64.0),
-        /// The coarsest levels kept resident over the whole terrain, so it
-        /// always draws whole.
+        /// Coarsest levels kept resident everywhere so the terrain always draws whole.
         pub pinned_levels: u32 = 2 => range(1, 8),
-        /// An optional budget of resident tiles (about 270 KB each, twice that
-        /// on the GPU); the least important beyond it drop.
+        /// Resident tile budget (about 270 KB CPU, twice that GPU, each); least important excess tiles drop.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_tiles: Option<u32> = None => budget,
-        /// Work generated, decoded or baked between checks of the frame's work
-        /// time, in samples' worth (67,000 a decoded tile, about 500,000 a
-        /// generated one); a frame's whole work where hosts give terrain no
-        /// clock.
+        /// Work per clock check, in samples (67,000 per decoded tile, about 500,000 per generated tile); the whole frame budget without a clock.
         pub samples_per_frame: u32 = 24_576 => at_least(1),
-        /// Milliseconds a frame works on terrain until the camera's view first
-        /// loads whole: loading takes large slices of frames.
+        /// Milliseconds of terrain work per frame until the view first loads whole.
         pub loading_work_ms: f32 = 50.0 => range(0.1, 1000.0),
-        /// Milliseconds a frame works on terrain after: play takes small
-        /// slices.
+        /// Milliseconds of terrain work per frame after the view loads.
         pub work_ms: f32 = 4.0 => range(0.1, 1000.0),
-        /// Meters around the camera and focus entities within which level-0
-        /// tiles load for collision.
+        /// Level-0 collision radius around the camera and focus entities, meters.
         pub collision_radius: f32 = 192.0 => range(0.0, 4096.0),
-        /// Long sun shadows through each terrain's horizon map,
-        /// with shadows on; shadow maps then draw terrain near the camera only.
-        /// Off, terrain casts into the shadow maps alone.
+        /// With shadows on, horizon maps cast long sun shadows and shadow maps cover nearby terrain. Off uses shadow maps alone.
         pub sun_shadows: bool = true => any,
         /// Texels along a horizon map's sides, 8 bytes each.
         pub shadow_resolution: u32 = 1024 => range(64, 4096),
-        /// Shadow edge height per meter to the slope casting it (the sun's disc
-        /// gives 0.0093).
+        /// Shadow-edge height per meter to its casting slope; the sun's disc gives 0.0093.
         pub shadow_softness: f32 = 0.01 => range(0.0, 0.2),
-        /// Ambient light on terrain scaled by how much sky its ground sees:
-        /// each terrain's sky visibility map, built once its
-        /// finest pinned level is resident, where valleys and hollows see less
-        /// sky and take their own light back instead.
+        /// Scale ambient light by terrain sky visibility, baked once the finest pinned level is resident. Sheltered valleys take ground light instead.
         pub sky_visibility: bool = true => any,
         /// Texels along a sky visibility map's sides, 4 bytes each.
         pub sky_resolution: u32 = 1024 => range(64, 4096),
-        /// Meters from the camera within which the ground's relief shows, its
-        /// view rays marching through its materials' heights; 0 none.
+        /// Distance for material-height ray marching, meters; 0 disables relief.
         pub relief_distance: f32 = 24.0 => range(0.0, 200.0),
         /// The most steps a relief ray takes.
         pub relief_steps: u32 = 8 => range(2, 64),
-        /// Ground generated around terrains with surroundings
-        /// streams and draws; off, every terrain ends at its edges.
+        /// Stream generated surroundings; off ends each terrain at its edges.
         pub surroundings: bool = true => any,
-        /// Detail lowered while the camera moves fast: off by
-        /// default, as it lowers detail in motion on purpose.
+        /// Optional detail reduction during fast camera motion; absent by default.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub motion_detail: Option<MotionDetail> = None => any,
-        /// Bytes of tiles kept in memory after the view leaves them,
-        /// about 600 KB each, to return at once when it comes back: the
-        /// least recently used beyond drop, and 0 keeps none.
+        /// Tile cache bytes (about 600 KB per tile). Least recently used excess tiles drop; 0 caches none.
         pub cache_bytes: u64 = 256 << 20 => any,
-        /// Bytes of tiles becoming resident in a frame, which the GPU takes in
-        /// that frame, about 540 KB a tile: tiles beyond wait for the next,
-        /// though each frame's first arrives whatever its size.
+        /// Tile bytes admitted per frame (about 540 KB each). Excess tiles wait; the first tile always fits.
         pub upload_bytes: u32 = 8 << 20 => at_least(1),
-        /// Multiples of each level's range within which workers generate tiles
-        /// ahead of the view into memory while nothing is missing; within the
-        /// keeping reach (2.5) none.
+        /// Worker prefetch distance in level-range multiples while nothing is missing; none within the 2.5 keeping reach.
         pub idle_reach: f32 = 3.0 => range(0.0, 8.0),
-        /// The most bands of rows a tile under the view generates in at once
-        /// on workers the other such tiles leave free; 1 generates whole tiles.
+        /// Most row bands per view tile on spare workers; 1 generates whole tiles.
         pub max_bands: u32 = 4 => range(1, 16),
-        /// Tiles' surface materials from the GPU: tiles generate
-        /// without control values, which a compute pass gives each as it
-        /// uploads, the rules' own but where GPU rounding crosses a threshold;
-        /// gameplay reads the rules at the points it asks. Off, the CPU gives
-        /// them.
+        /// Compute tile material controls on GPU upload; rounding may cross rule thresholds. Gameplay queries evaluate rules. Off computes controls on CPU.
         pub gpu_materials: bool = true => any,
-        /// The runtime virtual texture: the ground's materials
-        /// baked into pages the views ask for, which pixels read in place of
-        /// computing them; ground finer than its texels, steep ground and pages
-        /// not baked yet compute theirs.
+        /// Bake requested material pages for pixel lookups. Steep or finer ground and missing pages evaluate materials directly.
         pub virtual_texture: bool = true => any,
-        /// An optional budget of pages it keeps (about 340 KB each). Omitted,
-        /// it keeps as many as the views ask for, up to the device's texture
-        /// array layers; beyond either, pages unasked for a while make room,
-        /// and those asked for with none left drop (the ground computes
-        /// itself).
+        /// Optional page budget (about 340 KB each), also device-limited. Unrequested pages yield space; excess requested pages drop to direct shading.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub virtual_texture_pages: Option<u32> = None => budget,
         /// Pages it bakes in a frame at most, about 0.1 ms each on an

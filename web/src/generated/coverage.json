@@ -19,6 +19,7 @@
       "inspector": "Camera",
       "kind": "resource",
       "smokes": [
+        "basin-fog-render",
         "input",
         "surfaces"
       ]
@@ -394,6 +395,7 @@
     {
       "op": "terrain_height",
       "smokes": [
+        "basin-fog-topology",
         "host-parity",
         "jobs",
         "streaming",
@@ -688,6 +690,7 @@
     {
       "op": "game",
       "smokes": [
+        "basin-fog-render",
         "host-parity",
         "jobs",
         "lod",
@@ -848,6 +851,15 @@
       "stats": true
     },
     {
+      "inspector": "BasinFog",
+      "section": "basin_fog",
+      "smokes": [
+        "basin-fog-render",
+        "basin-fog-topology"
+      ],
+      "stats": false
+    },
+    {
       "inspector": "GroundCover",
       "section": "ground_cover",
       "smokes": [
@@ -884,7 +896,7 @@
       "inspector": "Water",
       "section": "water",
       "smokes": [
-        "basin-fog-render",
+        "basin-fog-topology",
         "jobs",
         "terrain-water-sky"
       ],
@@ -914,16 +926,8 @@
       "inspector": "Clouds",
       "section": "clouds",
       "smokes": [
-        "terrain-water-sky"
-      ],
-      "stats": true
-    },
-    {
-      "inspector": "BasinFog",
-      "section": "basin_fog",
-      "smokes": [
         "basin-fog-render",
-        "basin-fog-topology"
+        "terrain-water-sky"
       ],
       "stats": true
     },

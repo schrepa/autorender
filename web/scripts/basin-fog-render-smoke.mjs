@@ -207,7 +207,7 @@ try{
   await capture(page,command,output,"highlands-replaced-world");
   await openPaused(page,highlandsUrl("off"),{timeout:180000});
   let rendering;for(let i=0;i<1200;i++){rendering=(await command("render")).result.rendering;if(!rendering.loading&&!rendering.pipelines_compiling)break;await page.waitForTimeout(50);}
-  assert.equal(rendering.basin_fog.gpu_bytes,0);await capture(page,command,output,"highlands-original-off");
+  assert.equal(rendering.terrain.basin_fog.gpu_bytes,0);await capture(page,command,output,"highlands-original-off");
   assert.equal(errors.length,0,errors.join("\n"));await record(output,"results",results);
   const measurements=[];
   for(const result of results){

@@ -47,10 +47,10 @@ mod games {
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaMode, AmbientOcclusion, AnimatedProperty,
         AnimationChannel, AnimationClip, AnimationPlayer, AnimationPlugin, AnimationSystems, App,
-        AssetBudget, AssetError, AssetLibrary, Atmosphere, BasinFog, BasinFogs, Bloom, Camera, ClipHandle, Clouds,
-        ContactShadows, Cover, Cube, Decal, DecalBlend, DecalSettings, Deformation,
-        DeformationPlugin, Deformer, Engine, EngineConfig, EngineEntityCommands, Environment,
-        Feature, Filter, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
+        AssetBudget, AssetError, AssetLibrary, Atmosphere, BasinFog, BasinFogs, Bloom, Camera,
+        ClipHandle, Clouds, ContactShadows, Cover, Cube, Decal, DecalBlend, DecalSettings,
+        Deformation, DeformationPlugin, Deformer, Engine, EngineConfig, EngineEntityCommands,
+        Environment, Feature, Filter, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
         FixedSimulationSystems, FixedTickEnd, FixedTickEndSystems, FixedTime, Floating,
         FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Ground, GroundCover,
         GroundSample, Grounded, Grounding, HeightHeld, HierarchyError, InputState, Interior,
@@ -94,16 +94,16 @@ pub mod terrain {
     /// patches and the `ETR1` format.
     pub use engine_core::terrain_data as data;
     pub use engine_core::{
-        AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes,
-        Blend, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion, ErosionLayer, ErosionStage,
-        FarPlacement, HeightImage, HeightmapLayer, Hydrology, HydrologyLayer, HydrologySample,
-        HydrologyStage, Layer, LayerError, Layers, MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS,
-        MIN_COLLIDER_EXTENT, Mask, MotionDetail, NoiseLayer, NoiseMask, Patch, PathLayer,
-        PathProfile, PathStage, Placed, PlacedCollider, PlacedShape, PlacementAsset,
-        PlacementChoice, PlacementLayer, PlacementLod, Pyramid, PyramidError, Remap, Route,
-        RouteOptions, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Surroundings,
-        SurroundingsStatus, TerrainBakes, TerrainEdit, TerrainPrefetch, TerrainSource,
-        TerrainSurface, Tile, TileKey, WaterGrid,
+        AUTHORED_LAYER, AuthoredPlacement, BasinFogView, BasinPoolView, BasinTerrainView, Biome,
+        BiomeError, BiomeLayer, BiomeRules, Biomes, Blend, Control, DECK_DEPTH, DECK_MARGIN,
+        DECK_RISE, Erosion, ErosionLayer, ErosionStage, FarPlacement, HeightImage, HeightmapLayer,
+        Hydrology, HydrologyLayer, HydrologySample, HydrologyStage, Layer, LayerError, Layers,
+        MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS, MIN_COLLIDER_EXTENT, Mask, MotionDetail,
+        NoiseLayer, NoiseMask, Patch, PathLayer, PathProfile, PathStage, Placed, PlacedCollider,
+        PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, Pyramid,
+        PyramidError, Remap, Route, RouteOptions, Stamp, StampOp, SurfaceMaterial,
+        SurfaceProjection, Surroundings, SurroundingsStatus, TerrainBakes, TerrainEdit,
+        TerrainPrefetch, TerrainSource, TerrainSurface, Tile, TileKey, WaterGrid,
     };
 }
 
@@ -115,12 +115,13 @@ pub mod render {
         DeformationMap, GROUP_WORDS, GpuCurrent, GpuPresentation, MAX_NORMAL_INVERSE_NORM,
         MaterialBinding, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID,
         NODE_WORDS, NodeInfo, NodePose, PAGE_WORDS, PoseRows, PresentationMode, RIM_REACH,
-        RIM_START, RenderDecal, RenderDecals, RenderDeformation, RenderEmitter, RenderFrame,
-        RenderInstance, RenderJoint, RenderLight, RenderLights, RenderMaterial, RenderMesh,
-        RenderParticles, RenderPlacementAsset, RenderReflectionProbe, RenderReflectionProbes,
-        RenderSnapshot, RenderSurfaceMaps, RenderTerrain, RenderTerrains, RenderTexture,
-        STREAMING_GRIDS, StreamingGrid, TransformIndex, TransformPropagation, VIRTUAL_MESH_MAGIC,
-        carve_profile, presentation_bounds, propagate_transforms, rim_profile, valid_global_matrix,
+        RIM_START, RenderBasinFog, RenderDecal, RenderDecals, RenderDeformation, RenderEmitter,
+        RenderFrame, RenderInstance, RenderJoint, RenderLight, RenderLights, RenderMaterial,
+        RenderMesh, RenderParticles, RenderPlacementAsset, RenderReflectionProbe,
+        RenderReflectionProbes, RenderSnapshot, RenderSurfaceMaps, RenderTerrain, RenderTerrains,
+        RenderTexture, STREAMING_GRIDS, StreamingGrid, TransformIndex, TransformPropagation,
+        VIRTUAL_MESH_MAGIC, carve_profile, presentation_bounds, propagate_transforms, rim_profile,
+        valid_global_matrix,
     };
 }
 
@@ -128,10 +129,10 @@ pub mod render {
 /// agents read it.
 pub mod stats {
     pub use engine_core::{
-        Applied, BasinFogStats, CellStats, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn,
-        ErosionStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats, Names,
-        NavStats, OccupancyStats, OceanStats, PathStats, ProbeStats, RenderStats, ShadowStats,
-        SkyStats, TerrainRenderStats, TerrainStats, VirtualGeometryStats, WaterStats,
+        Applied, BasinFogStats, CellStats, CloudStats, CullingStats, DeformationStats, DetailStats,
+        Drawn, ErosionStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats,
+        Names, NavStats, OccupancyStats, OceanStats, PathStats, ProbeStats, RenderStats,
+        ShadowStats, SkyStats, TerrainRenderStats, TerrainStats, VirtualGeometryStats, WaterStats,
     };
 }
 

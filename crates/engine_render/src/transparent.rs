@@ -266,7 +266,9 @@ pub(crate) struct TransparencyFrame {
 impl Transparency {
     /// Recreates existing particle pipelines for the current fog specialization.
     pub(crate) fn set_basin_fog(&mut self, device: &wgpu::Device, enabled: bool) {
-        if let Some(particles) = &mut self.particles { particles.set_basin_fog(device, enabled, &accumulation_targets()); }
+        if let Some(particles) = &mut self.particles {
+            particles.set_basin_fog(device, enabled, &accumulation_targets());
+        }
     }
 
     /// Prepares a frame's transparency: its transparent mesh batches when
@@ -301,7 +303,8 @@ impl Transparency {
                         surface_format,
                         depth_format,
                         &accumulation_targets(),
-                        snapshot.environment.basin_fog.enabled && snapshot.environment.basin_fog.budget_m > 0.0,
+                        snapshot.environment.basin_fog.enabled
+                            && snapshot.environment.basin_fog.budget_m > 0.0,
                     )
                 });
                 let prepared = particles.prepare(device, queue, snapshot, emitters, size, depth);

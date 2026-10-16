@@ -1666,6 +1666,57 @@
       },
       "additionalProperties": false
     },
+    "SceneBasinFog": {
+      "description": "An artistic fog medium with a finite volume, not a weather forecast.",
+      "type": "object",
+      "properties": {
+        "budget_m": {
+          "description": "Cubic meters supplied per square meter of valid terrain.",
+          "type": "number",
+          "format": "float",
+          "default": 2.0,
+          "minimum": 0.0
+        },
+        "enabled": {
+          "description": "Whether the optional medium is enabled.",
+          "type": "boolean",
+          "default": true
+        },
+        "extinction_per_m": {
+          "description": "Optical extinction per meter through full-density fog.",
+          "type": "number",
+          "format": "float",
+          "default": 0.02500000037252903,
+          "minimum": 0.0
+        },
+        "level": {
+          "description": "Fixed terrain pyramid level used by the volume solver.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 4,
+          "maximum": 15,
+          "minimum": 0
+        },
+        "max_bytes": {
+          "description": "Workspace, retained maps and upload replacements; omitted is unbounded.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "top_fade_m": {
+          "description": "Vertical density ramp below a pool top, meters.",
+          "type": "number",
+          "format": "float",
+          "default": 3.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneBloom": {
       "description": "Bloom; an intensity of 0 turns it off.",
       "type": "object",
@@ -2378,6 +2429,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneAtmosphere"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "basin_fog": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneBasinFog"
             },
             {
               "type": "null"
@@ -4788,14 +4849,14 @@
       "type": "object",
       "properties": {
         "cache_bytes": {
-          "description": "Bytes of tiles kept in memory after the view leaves them,\nabout 600 KB each, to return at once when it comes back: the\nleast recently used beyond drop, and 0 keeps none.",
+          "description": "Tile cache bytes (about 600 KB per tile). Least recently used excess tiles drop; 0 caches none.",
           "type": "integer",
           "format": "uint64",
           "default": 268435456,
           "minimum": 0
         },
         "collision_radius": {
-          "description": "Meters around the camera and focus entities within which level-0\ntiles load for collision.",
+          "description": "Level-0 collision radius around the camera and focus entities, meters.",
           "type": "number",
           "format": "float",
           "default": 192.0,
@@ -4808,12 +4869,12 @@
           "default": true
         },
         "gpu_materials": {
-          "description": "Tiles' surface materials from the GPU: tiles generate\nwithout control values, which a compute pass gives each as it\nuploads, the rules' own but where GPU rounding crosses a threshold;\ngameplay reads the rules at the points it asks. Off, the CPU gives\nthem.",
+          "description": "Compute tile material controls on GPU upload; rounding may cross rule thresholds. Gameplay queries evaluate rules. Off computes controls on CPU.",
           "type": "boolean",
           "default": true
         },
         "idle_reach": {
-          "description": "Multiples of each level's range within which workers generate tiles\nahead of the view into memory while nothing is missing; within the\nkeeping reach (2.5) none.",
+          "description": "Worker prefetch distance in level-range multiples while nothing is missing; none within the 2.5 keeping reach.",
           "type": "number",
           "format": "float",
           "default": 3.0,
@@ -4821,7 +4882,7 @@
           "minimum": 0.0
         },
         "loading_work_ms": {
-          "description": "Milliseconds a frame works on terrain until the camera's view first\nloads whole: loading takes large slices of frames.",
+          "description": "Milliseconds of terrain work per frame until the view first loads whole.",
           "type": "number",
           "format": "float",
           "default": 50.0,
@@ -4829,7 +4890,7 @@
           "minimum": 0.1
         },
         "max_bands": {
-          "description": "The most bands of rows a tile under the view generates in at once\non workers the other such tiles leave free; 1 generates whole tiles.",
+          "description": "Most row bands per view tile on spare workers; 1 generates whole tiles.",
           "type": "integer",
           "format": "uint32",
           "default": 4,
@@ -4837,7 +4898,7 @@
           "minimum": 1
         },
         "max_tiles": {
-          "description": "An optional budget of resident tiles (about 270 KB each, twice that\non the GPU); the least important beyond it drop.",
+          "description": "Resident tile budget (about 270 KB CPU, twice that GPU, each); least important excess tiles drop.",
           "type": [
             "integer",
             "null"
@@ -4846,7 +4907,7 @@
           "minimum": 1
         },
         "motion_detail": {
-          "description": "Detail lowered while the camera moves fast: off by\ndefault, as it lowers detail in motion on purpose.",
+          "description": "Optional detail reduction during fast camera motion; absent by default.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrainMotionDetail"
@@ -4857,7 +4918,7 @@
           ]
         },
         "pinned_levels": {
-          "description": "The coarsest levels kept resident over the whole terrain, so it\nalways draws whole.",
+          "description": "Coarsest levels kept resident everywhere so the terrain always draws whole.",
           "type": "integer",
           "format": "uint32",
           "default": 2,
@@ -4865,7 +4926,7 @@
           "minimum": 1
         },
         "pixel_error": {
-          "description": "Pixels a level's samples span before the next coarser level takes\nover; smaller draws more triangles.",
+          "description": "Pixels per sample before coarsening; smaller values draw more triangles.",
           "type": "number",
           "format": "float",
           "default": 6.0,
@@ -4873,7 +4934,7 @@
           "minimum": 1.0
         },
         "relief_distance": {
-          "description": "Meters from the camera within which the ground's relief shows, its\nview rays marching through its materials' heights; 0 none.",
+          "description": "Distance for material-height ray marching, meters; 0 disables relief.",
           "type": "number",
           "format": "float",
           "default": 24.0,
@@ -4889,7 +4950,7 @@
           "minimum": 2
         },
         "samples_per_frame": {
-          "description": "Work generated, decoded or baked between checks of the frame's work\ntime, in samples' worth (67,000 a decoded tile, about 500,000 a\ngenerated one); a frame's whole work where hosts give terrain no\nclock.",
+          "description": "Work per clock check, in samples (67,000 per decoded tile, about 500,000 per generated tile); the whole frame budget without a clock.",
           "type": "integer",
           "format": "uint32",
           "default": 24576,
@@ -4904,7 +4965,7 @@
           "minimum": 64
         },
         "shadow_softness": {
-          "description": "Shadow edge height per meter to the slope casting it (the sun's disc\ngives 0.0093).",
+          "description": "Shadow-edge height per meter to its casting slope; the sun's disc gives 0.0093.",
           "type": "number",
           "format": "float",
           "default": 0.009999999776482582,
@@ -4920,29 +4981,29 @@
           "minimum": 64
         },
         "sky_visibility": {
-          "description": "Ambient light on terrain scaled by how much sky its ground sees:\neach terrain's sky visibility map, built once its\nfinest pinned level is resident, where valleys and hollows see less\nsky and take their own light back instead.",
+          "description": "Scale ambient light by terrain sky visibility, baked once the finest pinned level is resident. Sheltered valleys take ground light instead.",
           "type": "boolean",
           "default": true
         },
         "sun_shadows": {
-          "description": "Long sun shadows through each terrain's horizon map,\nwith shadows on; shadow maps then draw terrain near the camera only.\nOff, terrain casts into the shadow maps alone.",
+          "description": "With shadows on, horizon maps cast long sun shadows and shadow maps cover nearby terrain. Off uses shadow maps alone.",
           "type": "boolean",
           "default": true
         },
         "surroundings": {
-          "description": "Ground generated around terrains with surroundings\nstreams and draws; off, every terrain ends at its edges.",
+          "description": "Stream generated surroundings; off ends each terrain at its edges.",
           "type": "boolean",
           "default": true
         },
         "upload_bytes": {
-          "description": "Bytes of tiles becoming resident in a frame, which the GPU takes in\nthat frame, about 540 KB a tile: tiles beyond wait for the next,\nthough each frame's first arrives whatever its size.",
+          "description": "Tile bytes admitted per frame (about 540 KB each). Excess tiles wait; the first tile always fits.",
           "type": "integer",
           "format": "uint32",
           "default": 8388608,
           "minimum": 1
         },
         "virtual_texture": {
-          "description": "The runtime virtual texture: the ground's materials\nbaked into pages the views ask for, which pixels read in place of\ncomputing them; ground finer than its texels, steep ground and pages\nnot baked yet compute theirs.",
+          "description": "Bake requested material pages for pixel lookups. Steep or finer ground and missing pages evaluate materials directly.",
           "type": "boolean",
           "default": true
         },
@@ -4954,7 +5015,7 @@
           "minimum": 1
         },
         "virtual_texture_pages": {
-          "description": "An optional budget of pages it keeps (about 340 KB each). Omitted,\nit keeps as many as the views ask for, up to the device's texture\narray layers; beyond either, pages unasked for a while make room,\nand those asked for with none left drop (the ground computes\nitself).",
+          "description": "Optional page budget (about 340 KB each), also device-limited. Unrequested pages yield space; excess requested pages drop to direct shading.",
           "type": [
             "integer",
             "null"
@@ -4963,7 +5024,7 @@
           "minimum": 1
         },
         "work_ms": {
-          "description": "Milliseconds a frame works on terrain after: play takes small\nslices.",
+          "description": "Milliseconds of terrain work per frame after the view loads.",
           "type": "number",
           "format": "float",
           "default": 4.0,

@@ -156,6 +156,9 @@ pub struct RenderTerrain {
 /// The frame's terrains.
 #[derive(Clone, Debug, Default)]
 pub struct RenderTerrains {
+    /// Immutable optional basin-fog maps, current to terrain geometry.
+    pub basin_fog: Vec<crate::RenderBasinFog>,
+
     pub terrains: Vec<RenderTerrain>,
     /// The camera's view and projection without its translation: terrain
     /// draws camera-relative, from positions less the camera's.
@@ -167,6 +170,10 @@ pub struct RenderTerrains {
 
 /// Lists every terrain's resident tiles and the camera's patches.
 pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut RenderSnapshot) {
+    snapshot.terrain.basin_fog.clear();
+    if let Some(fog) = world.get_resource::<crate::BasinFogs>() {
+        fog.render(&mut snapshot.terrain.basin_fog);
+    }
     let listing = &mut snapshot.terrain;
     let missing = &mut snapshot.missing_assets;
     let assets = world.get_resource::<AssetLibrary>();

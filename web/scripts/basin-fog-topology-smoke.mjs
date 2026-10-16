@@ -19,7 +19,7 @@ try{
   console.log("Initial fog map and upload ready.");
   assert.equal(t.size[0],256);assert.equal(t.size[1],256);assert.equal(t.wet_cells,64516);assert.equal(t.pools,1);
   near(t.input_m3,16384);near(t.retained_m3,16129);near(t.drained_m3,255);near(t.lid_range[0],0.25,0.0001);
-  assert.ok(rendering.basin_fog.gpu_bytes>0);assert.equal(state.pending_jobs,0);assert.equal(state.pending_uploads,0);
+  assert.ok(rendering.terrain.basin_fog.gpu_bytes>0);assert.equal(state.pending_jobs,0);assert.equal(state.pending_uploads,0);
   const sample=async(points,terrain="ground")=>(await command("basin_fog_sample",{terrain,points})).result.samples;
   const map=async()=>{
     const labels=new Map(),hash=createHash("sha256");let wet=0,volume=0;
@@ -104,15 +104,15 @@ try{
   await command("environment",{merge:true,basin_fog:{max_bytes:admittedBytes}});({state}=await settle(command,v=>v.dropped_terrains===1&&v.terrains.some(t=>t.state==="ready")));
   assert.equal(state.terrains[0].state,"ready");assert.equal(state.terrains[1].state,"dropped");checks.push({case:"equal-distance entity priority",state});
   await command("environment",{merge:true,basin_fog:{max_bytes:0}});
-  ({state,rendering}=await settle(command,v=>v.dropped_terrains===2));assert.equal(state.pending_jobs,0);assert.equal(rendering.basin_fog.nodes,0);
+  ({state,rendering}=await settle(command,v=>v.dropped_terrains===2));assert.equal(state.pending_jobs,0);assert.equal(rendering.terrain.basin_fog.nodes,0);
   await command("environment",{merge:true,basin_fog:{max_bytes:null}});({state}=await settle(command));assert.equal(state.dropped_terrains,0);
   for(let cycle=0;cycle<3;cycle++){
     await command("environment",{merge:true,basin_fog:{enabled:false}});({state,rendering}=await settle(command,v=>v.terrains.length===0));
-    assert.equal(rendering.basin_fog.gpu_bytes,0);assert.equal(rendering.basin_fog.upload_bytes,0);assert.equal(state.requested_bytes,0);
-    checks.push({case:`off ${cycle}`,state,rendering:rendering.basin_fog});
-    await command("environment",{merge:true,basin_fog:{enabled:true}});const on=await settle(command);checks.push({case:`on ${cycle}`,state:on.state,rendering:on.rendering.basin_fog});
+    assert.equal(rendering.terrain.basin_fog.gpu_bytes,0);assert.equal(rendering.terrain.basin_fog.upload_bytes,0);assert.equal(state.requested_bytes,0);
+    checks.push({case:`off ${cycle}`,state,rendering:rendering.terrain.basin_fog});
+    await command("environment",{merge:true,basin_fog:{enabled:true}});const on=await settle(command);checks.push({case:`on ${cycle}`,state:on.state,rendering:on.rendering.terrain.basin_fog});
   }
-  await command("environment",{merge:true,basin_fog:{budget_m:0}});({state,rendering}=await settle(command,v=>v.terrains.length===0));assert.equal(rendering.basin_fog.gpu_bytes,0);
+  await command("environment",{merge:true,basin_fog:{budget_m:0}});({state,rendering}=await settle(command,v=>v.terrains.length===0));assert.equal(rendering.terrain.basin_fog.gpu_bytes,0);
   await command("environment",{merge:true,basin_fog:{budget_m:-1}},false);
   await command("environment",{merge:true,basin_fog:{level:999}},false);
   const invalid=document();invalid.entities[0].terrain.tiles=[4294967295,4294967295];invalid.revision=scene.scene.revision+1;
@@ -126,7 +126,7 @@ try{
   execFileSync("cargo",["run","-q","-p","engine_assetc","--release","--bin","terrain_bake","--",fileURLToPath(new URL("source.scene.json",fixtureFolder)),"ground",fileURLToPath(new URL("ground.etr",fixtureFolder))],{stdio:"inherit"});
   fileDocument.entities[0].terrain={origin:[0,0,0],file:`basin-fog-topology-${process.pid}/ground.etr`};
   await scene.scene.reload(command,fileDocument);({state,rendering}=await settle(command,v=>v.unsupported_terrains===1));
-  assert.equal(rendering.basin_fog.gpu_bytes,0);assert.equal(state.pending_jobs,0);assert.equal((await sample([[100.5,100.5]]))[0],null);
+  assert.equal(rendering.terrain.basin_fog.gpu_bytes,0);assert.equal(state.pending_jobs,0);assert.equal((await sample([[100.5,100.5]]))[0],null);
   checks.push({case:"file-backed terrain explicitly unsupported",state});
   assert.equal(errors.length,0,errors.join("\n"));
   await record(output,"checks",checks);console.log(JSON.stringify({ok:true,checks:checks.length,output}));

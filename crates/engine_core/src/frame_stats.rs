@@ -179,8 +179,6 @@ pub struct RenderStats {
     pub deformation: DeformationStats,
     /// Clouds.
     pub clouds: CloudStats,
-    /// Optional terrain basin medium.
-    pub basin_fog: BasinFogStats,
     /// World streaming.
     pub world_streaming: crate::CellStats,
     /// The physically based sky.
@@ -387,6 +385,9 @@ pub struct DetailStats {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TerrainRenderStats {
+    /// Optional terrain basin medium.
+    pub basin_fog: BasinFogStats,
+
     /// Patches the camera drew.
     pub patches: u32,
     /// Triangles the camera drew.

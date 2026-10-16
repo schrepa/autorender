@@ -7,8 +7,6 @@
 export interface FrameStats {
   /** Ambient occlusion. */
   ambient_occlusion: Applied;
-  /** Optional terrain basin medium. */
-  basin_fog: BasinFogStats;
   /** Bloom. */
   bloom: Applied;
   /** Clouds. */
@@ -474,6 +472,8 @@ export interface SkyStats {
 
 /** Terrains. */
 export interface TerrainRenderStats {
+  /** Optional terrain basin medium. */
+  basin_fog: BasinFogStats;
   /**
    * Surface materials past the palette's capacity, or whose maps the
    * shared arrays cannot hold (block compressed, or sized unlike the first

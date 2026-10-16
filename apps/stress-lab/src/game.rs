@@ -234,7 +234,7 @@ impl StressLab {
                     .app
                     .world()
                     .get_resource::<StressConfig>()
-                    .is_some_and(|c| c.scene == StressScene::Highlands)
+                    .is_some_and(|c| c.scene == crate::StressScene::Highlands)
             {
                 self.basin_demo = Some(crate::basin_demo::BasinDemo::new(engine));
             }

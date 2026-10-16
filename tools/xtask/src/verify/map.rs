@@ -68,6 +68,15 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Everything],
     },
+    Rule {
+        paths: &[
+            "**/basin_fog.rs",
+            "apps/stress-lab/src/basin_demo.rs",
+            "web/scripts/basin-fog-fixture.mjs",
+            "crates/engine_render/src/scene.wgsl",
+        ],
+        checks: &[Smoke("basin-fog-topology"), Smoke("basin-fog-render")],
+    },
     // Repository settings and scripts lint alone checks, or nothing does.
     Rule {
         paths: &[

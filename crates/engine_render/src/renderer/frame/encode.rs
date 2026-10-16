@@ -63,7 +63,9 @@ impl Renderer {
             Pass::Feature(pass) => {
                 report.draws += self.encode_feature(pass, state, encoder, view, node);
                 if pass == FeaturePass::CloudDome {
-                    self.camera.basin_fog.copy_prefix(encoder, &self.camera.cloud_shadows);
+                    self.camera
+                        .basin_fog
+                        .copy_prefix(encoder, &self.camera.cloud_shadows);
                 }
             }
             Pass::ProbeCaptures => self.encode_probes(state, encoder),

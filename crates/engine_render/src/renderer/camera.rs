@@ -126,7 +126,18 @@ impl CameraBindings {
             Bound::fixed(crate::pipelines::view(&self.refraction_fallback)),
             Bound::fixed(crate::pipelines::sampler(&self.refraction_sampler)),
         );
-        let uniforms = (&self.buffer, &self.lighting_buffer, Bound::counted(self.basin_fog.generation, self.basin_fog.buffer.as_ref().unwrap_or(&self.cloud_shadows).as_entire_binding()));
+        let uniforms = (
+            &self.buffer,
+            &self.lighting_buffer,
+            Bound::counted(
+                self.basin_fog.generation,
+                self.basin_fog
+                    .buffer
+                    .as_ref()
+                    .unwrap_or(&self.cloud_shadows)
+                    .as_entire_binding(),
+            ),
+        );
         self.group.bind(
             device,
             "engine/camera-bind-group",
@@ -168,7 +179,18 @@ impl CameraBindings {
             "engine/camera-bind-group",
             (&CAMERA, &self.layout),
             camera_entries(
-                (&self.buffer, &self.lighting_buffer, Bound::counted(self.basin_fog.generation, self.basin_fog.buffer.as_ref().unwrap_or(&self.cloud_shadows).as_entire_binding())),
+                (
+                    &self.buffer,
+                    &self.lighting_buffer,
+                    Bound::counted(
+                        self.basin_fog.generation,
+                        self.basin_fog
+                            .buffer
+                            .as_ref()
+                            .unwrap_or(&self.cloud_shadows)
+                            .as_entire_binding(),
+                    ),
+                ),
                 refraction,
                 sources,
             ),
@@ -200,7 +222,14 @@ impl CameraBindings {
                     (
                         sources.probes.camera(face),
                         &self.lighting_buffer,
-                        Bound::counted(self.basin_fog.generation, self.basin_fog.buffer.as_ref().unwrap_or(&self.cloud_shadows).as_entire_binding()),
+                        Bound::counted(
+                            self.basin_fog.generation,
+                            self.basin_fog
+                                .buffer
+                                .as_ref()
+                                .unwrap_or(&self.cloud_shadows)
+                                .as_entire_binding(),
+                        ),
                     ),
                     refraction,
                     sources,
@@ -245,10 +274,7 @@ fn terrain_entries<'a>(
         ("occupancy_coverage", coverage),
         ("occupancy_heights", heights),
         levels,
-        (
-            "cloud_shadows",
-            cloud_shadows,
-        ),
+        ("cloud_shadows", cloud_shadows),
     ]
 }
 
@@ -285,9 +311,6 @@ fn camera_entries<'a>(
         ("occupancy_coverage", coverage),
         ("occupancy_heights", heights),
         levels,
-        (
-            "cloud_shadows",
-            cloud_shadows,
-        ),
+        ("cloud_shadows", cloud_shadows),
     ]
 }

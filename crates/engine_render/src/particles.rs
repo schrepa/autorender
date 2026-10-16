@@ -238,7 +238,7 @@ mod gpu {
                 device,
                 &self.pipeline_layout,
                 &self.module,
-                "fs_particle",
+                crate::shaders::entry::particles::fs_particle,
                 targets,
                 self.depth_format,
                 &[],

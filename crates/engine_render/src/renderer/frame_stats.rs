@@ -254,6 +254,12 @@ impl Renderer {
                 failed_meshes: self.mesh_uploads.lod_failures.0,
             },
             terrain: TerrainRenderStats {
+                basin_fog: engine_core::BasinFogStats {
+                    gpu_bytes: self.camera.basin_fog.bytes,
+                    upload_bytes: self.camera.basin_fog.upload_bytes,
+                    nodes: self.camera.basin_fog.nodes,
+                },
+
                 patches: self.terrain.patches.frame.patches,
                 triangles: self.terrain.patches.frame.triangles,
                 shadow_patches: self.terrain.patches.frame.shadow_patches,
@@ -300,11 +306,6 @@ impl Renderer {
                 features.frames.clouds.as_ref().map(Ready::frame),
                 snapshot,
             ),
-            basin_fog: engine_core::BasinFogStats {
-                gpu_bytes: self.camera.basin_fog.bytes,
-                upload_bytes: self.camera.basin_fog.upload_bytes,
-                nodes: self.camera.basin_fog.nodes,
-            },
             world_streaming: snapshot.cells,
             sky: crate::sky::SkyPass::stats(Some(self.features.sky.get()), None, snapshot),
             occlusion_culling: CullingStats {

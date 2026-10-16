@@ -44,7 +44,10 @@ pub(crate) struct TerrainPipelines {
 impl TerrainPipelines {
     /// Drops scene-specialized pipelines when optional fog changes.
     pub(crate) fn invalidate_scene(&mut self) {
-        self.pipelines.clear(); self.deferred_ids.clear(); self.resolves.clear(); self.probe_pipelines.clear();
+        self.pipelines.clear();
+        self.deferred_ids.clear();
+        self.resolves.clear();
+        self.probe_pipelines.clear();
     }
 
     pub(super) fn new(device: &wgpu::Device) -> Self {

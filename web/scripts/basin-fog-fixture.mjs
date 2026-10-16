@@ -15,7 +15,7 @@ export function document({ridge=false,budget=0.25,origin=[0,0,0],hole=false,sea=
     surface:{materials:[{id:"ground",color:[0.4,0.4,0.4]}],biomes:[{id:"ground",layers:[{material:"ground"}]}]}};
   if(hole)terrain.layers.push({stamp:{center:[64.5,64.5],radius:0.5,op:"hole"}});
   if(hydrology)terrain.layers.push({hydrology:{level:0,channel_area:1e10,depth:0,max_depth:0}});
-  return {version:9,id:"basin-fog-fixture",revision:1,camera:fixtureCamera,materials:[],meshes:[],
+  return {id:"basin-fog-fixture",revision:1,camera:fixtureCamera,materials:[],meshes:[],
     environment:{basin_fog:{enabled:true,budget_m:budget,extinction_per_m:0.025,top_fade_m:3,level:0},
       terrain:{samples_per_frame:50000000,loading_work_ms:50,surroundings:false},water:{enabled:hydrology},ocean:{enabled:sea!==null,level:sea??0},
       ground_cover:{enabled:false},wind:{velocity:[0,0],gusts:0},clouds:{enabled:false},shadows:{enabled:false},ambient_occlusion:{intensity:0},bloom:{intensity:0},reflections:{intensity:0},sun_shafts:{intensity:0},contact_shadows:{enabled:false},temporal_antialiasing:{enabled:false}},

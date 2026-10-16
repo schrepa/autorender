@@ -1,7 +1,8 @@
 //! Optional finite-volume fog in generated terrain depressions.
 
+use crate::collections::HashMap;
 use engine_math as math;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -25,7 +26,7 @@ settings! {
         pub budget_m: f32 = 2.0 => at_least(0.0),
         /// Optical extinction per meter through full-density fog.
         pub extinction_per_m: f32 = 0.025 => at_least(0.0),
-        /// The vertical density ramp below each horizontal pool top.
+        /// Vertical density ramp below a pool top, meters.
         pub top_fade_m: f32 = 3.0 => at_least(0.0),
         /// Fixed terrain pyramid level used by the volume solver.
         pub level: u32 = 4 => range(0, engine_terrain::MAX_LEVEL),
@@ -321,23 +322,82 @@ fn summarize(entity: Entity, entry: &Entry, grid: &BasinGrid) -> BasinTerrainVie
     }
 }
 
-pub(crate) fn sync(world: &mut World) {
-    let settings = world
-        .get_resource::<BasinFog>()
-        .copied()
-        .unwrap_or_else(BasinFog::off)
-        .sanitized();
-    if !settings.enabled || settings.budget_m == 0.0 {
-        if let Some(mut state) = world.get_resource_mut::<BasinFogs>() {
-            state.entries = HashMap::new();
-            state.skipped = Vec::new();
-            state.settings = Some(settings);
+impl BasinFogs {
+    /// Reuses compatible topology, replacing only invalid source or fill state.
+    fn prepare_entry(
+        &mut self,
+        entity: Entity,
+        terrain: &crate::Terrain,
+        layers: Arc<Layers>,
+        budget: f32,
+        (water, sea): (bool, Option<f32>),
+        (level, requested): (u32, u64),
+    ) -> Option<&mut Entry> {
+        let matches = self.entries.get(&entity).is_some_and(|e| {
+            Arc::ptr_eq(&e.layers, &layers)
+                && e.pyramid == terrain.pyramid
+                && e.level == level
+                && e.water == water
+                && e.sea == sea
+        });
+        if !matches {
+            self.serial = self.serial.wrapping_add(1);
+            // Superseded work cannot be reused. Release its workspace before
+            // allocating a replacement; snapshots retain only immutable maps.
+            self.entries.remove(&entity);
+            let job = BasinJob::new(layers.clone(), terrain.pyramid, level, budget, water, sea)?;
+            self.entries.insert(
+                entity,
+                Entry {
+                    layers,
+                    pyramid: terrain.pyramid,
+                    level,
+                    water,
+                    sea,
+                    budget,
+                    origin: terrain.origin,
+                    revision: self.serial,
+                    source_revision: self.serial,
+                    requested,
+                    job,
+                    grid: None,
+                    uploaded: Arc::new(AtomicU64::new(0)),
+                    summary: None,
+                },
+            );
         }
-        return;
+        let entry = self.entries.get_mut(&entity).expect("admitted");
+        if entry.origin != terrain.origin {
+            self.serial = self.serial.wrapping_add(1);
+            entry.revision = self.serial;
+            entry.uploaded.store(0, Ordering::Relaxed);
+            entry.origin = terrain.origin;
+        }
+        if entry.budget != budget {
+            self.serial = self.serial.wrapping_add(1);
+            entry.revision = self.serial;
+            entry.grid = None;
+            entry.summary = None;
+            let _profile = engine_profile::span("cpu", "basin_fog_fill");
+            if !entry.job.refill(budget) {
+                let job = BasinJob::new(
+                    entry.layers.clone(),
+                    entry.pyramid,
+                    entry.level,
+                    budget,
+                    entry.water,
+                    entry.sea,
+                )?;
+                entry.job = job;
+            }
+            entry.budget = budget;
+        }
+        Some(entry)
     }
-    let mut state = world.remove_resource::<BasinFogs>().unwrap_or_default();
-    state.settings = Some(settings);
-    state.skipped.clear();
+}
+
+/// Nearest terrain bounds first, breaking ties by entity ID.
+fn ordered_terrains(world: &mut World) -> Vec<(Entity, crate::Terrain)> {
     let eye = world
         .get_resource::<crate::Camera>()
         .map_or(Vec3::ZERO, |c| c.eye());
@@ -361,6 +421,28 @@ pub(crate) fn sync(world: &mut World) {
             .total_cmp(&distance(tb))
             .then(a.to_bits().cmp(&b.to_bits()))
     });
+    terrains
+}
+
+/// Admits complete maps and advances only current fog work.
+pub(crate) fn sync(world: &mut World) {
+    let settings = world
+        .get_resource::<BasinFog>()
+        .copied()
+        .unwrap_or_else(BasinFog::off)
+        .sanitized();
+    if !settings.enabled || settings.budget_m == 0.0 {
+        if let Some(mut state) = world.get_resource_mut::<BasinFogs>() {
+            state.entries = HashMap::default();
+            state.skipped = Vec::new();
+            state.settings = Some(settings);
+        }
+        return;
+    }
+    let mut state = world.remove_resource::<BasinFogs>().unwrap_or_default();
+    state.settings = Some(settings);
+    state.skipped.clear();
+    let terrains = ordered_terrains(world);
     state
         .entries
         .retain(|e, _| terrains.iter().any(|(id, _)| e == id));
@@ -415,78 +497,17 @@ pub(crate) fn sync(world: &mut World) {
         remaining -= requested;
         gpu_remaining -= gpu;
         let sea = ocean.map(|height| height - terrain.origin.y);
-        let matches = state.entries.get(&entity).is_some_and(|e| {
-            Arc::ptr_eq(&e.layers, &layers)
-                && e.pyramid == terrain.pyramid
-                && e.level == level
-                && e.water == water
-                && e.sea == sea
-        });
-        if !matches {
-            state.serial = state.serial.wrapping_add(1);
-            // Superseded work cannot be reused. Release its workspace before
-            // allocating a replacement; snapshots retain only immutable maps.
-            state.entries.remove(&entity);
-            let Some(job) = BasinJob::new(
-                layers.clone(),
-                terrain.pyramid,
-                level,
-                settings.budget_m,
-                water,
-                sea,
-            ) else {
-                skip(&mut state, entity, &terrain, level, requested, "dropped");
-                continue;
-            };
-            state.entries.insert(
-                entity,
-                Entry {
-                    layers,
-                    pyramid: terrain.pyramid,
-                    level,
-                    water,
-                    sea,
-                    budget: settings.budget_m,
-                    origin: terrain.origin,
-                    revision: state.serial,
-                    source_revision: state.serial,
-                    requested,
-                    job,
-                    grid: None,
-                    uploaded: Arc::new(AtomicU64::new(0)),
-                    summary: None,
-                },
-            );
-        }
-        let entry = state.entries.get_mut(&entity).expect("admitted");
-        if entry.origin != terrain.origin {
-            state.serial = state.serial.wrapping_add(1);
-            entry.revision = state.serial;
-            entry.uploaded.store(0, Ordering::Relaxed);
-            entry.origin = terrain.origin;
-        }
-        if entry.budget != settings.budget_m {
-            state.serial = state.serial.wrapping_add(1);
-            entry.revision = state.serial;
-            entry.grid = None;
-            entry.summary = None;
-            let _profile = engine_profile::span("cpu", "basin_fog_fill");
-            if !entry.job.refill(settings.budget_m) {
-                let Some(job) = BasinJob::new(
-                    entry.layers.clone(),
-                    entry.pyramid,
-                    entry.level,
-                    settings.budget_m,
-                    entry.water,
-                    entry.sea,
-                ) else {
-                    skip(&mut state, entity, &terrain, level, requested, "dropped");
-                    continue;
-                };
-                entry.job = job;
-            }
-            entry.budget = settings.budget_m;
-        }
+        let Some(entry) = state.prepare_entry(
+            entity,
+            &terrain,
+            layers,
+            settings.budget_m,
+            (water, sea),
+            (level, requested),
+        ) else {
+            skip(&mut state, entity, &terrain, level, requested, "dropped");
+            continue;
+        };
         if entry.grid.is_none() {
             let _profile = engine_profile::span("cpu", "basin_fog_topology");
             while work_left > 0 && clock.zip(until).is_none_or(|(now, until)| now() < until) {

@@ -77,6 +77,28 @@ export interface AssetsResult {
   textures: number;
 }
 
+/** A valid grid cell's published heights and stable pool identity. */
+export interface BasinFogSample {
+  /** Fog thickness, meters; zero in a dry cell. */
+  depth: number;
+  /** World height of the effective ground or water floor, meters. */
+  floor: number;
+  /** Stable row-major pool label; zero when dry. */
+  pool: number;
+  /** World height of the horizontal fog top, meters. */
+  top: number;
+  /** False for a hole in the terrain grid. */
+  valid: boolean;
+}
+
+/** Samples from one terrain; null outside its current published solution. */
+export interface BasinFogSampleResult {
+  /** Samples in request order; null outside or pending. */
+  samples: BasinFogSample | null[];
+  /** The terrain queried. */
+  terrain: TerrainKey;
+}
+
 /** What `camera` answers once it rendered. */
 export interface CameraResult {
   /** Always true: the camera is the one asked for. */
@@ -565,6 +587,7 @@ export interface OceanWave {
 export interface OpResults {
   animation: AnimationResult;
   assets: AssetsResult;
+  basin_fog_sample: BasinFogSampleResult;
   camera: CameraResult;
   capture: CaptureResult;
   collision_events: CollisionEventsResult;

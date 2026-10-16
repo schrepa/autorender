@@ -1,15 +1,15 @@
 //! Read-only samples of the current terrain fog solution.
 
-use engine_core::{Engine, Feature, Terrain, BasinFogs, bevy_ecs::prelude::Entity, glam::Vec2};
-use engine_scene::SceneInstance;
-use engine_settings::ErrorCode;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use super::{TerrainKey, terrain_key};
 use crate::features::{EngineQuery, feature};
 use crate::protocol::bounds::MAX_POINTS;
 use crate::results::result;
 use crate::{DevError, coordinate};
-use super::{TerrainKey, terrain_key};
+use engine_core::{BasinFogs, Engine, Feature, Terrain, bevy_ecs::prelude::Entity, glam::Vec2};
+use engine_scene::SceneInstance;
+use engine_settings::ErrorCode;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Samples floor, top, depth and pool identity at world x/z points.
 #[derive(Debug, Deserialize, Serialize)]
@@ -50,23 +50,59 @@ pub struct BasinFogSampleResult {
 }
 
 impl EngineQuery for BasinFogSampleQuery {
-    fn answer(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
+    fn answer(
+        &self,
+        engine: &mut Engine,
+        scene: Option<&SceneInstance>,
+    ) -> Result<Value, DevError> {
         if self.points.is_empty() || self.points.len() > MAX_POINTS {
-            return Err(DevError::new(ErrorCode::OutOfRange, "$.points", format!("name 1 to {MAX_POINTS} points")));
+            return Err(DevError::new(
+                ErrorCode::OutOfRange,
+                "$.points",
+                format!("name 1 to {MAX_POINTS} points"),
+            ));
         }
         let world = engine.app.world_mut();
-        let entity = scene.and_then(|s| s.entity(&self.terrain)).or_else(|| {
-            world.query::<(Entity, &Terrain)>().iter(world).take(crate::MAX_SCAN_ENTITIES)
-                .find(|(id, _)| id.to_bits().to_string() == self.terrain).map(|(id, _)| id)
-        }).filter(|id| world.get::<Terrain>(*id).is_some()).ok_or_else(|| {
-            DevError::new(ErrorCode::UnknownTerrain, "$.terrain", format!("no terrain {}", self.terrain))
-        })?;
+        let entity = scene
+            .and_then(|s| s.entity(&self.terrain))
+            .or_else(|| {
+                world
+                    .query::<(Entity, &Terrain)>()
+                    .iter(world)
+                    .take(crate::MAX_SCAN_ENTITIES)
+                    .find(|(id, _)| id.to_bits().to_string() == self.terrain)
+                    .map(|(id, _)| id)
+            })
+            .filter(|id| world.get::<Terrain>(*id).is_some())
+            .ok_or_else(|| {
+                DevError::new(
+                    ErrorCode::UnknownTerrain,
+                    "$.terrain",
+                    format!("no terrain {}", self.terrain),
+                )
+            })?;
         let fog = feature::<BasinFogs>(world, Feature::Terrain)?;
-        let samples = self.points.iter().enumerate().map(|(index, p)| {
-            let x = coordinate(p[0], &format!("$.points[{index}][0]"))?;
-            let z = coordinate(p[1], &format!("$.points[{index}][1]"))?;
-            Ok(fog.sample(entity, Vec2::new(x, z)).map(|(valid, [floor, top, depth], pool)| BasinFogSample { valid, floor, top, depth, pool }))
-        }).collect::<Result<Vec<_>, DevError>>()?;
-        Ok(result::basin_fog_sample(BasinFogSampleResult { terrain: terrain_key(world, entity), samples }))
+        let samples = self
+            .points
+            .iter()
+            .enumerate()
+            .map(|(index, p)| {
+                let x = coordinate(p[0], &format!("$.points[{index}][0]"))?;
+                let z = coordinate(p[1], &format!("$.points[{index}][1]"))?;
+                Ok(fog
+                    .sample(entity, Vec2::new(x, z))
+                    .map(|(valid, [floor, top, depth], pool)| BasinFogSample {
+                        valid,
+                        floor,
+                        top,
+                        depth,
+                        pool,
+                    }))
+            })
+            .collect::<Result<Vec<_>, DevError>>()?;
+        Ok(result::basin_fog_sample(BasinFogSampleResult {
+            terrain: terrain_key(world, entity),
+            samples,
+        }))
     }
 }

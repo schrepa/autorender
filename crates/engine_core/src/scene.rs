@@ -430,8 +430,6 @@ pub struct RenderSnapshot {
     /// This frame's terrains: their resident tiles and the
     /// patches the camera draws.
     pub terrain: crate::RenderTerrains,
-    /// Immutable optional basin-fog maps, current to terrain geometry.
-    pub basin_fog: Vec<crate::RenderBasinFog>,
     /// This frame's deformation map and the stamps it presses.
     pub deformation: crate::RenderDeformation,
     /// World streaming's state at this frame.

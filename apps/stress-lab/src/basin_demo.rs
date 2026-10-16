@@ -40,7 +40,12 @@ impl BasinDemo {
     pub(crate) fn new(engine: &mut Engine) -> Self {
         let world = engine.app.world_mut();
         let config = world.resource::<crate::StressConfig>();
-        let (eye, target) = crate::highlands::overview(world, config);
+        let camera = config
+            .scene
+            .world()
+            .camera(world, config, "overview")
+            .expect("Highlands has an overview camera");
+        let (eye, target) = (camera.eye(), camera.target);
         let offset = Vec2::new(eye.x - target.x, eye.z - target.z);
         let distance = offset.length();
         let direction = offset / distance;
