@@ -28,8 +28,6 @@ use crate::targets::{FrameSize, ScreenTarget};
 
 pub(crate) const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-/// Weight of each frame's color against the history: an exponential average
-/// over about ten frames, beyond the eight-sample jitter cycle.
 /// Keep new samples contributing even after uncertainty has fallen.
 const MINIMUM_CURRENT_WEIGHT: f32 = 0.05;
 
@@ -367,7 +365,10 @@ impl TemporalPass {
                     ("scene", scene.clone()),
                     ("motion", target(&targets.motion)),
                     ("history", target(&targets.history[1 - parity])),
-                    ("coarse_history", target(&targets.coarse_history[1 - parity])),
+                    (
+                        "coarse_history",
+                        target(&targets.coarse_history[1 - parity]),
+                    ),
                     (
                         "history_sampler",
                         Bound::fixed(crate::pipelines::sampler(&self.sampler)),

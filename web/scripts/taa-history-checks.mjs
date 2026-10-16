@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { artifacts, commander, devUrl, launch, openPaused } from "./harness.mjs";
+import { artifacts, cargoBinaries, commander, devUrl, launch, openPaused } from "./harness.mjs";
+import { workspace } from "./workspace.mjs";
 
 const still = {
   seed: 7, renderables: 6000, moving_percent: 0, hierarchy: true, interpolation: true, colliders: 0,
@@ -71,8 +71,12 @@ export async function checkHistory(name, resources = {}) {
   const output = await artifacts(name);
   // Highlands needs the same generated materials as the factory workload.
   // Use its unchanged generator, including its input-hash cache.
-  const assets = spawnSync("cargo", ["xtask", "bench", "assets"], {
-    cwd: fileURLToPath(new URL("../../", import.meta.url)), encoding: "utf8", windowsHide: true,
+  // Use the runner's binary on Windows, where Cargo cannot replace a
+  // running xtask, and generate assets in the checkout being tested.
+  const { xtask } = process.env.ENGINE_XTASK_BIN
+    ? { xtask: process.env.ENGINE_XTASK_BIN } : await cargoBinaries(["-p", "xtask"]);
+  const assets = spawnSync(xtask, ["bench", "assets"], {
+    cwd: workspace, encoding: "utf8", windowsHide: true,
   });
   await writeFile(`${output}/assets.log`, `${assets.stdout ?? ""}${assets.stderr ?? ""}`);
   if (assets.error || assets.status !== 0) throw new Error(`Cannot prepare Highlands materials: ${assets.error ?? assets.status}; see ${output}/assets.log`);

@@ -341,6 +341,13 @@ pub(crate) const MAP: &[Rule] = &[
     },
     Rule {
         paths: &[
+            "crates/engine_render/src/**/temporal*",
+            "web/scripts/taa-history-checks.mjs",
+        ],
+        checks: &[Smoke("taa-bands")],
+    },
+    Rule {
+        paths: &[
             "crates/engine_core/src/**/lights*",
             "crates/engine_render/src/**/lights*",
         ],
