@@ -27,7 +27,7 @@ pub use library::{
 };
 pub use lod::{LodLevel, MeshLods, mesh_lods};
 pub use material::{
-    AlphaMode, Filter, Grounding, MAX_GROUNDING_HEIGHT, MAX_WORLD_TILING, Material,
+    AlphaCoverage, AlphaMode, Filter, Grounding, MAX_GROUNDING_HEIGHT, MAX_WORLD_TILING, Material,
     MaterialBinding, Sampler, Surface, TextureRef, TopLayer, Transmission, UvTransform, Wrap,
 };
 pub use mesh::{Aabb, Mesh, MeshVertex};

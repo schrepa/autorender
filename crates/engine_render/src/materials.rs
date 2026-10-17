@@ -12,8 +12,8 @@ use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
 use engine_core::{
-    Filter, Material, MaterialHandle, RenderMaterial, RenderSnapshot, Sampler, Texture,
-    TextureFormat, TextureHandle, Wrap,
+    AlphaCoverageState, Filter, Material, MaterialBinding, MaterialHandle, RenderMaterial,
+    RenderSnapshot, Sampler, Texture, TextureFormat, TextureHandle, Wrap,
 };
 
 use crate::batches::BatchPlan;
@@ -33,7 +33,7 @@ pub(crate) struct GpuTexture {
     pub mip_bytes: u64,
     // Prepared only when an eligible material uses this source texture.
     // Eviction drops its statistics together with the owning GPU texture.
-    alpha_profile: OnceCell<Option<crate::alpha_coverage::Profile>>,
+    alpha_profile: OnceCell<Result<crate::alpha_coverage::Profile, &'static str>>,
 }
 
 pub(crate) struct GpuMaterial {
@@ -43,6 +43,8 @@ pub(crate) struct GpuMaterial {
     // The library version the group holds: a replaced
     // material builds its group again.
     version: u64,
+    binding: MaterialBinding,
+    coverage: AlphaCoverageState,
 }
 
 /// Default map textures: white in both color spaces and a flat normal.
@@ -235,7 +237,7 @@ impl MaterialStore {
                 }
             }
             let mut uniform = MaterialUniform::new(material);
-            if let Some(cutoff) = crate::alpha_coverage::cutoff(material) {
+            let curve = crate::alpha_coverage::cutoff(material).and_then(|cutoff| {
                 let handle = material
                     .base_color_texture()
                     .expect("eligible base map")
@@ -251,12 +253,20 @@ impl MaterialStore {
                         .expect("uploaded source texture");
                     crate::alpha_coverage::Profile::new(&source.texture)
                 });
-                if let Some(curve) = profile.as_ref().and_then(|profile| profile.curve(cutoff)) {
+                profile.as_ref().map_err(|&reason| reason)?.curve(cutoff)
+            });
+            let coverage = match curve {
+                Ok(curve) => {
                     uniform.alpha_factors = curve.factors;
                     uniform.alpha_coverage = curve.metadata;
+                    AlphaCoverageState::Corrected {
+                        mip_levels: curve.metadata[2] as u32,
+                        legacy_from_mip: curve.metadata[1] as u32,
+                    }
                 }
-            }
-            let gpu = self.create_material(device, material, source.version, &uniform);
+                Err(reason) => AlphaCoverageState::Legacy { reason },
+            };
+            let gpu = self.create_material(device, material, source.version, &uniform, coverage);
             self.materials.insert(source.handle, gpu);
             self.generation += 1;
         }
@@ -269,6 +279,7 @@ impl MaterialStore {
         material: &Material,
         version: u64,
         uniform: &MaterialUniform,
+        coverage: AlphaCoverageState,
     ) -> GpuMaterial {
         let defaults = [
             &self.defaults.white_srgb,
@@ -295,12 +306,29 @@ impl MaterialStore {
             _uniform: uniform,
             variant: Variant::of(material),
             version,
+            binding: material
+                .binding()
+                .expect("uploaded materials have bindings"),
+            coverage,
         }
     }
 
     /// Advances whenever a material's group or variant may have changed.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Inspect by binding, since extraction aliases equivalent materials
+    /// to the first resolved handle. Changed bindings cannot see stale facts.
+    pub(crate) fn alpha_coverage(&self, material: &Material) -> Option<AlphaCoverageState> {
+        if let Err(reason) = crate::alpha_coverage::cutoff(material) {
+            return Some(AlphaCoverageState::Legacy { reason });
+        }
+        let binding = material.binding()?;
+        self.materials
+            .values()
+            .find(|gpu| gpu.binding == binding)
+            .map(|gpu| gpu.coverage)
     }
 
     /// The mip generator textures and impostors share.

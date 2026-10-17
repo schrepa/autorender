@@ -590,6 +590,23 @@ pub struct Mesh3dView {
     pub drawn_level: Option<u32>,
 }
 
+/// Requested and effective cutout filtering for an entity. Corrected and
+/// conditional states still use legacy in the prepared curve's uniform mip tail.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct AlphaCoverageView {
+    /// The material's authored choice (auto when omitted).
+    pub requested: engine_scene::SceneAlphaCoverage,
+    /// Actual material binding facts; None without a renderer or before upload.
+    pub prepared: Option<engine_core::AlphaCoverageState>,
+    /// corrected, legacy, conditional (mixed vertex opacity), or unknown.
+    pub effective: &'static str,
+    /// The material fallback reason, instance_opacity, vertex_opacity,
+    /// renderer_unavailable or not_uploaded; None when corrected throughout
+    /// the entity below the uniform mip boundary.
+    pub fallback_reason: Option<&'static str>,
+}
+
 /// A mesh as a scene authors it and what the renderer made of it.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]

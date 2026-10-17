@@ -26,6 +26,7 @@ impl DevTools {
             }),
         })
         .expect("built-in descriptor is bounded");
+        coverage::register(self, schemas);
         self.register_component::<LocalLight>(
             InspectorDescriptor::generated(schemas, "LocalLight")
                 .with_default(json!(SceneLight::default())),

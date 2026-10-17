@@ -16,6 +16,13 @@ use serde_json::{Value, json};
 struct Facts<'a>(&'a engine_render::Renderer);
 
 impl RendererFacts for Facts<'_> {
+    fn alpha_coverage(
+        &self,
+        material: &engine_core::Material,
+    ) -> Option<engine_core::AlphaCoverageState> {
+        self.0.material_alpha_coverage(material)
+    }
+
     fn texture_resident(&self, texture: engine_core::TextureHandle) -> bool {
         self.0.is_texture_resident(texture)
     }

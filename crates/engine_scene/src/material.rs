@@ -8,7 +8,7 @@ use engine_core::{
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
-use crate::{SceneError, SceneSurface};
+use crate::{SceneAlphaCoverage, SceneError, SceneSurface};
 
 /// One named material; color channels are linear values in `[0, 1]` and
 /// alpha is 1. `opacity` below 1 draws it transparent unless `alpha_mode`
@@ -72,6 +72,15 @@ pub struct SceneMaterial {
     /// With `mask` only: alpha below it is not drawn; default 0.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alpha_cutoff: Option<f32>,
+    /// Alpha-mask mip filtering: default `auto` prepares a texture/cutoff
+    /// curve for power-of-two RGBA8 UV maps with linear min/mag/mip filters,
+    /// cutoff in (0, 1) and opacity 1. Other cases, non-unit combined
+    /// instance/vertex opacity and uniform mip tails use the original
+    /// `1 + 0.25 * mip` rule. `legacy` always selects that rule. Camera,
+    /// shadows and source impostor bakes agree; raw alpha and final atlases
+    /// are unchanged. Inspect AlphaCoverage for effective behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha_coverage: Option<SceneAlphaCoverage>,
     /// Draw back faces too, lit from their own side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub double_sided: Option<bool>,
@@ -352,6 +361,7 @@ impl SceneMaterial {
             emissive_texture: map(material.emissive_texture()),
             alpha_mode: Some(alpha_mode),
             alpha_cutoff,
+            alpha_coverage: Some(material.alpha_coverage().into()),
             double_sided: Some(material.is_double_sided()),
             transmission: Some(transmission.factor),
             ior: Some(transmission.ior),
@@ -400,8 +410,9 @@ impl SceneMaterial {
                 message,
             )
         };
-        let mut material =
-            Material::new(self.color).map_err(|error| invalid("color", error.to_string()))?;
+        let mut material = Material::new(self.color)
+            .map_err(|error| invalid("color", error.to_string()))?
+            .with_alpha_coverage(self.alpha_coverage.unwrap_or_default().into());
         if let Some(opacity) = self.opacity {
             material = material
                 .with_opacity(opacity)

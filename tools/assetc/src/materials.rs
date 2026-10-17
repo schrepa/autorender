@@ -166,6 +166,7 @@ pub(crate) fn import(
             emissive_texture,
             alpha_mode,
             alpha_cutoff,
+            alpha_coverage: None,
             double_sided: material.double_sided().then_some(true),
             transmission,
             ior,

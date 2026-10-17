@@ -1,6 +1,13 @@
 {
   "inspectors": [
     {
+      "inspector": "AlphaCoverage",
+      "kind": "component",
+      "smokes": [
+        "alpha-coverage-mode"
+      ]
+    },
+    {
       "inspector": "AnimationPlayer",
       "kind": "component",
       "smokes": [
@@ -128,6 +135,7 @@
       "kind": "component",
       "smokes": [
         "agent",
+        "alpha-coverage-mode",
         "meshes",
         "texture"
       ]
@@ -299,6 +307,7 @@
       "smokes": [
         "agent",
         "alpha-coverage",
+        "alpha-coverage-mode",
         "collision",
         "gpu-presentation",
         "hierarchy",
@@ -326,6 +335,7 @@
       "smokes": [
         "agent",
         "alpha-coverage",
+        "alpha-coverage-mode",
         "culling",
         "hierarchy",
         "host-parity",
@@ -351,6 +361,7 @@
       "op": "describe",
       "smokes": [
         "agent",
+        "alpha-coverage-mode",
         "collision",
         "hierarchy",
         "host-parity",
@@ -435,6 +446,7 @@
       "op": "present",
       "smokes": [
         "alpha-coverage",
+        "alpha-coverage-mode",
         "collision",
         "gpu-presentation",
         "host-parity",
@@ -526,6 +538,7 @@
       "op": "camera",
       "smokes": [
         "alpha-coverage",
+        "alpha-coverage-mode",
         "culling",
         "gpu-presentation",
         "host-parity",
@@ -590,6 +603,7 @@
       "op": "render",
       "smokes": [
         "alpha-coverage",
+        "alpha-coverage-mode",
         "collision",
         "culling",
         "gpu-presentation",
@@ -650,6 +664,7 @@
       "smokes": [
         "agent",
         "alpha-coverage",
+        "alpha-coverage-mode",
         "collision",
         "culling",
         "gpu-presentation",
@@ -712,6 +727,7 @@
       "smokes": [
         "agent",
         "alpha-coverage",
+        "alpha-coverage-mode",
         "culling",
         "gpu-presentation",
         "terrain-surface",
@@ -724,7 +740,8 @@
       "section": "ambient_occlusion",
       "smokes": [
         "agent",
-        "alpha-coverage"
+        "alpha-coverage",
+        "alpha-coverage-mode"
       ],
       "stats": true
     },
@@ -734,6 +751,7 @@
       "smokes": [
         "agent",
         "alpha-coverage",
+        "alpha-coverage-mode",
         "host-parity"
       ],
       "stats": true
@@ -808,6 +826,7 @@
       "section": "level_of_detail",
       "smokes": [
         "alpha-coverage",
+        "alpha-coverage-mode",
         "lod",
         "terrain"
       ],
@@ -819,6 +838,7 @@
       "smokes": [
         "agent",
         "alpha-coverage",
+        "alpha-coverage-mode",
         "jobs",
         "native",
         "plugins",
@@ -860,6 +880,7 @@
       "section": "contact_shadows",
       "smokes": [
         "alpha-coverage",
+        "alpha-coverage-mode",
         "terrain-surface"
       ],
       "stats": true
@@ -957,6 +978,7 @@
       "section": "temporal_antialiasing",
       "smokes": [
         "alpha-coverage",
+        "alpha-coverage-mode",
         "native",
         "taa"
       ],

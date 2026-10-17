@@ -376,12 +376,16 @@ pub(crate) const MAP: &[Rule] = &[
     Rule {
         paths: &[
             "crates/engine_render/src/alpha_coverage.*",
+            "crates/engine_assets/src/material.rs",
+            "crates/engine_scene/src/alpha_coverage.rs",
+            "crates/engine_scene/src/material.rs",
+            "crates/engine_dev/src/inspect/coverage.rs",
             "crates/engine_render/src/materials.rs",
             "crates/engine_render/src/meshes/shading.wgsl",
             "crates/engine_render/src/meshes/impostors.wgsl",
             "crates/engine_render/src/shadows.wgsl",
         ],
-        checks: &[Smoke("alpha-coverage")],
+        checks: &[Smoke("alpha-coverage"), Smoke("alpha-coverage-mode")],
     },
     Rule {
         paths: &[

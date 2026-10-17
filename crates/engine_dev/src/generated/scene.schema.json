@@ -1325,6 +1325,21 @@
         "to"
       ]
     },
+    "SceneAlphaCoverage": {
+      "description": "Requested cutout filtering; inspect AlphaCoverage for the effective\nstate and fallback reason after rendering. Omission means auto.",
+      "oneOf": [
+        {
+          "description": "Use a coverage curve when eligible, otherwise the legacy multiplier.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "Always use the legacy multiplier, including shadows and source bakes.",
+          "type": "string",
+          "const": "legacy"
+        }
+      ]
+    },
     "SceneAlphaMode": {
       "type": "string",
       "enum": [
@@ -3027,6 +3042,17 @@
       "description": "One named material; color channels are linear values in `[0, 1]` and\nalpha is 1. `opacity` below 1 draws it transparent unless `alpha_mode`\nsays otherwise. glTF's texture maps, emissive color, alpha modes and\ndouble-sided surfaces complete it; `surface`\nroughness and metalness are glTF's roughness and metallic factors.",
       "type": "object",
       "properties": {
+        "alpha_coverage": {
+          "description": "Alpha-mask mip filtering: default `auto` prepares a texture/cutoff\ncurve for power-of-two RGBA8 UV maps with linear min/mag/mip filters,\ncutoff in (0, 1) and opacity 1. Other cases, non-unit combined\ninstance/vertex opacity and uniform mip tails use the original\n`1 + 0.25 * mip` rule. `legacy` always selects that rule. Camera,\nshadows and source impostor bakes agree; raw alpha and final atlases\nare unchanged. Inspect AlphaCoverage for effective behavior.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAlphaCoverage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "alpha_cutoff": {
           "description": "With `mask` only: alpha below it is not drawn; default 0.5.",
           "type": [

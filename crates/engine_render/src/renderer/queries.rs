@@ -55,6 +55,16 @@ impl Renderer {
         self.materials.is_texture_resident(handle)
     }
 
+    /// The current material's coverage curve or legacy fallback reason.
+    /// None until an eligible binding uploads. Equivalent material handles
+    /// share these facts, just as they share their GPU binding.
+    pub fn material_alpha_coverage(
+        &self,
+        material: &engine_core::Material,
+    ) -> Option<engine_core::AlphaCoverageState> {
+        self.materials.alpha_coverage(material)
+    }
+
     /// Mesh `handle` as uploaded: whether with skin joints, and its coarser
     /// levels of detail, finest first, each one's index count and largest
     /// deviation in mesh units. None before it uploads.

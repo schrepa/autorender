@@ -50,6 +50,8 @@ pub use files::{
 pub use instance::{ClipOrigin, MeshOrigin, SceneEntity, SceneInstance};
 pub use json::{parse_json, parse_value};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
+mod alpha_coverage;
+pub use alpha_coverage::SceneAlphaCoverage;
 pub use material::{
     SceneAlphaMode, SceneFilter, SceneGrounding, SceneMap, SceneMaterial, SceneMipmapFilter,
     SceneTextureMap, SceneTopLayer, SceneWrap,

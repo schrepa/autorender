@@ -1,7 +1,7 @@
 //! Cutoff-specific coverage of an immutable RGBA8 texture's mip chain.
 //! Only alpha statistics are retained; the shared color texture is untouched.
 
-use engine_core::{AlphaMode, Filter, Material, Texture, TextureFormat};
+use engine_core::{AlphaCoverage, AlphaMode, Filter, Material, Texture, TextureFormat};
 
 /// One factor per admitted mip, packed as the material uniform's vec4 rows.
 pub(crate) const FACTOR_ROWS: usize =
@@ -25,31 +25,45 @@ pub(crate) struct Profile {
 
 /// Constant material conditions. The fragment also checks the combined
 /// material, instance and vertex opacity before using the curve.
-pub(crate) fn cutoff(material: &Material) -> Option<f32> {
+pub(crate) fn cutoff(material: &Material) -> Result<f32, &'static str> {
+    if material.alpha_coverage() == AlphaCoverage::Legacy {
+        return Err("requested_legacy");
+    }
     let AlphaMode::Mask { cutoff } = material.alpha_mode() else {
-        return None;
+        return Err("not_masked");
     };
-    let map = material.base_color_texture()?;
-    (cutoff.is_normal()
-        && cutoff > 0.0
-        && cutoff < 1.0
-        && material.opacity() == 1.0
-        && material.world_tiling().is_none()
-        && map.sampler.mag_filter == Filter::Linear
-        && map.sampler.min_filter == Filter::Linear
-        && map.sampler.mipmap_filter == Some(Filter::Linear))
-    .then_some(cutoff)
+    let map = material
+        .base_color_texture()
+        .ok_or("missing_base_texture")?;
+    if !cutoff.is_normal() || cutoff <= 0.0 || cutoff >= 1.0 {
+        return Err("cutoff");
+    }
+    if material.opacity() != 1.0 {
+        return Err("material_opacity");
+    }
+    if material.world_tiling().is_some() {
+        return Err("world_mapping");
+    }
+    if map.sampler.mag_filter != Filter::Linear
+        || map.sampler.min_filter != Filter::Linear
+        || map.sampler.mipmap_filter != Some(Filter::Linear)
+    {
+        return Err("sampler");
+    }
+    Ok(cutoff)
 }
 
 impl Profile {
-    pub(crate) fn new(source: &Texture) -> Option<Self> {
+    pub(crate) fn new(source: &Texture) -> Result<Self, &'static str> {
         let (mut width, mut height) = (source.width(), source.height());
-        if source.format() != TextureFormat::Rgba8
-            || !width.is_power_of_two()
-            || !height.is_power_of_two()
-            || width.max(height) < 2
-        {
-            return None;
+        if source.format() != TextureFormat::Rgba8 {
+            return Err("texture_format");
+        }
+        if !width.is_power_of_two() || !height.is_power_of_two() {
+            return Err("texture_dimensions");
+        }
+        if width.max(height) < 2 {
+            return Err("no_mips");
         }
         let mut pixels: Vec<u8> = source
             .pixels()
@@ -92,12 +106,12 @@ impl Profile {
             pixels = next;
             (width, height) = (next_width, next_height);
         }
-        Some(Self {
+        Ok(Self {
             levels: levels.into_boxed_slice(),
         })
     }
 
-    pub(crate) fn curve(&self, cutoff: f32) -> Option<Curve> {
+    pub(crate) fn curve(&self, cutoff: f32) -> Result<Curve, &'static str> {
         // Callers admit normal cutoffs in (0, 1). Widen them exactly for
         // histogram comparisons; integer cross-products compare area errors
         // without depending on floating-point tie rounding.
@@ -105,7 +119,7 @@ impl Profile {
         let base = &self.levels[0];
         let covered = count(base, cutoff);
         if covered == 0 || covered == base.texels {
-            return None;
+            return Err("empty_or_full_coverage");
         }
         let mut curve = Curve {
             factors: [[1.0; 4]; FACTOR_ROWS],
@@ -150,11 +164,11 @@ impl Profile {
             }
             let factor = (cutoff / selected) as f32;
             if !factor.is_normal() || factor <= 0.0 {
-                return None;
+                return Err("invalid_factor");
             }
             curve.factors[index >> 2][index & 3] = factor;
         }
-        Some(curve)
+        Ok(curve)
     }
 }
 

@@ -8,6 +8,7 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+mod alpha_coverage;
 mod antialiasing;
 mod atmosphere;
 mod clock;
@@ -46,6 +47,7 @@ mod ticks;
 mod transform_edits;
 mod virtual_geometry;
 
+pub use alpha_coverage::*;
 pub use antialiasing::*;
 pub use atmosphere::*;
 pub use bevy_app::{App, Plugin, PluginGroup, PluginGroupBuilder};
@@ -59,10 +61,10 @@ pub use effects::*;
 /// What the mesh simplifier refuses, as level-of-detail generation runs it.
 pub use engine_assets::simplify::SimplifyError;
 pub use engine_assets::{
-    Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding, LodLevel,
-    MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshLods,
-    MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle, TextureRef, TopLayer,
-    Transmission, UvTransform, Wrap, mesh_lods,
+    Aabb, AlphaCoverage, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding,
+    LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle,
+    MeshLods, MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle, TextureRef,
+    TopLayer, Transmission, UvTransform, Wrap, mesh_lods,
 };
 pub use engine_assets::{
     AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, ClipHandle,

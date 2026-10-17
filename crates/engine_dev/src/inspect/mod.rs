@@ -1,4 +1,5 @@
 mod components;
+mod coverage;
 mod environment;
 mod poses;
 
@@ -128,6 +129,12 @@ type ReadInspector =
 /// report beside them. Hosts with a renderer answer it; without one, replies
 /// say None where it would.
 pub trait RendererFacts {
+    /// Coverage filtering prepared for this material binding; None until
+    /// an eligible binding uploads. Opacity at each test can still fall back.
+    fn alpha_coverage(
+        &self,
+        material: &engine_core::Material,
+    ) -> Option<engine_core::AlphaCoverageState>;
     /// Whether `texture` is resident on the GPU.
     fn texture_resident(&self, texture: TextureHandle) -> bool;
     /// `mesh` as uploaded; None before it uploads.

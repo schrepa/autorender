@@ -291,6 +291,18 @@ pub enum AlphaMode {
     Blend,
 }
 
+/// How a masked material preserves coverage as its base texture minifies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AlphaCoverage {
+    /// Default: use a texture/cutoff-specific curve for eligible RGBA8 UV
+    /// masks. Unsupported textures, samplers, cutoffs and opacity use legacy.
+    #[default]
+    Auto,
+    /// Always use the original `1 + 0.25 * mip` alpha-test multiplier.
+    /// Raw texture alpha, emission and blending are unchanged in either mode.
+    Legacy,
+}
+
 /// A glTF 2.0 metallic-roughness material: a linear base color
 /// factor, [`Surface`] factors and extensions, and optional texture maps.
 ///
@@ -311,6 +323,7 @@ pub struct Material {
     emissive: [f32; 3],
     emissive_texture: Option<TextureRef>,
     alpha_mode: AlphaMode,
+    alpha_coverage: AlphaCoverage,
     double_sided: bool,
     transmission: Transmission,
     world_tiling: Option<f32>,
@@ -356,6 +369,7 @@ impl Material {
             emissive: [0.0; 3],
             emissive_texture: None,
             alpha_mode: AlphaMode::Opaque,
+            alpha_coverage: AlphaCoverage::Auto,
             double_sided: false,
             transmission: Transmission::NONE,
             world_tiling: None,
@@ -404,6 +418,22 @@ impl Material {
 
     pub fn alpha_mode(&self) -> AlphaMode {
         self.alpha_mode
+    }
+
+    /// Selects coverage filtering for this material's camera, shadow and
+    /// source-impostor alpha tests. Auto is the default; it requires a
+    /// power-of-two RGBA8 base map, linear UV sampling with linear mips,
+    /// cutoff in `(0, 1)` and opacity 1. Each test also requires combined
+    /// instance/vertex opacity 1. Unsupported cases and uniform mip tails
+    /// retain legacy filtering. Final impostor atlases keep their own rule.
+    #[must_use]
+    pub fn with_alpha_coverage(mut self, mode: AlphaCoverage) -> Self {
+        self.alpha_coverage = mode;
+        self
+    }
+
+    pub fn alpha_coverage(&self) -> AlphaCoverage {
+        self.alpha_coverage
     }
 
     /// Whether this material draws in the transparent pass: it blends, or
@@ -654,8 +684,8 @@ impl Material {
     }
 
     /// What renderers bind for a material with maps: everything but its
-    /// color and surface, which they read per object. Materials with equal
-    /// bindings draw together whatever their colors.
+    /// color and surface, which they read per object, except opacity's
+    /// coverage eligibility. Materials with equal bindings draw together.
     pub fn binding(&self) -> Option<MaterialBinding> {
         self.has_maps().then(|| MaterialBinding {
             maps: self.maps().map(|map| {
@@ -694,6 +724,11 @@ impl Material {
                 AlphaMode::Blend => 2,
             },
             double_sided: self.double_sided,
+            coverage: (
+                self.alpha_coverage,
+                self.opacity() == 1.0,
+                self.world_tiling.is_none(),
+            ),
         })
     }
 }
@@ -711,6 +746,9 @@ pub struct MaterialBinding {
     parameters: [u32; 9],
     alpha: u8,
     double_sided: bool,
+    // Curve preparation depends on mode, unit opacity and UV mapping.
+    // Different colors still share bindings, and all share color textures.
+    coverage: (AlphaCoverage, bool, bool),
 }
 
 fn checked(texture: TextureRef) -> Result<TextureRef, AssetError> {
