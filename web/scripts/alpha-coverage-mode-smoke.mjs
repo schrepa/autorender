@@ -75,9 +75,9 @@ async function settled() {
   }
   assert.fail(`renderer did not settle: ${JSON.stringify(stats)}`);
 }
-async function capture(name, box = { x: 0, y: 0, width: size[0], height: size[1] }) {
+async function capture(name, box = { x: 0, y: 0, width: size[0], height: size[1] }, exact = true) {
   await settled();
-  await command("capture");
+  const frame = exact ? await command("capture") : await command("present", { alpha: 0, gpu: true });
   const png = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
   const crop = await page.evaluate(async ({ png, box }) => {
     const image = new Image(); image.src = `data:image/png;base64,${png}`; await image.decode();
@@ -90,7 +90,8 @@ async function capture(name, box = { x: 0, y: 0, width: size[0], height: size[1]
   }, { png: png.toString("base64"), box });
   const bytes = Buffer.from(crop.png, "base64");
   await writeFile(`${output}/${name}-crop.png`, bytes);
-  return { hash: createHash("sha256").update(bytes).digest("hex"), covered: crop.covered, pixels: crop.pixels };
+  return { hash: createHash("sha256").update(bytes).digest("hex"), covered: crop.covered, pixels: crop.pixels,
+    ...(exact ? {} : { rendering: frame.result.rendering }) };
 }
 async function inspect(id = "eligible") {
   const view = (await command("inspect", { entity: id, component: "Mesh3d" })).result.entity.components.Mesh3d;
@@ -112,6 +113,7 @@ async function warmed() {
 try {
   await scene.route();
   await openPaused(page, sceneUrl());
+  results.setup = (await command("status")).result.adapter;
   assert.deepEqual(await page.locator("canvas").evaluate(canvas => [canvas.width, canvas.height]), size);
   const reference = {};
   for (const id of ["eligible", "reduced"]) {
@@ -229,12 +231,12 @@ try {
       for (const [label, distance] of [["near", 40], ["transition", 200], ["far", 600]]) {
         await command("camera", { position: [10, 12, distance], target: [10, 3, 0], vertical_fov_radians: 55 * Math.PI / 180, near: 0.1, far: 5000 });
         for (let frame = 0; frame < 30; frame++) await command("present", { alpha: 0, gpu: true });
-        const image = await capture(`placed-${cycle}-${mode}-${label}`);
-        const repeat = await capture(`placed-${cycle}-${mode}-${label}-repeat`);
+        const image = await capture(`placed-${cycle}-${mode}-${label}`, undefined, false);
+        const repeat = await capture(`placed-${cycle}-${mode}-${label}-repeat`, undefined, false);
         assert.equal(image.hash, repeat.hash, "static source/bake captures are repeatable");
         if (cycle === 2) assert.equal(image.hash, results.placed[0].views.find(view => view.label === label).image.hash,
           "restoring auto restores foliage, shadows and final impostor pixels");
-        row.views.push({ label, image, rendering: (await command("render")).result.rendering });
+        row.views.push({ label, image, rendering: image.rendering });
       }
       assert.ok(row.views.some(view => view.rendering.level_of_detail.impostor_instances > 0), "far view draws baked impostors");
     }

@@ -739,7 +739,8 @@ type BoundMap = (TextureHandle, Sampler, [u32; 5], u32);
 
 /// A material's maps and map parameters ([`Material::binding`]): its
 /// textures with their samplers and transforms, normal scale, occlusion
-/// strength, emissive color, alpha mode, transmission and sides.
+/// strength, emissive color, alpha mode, transmission, sides and coverage
+/// mode/eligibility. Per-object RGB and surface factors do not split bindings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MaterialBinding {
     maps: [Option<BoundMap>; 5],

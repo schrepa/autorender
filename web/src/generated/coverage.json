@@ -289,6 +289,7 @@
         "agent",
         "agent-lifecycle",
         "alpha-coverage",
+        "alpha-coverage-mode",
         "collision",
         "culling",
         "frame-loop",
@@ -603,7 +604,6 @@
       "op": "render",
       "smokes": [
         "alpha-coverage",
-        "alpha-coverage-mode",
         "collision",
         "culling",
         "gpu-presentation",

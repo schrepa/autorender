@@ -43,7 +43,7 @@ pub(crate) struct GpuMaterial {
     // The library version the group holds: a replaced
     // material builds its group again.
     version: u64,
-    binding: MaterialBinding,
+    binding: Option<MaterialBinding>,
     coverage: AlphaCoverageState,
 }
 
@@ -306,9 +306,7 @@ impl MaterialStore {
             _uniform: uniform,
             variant: Variant::of(material),
             version,
-            binding: material
-                .binding()
-                .expect("uploaded materials have bindings"),
+            binding: material.binding(),
             coverage,
         }
     }
@@ -327,7 +325,7 @@ impl MaterialStore {
         let binding = material.binding()?;
         self.materials
             .values()
-            .find(|gpu| gpu.binding == binding)
+            .find(|gpu| gpu.binding == Some(binding))
             .map(|gpu| gpu.coverage)
     }
 

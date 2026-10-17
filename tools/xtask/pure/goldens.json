@@ -11,7 +11,7 @@
         },
         "materials": {
           "count": 119,
-          "hash": "463c2e42e5cac752"
+          "hash": "c67911e356e0f6a4"
         },
         "meshes": {
           "count": 9,
@@ -23,6 +23,10 @@
         }
       },
       "components": {
+        "AlphaCoverage": {
+          "count": 10000,
+          "hash": "a3cbb75f0c886121"
+        },
         "Collider": {
           "count": 1000,
           "hash": "dd2e1b0520e7762c"
@@ -45,7 +49,7 @@
         },
         "Mesh3d": {
           "count": 10000,
-          "hash": "a25cc4add845bb9c"
+          "hash": "bdedcc51d0dc317d"
         },
         "ParticleEmitter": {
           "count": 307,
@@ -61,7 +65,7 @@
         }
       },
       "entities": 10756,
-      "hash": "108aa48c9db5e4db"
+      "hash": "2256e6004f7e16ef"
     },
     "content dense": {
       "assets": {
@@ -71,7 +75,7 @@
         },
         "materials": {
           "count": 5,
-          "hash": "e041ba7209dae6f3"
+          "hash": "fb3070ef24d4d84a"
         },
         "meshes": {
           "count": 5,
@@ -83,6 +87,10 @@
         }
       },
       "components": {
+        "AlphaCoverage": {
+          "count": 10100,
+          "hash": "13058dee8eeb45cc"
+        },
         "GlobalTransform": {
           "count": 10100,
           "hash": "93290e77f952981c"
@@ -97,7 +105,7 @@
         },
         "Mesh3d": {
           "count": 10100,
-          "hash": "e9322e48df25b1af"
+          "hash": "ebe5976cdabaac1e"
         },
         "PresentedTransform": {
           "count": 10100,
@@ -109,7 +117,7 @@
         }
       },
       "entities": 10159,
-      "hash": "d1a13d5c91035c99"
+      "hash": "3387d9febf49a8b9"
     },
     "content field": {
       "assets": {
@@ -119,7 +127,7 @@
         },
         "materials": {
           "count": 8,
-          "hash": "e4271ab9d8ef9a58"
+          "hash": "a2384d1f8a44f862"
         },
         "meshes": {
           "count": 9,
@@ -131,6 +139,10 @@
         }
       },
       "components": {
+        "AlphaCoverage": {
+          "count": 10000,
+          "hash": "a3cbb75f0c886121"
+        },
         "Collider": {
           "count": 1000,
           "hash": "728b2907755171fd"
@@ -149,7 +161,7 @@
         },
         "Mesh3d": {
           "count": 10000,
-          "hash": "74a86396d111e1f9"
+          "hash": "ee4ea5aecc6292ab"
         },
         "PresentedTransform": {
           "count": 10313,
@@ -161,7 +173,7 @@
         }
       },
       "entities": 10372,
-      "hash": "6a7032a82d969f38"
+      "hash": "cc21047ad43e7aa1"
     },
     "content highlands": {
       "assets": {
@@ -171,7 +183,7 @@
         },
         "materials": {
           "count": 14,
-          "hash": "f38a0e5fc604380e"
+          "hash": "43d6b97bebe30803"
         },
         "meshes": {
           "count": 50,
@@ -183,6 +195,10 @@
         }
       },
       "components": {
+        "AlphaCoverage": {
+          "count": 10001,
+          "hash": "33046bde1ef2c0c3"
+        },
         "Collider": {
           "count": 1000,
           "hash": "728b2907755171fd"
@@ -205,7 +221,7 @@
         },
         "Mesh3d": {
           "count": 10001,
-          "hash": "6e118f8fe01c4804"
+          "hash": "0eee84f0c6a7c6ea"
         },
         "NavAgent": {
           "count": 1,
@@ -225,7 +241,7 @@
         }
       },
       "entities": 10378,
-      "hash": "7e23dbfc35b31fb6"
+      "hash": "7a0842313442f3e4"
     },
     "content metro": {
       "assets": {
@@ -235,7 +251,7 @@
         },
         "materials": {
           "count": 48,
-          "hash": "8325dedc841be6cb"
+          "hash": "45a4f58240a22c06"
         },
         "meshes": {
           "count": 17,
@@ -247,6 +263,10 @@
         }
       },
       "components": {
+        "AlphaCoverage": {
+          "count": 10000,
+          "hash": "a3cbb75f0c886121"
+        },
         "AnimationPlayer": {
           "count": 480,
           "hash": "0a845bd7b23c6068"
@@ -273,7 +293,7 @@
         },
         "Mesh3d": {
           "count": 10000,
-          "hash": "fd29d165fb1cb515"
+          "hash": "3fb7f34301f7ad20"
         },
         "ParticleEmitter": {
           "count": 21,
@@ -301,7 +321,7 @@
         }
       },
       "entities": 15331,
-      "hash": "bd6d3fcb1a3679fc"
+      "hash": "766ba9da9fedaa79"
     },
     "terrain frames": 400,
     "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, shaped_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141572, restored_tiles: 12, idle_tiles: 0, banded_tiles: 0, unplaced_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, failed_reads: 0, refused_falls: 0, loading: false } | terrain tiles 854854a0fbb2ae0d patches 3c83553fdfed650c | surroundings tiles a2eadb7ccd455bc5 patches 36dbb04c85cad6bc",
