@@ -28,7 +28,7 @@ pub fn build(root: &Path, attribution: bool) -> Result<(), String> {
         .iter()
         .filter(|client| client.game.is_some())
         .collect();
-    let mut arguments = vec!["build"];
+    let mut arguments = Vec::new();
     for game in &games {
         arguments.extend(["-p", game.package.as_str()]);
     }
@@ -41,21 +41,15 @@ pub fn build(root: &Path, attribution: bool) -> Result<(), String> {
         "profiling",
         "--locked",
     ]);
-    run(root, "cargo", &arguments)?;
+    let build = xtask::builds::cargo(root, &arguments, "browser-profile")?;
     for game in &games {
-        run(
+        let artifact = build.artifact(&game.wasm, "wasm")?;
+        xtask::bindings::generate(
             root,
-            "wasm-bindgen",
-            &[
-                &format!("target/{WASM_TARGET}/profiling/{}.wasm", game.wasm),
-                "--target",
-                "web",
-                "--out-dir",
-                &format!("web/pkg-{name}"),
-                "--out-name",
-                &game.wasm,
-                "--keep-debug",
-            ],
+            &artifact,
+            &game.wasm,
+            &["--keep-debug"],
+            &root.join(format!("web/pkg-{name}")),
         )?;
     }
     pipeline::install_web_dependencies(root)?;

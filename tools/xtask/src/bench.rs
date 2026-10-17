@@ -2,12 +2,11 @@
 //! the settings bundles, which every measured commit loads from its own
 //! tree, as it does the switches workloads take (`options.json`, generated);
 //! the catalog of what measurements report (`metrics.json`) and the paths
-//! that count as shaders, which the factory reads at the commit a task's
-//! tools come from. Lint holds them to the code (`check`); `bench assets`
+//! that count as shaders at the selected tool revision. Lint holds them to the code (`check`); `bench assets`
 //! builds the files workloads read that git does not hold, as the commit it
 //! runs in makes them.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -110,7 +109,7 @@ pub struct Assets {
     pub generated_hash: String,
 }
 
-/// Builds the generated files into `target/bench-assets/<inputs hash>/`,
+/// Builds generated files into leased entries of the shared bounded store,
 /// where a build of the same inputs (the generators' code and the
 /// toolchain) is reused.
 pub fn assets(root: &Path) -> Result<Assets, String> {
@@ -151,182 +150,75 @@ fn build_sets(
     cache: &str,
     sets: &[(&'static str, &'static [&'static str])],
 ) -> Result<PathBuf, String> {
-    let inputs = inputs_hash(root, sets)?;
-    let folder = root.join("target").join(cache).join(&inputs[..16]);
-    let complete = folder.join("complete");
-    if !complete.is_file() {
-        if folder.exists() {
-            fs::remove_dir_all(&folder)
-                .map_err(|error| format!("cannot clear {}: {error}", folder.display()))?;
-        }
-        for (set, command) in sets {
-            let into = folder.join(set);
-            fs::create_dir_all(&into)
-                .map_err(|error| format!("cannot create {}: {error}", into.display()))?;
-            let into = into.display().to_string();
-            let mut arguments = vec!["run"];
-            arguments.extend(*command);
-            arguments.push(&into);
-            crate::process::run(root, "cargo", &arguments)?;
-        }
-        fs::write(&complete, &inputs)
-            .map_err(|error| format!("cannot write {}: {error}", complete.display()))?;
-        prune_assets(&folder)?;
-    }
-    Ok(folder)
-}
-
-/// Builds of other inputs kept beside the newest, which engine changes
-/// make one by one (about 50 MB each).
-const KEPT_ASSETS: usize = 3;
-
-/// Removes all but the [`KEPT_ASSETS`] most recently built folders beside
-/// `newest`, which stays.
-fn prune_assets(newest: &Path) -> Result<(), String> {
-    let Some(parent) = newest.parent() else {
-        return Ok(());
-    };
-    let mut others: Vec<(std::time::SystemTime, PathBuf)> = fs::read_dir(parent)
-        .map_err(|error| format!("cannot list {}: {error}", parent.display()))?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && path != newest)
-        .map(|path| {
-            let built = fs::metadata(path.join("complete"))
-                .and_then(|metadata| metadata.modified())
-                .unwrap_or(std::time::UNIX_EPOCH);
-            (built, path)
-        })
-        .collect();
-    // Newest first.
-    others.sort_by_key(|(built, _)| std::cmp::Reverse(*built));
-    for (_, path) in others.into_iter().skip(KEPT_ASSETS) {
-        fs::remove_dir_all(&path)
-            .map_err(|error| format!("cannot remove {}: {error}", path.display()))?;
-    }
-    Ok(())
-}
-
-/// SHA-256 over what the generators of `sets` make their files from: the
-/// source files of every package they build from this repository, the
-/// lockfile and the compiler's version.
-fn inputs_hash(root: &Path, sets: &[(&str, &[&str])]) -> Result<String, String> {
-    // The packages the sets' commands run (`-p PACKAGE`).
-    let generators: Vec<&str> = sets
-        .iter()
-        .filter_map(|(_, command)| {
-            command
-                .windows(2)
-                .find(|pair| pair[0] == "-p")
-                .map(|pair| pair[1])
-        })
-        .collect();
-    let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--locked"])
-        .current_dir(root)
-        .output()
-        .map_err(|error| format!("cannot run cargo metadata: {error}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-    }
-    let metadata: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("cargo metadata is not JSON: {error}"))?;
-    let packages: BTreeMap<&str, &Value> = metadata["packages"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|package| Some((package["id"].as_str()?, package)))
-        .collect();
-    let nodes: BTreeMap<&str, &Value> = metadata["resolve"]["nodes"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|node| Some((node["id"].as_str()?, node)))
-        .collect();
-    let mut queue: VecDeque<&str> = packages
-        .iter()
-        .filter(|(_, package)| generators.contains(&package["name"].as_str().unwrap_or("")))
-        .map(|(id, _)| *id)
-        .collect();
-    let mut seen = BTreeSet::new();
-    let mut folders = BTreeSet::new();
-    while let Some(id) = queue.pop_front() {
-        if !seen.insert(id) {
-            continue;
-        }
-        let package = packages[id];
-        // Packages from this repository; the registry's are the lockfile's.
-        if package["source"].is_null() {
-            let manifest = Path::new(package["manifest_path"].as_str().unwrap_or_default());
-            if let Some(folder) = manifest.parent() {
-                folders.insert(folder.to_path_buf());
-            }
-        }
-        for dependency in nodes
-            .get(id)
-            .and_then(|node| node["deps"].as_array())
-            .into_iter()
-            .flatten()
-        {
-            let normal = dependency["dep_kinds"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|kind| kind["kind"].is_null() || kind["kind"] == "build");
-            if let (true, Some(package)) = (normal, dependency["pkg"].as_str()) {
-                queue.push_back(package);
-            }
-        }
-    }
-    let mut paths: Vec<String> = Vec::new();
-    for folder in &folders {
-        let relative = folder.strip_prefix(root).unwrap_or(folder);
-        let listed = Command::new("git")
-            .args(["ls-files", "-z", "--"])
-            .arg(relative)
-            .current_dir(root)
-            .output()
-            .map_err(|error| format!("cannot run git ls-files: {error}"))?;
-        paths.extend(
-            String::from_utf8_lossy(&listed.stdout)
-                .split('\0')
-                .filter(|path| !path.is_empty())
-                .map(str::to_owned),
-        );
-    }
-    paths.push("Cargo.lock".into());
-    paths.sort();
-    paths.dedup();
-    let mut hash = Sha256::new();
-    for path in &paths {
-        // Line endings as git holds them, whatever the checkout's.
-        let bytes = fs::read(root.join(path)).unwrap_or_default();
-        hash.update(path.as_bytes());
-        hash.update([0]);
-        hash.update(normalized(&bytes));
-        hash.update([0]);
-    }
-    let rustc = Command::new("rustc")
-        .arg("-V")
-        .output()
-        .map_err(|error| format!("cannot run rustc: {error}"))?;
-    hash.update(&rustc.stdout);
+    let store = xtask::cache::Store::open(root)?;
+    let mut generated = Vec::new();
     for (set, command) in sets {
-        hash.update(set.as_bytes());
-        hash.update(command.join(" ").as_bytes());
+        let split = command
+            .iter()
+            .position(|part| *part == "--")
+            .ok_or("generator has no argument separator")?;
+        let build = xtask::builds::cargo(root, &command[..split], "asset-generators")?;
+        let name = command
+            .windows(2)
+            .find(|pair| pair[0] == "--bin")
+            .ok_or("generator has no binary")?[1];
+        let program = build.executable(name)?;
+        // These generators consume no external resources. Their actual binary
+        // and invocation fully identify the generated bytes. Cargo validates
+        // source, untracked includes, manifests, build scripts and config first.
+        let inputs = serde_json::json!({"version": 1, "program": xtask::files::hash(&program)?, "arguments": &command[split+1..], "set": set});
+        let key = inputs.to_string();
+        let entry = match store.read("generated-assets", &key)? {
+            Some(entry) => entry,
+            None => {
+                let entry = store.entry("generated-assets", &key)?;
+                if !entry.valid()? {
+                    let staging = entry.staging()?;
+                    let into = staging.join(set);
+                    fs::create_dir_all(&into).map_err(|e| e.to_string())?;
+                    let mut generate = Command::new(&program);
+                    generate
+                        .current_dir(root)
+                        .args(&command[split + 1..])
+                        .arg(&into);
+                    let output = xtask::jobs::run(
+                        &mut generate,
+                        &staging.join("logs"),
+                        &Default::default(),
+                    )?;
+                    drop(generate);
+                    if !output.status.success() {
+                        return Err(format!("{name} failed: {}", output.stderr.display()));
+                    }
+                    entry.publish()?;
+                }
+                entry
+            }
+        };
+        generated.push((*set, xtask::cache::retain(entry)?));
     }
-    Ok(hex(&hash.finalize()))
-}
-
-/// `bytes` with Windows line endings as Unix ones.
-fn normalized(bytes: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(bytes.len());
-    for (index, &byte) in bytes.iter().enumerate() {
-        if !(byte == b'\r' && bytes.get(index + 1) == Some(&b'\n')) {
-            out.push(byte);
+    let identity = serde_json::json!({"sets": generated.iter().map(|(set, path)| Ok(serde_json::json!({"set": set, "files": xtask::files::manifest(&path.join(set))?}))).collect::<Result<Vec<_>, String>>()?});
+    let key = identity.to_string();
+    let entry = match store.read(cache, &key)? {
+        Some(entry) => entry,
+        None => {
+            let entry = store.entry(cache, &key)?;
+            if !entry.valid()? {
+                let staging = entry.staging()?;
+                for (set, folder) in &generated {
+                    xtask::files::copy_tree(&folder.join(set), &staging.join(set))?;
+                }
+                fs::write(
+                    staging.join("complete"),
+                    xtask::files::digest(key.as_bytes()),
+                )
+                .map_err(|e| e.to_string())?;
+                entry.publish()?;
+            }
+            entry
         }
-    }
-    out
+    };
+    xtask::cache::retain(entry)
 }
 
 /// Every file under `folder`, by its path from `base` with `/`.

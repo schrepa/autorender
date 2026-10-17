@@ -21,9 +21,11 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let folder = crate::bench::dense_assets(root)?.display().to_string();
     let trace = root.join(TRACE).display().to_string();
     println!("Running the core smoke (cargo run -p coresmoke)");
+    let context = crate::process::tools_context(root)?;
     let output = Command::new("cargo")
         .args(["run", "-q", "--locked", "-p", "coresmoke", "--target-dir"])
-        .arg(crate::process::tools_target(root))
+        .arg(context.path().join("target"))
+        .env("CARGO_BUILD_BUILD_DIR", context.path().join("target"))
         .arg("--")
         .args(["--assets", &folder, "--trace", &trace])
         .current_dir(root)

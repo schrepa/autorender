@@ -8,7 +8,7 @@
 //!   rules call for against a server of this checkout, the terrain corpus's
 //!   jobs in Wasm where called for, equivalence's smoke tier and the cells
 //!   the rules name, natively, where any rule calls for equivalence, and
-//!   the factory tools' self-checks where called for;
+//!   the execution tools' self-checks where called for;
 //! - `merge` (about 30-45 minutes): all of lint, every smoke check, the
 //!   native smoke again with its program built in the dev profile (where
 //!   debug assertions check the engine's invariants, such as the terrain
@@ -78,7 +78,7 @@ struct Selection {
     cells: BTreeSet<&'static str>,
     equivalence: bool,
     browser: bool,
-    /// The self-checks of the factory's tools called for.
+    /// The self-checks of the execution tools called for.
     self_checks: BTreeSet<&'static str>,
     /// The Cargo packages holding changed files, for Clippy.
     packages: BTreeSet<String>,
@@ -259,6 +259,9 @@ fn steps<'a>(
                 for package in &selection.packages {
                     arguments.extend(["-p".to_owned(), package.clone()]);
                 }
+            }
+            if everything || selection.packages.contains("xtask") {
+                arguments.extend(["--features".to_owned(), "xtask/engine".to_owned()]);
             }
             arguments
                 .extend(["--all-targets", "--locked", "--", "-D", "warnings"].map(str::to_owned));

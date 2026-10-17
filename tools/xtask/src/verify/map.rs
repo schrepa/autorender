@@ -34,7 +34,7 @@ pub(crate) enum Check {
     Equivalence,
     /// Equivalence's browser leg, at the merge level.
     Browser,
-    /// A self-check of the factory's tools (`cargo xtask selfcheck KIND`):
+    /// A self-check of the execution tools (`cargo xtask selfcheck KIND`):
     /// `measure` or `checks`.
     Tools(&'static str),
 }
@@ -618,11 +618,41 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Browser],
     },
-    // The factory's tools, which check themselves.
+    Rule {
+        paths: &[
+            "tools/xtask/Cargo.toml",
+            "tools/xtask/src/lib.rs",
+            "tools/xtask/src/launcher.rs",
+            "tools/xtask/src/builds.rs",
+            "tools/xtask/src/cargo_context.rs",
+            "tools/xtask/src/symbols.rs",
+            "tools/xtask/src/cache.rs",
+            "tools/xtask/src/files.rs",
+            "tools/xtask/src/jobs.rs",
+            "tools/xtask/src/analyzer*.rs",
+            "tools/xtask/src/bindings.rs",
+            "tools/xtask/src/execution.rs",
+            "tools/xtask/src/request_contract.rs",
+            "tools/xtask/src/tooling*.rs",
+        ],
+        checks: &[Tools("tooling")],
+    },
+    Rule {
+        paths: &["tools/xtask/src/native.rs"],
+        checks: &[Smoke("native"), Smoke("agent-lifecycle")],
+    },
+    // Execution tools check their own build, artifact and recovery contracts.
     Rule {
         paths: &[
             "tools/xtask/src/measure.rs",
-            "tools/xtask/src/formats.rs",
+            "tools/xtask/src/execution.rs",
+            "tools/xtask/src/measure_host.rs",
+            "tools/xtask/src/builds.rs",
+            "tools/xtask/src/cargo_context.rs",
+            "tools/xtask/src/symbols.rs",
+            "tools/xtask/src/cache.rs",
+            "tools/xtask/src/jobs.rs",
+            "tools/xtask/src/analyzer.rs",
             "tools/xtask/src/shader_report.rs",
             "tools/xtask/src/bench.rs",
             "tools/xtask/src/selfcheck.rs",
@@ -661,6 +691,7 @@ pub(crate) const MAP: &[Rule] = &[
     Rule {
         paths: &[
             "web/scripts/harness.mjs",
+            "web/scripts/prepared-binaries.mjs",
             "web/scripts/browser-launch.mjs",
             "web/scripts/heavy-run.mjs",
             "web/scripts/workspace.mjs",

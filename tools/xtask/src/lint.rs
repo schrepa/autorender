@@ -132,7 +132,12 @@ pub(crate) const LINT: &[Stage] = &[
     Stage {
         name: "clippy",
         needs: &[],
-        run: |root| clippy(root, &["--workspace", "--all-targets"]),
+        run: |root| {
+            clippy(
+                root,
+                &["--workspace", "--all-targets", "--features", "xtask/engine"],
+            )
+        },
     },
     // The native host with its development tools, and with its profiler,
     // as agents build native games (the app template's entry included).

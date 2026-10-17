@@ -70,10 +70,34 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
     check_wasm_bindgen(&root).map_err(|(code, message)| (code, "wasm-bindgen".into(), message))?;
 
     report["build"]["stage"] = json!("cargo");
-    let target_dir = root.join("target/iteration-wasm");
+    let store =
+        xtask::cache::Store::open(&root).map_err(|e| ("cache_unavailable", "cargo".into(), e))?;
+    let compiler =
+        xtask::builds::compiler(&root).map_err(|e| ("cargo_unavailable", "cargo".into(), e))?;
+    let context = store
+        .entry("cargo", &format!("browser-iteration:{compiler}"))
+        .map_err(|e| ("cache_unavailable", "cargo".into(), e))?;
+    context
+        .require_capacity(0)
+        .map_err(|e| ("cache_capacity", "cargo".into(), e))?;
+    let target_dir = context.path().join("target");
+    xtask::cargo_context::select(
+        &root,
+        &[
+            "--locked",
+            "--profile",
+            crate::pipeline::QUICK,
+            "--target",
+            WASM_TARGET,
+        ],
+        &context,
+        &target_dir,
+    )
+    .map_err(|e| ("cargo_workspace", "cargo".into(), e))?;
     let compiled = capture(
         Command::new("cargo")
             .current_dir(&root)
+            .env("CARGO_BUILD_BUILD_DIR", &target_dir)
             .envs([crate::process::engine_commit()])
             .arg("build")
             .args(client_packages())
@@ -137,29 +161,8 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
     report["build"]["stage"] = json!("bindings");
     let mut packages = Vec::with_capacity(clients().len());
     for (package, artifact) in artifacts {
-        let generated = capture(
-            Command::new("wasm-bindgen")
-                .current_dir(&root)
-                .arg(artifact)
-                .args(["--target", "web", "--out-dir"])
-                .arg(&output)
-                .args(["--out-name", package]),
-            false,
-        )
-        .map_err(|message| ("bindgen_unavailable", package.into(), message))?;
-        let discarded = report["output_bytes_truncated"]
-            .as_u64()
-            .unwrap_or_default()
-            + generated.stdout.text_truncated
-            + generated.stderr_truncated;
-        report["output_bytes_truncated"] = json!(discarded);
-        if !generated.status.success() {
-            return Err((
-                "bindgen_failed",
-                package.into(),
-                failure_message("Binding generation failed", &generated),
-            ));
-        }
+        let binding = xtask::bindings::generate(&root, &artifact, package, &[], &output)
+            .map_err(|message| ("bindgen_failed", package.into(), message))?;
         let javascript = output.join(format!("{package}.js"));
         let wasm = output.join(format!("{package}_bg.wasm"));
         let declarations = output.join(format!("{package}.d.ts"));
@@ -173,7 +176,7 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
                 "wasm-bindgen succeeded without producing all required files".into(),
             ));
         }
-        packages.push(json!({"name": package, "javascript": javascript, "wasm": wasm, "declarations": declarations}));
+        packages.push(json!({"name": package, "javascript": javascript, "wasm": wasm, "declarations": declarations, "binding": binding}));
     }
     report["build"]["packages"] = json!(packages);
     Ok(())

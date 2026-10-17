@@ -1,4 +1,4 @@
-//! `cargo xtask selfcheck [measure] [checks]`: the factory's tools run
+//! `cargo xtask selfcheck [measure] [checks]`: the measurement tools run
 //! against themselves, each an A/A comparison whose two sides must come out
 //! equal, on the working tree as a commit (made without touching any ref,
 //! the same content giving the same commit, so builds are reused; the
@@ -41,7 +41,7 @@ const BUSY_CPU_PCT: f64 = 50.0;
 /// The check the checks self-check runs: quick, and needing no GPU.
 const CHECK: &str = "agent-lifecycle-smoke";
 /// What the self-checks are, in the order they run.
-pub(crate) const KINDS: [&str; 2] = ["measure", "checks"];
+pub(crate) const KINDS: [&str; 3] = ["measure", "checks", "tooling"];
 
 pub fn selfcheck(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let kinds: Vec<&str> = if arguments.is_empty() {
@@ -68,6 +68,10 @@ pub fn selfcheck(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let mut differed = Vec::new();
     for kind in kinds {
         let found = match kind {
+            "tooling" => {
+                xtask::tooling_check::run(root)?;
+                Vec::new()
+            }
             "measure" => measure_aa(root, &sha, &folder.join("measure"))?,
             _ => checks_aa(root, &sha, &folder.join("checks"))?,
         };
@@ -165,7 +169,7 @@ fn working_commit(root: &Path, folder: &Path) -> Result<String, String> {
 
 /// The measure task of an A/A comparison of `sha` and its machine profile:
 /// this machine's discrete GPU (or its only one) through the platform's
-/// API, as the factory's setup measurement runs.
+/// API, as the local setup measurement runs.
 fn measure_task(sha: &str) -> (Value, Value) {
     let api = if cfg!(windows) {
         "d3d12"
@@ -181,12 +185,11 @@ fn measure_task(sha: &str) -> (Value, Value) {
     });
     let arm = json!({"sha": sha, "options": {}});
     let task = json!({
-        "id": 0,
-        "spec": {
+            "version": 1, "operation": "measure", "environment": profile,
             "tools_sha": sha,
             "base_sha": sha,
             "sha": sha,
-            "setup": "selfcheck",
+            "setup": setup,
             "pairs": PAIRS,
             "want": {"profiles": false, "shader_report": false},
             "checks": [],
@@ -211,7 +214,6 @@ fn measure_task(sha: &str) -> (Value, Value) {
                     "capture": {"timestamp_ms": 10_000, "overlays": false},
                 },
             }],
-        },
     });
     (task, profile)
 }
@@ -229,20 +231,11 @@ fn write(path: &Path, value: &Value) -> Result<PathBuf, String> {
 /// Runs the A/A measure task of `sha` into `folder`: what differed.
 fn measure_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, String> {
     fs::create_dir_all(folder).map_err(|error| error.to_string())?;
-    let (task, profile) = measure_task(sha);
+    let (task, _profile) = measure_task(sha);
     let task = write(&folder.join("task.json"), &task)?;
-    let profile = write(&folder.join("profile.json"), &profile)?;
     let out = folder.join("report.json");
     let path = |path: &Path| path.display().to_string();
-    let arguments = [
-        "--task",
-        &path(&task),
-        "--profile",
-        &path(&profile),
-        "--out",
-        &path(&out),
-    ]
-    .map(str::to_owned);
+    let arguments = ["--request", &path(&task), "--out", &path(&out)].map(str::to_owned);
     crate::measure::measure_with(root, &arguments, Some(sha))?;
     let report = read_json(&out)?;
     let mut differed = Vec::new();

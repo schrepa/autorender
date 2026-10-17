@@ -1,4 +1,4 @@
-//! The engine factory's checks: smoke scripts (`web/scripts/NAME.mjs`) run
+//! Local revision checks: smoke scripts (`web/scripts/NAME.mjs`) run
 //! against a development server of one commit, with the scripts of the
 //! same or another commit, every attempt kept. The scripts build, run and
 //! write in the served commit's checkout (`ENGINE_WORKSPACE`), so another
@@ -12,15 +12,12 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
-use crate::bench::hex;
 use crate::checkouts::checkout;
 use crate::measure::{commit_id, git, iso, output, read_json};
 use crate::serve::{Server, free_port};
@@ -46,14 +43,15 @@ struct Served {
 
 /// Starts `cargo xtask dev` in `source` on a free port and waits until it
 /// serves: its build of the page logged into `log`.
-fn start_server(source: &Path, sha: &str, log: &Path) -> Result<Served, String> {
+fn start_server(source: &Path, sha: &str, log: &Path, limit: Duration) -> Result<Served, String> {
     let port = free_port()?;
     let mut command = Command::new("cargo");
     command
         .args(["xtask", "dev", "--port", &port.to_string()])
+        .env("ENGINE_TOOL_WORKSPACE", source)
         .current_dir(source);
     let started = Instant::now();
-    let server = Server::start(command, port, log, sha, SERVER_START)?;
+    let server = Server::start(command, port, log, sha, limit)?;
     let build = web_build(source, sha, started.elapsed())?;
     Ok(Served { server, build })
 }
@@ -69,23 +67,19 @@ fn web_build(source: &Path, sha: &str, took: Duration) -> Result<Value, String> 
         Value::Array(features) => Value::Array(features.clone()),
         _ => json!(["engine/dev"]),
     };
-    let mut wasm: Vec<PathBuf> = fs::read_dir(source.join("web/pkg-dev"))
-        .map_err(|error| format!("cannot read web/pkg-dev: {error}"))?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "wasm")
-        })
+    let manifest = xtask::files::manifest(&source.join("web/pkg-dev"))?;
+    let files: Vec<_> = manifest
+        .as_array()
+        .ok_or("binding manifest must be an array")?
+        .iter()
+        .filter(|file| file["path"] != "build.json")
+        .cloned()
         .collect();
-    wasm.sort();
-    let mut hash = Sha256::new();
-    for path in &wasm {
-        let bytes = fs::read(path).map_err(|error| error.to_string())?;
-        hash.update(path.file_name().unwrap_or_default().as_encoded_bytes());
-        hash.update([0]);
-        hash.update(&bytes);
-    }
+    let artifact_hash = xtask::files::digest(
+        serde_json::to_string(&files)
+            .map_err(|e| e.to_string())?
+            .as_bytes(),
+    );
     let wasm_bindgen = output(source, "wasm-bindgen", &["--version"]).unwrap_or_default();
     Ok(json!({
         "sha": sha,
@@ -99,7 +93,7 @@ fn web_build(source: &Path, sha: &str, took: Duration) -> Result<Value, String> 
             "wasm-bindgen": wasm_bindgen,
         },
         "env": {"RUSTFLAGS": std::env::var("RUSTFLAGS").unwrap_or_default()},
-        "artifact_hash": hex(&hash.finalize()),
+        "artifact_hash": artifact_hash,
         "build_ms": took.as_secs_f64() * 1000.0,
     }))
 }
@@ -160,6 +154,10 @@ pub fn run(
     }
     let (mut entries, mut incomplete) = (Vec::new(), false);
     for (sha, checks) in by_commit {
+        if deadline.is_some_and(|end| SystemTime::now() >= end) {
+            incomplete = true;
+            break;
+        }
         let source = checkout(root, sha, None)?;
         // Its pages read the files git does not hold, which a measured
         // commit's checkout has too; without them they fail to load.
@@ -167,10 +165,25 @@ pub fn run(
             eprintln!("The files {sha}'s pages read are missing: {error}");
         }
         eprintln!("Starting the development server of {sha}.");
-        let log = folder.join(format!("server-{}.log", &sha[..12]));
-        let server = start_server(&source, sha, &log);
+        let log = folder.join(format!(
+            "server-{}-{}.log",
+            &sha[..12],
+            xtask::files::unique()
+        ));
+        let limit = deadline
+            .map(|end| end.duration_since(SystemTime::now()).unwrap_or_default())
+            .unwrap_or(SERVER_START)
+            .min(SERVER_START);
+        let server = start_server(&source, sha, &log, limit);
         for check in checks {
             let name = check["name"].as_str().ok_or("a check has a name")?;
+            if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            {
+                return Err("invalid check script name".into());
+            }
             let expect = check["expect"].as_str().unwrap_or("pass");
             let scripts_sha = check["scripts_sha"].as_str();
             let mut attempts = Vec::new();
@@ -183,20 +196,27 @@ pub fn run(
                 Err(_) => None,
             };
             while attempts.len() < ATTEMPTS {
-                if !attempts.is_empty()
-                    && deadline.is_some_and(|deadline| SystemTime::now() > deadline)
-                {
+                if deadline.is_some_and(|deadline| SystemTime::now() > deadline) {
                     incomplete = true;
                     break;
                 }
                 let started_at = iso(SystemTime::now());
                 let started = Instant::now();
-                let attempt_log =
-                    folder.join(format!("{name}-{}-{}.log", &sha[..12], attempts.len() + 1));
+                let attempt_log = folder.join(format!(
+                    "{name}-{}-{}-{}.log",
+                    &sha[..12],
+                    attempts.len() + 1,
+                    xtask::files::unique()
+                ));
                 let (exit_code, measurements) = match (&server, &web) {
-                    (Ok(served), Some(web)) => {
-                        attempt(web, &source, name, &served.server.url, &attempt_log)?
-                    }
+                    (Ok(served), Some(web)) => attempt(
+                        web,
+                        &source,
+                        name,
+                        &served.server.url,
+                        &attempt_log,
+                        deadline,
+                    )?,
                     (Err(error), _) => {
                         fs::write(&attempt_log, format!("{error}\n"))
                             .map_err(|error| error.to_string())?;
@@ -216,10 +236,22 @@ pub fn run(
                     "log": attempt_log.display().to_string(),
                     "measurements": measurements,
                 }));
+                xtask::files::atomic_json(
+                    &attempt_log.with_extension("attempt.json"),
+                    attempts.last().expect("recorded attempt"),
+                )?;
+                xtask::files::atomic_json(
+                    &folder.join("checks.checkpoint.json"),
+                    &json!({"completed": entries, "current": {"name": name, "sha": sha, "expect": expect, "build": build, "attempts": attempts}, "incomplete": true}),
+                )?;
                 // Nothing to run again without a server.
                 if holds(expect, exit_code) || server.is_err() {
                     break;
                 }
+            }
+            if attempts.is_empty() {
+                incomplete = true;
+                break;
             }
             entries.push(json!({
                 "name": name,
@@ -245,37 +277,40 @@ fn attempt(
     name: &str,
     url: &str,
     log: &Path,
+    deadline: Option<SystemTime>,
 ) -> Result<(i32, Vec<Value>), String> {
     let script = format!("scripts/{name}.mjs");
     if !web.join(&script).is_file() {
         fs::write(log, format!("{script} does not exist\n")).map_err(|error| error.to_string())?;
         return Ok((-1, Vec::new()));
     }
-    let mut child = Command::new("node")
+    let mut command = Command::new("node");
+    command
         .arg(&script)
         .env("DEMO_URL", url)
         .env("ENGINE_WORKSPACE", workspace)
-        .current_dir(web)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("cannot run node: {error}"))?;
-    let mut errors = child.stderr.take().expect("piped");
-    let stderr = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = errors.read_to_string(&mut text);
-        text
-    });
-    let mut stdout = String::new();
-    let _ = child
-        .stdout
-        .take()
-        .expect("piped")
-        .read_to_string(&mut stdout);
-    let status = child.wait().map_err(|error| error.to_string())?;
-    let stderr = stderr.join().unwrap_or_default();
-    fs::write(log, format!("{stdout}\n{stderr}")).map_err(|error| error.to_string())?;
-    Ok((status.code().unwrap_or(-1), measurements(&stdout)))
+        .env("ENGINE_TOOL_WORKSPACE", workspace)
+        .current_dir(web);
+    let timeout = deadline
+        .map(|end| end.duration_since(SystemTime::now()).unwrap_or_default())
+        .unwrap_or(Duration::from_secs(30 * 60));
+    let raw = log.with_extension("raw");
+    let result = xtask::jobs::run(
+        &mut command,
+        &raw,
+        &xtask::jobs::Limits {
+            timeout,
+            ..Default::default()
+        },
+    );
+    let stdout = fs::read_to_string(raw.join("stdout.log")).unwrap_or_default();
+    let stderr = fs::read_to_string(raw.join("stderr.log")).unwrap_or_default();
+    let (code, diagnostic) = match result {
+        Ok(output) => (output.status.code().unwrap_or(-1), String::new()),
+        Err(error) => (-1, error),
+    };
+    fs::write(log, format!("{stdout}\n{stderr}\n{diagnostic}")).map_err(|e| e.to_string())?;
+    Ok((code, measurements(&stdout)))
 }
 
 /// What a check measured about the image or the engine: the `measurements`
@@ -315,75 +350,36 @@ fn measurements(stdout: &str) -> Vec<Value> {
         .collect()
 }
 
-/// `cargo xtask checks`: a check task (its pull request merged into main,
-/// `sha`, and main, `main_sha`) as the factory's check report.
+/// Execute a versioned local request, preserving every check attempt.
 pub fn check_task(root: &Path, arguments: &[String]) -> Result<(), String> {
-    let usage = "usage: cargo xtask checks --task TASK.json --profile PROFILE.json --out REPORT.json [--formats FORMATS.json]";
-    let mut found: BTreeMap<&str, PathBuf> = BTreeMap::new();
-    let mut given = arguments.iter();
-    while let Some(name) = given.next() {
-        let key = match name.as_str() {
-            "--task" | "--profile" | "--out" | "--formats" => &name[2..],
-            _ => return Err(format!("unknown option {name}\n{usage}")),
-        };
-        let value = given
-            .next()
-            .ok_or_else(|| format!("{name} takes a path\n{usage}"))?;
-        found.insert(key, PathBuf::from(value));
+    let execution = xtask::execution::Request::read(arguments, "checks")?;
+    if execution.previous.is_some() {
+        return Err("check requests run fresh; continuation is for paired measurements".into());
     }
-    let [Some(task), Some(profile), Some(out)] =
-        ["task", "profile", "out"].map(|key| found.remove(key))
-    else {
-        return Err(usage.into());
-    };
-    let task = read_json(&task)?;
-    let spec = if task["spec"].is_object() {
-        &task["spec"]
-    } else {
-        &task
-    };
-    let id = task["id"].as_u64().ok_or("the task has no id")?;
-    let profile_start = read_json(&profile)?;
-    let tools_sha = git(root, &["rev-parse", "HEAD"])?;
-    if let Some(wanted) = spec["tools_sha"]
-        .as_str()
-        .filter(|wanted| *wanted != tools_sha)
-    {
-        return Err(format!(
-            "the tools come from {wanted}; this checkout is {tools_sha} (git checkout --detach {wanted})"
-        ));
-    }
-    let setup = match &spec["setup"] {
-        Value::String(id) => id.clone(),
-        setup => setup["id"].as_str().unwrap_or("unknown").to_owned(),
-    };
+    let spec = &execution.spec;
     let deadline = spec["deadline"]
         .as_str()
         .and_then(crate::measure::parse_iso);
-    let folder = root
-        .join("target")
-        .join("measure")
-        .join("checks")
-        .join(id.to_string());
-    let checks = spec["checks"].as_array().cloned().unwrap_or_default();
-    let (checks, incomplete) = run(root, &checks, &folder, deadline)?;
-    let report = json!({
-        "kind": "check",
-        "task": id,
-        "tools_sha": tools_sha,
-        "profile_start": profile_start,
-        "profile_end": read_json(&profile)?,
-        "setup": setup,
-        "sha": spec["sha"],
-        "main_sha": spec["main_sha"],
-        "checks": checks,
-        "incomplete": incomplete,
-    });
-    fs::write(
-        &out,
-        serde_json::to_string_pretty(&report).expect("reports serialize") + "\n",
-    )
-    .map_err(|error| format!("cannot write {}: {error}", out.display()))?;
+    let wanted = spec["checks"]
+        .as_array()
+        .cloned()
+        .ok_or("checks must be an array")?;
+    let mut checks = Vec::new();
+    let mut incomplete = false;
+    let mut report = json!({"kind": "check", "tools_sha": git(root, &["rev-parse", "HEAD"])? ,
+        "tool_identity": xtask::execution::tool_identity(root)?,
+        "profile_start": spec["environment"], "profile_end": spec["environment"],
+        "setup": spec["setup"]["id"], "sha": spec["sha"], "main_sha": spec["main_sha"],
+        "checks": [], "incomplete": true});
+    execution.checkpoint("checks", &report)?;
+    // Grouped execution keeps one server per served revision. Its per-attempt
+    // journal is durable even if the process is interrupted before returning.
+    let (completed, cut) = run(root, &wanted, &execution.folder, deadline)?;
+    checks.extend(completed);
+    incomplete |= cut;
+    report["checks"] = json!(checks);
+    report["incomplete"] = json!(incomplete);
+    execution.checkpoint("complete", &report)?;
     for check in report["checks"].as_array().into_iter().flatten() {
         let codes: Vec<String> = check["attempts"]
             .as_array()
@@ -408,9 +404,6 @@ pub fn check_task(root: &Path, arguments: &[String]) -> Result<(), String> {
             }
         }
     }
-    println!("Wrote {}.", out.display());
-    match found.remove("formats") {
-        Some(formats) => crate::measure::check_format(&report, &formats, "check"),
-        None => Ok(()),
-    }
+    println!("Wrote {}.", execution.out.display());
+    Ok(())
 }

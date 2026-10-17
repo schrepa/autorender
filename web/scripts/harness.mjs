@@ -21,10 +21,8 @@
 // @ts-check
 import "./exit-codes.mjs";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
-import { constants, setPriority } from "node:os";
 import { basename, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { launchContext } from "./browser-launch.mjs";
@@ -63,35 +61,7 @@ export function gardenScene() {
   return JSON.parse(readFileSync(new URL("fixtures/garden.scene.json", import.meta.url), "utf8"));
 }
 
-/** Builds the workspace's binaries `cargoArguments` select (`-p PACKAGE`,
- * `--bin NAME`, `--profile quick`) with the `cargo` on PATH, or `CARGO`, in
- * the background and below normal priority, so a check's browser work runs
- * meanwhile and keeps the processors it needs: resolves to each binary's
- * path by name, wherever the target folder is. Await it before running one. */
-export function cargoBinaries(cargoArguments) {
-  const built = new Promise((resolveBuild, reject) => {
-    const child = spawn(process.env.CARGO ?? "cargo", ["build", "-q", "--locked", "--message-format=json", ...cargoArguments],
-      { cwd: workspace, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    // The compilers it starts inherit the priority.
-    try { if (child.pid !== undefined) setPriority(child.pid, constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* Not permitted: normal priority. */ }
-    let stdout = "", stderr = "";
-    child.stdout.on("data", bytes => { stdout += bytes; });
-    child.stderr.on("data", bytes => { stderr = (stderr + bytes).slice(-16_384); });
-    child.on("error", reject);
-    child.on("close", code => {
-      if (code !== 0) { reject(new Error(`cargo build ${cargoArguments.join(" ")} exited ${code}: ${stderr}`)); return; }
-      const binaries = {};
-      for (const line of stdout.split(/\r?\n/)) {
-        const message = line.startsWith("{") ? JSON.parse(line) : null;
-        if (message?.reason === "compiler-artifact" && message.executable) binaries[message.target.name] = message.executable;
-      }
-      resolveBuild(binaries);
-    });
-  });
-  // A failed build fails the check where it is awaited.
-  built.catch(() => {});
-  return built;
-}
+export { cargoBinaries } from "./prepared-binaries.mjs";
 
 /** The workspace's `artifacts/NAME/`, emptied, for `name`'s captures: each
  * run replaces the last one's. */
