@@ -98,38 +98,35 @@ pub(crate) fn build_wasm(
     profile: &'static str,
 ) -> Result<(), String> {
     verify_wasm_bindgen(root)?;
-    let mut arguments: Vec<&str> = vec!["build"];
-    arguments.extend(client_packages());
+    let mut arguments: Vec<_> = client_packages().collect();
     arguments.extend(["--target", WASM_TARGET, "--profile", profile, "--locked"]);
     if development {
         arguments.extend(["--features", DEV_FEATURES]);
     }
-    run(root, "cargo", &arguments)?;
+    let build = xtask::builds::cargo(root, &arguments, "browser")?;
     let out_dir = if development {
         "web/pkg-dev"
     } else {
         "web/pkg"
     };
+    let mut bindings = Vec::new();
     for name in client_crates() {
-        let artifact = format!("target/{WASM_TARGET}/{profile}/{name}.wasm");
-        let mut arguments = vec![
-            artifact.as_str(),
-            "--target",
-            "web",
-            "--out-dir",
-            out_dir,
-            "--out-name",
+        let artifact = build.artifact(name, "wasm")?;
+        let options: &[&str] = if development {
+            &[]
+        } else {
+            &["--remove-name-section"]
+        };
+        bindings.push(xtask::bindings::generate(
+            root,
+            &artifact,
             name,
-        ];
-        // Function names are a fifth of a module: development builds keep
-        // them for stack traces and profiles.
-        if !development {
-            arguments.push("--remove-name-section");
-        }
-        run(root, "wasm-bindgen", &arguments)?;
+            options,
+            &root.join(out_dir),
+        )?);
     }
     let features: &[&str] = if development { &[DEV_FEATURES] } else { &[] };
-    let identity = serde_json::json!({"profile": profile, "features": features});
+    let identity = serde_json::json!({"profile": profile, "features": features, "bindings": bindings, "cargo_fresh": build.fresh(), "build_ms": build.elapsed_ms, "lock_ms": build.wait_ms});
     fs::write(
         root.join(out_dir).join("build.json"),
         serde_json::to_string_pretty(&identity).expect("identities serialize") + "\n",

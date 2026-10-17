@@ -4,36 +4,50 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+default-run = "xtask"
+
+[[bin]]
+name = "xtask"
+path = "src/launcher.rs"
+
+[[bin]]
+name = "engine-xtask"
+path = "src/main.rs"
+required-features = ["engine"]
+
+[features]
+default = []
+engine = ["dep:engine_scene", "dep:engine_dev", "dep:base64", "dep:engine_assets", "dep:engine_core", "dep:engine_terrain", "dep:engine_vgbuild", "dep:engine_native", "dep:glam", "dep:gltf", "dep:png", "dep:tiff", "dep:engine_render", "dep:naga", "dep:engine_assetc", "dep:engine_profiler", "dep:engine", "dep:policy", "dep:bevy_ecs"]
 
 [dependencies]
-engine_scene = { workspace = true, features = ["schema"] }
-engine_dev.workspace = true
+engine_scene = { workspace = true, optional = true, features = ["schema"] }
+engine_dev = { workspace = true, optional = true }
 # The pure checks' corpora run engine code directly, and meshoptimizer;
 # the terrain corpus's jobs replay in Wasm from base64.
-base64.workspace = true
-engine_assets.workspace = true
-engine_core.workspace = true
-engine_terrain.workspace = true
-engine_vgbuild.workspace = true
-engine_native.workspace = true
-glam.workspace = true
-gltf.workspace = true
-png.workspace = true
-tiff.workspace = true
-engine_render.workspace = true
-naga = { workspace = true, features = ["wgsl-in", "spv-out"] }
+base64 = { workspace = true, optional = true }
+engine_assets = { workspace = true, optional = true }
+engine_core = { workspace = true, optional = true }
+engine_terrain = { workspace = true, optional = true }
+engine_vgbuild = { workspace = true, optional = true }
+engine_native = { workspace = true, optional = true }
+glam = { workspace = true, optional = true }
+gltf = { workspace = true, optional = true }
+png = { workspace = true, optional = true }
+tiff = { workspace = true, optional = true }
+engine_render = { workspace = true, optional = true }
+naga = { workspace = true, optional = true, features = ["wgsl-in", "spv-out"] }
 # The shader report checks the analyzer it downloads.
 sha2.workspace = true
-engine_assetc.workspace = true
+engine_assetc = { workspace = true, optional = true }
 # What other programs did while a measured run was timed.
-engine_profiler = { workspace = true, features = ["load"] }
+engine_profiler = { workspace = true, optional = true, features = ["load"] }
 # The game surface's types, the types hosts share and the TypeScript
 # generator.
-engine = { workspace = true, features = ["schema"] }
+engine = { workspace = true, optional = true, features = ["schema"] }
 # The repository policy lint checks first.
-policy.workspace = true
+policy = { workspace = true, optional = true }
 # Systems' and components' names, which schedule ambiguities report.
-bevy_ecs = { workspace = true, features = ["debug"] }
+bevy_ecs = { workspace = true, optional = true, features = ["debug"] }
 serde_json.workspace = true
 
 [lints]

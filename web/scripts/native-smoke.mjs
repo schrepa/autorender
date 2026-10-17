@@ -144,9 +144,10 @@ try {
 
 // Job outputs: a run with workers keeps them; a verifying run reruns every
 // one it is handed back and finds them the same bits.
-const highlands = verify => JSON.parse(execFileSync(program, [
+const highlands = verify => JSON.parse(execFileSync(typeof program === "string" ? program : program.executable, [
+  ...(typeof program === "string" ? [] : program.arguments),
   "--preset=highlands", "--size=480x300", "--offscreen=30", "--workers=4", `--jobcache=${verify ? "verify" : "1024"}`,
-], { cwd: workspace, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], timeout: 300_000 }));
+], { cwd: workspace, env: typeof program === "string" ? process.env : program.env, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], timeout: 300_000 }));
 const kept = highlands(false);
 assert.ok(kept.stats.jobs.completed > 0 && kept.stats.jobs.workers === 4, JSON.stringify(kept.stats.jobs));
 // The main thread's stack, a megabyte on Windows: startup frames that grow

@@ -16,6 +16,7 @@ import { PANIC_PREFIX } from "../src/generated/host.ts";
 import { AgentError } from "./agent-protocol.mjs";
 import { recordReceived, recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
+import { stopProcessTree } from "./iteration-process.mjs";
 
 // Sessions' captures stay under artifacts/agent/SESSION, as browser
 // sessions' do; past the most recent SESSIONS_KEPT, the oldest go.
@@ -36,10 +37,13 @@ export function nativeProgram(native, { profiling = false } = {}) {
   const env = profiling && process.platform === "linux"
     ? { ...process.env, RUSTFLAGS: `${process.env.RUSTFLAGS ?? ""} -Cforce-frame-pointers=yes`.trim() }
     : process.env;
-  execFileSync("cargo", ["build", "-q", "-p", native, "--profile", profile, "--features", features], { cwd: workspace, env, stdio: ["ignore", "ignore", "inherit"] });
-  // Cargo builds the dev profile into target/debug.
-  const folder = profile === "dev" ? "debug" : profile;
-  return resolve(workspace, "target", folder, process.platform === "win32" ? `${native}-native.exe` : `${native}-native`);
+  const helper = process.env.ENGINE_XTASK_BIN;
+  const executable = helper || "cargo";
+  const prefix = helper ? [] : ["xtask"];
+  const options = ["--package", native, "--profile", profile, "--features", features];
+  execFileSync(executable, [...prefix, "prepare-native", ...options], { cwd: workspace, env, windowsHide: true, stdio: ["ignore", "ignore", "inherit"] });
+  return { executable, arguments: [...prefix, "run-native", ...options, "--"], env, name: native };
+
 }
 
 async function pruneSessions(root) {
@@ -127,14 +131,17 @@ async function compareCaptures(command, request) {
 /**
  * A development session of the native host `program`, started paused with
  * `args`, named `session`, which `signal` ends.
- * @param {{ program: string, args?: string[], session?: string, signal?: AbortSignal }} options
+ * @param {{ program: string | { executable: string, arguments: string[], env: NodeJS.ProcessEnv, name: string }, args?: string[], session?: string, signal?: AbortSignal }} options
  */
 export async function launchNativeSession({ program, args = [], session = randomUUID(), signal }) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "Session identity must be a bounded identifier.", "session");
   const artifacts = resolve(workspace, "artifacts", "agent", session);
   await pruneSessions(resolve(workspace, "artifacts", "agent"));
   await mkdir(artifacts, { recursive: true });
-  const child = spawn(program, [...args, "--dev", "--dev-artifacts", artifacts], { cwd: workspace, stdio: ["pipe", "pipe", "pipe"] });
+  const launch = typeof program === "string" ? { executable: program, arguments: [], env: process.env, name: program } : program;
+  const child = spawn(launch.executable, [...launch.arguments, ...args, "--dev", "--dev-artifacts", artifacts], {
+    cwd: workspace, env: launch.env, windowsHide: true, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"],
+  });
   const diagnostics = [];
   const waiting = [];
   let closing, invalidated = false, invalidationCallback, ready;
@@ -179,7 +186,7 @@ export async function launchNativeSession({ program, args = [], session = random
         child.once("exit", () => resolveClose());
         child.stdin.end();
         // A runtime that does not end with its input is stopped.
-        setTimeout(() => child.kill(), 5000).unref();
+        setTimeout(() => { void stopProcessTree(child); }, 5000).unref();
       });
     }
     return closing;
@@ -214,7 +221,7 @@ export async function launchNativeSession({ program, args = [], session = random
       if (response.result?.paused !== true) throw new AgentError("runtime_not_paused", "A new development runtime must start paused.");
     }
     return {
-      session, url: `native:${relative(workspace, program).split(sep).join("/")}`, instance: identity.instance, build: identity.build ?? null,
+      session, url: `native:${relative(workspace, launch.name).split(sep).join("/")}`, instance: identity.instance, build: identity.build ?? null,
       adapter: identity.adapter, close, setInvalidated,
       async execute(command) {
         if (command.op === "describe" && command.name === "ProfileCapture") {

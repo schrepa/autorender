@@ -106,6 +106,8 @@ impl Server {
     /// dev` serves it, its output into `log`: its clients built first.
     pub fn page(root: &Path, log: &Path) -> Result<Self, String> {
         crate::pipeline::prepare_dev(root)?;
+        let assets = crate::bench::assets(root)?;
+        crate::bench::install(root, &assets.folder)?;
         let port = free_port()?;
         let mut command = Command::new("node");
         command

@@ -104,6 +104,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         .iter()
         .filter(|client| client.schema)
     {
+        let context = crate::process::tools_context(root)?;
         let output = std::process::Command::new("cargo")
             .args([
                 "run",
@@ -116,7 +117,8 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
             ])
             .args(["--features", &format!("{}/schema", client.package)])
             .arg("--target-dir")
-            .arg(crate::process::tools_target(root))
+            .arg(context.path().join("target"))
+            .env("CARGO_BUILD_BUILD_DIR", context.path().join("target"))
             .current_dir(root)
             .output()
             .map_err(|error| format!("cannot run {}'s schema binary: {error}", client.package))?;

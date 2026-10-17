@@ -11,8 +11,13 @@ pub const WASM_TARGET: &str = "wasm32-unknown-unknown";
 /// so a build of it with other dependency features in xtask's folder
 /// replaces xtask's, which then relinks, and on Windows a running xtask
 /// cannot be relinked.
-pub fn tools_target(root: &Path) -> PathBuf {
-    root.join("target").join("tools")
+pub fn tools_context(root: &Path) -> Result<xtask::cache::Entry, String> {
+    let store = xtask::cache::Store::open(root)?;
+    let identity = format!("developer-tools:{}", xtask::builds::compiler(root)?);
+    let context = store.entry("cargo", &identity)?;
+    context.require_capacity(0)?;
+    xtask::cargo_context::select(root, &[], &context, &context.path().join("target"))?;
+    Ok(context)
 }
 
 #[cfg(windows)]
@@ -21,11 +26,12 @@ pub const NPM: &str = "npm.cmd";
 pub const NPM: &str = "npm";
 
 pub fn repository_root() -> Result<PathBuf, String> {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "cannot locate the workspace above tools/xtask".to_owned())
+    let from = std::env::var_os("ENGINE_TOOL_WORKSPACE")
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(std::env::current_dir)
+        .map_err(|error| error.to_string())?;
+    xtask::workspace(&from)
 }
 
 /// A browser client: its Cargo package, its Wasm crate's name, and for
@@ -145,15 +151,6 @@ pub fn clients_json() -> serde_json::Value {
         .collect()
 }
 
-/// The games tools select by name, as `a|b|c`.
-pub fn game_names() -> String {
-    clients()
-        .iter()
-        .filter_map(|client| client.game.as_deref())
-        .collect::<Vec<_>>()
-        .join("|")
-}
-
 /// The wasm-bindgen version Cargo.lock pins, which the CLI must match.
 fn wasm_bindgen_version(root: &Path) -> Result<String, String> {
     let lock = std::fs::read_to_string(root.join("Cargo.lock"))
@@ -239,14 +236,33 @@ pub fn engine_commit() -> (&'static str, String) {
 
 pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String> {
     println!("Running {program} {}", arguments.join(" "));
-    let status = Command::new(program)
-        .args(arguments)
+    let mut command = Command::new(program);
+    command.args(arguments);
+    let context = if program == "cargo"
+        && arguments
+            .first()
+            .is_some_and(|s| ["clippy", "doc", "check"].contains(s))
+    {
+        let context = xtask::cache::Store::open(root)?.entry(
+            "cargo",
+            &format!("validation:{}", xtask::builds::compiler(root)?),
+        )?;
+        context.require_capacity(0)?;
+        xtask::cargo_context::select(root, arguments, &context, &context.path().join("target"))?;
+        command.env("CARGO_TARGET_DIR", context.path().join("target"));
+        command.env("CARGO_BUILD_BUILD_DIR", context.path().join("target"));
+        Some(context)
+    } else {
+        None
+    };
+    let status = command
         .envs([engine_commit()])
         .current_dir(root)
         .status()
         .map_err(|error| {
             format!("cannot start {program}: {error}; ensure it is installed and available on PATH")
         })?;
+    drop(context);
     if status.success() {
         Ok(())
     } else {

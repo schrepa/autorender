@@ -61,10 +61,7 @@ const FOLDER: &str = "target/equivalence";
 /// Runs of each side for a cell with unstable captures, unless `--repeat`.
 const REPEAT: usize = 3;
 
-/// Builds of commits kept, unless `--keep`.
-const KEEP: usize = 4;
-
-const USAGE: &str = "usage: cargo xtask equivalence [--base REV] [--candidate REV] [--tier smoke|full] [--cells NAME,...] [--aa] [--repeat N] [--keep N] [--gpu discrete|integrated] [--browser | --both [--hosts]]";
+const USAGE: &str = "usage: cargo xtask equivalence [--base REV] [--candidate REV] [--tier smoke|full] [--cells NAME,...] [--aa] [--repeat N] [--gpu discrete|integrated] [--browser | --both [--hosts]]";
 
 /// What the command line asks for.
 struct Options {
@@ -76,7 +73,6 @@ struct Options {
     /// Runs of each side for a cell with unstable captures; with `--aa`,
     /// pairs of base runs (one unless given).
     repeat: Option<usize>,
-    keep: usize,
     gpu: String,
     /// The legs to run: the native host's, Chrome's, or both.
     native: bool,
@@ -94,7 +90,6 @@ fn options(arguments: &[String]) -> Result<Options, String> {
         cells: None,
         aa: false,
         repeat: None,
-        keep: KEEP,
         gpu: "discrete".into(),
         native: true,
         browser: false,
@@ -141,7 +136,10 @@ fn options(arguments: &[String]) -> Result<Options, String> {
                 options.cells = Some(value.split(',').map(str::to_owned).collect());
             }
             "--repeat" => options.repeat = Some(count()?),
-            "--keep" => options.keep = count()?,
+            "--keep" => return Err(
+                "build retention uses cache configure --max-bytes; result folders are caller-owned"
+                    .into(),
+            ),
             "--gpu" if ["discrete", "integrated"].contains(&value.as_str()) => {
                 options.gpu = value.clone();
             }
@@ -191,12 +189,7 @@ pub fn equivalence(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         (Some(rev), false) => Some(commit_side(root, "candidate", rev)?),
         (None, false) => Some(working_tree(root)?),
     };
-    let using: Vec<&str> = [&base]
-        .into_iter()
-        .chain(candidate.as_ref())
-        .filter_map(|side| side.sha.as_deref())
-        .collect();
-    prune(root, options.keep, &using);
+    prune(root);
     let catalog = bench::catalog(root)?;
     let stamp = measure::iso(SystemTime::now()).replace([':', '.'], "-");
     let folder = root.join(FOLDER).join("runs").join(&stamp);

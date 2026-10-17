@@ -13,7 +13,7 @@
  * it in the order they came: a run that releases it between steps
  * (equivalence, cell by cell) and wants it again queues behind them. After
  * taking it, a holder waits up to 15 minutes
- * while a headless Chrome of another program runs (the factory's workers do
+ * while a headless Chrome of another program runs (external programs may
  * not take the lock). A holder's children run with `ENGINE_HEAVY_LOCK_HELD=1`
  * and pass straight through, so runs nest.
  *

@@ -12,8 +12,7 @@
 //! `MILLISECONDS-PID.json`, and take it in the order they came: a run that
 //! releases it between steps (equivalence, cell by cell) and wants it again
 //! queues behind them. After taking it, a holder waits up to 15 minutes
-//! while a headless Chrome of another program runs (the factory's workers
-//! do not take the lock). A holder's children run with
+//! while a headless Chrome of another program runs. A holder's children run with
 //! `ENGINE_HEAVY_LOCK_HELD=1` ([`HELD`]) and pass straight through, so runs
 //! nest.
 
@@ -44,11 +43,14 @@ impl HeavyRun {
     /// Takes the lock as `label`, waiting while another process holds it,
     /// then while another program's headless Chrome runs; nothing to take
     /// where a parent holds it (`ENGINE_HEAVY_LOCK_HELD=1`).
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub fn hold(label: &str) -> Result<Self, String> {
+        Self::hold_until(label, None)
+    }
+
+    /// Bound queue and foreign-process waits by the caller's deadline, with a
+    /// finite default. Cancellation releases this caller's queue ticket only.
+    pub fn hold_until(label: &str, deadline: Option<SystemTime>) -> Result<Self, String> {
+        let wait_start = Instant::now();
         if std::env::var(HELD.0).is_ok_and(|held| held == HELD.1) {
             return Ok(Self { taken: None });
         }
@@ -58,6 +60,7 @@ impl HeavyRun {
         let mut ticket: Option<Ticket> = None;
         let mut reported: Option<Instant> = None;
         loop {
+            check_wait(wait_start, deadline)?;
             // Its turn: first in the queue, or nobody queued before it came.
             let line = queued(&queue);
             let turn = match &ticket {
@@ -154,32 +157,50 @@ impl HeavyRun {
         let run = Self {
             taken: Some(folder),
         };
-        let started = Instant::now();
-        let mut reported: Option<Instant> = None;
-        loop {
-            let foreign = headless_chromes();
-            if foreign.is_empty() {
-                break;
-            }
-            let pids: Vec<String> = foreign.iter().map(u32::to_string).collect();
-            if started.elapsed() > FOREIGN_CHROME_WAIT {
-                eprintln!(
-                    "heavy-run: foreign headless Chrome {} still running after 15 min; going ahead",
-                    pids.join(",")
-                );
-                break;
-            }
-            if reported.is_none_or(|at| at.elapsed() > Duration::from_secs(60)) {
-                reported = Some(Instant::now());
-                eprintln!(
-                    "heavy-run: waiting for foreign headless Chrome {} (factory?)",
-                    pids.join(",")
-                );
-            }
-            std::thread::sleep(Duration::from_secs(5));
-        }
+        wait_foreign(wait_start, deadline)?;
         Ok(run)
     }
+}
+
+fn check_wait(started: Instant, deadline: Option<SystemTime>) -> Result<(), String> {
+    if std::env::var_os("ENGINE_CANCEL_FILE").is_some_and(|p| Path::new(&p).exists()) {
+        return Err("heavy-run: cancelled while waiting".into());
+    }
+    if deadline.is_some_and(|end| SystemTime::now() >= end)
+        || started.elapsed() >= Duration::from_secs(30 * 60)
+    {
+        return Err("heavy-run: deadline exceeded while waiting".into());
+    }
+    Ok(())
+}
+
+fn wait_foreign(wait_start: Instant, deadline: Option<SystemTime>) -> Result<(), String> {
+    let started = Instant::now();
+    let mut reported: Option<Instant> = None;
+    loop {
+        check_wait(wait_start, deadline)?;
+        let foreign = headless_chromes();
+        if foreign.is_empty() {
+            break;
+        }
+        let pids: Vec<String> = foreign.iter().map(u32::to_string).collect();
+        if started.elapsed() > FOREIGN_CHROME_WAIT {
+            eprintln!(
+                "heavy-run: foreign headless Chrome {} still running after 15 min; going ahead",
+                pids.join(",")
+            );
+            break;
+        }
+        if reported.is_none_or(|at| at.elapsed() > Duration::from_secs(60)) {
+            reported = Some(Instant::now());
+            eprintln!(
+                "heavy-run: waiting for foreign headless Chrome {}",
+                pids.join(",")
+            );
+        }
+        std::thread::sleep(Duration::from_secs(5));
+    }
+    Ok(())
 }
 
 impl Drop for HeavyRun {

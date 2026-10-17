@@ -21,7 +21,7 @@ export async function stopProcessTree(child) {
 export function runBuild({ executable, root, output, signal, timeoutMs = 600_000 }) {
   return new Promise(resolve => {
     const child = spawn(executable, ["build-dev", "--output", output], {
-      cwd: root, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"],
+      cwd: root, env: { ...process.env, ENGINE_TOOL_WORKSPACE: root }, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"],
     });
     const chunks = [];
     let bytes = 0;

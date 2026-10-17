@@ -3,7 +3,7 @@
 //! work each entry point does (expressions, texture samples and loads,
 //! derivatives, loops, calls, barriers, atomics) and its SPIR-V. Where Radeon
 //! GPU Analyzer runs (Windows and Linux; downloaded once into
-//! `target/tools`, pinned and checked against its SHA-256): the AMD machine
+//! the shared byte-bounded developer cache, with a verified bundle): the AMD machine
 //! code each entry point compiles to on RDNA 3, 3.5 (integrated) and 4,
 //! the architectures its offline compiler knows, with its vector and scalar
 //! registers, local memory and scratch. The report is
@@ -11,39 +11,20 @@
 
 use engine_core::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde_json::{Value, json};
 
 use crate::gpu::{Checked, modules};
 
-/// The Radeon GPU Analyzer release the report uses, per operating system:
-/// archive URL and its SHA-256.
-const RGA_VERSION: &str = "2.14.2";
-#[cfg(windows)]
-const RGA_ARCHIVE: Option<(&str, &str)> = Some((
-    "https://github.com/GPUOpen-Tools/radeon_gpu_analyzer/releases/download/2.14.2/rga-windows-x64-2.14.2.zip",
-    "5b46941a72722ddb27c9427ca4413bccc6892b4185ec1d5b9120740687fa166d",
-));
-#[cfg(target_os = "linux")]
-const RGA_ARCHIVE: Option<(&str, &str)> = Some((
-    "https://github.com/GPUOpen-Tools/radeon_gpu_analyzer/releases/download/2.14.2/rga-2.14.2.tgz",
-    "341e7ca4f531e467be6de80a28342582230c54a42667a4eddda1b78489c35d62",
-));
-#[cfg(not(any(windows, target_os = "linux")))]
-const RGA_ARCHIVE: Option<(&str, &str)> = None;
-
-/// The AMD architectures compiled for: RDNA 3, RDNA 3.5 (integrated) and
-/// RDNA 4.
-const TARGETS: [&str; 3] = ["gfx1100", "gfx1150", "gfx1201"];
-
-/// RGA runs started by this process: each one's temp folder is named after
-/// its number.
-static RGA_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 /// Runs `gpu --report DIR [--no-rga]`.
 pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
-    let (folder, rga) = match options {
+    let use_cache = !options.iter().any(|option| option == "--no-cache");
+    let options: Vec<_> = options
+        .iter()
+        .filter(|option| option.as_str() != "--no-cache")
+        .cloned()
+        .collect();
+    let (folder, rga) = match options.as_slice() {
         [flag, folder] if flag == "--report" => (PathBuf::from(folder), true),
         [flag, folder, no] if flag == "--report" && no == "--no-rga" => {
             (PathBuf::from(folder), false)
@@ -51,7 +32,11 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
         _ => return Err("usage: cargo xtask gpu [--report DIR [--no-rga]]".into()),
     };
     let modules = modules()?;
-    let rga = if rga { rga_program(root)? } else { None };
+    let rga = if rga {
+        xtask::analyzer::Analyzer::open(root, use_cache)?
+    } else {
+        None
+    };
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     // Entry points compile independently: across the processors.
     let work: Vec<(&Checked, &naga::EntryPoint)> = modules
@@ -76,7 +61,7 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
                     let Some(&(checked, entry)) = work.get(index) else {
                         break;
                     };
-                    let report = entry_report(checked, entry, &folder, rga.as_deref());
+                    let report = entry_report(checked, entry, &folder, rga.as_ref());
                     *done[index].lock().expect("no worker panics") = Some(report);
                 }
             });
@@ -93,15 +78,9 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
     let report = json!({
         "version": 1,
         "naga": "counts over each entry point's function and every function it calls",
-        "amd": rga.as_ref().map(|program| json!({
-            "tool": format!("Radeon GPU Analyzer {RGA_VERSION}, offline SPIR-V mode (no driver)"),
-            "program": program.display().to_string(),
-            "targets": TARGETS,
-            "caution": "the offline compiler approximates the driver's; registers and instruction counts compare shaders and changes, not exact live costs",
-        })),
-        "amd_unavailable": rga.is_none().then_some(
-            if RGA_ARCHIVE.is_none() { "Radeon GPU Analyzer runs on Windows and Linux" } else { "skipped with --no-rga" }
-        ),
+        "amd": rga.as_ref().map(xtask::analyzer::Analyzer::description),
+        "amd_unavailable": rga.is_none().then_some("disabled or unsupported platform"),
+        "cache": rga.as_ref().map(xtask::analyzer::Analyzer::telemetry),
         "entries": entries,
     });
     let path = folder.join("report.json");
@@ -121,7 +100,7 @@ fn entry_report(
     checked: &Checked,
     entry: &naga::EntryPoint,
     folder: &Path,
-    rga: Option<&Path>,
+    rga: Option<&xtask::analyzer::Analyzer>,
 ) -> Result<Value, String> {
     let module = &checked.module;
     let mut counts = Counts::default();
@@ -171,7 +150,7 @@ fn entry_report(
         naga::ShaderStage::Compute => "compute",
         _ => "other",
     };
-    let amd = rga.map(|program| amd_report(program, &spirv, stage, folder, &stem));
+    let amd = rga.map(|program| program.report(&spirv, &entry.name, stage, folder, &stem));
     Ok(json!({
         "module": checked.name,
         "entry_point": entry.name,
@@ -278,223 +257,6 @@ impl Counts {
             "atomics": self.atomics,
         })
     }
-}
-
-/// `spirv` (an entry point of `stage`) compiled for each AMD target: its
-/// machine code's instructions and resources, or the compiler's failure.
-fn amd_report(program: &Path, spirv: &Path, stage: &str, folder: &Path, stem: &str) -> Value {
-    let flag = match stage {
-        "vertex" => "--vert",
-        "fragment" => "--frag",
-        _ => "--comp",
-    };
-    let out = folder.join("amd");
-    let _ = std::fs::create_dir_all(&out);
-    let mut targets = serde_json::Map::new();
-    for target in TARGETS {
-        let isa = out.join(format!("{stem}.{target}.isa"));
-        let analysis = out.join(format!("{stem}.{target}.csv"));
-        // RGA leaves a log in its temp folder on every run and reads that
-        // whole folder when it starts, so a machine's runs slow down without
-        // end: each run gets an empty temp folder of its own, removed after.
-        // It sits in the system's temp folder under a short name, as RGA
-        // fails on paths past Windows' 260 characters.
-        let temp = std::env::temp_dir().join(format!(
-            "rga-{}-{}",
-            std::process::id(),
-            RGA_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        let _ = std::fs::create_dir_all(&temp);
-        let output = Command::new(program)
-            .args(["-s", "vk-spv-offline", "-c", target, "--isa"])
-            .arg(&isa)
-            .arg("-a")
-            .arg(&analysis)
-            .arg(flag)
-            .arg(spirv)
-            .env("TEMP", &temp)
-            .env("TMP", &temp)
-            .env("TMPDIR", &temp)
-            .output();
-        let _ = std::fs::remove_dir_all(&temp);
-        let result = match output {
-            Ok(output) => {
-                // RGA names its outputs after the target and stage.
-                let isa_file = produced(&out, &isa, target);
-                let analysis_file = produced(&out, &analysis, target);
-                match (isa_file, analysis_file) {
-                    (Some(isa), Some(analysis)) => resources(&isa, &analysis),
-                    _ => {
-                        let said = format!(
-                            "{}{}",
-                            String::from_utf8_lossy(&output.stdout),
-                            String::from_utf8_lossy(&output.stderr)
-                        );
-                        let lines: Vec<&str> = said
-                            .lines()
-                            .filter(|line| !line.trim().is_empty())
-                            .collect();
-                        json!({"error": lines[lines.len().saturating_sub(4)..].join(" ")})
-                    }
-                }
-            }
-            Err(error) => json!({"error": error.to_string()}),
-        };
-        targets.insert(target.to_owned(), result);
-    }
-    Value::Object(targets)
-}
-
-/// The file RGA wrote for `requested` (it prefixes the target and suffixes
-/// the stage): the first in `folder` whose name starts with the target and
-/// contains the requested stem.
-fn produced(folder: &Path, requested: &Path, target: &str) -> Option<PathBuf> {
-    if requested.is_file() {
-        return Some(requested.to_owned());
-    }
-    let stem = requested.file_stem()?.to_string_lossy().into_owned();
-    let extension = requested.extension()?.to_string_lossy().into_owned();
-    std::fs::read_dir(folder)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| {
-            let name = path
-                .file_name()
-                .map_or(String::new(), |name| name.to_string_lossy().into_owned());
-            name.starts_with(target)
-                && name.contains(&stem)
-                && path
-                    .extension()
-                    .is_some_and(|found| found.to_string_lossy() == extension)
-        })
-}
-
-/// An analysis CSV's resources and the ISA's instruction count.
-fn resources(isa: &Path, analysis: &Path) -> Value {
-    let instructions = std::fs::read_to_string(isa).map_or(0, |text| {
-        text.lines()
-            .filter(|line| {
-                let line = line.trim_start();
-                line.starts_with(|first: char| first.is_ascii_lowercase()) && !line.ends_with(':')
-            })
-            .count()
-    });
-    let table = std::fs::read_to_string(analysis).unwrap_or_default();
-    let mut lines = table.lines();
-    let header: Vec<&str> = lines
-        .next()
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .collect();
-    let values: Vec<&str> = lines
-        .next()
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .collect();
-    let mut fields = serde_json::Map::new();
-    for (key, value) in header.iter().zip(&values) {
-        let key = key.to_ascii_lowercase();
-        let value = value
-            .parse::<f64>()
-            .map_or_else(|_| json!(value), |number| json!(number));
-        fields.insert(key, value);
-    }
-    json!({
-        "isa": isa.display().to_string(),
-        "instructions": instructions,
-        "resources": fields,
-    })
-}
-
-/// Radeon GPU Analyzer: on the path, or the pinned release in
-/// `target/tools`, downloaded and checked once; `None` where it does not run.
-fn rga_program(root: &Path) -> Result<Option<PathBuf>, String> {
-    let executable = if cfg!(windows) { "rga.exe" } else { "rga" };
-    if let Some(found) = std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|folder| folder.join(executable))
-            .find(|file| file.is_file())
-    }) {
-        return Ok(Some(found));
-    }
-    let Some((url, sha256)) = RGA_ARCHIVE else {
-        return Ok(None);
-    };
-    let folder = root.join("target/tools").join(format!("rga-{RGA_VERSION}"));
-    if let Some(found) = find(&folder, executable) {
-        return Ok(Some(found));
-    }
-    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let archive = folder.join(url.rsplit('/').next().expect("URLs have names"));
-    println!("Downloading Radeon GPU Analyzer {RGA_VERSION} (once) from {url}");
-    let status = Command::new("curl")
-        .args(["-sSL", "--fail", "-o"])
-        .arg(&archive)
-        .arg(url)
-        .status()
-        .map_err(|error| format!("cannot run curl: {error}"))?;
-    if !status.success() {
-        return Err(format!("downloading {url} failed"));
-    }
-    let bytes = std::fs::read(&archive).map_err(|error| error.to_string())?;
-    let digest: String = {
-        use sha2::Digest;
-        sha2::Sha256::digest(&bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
-    };
-    if digest != sha256 {
-        let _ = std::fs::remove_file(&archive);
-        return Err(format!(
-            "{url} has SHA-256 {digest}, not the pinned {sha256}"
-        ));
-    }
-    // Windows's own tar reads zip archives.
-    let tar = if cfg!(windows) {
-        std::env::var_os("SystemRoot").map_or_else(
-            || PathBuf::from("tar"),
-            |system| PathBuf::from(system).join("System32/tar.exe"),
-        )
-    } else {
-        PathBuf::from("tar")
-    };
-    let status = Command::new(tar)
-        .arg("-xf")
-        .arg(&archive)
-        .arg("-C")
-        .arg(&folder)
-        .status()
-        .map_err(|error| format!("cannot run tar: {error}"))?;
-    if !status.success() {
-        return Err(format!("unpacking {} failed", archive.display()));
-    }
-    let _ = std::fs::remove_file(&archive);
-    find(&folder, executable)
-        .map(Some)
-        .ok_or_else(|| format!("{} holds no {executable}", folder.display()))
-}
-
-/// `name` in `folder` or one or two folders down.
-fn find(folder: &Path, name: &str) -> Option<PathBuf> {
-    let direct = folder.join(name);
-    if direct.is_file() {
-        return Some(direct);
-    }
-    for entry in std::fs::read_dir(folder).ok()?.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            for candidate in [path.join(name), path.join("bin").join(name)] {
-                if candidate.is_file() {
-                    return Some(candidate);
-                }
-            }
-        }
-    }
-    None
 }
 
 /// The entry points costing most: by AMD vector registers where measured,

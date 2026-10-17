@@ -1,6 +1,6 @@
-//! `cargo xtask measure`: one measure task of the engine factory, run on the
-//! native host and written as the factory's measure report. The command
-//! runs from the commit the task's tools come from (`tools_sha`): its
+//! `cargo xtask measure`: a local versioned comparison request, run on the
+//! native host with caller-owned portable observations. The command
+//! runs from the commit the request's tools come from (`tools_sha`): its
 //! catalog and this code. Each workload compares two arms, each a commit
 //! (both may be the same one), its switches, and the scene, settings and
 //! generated files from that commit's own tree, so a change's scene edits
@@ -9,21 +9,20 @@
 //! candidate run whose order alternates (base, candidate, candidate,
 //! base...), each run a fresh process measured as the workload says
 //! (`engine_native`'s measured runs), timed by the host and by this
-//! command's own clock from the host's marks, until the task's clean pairs
+//! command's own clock from the host's marks, until the request's clean pairs
 //! (both runs settled), the deadline, or a run that never settles. A deep
 //! profile of each arm and the offline shader report follow where the task
-//! wants them. `--extend` adds rounds to an earlier report of the same task
+//! wants them. `--extend` adds rounds to an earlier report of the same experiment
 //! with the same builds. The runs and profiles hold the machine's heavy-run
 //! lock ([`crate::heavy`]); the checks after them take it themselves.
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use engine_profiler::load::{Load, Monitor};
+use crate::measure_host::run_host;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
@@ -48,43 +47,6 @@ const PROGRAM: &str = "stress-lab-native";
 const PROFILE: &str = "profiling";
 const FEATURES: &[&str] = &["profiling"];
 const TOOL: &str = "cargo xtask measure";
-
-const USAGE: &str = "usage: cargo xtask measure --task TASK.json --profile PROFILE.json --out REPORT.json [--extend REPORT.json] [--formats FORMATS.json]";
-
-struct Options {
-    task: PathBuf,
-    profile: PathBuf,
-    out: PathBuf,
-    extend: Option<PathBuf>,
-    formats: Option<PathBuf>,
-}
-
-fn options(arguments: &[String]) -> Result<Options, String> {
-    let mut found: BTreeMap<&str, PathBuf> = BTreeMap::new();
-    let mut arguments = arguments.iter();
-    while let Some(name) = arguments.next() {
-        let key = match name.as_str() {
-            "--task" | "--profile" | "--out" | "--extend" | "--formats" => &name[2..],
-            _ => return Err(format!("unknown option {name}\n{USAGE}")),
-        };
-        let value = arguments
-            .next()
-            .ok_or_else(|| format!("{name} takes a path\n{USAGE}"))?;
-        found.insert(key, PathBuf::from(value));
-    }
-    let mut required = |name: &str| {
-        found
-            .remove(name)
-            .ok_or_else(|| format!("--{name} is required\n{USAGE}"))
-    };
-    Ok(Options {
-        task: required("task")?,
-        profile: required("profile")?,
-        out: required("out")?,
-        extend: found.remove("extend"),
-        formats: found.remove("formats"),
-    })
-}
 
 pub fn read_json(path: &Path) -> Result<Value, String> {
     let text = fs::read_to_string(path)
@@ -162,34 +124,7 @@ pub fn iso(time: SystemTime) -> String {
 /// The time an ISO 8601 date and time (`2026-10-11T02:00:00Z`, with a
 /// fraction or an offset) names.
 pub fn parse_iso(text: &str) -> Option<SystemTime> {
-    let number = |range: std::ops::Range<usize>| text.get(range)?.parse::<i64>().ok();
-    let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
-    let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
-    let mut rest = &text[19..];
-    if let Some(fraction) = rest.strip_prefix('.') {
-        rest = fraction.trim_start_matches(|c: char| c.is_ascii_digit());
-    }
-    let offset = match rest {
-        "Z" | "z" => 0,
-        _ => {
-            let sign = match rest.get(..1)? {
-                "+" => 1,
-                "-" => -1,
-                _ => return None,
-            };
-            sign * (rest.get(1..3)?.parse::<i64>().ok()? * 3600
-                + rest.get(4..6)?.parse::<i64>().ok()? * 60)
-        }
-    };
-    // A civil date to days (Howard Hinnant's algorithm).
-    let year = year - i64::from(month <= 2);
-    let era = year.div_euclid(400);
-    let year_of_era = year - era * 400;
-    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    let days = era * 146_097 + day_of_era - 719_468;
-    let seconds = days * 86_400 + hour * 3600 + minute * 60 + second - offset;
-    Some(UNIX_EPOCH + Duration::from_secs(u64::try_from(seconds).ok()?))
+    xtask::request_contract::deadline(text)
 }
 
 /// One commit built and ready to measure: its checkout, its program and
@@ -212,7 +147,7 @@ pub(crate) fn program_name() -> String {
 }
 
 /// Makes `sha` available, fetching it from `origin` where it is missing
-/// (through its pull request's ref, when the task names one).
+/// (through its pull request's ref, when the request names one).
 pub(crate) fn ensure_commit(root: &Path, sha: &str, pull: Option<u64>) -> Result<(), String> {
     let commit = format!("{sha}^{{commit}}");
     if git(root, &["cat-file", "-e", &commit]).is_ok() {
@@ -266,10 +201,8 @@ pub(crate) fn dxc() -> Option<PathBuf> {
         .find(|file| file.is_file())
 }
 
-/// The commit `sha`: its source checked out under `target/measure/source/`,
-/// built into `target/measure/builds/`, where a build of the same commit is
-/// reused (its program unchanged), and its generated files made by its own
-/// tree's `cargo xtask bench assets`.
+/// Prepare a leased source, ask Cargo for the current executable, and retain
+/// an immutable program bundle plus assets made by that source's generators.
 fn prepare_build(
     root: &Path,
     sha: &str,
@@ -277,36 +210,39 @@ fn prepare_build(
     backend: &str,
 ) -> Result<Build, String> {
     let source = crate::checkouts::checkout(root, sha, pull)?;
-    let folder = root.join("target").join("measure").join("builds").join(sha);
-    let program = folder.join(program_name());
-    let identity = folder.join("build.json");
-    let kept = read_json(&identity).ok().filter(|build| {
-        program.is_file() && file_hash(&program).ok().as_deref() == build["artifact_hash"].as_str()
-    });
-    let mut build = match kept {
-        Some(build) => {
-            eprintln!("Reusing the build of {sha}.");
-            build
-        }
-        None => build_arm(root, &source, &folder, sha, backend)?,
-    };
-    // D3D12 compiles the engine's shaders with DXC, beside the program.
-    if cfg!(windows) {
-        match dxc() {
-            Some(library) => {
-                let beside = folder.join("dxcompiler.dll");
-                if file_hash(&beside).ok() != file_hash(&library).ok() {
-                    fs::copy(&library, &beside)
-                        .map_err(|error| format!("cannot copy {}: {error}", library.display()))?;
-                }
-                build["toolchain"]["dxc"] = file_hash(&library)?.into();
-            }
-            None if backend == "dx12" => {
-                return Err("D3D12 runs need DXC's dxcompiler.dll, which Firefox and Chrome ship: set DXC_PATH to it, or put it on the path".into());
-            }
-            None => {}
-        }
+    let compiled = xtask::builds::native_binary(
+        &source,
+        &[
+            "-p",
+            PACKAGE,
+            "--bin",
+            PROGRAM,
+            "--profile",
+            PROFILE,
+            "--features",
+            &FEATURES.join(","),
+            "--locked",
+        ],
+        "native",
+        &[("ENGINE_COMMIT", &sha[..12])],
+    )?;
+    let libraries: Vec<_> = dxc().into_iter().collect();
+    if cfg!(windows) && backend == "dx12" && libraries.is_empty() {
+        return Err("D3D12 requires dxcompiler.dll; set DXC_PATH".into());
     }
+    let bundle = xtask::builds::bundle(&source, &compiled, PROGRAM, &libraries)?;
+    let program = bundle.data().join(program_name());
+    let build = json!({"sha": sha, "profile": PROFILE, "target": "native", "features": FEATURES,
+        "toolchain": {"rustc": output(&source, "rustc", &["-vV"])?, "cargo": output(&source, "cargo", &["-V"])?,
+            "dxc": libraries.first().map(|p| file_hash(p)).transpose()?},
+        "env": {"RUSTFLAGS": std::env::var("RUSTFLAGS").unwrap_or_default(), "WGPU_BACKEND": backend,
+            "ENGINE_REPRODUCIBLE_LINK": if cfg!(target_env = "msvc") { "/Brepro" } else { "toolchain-default" }},
+        "artifact_hash": file_hash(&program)?, "build_ms": compiled.elapsed_ms,
+        "preparation": {"cargo_fresh": compiled.fresh(), "lock_ms": compiled.wait_ms},
+        "bundle_manifest": bundle.manifest()?,
+        "bundle_identity": xtask::builds::bundle_identity(&bundle, PROGRAM)?});
+    xtask::cache::retain(bundle)?;
+    drop(compiled);
     let printed = output(root, &program.display().to_string(), &["--shader-hash"])?;
     let shader_hash = serde_json::from_str::<Value>(&printed)
         .ok()
@@ -327,169 +263,11 @@ fn prepare_build(
 /// The generated files of the commit checked out in `source`, as its own
 /// `cargo xtask bench assets` makes them: their folder and SHA-256.
 pub(crate) fn generated(root: &Path, source: &Path, sha: &str) -> Result<(String, String), String> {
-    eprintln!("Generating the files workloads read at {sha}.");
-    let target = root.join("target").join("measure").join("target");
-    let made = Command::new("cargo")
-        .args(["xtask", "bench", "assets"])
-        .env("CARGO_TARGET_DIR", &target)
-        .current_dir(source)
-        .stderr(Stdio::inherit())
-        .output()
-        .map_err(|error| format!("cannot run cargo: {error}"))?;
-    let printed = String::from_utf8_lossy(&made.stdout);
-    let summary = printed
-        .lines()
-        .rev()
-        .find_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(|_| made.status.success());
-    match summary {
-        Some(summary) => match (
-            summary["folder"].as_str(),
-            summary["generated_hash"].as_str(),
-        ) {
-            (Some(folder), Some(hash)) => Ok((folder.to_owned(), hash.to_owned())),
-            _ => Err(format!(
-                "`cargo xtask bench assets` at {sha} printed no folder and generated_hash"
-            )),
-        },
-        None => Err(format!(
-            "`cargo xtask bench assets` at {sha} failed ({}): measured commits need it",
-            made.status
-        )),
-    }
-}
-
-/// Builds the program from `source` into `folder`, with its symbols, and
-/// records the build's identity there.
-fn build_arm(
-    root: &Path,
-    source: &Path,
-    folder: &Path,
-    sha: &str,
-    backend: &str,
-) -> Result<Value, String> {
-    eprintln!("Building {PACKAGE} at {sha}.");
-    // One target folder for every arm: dependencies build once, and each
-    // commit's own crates build beside the others'.
-    let target = root.join("target").join("measure").join("target");
-    let features = FEATURES.join(",");
-    let started = Instant::now();
-    let status = Command::new("cargo")
-        .args(["build", "-p", PACKAGE, "--profile", PROFILE, "--locked"])
-        .args(["--features", &features])
-        .env("CARGO_TARGET_DIR", &target)
-        .env("ENGINE_COMMIT", &sha[..12])
-        .current_dir(source)
-        .status()
-        .map_err(|error| format!("cannot run cargo: {error}"))?;
-    if !status.success() {
-        return Err(format!("building {PACKAGE} at {sha} failed ({status})"));
-    }
-    let build_ms = started.elapsed().as_secs_f64() * 1000.0;
-    fs::create_dir_all(folder).map_err(|error| error.to_string())?;
-    let built = target.join(PROFILE);
-    let program = folder.join(program_name());
-    fs::copy(built.join(program_name()), &program)
-        .map_err(|error| format!("cannot copy the program: {error}"))?;
-    // Windows keeps the symbols beside, which deep profiles read.
-    let symbols = format!("{}.pdb", PROGRAM.replace('-', "_"));
-    if built.join(&symbols).is_file() {
-        fs::copy(built.join(&symbols), folder.join(&symbols))
-            .map_err(|error| format!("cannot copy the symbols: {error}"))?;
-    }
-    let build = json!({
-        "sha": sha,
-        "profile": PROFILE,
-        "target": "native",
-        "features": FEATURES,
-        "toolchain": {
-            "rustc": output(source, "rustc", &["-V"])?,
-            "cargo": output(source, "cargo", &["-V"])?,
-        },
-        "env": {
-            "RUSTFLAGS": std::env::var("RUSTFLAGS").unwrap_or_default(),
-            "WGPU_BACKEND": backend,
-        },
-        "artifact_hash": file_hash(&program)?,
-        "build_ms": build_ms,
-    });
-    fs::write(
-        folder.join("build.json"),
-        serde_json::to_string_pretty(&build).expect("builds serialize"),
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(build)
-}
-
-/// What a run of the program printed.
-struct HostRun {
-    /// When each mark line arrived.
-    marks: BTreeMap<String, Instant>,
-    /// The measured run's report line, or everything else it printed.
-    report: Value,
-    /// What other programs did while the sampled frames ran: from the
-    /// first serialized one to the GPU finishing the last pipelined one.
-    load: Load,
-    stdout: String,
-    stderr: String,
-    success: bool,
-}
-
-/// Runs `program` with `arguments` from the repository, reading its marks
-/// as they come.
-fn run_host(
-    root: &Path,
-    program: &Path,
-    arguments: &[String],
-    environment: &[(&str, String)],
-) -> Result<HostRun, String> {
-    let mut child = Command::new(program)
-        .args(arguments)
-        .envs(environment.iter().map(|(name, value)| (*name, value)))
-        .current_dir(root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("cannot start {}: {error}", program.display()))?;
-    let mut load = Monitor::new(child.id());
-    let mut loaded = Load::default();
-    let mut errors = child.stderr.take().expect("piped");
-    let stderr = std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = errors.read_to_string(&mut text);
-        text
-    });
-    let (mut marks, mut report, mut stdout) = (BTreeMap::new(), Value::Null, String::new());
-    for line in BufReader::new(child.stdout.take().expect("piped")).lines() {
-        let at = Instant::now();
-        let line = line.map_err(|error| error.to_string())?;
-        if let Ok(value) = serde_json::from_str::<Value>(&line) {
-            if let Some(name) = value["mark"].as_str() {
-                match name {
-                    "serialized-start" => load.start(),
-                    "pipelined-end" => loaded = load.end(),
-                    _ => {}
-                }
-                marks.insert(name.to_owned(), at);
-                continue;
-            }
-            if value["report"].is_object() {
-                report = value["report"].clone();
-                continue;
-            }
-        }
-        stdout.push_str(&line);
-        stdout.push('\n');
-    }
-    let status = child.wait().map_err(|error| error.to_string())?;
-    Ok(HostRun {
-        marks,
-        report,
-        load: loaded,
-        stdout,
-        stderr: stderr.join().unwrap_or_default(),
-        success: status.success(),
-    })
+    eprintln!("Preparing generated files at {sha}.");
+    let assets = bench::assets(source)?;
+    bench::install(source, &assets.folder)?;
+    let _ = root;
+    Ok((assets.folder.display().to_string(), assets.generated_hash))
 }
 
 /// The machine's power state now: `ac`, `battery` or `unknown`, and its
@@ -622,7 +400,7 @@ struct Side<'a> {
     arguments: Vec<String>,
 }
 
-/// One workload's measurement as the task gives it, with how to run it.
+/// One workload's measurement as the request gives it, with how to run it.
 struct Workload<'a> {
     name: String,
     feature: String,
@@ -665,7 +443,7 @@ fn workload<'a>(
     let definition = &entry["workload"];
     if !definition.is_object() {
         return Err(format!(
-            "workload {name}: the task carries no definition (`workload`: scene, settings, runtimes, settle, sample, capture)"
+            "workload {name}: the request carries no definition (`workload`: scene, settings, runtimes, settle, sample, capture)"
         ));
     }
     let runtime: Vec<String> = definition["runtimes"]["native"]["args"]
@@ -694,7 +472,7 @@ fn workload<'a>(
             match arm[field].as_str() {
                 Some(wanted) if wanted != hash => {
                     return Err(format!(
-                        "workload {name}: the {role} arm's bench/{folder}/{file}.json at {sha} is {hash}, the task says {wanted}"
+                        "workload {name}: the {role} arm's bench/{folder}/{file}.json at {sha} is {hash}, the request says {wanted}"
                     ));
                 }
                 Some(_) => {}
@@ -761,6 +539,7 @@ fn workload<'a>(
 struct Machine {
     backend: String,
     timer_resolution_us: f64,
+    deadline: Option<SystemTime>,
 }
 
 /// One measured run of `side`, from its commit's checkout, its files in
@@ -794,6 +573,8 @@ fn measure_run(
         &side.build.program,
         &arguments,
         &environment,
+        &folder.join(format!("{stem}.raw")),
+        machine.deadline,
     )?;
     let log = folder.join(format!("{stem}.log"));
     fs::write(&log, format!("{}\n{}", run.stdout, run.stderr))
@@ -923,7 +704,7 @@ fn round(value: f64) -> f64 {
     (value * 10.0).round() / 10.0
 }
 
-/// `text` within the 300 characters the factory's reasons hold.
+/// A compact diagnostic; the full error remains in the raw attempt log.
 pub(crate) fn reason(text: &str) -> String {
     const MOST: usize = 300;
     if text.chars().count() <= MOST {
@@ -962,6 +743,8 @@ fn profile_run(side: &Side, machine: &Machine, folder: &Path) -> Value {
         &side.build.program,
         &arguments,
         &environment,
+        &folder.join(format!("profile-{}.raw", side.role)),
+        machine.deadline,
     ) {
         Ok(run) => run,
         Err(error) => return unavailable(error),
@@ -1003,16 +786,51 @@ fn profile_run(side: &Side, machine: &Machine, folder: &Path) -> Value {
 /// tree's tools.
 fn shader_report(root: &Path, role: &str, build: &Build, folder: &Path) -> Value {
     let into = folder.join(format!("shaders-{role}"));
-    let target = root.join("target").join("measure").join("target");
     let into_text = into.display().to_string();
-    let status = Command::new("cargo")
-        .args(["xtask", "gpu", "--report", &into_text])
-        .env("CARGO_TARGET_DIR", &target)
-        .current_dir(&build.source)
-        .status();
+    let status = (|| -> Result<(), String> {
+        let helper = xtask::builds::helper(&build.source)?;
+        let mut command = Command::new(
+            helper
+                .data()
+                .join(format!("engine-xtask{}", std::env::consts::EXE_SUFFIX)),
+        );
+        command
+            .args(["gpu", "--report", &into_text, "--no-rga"])
+            .current_dir(&build.source)
+            .env("ENGINE_TOOL_WORKSPACE", &build.source);
+        let output = xtask::jobs::run(&mut command, &into.join("generation"), &Default::default())?;
+        if !output.status.success() {
+            return Err(format!(
+                "shader generation failed: {}",
+                output.stderr.display()
+            ));
+        }
+        let mut report = read_json(&into.join("report.json"))?;
+        // SPIR-V and Naga observations come from each revision's own code;
+        // the current compiler/cache layer analyzes those exact bytes.
+        if let Some(analyzer) = xtask::analyzer::Analyzer::open(root, true)? {
+            for entry in report["entries"]
+                .as_array_mut()
+                .ok_or("shader report has no entries")?
+            {
+                if let (Some(spirv), Some(stage), Some(name)) = (
+                    entry["spirv"].as_str(),
+                    entry["stage"].as_str(),
+                    entry["entry_point"].as_str(),
+                ) {
+                    let stem = format!("{}.{}", entry["module"].as_str().unwrap_or("shader"), name);
+                    entry["amd"] = analyzer.report(Path::new(spirv), name, stage, &into, &stem);
+                }
+            }
+            report["amd"] = analyzer.description();
+            report["amd_unavailable"] = Value::Null;
+            report["cache"] = analyzer.telemetry();
+        }
+        xtask::files::atomic_json(&into.join("report.json"), &report)
+    })();
     let report = into.join("report.json");
     match status {
-        Ok(status) if status.success() && report.is_file() => {
+        Ok(()) if report.is_file() => {
             let written = read_json(&report).unwrap_or_default();
             let unavailable: Vec<Value> = written["amd_unavailable"]
                 .as_str()
@@ -1031,21 +849,6 @@ fn shader_report(root: &Path, role: &str, build: &Build, folder: &Path) -> Value
     }
 }
 
-/// The task's spec and id: the task as the factory gives it (`id`,
-/// `spec`), or its spec alone with its `id`.
-fn spec_of(task: &Value) -> Result<(u64, &Value), String> {
-    let spec = if task["spec"].is_object() {
-        &task["spec"]
-    } else {
-        task
-    };
-    let id = task["id"]
-        .as_u64()
-        .or_else(|| task["task"].as_u64())
-        .ok_or("the task has no id")?;
-    Ok((id, spec))
-}
-
 pub fn measure(root: &Path, arguments: &[String]) -> Result<(), String> {
     measure_with(root, arguments, None)
 }
@@ -1062,38 +865,23 @@ pub(crate) fn measure_with(
     arguments: &[String],
     tools: Option<&str>,
 ) -> Result<(), String> {
-    let options = options(arguments)?;
-    let task = read_json(&options.task)?;
-    let (task_id, spec) = spec_of(&task)?;
-    let profile_start = read_json(&options.profile)?;
-    let previous = options.extend.as_deref().map(read_json).transpose()?;
-    // The tools are this checkout, which must be the task's tools commit.
-    let tools_sha = match tools {
-        Some(tools) => tools.to_owned(),
-        None if git(root, &["status", "--porcelain", "--untracked-files=no"])?.is_empty() => {
-            git(root, &["rev-parse", "HEAD"])?
-        }
-        None => return Err("the tools checkout has uncommitted changes: measure from a clean checkout of the task's tools commit".into()),
-    };
-    if let Some(wanted) = spec["tools_sha"]
-        .as_str()
-        .filter(|wanted| *wanted != tools_sha)
+    let execution = xtask::execution::Request::read(arguments, "measure")?;
+    let spec = &execution.spec;
+    let profile_start = spec["environment"].clone();
+    let previous = &execution.previous;
+    let tool_identity = xtask::execution::tool_identity(root)?;
+    let tools_sha = tools
+        .map(str::to_owned)
+        .unwrap_or(git(root, &["rev-parse", "HEAD"])?);
+    let setup = spec["setup"].clone();
+    if previous
+        .as_ref()
+        .is_some_and(|report| report["tool_identity"] != tool_identity)
     {
-        return Err(format!(
-            "the tools come from {wanted}; this checkout is {tools_sha} (git checkout --detach {wanted})"
-        ));
+        return Err(
+            "continuation requires the same actual measurement executable and source state".into(),
+        );
     }
-    let setup = match &spec["setup"] {
-        Value::String(id) => profile_start["setups"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|setup| setup["id"] == *id)
-            .cloned()
-            .ok_or_else(|| format!("setup {id} is not in the profile's setups"))?,
-        setup if setup.is_object() => setup.clone(),
-        _ => return Err("the task names no setup".into()),
-    };
     if setup["runtime"] != "native" {
         return Err(format!(
             "setup {} runs {}: this command measures native setups",
@@ -1118,58 +906,76 @@ pub(crate) fn measure_with(
     } else {
         "discrete"
     };
-    let base_sha = commit_id(spec["base_sha"].as_str(), "the task's base_sha")?;
-    let candidate_sha = commit_id(spec["sha"].as_str(), "the task's sha")?;
-    let pull = spec["pr"].as_u64().or_else(|| task["pr"].as_u64());
+    let base_sha = commit_id(spec["base_sha"].as_str(), "the request's base_sha")?;
+    let candidate_sha = commit_id(spec["sha"].as_str(), "the request's sha")?;
+    let pull = None;
     if previous.as_ref().is_some_and(|previous| {
-        previous["task"] != task_id
-            || previous["base_sha"] != base_sha
+        previous["base_sha"] != base_sha
             || previous["candidate_sha"] != candidate_sha
             || previous["tools_sha"] != tools_sha.as_str()
     }) {
-        return Err("--extend takes a report of this task, its commits and tools".into());
+        return Err("--extend takes a report of the same source revisions and tools".into());
     }
     let deadline = spec["deadline"].as_str().and_then(parse_iso);
     let pairs = spec["pairs"].as_u64().unwrap_or(MIN_PAIRS);
     let want_profiles = spec["want"]["profiles"] == true;
     let catalog = bench::catalog(root)?;
-    // Every commit the task measures, built once: the report's two, and its
+    // Every commit the request measures, built once: the report's two, and its
     // workloads' arms (both may be the same commit, switched off against on).
+    if previous.is_none() {
+        execution.checkpoint("preparation", &json!({"kind":"measure", "tool_identity":tool_identity, "tools_sha":tools_sha, "base_sha":base_sha, "candidate_sha":candidate_sha, "workloads":[], "checks":[], "incomplete":true}))?;
+    }
     let mut builds: BTreeMap<String, Build> = BTreeMap::new();
     let mut commits = vec![base_sha, candidate_sha];
     commits.extend(arm_commits(spec)?);
     for sha in commits {
         if !builds.contains_key(sha) {
-            builds.insert(sha.to_owned(), prepare_build(root, sha, pull, backend)?);
+            let built = prepare_build(root, sha, pull, backend).inspect_err(|error| {
+                if let Err(journal) =
+                    execution.attempt("failed-build", &json!({"sha": sha, "error": error}))
+                {
+                    eprintln!("{journal}");
+                }
+            })?;
+            builds.insert(sha.to_owned(), built);
         }
     }
     crate::checkouts::prune(root);
-    if let Some(previous) = &previous {
-        for (role, sha) in [("base", base_sha), ("candidate", candidate_sha)] {
-            if previous["builds"][role]["artifact_hash"] != builds[sha].build["artifact_hash"] {
-                return Err(format!(
-                    "the {role} build differs from the report's: an extension measures the same binaries"
-                ));
-            }
-        }
+    let build_identities: BTreeMap<_, _> = builds.iter().map(|(sha, build)| (sha, json!({
+        "artifact_hash": build.build["artifact_hash"], "bundle": build.build["bundle_identity"],
+        "toolchain": build.build["toolchain"], "generated_hash": build.generated_hash
+    }))).collect();
+    let build_identities = json!(build_identities);
+    if let Some(previous) = previous {
+        xtask::execution::admit_builds(previous, &build_identities)?;
     }
     // The runs and profiles hold the machine's heavy-run lock: nothing else
     // draws on its GPU meanwhile.
-    let heavy = crate::heavy::HeavyRun::hold(&format!("cargo xtask measure (task {task_id})"))?;
+    let lock_start = Instant::now();
+    let heavy = crate::heavy::HeavyRun::hold_until(
+        &format!("cargo xtask measure (run {})", execution.run_id),
+        deadline,
+    )?;
+    let heavy_lock_ms = lock_start.elapsed().as_millis();
     let machine = Machine {
         backend: backend.to_owned(),
         timer_resolution_us: timer_resolution_us(),
+        deadline,
     };
-    let runs_folder = root
-        .join("target")
-        .join("measure")
-        .join("runs")
-        .join(task_id.to_string());
+    let runs_folder = execution.folder.clone();
+    let mut checkpoint = json!({"kind": "measure", "tools_sha": tools_sha, "tool_identity": tool_identity,
+        "profile_start": profile_start, "setup": setup["id"], "base_sha": base_sha, "candidate_sha": candidate_sha,
+        "builds": {"base": builds[base_sha].build, "candidate": builds[candidate_sha].build},
+        "build_identities": build_identities, "preparation": {"heavy_lock_ms": heavy_lock_ms}, "workloads": [], "checks": [], "incomplete": true});
+    execution.checkpoint("runtime", &checkpoint)?;
     let mut incomplete = false;
     let mut workloads = Vec::new();
     for entry in spec["workloads"].as_array().into_iter().flatten() {
         let workload = workload(root, entry, &builds, gpu)?;
-        let folder = runs_folder.join(format!("{}-{}", workload.name, workload.feature));
+        let folder = runs_folder.join(xtask::files::relative(&format!(
+            "{}-{}",
+            workload.name, workload.feature
+        ))?);
         fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
         let earlier = previous.as_ref().and_then(|previous| {
             previous["workloads"].as_array()?.iter().find(|earlier| {
@@ -1244,9 +1050,14 @@ pub(crate) fn measure_with(
                                 unavailable.push(entry);
                             }
                         }
+                        execution.attempt("measurement", &record)?;
                         measured.push(record);
                     }
                     Err(error) => {
+                        execution.attempt(
+                            "failed-measurement",
+                            &json!({"arm": role, "error": error, "complete_pair": false}),
+                        )?;
                         failed = Some(error);
                         break;
                     }
@@ -1254,6 +1065,7 @@ pub(crate) fn measure_with(
             }
             if let Some(error) = failed {
                 // A round is one run of each arm: a lone run stays out.
+                incomplete = true;
                 eprintln!("{error}");
                 unavailable.push(json!({"metric": "*", "reason": reason(&error)}));
                 break;
@@ -1263,6 +1075,13 @@ pub(crate) fn measure_with(
                 size = json!(measured_size(&folder));
             }
             runs.extend(measured);
+            checkpoint["workloads"] = json!(workloads);
+            checkpoint["workloads"].as_array_mut().expect("workload array").push(json!({
+                "name": workload.name, "feature": workload.feature, "arms": workload.arms,
+                "method": {"runtime": "native", "tool": TOOL, "frames": workload.frames, "warmup_frames": workload.warmup_frames, "paced": false, "size": size},
+                "runs": runs, "settle": settle, "profiles": [], "vendor": [], "unavailable": unavailable
+            }));
+            execution.checkpoint("runtime", &checkpoint)?;
             if unsettled_in_a_row(&runs, "base") >= NEVER_SETTLES {
                 settle = "base-never-settled".into();
             } else if unsettled_in_a_row(&runs, "candidate") >= NEVER_SETTLES {
@@ -1272,14 +1091,6 @@ pub(crate) fn measure_with(
         let mut profiles: Vec<Value> = earlier
             .and_then(|earlier| earlier["profiles"].as_array().cloned())
             .unwrap_or_default();
-        if want_profiles && workload.feature != "off" {
-            for side in &workload.sides {
-                if !profiles.iter().any(|profile| profile["arm"] == side.role) {
-                    eprintln!("{}: profiling the {} arm.", workload.name, side.role);
-                    profiles.push(profile_run(side, &machine, &folder));
-                }
-            }
-        }
         workloads.push(json!({
             "name": workload.name,
             "feature": workload.feature,
@@ -1298,8 +1109,27 @@ pub(crate) fn measure_with(
             "vendor": earlier.map_or(json!([]), |earlier| earlier["vendor"].clone()),
             "unavailable": unavailable,
         }));
+        if want_profiles && workload.feature != "off" {
+            for side in &workload.sides {
+                if !profiles
+                    .iter()
+                    .any(|profile| profile["arm"] == side.role && profile["complete"] == true)
+                {
+                    eprintln!("{}: profiling the {} arm.", workload.name, side.role);
+                    let profile = profile_run(side, &machine, &folder);
+                    execution.attempt("profile", &profile)?;
+                    profiles.retain(|old| old["arm"] != side.role);
+                    profiles.push(profile);
+                    workloads.last_mut().expect("current workload")["profiles"] = json!(profiles);
+                    checkpoint["workloads"] = json!(workloads);
+                    execution.checkpoint("profiling", &checkpoint)?;
+                }
+            }
+        }
     }
     drop(heavy);
+    checkpoint["workloads"] = json!(workloads);
+    execution.checkpoint("static-analysis", &checkpoint)?;
     let (base, candidate) = (&builds[base_sha], &builds[candidate_sha]);
     let shaders_changed = base.shader_hash != candidate.shader_hash;
     let static_part = if spec["want"]["shader_report"] == true || shaders_changed {
@@ -1314,6 +1144,8 @@ pub(crate) fn measure_with(
             .as_ref()
             .and_then(|previous| previous.get("static").cloned())
     };
+    checkpoint["static"] = static_part.clone().unwrap_or(Value::Null);
+    execution.checkpoint("checks", &checkpoint)?;
     // The checks last: they build and serve the page, which measuring
     // must not share the machine with. An extension keeps those it has.
     let checks = match previous.as_ref().map(|previous| previous["checks"].clone()) {
@@ -1326,10 +1158,12 @@ pub(crate) fn measure_with(
             checks
         }
     };
-    let profile_end = read_json(&options.profile)?;
+    let profile_end = spec["environment"].clone();
     let mut report = json!({
         "kind": "measure",
-        "task": task_id,
+        "tool_identity": tool_identity,
+        "build_identities": build_identities,
+        "preparation": {"heavy_lock_ms": heavy_lock_ms},
         "tools_sha": tools_sha,
         "profile_start": profile_start,
         "profile_end": profile_end,
@@ -1345,46 +1179,9 @@ pub(crate) fn measure_with(
     if let Some(static_part) = static_part {
         report["static"] = static_part;
     }
-    fs::write(
-        &options.out,
-        serde_json::to_string_pretty(&report).expect("reports serialize") + "\n",
-    )
-    .map_err(|error| format!("cannot write {}: {error}", options.out.display()))?;
+    execution.checkpoint("complete", &report)?;
     print_summary(&report);
-    println!("Wrote {}.", options.out.display());
-    match &options.formats {
-        Some(formats) => check_format(&report, formats, "measure"),
-        None => Ok(()),
-    }
-}
-
-/// Whether `report` matches the factory's `kind` format in the `formats`
-/// file (its `/api/formats`), with its local files as the hashes the
-/// factory's command line uploads them as.
-pub fn check_format(report: &Value, formats: &Path, kind: &str) -> Result<(), String> {
-    let formats = read_json(formats)?;
-    let schema = if formats["schemas"].is_object() {
-        &formats["schemas"][kind]
-    } else {
-        &formats[kind]
-    };
-    if !schema.is_object() {
-        return Err(format!(
-            "the formats file holds no {kind} schema (schemas.{kind})"
-        ));
-    }
-    let problems = crate::formats::problems(schema, &with_file_hashes(report));
-    if !problems.is_empty() {
-        return Err(format!(
-            "the report does not match the factory's {kind} format:
-  {}",
-            problems.join(
-                "
-  "
-            )
-        ));
-    }
-    println!("The report matches the factory's {kind} format.");
+    println!("Wrote {}.", execution.out.display());
     Ok(())
 }
 
@@ -1400,56 +1197,6 @@ fn measured_size(folder: &Path) -> Option<[u32; 2]> {
     let bytes = fs::read(captures.first()?).ok()?;
     let word = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
     Some([word(16)?, word(20)?])
-}
-
-/// The report with each local file it names as its SHA-256, as the
-/// factory's command line sends it after uploading them.
-fn with_file_hashes(report: &Value) -> Value {
-    fn hashed(value: Option<&mut Value>) {
-        let Some(value) = value else {
-            return;
-        };
-        if let Some(hash) = value
-            .as_str()
-            .and_then(|path| file_hash(Path::new(path)).ok())
-        {
-            *value = hash.into();
-        }
-    }
-    // Every list of files at `path` in `value`, where there is one.
-    fn files<'a>(value: &'a mut Value, path: &[&str]) -> Vec<&'a mut Value> {
-        let mut at = Some(value);
-        for key in path {
-            at = at.and_then(|value| value.get_mut(*key));
-        }
-        at.and_then(Value::as_array_mut)
-            .map(|files| files.iter_mut().collect())
-            .unwrap_or_default()
-    }
-    let mut report = report.clone();
-    for workload in files(&mut report, &["workloads"]) {
-        for run in files(workload, &["runs"]) {
-            hashed(run.get_mut("capture"));
-        }
-        for key in ["profiles", "vendor"] {
-            for entry in files(workload, &[key]) {
-                for file in files(entry, &["files"]) {
-                    hashed(file.get_mut("hash"));
-                }
-            }
-        }
-    }
-    for check in files(&mut report, &["checks"]) {
-        for attempt in files(check, &["attempts"]) {
-            hashed(attempt.get_mut("log"));
-        }
-    }
-    for arm in ["base", "candidate"] {
-        for file in files(&mut report, &["static", "shader_report", arm, "files"]) {
-            hashed(file.get_mut("hash"));
-        }
-    }
-    report
 }
 
 /// Each workload's clean pairs and its arms' medians of the frame times.
