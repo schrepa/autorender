@@ -407,7 +407,11 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_render/src/**/gpu_presentation/**",
             "crates/engine_render/src/**/presentation*",
         ],
-        checks: &[Smoke("gpu-presentation"), Smoke("interpolation")],
+        checks: &[
+            Smoke("gpu-presentation"),
+            Smoke("presentation-compaction"),
+            Smoke("interpolation"),
+        ],
     },
     Rule {
         paths: &[

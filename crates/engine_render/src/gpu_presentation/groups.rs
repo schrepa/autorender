@@ -151,6 +151,10 @@ impl DrawGroups {
     }
 
     /// Sizes storage for `candidates` candidates in `batches` batches.
+    #[expect(
+        clippy::expect_used,
+        reason = "device-admitted 16-byte candidates bound the smaller scan and its u32 addresses"
+    )]
     pub(super) fn ensure(&mut self, device: &wgpu::Device, candidates: usize, batches: usize) {
         if candidates > self.capacity {
             self.capacity = grow(candidates);
