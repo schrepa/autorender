@@ -99,6 +99,15 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Equivalence, Tools("measure")],
     },
+    // The spatial reflection queue and its production GPU checks.
+    Rule {
+        paths: &[
+            "crates/engine_render/src/reflection*",
+            "crates/engine_render/examples/reflection_queue_plan.rs",
+            "web/scripts/reflection-worklist-*.mjs",
+        ],
+        checks: &[Shaders, Smoke("reflection-worklist")],
+    },
     // The math everything computes with.
     Rule {
         paths: &["crates/engine_math/**"],

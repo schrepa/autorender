@@ -20,6 +20,7 @@
       "kind": "resource",
       "smokes": [
         "input",
+        "reflection-worklist",
         "surfaces"
       ]
     },
@@ -306,6 +307,7 @@
         "lod",
         "meshes",
         "native",
+        "reflection-worklist",
         "spline",
         "streaming",
         "surfaces",
@@ -456,6 +458,7 @@
         "gpu-presentation",
         "host-parity",
         "lod",
+        "reflection-worklist",
         "streaming",
         "surfaces",
         "taa",
@@ -525,6 +528,7 @@
         "host-parity",
         "interpolation",
         "jobs",
+        "reflection-worklist",
         "streaming",
         "surfaces",
         "terrain",
@@ -592,6 +596,7 @@
         "jobs",
         "meshes",
         "plugins",
+        "reflection-worklist",
         "spline",
         "streaming",
         "surfaces",
@@ -616,6 +621,7 @@
         "meshes",
         "native",
         "plugins",
+        "reflection-worklist",
         "taa",
         "terrain-water-sky"
       ]
@@ -632,6 +638,7 @@
         "jobs",
         "meshes",
         "native",
+        "reflection-worklist",
         "taa",
         "terrain-water-sky"
       ]
@@ -649,6 +656,7 @@
         "lod",
         "meshes",
         "native",
+        "reflection-worklist",
         "spline",
         "surfaces",
         "taa",
@@ -664,6 +672,7 @@
         "jobs",
         "lod",
         "native",
+        "reflection-worklist",
         "surfaces"
       ]
     },
@@ -744,7 +753,8 @@
       "inspector": "Reflections",
       "section": "reflections",
       "smokes": [
-        "agent"
+        "agent",
+        "reflection-worklist"
       ],
       "stats": true
     },
@@ -806,6 +816,7 @@
         "jobs",
         "native",
         "plugins",
+        "reflection-worklist",
         "streaming",
         "terrain",
         "terrain-files",
@@ -940,6 +951,7 @@
       "section": "temporal_antialiasing",
       "smokes": [
         "native",
+        "reflection-worklist",
         "taa"
       ],
       "stats": true
