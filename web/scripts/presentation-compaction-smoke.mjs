@@ -4,11 +4,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { artifacts, commander, devUrl, differentPixels, launch, openPaused, routedScene, sceneUrl } from "./harness.mjs";
+import { workspace, workspacePath } from "./workspace.mjs";
 
-const root = fileURLToPath(new URL("../../", import.meta.url));
 const sentinel = 0xdeadbeef;
 const flags = { VISIBLE: 1, MOVING: 2, VALID: 4, PHASE1: 8, PHASE2: 16, OCCLUDED: 32, SUBPIXEL: 64, PROBE: 128 };
 const moved = 0x80000000;
@@ -26,7 +25,7 @@ function declarations(source, name) {
   });
 }
 
-function verifyAbi(source, bindings, shaders) {
+function verifyAbi(source, bindings) {
   const expected = {
     Frame: [
       ["alpha", "f32"], ["candidates", "u32"], ["budget", "u32"], ["culling", "u32"],
@@ -68,7 +67,6 @@ function verifyAbi(source, bindings, shaders) {
   assert.deepEqual(entries, [[0, "uniform", "frame"], [6, "read", "candidates"], [7, "read", "batches"],
     [9, "write", "scan"], [10, "write", "batch_bases"], [11, "write", "visible_ids"], [12, "write", "draws"],
     [19, "write", "occlusion_counts"], [24, "write", "impostor_ids"]]);
-  assert.match(shaders, /PRESENTATION_SHADER\s*=\s*\[\s*"presentation\.wgsl",?\s*\]/);
   return entries;
 }
 
@@ -454,12 +452,16 @@ async function probeChecks(page, output) {
 }
 
 async function main() {
-  const [source, bindings, shaders] = await Promise.all([
-    readFile(new URL("../../crates/engine_render/src/presentation.wgsl", import.meta.url), "utf8"),
-    readFile(new URL("../../crates/engine_render/src/bindings.rs", import.meta.url), "utf8"),
-    readFile(new URL("../../crates/engine_render/src/shaders.rs", import.meta.url), "utf8"),
+  const [bindings, shaders] = await Promise.all([
+    readFile(workspacePath("crates/engine_render/src/bindings.rs"), "utf8"),
+    readFile(workspacePath("crates/engine_render/src/shaders.rs"), "utf8"),
   ]);
-  const entries = verifyAbi(source, bindings, shaders);
+  const declaration = shaders.match(/PRESENTATION_SHADER\s*=\s*\[([^\]]+)\]/)?.[1];
+  assert.ok(declaration, "production presentation shader declaration exists");
+  const sourceFiles = [...declaration.matchAll(/"([^"]+)"/g)].map(match => match[1]);
+  assert.deepEqual(sourceFiles, ["math.wgsl", "screen_cull.wgsl", "presentation.wgsl"], "production shader composition drift");
+  const source = (await Promise.all(sourceFiles.map(file => readFile(workspacePath("crates/engine_render/src", file), "utf8")))).join("");
+  const entries = verifyAbi(source, bindings);
   const output = await artifacts("presentation-compaction-smoke");
   const { browser, page, errors } = await launch({ width: 1200, height: 900, timeout: 120_000 });
   try {
@@ -470,8 +472,8 @@ async function main() {
     const probes = await probeChecks(page, output);
     assert.deepEqual(errors, []);
     const result = { ok: true, browser: browser.version(), api: "WebGPU", backend: "not exposed by WebGPU",
-      source_sha: createHash("sha256").update(source).digest("hex"),
-      commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(), kernels, lifecycle, probes, artifact: output };
+      source_files: sourceFiles, source_sha: createHash("sha256").update(source).digest("hex"),
+      commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: workspace, encoding: "utf8" }).trim(), kernels, lifecycle, probes, artifact: output };
     await writeFile(`${output}/result.json`, JSON.stringify(result, null, 2));
     console.log(JSON.stringify(result));
   } finally {
