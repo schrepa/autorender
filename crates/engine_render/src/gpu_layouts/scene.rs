@@ -297,6 +297,14 @@ gpu_structs! {
         pub sun_direction: [f32; 4],
     }
 
+    /// Immutable dispatch parameters of the reflection worklists.
+    #[derive(Clone, Copy, Pod, Zeroable)]
+    pub(crate) struct QueueParams as ["QueueParams"] {
+        pub size: [u32; 4],
+        pub scan: [u32; 4],
+        pub extra: [u32; 4],
+    }
+
     /// Temporal antialiasing's resolve, as `temporal.wgsl` reads it.
     #[derive(Clone, Copy, Pod, Zeroable)]
     pub(crate) struct ResolveUniform as ["Resolve"] {
