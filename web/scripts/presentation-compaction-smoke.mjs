@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { artifacts, commander, devUrl, differentPixels, launch, openPaused, routedScene, sceneUrl } from "./harness.mjs";
+import { artifacts, commander, devUrl, differentPixels, launch, openPaused, routedScene, sceneUrl, waitFrames } from "./harness.mjs";
 import { workspace, workspacePath } from "./workspace.mjs";
 
 const sentinel = 0xdeadbeef;
@@ -321,7 +321,8 @@ async function settled(command, label) {
     reply = await command("present", { alpha: 0, gpu: true });
     const rendering = reply.result.rendering;
     const current = JSON.stringify(work(rendering));
-    stable = current === previous && !rendering.pipelines_compiling && rendering.triangles != null ? stable + 1 : 0;
+    const fresh = rendering.read_back_age < frame + 1;
+    stable = fresh && current === previous && !rendering.pipelines_compiling && rendering.triangles != null ? stable + 1 : 0;
     previous = current;
     if (frame >= 8 && stable >= 6) return reply;
     await delay(20);
@@ -381,7 +382,7 @@ async function lifecycleChecks(page, output) {
   await command("step", { ticks: 3 });
   const before = (await command("status")).observation.tick;
   await command("resume");
-  await delay(600);
+  await waitFrames(command, 3);
   const moving = await command("pause");
   assert.ok(BigInt(moving.observation.tick) > BigInt(before), "ordinary moving frames advance ticks");
   assert.equal(moving.observation.presentation.gpu_pending, true);
@@ -394,7 +395,7 @@ async function lifecycleChecks(page, output) {
 
 function probeFixture(shift) {
   return {
-    version: 9, id: "compaction-probe-fixture", revision: 1,
+    id: "compaction-probe-fixture", revision: 1,
     camera: { position: [15, 12, 23], target: [0, 1, 0], fov_degrees: 55, near: 0.1, far: 500 },
     materials: [
       { id: "floor", color: [0.6, 0.62, 0.58, 1] },
