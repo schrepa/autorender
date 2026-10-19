@@ -863,6 +863,14 @@
       "stats": false
     },
     {
+      "inspector": "Foliage",
+      "section": "foliage",
+      "smokes": [
+        "taa"
+      ],
+      "stats": false
+    },
+    {
       "inspector": "Occupancy",
       "section": "occupancy",
       "smokes": [

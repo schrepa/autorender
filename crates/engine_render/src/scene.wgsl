@@ -83,6 +83,10 @@ struct Lighting {
     night: vec4<f32>,
     star_turn: vec4<f32>,
     moon: vec4<f32>,
+    // Foliage: its transmission, its plants' variation, 1 where masked
+    // leaves dissolve with hashed cutoffs this frame, and the meters its
+    // bases blend into the ground over; all 0 off.
+    foliage: vec4<f32>,
 }
 // Sun shadows: world to each near cascade and to both
 // far maps (x and y in [-1, 1] across a map, z in [0, 1]).

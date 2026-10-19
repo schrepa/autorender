@@ -21,6 +21,7 @@ mod entity_indices;
 mod environment;
 mod extraction;
 mod features;
+mod foliage;
 mod frame_stats;
 mod gpu_culling;
 mod grounded;
@@ -88,6 +89,7 @@ pub use engine_terrain::{
 };
 pub use environment::*;
 pub use features::*;
+pub use foliage::*;
 pub use frame_stats::*;
 pub use glam;
 pub use gpu_culling::*;

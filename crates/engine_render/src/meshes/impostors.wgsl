@@ -379,7 +379,10 @@ fn impostor_card(input: ImpostorInput) -> ImpostorCard {
     output.normal_z = xy * orientation;
     let axis = model[0].xyz * dir.x + model[1].xyz * dir.y + model[2].xyz * dir.z;
     output.depth_axis = vec4<f32>(axis * radius, support / radius);
-    output.material = vec4<u32>(color.color, color.surface, frames);
+    // The frames fill the word's low 18 bits: the origin key's top byte
+    // fits above them.
+    output.material = vec4<u32>(color.color, color.surface,
+        frames | (origin_key(model[3].xyz) & 0xff000000u));
     output.batch = input.batch;
     return ImpostorCard(local, output);
 }
@@ -433,6 +436,7 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
         1.0 - input.normal_x.w - input.normal_y.w);
     let packed = input.material.w;
     let frames = vec3<u32>(packed & 63u, (packed >> 6u) & 63u, (packed >> 12u) & 63u);
+    let masked = (record.flags & IMPOSTOR_MASKED) != 0u;
     // The level whose texels match the pixels, and half a texel of the
     // coarser level sampled, which keeps each frame's samples in its cell.
     // The atlas is its frames' texels across and has their levels down to
@@ -458,7 +462,14 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     // Most of a card around its mesh is empty: those fragments stop before
     // reading the rest.
     let coverage = albedo.a;
-    if coverage * (1.0 + MASK_MIP_SCALE * level) < 0.5 {
+    // Masked materials' cards dissolve as their meshes do with hashed
+    // cutoffs (`alpha_cutoff`).
+    var cutoff = 0.5;
+    if masked {
+        fragment_pixel = input.clip_position.xy;
+        cutoff = alpha_cutoff(cutoff);
+    }
+    if coverage * (1.0 + MASK_MIP_SCALE * level) < cutoff {
         discard;
     }
     // Fading, a card covers the pixels its fade shows, what
@@ -490,10 +501,17 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     // Roughness, metalness, emission over 16 and ripples.
     let slot_surface = unpack4x8unorm(input.material.z);
     let color = vec4<f32>(unpack2x16unorm(input.material.x), unpack2x16unorm(input.material.y));
-    let albedo_color = albedo.rgb * unpremultiply * color.rgb;
+    var albedo_color = albedo.rgb * unpremultiply * color.rgb;
+    // Masked foliage's leaves, tinted by their plant as their meshes are.
+    var leaf = 0.0;
+    if masked {
+        leaf = leafiness(albedo_color);
+        albedo_color *= plant_tint(packed, leaf);
+    }
     let metalness = slot_surface.y * surface.y * unpremultiply;
     var point: SurfacePoint;
     point.albedo = albedo_color;
+    point.leaf = leaf;
     point.opacity = color.a;
     point.emission = slot_surface.z * 16.0 * emissive.a * unpremultiply;
     point.emissive = record.emissive * emissive.rgb * unpremultiply;

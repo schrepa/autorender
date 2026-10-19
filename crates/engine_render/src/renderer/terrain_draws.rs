@@ -95,7 +95,10 @@ impl Renderer {
                 snapshot.camera_position,
                 snapshot.elapsed_seconds,
             ),
-            self.display.size().height as f32,
+            (
+                self.display.size().height as f32,
+                snapshot.environment.foliage.sanitized().ground_blend > 0.0,
+            ),
         );
         let lit = opaque_kind.lit;
         let lights = self.features.lights.get().map(LightPass::fragment_layout);

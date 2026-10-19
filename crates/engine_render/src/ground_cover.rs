@@ -29,7 +29,7 @@ use crate::scene_shading::SceneShading;
 use crate::terrain::TerrainPass;
 
 /// Uniform offset alignment between terrains' growth.
-const SLOT: u64 = 256;
+const SLOT: u64 = 512;
 /// Bytes of the growth's uniform (`Grow`).
 pub(crate) const GROW_BYTES: u64 = size_of::<GrowUniform>() as u64;
 
@@ -112,7 +112,11 @@ impl GroundCoverPass {
                 wgpu::BufferUsages::INDIRECT,
             ),
             uniforms: crate::buffers::uniform(device, "engine/cover-grow", SLOT),
-            frame: crate::buffers::uniform(device, "engine/cover-frame", 16),
+            frame: crate::buffers::uniform(
+                device,
+                "engine/cover-frame",
+                size_of::<FrameUniform>() as u64,
+            ),
             grow_group: Cached::default(),
             draw_group: Cached::default(),
             growths: Vec::new(),
@@ -152,7 +156,7 @@ impl GroundCoverPass {
         terrain: &TerrainPass,
         terrains: &engine_core::RenderTerrains,
         (settings, wind, culling, eye, time): (&GroundCover, [f32; 2], Mat4, Vec3, f32),
-        height: f32,
+        (height, grounded): (f32, bool),
     ) -> bool {
         self.growths.clear();
         self.reach = 0.0;
@@ -163,7 +167,7 @@ impl GroundCoverPass {
             queue,
             terrain,
             terrains,
-            (settings, wind),
+            (settings, wind, grounded),
             (culling, eye, time, previous, height),
         );
         if !grows {
@@ -183,7 +187,7 @@ impl GroundCoverPass {
         queue: &wgpu::Queue,
         terrain: &TerrainPass,
         terrains: &engine_core::RenderTerrains,
-        (settings, wind): (&GroundCover, [f32; 2]),
+        (settings, wind, grounded): (&GroundCover, [f32; 2], bool),
         (culling, eye, time, previous, height): (Mat4, Vec3, f32, f32, f32),
     ) -> bool {
         let settings = settings.sanitized();
@@ -258,6 +262,7 @@ impl GroundCoverPass {
                     deform_grid: shading.grid,
                     deform: shading.scale,
                     ranges,
+                    foliage: [f32::from(u8::from(grounded)), 0.0, 0.0, 0.0],
                 };
                 self.growths.push(Growth {
                     offset: (uniforms.len() as u64 * SLOT) as u32,
@@ -305,6 +310,7 @@ impl GroundCoverPass {
         self.grow_bytes = bytes;
         let frame = FrameUniform {
             wind: [wind[0], wind[1], time, previous],
+            ground: [f32::from(u8::from(grounded)), 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
         self.compute

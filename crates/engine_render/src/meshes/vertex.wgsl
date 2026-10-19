@@ -7,6 +7,19 @@ fn pose_matrix(pose: AffinePose) -> mat4x4<f32> {
         vec4<f32>(0.0, 0.0, 0.0, 1.0)));
 }
 
+// The origin key of a slot standing at `origin`, in a word's high 16 bits:
+// a hash of where it stands across the ground (not its height, which
+// follows the ground as drawn). Meshes' fade words carry all of it and
+// cards' frame words its top byte, which foliage's tints read
+// (`plant_tint`).
+fn origin_key(origin: vec3<f32>) -> u32 {
+    let cell = bitcast<vec2<u32>>(vec2<i32>(floor(origin.xz * 4.0)));
+    var h = (cell.x * 0x8da6b343u) ^ (cell.y * 0xd8163841u);
+    h = (h ^ (h >> 16u)) * 0x7feb352du;
+    h = (h ^ (h >> 15u)) * 0x846ca68bu;
+    return (h ^ (h >> 16u)) & 0xffff0000u;
+}
+
 // Linear color and opacity of a vertex output's packed material.
 fn output_color(material: vec4<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16unorm(material.x), unpack2x16unorm(material.y));
@@ -29,7 +42,7 @@ fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
     let slot = colors[index];
     var output = transform_vertex(input.position, input.normal, slot.color, slot.surface,
         input.uv, model);
-    output.material.w = slot_fade(input.slot);
+    output.material.w = slot_fade(input.slot) | origin_key(model[3].xyz);
     let sway = slot_sway(slot.flags);
     if sway > 0.0 {
         let world = output.world_v.xyz
@@ -336,7 +349,7 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     let material = colors[slot];
     var vertex = transform_vertex(input.position, input.normal, material.color,
         material.surface, input.uv, model);
-    vertex.material.w = slot_fade(input.slot);
+    vertex.material.w = slot_fade(input.slot) | origin_key(model[3].xyz);
     let point = vec4<f32>(input.position, 1.0);
     var world = model * point;
     // Reading previous poses costs more than the rest of the motion: only

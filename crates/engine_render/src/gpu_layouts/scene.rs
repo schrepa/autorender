@@ -117,6 +117,11 @@ gpu_structs! {
         pub star_turn: [f32; 4],
         /// The direction toward the moon; w unused.
         pub moon: [f32; 4],
+        /// Foliage: its transmission, its plants' variation, 1 where
+        /// masked leaves dissolve with hashed cutoffs this frame (a
+        /// temporally antialiased one), and the meters its bases blend into
+        /// the ground over; all 0 off.
+        pub foliage: [f32; 4],
     }
 
     /// Separate per-instance color, opacity and packed surface; unchanged colors

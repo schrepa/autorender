@@ -487,6 +487,7 @@ impl Renderer {
             &snapshot.environment.reflections,
             &snapshot.environment.refraction,
             &snapshot.environment.sky,
+            (&snapshot.environment.foliage, temporal_frame.is_some()),
         );
         // Whether 8-bit color writes dither.
         lighting.grade[3] = f32::from(u8::from(snapshot.environment.dither.enabled));

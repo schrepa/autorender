@@ -117,11 +117,13 @@ impl LightingUniform {
         reflections: &Reflections,
         refraction: &engine_core::Refraction,
         sky: &engine_core::Sky,
+        (foliage, temporal): (&engine_core::Foliage, bool),
     ) -> Self {
         let atmosphere = atmosphere.sanitized();
         let reflections = reflections.sanitized();
         let refraction = refraction.sanitized();
         let sky = sky.sanitized();
+        let foliage = foliage.sanitized();
         // With the physically based sky the air hazes what
         // lies far away by its own extinction, thinning with height as its
         // scattering does; no fog. Its colors come from the sky's tables.
@@ -196,6 +198,16 @@ impl LightingUniform {
             night: [0.0; 4],
             star_turn: [0.0, 0.0, 0.0, 1.0],
             moon: [0.0; 4],
+            foliage: [
+                foliage.transmission,
+                foliage.variation,
+                if foliage.hashed_cutoff && temporal {
+                    1.0
+                } else {
+                    0.0
+                },
+                foliage.ground_blend,
+            ],
         }
     }
 }

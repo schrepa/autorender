@@ -54,6 +54,9 @@ struct Grow {
     // over the last quarter of its range; 0 for levels that
     // never morph.
     ranges: array<vec4<f32>, 2>,
+    // Foliage: 1 while blades keep their ground's normal (its bases blend
+    // into the ground).
+    foliage: vec4<f32>,
 }
 
 // A surface material's cover: blades per square meter, the shortest and
@@ -74,10 +77,11 @@ struct PaletteEntry {
     canopy: vec4<f32>,
 }
 
+// A blade, as `meshes/cover.wgsl` reads it.
 struct CoverBlade {
     root: vec3<f32>,
     height: f32,
-    facing: f32,
+    facing: u32,
     width: f32,
     root_color: u32,
     tip_color: u32,
@@ -287,6 +291,38 @@ fn cell_samples(corner: vec2<f32>, spacing: f32, level: u32, first: vec2<u32>) -
     rect.first = low;
     rect.count = high + 1u - min(low, high + 1u);
     return rect;
+}
+
+// The ground's normal at terrain-local `local` from its finest resident
+// level, its samples' slopes blended across their cell.
+fn ground_normal(local: vec2<f32>) -> vec3<f32> {
+    for (var index = 0u; index < grow.counts.y; index++) {
+        let per = grow.origin.w * f32(1u << index);
+        let samples = max(local / per, vec2<f32>(0.0));
+        let tile = level_tile(grown(), index, samples);
+        if tile.layer == NOT_RESIDENT {
+            continue;
+        }
+        let corner = min(vec2<u32>(samples), tile.first + vec2<u32>(255u));
+        let f = saturate(samples - vec2<f32>(corner));
+        let a = tile_height(tile, corner);
+        let b = tile_height(tile, corner + vec2<u32>(1u, 0u));
+        let c = tile_height(tile, corner + vec2<u32>(0u, 1u));
+        let d = tile_height(tile, corner + vec2<u32>(1u, 1u));
+        let slope = vec2<f32>(mix(b - a, d - c, f.y), mix(c - a, d - b, f.x)) / per;
+        return normalize(vec3<f32>(-slope.x, 1.0, -slope.y));
+    }
+    return vec3<f32>(0.0, 1.0, 0.0);
+}
+
+// A blade's facing word while blades keep their ground's normal
+// (`meshes/cover.wgsl`'s `blade_facing`): `facing` (radians) in the low 16
+// bits, `normal`'s x and z as 8-bit fractions above.
+fn grounded_facing(facing: f32, normal: vec3<f32>) -> u32 {
+    let turn = u32(round(fract(facing / TAU) * 65535.0));
+    let tilt = vec2<u32>(round((clamp(normal.xz, vec2<f32>(-1.0), vec2<f32>(1.0)) * 0.5
+        + 0.5) * 255.0));
+    return turn | (tilt.x << 16u) | (tilt.y << 24u);
 }
 
 // Packs a linear color as 8-bit square roots, the blades' encoding.
@@ -511,7 +547,12 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         var blade: CoverBlade;
         blade.root = root;
         blade.height = height;
-        blade.facing = unit(hash(seed ^ 0x85ebca6bu)) * TAU;
+        let facing = unit(hash(seed ^ 0x85ebca6bu)) * TAU;
+        if grow.foliage.x > 0.0 {
+            blade.facing = grounded_facing(facing, ground_normal(local));
+        } else {
+            blade.facing = bitcast<u32>(facing);
+        }
         // Wider where fewer stand, as wide on screen at every distance.
         blade.width = spec.shape.w * max(1.0, away / (0.2 * radius_densest));
         blade.root_color = pack_color(palette[entry].far.rgb * variation, 0.0);

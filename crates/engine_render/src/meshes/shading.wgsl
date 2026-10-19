@@ -52,6 +52,9 @@ struct SurfacePoint {
     // The share of the sun the point's own mesh hides: impostors',
     // zero elsewhere.
     sun_shade: f32,
+    // How much of the point is leaf, needle or blade (`leafiness`): zero
+    // but for masked foliage, its cards and ground cover.
+    leaf: f32,
 }
 
 // Shaded light of a surface: graded color (and its linear light before the
@@ -67,6 +70,68 @@ struct Shaded {
     normal: vec3<f32>,
     roughness: f32,
     opacity: f32,
+}
+
+// The fragment being shaded: its vertex stage's material word, whose top
+// byte is its slot's origin key's (`origin_key`), and its pixel. Fragments
+// outside the mesh entry points keep zero.
+var<private> fragment_plant: u32;
+var<private> fragment_pixel: vec2<f32>;
+
+// How much of a surface of linear color `albedo` reads as leaf: green over
+// its other channels; bark's browns and greys read none.
+fn leafiness(albedo: vec3<f32>) -> f32 {
+    return saturate(4.0 * (albedo.g - max(albedo.r, albedo.b)) / max(albedo.g, 1.0e-4));
+}
+
+// The tint the plant of word `plant` gives `leaf` of a surface,
+// `foliage.y` of the way (0 off): its hash picks a place along a gradient
+// from drier and yellower to deeper and bluer green.
+fn plant_tint(plant: u32, leaf: f32) -> vec3<f32> {
+    let strength = lighting.foliage.y * leaf;
+    if strength <= 0.0 {
+        return vec3<f32>(1.0);
+    }
+    let along = f32(plant >> 24u) / 255.0;
+    let gradient = mix(vec3<f32>(1.16, 1.05, 0.64), vec3<f32>(0.80, 0.97, 1.08), along);
+    return mix(vec3<f32>(1.0), gradient, strength);
+}
+
+// How far the sun's light bends toward a leaf's normal passing through it,
+// and how tightly it gathers about the sun seen through it.
+const TRANSMISSION_BEND: f32 = 0.3;
+const TRANSMISSION_POWER: f32 = 4.0;
+
+// Sunlight `point`'s leaf share passes toward the eye, per unit of the
+// sun's color, `foliage.x` of it (0 off): strongest looking at the sun
+// through the leaf, its direction bent a little by the leaf's normal
+// (Barré-Brisebois and Bouchard's translucency), tinted by its color.
+fn transmitted(point: SurfacePoint) -> vec3<f32> {
+    let strength = lighting.foliage.x * point.leaf;
+    if strength <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let bent = lighting.sun.xyz + point.normal * TRANSMISSION_BEND;
+    let through = saturate(dot(point.view, -normalize(bent)));
+    return point.diffuse_color * (strength * pow(through, TRANSMISSION_POWER));
+}
+
+// The share of ambient occlusion `point` keeps: leaves passing light take
+// half of it off, as light reaches into crowns and turf.
+fn foliage_occlusion(point: SurfacePoint) -> f32 {
+    return 1.0 - 0.5 * saturate(lighting.foliage.x) * point.leaf;
+}
+
+// The coverage masked fragments keep pixels above: the material's `cutoff`,
+// or on temporally antialiased frames with hashed cutoffs (`foliage.z`) a
+// threshold turning across pixels and frames, so frames average soft
+// partial coverage over alpha's falloff (Wyman and McGuire's hashed alpha
+// testing).
+fn alpha_cutoff(cutoff: f32) -> f32 {
+    if lighting.foliage.z == 0.0 {
+        return cutoff;
+    }
+    return max(fade_noise(fragment_pixel), 1.0 / 255.0);
 }
 
 // Texture coordinates of map `index` (base color, metallic-roughness,
@@ -466,6 +531,10 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     }
     point.roughness = max(roughness, 0.03);
     point.alpha = point.roughness * point.roughness;
+    if ALPHA_MASK {
+        point.leaf = leafiness(point.albedo);
+        point.albedo *= plant_tint(fragment_plant, point.leaf);
+    }
     point.f0 = mix(vec3<f32>(0.04), point.albedo, metalness);
     point.diffuse_color = point.albedo * (1.0 - metalness);
     point.geometric = geometric_normal(surface_normal, front);
@@ -548,7 +617,7 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     let point = textured_point(color, surface_normal, world, world_dx, world_dy, texels, packed,
         front);
     let result = widened(point, dpdx(point.normal), dpdy(point.normal));
-    if ALPHA_MASK && result.opacity * texels.coverage < material_maps.params.z {
+    if ALPHA_MASK && result.opacity * texels.coverage < alpha_cutoff(material_maps.params.z) {
         discard;
     }
     return result;
@@ -694,7 +763,8 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     // The sun's light before shadows: where it, the point's sun shade or its
     // interior's share is zero, so is what shadows leave, which then goes
     // unlooked up.
-    let sunlit = (point.diffuse_color * wrapped + highlight * specular) * lighting.sun_color.rgb;
+    let sunlit = (point.diffuse_color * wrapped + highlight * specular + transmitted(point))
+        * lighting.sun_color.rgb;
     var visible = 1.0;
     if any(sunlit != vec3<f32>(0.0)) && point.sun_shade != 1.0 && interior.y != 0.0 {
         visible = sun_visibility(point.world + point.shadow_offset, point.geometric,
@@ -712,7 +782,8 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     shaded.roughness = point.roughness;
     shaded.linear = fogged;
     shaded.color = grade(fogged);
-    shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered);
+    shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered)
+        * foliage_occlusion(point);
     shaded.glow = glow_weight(fogged);
     // Reflectivity for screen-space reflections: the environment BRDF's
     // share, fading out toward the roughness limit and through fog.
@@ -742,6 +813,8 @@ fn fragment(input: VertexOutput) -> Fragment {
     if FADE_LIST && fade_hidden(input.material.w, input.clip_position.xy) {
         discard;
     }
+    fragment_plant = input.material.w;
+    fragment_pixel = input.clip_position.xy;
     var values: Fragment;
     values.color = output_color(input.material);
     values.normal = input.normal_u.xyz;
@@ -758,6 +831,8 @@ fn extended_fragment(input: ExtendedOutput) -> Fragment {
     if FADE_LIST && fade_hidden(input.material.w, input.clip_position.xy) {
         discard;
     }
+    fragment_plant = input.material.w;
+    fragment_pixel = input.clip_position.xy;
     var values: Fragment;
     values.color = output_color(input.material) * input.color;
     values.normal = input.normal_u.xyz;

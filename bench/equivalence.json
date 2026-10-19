@@ -266,6 +266,19 @@
       "captures": ["exact", "gpu:0.5"]
     },
     {
+      "name": "metro-foliage",
+      "tier": "full",
+      "note": "Metro up close with temporal antialiasing and every foliage look on, its environment section switched by the environment control: its masked leaves transmit the sun, vary by plant and dissolve with hashed cutoffs.",
+      "scene": "metro",
+      "environment": {
+        "temporal_antialiasing": { "enabled": true },
+        "foliage": { "transmission": 1.0, "variation": 1.0, "hashed_cutoff": true, "ground_blend": 0.5 }
+      },
+      "ticks": 30,
+      "views": ["close"],
+      "captures": ["display:16"]
+    },
+    {
       "name": "metro-local-lights-off",
       "tier": "full",
       "note": "Metro without local lights, its environment section switched by the environment control.",

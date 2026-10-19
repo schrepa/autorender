@@ -118,6 +118,8 @@ gpu_consts! {
     /// The flag of records whose frames cover only the upper hemisphere, above
     /// their texels across a frame.
     pub(crate) const IMPOSTOR_HEMISPHERE: u32 = 1 << 16 => ["IMPOSTOR_HEMISPHERE"];
+    /// The flag of impostor records whose material is masked.
+    pub(crate) const IMPOSTOR_MASKED: u32 = 1 << 17 => ["IMPOSTOR_MASKED"];
 
     // crate::decals
     /// `DecalRecord::pose` of decals drawn from their own matrix.

@@ -224,6 +224,23 @@ try {
   await command("environment", { temporal_antialiasing: { enabled: true } });
   assert.deepEqual(await inspect(), { enabled: true, ...plain });
 
+  // Foliage looks, off by default and turned on by the paused environment
+  // control: masked leaves' hashed cutoffs, which only temporally
+  // antialiased frames take, and their transmission; how much they change
+  // converged frames, measured.
+  const inspectFoliage = async () => (await command("inspect", { component: "Foliage" })).result.value;
+  assert.deepEqual(await inspectFoliage(), { transmission: 0, variation: 0, hashed_cutoff: false, ground_blend: 0 }, "foliage looks are off by default");
+  const leaves = await command("environment", { foliage: { transmission: 1, hashed_cutoff: true } });
+  assert.deepEqual(leaves.result.environment_changed, ["foliage"]);
+  assert.equal((await inspectFoliage()).hashed_cutoff, true);
+  const [leavesFirst] = await run("taa-foliage", 60);
+  results.foliage = await compare([again, leavesFirst]);
+  measurements.push({
+    name: "foliage difference", value: results.foliage.mean_difference, unit: "levels",
+    note: "mean channel difference between converged still frames without and with foliage transmission and hashed cutoffs",
+  });
+  await command("environment", { foliage: { transmission: 0, hashed_cutoff: false } });
+
   // Captures after temporal frames are still exact.
   const after = await capture("exact-after-taa");
   assert.equal((await compare([exact, after])).changed[0], 0, "captures must stay exact after temporal frames");

@@ -5,6 +5,8 @@ const IMPOSTOR_FRAMES: u32 = 8u;
 // The flag of records whose frames cover only the upper hemisphere, above
 // their texels across a frame.
 const IMPOSTOR_HEMISPHERE: u32 = 0x10000u;
+// The flag of records whose material is masked (alpha tested), above that.
+const IMPOSTOR_MASKED: u32 = 0x20000u;
 
 // The flags of a card fading in or out as the camera's view of its object
 // switches: its record's index in the low 15

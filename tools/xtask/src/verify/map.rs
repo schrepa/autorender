@@ -351,6 +351,14 @@ pub(crate) const MAP: &[Rule] = &[
     },
     Rule {
         paths: &[
+            "crates/engine_core/src/**/foliage*",
+            "crates/engine_render/src/meshes/cover*",
+            "crates/engine_render/src/meshes/impostors*",
+        ],
+        checks: &[Smoke("taa"), Cells(&["metro-foliage"])],
+    },
+    Rule {
+        paths: &[
             "crates/engine_core/src/**/particles*",
             "crates/engine_render/src/**/particles*",
         ],

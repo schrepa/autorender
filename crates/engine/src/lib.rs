@@ -54,7 +54,7 @@ mod games {
         ContactShadows, Cover, Cube, Decal, DecalBlend, DecalSettings, Deformation,
         DeformationPlugin, Deformer, Dither, Engine, EngineConfig, EngineEntityCommands,
         Environment, Feature, Filter, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
-        FixedSimulationSystems, FixedTickEnd, FixedTickEndSystems, FixedTime, Floating,
+        FixedSimulationSystems, FixedTickEnd, FixedTickEndSystems, FixedTime, Floating, Foliage,
         FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Ground, GroundCover,
         GroundSample, Grounded, Grounding, Haze, HeightHeld, HierarchyError, InputState, Interior,
         InterpolateTransform, InterpolationError, KeyInterpolation, Keyframes, LevelOfDetail,

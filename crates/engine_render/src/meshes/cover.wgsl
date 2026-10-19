@@ -3,22 +3,35 @@
 // root, leaning in the wind, its root the ground's color and its tip its
 // cover's.
 
-// One blade: its root (world), height (meters), facing (radians: its flat
-// side faces that way), width at the root (meters), and its root color
-// (RGB8) and tip color with how far it sways (RGBA8).
+// One blade: its root (world), height (meters), facing word
+// (`blade_facing`: its flat side faces that way), width at the root
+// (meters), and its root color (RGB8) and tip color with how far it sways
+// (RGBA8).
 struct CoverBlade {
     root: vec3<f32>,
     height: f32,
-    facing: f32,
+    facing: u32,
     width: f32,
     root_color: u32,
     tip_color: u32,
 }
 
 // The frame's cover: the wind (x and z, meters per second), and the
-// presentation time now and at the previous frame (seconds).
+// presentation time now and at the previous frame (seconds); whether
+// blades keep their ground's normal (x, 1: foliage's ground blend).
 struct CoverFrame {
     wind: vec4<f32>,
+    ground: vec4<f32>,
+}
+
+// A blade's facing (radians): its word's bits, or while blades keep their
+// ground's normal its low 16 bits (`cover_grow.wgsl`'s
+// `grounded_facing`).
+fn blade_facing(blade: CoverBlade) -> f32 {
+    if cover_frame.ground.x == 0.0 {
+        return bitcast<f32>(blade.facing);
+    }
+    return f32(blade.facing & 0xffffu) / 65535.0 * (2.0 * PI);
 }
 
 @group(1) @binding(33) var<storage, read> cover_blades: array<CoverBlade>;
@@ -34,6 +47,10 @@ struct CoverOutput {
     @location(3) color: vec3<f32>,
     // From 0 at the root to 1 at the tip.
     @location(4) along: f32,
+    // While blades keep their ground's normal: its x and z as 8-bit
+    // fractions in the high half, the blade's height (meters, half float)
+    // in the low.
+    @location(5) @interpolate(flat) ground: u32,
 }
 
 struct CoverTemporalOutput {
@@ -42,7 +59,8 @@ struct CoverTemporalOutput {
     @location(2) normal: vec3<f32>,
     @location(3) color: vec3<f32>,
     @location(4) along: f32,
-    @location(5) previous: vec3<f32>,
+    @location(5) @interpolate(flat) ground: u32,
+    @location(6) previous: vec3<f32>,
 }
 
 // A point of a blade: where it lies and the blade's normal there.
@@ -56,7 +74,8 @@ struct CoverPoint {
 // and leaning along the wind as gusts travel across the field, with its
 // own curl the rest of the way.
 fn cover_point(blade: CoverBlade, along: f32, across: f32, time: f32) -> CoverPoint {
-    let facing = vec3<f32>(cos(blade.facing), 0.0, sin(blade.facing));
+    let turned = blade_facing(blade);
+    let facing = vec3<f32>(cos(turned), 0.0, sin(turned));
     let side = vec3<f32>(-facing.z, 0.0, facing.x);
     let sway = unpack4x8unorm(blade.tip_color).w;
     let wind = vec3<f32>(cover_frame.wind.x, 0.0, cover_frame.wind.y);
@@ -65,10 +84,10 @@ fn cover_point(blade: CoverBlade, along: f32, across: f32, time: f32) -> CoverPo
     // Gusts: waves running with the wind, slower ripples within them.
     let travel = dot(blade.root, toward);
     let gust = 0.55 + 0.3 * sin(time * 1.3 - travel * 0.12)
-        + 0.15 * sin(time * 3.7 - travel * 0.6 + blade.facing);
+        + 0.15 * sin(time * 3.7 - travel * 0.6 + turned);
     let lean_wind = sway * saturate(speed * 0.08) * gust;
     // Each blade's own curl, from its facing.
-    let curl = 0.25 + 0.2 * fract(blade.facing * 3.1);
+    let curl = 0.25 + 0.2 * fract(turned * 3.1);
     let lean = toward * lean_wind + facing * curl * (1.0 - lean_wind);
     let bend = min(length(lean), 0.95);
     let direction = select(facing, lean / max(length(lean), 1.0e-4), length(lean) > 1.0e-4);
@@ -111,6 +130,10 @@ fn cover_output(instance: u32, vertex: u32, time: f32) -> CoverOutput {
     output.normal = point.normal;
     output.color = cover_color(blade, along);
     output.along = along;
+    if cover_frame.ground.x != 0.0 {
+        output.ground = (blade.facing & 0xffff0000u)
+            | (pack2x16float(vec2<f32>(blade.height, 0.0)) & 0xffffu);
+    }
     return output;
 }
 
@@ -135,6 +158,7 @@ fn vs_cover_temporal(@builtin(instance_index) instance: u32,
     temporal.normal = output.normal;
     temporal.color = output.color;
     temporal.along = output.along;
+    temporal.ground = output.ground;
     temporal.previous = (camera.previous_view_projection * vec4<f32>(previous.world, 1.0)).xyw;
     return temporal;
 }
@@ -151,11 +175,22 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     }
     let through = dot(face, lighting.sun.xyz) < 0.0;
     let lit = select(face, -face, through);
-    let normal = normalize(mix(lit, vec3<f32>(0.0, 1.0, 0.0), 0.6));
+    var normal = normalize(mix(lit, vec3<f32>(0.0, 1.0, 0.0), 0.6));
+    // With foliage's ground blend, bases take the ground's normal, so
+    // they light as the ground's canopy around them does.
+    if lighting.foliage.w > 0.0 && input.ground != 0u {
+        let tilt = vec2<f32>(f32((input.ground >> 16u) & 0xffu), f32(input.ground >> 24u))
+            / 255.0 * 2.0 - 1.0;
+        let ground = vec3<f32>(tilt.x, sqrt(max(1.0 - dot(tilt, tilt), 0.0)), tilt.y);
+        let above = input.along * unpack2x16float(input.ground & 0xffffu).x;
+        normal = normalize(mix(normal, ground, 1.0 - smoothstep(0.0, lighting.foliage.w, above)));
+    }
     let relative = input.world - camera.position.xyz;
     let albedo = input.color * select(1.0, 0.8, through);
     var point: SurfacePoint;
     point.albedo = albedo;
+    // Blades are leaf throughout.
+    point.leaf = 1.0;
     point.opacity = 1.0;
     point.occlusion = mix(0.35, 1.0, input.along);
     point.roughness = 0.7;
@@ -180,6 +215,7 @@ fn cover_temporal_output(input: CoverTemporalOutput) -> CoverOutput {
     output.normal = input.normal;
     output.color = input.color;
     output.along = input.along;
+    output.ground = input.ground;
     return output;
 }
 

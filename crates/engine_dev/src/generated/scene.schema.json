@@ -2499,6 +2499,16 @@
             }
           ]
         },
+        "foliage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFoliage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "ground_cover": {
           "anyOf": [
             {
@@ -2776,6 +2786,42 @@
           "type": "number",
           "format": "float",
           "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneFoliage": {
+      "description": "Foliage looks.",
+      "type": "object",
+      "properties": {
+        "ground_blend": {
+          "description": "Meters up from the ground over which plants' color and light\nblend into the ground's at their base; 0 turns it off.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 4.0,
+          "minimum": 0.0
+        },
+        "hashed_cutoff": {
+          "description": "Whether masked leaves dissolve over their texture's coverage on\ntemporally antialiased frames, a threshold turning across pixels\nand frames instead of the material's cutoff.",
+          "type": "boolean",
+          "default": false
+        },
+        "transmission": {
+          "description": "Sunlight leaves, needles and blades pass toward the eye, seen\nagainst the sun through them, tinted by their color and shaded\nas the sun is; 0 turns it off.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 4.0,
+          "minimum": 0.0
+        },
+        "variation": {
+          "description": "How far each plant's leaves stray from its material's color, by\na hash of where it stands, along a gradient from drier to deeper\ngreen; bark keeps its color. 0 turns it off.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
           "maximum": 1.0,
           "minimum": 0.0
         }
