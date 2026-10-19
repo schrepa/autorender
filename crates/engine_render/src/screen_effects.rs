@@ -125,10 +125,14 @@ screen_effects! {
         reads: [Depth, Scene, Glow, Surface],
     },
     /// Sun shafts: light gathered through the shadow maps, which they
-    /// need.
+    /// need, from the fog they march, which must scatter: the physical
+    /// sky's air has none (its lighting zeroes the fog).
     shafts {
         gate: |environment, _| {
-            environment.sun_shafts.sanitized().enabled() && environment.shadows.enabled
+            environment.sun_shafts.sanitized().enabled()
+                && environment.shadows.enabled
+                && !environment.sky.sanitized().enabled
+                && environment.atmosphere.sanitized().fog_density > 0.0
         },
         uniform: |settings, on, _| {
             let shafts = settings.sun_shafts.sanitized();
