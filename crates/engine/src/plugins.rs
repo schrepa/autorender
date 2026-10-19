@@ -6,6 +6,7 @@ use engine_core::{
     AnimationPlugin, DeformationPlugin, Feature, NavigationPlugin, OceanPlugin, PluginGroup,
     PluginGroupBuilder, TerrainPlugin, TimeOfDayPlugin, WorldStreamingPlugin,
 };
+use engine_physics::PhysicsPlugin;
 
 /// Every feature of the engine ([`Feature::ALL`]) as one plugin group, in
 /// that order. Add it to an engine for all of them, or leave some out:

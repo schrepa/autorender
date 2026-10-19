@@ -4,7 +4,7 @@
 
 use engine_collision::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
 use engine_core::{
-    Engine, Feature, RouteOptions, Terrain, Terrains,
+    Engine, Feature, RouteOptions, Terrain, Terrains, WaterKind,
     bevy_ecs::prelude::World,
     glam::{Vec2, Vec3},
 };
@@ -258,29 +258,23 @@ fn heights(engine: &mut Engine, points: &[[f64; 2]]) -> Result<Value, DevError> 
             let x = coordinate(point[0], &format!("$.points[{index}][0]"))?;
             let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
             Ok(terrains.sample(x, z).map(|sample| {
-                // What its hydrology bake found there,
-                // as the finest level sees it, and the water standing
-                // there: its surface (world height)
-                // and depth.
-                let bake = terrains.layers(sample.terrain).and_then(|layers| {
+                // What its hydrology bake found there, as the finest level
+                // sees it.
+                let found = terrains.layers(sample.terrain).and_then(|layers| {
                     let terrain = terrains.terrain(sample.terrain)?;
                     let water = layers.hydrology()?;
                     let local = (x - terrain.origin.x, z - terrain.origin.z);
-                    // Above the ground as tiles hold it, which layers
-                    // after the bake may raise over the water.
-                    let standing = water
-                        .water_at(local.0, local.1)
-                        .map(|(surface, _)| terrain.origin.y + surface)
-                        .filter(|&surface| surface > sample.height)
-                        .map(|surface| StandingWater {
-                            surface,
-                            depth: surface - sample.height,
-                        });
-                    Some((
-                        water.at(local.0, local.1, terrain.pyramid.spacing(0)),
-                        standing,
-                    ))
+                    Some(water.at(local.0, local.1, terrain.pyramid.spacing(0)))
                 });
+                // The water standing there as the tiles hold it, over the
+                // ground they hold: its surface (world height) and depth.
+                let standing = terrains
+                    .water_at(Vec3::new(x, sample.height, z))
+                    .filter(|water| water.kind != WaterKind::Fall)
+                    .map(|water| StandingWater {
+                        surface: water.surface,
+                        depth: water.depth,
+                    });
                 // Meters from the nearest road's edge,
                 // where a path's masks reach.
                 let path = terrains.layers(sample.terrain).and_then(|layers| {
@@ -294,8 +288,8 @@ fn heights(engine: &mut Engine, points: &[[f64; 2]]) -> Result<Value, DevError> 
                     normal: sample.normal.to_array(),
                     hole: sample.hole,
                     level: sample.level,
-                    water: bake.as_ref().map(|&(found, _)| found),
-                    standing_water: bake.and_then(|(_, standing)| standing),
+                    water: found,
+                    standing_water: standing,
                     path,
                 }
             }))

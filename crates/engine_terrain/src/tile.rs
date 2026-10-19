@@ -10,6 +10,7 @@ use engine_math::{max, min};
 
 use crate::layers::{Layers, state_len};
 use crate::surface::{BiomeRules, Control, RowInputs, RowScratch};
+use crate::tile_water::{TileWater, WaterPoint};
 use crate::{
     HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placing, Pyramid, TILE_QUADS,
     TILE_SAMPLES, TILE_STRIDE, TileKey,
@@ -33,6 +34,8 @@ pub struct Tile {
     control: Option<Box<[u32]>>,
     placed: Option<Arc<[crate::Placed]>>,
     placing: Option<Placing>,
+    // The water standing on it, the world's one water there.
+    water: Option<TileWater>,
     bounds: [f32; 2],
     patch_bounds: Box<[[f32; 2]]>,
     patch_holes: [u64; 4],
@@ -74,6 +77,7 @@ impl Tile {
             control: None,
             placed: None,
             placing: None,
+            water: None,
             bounds: [0.0; 2],
             patch_bounds: vec![[0.0; 2]; (PATCHES_PER_TILE * PATCHES_PER_TILE) as usize]
                 .into_boxed_slice(),
@@ -117,6 +121,20 @@ impl Tile {
             self.control = Some(control);
             self
         })
+    }
+
+    /// The tile with the water its samples' `surface` and packed `info`
+    /// ([`crate::tile_water::pack`]) stand at: none where no sample's
+    /// surface stands over its ground or the sizes do not match.
+    #[must_use]
+    pub(crate) fn with_water(mut self, surface: Box<[f32]>, info: Box<[u32]>) -> Self {
+        self.water = TileWater::new(surface, info, &self.heights);
+        self
+    }
+
+    /// The water standing on the tile, if any does.
+    pub fn water(&self) -> Option<&TileWater> {
+        self.water.as_ref()
     }
 
     pub fn key(&self) -> TileKey {
@@ -247,9 +265,10 @@ impl Tile {
         bits[index / 64] & (1 << (index % 64)) != 0
     }
 
-    /// The surface at `local`, meters from the tile's first corner, on the
-    /// triangles every consumer splits cells into; `None` outside the tile.
-    pub fn sample(&self, local: Vec2) -> Option<TileSample> {
+    /// The cell holding `local`, meters from the tile's first corner: its
+    /// first sample's column and row and where in it `local` lies, `fu` and
+    /// `fv`; `None` outside the tile.
+    fn cell(&self, local: Vec2) -> Option<(i32, i32, f32, f32)> {
         let size = TILE_QUADS as f32;
         let u = local.x / self.spacing;
         let v = local.y / self.spacing;
@@ -258,31 +277,76 @@ impl Tile {
         }
         let i = (u.floor() as i32).min(TILE_QUADS as i32 - 1);
         let j = (v.floor() as i32).min(TILE_QUADS as i32 - 1);
-        let fu = u - i as f32;
-        let fv = v - j as f32;
-        let h00 = self.height(i, j);
-        let h10 = self.height(i + 1, j);
-        let h01 = self.height(i, j + 1);
-        let h11 = self.height(i + 1, j + 1);
-        // The diagonal runs from the cell's (x, z+1) corner to its (x+1, z)
-        // corner.
-        let (height, slope) = if fu + fv <= 1.0 {
-            (
-                h00 + fu * (h10 - h00) + fv * (h01 - h00),
-                Vec2::new(h10 - h00, h01 - h00),
-            )
+        Some((i, j, u - i as f32, v - j as f32))
+    }
+
+    /// The surface at `local`, meters from the tile's first corner, on the
+    /// triangles every consumer splits cells into; `None` outside the tile.
+    pub fn sample(&self, local: Vec2) -> Option<TileSample> {
+        let (i, j, fu, fv) = self.cell(local)?;
+        let corners = [
+            self.height(i, j),
+            self.height(i + 1, j),
+            self.height(i, j + 1),
+            self.height(i + 1, j + 1),
+        ];
+        let [h00, h10, h01, h11] = corners;
+        let slope = if fu + fv <= 1.0 {
+            Vec2::new(h10 - h00, h01 - h00)
         } else {
-            (
-                h11 + (1.0 - fu) * (h01 - h11) + (1.0 - fv) * (h10 - h11),
-                Vec2::new(h11 - h01, h11 - h10),
-            )
+            Vec2::new(h11 - h01, h11 - h10)
         };
         let normal = Vec3::new(-slope.x / self.spacing, 1.0, -slope.y / self.spacing).normalize();
         Some(TileSample {
-            height,
+            height: on_triangle(corners, fu, fv),
             normal,
             hole: self.is_hole(i as u32, j as u32),
         })
+    }
+
+    /// The water at `local`, meters from the tile's first corner, on the
+    /// triangles [`Self::sample`] reads the ground on: its surface, its
+    /// depth over that ground, its flow, whitewater and kind; `None` where
+    /// no water reaches the triangle's corners or its surface stands at or
+    /// below the ground.
+    pub fn water_at(&self, local: Vec2) -> Option<WaterPoint> {
+        let water = self.water.as_ref()?;
+        let (i, j, fu, fv) = self.cell(local)?;
+        let at = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)];
+        let surfaces = at.map(|(x, z)| water.surface(x, z));
+        // The corners of the triangle holding it.
+        let corners = if fu + fv <= 1.0 { [0, 1, 2] } else { [3, 2, 1] };
+        if corners.iter().any(|&corner| !surfaces[corner].is_finite()) {
+            return None;
+        }
+        let surface = on_triangle(surfaces, fu, fv);
+        let depth = surface - on_triangle(at.map(|(x, z)| self.height(x, z)), fu, fv);
+        if depth <= 0.0 {
+            return None;
+        }
+        let info = at.map(|(x, z)| water.sample_info(x, z));
+        Some(WaterPoint {
+            surface,
+            depth,
+            flow: Vec2::new(
+                on_triangle(info.map(|(flow, _, _, _)| flow.x), fu, fv),
+                on_triangle(info.map(|(flow, _, _, _)| flow.y), fu, fv),
+            ),
+            white: on_triangle(info.map(|(_, white, _, _)| white), fu, fv),
+            lake: info[corners[0]].2,
+        })
+    }
+}
+
+/// The value at `(fu, fv)` in a cell whose corners, from its first, hold
+/// `[v00, v10, v01, v11]`, on the triangle holding it: the cell's diagonal
+/// runs from its (x, z+1) corner to its (x+1, z) corner.
+#[inline]
+fn on_triangle([v00, v10, v01, v11]: [f32; 4], fu: f32, fv: f32) -> f32 {
+    if fu + fv <= 1.0 {
+        v00 + fu * (v10 - v00) + fv * (v01 - v00)
+    } else {
+        v11 + (1.0 - fu) * (v01 - v11) + (1.0 - fv) * (v10 - v11)
     }
 }
 
@@ -351,8 +415,9 @@ enum Stage {
 
 /// Rows of a tile a band of its generation made: the tile's
 /// key, the first stored row (0 to 258, samples -1 to 257), and those rows'
-/// heights and control values, with the hole bits of the cells starting in
-/// them; [`merge_bands`] joins a tile's bands.
+/// heights, control values and water (its surfaces and packed info), with
+/// the hole bits of the cells starting in them; [`merge_bands`] joins a
+/// tile's bands.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TileBand {
     pub key: TileKey,
@@ -360,6 +425,7 @@ pub struct TileBand {
     pub heights: Vec<f32>,
     pub holes: Option<Vec<u64>>,
     pub control: Option<Vec<u32>>,
+    pub water: Option<(Vec<f32>, Vec<u32>)>,
 }
 
 crate::codec::record!(TileBand {
@@ -368,6 +434,7 @@ crate::codec::record!(TileBand {
     heights,
     holes,
     control,
+    water,
 });
 
 /// Tile `key` at `spacing` joined from `bands`, each row from
@@ -380,8 +447,15 @@ pub fn merge_bands(key: TileKey, spacing: f32, bands: &[TileBand]) -> Option<Til
     let mut covered = vec![false; stride];
     let holed = bands.first()?.holes.is_some();
     let surfaced = bands.first()?.control.is_some();
+    let watered = bands.first()?.water.is_some();
     let mut holes = holed.then(|| vec![0_u64; HOLE_WORDS]);
     let mut control = surfaced.then(|| vec![0_u32; stride * stride]);
+    let mut water = watered.then(|| {
+        (
+            vec![f32::NAN; stride * stride],
+            vec![0_u32; stride * stride],
+        )
+    });
     for band in bands {
         let rows = band.heights.len() / stride;
         let first = band.first as usize;
@@ -390,6 +464,11 @@ pub fn merge_bands(key: TileKey, spacing: f32, bands: &[TileBand]) -> Option<Til
             || first + rows > stride
             || band.holes.is_some() != holed
             || band.control.as_ref().map(Vec::len) != surfaced.then_some(rows * stride)
+            || band
+                .water
+                .as_ref()
+                .map(|(surface, info)| [surface.len(), info.len()])
+                != watered.then_some([rows * stride; 2])
         {
             return None;
         }
@@ -401,7 +480,11 @@ pub fn merge_bands(key: TileKey, spacing: f32, bands: &[TileBand]) -> Option<Til
         let at = first * stride..(first + rows) * stride;
         heights[at.clone()].copy_from_slice(&band.heights);
         if let (Some(out), Some(values)) = (&mut control, &band.control) {
-            out[at].copy_from_slice(values);
+            out[at.clone()].copy_from_slice(values);
+        }
+        if let (Some((surface, info)), Some((surfaces, infos))) = (&mut water, &band.water) {
+            surface[at.clone()].copy_from_slice(surfaces);
+            info[at].copy_from_slice(infos);
         }
         if let (Some(out), Some(bits)) = (&mut holes, &band.holes) {
             if bits.len() != HOLE_WORDS {
@@ -421,10 +504,14 @@ pub fn merge_bands(key: TileKey, spacing: f32, bands: &[TileBand]) -> Option<Til
         heights.into_boxed_slice(),
         holes.map(Vec::into_boxed_slice),
     )?;
-    match control {
-        Some(control) => tile.with_control(control.into_boxed_slice()),
-        None => Some(tile),
-    }
+    let tile = match control {
+        Some(control) => tile.with_control(control.into_boxed_slice())?,
+        None => tile,
+    };
+    Some(match water {
+        Some((surface, info)) => tile.with_water(surface.into(), info.into()),
+        None => tile,
+    })
 }
 
 /// Generates one tile from a layer stack in steps, so streaming can spread
@@ -896,7 +983,6 @@ impl Generator {
                 flow: water.flow * shown,
                 wetness: water.wetness * shown,
                 lake: water.lake * shown,
-                carve: water.carve * shown,
                 river: water.river,
             });
             inputs.path.push(if shown > 0.0 && reads.path {
@@ -1038,23 +1124,30 @@ impl Generator {
                     let (first, end) = self.control_rows();
                     let stride = TILE_STRIDE as usize;
                     let at = first * stride..end * stride;
+                    let water = self.water_rows(first..end, budget);
                     self.banded = Some(TileBand {
                         key: self.key,
                         first: first as u32,
                         heights: self.heights[at.clone()].to_vec(),
                         holes: self.holes.as_deref().map(<[u64]>::to_vec),
                         control: self.control.as_deref().map(|control| control[at].to_vec()),
+                        water,
                     });
                     self.stage = Stage::Banded;
                     return None;
                 }
                 Stage::Banded => return None,
                 Stage::Done => {
+                    let water = self.water_rows(0..TILE_STRIDE as usize, budget);
                     let heights = std::mem::take(&mut self.heights);
                     self.stage = Stage::Failed;
                     let tile = Tile::new(self.key, self.spacing, heights, self.holes.take())?;
                     let tile = match self.control.take() {
                         Some(control) => tile.with_control(control)?,
+                        None => tile,
+                    };
+                    let tile = match water {
+                        Some((surface, info)) => tile.with_water(surface.into(), info.into()),
                         None => tile,
                     };
                     self.stage = Stage::Done;
@@ -1102,6 +1195,29 @@ impl Generator {
                 }
             }
         }
+    }
+
+    /// The water of stored rows `rows` (0 to 258) as the stack's hydrology
+    /// bake holds its lakes and rivers over them
+    /// ([`crate::tile_water::water_rows`]): their samples' surfaces and
+    /// packed info, row by row; `None` without the bake.
+    fn water_rows(&mut self, rows: Range<usize>, budget: &mut u64) -> Option<(Vec<f32>, Vec<u32>)> {
+        let layers = Arc::clone(&self.layers);
+        let (index, hydrology) = layers.hydrology_layer()?;
+        let span = self.span(index);
+        let count = (rows.end - rows.start) * TILE_STRIDE as usize;
+        let (mut surface, mut info) = (vec![f32::NAN; count], vec![0_u32; count]);
+        crate::tile_water::water_rows(
+            (&hydrology.water, &hydrology.rivers),
+            span.as_deref(),
+            (rows, &|_| 0..TILE_STRIDE as usize),
+            (&self.xs, &self.zs, &self.heights),
+            self.spacing,
+            &|x, z| layers.shown(x, z),
+            (&mut surface, &mut info),
+        );
+        *budget = budget.saturating_sub(count as u64);
+        Some((surface, info))
     }
 
     /// Heights of sample row `row` (-1 to 257), every layer applied in
@@ -1270,8 +1386,9 @@ impl Layers {
 }
 
 /// A tile's key, spacing, samples, holes, control values, placed
-/// objects and which of them; reading rebuilds its bounds as [`Tile::new`]
-/// does.
+/// objects and which of them, and its water's surfaces and packed info;
+/// reading rebuilds its bounds and wet patches as [`Tile::new`] and
+/// `Tile::with_water` do.
 impl crate::codec::Codec for Tile {
     fn write(&self, out: &mut crate::codec::Writer) {
         out.put(&self.key)
@@ -1281,6 +1398,13 @@ impl crate::codec::Codec for Tile {
             .put(&self.control)
             .put(&self.placed)
             .put(&self.placing);
+        match &self.water {
+            Some(water) => out
+                .put(&true)
+                .put(&water.surfaces().to_vec())
+                .put(&water.info().to_vec()),
+            None => out.put(&false),
+        };
     }
 
     fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
@@ -1292,9 +1416,15 @@ impl crate::codec::Codec for Tile {
         let control: Option<Box<[u32]>> = input.get()?;
         let placed: Option<Arc<[crate::Placed]>> = input.get()?;
         let placing = input.get()?;
+        let watered: bool = input.get()?;
         let mut tile = Self::new(key, spacing, heights, holes).ok_or(invalid)?;
         if let Some(control) = control {
             tile = tile.with_control(control).ok_or(invalid)?;
+        }
+        if watered {
+            let surface: Box<[f32]> = input.get()?;
+            let info: Box<[u32]> = input.get()?;
+            tile = tile.with_water(surface, info);
         }
         tile.placed = placed;
         tile.placing = placing;

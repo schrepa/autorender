@@ -5,10 +5,13 @@
 // than a few of their cells; pixels shade with every wave longer than a
 // few pixels, and the slopes of shorter ones roughen the surface instead,
 // so distant water glitters rather than aliasing. The CPU's queries
-// (`engine_core::OceanWaves`) sum the same waves. Light passing through
-// the sea fades over the distance to the ground behind it, foam gathers
-// where the waves compress crests and along shores, and sunlight glows
-// through crests seen against it.
+// (`engine_core::OceanWaves`) sum the same waves. The waves' tiles ripple
+// it as they do terrains' water, and it is lit as they are
+// (`water_light`): what lies under it shows through, bent where the frame
+// copies the scene's color and dimmed channel by channel over the view's
+// path to it (the light reaching it already dims through the water above,
+// `atmospheric`). Foam gathers where the waves compress crests and along
+// shores, and sunlight glows through crests seen against it.
 
 const OCEAN_TAU: f32 = 6.283185307179586;
 
@@ -67,11 +70,18 @@ fn ocean_moved(still: vec2<f32>, spacing: f32) -> vec3<f32> {
     return moved;
 }
 
+// The corners of a cell's two triangles, split along the diagonal from
+// its (1, 0) corner to its (0, 1) corner.
+const OCEAN_CORNERS = array<vec2<u32>, 6>(
+    vec2<u32>(0u, 0u), vec2<u32>(0u, 1u), vec2<u32>(1u, 0u),
+    vec2<u32>(1u, 0u), vec2<u32>(0u, 1u), vec2<u32>(1u, 1u),
+);
+
 fn ocean_output(vertex: u32, sector: u32) -> OceanOutput {
     let per_sector = u32(water.ocean_grid.z);
     let around = u32(water.ocean.z);
     let quad = vertex / 6u;
-    let corner = WATER_CORNERS[vertex % 6u];
+    let corner = OCEAN_CORNERS[vertex % 6u];
     // The last sector's far side is the first's near one: the same angle.
     let segment = (sector * per_sector + quad % per_sector + corner.x) % around;
     let ring = quad / per_sector + corner.y;
@@ -138,6 +148,8 @@ fn shade_ocean_below(input: OceanOutput) -> WaterShade {
     var result: WaterShade;
     result.shaded = shaded;
     result.coverage = 1.0;
+    result.behind = vec3<f32>(0.0);
+    result.fade = 1.0;
     return result;
 }
 
@@ -165,23 +177,22 @@ fn ocean_normal(still: vec2<f32>, footprint: f32) -> vec4<f32> {
         stretch.x * stretch.z - stretch.y * stretch.y);
 }
 
-fn shade_ocean(input: OceanOutput) -> WaterShade {
+// The sea at `input`, refracting the scene's color when `refracts`.
+fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     if lighting.underwater.w > 0.0 {
         return shade_ocean_below(input);
     }
     let world = input.relative + camera.position.xyz;
     let still = input.still.xy;
     let time = camera.position.w;
-    let distance = length(input.relative);
     let view = stable_normalize(-input.relative);
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
     // Meters of still sea a pixel spans.
     let footprint = max(max(length(dpdx(still)), length(dpdy(still))), 1.0e-4);
-    // Ripples ride the wind over the waves.
-    let wind = water.ripples.zw;
-    let drift = wind * 0.12;
-    let slopes = water_slopes(world.xz, water.ripples.y, drift, time, footprint);
+    // The waves' tiles ripple the sea's own waves.
+    let ripples = water_waves_at(world.xz, world_dx.xz, world_dy.xz, vec3<f32>(1.0));
+    let strength = water.ripples.x * water_gusts(world.xz, time);
     // Every wave longer than a few pixels tilts and stretches the surface;
     // shorter waves' slopes roughen it instead.
     let waved = ocean_normal(still, footprint);
@@ -194,21 +205,27 @@ fn shade_ocean(input: OceanOutput) -> WaterShade {
         let slope = number * wave.z;
         hidden += (1.0 - keep * keep) * slope * slope * 0.5;
     }
-    var normal = normalize(waved.xyz + vec3<f32>(-slopes.x, 0.0, -slopes.y) * water.ripples.x);
-    // Slopes turned away from the eye would mirror what lies below the
-    // horizon: they lean back toward it.
-    normal = normalize(normal + view * max(0.05 - dot(normal, view), 0.0));
+    let normal = normalize(waved.xyz + vec3<f32>(-ripples.x, 0.0, -ripples.y) * strength);
     let compression = waved.w;
-    // The ground behind the sea, unless only the sky is: the meters the
-    // view travels through the water and how deep it stands there.
+    // The ground behind the sea, unless only the sky is: how deep it
+    // stands under the surface, the meters the view travels through the
+    // water to what it shows and, where the frame refracts the scene, its
+    // color.
     var through = 1.0e6;
     var below = 1.0e6;
-    if (textureLoad(water_depth, vec2<i32>(input.clip_position.xy), 0) > 0.0) {
-        let ground = water_ground(input.clip_position.xy);
-        through = max(length(ground - input.relative), 0.0);
-        below = max(input.relative.y - ground.y, 0.0);
+    var behind: WaterBehind;
+    behind.color = vec3<f32>(0.0);
+    let pixel = input.clip_position.xy;
+    if textureLoad(water_depth, vec2<i32>(pixel), 0) > 0.0 {
+        let own = water_ground(pixel);
+        below = max(input.relative.y - own.y, 0.0);
+        behind.ground = own;
+        if refracts {
+            behind = water_behind(input.relative, normal, view, pixel, own);
+        }
+        through = max(length(behind.ground - input.relative), 0.0);
     }
-    let transmit = exp2(-through / water.color.w);
+    let transmit = water_transmitted(through);
     // Foam on crests the waves compress and along shores, in patches and
     // streaks drawn out along the sea's wind, evening out with distance.
     let heading = water.origin.xy;
@@ -224,45 +241,34 @@ fn shade_ocean(input: OceanOutput) -> WaterShade {
     let lace = smoothstep(0.2, 0.75, grain + 0.35 * crest);
     let foam = water.foam.x * max(crest * lace, shore * smoothstep(0.25, 0.65, grain + 0.3 * shore));
     // Calm water is a mirror; the slopes of waves too short to draw spread
-    // its highlights, as a rougher surface would.
-    let alpha = sqrt(0.05 * 0.05 * 0.05 * 0.05 + 2.0 * hidden);
-    let roughness = min(sqrt(alpha), 0.6);
+    // its highlights, as a rougher surface would, and so do the ripples
+    // finer than the pixel.
+    let roughness = water_roughness(2.0 * hidden + ripples.z * strength * strength);
     // Sunlight through crests seen against it.
     let crest_height = saturate(input.still.z / max(water.foam.w, 1.0e-3) * 0.5 + 0.5);
     let against = pow(saturate(dot(-view, lighting.sun.xyz)), 4.0) * saturate(lighting.sun.y * 4.0);
     let glow = (water.color.rgb * 3.0 + vec3<f32>(0.0, 0.04, 0.035)) * lighting.sun_color.rgb
         * (against * crest_height * crest_height * crest_height * (1.0 - foam));
-    var point: SurfacePoint;
-    point.albedo = water.color.rgb;
-    point.opacity = 1.0;
-    point.emission = 0.0;
-    point.emissive = vec3<f32>(0.0);
-    point.occlusion = 1.0;
-    point.bounce = vec3<f32>(0.0);
-    point.roughness = mix(roughness, 0.7, foam);
-    point.alpha = point.roughness * point.roughness;
-    point.f0 = vec3<f32>(0.02);
-    point.diffuse_color = mix(water.color.rgb * (1.0 - transmit), vec3<f32>(0.8), foam);
-    point.geometric = vec3<f32>(0.0, 1.0, 0.0);
-    point.normal = normal;
-    point.distance = distance;
-    point.view = view;
-    point.n_v = max(dot(normal, view), 1.0e-4);
-    point.world = world;
-    point.world_dx = world_dx;
-    point.world_dy = world_dy;
-    point.shadow_offset = vec3<f32>(0.0);
-    point.on_terrain = false;
-    point.sun_shade = 0.0;
+    var surface: WaterSurface;
+    surface.relative = input.relative;
+    surface.world_dx = world_dx;
+    surface.world_dy = world_dy;
+    surface.normal = normal;
+    surface.roughness = roughness;
+    surface.foam = foam;
+    surface.transmit = transmit;
+    surface.glow = glow;
+    let lit = water_light(surface);
+    // Of what the surface lets through, foam covers what lies below; the
+    // sea thins out to nothing where it meets the shore and around what
+    // stands in it.
+    let fade = smoothstep(0.0, WATER_SHORE, below);
     var result: WaterShade;
-    result.shaded = finish(point, glow);
-    // The surface reflects its Fresnel share; of the rest, the water lets
-    // the ground show through. Foam covers it, and the sea thins out to
-    // nothing where it meets the shore.
-    let reflectance = saturate(luminance(environment_brdf(point.f0, point.roughness,
-        point.n_v)));
-    result.coverage = max(1.0 - (1.0 - reflectance) * transmit, foam)
-        * smoothstep(0.0, 0.08, below);
+    result.shaded = lit.shaded;
+    result.coverage = max(1.0 - (1.0 - lit.reflectance) * luminance(transmit), foam) * fade;
+    result.behind = behind.color * transmit * ((1.0 - lit.reflectance) * (1.0 - foam)
+        * (1.0 - atmospheric_cover(camera.position.xyz, world)));
+    result.fade = fade;
     return result;
 }
 
@@ -276,22 +282,22 @@ fn ocean_temporal_output(input: OceanTemporalOutput) -> OceanOutput {
 
 @fragment
 fn fs_ocean(input: OceanOutput) -> @location(0) vec4<f32> {
-    let shade = shade_ocean(input);
+    let shade = shade_ocean(input, false);
     return vec4<f32>(encoded(shade.shaded.color) * shade.coverage, shade.coverage);
 }
 
 @fragment
 fn fs_ocean_post(input: OceanOutput) -> SceneTargets {
-    let shade = shade_ocean(input);
+    let shade = shade_ocean(input, true);
     var targets = scene_targets(shade.shaded);
-    targets.color = vec4<f32>(shade.shaded.color * shade.coverage, shade.coverage);
+    targets.color = water_covering(shade);
     return targets;
 }
 
 @fragment
 fn fs_ocean_temporal(input: OceanTemporalOutput) -> TemporalTargets {
-    let shade = shade_ocean(ocean_temporal_output(input));
+    let shade = shade_ocean(ocean_temporal_output(input), true);
     var targets = temporal_targets(shade.shaded, input.clip_position, input.previous);
-    targets.color = vec4<f32>(shade.shaded.color * shade.coverage, shade.coverage);
+    targets.color = water_covering(shade);
     return targets;
 }

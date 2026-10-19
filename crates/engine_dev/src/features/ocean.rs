@@ -34,7 +34,9 @@ pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
 /// compress it there (1 still, toward 0 on sharpening crests, where foam
 /// gathers) and the still sea's point the waves moved there, or null
 /// without a sea; the ground below where a terrain tile is resident,
-/// and the water's depth over it.
+/// and the water's depth over it; and the world's water there as
+/// everything meeting it reads it (rivers, lakes or the sea at the fixed
+/// tick: kind, surface, depth, velocity and foam), or null where dry.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -90,6 +92,17 @@ impl EngineQuery for WaterQuery {
                 let ground = Ground::sample_in(world, x, z).map(|sample| sample.height);
                 // Millimeters and ten-thousandths keep responses small.
                 let round = |value: f64, step: f64| (value / step).round() * step;
+                let water = engine_core::WaterSources::sample_in(
+                    world,
+                    engine_core::glam::Vec3::new(x, ground.unwrap_or(0.0), z),
+                )
+                .map(|water| WorldWater {
+                    kind: water.kind,
+                    surface: round(f64::from(water.surface), 1.0e-3),
+                    depth: round(f64::from(water.depth), 1.0e-3),
+                    velocity: water.velocity.map(|value| round(f64::from(value), 1.0e-3)),
+                    foam: round(f64::from(water.foam), 1.0e-3),
+                });
                 Ok(WaterSample {
                     ocean: surface.map(|surface| SeaSurface {
                         height: round(f64::from(surface.height), 1.0e-3),
@@ -101,6 +114,7 @@ impl EngineQuery for WaterQuery {
                     depth: surface
                         .zip(ground)
                         .map(|(surface, ground)| round(f64::from(surface.height - ground), 1.0e-3)),
+                    water,
                 })
             })
             .collect::<Result<Vec<_>, DevError>>()?;
@@ -140,6 +154,20 @@ pub struct WaterSample {
     pub ground: Option<f64>,
     /// The water's depth, where both are.
     pub depth: Option<f64>,
+    /// The world's water there, where any stands.
+    pub water: Option<WorldWater>,
+}
+
+/// The world's water over a point: its kind, surface (world meters), depth
+/// over the ground or bed, velocity (world meters a second) and foam.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct WorldWater {
+    pub kind: engine_core::WaterKind,
+    pub surface: f64,
+    pub depth: f64,
+    pub velocity: [f64; 3],
+    pub foam: f64,
 }
 
 /// The sea's surface over a point.

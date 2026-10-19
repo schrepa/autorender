@@ -35,7 +35,7 @@ try {
   // the view itself) when one smoke held them all, and keep it.
   await command("terrain", { view: "materials" });
   // Water stands in the bake's lakes: queries find its
-  // surface and depth, the overview draws chunks of it, it shades pixels
+  // surface and depth, the overview draws patches of it, it shades pixels
   // and the section refuses water clearer than its range.
   const grid = [];
   for (let z = -480; z <= 480; z += 40) for (let x = -480; x <= 480; x += 40) grid.push([x, z]);
@@ -50,7 +50,7 @@ try {
   const waterSettings = (await command("inspect", { component: "Water" })).result.value;
   await command("camera", overview);
   const wet = (await command("environment", { water: waterSettings })).result.rendering;
-  assert.ok(wet.water.chunks > 0, `water draws: ${wet.water.chunks}`);
+  assert.ok(wet.water.patches > 0, `water draws: ${wet.water.patches}`);
   const withWater = await capture("water");
   await command("environment", { water: { ...waterSettings, enabled: false } });
   const withoutWater = await capture("no-water");
@@ -59,7 +59,7 @@ try {
   const murky = await command("environment", { water: { ...waterSettings, clarity: 0 } }, false);
   assert.equal(murky.error.path, "$.water.clarity");
   await command("environment", { water: waterSettings });
-  checks.push({ check: "water", lake_samples: lakes.length, chunks: wet.water.chunks, pixels: waterPixels.changed });
+  checks.push({ check: "water", lake_samples: lakes.length, patches: wet.water.patches, pixels: waterPixels.changed });
   // The sea stands at its level wherever the ground lies
   // lower: queries sum the waves frames draw, which move with time and stay
   // within their height, its sectors draw, and a camera just over the

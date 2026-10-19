@@ -46,12 +46,14 @@ mod components;
 mod dispatch;
 mod extract;
 mod files;
+mod flow;
 mod ground_cover;
 mod identity;
 mod occupancy;
 mod plan;
 mod queries;
 mod residency;
+mod rewater;
 mod settings;
 mod stats;
 mod store;
@@ -59,6 +61,7 @@ mod streaming;
 mod surroundings;
 mod tile_map;
 mod water;
+mod water_source;
 mod waterfalls;
 mod wind;
 
@@ -103,8 +106,8 @@ use engine_terrain::{
     Fall, FileHeader, Generator, HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask,
     NavOptions, NavPath, NoiseMask, Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Patch, PathStage,
     Placing, Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS, TILE_STRIDE,
-    TerrainBake, Tile, TileBand, TileKey, TileSample, WantedTile, WantedView, decode_tile,
-    merge_placed,
+    TerrainBake, Tile, TileBand, TileKey, TileSample, WantedTile, WantedView, WaterPoint,
+    decode_tile, merge_placed,
 };
 
 use crate::{
@@ -124,6 +127,9 @@ pub struct TerrainPlugin;
 impl bevy_app::Plugin for TerrainPlugin {
     fn build(&self, app: &mut bevy_app::App) {
         crate::install(app, crate::Feature::Terrain);
+        app.world_mut()
+            .resource_mut::<crate::WaterSources>()
+            .register("terrain", water_source::terrain_water);
         app.init_resource::<Terrains>()
             .insert_resource(crate::Ground {
                 sample: ground_sample,
@@ -136,6 +142,11 @@ impl bevy_app::Plugin for TerrainPlugin {
             .add_systems(
                 crate::ViewSync,
                 stream_terrains.in_set(crate::ViewSyncSystems::Stream),
+            )
+            // Rivers follow what stands in them once bodies have moved.
+            .add_systems(
+                crate::FixedSimulation,
+                flow::step.in_set(crate::FixedSimulationSystems::Ride),
             )
             .add_systems(
                 crate::WorldSync,

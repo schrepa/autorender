@@ -94,7 +94,8 @@ pub struct ErosionView {
 /// A terrain's hydrology bake: whether it is in progress
 /// (tiles wait for it), and once done the samples it read, those channels
 /// run through, those of filled pits, the largest area draining through
-/// one (square meters) and the waterfalls rivers drop over.
+/// one (square meters), the waterfalls rivers drop over, how its rivers and
+/// lakes flow and its first falls.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct HydrologyView {
@@ -104,6 +105,102 @@ pub struct HydrologyView {
     pub lake_samples: Option<usize>,
     pub max_area: Option<f32>,
     pub falls: Option<usize>,
+    pub flow: Option<RiverFlowView>,
+    /// The first [`FALLS_SHOWN`] falls.
+    pub fall_list: Vec<FallView>,
+}
+
+/// Falls a terrain's view lists at most.
+pub const FALLS_SHOWN: usize = 16;
+
+/// A terrain's water in world space: how its rivers and lakes flow, its
+/// first [`FALLS_SHOWN`] falls, its largest lakes and where its rivers carry
+/// most, run fastest against their waves and meet.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct TerrainWaterView {
+    pub flow: RiverFlowView,
+    pub falls: Vec<FallView>,
+    pub lakes: Vec<LakeView>,
+    pub sights: Vec<RiverSight>,
+    /// Solids resting on its rivers' beds at the last fixed tick.
+    pub blocks: usize,
+    /// The water they hold back, and pools still draining.
+    pub pools: Vec<PoolView>,
+}
+
+/// Water held back behind solids in a river: where it stands (world
+/// space, its level), how far above the river's baked water, what flowed
+/// in and out at the last fixed tick (cubic meters a second), the share of
+/// the river's width the solids block and their highest crest (world
+/// height; none once they are gone and it drains), and the water surface
+/// it covers (square meters).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct PoolView {
+    pub at: [f32; 3],
+    pub rise: f32,
+    pub inflow: f32,
+    pub outflow: f32,
+    pub blocked: f32,
+    pub crest: Option<f32>,
+    pub area: f32,
+}
+
+/// A lake: its level, its area (square meters), its middle and a point of
+/// its shore (world space).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct LakeView {
+    pub level: f32,
+    pub area: f32,
+    pub middle: [f32; 3],
+    pub shore: [f32; 3],
+}
+
+/// A point of a river worth looking at (`largest`, `rapids` or
+/// `confluence`): where its water stands (world space), the way it runs,
+/// half its width, its speed, discharge and foam.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct RiverSight {
+    pub kind: &'static str,
+    pub point: [f32; 3],
+    pub direction: [f32; 2],
+    pub half: f32,
+    pub speed: f32,
+    pub discharge: f32,
+    pub foam: f32,
+}
+
+/// How a terrain's rivers flow, as its bake solved them: rivers, lakes,
+/// river points, the largest discharge (cubic meters a second), the fastest
+/// mean speed (meters a second), the share of points running faster than
+/// their waves (Froude number over one) and of points carrying foam (over a
+/// tenth).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct RiverFlowView {
+    pub rivers: usize,
+    pub lakes: usize,
+    pub points: usize,
+    pub max_discharge: f32,
+    pub fastest: f32,
+    pub rapid_share: f32,
+    pub foam_share: f32,
+}
+
+/// A waterfall, terrain-local: its lip's water and where its jet lands, the
+/// river's width at the lip, the water's landing speed (meters a second)
+/// and the discharge it carries (cubic meters a second).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct FallView {
+    pub top: [f32; 3],
+    pub bottom: [f32; 3],
+    pub width: f32,
+    pub speed: f32,
+    pub discharge: f32,
 }
 
 /// The log of runtime deformation's stamps: stamps held, pressed and dropped by
@@ -328,10 +425,9 @@ pub struct TerrainsView {
     /// and why the latest did.
     pub failed_reads: u64,
     pub latest_read_failure: Option<String>,
-    /// Falls drawn without their white water since terrains started,
-    /// which the asset library refused, and why the latest was.
-    pub refused_falls: u64,
-    pub latest_fall_refusal: Option<String>,
+    /// The first terrain whose hydrology bake is done: how its rivers flow
+    /// and its first falls (world space).
+    pub water: Option<TerrainWaterView>,
     /// Terrains' jobs that failed on workers since each terrain arrived
     /// (after several, a terrain generates its tiles itself), and why the
     /// latest did.

@@ -20,7 +20,7 @@ const { browser, page, errors } = await launch({ width: 960, height: 540, timeou
 // What an exact frame draws of the terrain, which time leaves alone.
 const drawn = ({ terrain, water }) => ({
   tiles: terrain.tiles, patches: terrain.patches, triangles: terrain.triangles, shadow_patches: terrain.shadow_patches,
-  placed_objects: terrain.placed_objects, placed_far_objects: terrain.placed_far_objects, water_chunks: water.chunks,
+  placed_objects: terrain.placed_objects, placed_far_objects: terrain.placed_far_objects, water_patches: water.patches,
 });
 const command = commander(page, { deadline: 600_000 });
 const view = { position: [-120, 0, 260], target: [380, 0, -340], vertical_fov_radians: 1.0, near: 0.2, far: 40000 };

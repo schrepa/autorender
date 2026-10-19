@@ -7,11 +7,13 @@
 mod bvh;
 mod geometry;
 mod placed;
+mod solids;
 mod terrain;
 mod types;
 mod world;
 
 pub use placed::BRIDGE_LAYER;
+pub use solids::{ColliderSolid, GroundSolid, PlacedSolid, Solid};
 pub use types::*;
 pub use world::{CollisionWorld, SensorEvents, refresh_collision_world};
 

@@ -68,6 +68,11 @@ impl PatchDraws {
         self.eye
     }
 
+    /// The grid's indices: its triangles, then its skirts'.
+    pub(super) fn indices(&self) -> &wgpu::Buffer {
+        &self.indices
+    }
+
     /// The records this frame draws, which debug builds check.
     #[cfg(debug_assertions)]
     pub(super) fn records(&self) -> &[PatchRecord] {
@@ -311,7 +316,7 @@ impl PatchDraws {
 
 /// The instance record of `patch`, or `None` when its tile or its
 /// parent has no layer.
-fn record(
+pub(super) fn record(
     parts: &Layout<'_>,
     terrain: &RenderTerrain,
     patch: &engine_core::Patch,
@@ -466,13 +471,25 @@ fn grid_indices() -> Vec<u16> {
 /// Each level's anchor sample (x, z): a point on every level's grid near
 /// the eye, from which patches count their samples.
 #[derive(Clone, Copy)]
-struct Anchors {
+pub(super) struct Anchors {
     // The eye's cell on the top level's grid.
     cells: [i64; 2],
     levels: u32,
 }
 
 impl Anchors {
+    /// `terrain`'s anchors for a view from `eye`.
+    pub(super) fn of(terrain: &RenderTerrain, eye: DVec3) -> Self {
+        let pyramid = &terrain.pyramid;
+        let levels = pyramid.levels();
+        let top = f64::from(pyramid.spacing(levels - 1));
+        let cells = ((eye - terrain.origin.as_dvec3()) / top).round();
+        Self {
+            cells: [cells.x as i64, cells.z as i64],
+            levels,
+        }
+    }
+
     /// Level `level`'s anchor sample.
     fn at(self, level: u32) -> [i64; 2] {
         let scale = 1_i64 << (self.levels - 1 - level);
@@ -488,15 +505,14 @@ fn terrain_uniform(
     deformation: crate::deformation::DeformationShading,
 ) -> (TerrainUniform, Anchors) {
     let pyramid = &terrain.pyramid;
-    let levels = pyramid.levels();
-    let top = f64::from(pyramid.spacing(levels - 1));
-    let origin = terrain.origin.as_dvec3();
-    let cells = ((eye - origin) / top).round();
-    let anchor = origin + DVec3::new(cells.x * top, 0.0, cells.z * top);
-    let anchors = Anchors {
-        cells: [cells.x as i64, cells.z as i64],
-        levels,
-    };
+    let anchors = Anchors::of(terrain, eye);
+    let top = f64::from(pyramid.spacing(pyramid.levels() - 1));
+    let anchor = terrain.origin.as_dvec3()
+        + DVec3::new(
+            anchors.cells[0] as f64 * top,
+            0.0,
+            anchors.cells[1] as f64 * top,
+        );
     let relative = (anchor - eye).as_vec3();
     let uniform = TerrainUniform {
         anchor: [relative.x, relative.y, relative.z, pyramid.spacing(0)],

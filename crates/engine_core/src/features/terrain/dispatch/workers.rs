@@ -151,7 +151,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                         },
                     );
                     state.failed.remove(&key);
-                    state.arrive(tile, priority, Some(&mut *self.slots.jobs));
+                    state.arrive((tile, None), priority, Some(&mut *self.slots.jobs));
                     self.inserted = true;
                 }
                 Ok(_) => {}
@@ -236,7 +236,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
             if self.rules.places(key.level, banding.placing) {
                 self.place_in_bands(state, tile, (banding.priority, banding.placing));
             } else {
-                state.arrive(tile, banding.priority, Some(&mut *self.slots.jobs));
+                state.arrive((tile, None), banding.priority, Some(&mut *self.slots.jobs));
             }
             self.inserted = true;
         }
@@ -292,7 +292,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                 jobs,
             },
         );
-        state.store.arrive(Arc::new(tile), Phase::Placing);
+        state.store.arrive(Arc::new(tile), Phase::Placing, None);
     }
 
     /// Then the objects of tiles bands made, once every band of them is
@@ -354,8 +354,14 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                 .into_iter()
                 .flat_map(|(_, objects)| objects.unwrap_or_default())
                 .collect();
+            // Its objects join the tile resident now, with its water.
+            let watered = state.store.watered(&key).cloned().flatten();
             let tile = Tile::clone(&tile).with_placed(objects, placements.placing);
-            state.arrive(tile, placements.priority, Some(&mut *self.slots.jobs));
+            state.arrive(
+                (tile, watered),
+                placements.priority,
+                Some(&mut *self.slots.jobs),
+            );
             self.inserted = true;
         }
     }
@@ -415,6 +421,9 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                 engine_terrain::jobs::far_output,
             ) {
                 Ok(far) => {
+                    // They join the tile resident now, whose ground they were
+                    // placed on: its water may be newer.
+                    let tile = state.store.get(&key).cloned().unwrap_or(tile);
                     let placed = merge_placed(tile.placed(), &far);
                     state.store.complete(Arc::new(
                         Tile::clone(&tile).with_placed(placed, Placing::All),
@@ -447,7 +456,7 @@ impl<'a, 'b> OnWorkers<'a, 'b> {
                     && tile.key() == key
                     && !state.store.contains(&key)
                 {
-                    state.store.keep_in_memory(Arc::new(tile), self.frame);
+                    state.store.keep_in_memory(Arc::new(tile), None, self.frame);
                 }
             } else if !missing.is_empty() || made != self.generation || !state.ahead.contains(&key)
             {

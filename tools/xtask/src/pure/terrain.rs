@@ -329,7 +329,7 @@ fn record_bakes(layers: &Layers, observed: &mut Observations) {
                     "lake samples": stats.lake_samples,
                     "max area": stats.max_area,
                     "falls": stats.falls,
-                    "rivers": found.rivers.rivers().len(),
+                    "rivers": found.rivers().len(),
                 })
             }),
             Layer::Erosion(stage) => stage.baked.as_ref().map(|found| {

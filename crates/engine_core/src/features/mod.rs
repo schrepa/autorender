@@ -54,6 +54,9 @@ macro_rules! engine_features {
             deformation: Deformation => DeformationPlugin, needs [];
             /// Colliders, spatial queries and sensor events.
             collision: Collision => CollisionPlugin, needs [];
+            /// Rigid bodies moving under gravity, contacts with the world's
+            /// solids and each other, and the water and wind about them.
+            physics: Physics => PhysicsPlugin, needs [Collision];
         }
     };
 }

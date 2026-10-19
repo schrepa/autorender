@@ -330,7 +330,8 @@ impl Renderer {
         // What placed objects cover, where the camera moved.
         features.frames.occupancy = self.prepare_occupancy();
         // Water on terrains.
-        features.frames.water = self.prepare_water(snapshot, passes.opaque_kind);
+        features.frames.water =
+            self.prepare_water(snapshot, passes.opaque_kind, &packing.temporal_frame);
         // Terrain's horizon maps may have been replaced.
         self.refresh_camera_group();
         let shape = self.frame_shape(

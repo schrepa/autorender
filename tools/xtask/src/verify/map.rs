@@ -446,6 +446,23 @@ pub(crate) const MAP: &[Rule] = &[
         ],
     },
     Rule {
+        paths: &[
+            "crates/engine_physics/**",
+            "crates/engine_dev/src/features/physics*",
+            "crates/engine_core/src/physics*",
+            "crates/engine_core/src/water*",
+            "crates/engine_core/src/**/terrain/flow*",
+            "crates/engine_terrain/src/flow*",
+        ],
+        checks: &[
+            Smoke("physics"),
+            Smoke("plugins"),
+            Smoke("terrain-water-sky"),
+            Pure("caches"),
+            Equivalence,
+        ],
+    },
+    Rule {
         paths: &["crates/engine_scene/**", "crates/engine_settings/**"],
         checks: &[
             Pure("scenes"),

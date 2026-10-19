@@ -204,7 +204,6 @@ impl Terrains {
                 .map(|state| state.falls.len() as u32)
                 .sum(),
             failed_reads: self.degraded.failed_reads,
-            refused_falls: self.degraded.refused_falls,
             ..TerrainStats::default()
         };
         let forward = camera.target - camera.eye();
@@ -414,6 +413,10 @@ impl Terrains {
                 + state.placements.len()) as u32;
             stats.banded_tiles += state.banded_tiles;
             stats.unplaced_tiles += state.unplaced_tiles();
+            // Tiles' water follows the rivers as they run now.
+            let [rewatered, stale] = rewater::rewater(state, &work, &mut budget);
+            stats.rewatered_tiles += rewatered;
+            stats.stale_water_tiles += stale;
             if settings.enabled {
                 let store = &state.store;
                 engine_terrain::select_patches(
@@ -686,7 +689,6 @@ impl TerrainStreaming {
                     .filter(|state| state.around.is_none())
                     .count() as u32,
                 failed_reads: terrains.degraded.failed_reads,
-                refused_falls: terrains.degraded.refused_falls,
                 ..TerrainStats::default()
             };
             // Terrains that do not stream have nothing to load.

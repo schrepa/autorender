@@ -92,6 +92,7 @@
     {"rule": "invalid_nav_agent", "path": "$.entities[1].nav_agent", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "nav_agent": {}}]}},
     {"rule": "invalid_grounded", "path": "$.entities[1].grounded", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "grounded": {}}]}},
     {"rule": "invalid_floating", "path": "$.entities[1].floating", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "floating": {}}]}},
+    {"rule": "invalid_rigid_body", "path": "$.entities[1].rigid_body", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "rigid_body": {}}]}},
     {"rule": "missing_plugin", "path": "$.entities[0].floating", "stage": "instantiate", "world": "engine", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "floating": {}}]}},
     {"rule": "missing_asset_library", "path": "$", "stage": "instantiate", "world": "bare", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": []}},
     {"rule": "asset_budget_exceeded", "path": "$.meshes[0]", "stage": "instantiate", "world": "no meshes", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": []}},

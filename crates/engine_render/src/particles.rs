@@ -1,8 +1,8 @@
 //! Particles: emitter records and the stateless particle
-//! pipelines. Alpha particles draw into the transparent accumulation targets,
-//! additive ones into the frame's color (and glow) in the transparent
-//! composite pass. Everything here is created with the first frame that has
-//! emitters.
+//! pipelines. Alpha particles and mist draw into the transparent
+//! accumulation targets, additive ones into the frame's color (and glow) in
+//! the transparent composite pass. Everything here is created with the
+//! first frame that has emitters.
 
 #![expect(clippy::expect_used, reason = "drawing reads what this frame prepared")]
 
@@ -64,20 +64,25 @@ impl ParticleUniform {
     }
 }
 
-/// Emitter records in draw order: alpha emitters first, then additive ones,
-/// with the instances of each, up to `room` particles (what the GPU's
-/// bindings hold); returns the alpha and total particle counts and the
-/// particles of emitters that did not fit.
+/// Emitter records in draw order: alpha emitters first, then mist, then
+/// additive ones, with the instances of each, up to `room` particles (what
+/// the GPU's bindings hold); returns the particles alpha emitters end at,
+/// those mist ends at, the total and the particles of emitters that did
+/// not fit.
 pub(crate) fn pack_emitters(
     emitters: &[RenderEmitter],
     records: &mut Vec<EmitterData>,
     room: u64,
-) -> (u32, u32, u64) {
+) -> (u32, u32, u32, u64) {
     records.clear();
     let mut first = 0_u32;
-    let mut alpha = 0;
+    let (mut alpha, mut mist) = (0, 0);
     let mut dropped = 0;
-    for blend in [ParticleBlend::Alpha, ParticleBlend::Additive] {
+    for blend in [
+        ParticleBlend::Alpha,
+        ParticleBlend::Mist,
+        ParticleBlend::Additive,
+    ] {
         for emitter in emitters
             .iter()
             .filter(|emitter| emitter.emitter.blend == blend)
@@ -89,11 +94,13 @@ pub(crate) fn pack_emitters(
             records.push(EmitterData::new(emitter, first));
             first += emitter.count;
         }
-        if blend == ParticleBlend::Alpha {
-            alpha = first;
+        match blend {
+            ParticleBlend::Alpha => alpha = first,
+            ParticleBlend::Mist => mist = first,
+            ParticleBlend::Additive => {}
         }
     }
-    (alpha, first, dropped)
+    (alpha, mist, first, dropped)
 }
 
 /// The emitter of each instance of `records`.
@@ -121,10 +128,12 @@ mod gpu {
     use crate::cached::{Bound, GroupCache, Versioned};
     use crate::gpu_data::PARTICLE_SHADER;
 
-    /// A frame's particles: alpha instances first, then additive ones, and
-    /// the particles of emitters beyond the GPU's bindings.
+    /// A frame's particles: alpha instances first, then mist, then additive
+    /// ones (where each ends), and the particles of emitters beyond the GPU's
+    /// bindings.
     pub(crate) struct ParticleFrame {
         pub alpha: u32,
+        pub mist: u32,
         pub total: u32,
         pub dropped: u64,
     }
@@ -134,6 +143,10 @@ mod gpu {
         pipeline_layout: wgpu::PipelineLayout,
         module: wgpu::ShaderModule,
         alpha: wgpu::RenderPipeline,
+        // Mist's pipeline, and the targets it draws into; created when
+        // first used.
+        mist: Option<wgpu::RenderPipeline>,
+        transparent_targets: Vec<Option<wgpu::ColorTargetState>>,
         // Additive pipelines into the canvas and into the scene and glow
         // targets, created when first used.
         additive: [Option<wgpu::RenderPipeline>; 2],
@@ -148,9 +161,9 @@ mod gpu {
         uploaded: Vec<EmitterData>,
         owner_staging: Vec<u32>,
         // The render stream and emitters revision the uploads were packed
-        // from, and that packing's alpha, total and dropped particles.
+        // from, and that packing's alpha, mist, total and dropped particles.
         packed: Option<(u64, u64)>,
-        counts: (u32, u32, u64),
+        counts: (u32, u32, u32, u64),
         group: GroupCache<4>,
     }
 
@@ -187,6 +200,8 @@ mod gpu {
                 pipeline_layout,
                 module,
                 alpha,
+                mist: None,
+                transparent_targets: transparent_targets.to_vec(),
                 additive: [None, None],
                 surface_format,
                 depth_format,
@@ -212,7 +227,7 @@ mod gpu {
                 uploaded: Vec::new(),
                 owner_staging: Vec::new(),
                 packed: None,
-                counts: (0, 0, 0),
+                counts: (0, 0, 0, 0),
                 group: GroupCache::default(),
             }
         }
@@ -241,9 +256,20 @@ mod gpu {
                 self.pack(device, queue, snapshot);
                 self.packed = Some(emitters);
             }
-            let (alpha, total, dropped) = self.counts;
+            let (alpha, mist, total, dropped) = self.counts;
             if total == 0 {
                 return None;
+            }
+            if mist > alpha && self.mist.is_none() {
+                self.mist = Some(pipeline(
+                    device,
+                    &self.pipeline_layout,
+                    &self.module,
+                    particles::fs_particle_mist,
+                    &self.transparent_targets,
+                    self.depth_format,
+                    &[],
+                ));
             }
             let uniform = ParticleUniform::new(snapshot.view_projection, size.width, size.height);
             if self.written != Some(uniform) {
@@ -263,6 +289,7 @@ mod gpu {
             );
             Some(ParticleFrame {
                 alpha,
+                mist,
                 total,
                 dropped,
             })
@@ -274,7 +301,7 @@ mod gpu {
         fn pack(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, snapshot: &RenderSnapshot) {
             let room = self.owners.room() / 4;
             self.counts = pack_emitters(&snapshot.particles.list, &mut self.records, room);
-            let total = self.counts.1;
+            let total = self.counts.2;
             if total == 0 {
                 return;
             }
@@ -355,20 +382,27 @@ mod gpu {
             self.additive[index] = Some(pipeline);
         }
 
-        /// Draws alpha particles into the transparent accumulation targets.
+        /// Draws alpha particles and mist into the transparent accumulation
+        /// targets.
         pub(crate) fn draw_alpha(
             &self,
             pass: &mut wgpu::RenderPass<'_>,
             camera: &wgpu::BindGroup,
             frame: &ParticleFrame,
         ) {
-            if frame.alpha == 0 {
+            if frame.mist == 0 {
                 return;
             }
-            pass.set_pipeline(&self.alpha);
             pass.set_bind_group(0, camera, &[]);
             pass.set_bind_group(1, self.group.get().expect("prepared this frame"), &[]);
-            pass.draw(0..4, 0..frame.alpha);
+            if frame.alpha > 0 {
+                pass.set_pipeline(&self.alpha);
+                pass.draw(0..4, 0..frame.alpha);
+            }
+            if let (true, Some(mist)) = (frame.mist > frame.alpha, &self.mist) {
+                pass.set_pipeline(mist);
+                pass.draw(0..4, frame.alpha..frame.mist);
+            }
         }
 
         /// Draws additive particles into the frame's color; call
@@ -380,13 +414,13 @@ mod gpu {
             frame: &ParticleFrame,
             post: bool,
         ) {
-            if frame.total == frame.alpha {
+            if frame.total == frame.mist {
                 return;
             }
             pass.set_pipeline(self.additive[usize::from(post)].as_ref().expect("ensured"));
             pass.set_bind_group(0, camera, &[]);
             pass.set_bind_group(1, self.group.get().expect("prepared this frame"), &[]);
-            pass.draw(0..4, frame.alpha..frame.total);
+            pass.draw(0..4, frame.mist..frame.total);
         }
     }
 

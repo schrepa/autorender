@@ -1,6 +1,7 @@
 //! The hydrology bake: the level's grid gathered, then where water runs
-//! and pools over it at once, then each river's water from the finest
-//! ground along it, a point at a time.
+//! and pools over it at once, then each river's ground read from the finest
+//! level, a point at a time, and its flow in its channel solved downstream
+//! first.
 
 use engine_math::collections::HashMap;
 use std::sync::Arc;
@@ -9,9 +10,16 @@ use glam::Vec2;
 
 use super::{Bake, Gather};
 use crate::Pyramid;
-use crate::hydrology::{FALL_SLOPE, Hydrology, HydrologyLayer, bake};
+use crate::hydraulics::{Flow, Reach, filling_yield, foam_entering, river};
+use crate::hydrology::{Hydrology, HydrologyLayer, bake};
 use crate::layers::Layers;
-use crate::rivers::{BANK_OFFSET, RiverLine, Rivers, across, profile};
+use crate::rivers::{BANK_OFFSET, RiverLine, Rivers, across};
+
+/// Meters below the water it meets a river ends: held back to a lake's or the
+/// river it joins' level, its own surface slides just under theirs instead of
+/// standing at the same depth; rivers joining another at one place end a step
+/// further below each, the one carrying most highest.
+const MEETING_DROP: f32 = 0.03;
 
 /// Where water runs over the layers before it and the channels it carves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,25 +72,30 @@ impl Bake for HydrologyBake {
                 hydrology: Some(hydrology),
                 lines,
                 ground,
+                layer: work.layer,
             })
             .advance(below, pyramid, budget)
     }
 }
 
 /// A hydrology bake's rivers being read: what the bake
-/// found, the rivers' lines, and the finest ground read at their points so
-/// far (at each line's middle and its banks).
+/// found, the rivers' lines, the finest ground read at their points so far
+/// (at each line's middle and its banks), and the layer saying how they
+/// flow.
 struct RiverJob {
     hydrology: Option<Hydrology>,
     lines: Vec<RiverLine>,
     ground: Vec<Vec<[f32; 3]>>,
+    layer: HydrologyLayer,
 }
 
 impl RiverJob {
-    /// Reads the finest ground of `below` along the rivers within `budget`,
-    /// the hydrology's channels carved into it; then sets every river's
-    /// water, upstream rivers first, a river leaving a confluence starting
-    /// no higher than those meeting there.
+    /// Reads the finest ground of `below` along the rivers within `budget`;
+    /// then solves every river's flow in its channel, downstream rivers
+    /// first, each held back by the lake it enters or the river it joins
+    /// and starting at the level of the lake it leaves, with the yield the
+    /// layer gives or, by default, the one that runs them `fill` of the way
+    /// up their channels.
     fn advance(
         &mut self,
         below: &Layers,
@@ -91,7 +104,13 @@ impl RiverJob {
     ) -> Option<Hydrology> {
         let spacing = pyramid.spacing(0);
         let hydrology = self.hydrology.as_ref()?;
-        let level = hydrology.level_for(spacing);
+        let read = |at: Vec2| {
+            let sample = [
+                (at.x / spacing).round() as i64,
+                (at.y / spacing).round() as i64,
+            ];
+            below.sample_height(pyramid, 0, sample)
+        };
         let cost = below.height_cost() * 3;
         for (line, ground) in self.lines.iter().zip(&mut self.ground) {
             while ground.len() < line.points.len() {
@@ -101,32 +120,112 @@ impl RiverJob {
                 let index = ground.len();
                 let point = line.points[index];
                 let side = across(&line.points, index) * (line.half[index] + BANK_OFFSET);
-                let read = |at: Vec2| {
-                    let sample = [
-                        (at.x / spacing).round() as i64,
-                        (at.y / spacing).round() as i64,
-                    ];
-                    below.sample_height(pyramid, 0, sample) - hydrology.carve_at(at.x, at.y, level)
-                };
                 ground.push([read(point), read(point + side), read(point - side)]);
                 *budget = budget.saturating_sub(cost);
             }
         }
+        // Each river's start, which rivers ending there join. Lines run
+        // upstream first: downstream rivers come later.
         let key = |point: Vec2| [point.x.to_bits(), point.y.to_bits()];
-        let mut ends: HashMap<[u32; 2], f32> = HashMap::default();
-        let mut rivers = Vec::with_capacity(self.lines.len());
-        for (line, ground) in self.lines.iter().zip(&self.ground) {
-            let incoming = ends.get(&key(line.points[0])).copied();
-            let river = profile(line, ground, incoming, FALL_SLOPE);
-            let end = key(line.points[line.points.len() - 1]);
-            let last = river.surface[river.surface.len() - 1];
-            ends.entry(end)
-                .and_modify(|level| *level = engine_math::min(*level, last))
-                .or_insert(last);
-            rivers.push(river);
+        let starts: HashMap<[u32; 2], usize> = self
+            .lines
+            .iter()
+            .enumerate()
+            .map(|(index, line)| (key(line.points[0]), index))
+            .collect();
+        // Rivers ending at one place, the one draining most first.
+        let mut meeting: HashMap<[u32; 2], Vec<usize>> = HashMap::default();
+        for (index, line) in self.lines.iter().enumerate() {
+            meeting
+                .entry(key(line.points[line.points.len() - 1]))
+                .or_default()
+                .push(index);
+        }
+        let mut step = vec![1.0_f32; self.lines.len()];
+        for joining in meeting.values_mut() {
+            joining.sort_by(|&a, &b| {
+                let area = |index: usize| self.lines[index].area[self.lines[index].area.len() - 1];
+                area(b).total_cmp(&area(a)).then(a.cmp(&b))
+            });
+            for (rank, &index) in joining.iter().enumerate() {
+                step[index] = (rank + 1) as f32;
+            }
+        }
+        let layer = &self.layer;
+        let yield_rate = if layer.discharge > 0.0 {
+            // Cubic meters a second a square kilometer, a square meter at
+            // a time.
+            Some(layer.discharge * 1.0e-6)
+        } else {
+            let reaches: Vec<Reach<'_>> = self
+                .lines
+                .iter()
+                .zip(&self.ground)
+                .map(|(line, ground)| Reach {
+                    line,
+                    ground,
+                    source: None,
+                    outlet: None,
+                })
+                .collect();
+            filling_yield(&reaches, layer.fill, layer.roughness)
+        };
+        let flow = Flow {
+            yield_rate: yield_rate.unwrap_or(0.0),
+            roughness: layer.roughness,
+        };
+        let water = &hydrology.water;
+        let mut rivers: Vec<Option<crate::rivers::River>> = vec![None; self.lines.len()];
+        let mut falls = Vec::new();
+        for index in (0..self.lines.len()).rev() {
+            let line = &self.lines[index];
+            let end = line.points[line.points.len() - 1];
+            let outlet = match starts.get(&key(end)) {
+                Some(&joined) if joined != index => rivers[joined]
+                    .as_ref()
+                    .map(|river| river.surface[0])
+                    .filter(|level| level.is_finite()),
+                _ => water.lake_level(end.x, end.y),
+            }
+            .map(|level| level - MEETING_DROP * step[index]);
+            let source = if line.head {
+                water.lake_beside(line.points[0].x, line.points[0].y)
+            } else {
+                None
+            };
+            let reach = Reach {
+                line,
+                ground: &self.ground[index],
+                source,
+                outlet,
+            };
+            let (solved, jets) = river(&reach, &flow);
+            rivers[index] = Some(solved);
+            falls.extend(jets);
+        }
+        // Foam rides on into the river the water joins: each river starts
+        // with the foam the rivers ending there bring, by the discharge each
+        // carries, upstream rivers first.
+        for index in 0..rivers.len() {
+            let joining = meeting
+                .get(&key(self.lines[index].points[0]))
+                .map_or(&[][..], Vec::as_slice);
+            let (mut foam, mut discharge) = (0.0, 0.0);
+            for river in joining.iter().filter_map(|&other| rivers[other].as_ref()) {
+                let last = river.foam.len() - 1;
+                foam += river.foam[last] * river.discharge[last];
+                discharge += river.discharge[last];
+            }
+            if discharge > 0.0
+                && let Some(river) = &mut rivers[index]
+            {
+                foam_entering(river, foam / discharge);
+            }
         }
         let mut hydrology = self.hydrology.take()?;
-        hydrology.rivers = Arc::new(Rivers::new(rivers));
+        hydrology.rivers = Arc::new(Rivers::new(rivers.into_iter().flatten().collect()));
+        hydrology.stats.falls = falls.len();
+        hydrology.falls = falls.into();
         Some(hydrology)
     }
 }

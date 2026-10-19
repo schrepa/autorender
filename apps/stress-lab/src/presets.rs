@@ -33,6 +33,7 @@ fn baseline() -> StressConfig {
         sensor_percent: 0,
         dense_colliders: false,
         queries_per_tick: 0,
+        bodies: 0,
         mesh_variety: 32,
         textured: true,
         culling: true,

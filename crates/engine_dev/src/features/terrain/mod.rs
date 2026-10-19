@@ -91,8 +91,39 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
                     surroundings_patches: stats.surroundings_patches,
                     failed_reads: stats.failed_reads,
                     latest_read_failure: terrains.latest_read_failure().map(str::to_owned),
-                    refused_falls: stats.refused_falls,
-                    latest_fall_refusal: terrains.latest_fall_refusal().map(str::to_owned),
+                    water: terrains
+                        .waters()
+                        .next()
+                        .and_then(|(entity, origin, layers)| {
+                            let found = layers.hydrology()?;
+                            let held = terrains.river_flow(entity);
+                            let world = |point: [f32; 3]| {
+                                [
+                                    point[0] + origin.x,
+                                    point[1] + origin.y,
+                                    point[2] + origin.z,
+                                ]
+                            };
+                            Some(crate::views::TerrainWaterView {
+                                flow: river_flow(found),
+                                lakes: lakes(found, origin),
+                                sights: sights(found, origin),
+                                blocks: held.map_or(0, |flow| flow.blocks().len()),
+                                pools: held.map_or_else(Vec::new, |flow| pools(flow, origin)),
+                                falls: found
+                                    .falls
+                                    .iter()
+                                    .take(crate::views::FALLS_SHOWN)
+                                    .map(|fall| crate::views::FallView {
+                                        top: world(fall.top),
+                                        bottom: world(fall.bottom),
+                                        width: fall.width,
+                                        speed: fall.speed,
+                                        discharge: fall.discharge,
+                                    })
+                                    .collect(),
+                            })
+                        }),
                     failed_jobs,
                     latest_job_failure: latest_job_failure.map(str::to_owned),
                 })
@@ -145,15 +176,7 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
         };
         let bakes = terrains.bakes(entity);
         if holds(|layer| matches!(layer, engine_core::Layer::Hydrology(_))) {
-            let stats = bakes.hydrology;
-            hydrology = Some(crate::views::HydrologyView {
-                baking: bakes.baking,
-                samples: stats.map(|stats| stats.samples),
-                channel_samples: stats.map(|stats| stats.channel_samples),
-                lake_samples: stats.map(|stats| stats.lake_samples),
-                max_area: stats.map(|stats| stats.max_area),
-                falls: stats.map(|stats| stats.falls),
-            });
+            hydrology = Some(hydrology_view(terrains, entity));
         }
         // Each path layer's profile, once baked.
         if let Some(layers) = terrains.layers(entity) {
@@ -235,6 +258,129 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
                 patches: status.patches,
             }),
     }))
+}
+
+/// The hydrology bake of the terrain on `entity`: its progress, what it
+/// found, how its rivers flow and its first falls (terrain-local).
+fn hydrology_view(terrains: &engine_core::Terrains, entity: Entity) -> crate::views::HydrologyView {
+    let bakes = terrains.bakes(entity);
+    let stats = bakes.hydrology;
+    let baked = terrains.layers(entity);
+    let found = baked.as_deref().and_then(engine_core::Layers::hydrology);
+    crate::views::HydrologyView {
+        baking: bakes.baking,
+        samples: stats.map(|stats| stats.samples),
+        channel_samples: stats.map(|stats| stats.channel_samples),
+        lake_samples: stats.map(|stats| stats.lake_samples),
+        max_area: stats.map(|stats| stats.max_area),
+        falls: stats.map(|stats| stats.falls),
+        flow: found.map(river_flow),
+        fall_list: found
+            .map(|found| {
+                found
+                    .falls
+                    .iter()
+                    .take(crate::views::FALLS_SHOWN)
+                    .map(|fall| crate::views::FallView {
+                        top: fall.top,
+                        bottom: fall.bottom,
+                        width: fall.width,
+                        speed: fall.speed,
+                        discharge: fall.discharge,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// The pools `flow` holds, world space.
+fn pools(
+    flow: &engine_core::terrain_data::RiverFlow,
+    origin: engine_core::glam::Vec3,
+) -> Vec<crate::views::PoolView> {
+    flow.pools()
+        .iter()
+        .map(|pool| {
+            let (point, rise) = flow.pool_place(pool);
+            let (blocked, crest, area) = flow.holding(pool);
+            crate::views::PoolView {
+                at: [
+                    point[0] + origin.x,
+                    pool.level + origin.y,
+                    point[1] + origin.z,
+                ],
+                rise,
+                inflow: pool.inflow,
+                outflow: pool.outflow,
+                blocked,
+                crest: crest.map(|crest| crest + origin.y),
+                area,
+            }
+        })
+        .collect()
+}
+
+/// Lakes a terrain's water view lists at most.
+const LAKES_SHOWN: usize = 8;
+
+/// `found`'s largest lakes (world space, the terrain at `origin`).
+fn lakes(
+    found: &engine_core::terrain_data::Hydrology,
+    origin: engine_core::glam::Vec3,
+) -> Vec<crate::views::LakeView> {
+    found
+        .lake_sights(LAKES_SHOWN)
+        .into_iter()
+        .map(|lake| {
+            let at = |[x, z]: [f32; 2]| [x + origin.x, lake.level + origin.y, z + origin.z];
+            crate::views::LakeView {
+                level: lake.level + origin.y,
+                area: lake.area,
+                middle: at(lake.middle),
+                shore: at(lake.shore),
+            }
+        })
+        .collect()
+}
+
+/// Where `found`'s rivers carry most, run fastest against their waves and
+/// meet with the most water (world space, the terrain at `origin`).
+fn sights(
+    found: &engine_core::terrain_data::Hydrology,
+    origin: engine_core::glam::Vec3,
+) -> Vec<crate::views::RiverSight> {
+    found
+        .river_sights()
+        .into_iter()
+        .map(|sight| crate::views::RiverSight {
+            kind: sight.kind,
+            point: [
+                sight.point[0] + origin.x,
+                sight.point[1] + origin.y,
+                sight.point[2] + origin.z,
+            ],
+            direction: sight.direction,
+            half: sight.half,
+            speed: sight.speed,
+            discharge: sight.discharge,
+            foam: sight.foam,
+        })
+        .collect()
+}
+
+/// How `found`'s rivers and lakes flow.
+fn river_flow(found: &engine_core::terrain_data::Hydrology) -> crate::views::RiverFlowView {
+    let flow = found.flow_summary();
+    crate::views::RiverFlowView {
+        rivers: flow.rivers,
+        lakes: flow.lakes,
+        points: flow.points,
+        max_discharge: flow.max_discharge,
+        fastest: flow.fastest,
+        rapid_share: flow.rapid_share,
+        foam_share: flow.foam_share,
+    }
 }
 
 /// Temporarily set terrain's level of detail and view and

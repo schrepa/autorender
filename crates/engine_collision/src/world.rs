@@ -117,8 +117,8 @@ pub struct CollisionWorld {
     next_pairs: Vec<SensorPair>,
     report: CollisionReport,
     last_error: Option<CollisionError>,
-    terrain: TerrainFields,
-    placed: PlacedShapes,
+    pub(crate) terrain: TerrainFields,
+    pub(crate) placed: PlacedShapes,
 }
 
 impl FromWorld for CollisionWorld {
@@ -141,6 +141,19 @@ impl FromWorld for CollisionWorld {
 }
 
 impl CollisionWorld {
+    /// The admitted colliders whose bounds meet `bounds`: each one's
+    /// entity, collider and shape.
+    pub(crate) fn entries_in(
+        &self,
+        bounds: Bounds,
+    ) -> impl Iterator<Item = (Entity, Collider, &AffineShape)> + '_ {
+        self.bvh
+            .query(move |node| node.overlaps(bounds))
+            .map(|index| &self.entries[index])
+            .filter(move |entry| entry.affine.bounds.overlaps(bounds))
+            .map(|entry| (entry.entity, entry.collider, &entry.affine))
+    }
+
     pub fn report(&self) -> CollisionReport {
         self.report
     }

@@ -231,6 +231,21 @@
         "replace"
       ]
     },
+    "BodyMotion": {
+      "description": "How a body moves.",
+      "oneOf": [
+        {
+          "description": "Under gravity, contacts, water and wind: physics writes its pose.",
+          "type": "string",
+          "const": "dynamic"
+        },
+        {
+          "description": "Along the poses written to it, pushing dynamic bodies aside as it\ngoes: platforms, doors, paddles.",
+          "type": "string",
+          "const": "kinematic"
+        }
+      ]
+    },
     "Cover": {
       "description": "The cover growing where a surface material lies.",
       "type": "object",
@@ -414,7 +429,7 @@
       "additionalProperties": false
     },
     "HydrologyLayer": {
-      "description": "A layer that bakes where water runs over the layers below it and carves\nchannels into them.",
+      "description": "A layer that bakes where water runs over the layers below it and cuts\nchannels into them.",
       "type": "object",
       "properties": {
         "channel_area": {
@@ -432,6 +447,20 @@
           "default": 1.0,
           "maximum": 100.0,
           "minimum": 0.0
+        },
+        "discharge": {
+          "description": "Cubic meters a second each square kilometer drained yields to the\nrivers: with their channels' width and slope and the roughness of\ntheir beds it sets how deep and fast they run. 0, the default,\nyields what runs rivers `fill` of the way up their channels where\ntheir channels' slope is typical.",
+          "type": "number",
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0
+        },
+        "fill": {
+          "description": "The share of their channels' depth rivers run at where their\nchannels' slope is typical, while `discharge` leaves their yield\nto their channels: fuller where they level out, shallower where\nthey steepen.",
+          "type": "number",
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.05
         },
         "level": {
           "description": "The pyramid level whose samples the bake reads: finer levels carve\nnarrower channels and take longer.",
@@ -456,6 +485,13 @@
           "default": 60.0,
           "maximum": 1000.0,
           "minimum": 0.1
+        },
+        "roughness": {
+          "description": "Manning's roughness of riverbeds (seconds over the cube root of a\nmeter): rougher beds hold water deeper and slower.",
+          "type": "number",
+          "format": "float",
+          "maximum": 0.3,
+          "minimum": 0.01
         },
         "stream_area": {
           "description": "Square meters of upstream area where streams begin: channels\ndraining less than `channel_area` run as streams down to the rivers\nthey join, their width falling with the area they drain below a\nriver's at its head and their depth with its square root, cut a little\ninto the ground. 0, the default, has none, as has `channel_area` or\nmore.",
@@ -2514,6 +2550,16 @@
             }
           ]
         },
+        "physics": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScenePhysics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "reflection_probes": {
           "anyOf": [
             {
@@ -3469,6 +3515,17 @@
             }
           ]
         },
+        "rigid_body": {
+          "description": "Moves as a rigid body: by gravity, contacts with the world's\nsolids and other bodies, and the water and wind about it, its\nshape its collider's. Roots only.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneRigidBody"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skin": {
           "description": "The skin deforming this object's mesh. Requires a mesh with\njoints and weights.",
           "type": [
@@ -3719,6 +3776,11 @@
           "description": "Adding light, unlit: sparks, fire.",
           "type": "string",
           "const": "additive"
+        },
+        {
+          "description": "Balls of mist, soft through their depth, lit by the sky and the\nsun they scatter forward: spray, steam, fog banks.",
+          "type": "string",
+          "const": "mist"
         }
       ]
     },
@@ -3739,6 +3801,59 @@
           ],
           "format": "uint32",
           "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "ScenePhysics": {
+      "description": "Rigid bodies' world.",
+      "type": "object",
+      "properties": {
+        "air_density": {
+          "description": "Kilograms a cubic meter of air weighs: what the wind drags\nbodies with.",
+          "type": "number",
+          "format": "float",
+          "default": 1.225000023841858,
+          "maximum": 100.0,
+          "minimum": 0.0
+        },
+        "enabled": {
+          "description": "Whether bodies move; off, each holds where it stands.",
+          "type": "boolean",
+          "default": true
+        },
+        "gravity": {
+          "description": "Every body's acceleration, meters per second squared: by default\nthe pull the terrains' water runs and falls by.",
+          "type": "array",
+          "default": [
+            0.0,
+            -9.8100004196167,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": -100.0
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "iterations": {
+          "description": "Constraint solver iterations a tick: more keep stacks and piles\nstiffer, at their cost.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 4,
+          "maximum": 16,
+          "minimum": 1
+        },
+        "water_density": {
+          "description": "Kilograms a cubic meter of water weighs: bodies in water are\nbuoyed by the weight of what they displace and dragged with its\ncurrent, so those lighter than it float.",
+          "type": "number",
+          "format": "float",
+          "default": 1000.0,
+          "maximum": 20000.0,
+          "minimum": 0.0
         }
       },
       "additionalProperties": false
@@ -3937,6 +4052,89 @@
           "default": 1.0,
           "maximum": 4.0,
           "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneRigidBody": {
+      "description": "A rigid body: physics moves its entity by gravity, its contacts with\nthe world's solids (terrain, placed objects, bridge decks and\ncolliders) and other bodies, and the water and wind about it. Its shape\nis its entity's collider, scaled by its transform; its mass is that\nshape's volume times its density, so bodies lighter than water float.\nRoots only. Each fixed tick physics writes a dynamic body's pose to its\ntransform, which interpolates between ticks; a pose written to it\nsince moves it there. Bodies where the ground under them is not\nresident hold still until it is.",
+      "type": "object",
+      "properties": {
+        "density": {
+          "description": "Kilograms a cubic meter: water's is 1000, wood's about 600,\nstone's about 2600.",
+          "type": "number",
+          "format": "float",
+          "default": 600.0,
+          "maximum": 100000.0,
+          "minimum": 1.0
+        },
+        "drag": {
+          "description": "Its drag coefficient: how hard water's current and the wind push\non the area it turns to them.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 10.0,
+          "minimum": 0.0
+        },
+        "fast": {
+          "description": "Swept between ticks, so it stops at thin solids however fast it\nmoves.",
+          "type": "boolean",
+          "default": false
+        },
+        "friction": {
+          "description": "How its surface grips what it slides on.",
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579,
+          "maximum": 10.0,
+          "minimum": 0.0
+        },
+        "motion": {
+          "description": "How it moves.",
+          "$ref": "#/$defs/BodyMotion",
+          "default": "dynamic"
+        },
+        "restitution": {
+          "description": "How much of its speed into a contact it bounces back with.",
+          "type": "number",
+          "format": "float",
+          "default": 0.05000000074505806,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "spin": {
+          "description": "Its spin as it joins, radians a second about the world's axes.",
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": -1000.0
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "velocity": {
+          "description": "Its velocity as it joins, world meters a second.",
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": -1000.0
+          },
+          "maxItems": 3,
+          "minItems": 3
         }
       },
       "additionalProperties": false

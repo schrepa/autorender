@@ -35,6 +35,7 @@ pub mod math;
 pub use engine_math::collections;
 mod packed;
 mod particles;
+mod physics;
 pub mod presentation_bounds;
 mod probes;
 mod retained_render;
@@ -45,6 +46,7 @@ mod statistics;
 mod ticks;
 mod transform_edits;
 mod virtual_geometry;
+mod water;
 
 pub use antialiasing::*;
 pub use atmosphere::*;
@@ -82,7 +84,7 @@ pub use engine_terrain::{
     HeightImage, HeightmapLayer, Hydrology, HydrologyLayer, HydrologySample, HydrologyStage,
     HydrologyStats, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch, PathLayer,
     PathProfile, PathStage, PathStats, Placed, PlacementChoice, PlacementLayer, Pyramid,
-    PyramidError, Remap, Route, RouteOptions, Stamp, StampOp, Tile, TileKey, WaterGrid,
+    PyramidError, Remap, Route, RouteOptions, Stamp, StampOp, Tile, TileKey,
 };
 pub use environment::*;
 pub use features::*;
@@ -97,6 +99,7 @@ pub use jobs::*;
 pub use level_of_detail::*;
 pub use lights::*;
 pub use particles::*;
+pub use physics::{Physics, PhysicsStats};
 pub use probes::*;
 pub use retained_render::*;
 pub use scene::*;
@@ -105,6 +108,7 @@ pub use spline_mesh::*;
 pub use statistics::{Distribution, median};
 pub use transform_edits::*;
 pub use virtual_geometry::*;
+pub use water::{WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource, WaterSources};
 
 use bevy_app::PluginsState;
 use bevy_ecs::{
@@ -174,12 +178,14 @@ pub struct ViewSync;
 pub struct FixedTickEnd;
 
 /// The phases of [`FixedSimulation`] the engine's features join, in this
-/// order: agents move (navigation walks), things ride what moves under them
+/// order: agents move (navigation walks), rigid bodies move under the
+/// tick's forces and contacts (physics), things ride what moves under them
 /// (the ocean's floating entities), then animation poses its targets.
 /// Gameplay orders its systems against them or the features' own sets.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FixedSimulationSystems {
     Move,
+    Simulate,
     Ride,
     Pose,
 }
@@ -298,6 +304,12 @@ impl TickAhead {
     }
 }
 
+/// Runs `schedule`'s systems one after another on the calling thread, as
+/// every engine schedule does.
+fn single_threaded(schedule: &mut Schedule) {
+    schedule.set_executor(SingleThreadedExecutor::new());
+}
+
 impl Engine {
     /// Creates gameplay and transform schedules and default camera/input resources.
     pub fn new(config: EngineConfig) -> Self {
@@ -357,35 +369,20 @@ impl Engine {
                 FixedSimulation,
                 (
                     FixedSimulationSystems::Move,
+                    FixedSimulationSystems::Simulate,
                     FixedSimulationSystems::Ride,
                     FixedSimulationSystems::Pose,
                 )
                     .chain(),
             )
-            .edit_schedule(FixedSimulation, |schedule| {
-                schedule.set_executor(SingleThreadedExecutor::new());
-            })
-            .edit_schedule(FixedPreSimulation, |schedule| {
-                schedule.set_executor(SingleThreadedExecutor::new());
-            })
-            .edit_schedule(FixedPostSimulation, |schedule| {
-                schedule.set_executor(SingleThreadedExecutor::new());
-            })
-            .edit_schedule(Presentation, |schedule| {
-                schedule.set_executor(SingleThreadedExecutor::new());
-            })
-            .edit_schedule(TransformPropagation, |schedule| {
-                schedule.set_executor(SingleThreadedExecutor::new());
-            })
-            .edit_schedule(WorldSync, |schedule| {
-                schedule.set_executor(SingleThreadedExecutor::new());
-            })
-            .edit_schedule(ViewSync, |schedule| {
-                schedule.set_executor(SingleThreadedExecutor::new());
-            })
-            .edit_schedule(FixedTickEnd, |schedule| {
-                schedule.set_executor(SingleThreadedExecutor::new());
-            })
+            .edit_schedule(FixedSimulation, single_threaded)
+            .edit_schedule(FixedPreSimulation, single_threaded)
+            .edit_schedule(FixedPostSimulation, single_threaded)
+            .edit_schedule(Presentation, single_threaded)
+            .edit_schedule(TransformPropagation, single_threaded)
+            .edit_schedule(WorldSync, single_threaded)
+            .edit_schedule(ViewSync, single_threaded)
+            .edit_schedule(FixedTickEnd, single_threaded)
             .insert_resource(FixedTime {
                 delta_seconds: clock.step_seconds() as f32,
                 elapsed_seconds: 0.0,
@@ -396,6 +393,7 @@ impl Engine {
             .init_resource::<Camera>()
             .init_resource::<Atmosphere>()
             .init_resource::<Features>()
+            .init_resource::<WaterSources>()
             .init_resource::<Jobs>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()

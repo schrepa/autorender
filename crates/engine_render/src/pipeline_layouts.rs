@@ -20,7 +20,7 @@ use crate::bindings::{
     TERRAIN_VT_BAKE, TERRAIN_VT_CAMERA, TERRAIN_VT_FEEDBACK, TERRAIN_VT_TERRAIN,
     TRANSPARENT_COMPOSITE, Table, VIRTUAL_BIN, VIRTUAL_POSES, VIRTUAL_SEED, VIRTUAL_SELECT,
     VIRTUAL_SHADOW, VIRTUAL_TRAVERSE, VISIBILITY_CLASSIFY, VISIBILITY_PASS, VISIBILITY_RESOLVE,
-    WATER, WATER_DEPTH,
+    WATER, WATER_BEHIND, WATER_WAVES,
 };
 
 /// What a pipeline layout keeps within, for each stage (and, for dynamic
@@ -129,7 +129,7 @@ pipeline_layouts! {
     COVER_PIPELINES = [CAMERA, COVER_DRAW];
     LIT_COVER_PIPELINES = [CAMERA, COVER_DRAW, EMPTY, LIGHT_SHADING];
     /// Water over the opaque scene, particles and sun shafts.
-    WATER_PIPELINES = [CAMERA, WATER, WATER_DEPTH];
+    WATER_PIPELINES = [CAMERA, WATER, WATER_BEHIND];
     PARTICLE_PIPELINES = [CAMERA, PARTICLES];
     SHAFT_PIPELINES = [CAMERA, SHAFTS];
     /// Shadow casters: plain, masked by their material, impostor cards;
@@ -158,6 +158,8 @@ pipeline_layouts! {
     CLOUD_VIEW_PIPELINES = [CLOUD_VIEW];
     SKY_TABLE_PIPELINES = [SKY_TABLES];
     DEFORMATION_PIPELINES = [DEFORMATION];
+    /// Water's waves: their spectra evolved, transformed and averaged.
+    WATER_WAVE_PIPELINES = [WATER_WAVES];
     COVER_GROW_PIPELINES = [COVER_GROW];
     OCCUPANCY_PIPELINES = [OCCUPANCY];
     SCATTER_SNAP_PIPELINES = [SCATTER_SNAP];
@@ -185,4 +187,4 @@ pipeline_layouts! {
 /// Distinct pipeline layouts the renderer may build: one more costs every
 /// Firefox start about 150 ms, so raising it is a decision, not a side
 /// effect.
-pub const LAYOUT_BUDGET: usize = 70;
+pub const LAYOUT_BUDGET: usize = 71;

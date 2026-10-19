@@ -121,7 +121,7 @@ impl Executor for InPlace<'_, '_> {
         };
         if let Some(tile) = tile {
             state.jobs.remove(&key);
-            state.arrive(tile, priority, None);
+            state.arrive((tile, None), priority, None);
         } else if let Some(shape) = state.jobs.get_mut(&key).and_then(Generator::take_shape) {
             state.shape(shape);
         }

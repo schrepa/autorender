@@ -116,7 +116,7 @@ pub fn generated() -> Result<Generated, String> {
         "Grounded": schemars::schema_for!(views::GroundedView),
         "Jobs": schemars::schema_for!(views::JobsView),
         "protocol": schemars::schema_for!(protocol::DevRequest),
-        "BrowserControl": schemars::schema_for!(protocol::BrowserControl),
+        "BrowserControl": control_schema(),
         "FrameStats": frame_stats(&mut problems),
     });
     if let Some(all) = schemas.as_object_mut() {
@@ -270,6 +270,82 @@ fn typed_results(queries: &[String], controls: &[String], problems: &mut Vec<Str
     }
     if untyped.windows(2).any(|pair| pair[0] >= pair[1]) {
         problems.push("UNTYPED_RESULTS (engine_dev results.rs) must be sorted and unique".into());
+    }
+}
+
+/// The controls' schema, each environment section the environment control
+/// replaces (the atmosphere among them) named by its inspector, which
+/// describes its fields, rather than written out, as the `Environment`
+/// inspector names them: it fits one reply however many sections there are.
+/// Definitions only the sections used go with them.
+fn control_schema() -> Value {
+    struct Titles(Vec<(String, &'static str)>);
+    impl SectionVisitor for Titles {
+        fn section<T: EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
+            let schema = serde_json::to_value(T::schema()).unwrap_or_default();
+            if let Some(title) = schema["title"].as_str() {
+                self.0.push((title.to_owned(), T::NAME));
+            }
+        }
+    }
+    let mut schema =
+        serde_json::to_value(schemars::schema_for!(protocol::BrowserControl)).unwrap_or_default();
+    let mut titles = Titles(vec![("SceneAtmosphere".to_owned(), "Atmosphere")]);
+    engine_scene::SceneEnvironment::default().visit(&mut titles);
+    let Some(definitions) = schema["$defs"].as_object_mut() else {
+        return schema;
+    };
+    for (title, inspector) in titles.0 {
+        if let Some(definition) = definitions.get_mut(&title) {
+            *definition = json!({
+                "type": "object",
+                "description": format!("The {inspector} inspector describes its fields."),
+            });
+        }
+    }
+    // Keep the definitions the schema still reaches.
+    let mut reached = std::collections::BTreeSet::new();
+    let mut pending = Vec::new();
+    let mut root = schema.clone();
+    if let Some(object) = root.as_object_mut() {
+        object.remove("$defs");
+    }
+    references(&root, &mut pending);
+    while let Some(name) = pending.pop() {
+        if reached.insert(name.clone())
+            && let Some(definition) = schema["$defs"].get(&name)
+        {
+            references(definition, &mut pending);
+        }
+    }
+    if let Some(definitions) = schema["$defs"].as_object_mut() {
+        definitions.retain(|name, _| reached.contains(name));
+    }
+    schema
+}
+
+/// Adds the names of the definitions `value` refers to to `names`.
+fn references(value: &Value, names: &mut Vec<String>) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                if key == "$ref"
+                    && let Some(name) = value
+                        .as_str()
+                        .and_then(|path| path.strip_prefix("#/$defs/"))
+                {
+                    names.push(name.to_owned());
+                } else {
+                    references(value, names);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                references(value, names);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 

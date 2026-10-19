@@ -244,6 +244,8 @@ error_codes! {
     InvalidGrounded => "invalid_grounded",
     /// Only roots ride the sea.
     InvalidFloating => "invalid_floating",
+    /// Only roots move as rigid bodies.
+    InvalidRigidBody => "invalid_rigid_body",
     /// An environment section is invalid.
     InvalidEnvironment => "invalid_environment",
 

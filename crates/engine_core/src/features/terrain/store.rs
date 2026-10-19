@@ -1,6 +1,7 @@
 //! A terrain's resident tiles, and the tiles kept in memory after they
 //! left: the one owner of what each resident tile is. Each holds how much
-//! of it is here (its [`Phase`]) and the [`Generation`] it was made from;
+//! of it is here (its [`Phase`]), the [`Generation`] it was made from and
+//! the rivers its water was made from ([`Watered`]);
 //! a tile of another generation than its terrain makes now lies under an
 //! edit since (or was made before its terrain's materials changed) and
 //! regenerates, drawn until then. The
@@ -26,28 +27,37 @@ pub(super) enum Phase {
     Whole,
 }
 
-/// A resident tile: the tile, its phase, the generation it was made from
-/// and the arrival that made it resident, which work on it (a far job)
-/// belongs to.
+/// The rivers a tile's water was made from: `None` for its bake's own, as
+/// tiles generate; else the rivers as what stood in them held them back.
+pub(super) type Watered = Option<Arc<engine_terrain::Rivers>>;
+
+/// A resident tile: the tile, its phase, the generation it was made from,
+/// the rivers its water was made from and the arrival that made it
+/// resident, which work on it (a far job) belongs to.
 struct Resident {
     tile: Arc<Tile>,
     phase: Phase,
     made: Generation,
+    watered: Watered,
     arrival: u64,
 }
 
-/// A tile kept in memory after it left the view: its bytes there and the
-/// frame it left, or the last a place a game names wanted it.
+/// A tile kept in memory after it left the view: the rivers its water was
+/// made from, its bytes there and the frame it left, or the last a place a
+/// game names wanted it.
 struct CachedTile {
     tile: Arc<Tile>,
+    watered: Watered,
     bytes: u64,
     left: u64,
 }
 
-/// A resident tile that left: the tile, and whether it was whole and of
-/// the generation tiles are made from now.
+/// A resident tile that left: the tile, the rivers its water was made
+/// from, and whether it was whole and of the generation tiles are made
+/// from now.
 pub(super) struct Left {
     pub(super) tile: Arc<Tile>,
+    pub(super) watered: Watered,
     pub(super) current: bool,
 }
 
@@ -98,6 +108,11 @@ impl TileStore {
     /// The resident tile `key`.
     pub(super) fn get(&self, key: &TileKey) -> Option<&Arc<Tile>> {
         self.tiles.get(key).map(|resident| &resident.tile)
+    }
+
+    /// The rivers resident tile `key`'s water was made from.
+    pub(super) fn watered(&self, key: &TileKey) -> Option<&Watered> {
+        self.tiles.get(key).map(|resident| &resident.watered)
     }
 
     pub(super) fn contains(&self, key: &TileKey) -> bool {
@@ -178,26 +193,47 @@ impl TileStore {
     }
 
     /// Makes `tile` resident in `phase`, made from the generation tiles are
-    /// made from now, in place of whatever its key held, measuring how far
-    /// it lies from its resident parent and its resident children from it.
-    /// The only way a tile becomes resident.
-    pub(super) fn arrive(&mut self, tile: Arc<Tile>, phase: Phase) {
+    /// made from now, its water made from the rivers `watered`, in place of
+    /// whatever its key held, measuring how far it lies from its resident
+    /// parent and its resident children from it. The only way a tile
+    /// becomes resident.
+    pub(super) fn arrive(&mut self, tile: Arc<Tile>, phase: Phase, watered: Watered) {
         let made = self.generation;
-        self.put(tile, phase, made);
+        self.put(tile, phase, made, watered);
     }
 
     /// Gives resident tile `key`, waiting on its objects standing far away,
-    /// `tile`: itself with them. It stays of the generation it was made
-    /// from: objects placed on ground edited since regenerate with it.
+    /// `tile`: itself with them, its water as the resident tile's. It stays
+    /// of the generation it was made from: objects placed on ground edited
+    /// since regenerate with it.
     pub(super) fn complete(&mut self, tile: Arc<Tile>) {
         let key = tile.key();
-        let Some(made) = self.tiles.get(&key).map(|resident| resident.made) else {
+        let Some((made, watered)) = self
+            .tiles
+            .get(&key)
+            .map(|resident| (resident.made, resident.watered.clone()))
+        else {
             return;
         };
-        self.put(tile, Phase::Whole, made);
+        self.put(tile, Phase::Whole, made, watered);
     }
 
-    fn put(&mut self, tile: Arc<Tile>, phase: Phase, made: Generation) {
+    /// Gives resident tile `key` its water made from the rivers `watered`:
+    /// `tile`, itself with that water, or where its water stays the same,
+    /// none. It keeps its phase, generation and arrival: its ground and
+    /// objects are the same.
+    pub(super) fn rewater(&mut self, key: &TileKey, tile: Option<Arc<Tile>>, watered: Watered) {
+        let Some(resident) = self.tiles.get_mut(key) else {
+            return;
+        };
+        resident.watered = watered;
+        if let Some(tile) = tile {
+            resident.tile = tile;
+            self.revision += 1;
+        }
+    }
+
+    fn put(&mut self, tile: Arc<Tile>, phase: Phase, made: Generation, watered: Watered) {
         let key = tile.key();
         let level = usize::from(key.level);
         if let Some(parent) = self
@@ -224,6 +260,7 @@ impl TileStore {
                 tile,
                 phase,
                 made,
+                watered,
                 arrival: self.arrivals,
             },
         );
@@ -237,6 +274,7 @@ impl TileStore {
         Some(Left {
             current: resident.phase == Phase::Whole && resident.made == self.generation,
             tile: resident.tile,
+            watered: resident.watered,
         })
     }
 
@@ -263,8 +301,9 @@ impl TileStore {
 
     // Tiles kept in memory.
 
-    /// Keeps `tile` in memory as of frame `frame`.
-    pub(super) fn keep_in_memory(&mut self, tile: Arc<Tile>, frame: u64) {
+    /// Keeps `tile`, its water made from the rivers `watered`, in memory as
+    /// of frame `frame`.
+    pub(super) fn keep_in_memory(&mut self, tile: Arc<Tile>, watered: Watered, frame: u64) {
         let key = tile.key();
         let bytes = memory_bytes(&tile);
         self.forget(key);
@@ -274,6 +313,7 @@ impl TileStore {
             key,
             CachedTile {
                 tile,
+                watered,
                 bytes,
                 left: frame,
             },
@@ -334,7 +374,7 @@ impl TileStore {
             if let Some(cached) = self.cache.remove(&key) {
                 self.cached_bytes -= cached.bytes;
                 work.upload(2 * TILE_ARRAY_BYTES);
-                self.arrive(cached.tile, Phase::Whole);
+                self.arrive(cached.tile, Phase::Whole, cached.watered);
                 restored += 1;
             }
         }

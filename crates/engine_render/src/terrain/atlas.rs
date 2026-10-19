@@ -214,6 +214,26 @@ impl TileAtlas {
                 _ => {}
             }
         }
+        // A tile replaced over the same ground and materials (its water made
+        // again as its rivers run now) keeps its layer as it is: only its
+        // water changes, which the water's blocks follow.
+        let same_ground: Vec<(u64, TileKey)> = self
+            .slots
+            .keys()
+            .filter(|key| {
+                self.held.get(*key).is_some_and(|held| {
+                    let tile = listed[*key];
+                    !std::sync::Arc::ptr_eq(held, tile)
+                        && held.heights() == tile.heights()
+                        && held.hole_bits() == tile.hole_bits()
+                        && held.control() == tile.control()
+                })
+            })
+            .copied()
+            .collect();
+        for key in same_ground {
+            self.held.insert(key, std::sync::Arc::clone(listed[&key]));
+        }
         let replaced: Vec<((u64, TileKey), u32)> = self
             .slots
             .iter()

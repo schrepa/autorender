@@ -137,10 +137,12 @@ impl Renderer {
                 .filter(|tile| !tile.placed().is_empty())
                 .map(|tile| (tile.key(), tile))
                 .collect();
+            // A tile replaced with the same objects (its water made again)
+            // keeps them as they stand.
             draws.pool.retain(terrain.id, |key, held| {
-                current
-                    .get(&key)
-                    .is_some_and(|tile| Arc::ptr_eq(tile, held))
+                current.get(&key).is_some_and(|tile| {
+                    Arc::ptr_eq(tile, held) || std::ptr::eq(tile.placed(), held.placed())
+                })
             });
             for tile in terrain.tiles.iter() {
                 if tile.placed().is_empty() || draws.pool.contains(terrain.id, tile.key()) {

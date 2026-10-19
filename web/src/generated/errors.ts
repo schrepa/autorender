@@ -83,6 +83,7 @@ export type ErrorCode =
   | "invalid_streamed"
   | "invalid_grounded"
   | "invalid_floating"
+  | "invalid_rigid_body"
   | "invalid_environment"
   | "missing_plugin"
   | "collision_invalid_shape"

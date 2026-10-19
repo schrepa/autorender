@@ -254,21 +254,29 @@ impl Renderer {
     }
 
     /// Prepares this frame's water and its pipeline into
-    /// `opaque_kind`'s targets, created while terrains with hydrology still
-    /// bake; `None` when none of it draws.
+    /// `opaque_kind`'s targets, created while terrains with hydrology stream
+    /// in; the sea draws through the terrain's projection, jittered as
+    /// `temporal_frame` jitters it; `None` when none of it draws.
     pub(super) fn prepare_water(
         &mut self,
         snapshot: &RenderSnapshot,
         opaque_kind: PassKind,
+        temporal_frame: &Option<TemporalFrame>,
     ) -> Option<Ready<WaterFrame>> {
         let targets = opaque_kind.targets()?;
         let coming = snapshot
             .terrain
             .terrains
             .iter()
-            .any(|terrain| terrain.hydrology && terrain.water.is_none());
+            .any(|terrain| terrain.hydrology);
+        let jitter = temporal_frame.as_ref().map_or([0.0; 2], |frame| {
+            [frame.camera.jitter[0], frame.camera.jitter[1]]
+        });
+        let cull = snapshot.terrain.relative_view_projection;
+        let view = crate::gpu_data::jittered(cull, jitter);
         let (device, shader, camera) = (&self.device, &self.mesh_shader, &self.camera.layout);
         let formats = (self.display.format(), DEPTH_FORMAT);
+        let tiles = self.terrain.water_draws();
         self.features.water.prepare(|water| {
             if coming {
                 water.ensure_pipeline(device, shader, camera, (targets, true), formats);
@@ -277,14 +285,19 @@ impl Renderer {
             let prepared = water.prepare(
                 device,
                 &self.queue,
-                &snapshot.terrain,
+                (tiles, &snapshot.terrain.terrains),
                 (environment.water, environment.ocean),
                 (
                     snapshot.camera_position,
-                    environment.wind.velocity,
+                    environment.wind,
                     snapshot.presented_seconds,
                 ),
-                &self.depth.texture,
+                (
+                    cull,
+                    view,
+                    &self.depth.texture,
+                    targets != crate::render_graph::Targets::Canvas,
+                ),
             )?;
             water.ensure_pipeline(device, shader, camera, (targets, false), formats);
             Some(prepared)

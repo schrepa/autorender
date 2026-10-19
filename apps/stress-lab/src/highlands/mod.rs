@@ -14,7 +14,9 @@
 //! the lake, streamed: they exist only near the camera. A
 //! hiker walks the road's first stretch and back.
 
+mod bodies;
 mod caves;
+mod hiker;
 mod rocks;
 mod trees;
 mod world;
@@ -576,9 +578,8 @@ pub(crate) fn populate(
     // Leveled where the mountains already stand there.
     let level = Layers::new(vec![mountains.clone()])?.height_at(&pyramid, Vec2::from(plateau));
     world.insert_resource(Plateau(level));
-    // The hamlet's plateau, wide enough for the field's grid: leveled
-    // before erosion, which then wears around it, and again after, so it
-    // stays level whatever runs over it.
+    // The hamlet's plateau, wide enough for the field's grid: leveled before
+    // erosion wears around it, and before the water runs over it again.
     let plateau_stamp = Layer::Stamp(Stamp {
         center: plateau,
         radius: hamlet,
@@ -614,6 +615,7 @@ pub(crate) fn populate(
             falloff: 700.0,
             op: StampOp::Flatten(60.0),
         }),
+        plateau_stamp,
         // Streams and rivers carved where water gathers off
         // the mountains, baked over the sixteen-meter tiles erosion shaped;
         // streams a meter or so wide run down to them from a sixth of a
@@ -627,10 +629,10 @@ pub(crate) fn populate(
                 max_depth: 7.0,
                 max_width: 70.0,
                 stream_area: 25_000.0,
+                ..HydrologyLayer::default()
             },
             baked: None,
         }),
-        plateau_stamp,
         // The road down into the valley, leveled to its own
         // profile across six meters, its shoulders easing into the ground.
         Layer::Path(PathStage {
@@ -704,7 +706,7 @@ pub(crate) fn populate(
             }),
     );
     lanterns(world, &ROAD, half)?;
-    hiker(world, &ROAD, half)?;
+    hiker::hiker(world, &ROAD, half)?;
     Ok((
         (
             Vec3::new(-half, -50.0, -half),
@@ -737,82 +739,6 @@ const FOOT: Grounding = Grounding {
     color: [0.68, 0.64, 0.58],
     height: 0.05,
 };
-
-/// A hiker walking between two points: the ends (world x
-/// and z), the one it walks toward, and the seconds it rests before
-/// setting off again after finding no way.
-#[derive(Component)]
-struct Hiker {
-    ends: [[f32; 2]; 2],
-    toward: usize,
-    rest: f32,
-}
-
-/// Seconds a hiker that found no way waits before turning back: searches
-/// are not free, so a walk that cannot be found is not searched again and
-/// again.
-const HIKER_REST: f32 = 10.0;
-
-/// A hiker in a red jacket walking from `road`'s start (terrain-local, the
-/// terrain's corner at `-half`) to the first of its points 350 meters away
-/// and back.
-fn hiker(world: &mut World, road: &[[f32; 2]], half: f32) -> engine::Result<()> {
-    let world_point = |[x, z]: [f32; 2]| [x - half, z - half];
-    let start = world_point(road[0]);
-    let far = road
-        .iter()
-        .map(|&point| world_point(point))
-        .find(|point| Vec2::from(*point).distance(Vec2::from(start)) > 350.0)
-        .unwrap_or(world_point(road[road.len() - 1]));
-    let mut assets = world.resource_mut::<AssetLibrary>();
-    let mesh = assets.insert_mesh(Mesh::cube())?;
-    let material = assets.insert_material(Material::new([0.62, 0.1, 0.07, 1.0])?)?;
-    // A body 1.75 meters tall, its origin at its middle.
-    let offset = 0.875;
-    world.spawn((
-        Transform {
-            translation: Vec3::new(start[0], 0.0, start[1]),
-            scale: Vec3::new(0.45, 1.75, 0.3),
-            ..Transform::default()
-        },
-        Mesh3d { mesh, material },
-        Grounded { offset },
-        NavAgent {
-            destination: Some(far),
-            speed: 1.6,
-            offset,
-            ..NavAgent::default()
-        },
-        InterpolateTransform,
-        Hiker {
-            ends: [start, far],
-            toward: 1,
-            rest: 0.0,
-        },
-    ));
-    Ok(())
-}
-
-/// Turns each hiker back when it arrives, or after a rest
-/// when it finds no way.
-fn hike(time: Res<FixedTime>, mut hikers: Query<(&mut NavAgent, &NavWalk, &mut Hiker)>) {
-    for (mut agent, walk, mut hiker) in &mut hikers {
-        if walk.destination != agent.destination {
-            continue;
-        }
-        match walk.status {
-            NavStatus::Unreachable if hiker.rest < HIKER_REST => {
-                hiker.rest += time.delta_seconds;
-                continue;
-            }
-            NavStatus::Arrived | NavStatus::Unreachable => {}
-            _ => continue,
-        }
-        hiker.rest = 0.0;
-        hiker.toward = 1 - hiker.toward;
-        agent.destination = Some(hiker.ends[hiker.toward]);
-    }
-}
 
 /// Meters between lanterns along a road, and from its middle line to them.
 const LANTERN_SPACING: f32 = 40.0;
@@ -1248,9 +1174,9 @@ fn steepest_hillside(layers: &Layers, pyramid: &Pyramid, center: Vec2, inner: f3
 /// The highlands' systems: the cave opening once the terrain is baked, and
 /// a sled and a walker making tracks in the snow.
 pub(crate) fn add_systems(app: &mut App) {
-    app.add_systems(Presentation, (open_cave, place_track_makers))
+    app.add_systems(Presentation, (open_cave, place_track_makers, bodies::place))
         .add_systems(FixedSimulation, make_tracks)
-        .add_systems(FixedSimulation, hike.after(NavSystems::Walk));
+        .add_systems(FixedSimulation, hiker::hike.after(NavSystems::Walk));
 }
 
 /// Marks the snow searched for the sled and the walker, and

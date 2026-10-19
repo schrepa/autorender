@@ -81,6 +81,15 @@ macro_rules! entity_components {
                 rule: any,
                 direct
             },
+            /// Moves as a rigid body: by gravity, contacts with the world's
+            /// solids and other bodies, and the water and wind about it, its
+            /// shape its collider's. Roots only.
+            rigid_body: engine_physics::RigidBody {
+                feature: Physics,
+                shows: "RigidBody.body",
+                rule: any,
+                direct
+            },
             /// Walks over the terrain to a destination. Roots only.
             nav_agent: engine_core::NavAgent {
                 feature: Navigation,
@@ -295,6 +304,29 @@ impl SceneComponent for Grounded {
     const PLACEMENT: Placement = Placement::Roots(
         ErrorCode::InvalidGrounded,
         "only roots stand on the ground; ground the placement or root instead",
+    );
+
+    fn prepare(
+        &self,
+        _: &str,
+        _: &SceneDocument,
+        _: Option<&SceneFiles>,
+    ) -> Result<Self, SceneError> {
+        Ok(*self)
+    }
+
+    fn spawn(prepared: &Self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*prepared);
+    }
+}
+
+impl SceneComponent for engine_physics::RigidBody {
+    type Prepared = Self;
+
+    // Bodies move in the world.
+    const PLACEMENT: Placement = Placement::Roots(
+        ErrorCode::InvalidRigidBody,
+        "only roots move as bodies; give the placement or root the body instead",
     );
 
     fn prepare(

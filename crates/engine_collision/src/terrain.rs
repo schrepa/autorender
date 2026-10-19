@@ -33,13 +33,14 @@ use crate::{
 
 /// One tile's heightfield: its terrain, key, the tile it was built from
 /// (edits replace tiles under the same key), world center
-/// (parry centers heightfields) and world bounds.
+/// (parry centers heightfields), the field (which solvers share) and
+/// world bounds.
 struct Field {
     entity: Entity,
     key: TileKey,
     tile: Arc<Tile>,
     center: Vec3,
-    shape: HeightField,
+    shape: Arc<HeightField>,
     bounds: Bounds,
 }
 
@@ -61,6 +62,24 @@ impl TerrainFields {
     /// Heightfields in use.
     pub(crate) fn len(&self) -> usize {
         self.fields.len()
+    }
+
+    /// The heightfields in use, as solvers mirror them.
+    pub(crate) fn solids(&self) -> impl Iterator<Item = crate::GroundSolid<'_>> {
+        self.fields.iter().map(|field| crate::GroundSolid {
+            terrain: field.entity,
+            key: field.key,
+            tile: &field.tile,
+            center: field.center,
+            min: field.bounds.min,
+            max: field.bounds.max,
+            field: &field.shape,
+        })
+    }
+
+    /// The terrains' revision the heightfields were last built at.
+    pub(crate) fn revision(&self) -> Option<u64> {
+        self.revision
     }
 
     /// Follows `terrains`' collision tiles; returns whether they changed.
@@ -91,10 +110,18 @@ impl TerrainFields {
         let mut kept = std::mem::take(&mut self.fields);
         for (entity, origin, tile) in wanted {
             let key = tile.key();
+            // A tile replaced over the same ground (its water made again as
+            // its rivers run now) keeps its heightfield.
             if let Some(position) = kept.iter().position(|field| {
-                field.entity == entity && field.key == key && Arc::ptr_eq(&field.tile, tile)
+                field.entity == entity
+                    && field.key == key
+                    && (Arc::ptr_eq(&field.tile, tile)
+                        || (field.tile.heights() == tile.heights()
+                            && field.tile.hole_bits() == tile.hole_bits()))
             }) {
-                self.fields.push(kept.swap_remove(position));
+                let mut field = kept.swap_remove(position);
+                field.tile = tile.clone();
+                self.fields.push(field);
                 continue;
             }
             let samples = TILE_SAMPLES as usize;
@@ -135,7 +162,7 @@ impl TerrainFields {
                 key,
                 tile: tile.clone(),
                 center: corner + Vec3::new(size * 0.5, 0.0, size * 0.5),
-                shape,
+                shape: Arc::new(shape),
                 bounds: Bounds {
                     min: Vec3::new(corner.x, origin.y + low, corner.z),
                     max: Vec3::new(corner.x + size, origin.y + high, corner.z + size),

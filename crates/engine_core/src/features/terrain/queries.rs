@@ -301,7 +301,7 @@ impl Terrains {
             .find(|state| state.entity == entity && state.around.is_none())
             .map_or_else(TerrainBakes::default, |state| TerrainBakes {
                 baking: state.bake.is_some(),
-                hydrology: state.hydrology,
+                hydrology: state.hydrology.stats,
                 erosion: state.erosion,
             })
     }

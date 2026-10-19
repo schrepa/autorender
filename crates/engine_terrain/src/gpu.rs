@@ -131,7 +131,7 @@ impl SurfaceData {
             offset: layers.offset.to_array(),
             hydrology: layers
                 .hydrology()
-                .map(|hydrology| (hydrology.spacing, hydrology.carve.levels())),
+                .map(|hydrology| (hydrology.spacing, hydrology.flow.levels())),
         })
     }
 
@@ -213,7 +213,6 @@ pub fn sample_control(
             flow: water.flow * shown,
             wetness: water.wetness * shown,
             lake: water.lake * shown,
-            carve: water.carve * shown,
             river: water.river,
         },
         path: if shown > 0.0 && reads.path {

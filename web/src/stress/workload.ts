@@ -32,7 +32,7 @@ offer("effects", STRESS_CATALOG.effects);
 offer("view", STRESS_CATALOG.views);
 offer("meshes", STRESS_CATALOG.mesh_varieties.map(value => ({ value })));
 // Number inputs take the bounds validation keeps.
-for (const [id, field] of [["colliders", "colliders"], ["sensors", "sensor_percent"], ["seed", "seed"]] as const) {
+for (const [id, field] of [["colliders", "colliders"], ["bodies", "bodies"], ["sensors", "sensor_percent"], ["seed", "seed"]] as const) {
   const limits = STRESS_CONFIG_LIMITS[field];
   el<HTMLInputElement>(id).min = String(limits.minimum);
   el<HTMLInputElement>(id).max = String(limits.maximum);
@@ -167,7 +167,7 @@ const recorder = new Recorder(values => controls?.distribution(values) ?? null, 
 
 function fill(config: StressConfig) {
   for (const [id, field] of [["objects", "renderables"], ["moving", "moving_percent"], ["colliders", "colliders"],
-    ["sensors", "sensor_percent"], ["queries", "queries_per_tick"], ["meshes", "mesh_variety"], ["seed", "seed"]] as const) {
+    ["bodies", "bodies"], ["sensors", "sensor_percent"], ["queries", "queries_per_tick"], ["meshes", "mesh_variety"], ["seed", "seed"]] as const) {
     const input = el<HTMLInputElement | HTMLSelectElement>(id);
     if (input instanceof HTMLSelectElement && ![...input.options].some(option => Number(option.value) === config[field])) {
       input.add(new Option(String(config[field]), String(config[field])));
@@ -182,6 +182,7 @@ function fill(config: StressConfig) {
 }
 function readConfig(): StressConfig {
   return { seed: number("seed"), renderables: number("objects"), moving_percent: number("moving"), colliders: number("colliders"),
+    bodies: number("bodies"),
     sensor_percent: number("sensors"), queries_per_tick: number("queries"), mesh_variety: number("meshes"), hierarchy: checked("hierarchy"),
     interpolation: checked("interpolation"), textured: checked("textures"), dense_colliders: checked("dense"), culling: checked("culling"),
     scene: choice("scene-select").value as StressScene, compressed_textures: checked("compressed") };

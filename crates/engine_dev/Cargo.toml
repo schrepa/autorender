@@ -9,6 +9,7 @@ publish.workspace = true
 engine_settings.workspace = true
 engine_core.workspace = true
 engine_collision.workspace = true
+engine_physics.workspace = true
 engine_scene.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -19,6 +20,7 @@ serde_json.workspace = true
 engine_profile.workspace = true
 schemars.workspace = true
 engine_settings = { workspace = true, features = ["schema"] }
+engine_physics = { workspace = true, features = ["schema"] }
 # Environment controls reuse the scene sections, schemas included.
 engine_scene = { workspace = true, features = ["schema"] }
 

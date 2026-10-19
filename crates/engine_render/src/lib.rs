@@ -66,6 +66,8 @@ mod transparent;
 mod virtual_geometry;
 mod visibility;
 mod water;
+mod water_falls;
+mod water_waves;
 pub use platform::{AdapterInfo, RenderError, RenderTarget, read_range};
 #[cfg(not(target_arch = "wasm32"))]
 pub use platform::{GpuPreference, NativeWindow, start_native_instances_with};

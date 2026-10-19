@@ -10,6 +10,9 @@
 
 /// Opt-in collision geometry, filtered queries, and fixed-tick sensor events.
 pub use engine_collision as collision;
+/// Rigid bodies moving under gravity, contacts with the world's solids,
+/// and the water and wind about them.
+pub use engine_physics as physics;
 /// Optional bounded profiling scopes; calls compile away without `profiling`.
 pub use engine_profile as profiling;
 /// Authoring, validation, and explicit scene ownership.
@@ -58,14 +61,15 @@ mod games {
         LocalLight, LocalLightSettings, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle,
         MeshVertex, NavAgent, NavAgents, NavStatus, NavSystems, NavWalk, Navigation,
         NavigationPlugin, OcclusionCulling, Occupancy, Ocean, OceanPlugin, OceanSystems, Parent,
-        ParticleBlend, ParticleEmitter, ParticleSettings, Plugin, PluginGroup, Presentation,
-        PresentationState, PresentedTime, PresentedTransform, PresentedTransforms, ReflectionProbe,
-        ReflectionProbeSettings, Reflections, Refraction, Sampler, Shadows, Skin, Sky, SplineMesh,
-        Spot, StreamSet, Streamed, StreamedId, StreamedItem, StreamingFocus, SubpixelCulling,
-        SunShafts, Surface, TemporalAntialiasing, Terrain, TerrainPlugin, TerrainSample,
-        TerrainSettings, Terrains, Texture, TextureHandle, TextureRef, TimeOfDay, TimeOfDayPlugin,
-        Tint, TopLayer, Track, TrackDepth, Tracks, Transform, TransformEditError, Transmission,
-        UvTransform, ViewSync, ViewSyncSystems, VirtualGeometry, Water, Wind, WorldCells,
+        ParticleBlend, ParticleEmitter, ParticleSettings, Physics, Plugin, PluginGroup,
+        Presentation, PresentationState, PresentedTime, PresentedTransform, PresentedTransforms,
+        ReflectionProbe, ReflectionProbeSettings, Reflections, Refraction, Sampler, Shadows, Skin,
+        Sky, SplineMesh, Spot, StreamSet, Streamed, StreamedId, StreamedItem, StreamingFocus,
+        SubpixelCulling, SunShafts, Surface, TemporalAntialiasing, Terrain, TerrainPlugin,
+        TerrainSample, TerrainSettings, Terrains, Texture, TextureHandle, TextureRef, TimeOfDay,
+        TimeOfDayPlugin, Tint, TopLayer, Track, TrackDepth, Tracks, Transform, TransformEditError,
+        Transmission, UvTransform, ViewSync, ViewSyncSystems, VirtualGeometry, Water, WaterKind,
+        WaterObstacle, WaterObstacles, WaterSample, WaterSource, WaterSources, Wind, WorldCells,
         WorldChanges, WorldStreaming, WorldStreamingPlugin, WorldSync, WorldSyncSystems, Wrap,
         edit_transform, math, remove_streamed, reset_all_interpolation, reset_interpolation,
         set_parent, set_parents,
@@ -103,7 +107,7 @@ pub mod terrain {
         PlacementChoice, PlacementLayer, PlacementLod, Pyramid, PyramidError, Remap, Route,
         RouteOptions, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Surroundings,
         SurroundingsStatus, TerrainBakes, TerrainEdit, TerrainPrefetch, TerrainSource,
-        TerrainSurface, Tile, TileKey, WaterGrid,
+        TerrainSurface, Tile, TileKey,
     };
 }
 
@@ -112,15 +116,17 @@ pub mod terrain {
 pub mod render {
     pub use engine_core::{
         CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, CellView, DEFORMATION_GRAIN,
-        DeformationMap, GROUP_WORDS, GpuCurrent, GpuPresentation, MAX_NORMAL_INVERSE_NORM,
-        MaterialBinding, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID,
-        NODE_WORDS, NodeInfo, NodePose, PAGE_WORDS, PoseRows, PresentationMode, RIM_REACH,
-        RIM_START, RenderDecal, RenderDecals, RenderDeformation, RenderEmitter, RenderFrame,
-        RenderInstance, RenderJoint, RenderLight, RenderLights, RenderMaterial, RenderMesh,
-        RenderParticles, RenderPlacementAsset, RenderReflectionProbe, RenderReflectionProbes,
-        RenderSnapshot, RenderSurfaceMaps, RenderTerrain, RenderTerrains, RenderTexture,
-        STREAMING_GRIDS, StreamingGrid, TransformIndex, TransformPropagation, VIRTUAL_MESH_MAGIC,
-        carve_profile, presentation_bounds, propagate_transforms, rim_profile, valid_global_matrix,
+        DeformationMap, GROUP_WORDS, GUST_QUICK_ACROSS, GUST_QUICK_RATE, GUST_QUICK_SHARE,
+        GUST_QUICK_TRAVEL, GUST_SLOW_RATE, GUST_SLOW_SHARE, GUST_SLOW_TRAVEL, GpuCurrent,
+        GpuPresentation, MAX_NORMAL_INVERSE_NORM, MaterialBinding, NO_PARENT, NODE_ACTIVE,
+        NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NODE_WORDS, NodeInfo, NodePose, PAGE_WORDS,
+        PoseRows, PresentationMode, RIM_REACH, RIM_START, RenderDecal, RenderDecals,
+        RenderDeformation, RenderEmitter, RenderFrame, RenderInstance, RenderJoint, RenderLight,
+        RenderLights, RenderMaterial, RenderMesh, RenderParticles, RenderPlacementAsset,
+        RenderReflectionProbe, RenderReflectionProbes, RenderSnapshot, RenderSurfaceMaps,
+        RenderTerrain, RenderTerrains, RenderTexture, STREAMING_GRIDS, StreamingGrid,
+        TransformIndex, TransformPropagation, VIRTUAL_MESH_MAGIC, carve_profile,
+        presentation_bounds, propagate_transforms, rim_profile, valid_global_matrix,
     };
 }
 
@@ -130,8 +136,8 @@ pub mod stats {
     pub use engine_core::{
         Applied, CellStats, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn,
         ErosionStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats, Names,
-        NavStats, OccupancyStats, OceanStats, PathStats, ProbeStats, RenderStats, ShadowStats,
-        SkyStats, TerrainRenderStats, TerrainStats, VirtualGeometryStats, WaterStats,
+        NavStats, OccupancyStats, OceanStats, PathStats, PhysicsStats, ProbeStats, RenderStats,
+        ShadowStats, SkyStats, TerrainRenderStats, TerrainStats, VirtualGeometryStats, WaterStats,
     };
 }
 
@@ -214,6 +220,7 @@ pub mod prelude {
         CollisionWorld, QueryFilter, SensorFilter, ShapeCastOptions, refresh_collision_world,
     };
     pub use engine_core::glam::{Mat4, Quat, Vec2, Vec3, Vec4};
+    pub use engine_physics::{BodyMotion, PhysicsPlugin, PhysicsSystems, PhysicsWorld, RigidBody};
     // Bevy derives resolve this name in client scope when only the engine
     // facade is a direct dependency, so expose the crate beside the parts of
     // its prelude the engine runs: not its hierarchy (the engine's is

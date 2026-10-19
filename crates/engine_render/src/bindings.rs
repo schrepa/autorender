@@ -104,6 +104,8 @@ pub enum Kind {
     Storage(Format),
     /// A 3D texture of this format shaders write.
     Storage3d(Format),
+    /// A 2D array texture of this format shaders write.
+    StorageArray(Format),
     Sampler(Sampling),
 }
 
@@ -998,29 +1000,61 @@ tables! {
         ],
     };
 
-    /// Group 1 of ground cover's pipelines (`meshes/cover.wgsl`):
-    /// the frame's blades and the wind and times they sway with.
-    /// Group 1 of water's pipelines (`meshes/water.wgsl`): one
-    /// terrain's water surface heights, its depth and flow, and its uniform;
-    /// the sea's has placeholder textures.
+    /// Group 1 of water's pipelines (`meshes/water.wgsl`): terrain's height
+    /// array and the views' and terrains' uniforms at dynamic offsets, as
+    /// terrain's patches draw on them; tiles' water blocks, their surfaces
+    /// and packed flow, whitewater and kind; water's uniform; and the
+    /// waves' moments with their levels (`water_waves.rs`) and the sampler
+    /// repeating them. The sea's group has placeholders for what only
+    /// tiles' water reads.
     const WATER: Table = Table {
         label: "engine/water-layout",
         serves: [SHADER @ 1],
         bindings: &[
-            texture(35, "water_surface", Unfilterable, D2, V),
-            texture(36, "water_info", Unfilterable, D2, V),
-            uniform_of(37, "water", size_of::<water::WaterUniform>(), VF),
+            texture(17, "terrain_heights", Unfilterable, D2Array, V),
+            dynamic_uniform(18, "terrain_view", size_of::<terrain::ViewUniform>(), VF),
+            dynamic_uniform(
+                19,
+                "terrain",
+                size_of::<terrain::TerrainUniform>(),
+                VF,
+            ),
+            texture(50, "water_surface", Unfilterable, D2Array, V),
+            texture(51, "water_info", Unfilterable, D2Array, V),
+            uniform_of(52, "water", size_of::<water::WaterUniform>(), VF),
+            texture(53, "water_waves", Float, D2Array, F),
+            sampler(54, "water_wave_sampler", Filtering, F),
         ],
     };
 
-    /// Group 2 of water's pipelines: a copy of the opaque
-    /// scene's depth, the ground behind the water.
-    const WATER_DEPTH: Table = Table {
-        label: "engine/water-depth-layout",
+    /// Group 2 of water's pipelines: what lies behind the water, copied
+    /// from the opaque scene before it draws: the depth, and the color in
+    /// frames drawing the effects' targets (a placeholder in others).
+    const WATER_BEHIND: Table = Table {
+        label: "engine/water-behind-layout",
         serves: [SHADER @ 2],
-        bindings: &[texture(17, "water_depth", Depth, D2, F)],
+        bindings: &[
+            texture(22, "water_depth", Depth, D2, F),
+            texture(23, "water_scene", Float, D2, F),
+        ],
     };
 
+    /// Water's waves (`water_waves.wgsl`): the frame's tiles and loop,
+    /// their spectra, what a pass reads (the rows transformed, or a level of
+    /// the moments) and what it writes.
+    const WATER_WAVES: Table = Table {
+        label: "engine/water-waves-layout",
+        serves: [WATER_WAVES_SHADER @ 0],
+        bindings: &[
+            uniform_of(0, "waves", size_of::<water::WaveFrame>(), C),
+            read(1, "wave_spectrum", C),
+            texture(2, "wave_source", Float, D2Array, C),
+            bind(3, "wave_target", Kind::StorageArray(Rgba16Float), C),
+        ],
+    };
+
+    /// Group 1 of ground cover's pipelines (`meshes/cover.wgsl`):
+    /// the frame's blades and the wind and times they sway with.
     const COVER_DRAW: Table = Table {
         label: "engine/cover-layout",
         serves: [SHADER @ 1],
@@ -1363,12 +1397,12 @@ shared_groups! {
             terrain_sky, terrain_deformation, terrain_control_sampler
         ],
         cover: 33..35 [cover_blades, cover_frame],
-        water: 35..38 [water_surface, water_info, water],
         sky: 38..46 [
             sky_clouds, sky_cloud_sampler, sky_air, sky_view_table, sky_transmittance_table,
             sky_table_sampler, sky_clouds_old, sky_domes
         ],
         view_clouds: 46..50 [view_clouds, view_cloud_front, view_cloud_depth, view_cloud_sampler],
+        water: 50..55 [water_surface, water_info, water, water_waves, water_wave_sampler],
     }
     SHADER @ 2 {
         poses: 0..6 [poses, colors, previous_poses, palette, previous_palette, grounds],
@@ -1376,9 +1410,9 @@ shared_groups! {
         visibility: 9..13 [visibility_draw, visible_clusters, visibility_ids, resolve_tiles],
         decals: 13..15 [decal_records, decal_depth],
         impostor_bakes: 15..17 [impostor_bake, impostor_shade],
-        water: 17..18 [water_depth],
         terrain: 18..19 [terrain_ids_texture],
         virtual_texture: 19..22 [terrain_vt_wanted, terrain_vt_bakes, terrain_vt_heights],
+        water: 22..24 [water_depth, water_scene],
     }
     SHADER @ 3 {
         lights: 0..4 [clusters, lights, cluster_ranges, cluster_lights],

@@ -100,6 +100,7 @@
     "invalid_request": "A request breaks a rule of its own; the message names it.",
     "invalid_request_id": "A request ID is missing or malformed.",
     "invalid_revision": "A revision is not an unsigned decimal string.",
+    "invalid_rigid_body": "Only roots move as rigid bodies.",
     "invalid_rotation": "A rotation is not a finite unit quaternion.",
     "invalid_selector": "A selector names no entity, component or resource the way selectors do.",
     "invalid_session": "No session answers to that ID.",
@@ -220,6 +221,13 @@
       "name": "collision",
       "needs": [],
       "plugin": "CollisionPlugin"
+    },
+    {
+      "name": "physics",
+      "needs": [
+        "collision"
+      ],
+      "plugin": "PhysicsPlugin"
     }
   ],
   "max_request_bytes": 16384,

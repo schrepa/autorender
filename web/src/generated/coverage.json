@@ -155,6 +155,14 @@
       ]
     },
     {
+      "inspector": "PhysicsWorld",
+      "kind": "resource",
+      "smokes": [
+        "physics",
+        "plugins"
+      ]
+    },
+    {
       "inspector": "PresentationState",
       "kind": "resource",
       "smokes": [
@@ -174,6 +182,13 @@
       "kind": "component",
       "smokes": [
         "surfaces"
+      ]
+    },
+    {
+      "inspector": "RigidBody",
+      "kind": "component",
+      "smokes": [
+        "physics"
       ]
     },
     {
@@ -251,6 +266,7 @@
         "collision",
         "hierarchy",
         "interpolation",
+        "physics",
         "streaming",
         "terrain",
         "terrain-water-sky",
@@ -306,6 +322,7 @@
         "lod",
         "meshes",
         "native",
+        "physics",
         "spline",
         "streaming",
         "surfaces",
@@ -353,6 +370,7 @@
         "interpolation",
         "lod",
         "native",
+        "physics",
         "spline",
         "surfaces",
         "terrain",
@@ -456,6 +474,7 @@
         "gpu-presentation",
         "host-parity",
         "lod",
+        "physics",
         "streaming",
         "surfaces",
         "taa",
@@ -553,6 +572,7 @@
         "interpolation",
         "meshes",
         "native",
+        "physics",
         "streaming",
         "taa",
         "terrain",
@@ -591,6 +611,7 @@
         "interpolation",
         "jobs",
         "meshes",
+        "physics",
         "plugins",
         "spline",
         "streaming",
@@ -649,6 +670,7 @@
         "lod",
         "meshes",
         "native",
+        "physics",
         "spline",
         "surfaces",
         "taa",
@@ -675,6 +697,7 @@
         "hierarchy",
         "host-parity",
         "interpolation",
+        "physics",
         "plugins",
         "spline",
         "streaming",
@@ -852,6 +875,7 @@
       "section": "water",
       "smokes": [
         "jobs",
+        "physics",
         "terrain-water-sky"
       ],
       "stats": true
@@ -860,6 +884,7 @@
       "inspector": "Ocean",
       "section": "ocean",
       "smokes": [
+        "physics",
         "plugins",
         "terrain-water-sky"
       ],
@@ -915,6 +940,15 @@
       "smokes": [
         "plugins",
         "terrain"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Physics",
+      "section": "physics",
+      "smokes": [
+        "physics",
+        "plugins"
       ],
       "stats": true
     },

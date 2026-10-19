@@ -107,6 +107,12 @@ export interface QuerySnapshot {
  * page: the engine sets none.
  */
 export interface StressConfig {
+  /**
+   * Rigid bodies the world drops: in the highlands, logs into the
+   * strongest river near the camera, above a dam of logs that holds
+   * it back; other worlds drop none. With any, collision joins too.
+   */
+  bodies: number;
   /** Colliders, at most one per renderable. */
   colliders: number;
   /**
@@ -162,6 +168,10 @@ export interface TimingSnapshot {
 
 /** Each configuration field's bounds or values, as validation keeps them. */
 export const STRESS_CONFIG_LIMITS = {
+  "bodies": {
+    "maximum": 64,
+    "minimum": 0
+  },
   "colliders": {
     "maximum": 10000,
     "minimum": 0
@@ -216,6 +226,7 @@ export const STRESS_CATALOG = {
         "sensor_percent": 0,
         "dense_colliders": false,
         "queries_per_tick": 0,
+        "bodies": 0,
         "mesh_variety": 32,
         "textured": true,
         "culling": true,
@@ -238,6 +249,7 @@ export const STRESS_CATALOG = {
         "sensor_percent": 0,
         "dense_colliders": false,
         "queries_per_tick": 0,
+        "bodies": 0,
         "mesh_variety": 64,
         "textured": true,
         "culling": true,
@@ -260,6 +272,7 @@ export const STRESS_CATALOG = {
         "sensor_percent": 0,
         "dense_colliders": false,
         "queries_per_tick": 0,
+        "bodies": 0,
         "mesh_variety": 64,
         "textured": true,
         "culling": true,
@@ -282,6 +295,7 @@ export const STRESS_CATALOG = {
         "sensor_percent": 0,
         "dense_colliders": false,
         "queries_per_tick": 0,
+        "bodies": 0,
         "mesh_variety": 8,
         "textured": true,
         "culling": true,
@@ -304,6 +318,7 @@ export const STRESS_CATALOG = {
         "sensor_percent": 0,
         "dense_colliders": false,
         "queries_per_tick": 0,
+        "bodies": 0,
         "mesh_variety": 32,
         "textured": true,
         "culling": true,
@@ -326,6 +341,7 @@ export const STRESS_CATALOG = {
         "sensor_percent": 10,
         "dense_colliders": false,
         "queries_per_tick": 32,
+        "bodies": 0,
         "mesh_variety": 8,
         "textured": true,
         "culling": true,
@@ -348,6 +364,7 @@ export const STRESS_CATALOG = {
         "sensor_percent": 0,
         "dense_colliders": false,
         "queries_per_tick": 0,
+        "bodies": 0,
         "mesh_variety": 1,
         "textured": false,
         "culling": true,
@@ -370,6 +387,7 @@ export const STRESS_CATALOG = {
         "sensor_percent": 0,
         "dense_colliders": false,
         "queries_per_tick": 256,
+        "bodies": 0,
         "mesh_variety": 8,
         "textured": false,
         "culling": true,
@@ -392,6 +410,7 @@ export const STRESS_CATALOG = {
         "sensor_percent": 100,
         "dense_colliders": true,
         "queries_per_tick": 0,
+        "bodies": 0,
         "mesh_variety": 8,
         "textured": true,
         "culling": true,
@@ -506,6 +525,10 @@ export const STRESS_CATALOG = {
     {
       "value": "away",
       "label": "Look away"
+    },
+    {
+      "value": "bodies",
+      "label": "The bodies"
     }
   ],
   "mesh_varieties": [

@@ -131,6 +131,11 @@ fn binding_type(kind: Kind) -> wgpu::BindingType {
             format: texture_format(format),
             view_dimension: wgpu::TextureViewDimension::D3,
         },
+        Kind::StorageArray(format) => wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format: texture_format(format),
+            view_dimension: wgpu::TextureViewDimension::D2Array,
+        },
         Kind::Sampler(sampling) => wgpu::BindingType::Sampler(match sampling {
             Sampling::Filtering => wgpu::SamplerBindingType::Filtering,
             Sampling::NonFiltering => wgpu::SamplerBindingType::NonFiltering,
@@ -384,6 +389,7 @@ impl Fillers {
             kind @ (Kind::Texture { .. }
             | Kind::Storage(_)
             | Kind::Storage3d(_)
+            | Kind::StorageArray(_)
             | Kind::Sampler(_)) => {
                 panic!("no filler for {kind:?}")
             }

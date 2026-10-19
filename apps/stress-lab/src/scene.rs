@@ -42,17 +42,20 @@ pub fn create_workload_with(
         frustum_culling: config.culling,
         ..EngineConfig::default()
     });
-    // A workload with neither colliders nor queries leaves collision out.
-    let collision_enabled = config.colliders > 0 || config.queries_per_tick > 0;
+    // A workload with neither colliders nor queries leaves collision out,
+    // and physics, whose bodies meet collision's solids.
+    let collision_enabled =
+        config.colliders > 0 || config.queries_per_tick > 0 || config.bodies > 0;
     if collision_enabled {
         engine
             .app
             .add_plugins(EnginePlugins)
             .insert_resource(stress_collision_budgets());
     } else {
-        engine
-            .app
-            .add_plugins(EnginePlugins::without([Feature::Collision]));
+        engine.app.add_plugins(EnginePlugins::without([
+            Feature::Collision,
+            Feature::Physics,
+        ]));
     }
     engine.app.insert_resource(config.clone());
     let (atmosphere, lamps) = look(config.scene, "scene")?;
@@ -79,6 +82,7 @@ pub fn create_workload_with(
     }
     set_view(&mut engine, "overview")?;
     engine.app.add_plugins(FlyCameraPlugin);
+    engine.app.add_systems(Presentation, aim_when_bodies_come);
     content.add_systems(&mut engine.app, moving_nodes);
     if config.queries_per_tick > 0 {
         engine
@@ -205,11 +209,49 @@ pub(crate) const EFFECTS: [(&str, &str); 9] = [
 ];
 
 /// The camera views: each one's name and its name in menus.
-pub(crate) const VIEWS: [(&str, &str); 3] = [
+pub(crate) const VIEWS: [(&str, &str); 4] = [
     ("overview", "Overview"),
     ("close", "Inside the field"),
     ("away", "Look away"),
+    ("bodies", "The bodies"),
 ];
+
+/// The bodies' view was asked for before there were any: the camera turns
+/// to them when they come.
+#[derive(Resource)]
+struct AwaitingBodies;
+
+/// Turns the camera to the bodies once they come, their view asked for
+/// before there were any.
+fn aim_when_bodies_come(world: &mut World) {
+    if world.contains_resource::<AwaitingBodies>() && bodies_view(world).is_some() {
+        aim(world, "bodies").expect("known view");
+    }
+}
+
+/// Looking down at the world's rigid bodies from beside them, where most
+/// stand: `None` without any.
+fn bodies_view(world: &mut World) -> Option<Camera> {
+    let mut bodies = world.query_filtered::<&Transform, With<RigidBody>>();
+    let at: Vec<Vec3> = bodies
+        .iter(world)
+        .map(|transform| transform.translation)
+        .collect();
+    if at.is_empty() {
+        return None;
+    }
+    let middle = at.iter().copied().sum::<Vec3>() / at.len() as f32;
+    let reach = at
+        .iter()
+        .map(|point| point.distance(middle))
+        .fold(4.0, engine::math::max);
+    Some(Camera {
+        position: middle + Vec3::new(1.0, 0.8, 1.2) * (reach * 1.6 + 6.0),
+        target: middle,
+        far: 20_000.0,
+        ..Camera::default()
+    })
+}
 
 /// The grade under the physically based sky: its light at
 /// full strength, close to authored colors, a little contrast; the sky
@@ -272,10 +314,24 @@ fn resolve(scene: StressScene, name: &str) -> &str {
 }
 
 pub fn set_view(engine: &mut Engine, view: &str) -> engine::Result<()> {
-    let config = engine.app.world().resource::<StressConfig>();
+    aim(engine.app.world_mut(), view)
+}
+
+/// Puts `world`'s camera at view `view`. The bodies' view, asked for before
+/// there are any, looks over the world until they come.
+fn aim(world: &mut World, view: &str) -> engine::Result<()> {
+    let bodies = (view == "bodies").then(|| bodies_view(world)).flatten();
+    let awaiting = view == "bodies" && bodies.is_none();
+    if awaiting {
+        world.insert_resource(AwaitingBodies);
+    } else {
+        world.remove_resource::<AwaitingBodies>();
+    }
+    let view = if awaiting { "overview" } else { view };
+    let config = world.resource::<StressConfig>();
     let span = (config.renderables as f32).sqrt().ceil() * SPACING;
     let content = config.scene.world();
-    let camera = match content.camera(engine.app.world(), config, view) {
+    let camera = match content.camera(world, config, view).or(bodies) {
         Some(camera) => camera,
         None => match view {
             "overview" => Camera {
@@ -310,9 +366,7 @@ pub fn set_view(engine: &mut Engine, view: &str) -> engine::Result<()> {
         },
     };
     let speed = content.camera_speed(span);
-    engine.app.insert_resource(camera);
-    engine
-        .app
-        .insert_resource(FlyCameraController::from_camera(&camera).with_speed(speed));
+    world.insert_resource(camera);
+    world.insert_resource(FlyCameraController::from_camera(&camera).with_speed(speed));
     Ok(())
 }

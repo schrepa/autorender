@@ -91,6 +91,8 @@ export interface FrameStats {
   ocean: OceanStats;
   /** Particles. */
   particles: Drawn;
+  /** Rigid bodies at the last fixed tick, read when the stats are. */
+  physics: PhysicsStats;
   /** Pipelines the renderer has created. */
   pipelines: number;
   /**
@@ -404,6 +406,30 @@ export interface OceanStats {
   triangles: number;
 }
 
+/** Physics at the last fixed tick, read when the stats are. */
+export interface PhysicsStats {
+  /** Of them, awake: moving, or pushed this tick. */
+  awake: number;
+  /** Bodies the solver holds. */
+  bodies: number;
+  /** Contacts touching between bodies and solids or each other. */
+  contacts: number;
+  /**
+   * Of them, held still where the world's solids under them are not
+   * resident yet.
+   */
+  held: number;
+  /**
+   * The world's solids the solver holds for bodies to meet: terrain
+   * tiles, placed objects and colliders near them.
+   */
+  solids: number;
+  /** Samples of the world's water the tick's bodies took. */
+  water_samples: number;
+  /** Of them, in water. */
+  wet: number;
+}
+
 /** Reflection probes. */
 export interface ProbeStats {
   /** Probes a budget or the GPU's texture array layers left out. */
@@ -580,8 +606,15 @@ export interface VirtualGeometryStats {
   visibility_buffer: boolean;
 }
 
-/** Terrains' lakes and rivers. */
+/** Terrains' water, as their tiles hold it. */
 export interface WaterStats {
-  /** Chunks of lakes' and rivers' ribbons drawn. */
-  chunks: number;
+  /** Blocks of tiles' water resident on the GPU, a patch's each. */
+  blocks: number;
+  /**
+   * Blocks this frame dropped for want of the device's texture array
+   * layers, whose water does not draw.
+   */
+  dropped_blocks: number;
+  /** Terrain patches holding water drawn. */
+  patches: number;
 }

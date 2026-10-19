@@ -92,7 +92,26 @@ struct TerrainVertex {
     cell: vec2<f32>,
 }
 
+// A patch's vertex as its patch draws it: its place on the grid, which of
+// its coordinates are odd and how far it morphs into its parent, its
+// tile's height there, its parent's at its even neighbor and the height it
+// stands at between them, and the vertex. What stands on the ground, as
+// water does, morphs alike.
+struct TerrainGridVertex {
+    grid: vec2<u32>,
+    odd: vec2<u32>,
+    morph: f32,
+    fine: f32,
+    coarse: f32,
+    height: f32,
+    vertex: TerrainVertex,
+}
+
 fn terrain_vertex(input: PatchInput) -> TerrainVertex {
+    return terrain_grid_vertex(input).vertex;
+}
+
+fn terrain_grid_vertex(input: PatchInput) -> TerrainGridVertex {
     var grid: vec2<u32>;
     var skirt = false;
     if input.vertex < TERRAIN_GRID_VERTICES {
@@ -125,11 +144,17 @@ fn terrain_vertex(input: PatchInput) -> TerrainVertex {
     // tile's heights to the bit.
     let height = fine * (1.0 - morph) + coarse * morph;
     let morphed = base - vec2<f32>(odd) * morph;
-    var vertex: TerrainVertex;
-    vertex.relative = vec3<f32>(morphed.x * spacing + terrain.anchor.x,
+    var vertex: TerrainGridVertex;
+    vertex.grid = grid;
+    vertex.odd = odd;
+    vertex.morph = morph;
+    vertex.fine = fine;
+    vertex.coarse = coarse;
+    vertex.height = height;
+    vertex.vertex.relative = vec3<f32>(morphed.x * spacing + terrain.anchor.x,
         height + terrain.anchor.y - select(0.0, input.shape.w, skirt),
         morphed.y * spacing + terrain.anchor.z);
-    vertex.cell = vec2<f32>(texel - 1u) + morphed - base;
+    vertex.vertex.cell = vec2<f32>(texel - 1u) + morphed - base;
     return vertex;
 }
 

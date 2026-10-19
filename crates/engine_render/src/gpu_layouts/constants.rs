@@ -176,11 +176,32 @@ gpu_consts! {
     // crate::depth_pyramid
     pub(crate) const PYRAMID_GROUP: u32 = 8 => ["@pyramid_first" in DEPTH_PYRAMID_SHADER, "@pyramid_down" in DEPTH_PYRAMID_SHADER, "@pyramid_first_nearest" in DEPTH_PYRAMID_SHADER, "@pyramid_down_nearest" in DEPTH_PYRAMID_SHADER];
 
-    // crate::water
-    /// The deepest water the depth texture holds (meters, `water.wgsl`'s
-    /// `WATER_DEPTH_RANGE`): it keeps the square root of each depth's share of
-    /// it, so shallows keep centimeters and a deep lake's middle its depth.
-    pub(crate) const WATER_DEPTH_RANGE: f32 = 256.0 => ["WATER_DEPTH_RANGE"];
+    // crate::terrain::water_blocks
+    /// Samples along a side of a block of tiles' water: a patch's, its edges
+    /// included, as its grid's vertices.
+    pub(crate) const WATER_BLOCK: u32 = TERRAIN_GRID => ["WATER_BLOCK"];
+    /// Blocks along a side of a layer of the water arrays.
+    pub(crate) const WATER_BLOCKS_SIDE: u32 = 16 => ["WATER_BLOCKS_SIDE"];
+    /// No block: a patch whose parent tile's water holds none over it.
+    pub(crate) const NO_WATER_BLOCK: u32 = u32::MAX => ["NO_WATER_BLOCK"];
+    /// The surface a block's sample no water reaches holds: below any
+    /// ground, so water never shows there.
+    pub(crate) const NO_WATER_SURFACE: f32 = -1.0e30 => ["NO_WATER_SURFACE"];
+    /// Meters a second either way a block's packed flow spans.
+    pub(crate) const WATER_FLOW_RANGE: f32 = engine_core::terrain_data::WATER_FLOW_RANGE => ["WATER_FLOW_RANGE"];
+    /// Meters of half width a block's packed width of a river's water spans.
+    pub(crate) const WATER_WIDTH_RANGE: f32 = engine_core::terrain_data::WATER_WIDTH_RANGE => ["WATER_WIDTH_RANGE"];
+
+    // crate::water_waves
+    /// Texels along a side of a tile of water's waves: wave numbers of its
+    /// spectrum, and points of its slopes.
+    pub(crate) const WAVE_TEXELS: u32 = 256 => ["WAVE_TEXELS" in WATER_WAVES_SHADER];
+    /// Tiles of water's waves, each repeating at its own length.
+    pub(crate) const WAVE_TILES: usize = 3 => ["WAVE_TILES" in WATER_WAVES_SHADER, "WATER_WAVE_TILES"];
+    /// Invocations transforming a line of a tile: a butterfly each.
+    pub(crate) const WAVE_LINE_GROUP: u32 = 128 => ["@evolve_rows" in WATER_WAVES_SHADER, "@transform_columns" in WATER_WAVES_SHADER];
+    /// Workgroup side of the moments' levels.
+    pub(crate) const WAVE_LEVEL_GROUP: u32 = 8 => ["@average_level" in WATER_WAVES_SHADER];
 
     // crate::ground_cover
     /// Bytes of a blade (`CoverBlade`).
@@ -257,6 +278,13 @@ gpu_mirrors! {
     engine_core::presentation_bounds::COMMON_DETERMINANT_MARGIN => ["COMMON_DETERMINANT_MARGIN" in PRESENTATION_SHADER];
     engine_core::presentation_bounds::LINEAR_ROTATION_DOT_THRESHOLD => ["LINEAR_ROTATION_DOT" in PRESENTATION_SHADER];
     engine_core::RIM_START => ["RIM_START" in DEFORMATION_SHADER];
+    engine_core::GUST_SLOW_SHARE => ["GUST_SLOW_SHARE"];
+    engine_core::GUST_SLOW_RATE => ["GUST_SLOW_RATE"];
+    engine_core::GUST_SLOW_TRAVEL => ["GUST_SLOW_TRAVEL"];
+    engine_core::GUST_QUICK_SHARE => ["GUST_QUICK_SHARE"];
+    engine_core::GUST_QUICK_RATE => ["GUST_QUICK_RATE"];
+    engine_core::GUST_QUICK_TRAVEL => ["GUST_QUICK_TRAVEL"];
+    engine_core::GUST_QUICK_ACROSS => ["GUST_QUICK_ACROSS"];
     engine_core::RIM_REACH => ["RIM_REACH" in DEFORMATION_SHADER];
     engine_core::terrain_data::TILE_QUADS => ["TILE_QUADS" in TERRAIN_HORIZON_SHADER, "TILE_QUADS" in TERRAIN_SKY_SHADER];
     engine_core::terrain_data::TILE_STRIDE => ["TILE_STRIDE" in TERRAIN_CONTROL_SHADER, "TILE_STRIDE" in TERRAIN_NORMALS_SHADER];

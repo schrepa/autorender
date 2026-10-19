@@ -26,6 +26,25 @@ pub(super) const AHEAD_MAX: f32 = 1000.0;
 
 pub(super) const JUMP: f32 = 100.0;
 
+/// What a terrain's last hydrology bake found, and its rivers' flow once a
+/// solid stood in them: their water as what stands there now holds it
+/// back. A new bake's rivers flow anew.
+#[derive(Default)]
+pub(super) struct HydrologyState {
+    pub(super) stats: Option<HydrologyStats>,
+    pub(super) flow: Option<engine_terrain::RiverFlow>,
+}
+
+impl HydrologyState {
+    /// A bake's, which found `stats`.
+    pub(super) fn baked(stats: HydrologyStats) -> Self {
+        Self {
+            stats: Some(stats),
+            flow: None,
+        }
+    }
+}
+
 /// One terrain's streaming state.
 pub(super) struct TerrainState {
     pub(super) entity: Entity,
@@ -52,7 +71,7 @@ pub(super) struct TerrainState {
     /// erosion bakes found.
     pub(super) baked: Option<Arc<Layers>>,
     pub(super) bake: Option<TerrainBake>,
-    pub(super) hydrology: Option<HydrologyStats>,
+    pub(super) hydrology: HydrologyState,
     pub(super) erosion: Option<ErosionStats>,
     /// Its roads' bridges, terrain-local, once every bake
     /// is done, and its rivers' waterfalls.
@@ -153,7 +172,7 @@ impl TerrainState {
             ranges: Vec::new(),
             baked: None,
             bake: None,
-            hydrology: None,
+            hydrology: HydrologyState::default(),
             erosion: None,
             bridges: Arc::from(Vec::new()),
             falls: Arc::from(Vec::new()),
@@ -328,7 +347,7 @@ impl TerrainState {
             self.terrain.surface.rules.clone(),
         );
         match job.advance(budget) {
-            Some(tile) => self.store.arrive(Arc::new(tile), Phase::Whole),
+            Some(tile) => self.store.arrive(Arc::new(tile), Phase::Whole, None),
             None => {
                 self.jobs.insert(key, job);
                 // Its shape draws meanwhile.
@@ -345,7 +364,7 @@ impl TerrainState {
         };
         if let Some(tile) = job.advance(budget) {
             self.jobs.remove(&key);
-            self.store.arrive(Arc::new(tile), Phase::Whole);
+            self.store.arrive(Arc::new(tile), Phase::Whole, None);
         }
         true
     }
@@ -369,7 +388,7 @@ impl TerrainState {
         let mut ancestor = pyramid.parent(key);
         // The GPU gives shapes their materials.
         if !self.materials {
-            self.store.arrive(Arc::new(shape), Phase::Shape);
+            self.store.arrive(Arc::new(shape), Phase::Shape, None);
             return true;
         }
         loop {
@@ -385,16 +404,22 @@ impl TerrainState {
             }
             ancestor = pyramid.parent(at);
         }
-        self.store.arrive(Arc::new(shape), Phase::Shape);
+        self.store.arrive(Arc::new(shape), Phase::Shape, None);
         true
     }
 
-    /// Makes generated `tile` resident in place of whatever its key held:
+    /// Makes generated `tile`, its water made from the rivers `watered`,
+    /// resident in place of whatever its key held:
     /// its shape, a tile under edits since, or one waiting for its objects
     /// standing far away, whose job in `jobs` stops. One without the
     /// objects standing far away its level places wants them placed, at job
     /// priority `priority`, whichever way it arrived.
-    pub(super) fn arrive(&mut self, tile: Tile, priority: u32, jobs: Option<&mut Jobs>) {
+    pub(super) fn arrive(
+        &mut self,
+        (tile, watered): (Tile, Watered),
+        priority: u32,
+        jobs: Option<&mut Jobs>,
+    ) {
         let key = tile.key();
         self.far_wanted.remove(&key);
         if let Some((id, ..)) = self.far_jobs.remove(&key)
@@ -404,7 +429,7 @@ impl TerrainState {
         }
         let far = self.lacks_far(&tile);
         let phase = if far { Phase::Far } else { Phase::Whole };
-        self.store.arrive(Arc::new(tile), phase);
+        self.store.arrive(Arc::new(tile), phase, watered);
         if far {
             self.far_wanted.insert(key, priority);
         }
@@ -464,7 +489,7 @@ impl TerrainState {
             && left.current
             && !self.lacks_far(&left.tile)
         {
-            self.store.keep_in_memory(left.tile, frame);
+            self.store.keep_in_memory(left.tile, left.watered, frame);
         }
     }
 
@@ -540,6 +565,25 @@ impl TerrainState {
             let sample = tile.sample(local - pyramid.tile_origin(key))?;
             Some((level, sample))
         })
+    }
+
+    /// The water at terrain-local `local` as the tile [`Self::sample`] reads
+    /// the ground of holds it: its surface, its depth over that ground, its
+    /// flow and whitewater; `None` where it holds none, or over a hole.
+    pub(super) fn water(&self, local: Vec2) -> Option<WaterPoint> {
+        if self.cut_out(local) {
+            return None;
+        }
+        let pyramid = &self.terrain.pyramid;
+        (0..pyramid.levels())
+            .find_map(|level| {
+                let key = pyramid.tile_at(level, local)?;
+                let tile = self.store.get(&key)?;
+                let local = local - pyramid.tile_origin(key);
+                let sample = tile.sample(local)?;
+                Some((!sample.hole).then(|| tile.water_at(local)).flatten())
+            })
+            .flatten()
     }
 
     /// The meters tracks sink the ground at terrain-local `local` at most:
@@ -626,8 +670,6 @@ pub struct Terrains {
 pub(super) struct Degraded {
     pub(super) failed_reads: u64,
     pub(super) latest_read: Option<String>,
-    pub(super) refused_falls: u64,
-    pub(super) latest_fall: Option<String>,
 }
 
 /// The workers' jobs and recipes of terrains gone.

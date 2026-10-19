@@ -20,19 +20,6 @@ impl Terrains {
         self.degraded.latest_read.as_deref()
     }
 
-    /// Why the asset library refused the latest falls' white water, if it
-    /// refused any.
-    pub fn latest_fall_refusal(&self) -> Option<&str> {
-        self.degraded.latest_fall.as_deref()
-    }
-
-    /// Counts falls drawn without their white water, which the asset
-    /// library refused for `reason`.
-    pub(crate) fn refuse_falls(&mut self, reason: String) {
-        self.degraded.refused_falls += 1;
-        self.degraded.latest_fall = Some(reason);
-    }
-
     /// Moves the byte ranges hosts should fetch into `out`.
     pub fn take_requests(&mut self, out: &mut Vec<TileRequest>) {
         out.append(&mut self.requests);

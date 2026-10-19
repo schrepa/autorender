@@ -415,6 +415,38 @@ impl OceanWaves {
     }
 }
 
+/// Seconds either side of a moment the sea's water velocity is taken over.
+const VELOCITY_STEP: f64 = 0.05;
+/// Meters of water a sample over ground nothing has loaded stands in.
+const OPEN_SEA: f32 = 1000.0;
+
+/// The sea at world `point` as the world's water reads it, at the fixed
+/// tick's time: its surface, the water over the ground, how fast the waves
+/// move it and the whitecaps where they compress it: the source the ocean
+/// plugin registers.
+pub(crate) fn sea_water(world: &World, point: Vec3) -> Option<crate::WaterSample> {
+    let ocean = world
+        .get_resource::<Ocean>()
+        .filter(|ocean| ocean.enabled)?;
+    let seconds = world
+        .get_resource::<FixedTime>()
+        .map_or(0.0, |time| time.elapsed_seconds);
+    let waves = ocean.spectrum();
+    let surface = waves.surface(f64::from(point.x), f64::from(point.z), seconds);
+    let [x, z] = surface.still;
+    let ahead = waves.moved(x, z, seconds + VELOCITY_STEP).displacement;
+    let behind = waves.moved(x, z, seconds - VELOCITY_STEP).displacement;
+    let velocity = (ahead - behind) / (2.0 * VELOCITY_STEP as f32);
+    let ground = crate::Ground::sample_in(world, point.x, point.z).map(|ground| ground.height);
+    Some(crate::WaterSample {
+        kind: crate::WaterKind::Sea,
+        surface: surface.height,
+        depth: ground.map_or(OPEN_SEA, |ground| max(surface.height - ground, 0.0)),
+        velocity: velocity.to_array(),
+        foam: clamp((0.8 - surface.compression) * 8.0, 0.0, 1.0),
+    })
+}
+
 /// The sea and the entities riding it: [`crate::Feature::Ocean`].
 #[derive(Default)]
 pub struct OceanPlugin;
@@ -422,6 +454,9 @@ pub struct OceanPlugin;
 impl bevy_app::Plugin for OceanPlugin {
     fn build(&self, app: &mut bevy_app::App) {
         crate::install(app, crate::Feature::Ocean);
+        app.world_mut()
+            .resource_mut::<crate::WaterSources>()
+            .register("sea", sea_water);
         app.add_systems(crate::FixedSimulation, float.in_set(OceanSystems::Float))
             .configure_sets(
                 crate::FixedSimulation,

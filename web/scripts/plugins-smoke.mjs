@@ -42,6 +42,8 @@ const authoring = {
   time_of_day: [scene => { scene.environment = { time_of_day: {} }; }, "$.environment.time_of_day"],
   deformation: [scene => scene.entities.push({ id: "roller", deformer: {} }), "$.entities[1].deformer"],
   collision: [scene => { scene.entities[0].collider = { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] } }; }, "$.entities[0].collider"],
+  physics: [scene => scene.entities.push({ id: "body", mesh: "box", material: "plain", transform: { translation: [0, 2, 0] },
+    collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] } }, rigid_body: {} }), "$.entities[1].rigid_body"],
 };
 const authored = names => {
   const scene = core();
@@ -60,6 +62,7 @@ const requests = {
   time_of_day: ["inspect", { component: "TimeOfDay" }],
   deformation: ["inspect", { component: "Tracks" }],
   collision: ["raycast", ray],
+  physics: ["inspect", { component: "PhysicsWorld" }],
 };
 // What the engine without it answers about it, scenes aside.
 const refusals = {
@@ -71,6 +74,7 @@ const refusals = {
   time_of_day: ["environment", { time_of_day: {} }],
   deformation: ["inspect", { component: "Tracks" }],
   collision: ["raycast", ray],
+  physics: ["environment", { physics: { enabled: true } }],
 };
 const leftOut = name => features.filter(other => other === name || (needs[other] ?? []).includes(name));
 // Every feature has its authored scene, a request it answers and one its

@@ -190,11 +190,15 @@ impl Renderer {
             .light_frame()
             .and(self.features.lights.get())
             .map(LightPass::fragment_group);
+        let scene = (state.shape.targets != Targets::Canvas)
+            .then(|| self.features.post.get())
+            .flatten()
+            .map(crate::post::PostPass::scene_texture);
         let encode = Encode::new(
             (&views, &meshes),
             (&self.device, &self.profiler),
             (self.camera.group(), &self.materials, lights),
-            (state.shape.targets, &self.depth.texture),
+            (state.shape.targets, &self.depth.texture, scene),
         );
         self.features
             .encode(pass, &state.features.frames, node, &encode, encoder)

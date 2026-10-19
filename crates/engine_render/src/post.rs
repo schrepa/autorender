@@ -506,6 +506,12 @@ impl PostPass {
         (&targets.scene, &targets.glow, &targets.surface)
     }
 
+    /// The scene color's texture, which water copies before it draws over
+    /// it.
+    pub(crate) fn scene_texture(&self) -> &wgpu::Texture {
+        &self.targets.get().expect("sized in begin").textures[0]
+    }
+
     /// The scene color as a group binds it, for glass refracting it.
     pub(crate) fn scene(&self) -> Bound<'_> {
         let targets = self.targets.get().expect("sized in begin");
@@ -768,7 +774,16 @@ impl PostPass {
         let levels = BLOOM_LEVELS.min(crate::gpu_data::mip_levels(half.0, half.1));
         let scene_levels = SCENE_LEVELS.min(crate::gpu_data::mip_levels(half.0, half.1));
         let textures = [
-            texture("engine/post-scene", (width, height), SCENE_FORMAT, 1),
+            // Water copies the scene it refracts before it draws over it.
+            crate::targets::texture_2d(
+                device,
+                "engine/post-scene",
+                (width, height),
+                1,
+                1,
+                SCENE_FORMAT,
+                crate::targets::RENDER_TARGET | wgpu::TextureUsages::COPY_SRC,
+            ),
             texture("engine/post-glow", (width, height), GLOW_FORMAT, 1),
             texture("engine/post-occlusion", half, OCCLUSION_FORMAT, 1),
             texture("engine/post-bloom", half, self.bloom_format, levels),

@@ -787,7 +787,8 @@ pub(crate) fn place_row(
         heights.push(sample.height);
         gradients.push(gradient);
         curvatures.push(curvature);
-        // What the mask reads alone.
+        // What the mask reads alone; the water standing there is the
+        // tile's, lake or river, as deep as it stands over the ground.
         waters.push(match water {
             Some(water) if layer.reads.water => {
                 let river = water
@@ -796,7 +797,12 @@ pub(crate) fn place_row(
                     .map_or(crate::hydrology::RIVER_FAR, |river| {
                         river.distance - river.half
                     });
-                water.masks_at(point[0], point[1], spacing, river)
+                crate::HydrologySample {
+                    lake: tile
+                        .water_at(glam::Vec2::from(local))
+                        .map_or(0.0, |water| water.depth),
+                    ..water.masks_at(point[0], point[1], spacing, river)
+                }
             }
             _ => crate::HydrologySample::default(),
         });

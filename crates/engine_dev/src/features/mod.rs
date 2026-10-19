@@ -26,6 +26,7 @@ macro_rules! dev_features {
             deformation,
             navigation,
             ocean,
+            physics,
             terrain,
             world_streaming,
         }
@@ -143,6 +144,7 @@ pub mod collision;
 pub mod deformation;
 pub mod navigation;
 pub mod ocean;
+pub mod physics;
 pub mod terrain;
 pub mod world_streaming;
 

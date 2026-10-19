@@ -52,6 +52,14 @@
     "additionalProperties": false,
     "description": "A deterministic stress workload. Configuration changes rebuild the\nowned workload outside the frame loop; configurations without `scene`\nbuild the tower field. The bounds are sanity bounds for URLs and the\npage: the engine sets none.",
     "properties": {
+      "bodies": {
+        "default": 0,
+        "description": "Rigid bodies the world drops: in the highlands, logs into the\nstrongest river near the camera, above a dam of logs that holds\nit back; other worlds drop none. With any, collision joins too.",
+        "format": "uint32",
+        "maximum": 64,
+        "minimum": 0,
+        "type": "integer"
+      },
       "colliders": {
         "default": 1000,
         "description": "Colliders, at most one per renderable.",

@@ -81,6 +81,7 @@ macro_rules! environment_sections {
             sky: Sky { opt_in: true, feature: Core },
             time_of_day: TimeOfDay { opt_in: true, feature: TimeOfDay },
             navigation: Navigation { opt_in: false, feature: Navigation },
+            physics: Physics { opt_in: false, feature: Physics },
             occlusion_culling: OcclusionCulling { opt_in: false, feature: Core },
             subpixel_culling: SubpixelCulling { opt_in: false, feature: Core },
             temporal_antialiasing: TemporalAntialiasing { opt_in: false, feature: Core },

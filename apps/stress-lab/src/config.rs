@@ -80,6 +80,10 @@ settings! {
         pub dense_colliders: bool = false => any,
         /// Ray, overlap and sweep queries each fixed tick.
         pub queries_per_tick: u32 = 32 => range(0, 512),
+        /// Rigid bodies the world drops: in the highlands, logs into the
+        /// strongest river near the camera, above a dam of logs that holds
+        /// it back; other worlds drop none. With any, collision joins too.
+        pub bodies: u32 = 0 => range(0, 64),
         /// Mesh batches the renderables draw from: one of
         /// [`MESH_VARIETIES`].
         #[cfg_attr(feature = "schema", schemars(transform = mesh_varieties))]

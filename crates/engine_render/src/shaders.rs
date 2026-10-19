@@ -71,6 +71,10 @@ shaders! {
     DEFORMATION_SHADER = [
         "deformation.wgsl",
     ];
+    /// Water's waves: their spectra evolved and transformed into slopes.
+    WATER_WAVES_SHADER = [
+        "water_waves.wgsl",
+    ];
     CLOUDS_SHADER = [
         "clouds.wgsl",
     ];
@@ -246,8 +250,8 @@ entry_points! {
             vs_affine_temporal_skinned, vs_resolve, vs_sky, vs_decal, vs_impostor_bake,
             vs_impostor_bake_extended, vs_impostor, vs_impostor_temporal, vs_terrain,
             vs_terrain_temporal, vs_terrain_vt_bake, vs_fullscreen, vs_cover,
-            vs_cover_temporal, vs_water, vs_river, vs_river_temporal, vs_water_temporal, vs_ocean,
-            vs_ocean_temporal
+            vs_cover_temporal, vs_water, vs_water_temporal, vs_ocean,
+            vs_ocean_temporal, vs_fall, vs_fall_temporal
         ],
         fragment: [
             fs_visibility, fs_main, fs_main_lit, fs_post, fs_post_lit, fs_temporal, fs_temporal_lit,
@@ -266,7 +270,7 @@ entry_points! {
             fs_terrain_post_lit, fs_terrain_temporal, fs_terrain_temporal_lit, fs_terrain_probe,
             fs_terrain_probe_lit, fs_cover, fs_cover_lit, fs_cover_post, fs_cover_post_lit,
             fs_cover_temporal, fs_cover_temporal_lit, fs_water, fs_water_post, fs_water_temporal,
-            fs_ocean, fs_ocean_post, fs_ocean_temporal
+            fs_ocean, fs_ocean_post, fs_ocean_temporal, fs_fall, fs_fall_post, fs_fall_temporal
         ],
         compute: [cs_terrain_vt_feedback],
     }
@@ -287,6 +291,9 @@ entry_points! {
     }
     deformation = DEFORMATION_SHADER {
         compute: [press, slopes, scroll, wipe, rebase],
+    }
+    water_waves = WATER_WAVES_SHADER {
+        compute: [evolve_rows, transform_columns, average_level],
     }
     clouds = CLOUDS_SHADER {
         compute: [make_noise, shadow_clouds, march_clouds, march_view],
@@ -339,7 +346,7 @@ entry_points! {
     }
     particles = PARTICLE_SHADER {
         vertex: [vs_particle],
-        fragment: [fs_particle, fs_particle_add, fs_particle_add_post],
+        fragment: [fs_particle, fs_particle_mist, fs_particle_add, fs_particle_add_post],
     }
     transparent = TRANSPARENT_SHADER {
         vertex: [vs_fullscreen],

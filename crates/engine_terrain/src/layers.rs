@@ -1413,12 +1413,8 @@ impl Layers {
                 let Some(baked) = &stage.baked else {
                     return;
                 };
-                let level = baked.level_for(spacing);
-                for (height, &x) in row.iter_mut().zip(xs) {
-                    *height -= baked.carve_at(x, z, level) * self.shown(x, z);
-                }
-                // Rivers cut their beds below their water and
-                // ease their banks to the ground at every level.
+                // Rivers cut their channels, the one place they are
+                // cut, and ease their banks to the ground at every level.
                 let (low, high) = baked.rivers.bounds();
                 if baked.rivers.is_empty()
                     || low.x > max.x

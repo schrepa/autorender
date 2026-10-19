@@ -66,6 +66,8 @@ pub struct FrameStats {
     pub jobs: crate::JobStats,
     /// Navigation agents at the last fixed tick, read when the stats are.
     pub navigation: crate::NavStats,
+    /// Rigid bodies at the last fixed tick, read when the stats are.
+    pub physics: crate::PhysicsStats,
     /// The renderer's features it disabled for good, by name: one whose
     /// creation failed validation, or that an uncaptured GPU error named
     /// by its objects' labels. Frames render without them.
@@ -469,12 +471,17 @@ pub struct OccupancyStats {
     pub redraws: u32,
 }
 
-/// Terrains' lakes and rivers.
+/// Terrains' water, as their tiles hold it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WaterStats {
-    /// Chunks of lakes' and rivers' ribbons drawn.
-    pub chunks: u32,
+    /// Terrain patches holding water drawn.
+    pub patches: u32,
+    /// Blocks of tiles' water resident on the GPU, a patch's each.
+    pub blocks: u32,
+    /// Blocks this frame dropped for want of the device's texture array
+    /// layers, whose water does not draw.
+    pub dropped_blocks: u32,
 }
 
 /// The sea.

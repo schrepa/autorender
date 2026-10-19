@@ -64,6 +64,19 @@ impl PlacedShapes {
         self.objects.len()
     }
 
+    /// The objects whose bounds meet `bounds`: each one's terrain,
+    /// placement and shape.
+    pub(crate) fn objects_in(
+        &self,
+        bounds: Bounds,
+    ) -> impl Iterator<Item = (Entity, PlacedPart, &AffineShape)> + '_ {
+        self.bvh
+            .query(move |node| node.overlaps(bounds))
+            .map(|index| &self.objects[index])
+            .filter(move |object| object.affine.bounds.overlaps(bounds))
+            .map(|object| (object.entity, object.part, &object.affine))
+    }
+
     /// Follows `terrains`' resident tiles; returns whether the objects
     /// changed.
     pub(crate) fn sync(&mut self, terrains: Option<&Terrains>) -> bool {

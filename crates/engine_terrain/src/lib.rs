@@ -25,8 +25,10 @@
 mod bake;
 pub mod codec;
 mod erosion;
+mod flow;
 mod format;
 pub mod gpu;
+pub mod hydraulics;
 mod hydrology;
 pub mod jobs;
 mod layers;
@@ -37,18 +39,21 @@ mod placement;
 mod pyramid;
 mod rivers;
 mod select;
+mod sights;
 mod surface;
 mod tile;
+mod tile_water;
 
 pub use bake::{Bake, BakeKind, Baked, ErosionBake, HydrologyBake, PathBake, Stage, TerrainBake};
 pub use erosion::{Erosion, ErosionLayer, ErosionStats};
+pub use flow::{Block, Pool, RiverFlow, WEIR};
 pub use format::{
     FileHeader, FileTile, FormatError, TERRAIN_FILE_MAGIC, TERRAIN_FILE_VERSION, decode_tile,
     encode_file,
 };
 pub use hydrology::{
-    FALL_HEIGHT, FALL_SLOPE, FLOW_RANGE, Fall, Hydrology, HydrologyLayer, HydrologySample,
-    HydrologyStats, LAKE_RANGE, RIVER_FAR, WETNESS_RANGE, WaterGrid,
+    FALL_HEIGHT, FILL, FLOW_RANGE, Fall, Hydrology, HydrologyLayer, HydrologySample,
+    HydrologyStats, LAKE_RANGE, RIVER_FAR, ROUGHNESS, WETNESS_RANGE,
 };
 pub use layers::{
     Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers,
@@ -64,15 +69,20 @@ pub use placement::{
     Placing, merge_placed,
 };
 pub use pyramid::{Pyramid, PyramidError, TileKey};
-pub use rivers::{BANK_OFFSET, RIVER_STEP, River, RiverPoint, Rivers};
+pub use rivers::{BANK_OFFSET, RIVER_STEP, Rivers};
 pub use select::{
     LodRanges, Patch, Selection, WantedTile, WantedView, select_patches, wanted_tiles,
 };
+pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverSight};
 pub use surface::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,
     Mask, NoiseMask, Remap, SampleInputs,
 };
 pub use tile::{Generator, Tile, TileBand, TileSample, merge_bands};
+pub use tile_water::{
+    TileWater, WATER_FLOW_RANGE, WATER_WIDTH_RANGE, WaterPoint, pack as pack_water,
+    unpack as unpack_water,
+};
 
 /// The finest-to-coarsest pyramid level any layer, bake, walk, route or
 /// placement names at most.

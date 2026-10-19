@@ -117,6 +117,9 @@ pub enum SceneParticleBlend {
     Alpha,
     /// Adding light, unlit: sparks, fire.
     Additive,
+    /// Balls of mist, soft through their depth, lit by the sky and the
+    /// sun they scatter forward: spray, steam, fog banks.
+    Mist,
 }
 
 /// The engine's default emitter, as authored.
@@ -198,6 +201,7 @@ impl From<&ParticleEmitter> for SceneEmitter {
             blend: match emitter.blend {
                 ParticleBlend::Alpha => SceneParticleBlend::Alpha,
                 ParticleBlend::Additive => SceneParticleBlend::Additive,
+                ParticleBlend::Mist => SceneParticleBlend::Mist,
             },
             stretch: emitter.stretch,
             offset: emitter.offset.to_array(),
@@ -224,6 +228,7 @@ impl SceneEmitter {
             blend: match self.blend {
                 SceneParticleBlend::Alpha => ParticleBlend::Alpha,
                 SceneParticleBlend::Additive => ParticleBlend::Additive,
+                SceneParticleBlend::Mist => ParticleBlend::Mist,
             },
             stretch: self.stretch,
             offset: Vec3::from_array(self.offset),

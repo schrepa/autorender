@@ -3,7 +3,8 @@
 // emitter is born at k / rate seconds, and the emitter's instances draw the
 // latest births, one lane each. Billboards face the camera, or streak along
 // their motion. Alpha particles are lit by the sun and sky and accumulate as
-// weighted blended transparency; additive ones add their light.
+// weighted blended transparency, as mist does, each particle of it a ball
+// soft through its depth; additive ones add their light.
 
 struct Particles {
     // Camera right (xyz) and up (xyz), unit and world space.
@@ -52,6 +53,10 @@ struct ParticleOutput {
     @location(2) world: vec3<f32>,
     // Distance over which the particle fades into opaque surfaces.
     @location(3) @interpolate(flat) softness: f32,
+    // Its middle, and the meters over which mist thins from it (w); and
+    // where its noise lies, its own.
+    @location(4) @interpolate(flat) center: vec4<f32>,
+    @location(5) @interpolate(flat) key: f32,
 }
 
 // PCG hash (Jarzynski and Olano).
@@ -141,7 +146,47 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
     output.corner = corner;
     output.world = world;
     output.softness = max(size, 0.05);
+    output.center = vec4<f32>(position, size * MIST_SPREAD);
+    output.key = unit(pcg(seed + 5u)) * 256.0;
     return output;
+}
+
+// Mist: the share of its diameter over which a ball of it thins from its
+// middle (a Gaussian's width: its billboard's edge lies 2.5 of them out,
+// where it has thinned to nothing), how strongly its droplets scatter the
+// sun forward (Henyey and Greenstein's g) and how much of the sun's light
+// they scatter toward the eye beside the sky's.
+const MIST_SPREAD: f32 = 0.2;
+const MIST_PHASE_G: f32 = 0.6;
+const MIST_SUN: f32 = 0.35;
+
+// The error function (Abramowitz and Stegun 7.1.26, within 1.5e-7).
+fn error_function(x: f32) -> f32 {
+    let a = abs(x);
+    let t = 1.0 / (1.0 + 0.3275911 * a);
+    let tail = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t
+        + 0.254829592) * t * exp(-a * a);
+    return sign(x) * (1.0 - tail);
+}
+
+// Value noise at `p` in three dimensions: hashed lattice values blended by
+// smooth steps.
+fn mist_noise(p: vec3<f32>) -> f32 {
+    let cell = floor(p);
+    let f = p - cell;
+    let u = f * f * (3.0 - 2.0 * f);
+    let q = vec3<u32>(vec3<i32>(cell));
+    let x0 = q.x * 0x8da6b343u;
+    let x1 = x0 + 0x8da6b343u;
+    let y0 = q.y * 0xd8163841u;
+    let y1 = y0 + 0xd8163841u;
+    let z0 = q.z * 0xcb1ab31fu;
+    let z1 = z0 + 0xcb1ab31fu;
+    let low = mix(mix(unit(pcg(x0 ^ y0 ^ z0)), unit(pcg(x1 ^ y0 ^ z0)), u.x),
+        mix(unit(pcg(x0 ^ y1 ^ z0)), unit(pcg(x1 ^ y1 ^ z0)), u.x), u.y);
+    let high = mix(mix(unit(pcg(x0 ^ y0 ^ z1)), unit(pcg(x1 ^ y0 ^ z1)), u.x),
+        mix(unit(pcg(x0 ^ y1 ^ z1)), unit(pcg(x1 ^ y1 ^ z1)), u.x), u.y);
+    return mix(low, high, u.z);
 }
 
 // Whether this fragment lies outside the round billboard, which covers it
@@ -181,6 +226,64 @@ fn fs_particle(input: ParticleOutput) -> TransparentTargets {
     let view = normalize(input.world - eye);
     let fogged = atmospheric(light, eye, input.world, view).rgb;
     return weighted(grade(fogged), alpha, length(input.world - eye));
+}
+
+// Mist: a ball of droplets thinning from its middle as a Gaussian, which
+// stops as much light as the view crosses of it before the opaque surface
+// behind (so it meets surfaces softly however near they stand, and its
+// edge shows round from any side), alpha being what a view through its
+// middle stops; torn by noise drifting through it. It scatters the sky's
+// light, and the sun's forward, the more the nearer the eye looks toward
+// the sun, as much as reaches its middle.
+@fragment
+fn fs_particle_mist(input: ParticleOutput) -> TransparentTargets {
+    if outside(input) {
+        discard;
+    }
+    let eye = camera.position.xyz;
+    let direction = normalize(input.world - eye);
+    let middle = input.center.xyz;
+    let spread = max(input.center.w, 1.0e-3);
+    let to_middle = middle - eye;
+    let along = dot(to_middle, direction);
+    let missed = max(dot(to_middle, to_middle) - along * along, 0.0);
+    // How far the view runs before the opaque surface behind stops it.
+    let pixel = vec2<i32>(input.clip_position.xy);
+    let depth = textureLoad(depth_texture, pixel, 0);
+    let uv = input.clip_position.xy * particles.size.zw;
+    let clip = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
+    let behind = camera.inverse_view_projection * clip;
+    let reach = length(behind.xyz / behind.w - eye);
+    // Of the ball's density along a line through its middle, the share the
+    // view crosses: as it misses the middle, and up to the surface behind.
+    let crossed = 0.5 * (error_function((reach - along) / spread)
+        - error_function(-along / spread)) * exp(-missed / (spread * spread));
+    let closest = eye + direction * clamp(along, 0.0, reach);
+    let drift = vec3<f32>(0.0, -0.25, 0.0) * camera.position.w;
+    let torn = mist_noise((closest - middle + drift) / spread * 0.7
+        + vec3<f32>(input.key, 17.0, 41.0));
+    let thickest = -log(max(1.0 - input.color.a, 1.0e-3));
+    let alpha = 1.0 - exp(-thickest * crossed * mix(0.3, 1.7, torn));
+    if alpha <= 1.0e-3 {
+        discard;
+    }
+    let sun = lighting.sun.xyz;
+    var sunlight = vec3<f32>(0.0);
+    if sun.y > 0.0 {
+        let g = MIST_PHASE_G;
+        let denominator = 1.0 + g * g - 2.0 * g * dot(sun, direction);
+        let phase = (1.0 - g * g) / (denominator * sqrt(denominator));
+        sunlight = lighting.sun_color.rgb * (MIST_SUN * phase)
+            * sun_visibility(middle, sun, vec3<f32>(0.0), vec3<f32>(0.0), length(to_middle),
+                false);
+    }
+    // The light around it: the sky's, and the sunlit and skylit ground's
+    // it stands over, as water's foam takes it.
+    let sky = sky_average(vec3<f32>(0.0, 1.0, 0.0)) * lighting.zenith.w;
+    let around = lighting.sun_color.rgb * (0.35 * saturate(sun.y)) + sky * 0.5;
+    let light = input.color.rgb * (mix(around, sky, 0.5) + sunlight);
+    let fogged = atmospheric(light, eye, closest, direction).rgb;
+    return weighted(grade(fogged), alpha, length(closest - eye));
 }
 
 // Additive particles: their light through the fog, graded.

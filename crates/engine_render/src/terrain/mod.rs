@@ -20,8 +20,9 @@
 //!
 //! The pass is its parts: the tile atlas (`atlas`), the tables shaders
 //! look up (`tables`), the frame's patches (`patches`) and the pipelines
-//! and terrain group (`pipelines`), beside the material maps, sky maps,
-//! horizon maps, runtime virtual texture and deformation map. Debug builds
+//! and terrain group (`pipelines`), beside tiles' water (`water_blocks`),
+//! the material maps, sky maps, horizon maps, runtime virtual texture and
+//! deformation map. Debug builds
 //! check what holds between them after every preparation (`invariants`).
 
 use engine_core::collections::HashMap;
@@ -56,11 +57,13 @@ mod invariants;
 mod patches;
 mod pipelines;
 mod tables;
+mod water_blocks;
 
 use atlas::TileAtlas;
 pub(crate) use patches::{PatchDraws, planes, visible};
 use pipelines::{GroupSources, TerrainPipelines};
 use tables::TerrainTables;
+pub(crate) use water_blocks::{GRID_INDICES as WATER_GRID_INDICES, water_patch_layout};
 
 pub(crate) use crate::gpu_layouts::terrain::PatchRecord;
 
@@ -92,6 +95,25 @@ const HOLE_WORDS: usize = ((LAYER_SIZE - 2) * (LAYER_SIZE - 2)).div_ceil(32) as 
 
 /// Bytes of a terrain's uniform.
 pub(crate) const TERRAIN_UNIFORM_BYTES: usize = size_of::<TerrainUniform>();
+
+/// What water's pass draws tiles' water with: the height array, the views'
+/// and terrains' uniforms, the water blocks' arrays, generations advancing
+/// when any of them is another texture or buffer, this frame's patches
+/// holding water and each terrain's uniform offset and range of them, the
+/// grid's indices, and the blocks resident and dropped this frame for want
+/// of layers.
+pub(crate) struct TerrainWaterDraws<'a> {
+    pub(crate) heights: &'a wgpu::TextureView,
+    pub(crate) views: &'a wgpu::Buffer,
+    pub(crate) uniforms: &'a wgpu::Buffer,
+    pub(crate) surfaces: &'a wgpu::TextureView,
+    pub(crate) info: &'a wgpu::TextureView,
+    pub(crate) generation: (u64, u64, u64),
+    pub(crate) instances: &'a wgpu::Buffer,
+    pub(crate) indices: &'a wgpu::Buffer,
+    pub(crate) terrains: &'a [(u32, Range<u32>)],
+    pub(crate) blocks: [u32; 2],
+}
 
 /// What ground cover's growth reads of the terrain pass.
 pub(crate) struct CoverSources<'a> {
@@ -216,6 +238,8 @@ pub(crate) struct TerrainPass {
     pub(crate) deformation: crate::deformation::DeformationPass,
     /// The runtime virtual texture.
     pub(crate) vt: crate::terrain_vt::VirtualTexture,
+    /// Tiles' water.
+    pub(crate) water: water_blocks::WaterBlocks,
 }
 
 impl TerrainPass {
@@ -230,6 +254,7 @@ impl TerrainPass {
             sky: SkyMaps::new(device, queue),
             deformation: crate::deformation::DeformationPass::new(device),
             vt: crate::terrain_vt::VirtualTexture::new(device),
+            water: water_blocks::WaterBlocks::new(device),
         }
     }
 
@@ -252,6 +277,30 @@ impl TerrainPass {
             + self.maps.capacity_bytes()
             + self.deformation.capacity_bytes()
             + self.vt.capacity_bytes()
+            + self.water.capacity_bytes()
+    }
+
+    /// What water's pass draws tiles' water with; `None` before tiles and
+    /// their water arrive.
+    pub(crate) fn water_draws(&self) -> Option<TerrainWaterDraws<'_>> {
+        let heights = self.atlas.heights()?;
+        let (surfaces, info) = self.water.views()?;
+        Some(TerrainWaterDraws {
+            heights,
+            views: &self.patches.views,
+            uniforms: &self.tables.uniforms,
+            surfaces,
+            info,
+            generation: (
+                self.atlas.generation,
+                self.tables.uniform_generation,
+                self.water.generation,
+            ),
+            instances: &self.water.instances,
+            indices: self.patches.indices(),
+            terrains: &self.water.terrains,
+            blocks: [self.water.resident(), self.water.dropped],
+        })
     }
 
     /// Records this frame's horizon map builds.
@@ -285,6 +334,7 @@ impl TerrainPass {
         if let Some(synced) = atlas.sync(device, queue, terrains, max_layers) {
             self.tables.write_holes(device, queue, &synced, max_layers);
         }
+        self.water.sync(device, queue, &atlas.held, max_layers);
         let fades = atlas.fade_words(views.fades, self.tables.fade_words);
         self.tables.write_fades(queue, fades);
         self.tables
@@ -319,6 +369,7 @@ impl TerrainPass {
             .iter()
             .all(|terrain| terrain.patches.is_empty())
         {
+            self.water.terrains.clear();
             return false;
         }
         self.tables.size_uniforms(device, terrains);
@@ -331,6 +382,9 @@ impl TerrainPass {
             textures: &textures,
         };
         let uniforms = self.patches.lay_out(device, terrains, views, &parts);
+        let eye = views.eye.as_dvec3();
+        let seen = (views.culling, eye, views.fades);
+        self.water.lay_out(device, queue, terrains, seen, &parts);
         queue.write_buffer(&self.tables.uniforms, 0, &uniforms);
         self.patches.write(queue, views);
         self.pipelines.ensure_group(

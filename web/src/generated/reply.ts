@@ -439,12 +439,11 @@ export interface HostContext {
 /**
  * What a bake found about one place: the base-10 logarithm of its
  * upstream area (square meters), its wetness index, how deep water would
- * stand there in a filled pit and how deep channels carve it (meters), and
- * meters from the nearest river's edge, negative in its
- * water; [`RIVER_FAR`] beyond every river's reach.
+ * stand there in a filled pit (meters), and meters from the nearest
+ * river's edge, negative in its water; [`RIVER_FAR`] beyond every river's
+ * reach.
  */
 export interface HydrologySample {
-  carve: number;
   flow: number;
   lake: number;
   river: number;
@@ -980,10 +979,8 @@ export interface TerrainStats {
   /** Wanted tiles beyond the tile budget or the device's capacity. */
   dropped_tiles: number;
   /**
-   * Tile reads that failed since terrains started (read again later),
-   * and falls drawn without their white water, which the asset library
-   * refused; [`Terrains::latest_read_failure`] and
-   * [`Terrains::latest_fall_refusal`] say why the latest did.
+   * Tile reads that failed since terrains started (read again later);
+   * [`Terrains::latest_read_failure`] says why the latest did.
    */
   failed_reads: number;
   fallback_patches: number;
@@ -1006,16 +1003,22 @@ export interface TerrainStats {
    * levels not resident yet.
    */
   patches: number;
-  refused_falls: number;
   /** Tiles resident now. */
   resident_tiles: number;
   restored_tiles: number;
+  /**
+   * Resident tiles whose water the update made again as their rivers
+   * run now, what stands in them holding them back, and those whose
+   * water was made from other rivers still waiting their turn.
+   */
+  rewatered_tiles: number;
   /**
    * Of the resident tiles, those holding their shape alone so far:
    * heights and holes, drawn with coarser levels'
    * materials while the rest loads.
    */
   shaped_tiles: number;
+  stale_water_tiles: number;
   surroundings_patches: number;
   /** Of the resident tiles and patches, those of terrains' surroundings. */
   surroundings_tiles: number;
@@ -1110,6 +1113,12 @@ export interface WalkResult {
   searched: number;
 }
 
+/**
+ * What kind of water a sample is: a river's, a lake's, a waterfall's jet or
+ * the sea's.
+ */
+export type WaterKind = "river" | "lake" | "fall" | "sea";
+
 /** What `water_query` answers: the sea and ground under each point. */
 export interface WaterQueryResult {
   /** Its waves' heights summed. */
@@ -1132,6 +1141,8 @@ export interface WaterSample {
   ground?: number | null;
   /** The sea's surface, where there is a sea. */
   ocean?: SeaSurface | null;
+  /** The world's water there, where any stands. */
+  water?: WorldWater | null;
 }
 
 /** What `world_changes` answers: what it changed and what stays removed. */
@@ -1144,6 +1155,18 @@ export interface WorldChangesResult {
   restored: number;
   /** Controls change the session's world, not the scene's source. */
   temporary: boolean;
+}
+
+/**
+ * The world's water over a point: its kind, surface (world meters), depth
+ * over the ground or bed, velocity (world meters a second) and foam.
+ */
+export interface WorldWater {
+  depth: number;
+  foam: number;
+  kind: WaterKind;
+  surface: number;
+  velocity: number[];
 }
 
 /** The largest difference so far and where. */

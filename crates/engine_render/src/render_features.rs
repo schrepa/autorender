@@ -417,6 +417,8 @@ pub(crate) struct Encode<'f> {
     pub(crate) targets: Targets,
     /// The depth buffer's texture.
     pub(crate) depth: &'f wgpu::Texture,
+    /// The scene color's texture, in frames drawing the effects' targets.
+    pub(crate) scene: Option<&'f wgpu::Texture>,
 }
 
 impl<'f> Encode<'f> {
@@ -428,7 +430,7 @@ impl<'f> Encode<'f> {
             &'f MaterialStore,
             Option<&'f wgpu::BindGroup>,
         ),
-        (targets, depth): (Targets, &'f wgpu::Texture),
+        (targets, depth, scene): (Targets, &'f wgpu::Texture, Option<&'f wgpu::Texture>),
     ) -> Self {
         Self {
             views,
@@ -440,6 +442,7 @@ impl<'f> Encode<'f> {
             lights,
             targets,
             depth,
+            scene,
         }
     }
 

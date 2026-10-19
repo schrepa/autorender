@@ -60,7 +60,7 @@
           "hash": "cec8a534d0550bf0"
         }
       },
-      "entities": 10756,
+      "entities": 10760,
       "hash": "108aa48c9db5e4db"
     },
     "content dense": {
@@ -108,7 +108,7 @@
           "hash": "71d2976ae2d9972e"
         }
       },
-      "entities": 10159,
+      "entities": 10163,
       "hash": "d1a13d5c91035c99"
     },
     "content field": {
@@ -160,7 +160,7 @@
           "hash": "857359c078750dcd"
         }
       },
-      "entities": 10372,
+      "entities": 10376,
       "hash": "6a7032a82d969f38"
     },
     "content highlands": {
@@ -217,15 +217,15 @@
         },
         "Terrain": {
           "count": 1,
-          "hash": "6be1af59c3028667"
+          "hash": "6d12d3e63c79bc45"
         },
         "Transform": {
           "count": 10314,
           "hash": "cdd1696b966b996a"
         }
       },
-      "entities": 10378,
-      "hash": "7e23dbfc35b31fb6"
+      "entities": 10382,
+      "hash": "23bbc47ad82d1f10"
     },
     "content metro": {
       "assets": {
@@ -300,12 +300,12 @@
           "hash": "47123809d28c1818"
         }
       },
-      "entities": 15331,
+      "entities": 15335,
       "hash": "bd6d3fcb1a3679fc"
     },
     "terrain frames": 400,
-    "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, shaped_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141572, restored_tiles: 12, idle_tiles: 0, banded_tiles: 0, unplaced_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, failed_reads: 0, refused_falls: 0, loading: false } | terrain tiles 854854a0fbb2ae0d patches 3c83553fdfed650c | surroundings tiles a2eadb7ccd455bc5 patches 36dbb04c85cad6bc",
-    "terrain trace": "9f34d6519e4a422d"
+    "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, shaped_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141312, restored_tiles: 12, idle_tiles: 0, banded_tiles: 0, unplaced_tiles: 0, rewatered_tiles: 0, stale_water_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, failed_reads: 0, loading: false } | terrain tiles 854854a0fbb2ae0d patches f92aaf1ed8717440 | surroundings tiles a2eadb7ccd455bc5 patches 8317cdfc9f70e8eb",
+    "terrain trace": "6b198568a545e190"
   },
   "gltf": {
     "gltf prefab": {
@@ -727,6 +727,11 @@
       "message": "an entity requires both mesh and material, or neither; prefab instance roots cannot also render",
       "path": "$.entities[0]"
     },
+    "refusal invalid_rigid_body at $.entities[1].rigid_body": {
+      "code": "invalid_rigid_body",
+      "message": "only roots move as bodies; give the placement or root the body instead",
+      "path": "$.entities[1].rigid_body"
+    },
     "refusal invalid_skin at $.entities[0].skin": {
       "code": "invalid_skin",
       "message": "a skin deforms its entity's mesh; give the entity a mesh and material",
@@ -897,50 +902,50 @@
     },
     "bake 6": {
       "bridges": 2,
-      "deepest cut": 2.5924453735351562,
+      "deepest cut": 2.4002151489257812,
       "highest fill": 0.0,
       "length": 300.0,
       "samples": 76,
-      "steepest": 0.016986846923828125,
+      "steepest": 0.016534805297851562,
       "tunnels": 1
     },
-    "bakes": "eb6186cf9a5001e7",
-    "etr1": "12b75cc93ca7c8fa",
-    "far 2/0/0": "5788c8c6bde61422",
-    "far objects 2/0/0": 2564,
-    "surroundings 2/0/0": "d4fec868d3636939",
-    "surroundings 2/0/1": "a74b05bc63f53540",
-    "surroundings 2/1/0": "58eded51bec75d61",
-    "surroundings 2/1/1": "9f31cd2a6e095780",
-    "surroundings 3/0/0": "8840a6078668b7bc",
+    "bakes": "96fb9a165543f8f6",
+    "etr1": "ef8ef0c195e72e88",
+    "far 2/0/0": "3d0b75e603cf71da",
+    "far objects 2/0/0": 2565,
+    "surroundings 2/0/0": "2a75944cd21cb756",
+    "surroundings 2/0/1": "a7d37523f501270c",
+    "surroundings 2/1/0": "bd065b4e16070d51",
+    "surroundings 2/1/1": "0d068079afb9d862",
+    "surroundings 3/0/0": "8606428fe9f3e0b3",
     "surroundings tiles": 8,
-    "tile 0/0/0": "28014371e82b0486",
-    "tile 0/0/1": "c63a159828d9d806",
-    "tile 0/0/2": "aea60eb3d3dec3b3",
-    "tile 0/0/3": "837008fd584baaa1",
-    "tile 0/1/0": "90437d966728a003",
-    "tile 0/1/1": "7d42637e888b6d3d",
-    "tile 0/1/2": "0058f76b767dda73",
-    "tile 0/1/3": "1b9a311373828e71",
-    "tile 0/2/0": "3da1804f6eef0d3a",
-    "tile 0/2/1": "c273b2d5f9b5cffe",
-    "tile 0/2/2": "9ad6dae6459a2da1",
-    "tile 0/2/3": "9d54d7bfa5fa4f12",
-    "tile 0/3/0": "fd405af296153bbd",
-    "tile 0/3/1": "e449be093aa716ff",
-    "tile 0/3/2": "17c9c3af686e69ea",
-    "tile 0/3/3": "77cfe8905dcde04e",
-    "tile 1/0/0": "4557ada1dd7ef952",
-    "tile 1/0/1": "c3f2d70f56da7442",
-    "tile 1/1/0": "01a51d1b046f9406",
-    "tile 1/1/1": "f6a7b7feef495b54",
-    "tile 2/0/0": "dba859d289f52097",
-    "tile objects": 12693,
+    "tile 0/0/0": "da4589a4fafc0936",
+    "tile 0/0/1": "723b88d05519dfd0",
+    "tile 0/0/2": "d237987dcca583ba",
+    "tile 0/0/3": "bb1e6846baf4229e",
+    "tile 0/1/0": "38414f5f0fd16a82",
+    "tile 0/1/1": "7322fc989cd21c50",
+    "tile 0/1/2": "78fba651af308467",
+    "tile 0/1/3": "c238f6da92a92406",
+    "tile 0/2/0": "ede7ec264c38c62a",
+    "tile 0/2/1": "b3b3c5d96f02afc9",
+    "tile 0/2/2": "041cf8d282c2e6b2",
+    "tile 0/2/3": "4de3e0c64d645568",
+    "tile 0/3/0": "b9877654aa1498b5",
+    "tile 0/3/1": "77612cdf47720dbe",
+    "tile 0/3/2": "7ba4b213aaa35573",
+    "tile 0/3/3": "5b0b7e00df4e45e3",
+    "tile 1/0/0": "7b408d6b1af8d58a",
+    "tile 1/0/1": "8c824b904096bec7",
+    "tile 1/1/0": "903b4833898e700b",
+    "tile 1/1/1": "d9d3d416c6dac6d7",
+    "tile 2/0/0": "cf47728d90345719",
+    "tile objects": 12697,
     "tiles": 21,
     "walk": {
-      "length": 209.10984802246094,
+      "length": 228.93650817871094,
       "level": 0,
-      "points": 54
+      "points": 61
     }
   }
 }

@@ -23,7 +23,9 @@ use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
 use crate::layers::{Layer, PathStage};
-use crate::{Generator, Layers, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
+use crate::{
+    Generator, Layers, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, Tile, TileKey, TileWater,
+};
 
 settings! {
     /// How an agent walks.
@@ -116,6 +118,9 @@ pub struct WalkSearch {
     height: usize,
     spacing: f32,
     heights: Vec<f32>,
+    // The surface water stands at over each sample, as the tiles hold it
+    // (NaN where none reaches).
+    water: Vec<f32>,
     stage: Stage,
     searched: usize,
 }
@@ -207,6 +212,7 @@ impl WalkSearch {
             height,
             spacing,
             heights: vec![0.0; width * height],
+            water: vec![f32::NAN; width * height],
             stage: Stage::Heights {
                 tiles,
                 next: 0,
@@ -253,7 +259,7 @@ impl WalkSearch {
                         .advance(budget);
                     match tile {
                         Some(tile) => {
-                            self.copy_tile(key, tile.heights());
+                            self.copy_tile(key, &tile);
                             Stage::Heights {
                                 tiles,
                                 next: next + 1,
@@ -319,8 +325,10 @@ impl WalkSearch {
             .then(|| cell.y as usize * self.width + cell.x as usize)
     }
 
-    /// Copies tile `key`'s `heights` over the grid's samples it holds.
-    fn copy_tile(&mut self, key: TileKey, heights: &[f32]) {
+    /// Copies tile `key`'s heights and water over the grid's samples it
+    /// holds.
+    fn copy_tile(&mut self, key: TileKey, tile: &Tile) {
+        let (heights, water) = (tile.heights(), tile.water().map(TileWater::surfaces));
         let quads = i64::from(TILE_QUADS);
         let (stride, samples) = (i64::from(TILE_STRIDE), i64::from(TILE_SAMPLES));
         let (tx, tz) = (i64::from(key.x), i64::from(key.z));
@@ -333,8 +341,12 @@ impl WalkSearch {
         for row in rows {
             let to = (tz * quads + row - self.first[1]) as usize * self.width;
             for column in columns.clone() {
-                self.heights[to + (tx * quads + column - self.first[0]) as usize] =
-                    heights[((row + 1) * stride + column + 1) as usize];
+                let (at, from) = (
+                    to + (tx * quads + column - self.first[0]) as usize,
+                    ((row + 1) * stride + column + 1) as usize,
+                );
+                self.heights[at] = heights[from];
+                self.water[at] = water.map_or(f32::NAN, |water| water[from]);
             }
         }
     }
@@ -386,20 +398,17 @@ impl WalkSearch {
     }
 
     /// Marks `rows`' samples an agent stands on: not holes, not under water
-    /// deeper than it wades. Water stands as deep as its surface rises over
-    /// the ground the walk reads there, not over the ground
-    /// the hydrology bake read: roads, stamps and edits after the bake fill
-    /// over its streams and dig below them.
+    /// deeper than it wades. Water stands as deep as its surface, as the
+    /// tiles hold it, rises over the ground the walk reads there: bridge
+    /// decks stand above it.
     fn mask_rows(&self, walkable: &mut [bool], rows: std::ops::Range<usize>) {
-        let water = self.layers.hydrology();
         let samples = rows.start * self.width..rows.end * self.width;
         for (stands, sample) in walkable[samples.clone()].iter_mut().zip(samples) {
             let point = self.position(sample);
-            let ground = self.heights[sample];
-            *stands = !self.layers.hole_at(point.x, point.y)
-                && !water
-                    .and_then(|water| water.water_at(point.x, point.y))
-                    .is_some_and(|(surface, _)| surface - ground > self.options.max_water);
+            // Dry ground (no water: NaN) and water shallow enough to wade.
+            let depth = self.water[sample] - self.heights[sample];
+            let wades = depth.is_nan() || depth <= self.options.max_water;
+            *stands = wades && !self.layers.hole_at(point.x, point.y);
         }
     }
 

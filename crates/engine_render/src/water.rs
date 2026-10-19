@@ -1,56 +1,58 @@
-//! Water: terrains' lakes and rivers where their hydrology
-//! bakes found them. Each terrain's water grid uploads once
-//! as two textures, its surface heights and its depth and flow, and splits
-//! into chunks of [`CHUNK_QUADS`] quads a side, those holding water kept.
-//! Each frame the chunks the camera sees draw, coarser with distance,
-//! after the opaque scene and its decals: water blends over the ground by
-//! how little light comes back through it and writes the depth and surface
-//! targets, so later passes and screen-space reflections see its surface.
-//! Before it draws, the opaque depth copies into a texture of its own, from
-//! which its pixels find the ground behind them: the
-//! distance light travels through the water, and where it runs shallow
-//! enough to foam.
+//! Water: terrains' water as their tiles hold it, and the sea. Each frame
+//! the camera's terrain patches holding water draw on terrain's own grid,
+//! with its morph and projection, standing at the surfaces the tiles' water
+//! blocks hold (`crate::terrain::TerrainPass::water_draws`): the depth each
+//! pixel shades by is the tiles' water less their ground on the triangles
+//! the ground is drawn on, and the shore falls where the ground rises
+//! through the water. Water draws after the opaque scene and its decals and
+//! blends over the ground by how little light comes back through it,
+//! writing the depth and surface targets, so later passes and screen-space
+//! reflections see its surface. Before it draws, the opaque depth copies
+//! into a texture of its own: what stands in the water behind a pixel
+//! shortens the light's path to it. In frames drawing the effects' targets
+//! the opaque color copies too, and water covers it whole with what shows
+//! through it, bent by its waves and dimmed channel by channel over the
+//! light's path; other frames blend water over the ground.
+//!
+//! Water's waves (`crate::water_waves`) evolve before it draws, the same
+//! tiles of them for terrains' water and the sea.
+//!
+//! Where terrains' rivers leave their beds, their jets draw last, as
+//! sheets (`crate::water_falls`) over the water they land in, writing their
+//! depth where they cover the scene.
 //!
 //! Water is a feature of the renderer (`crate::render_features`).
-//!
-//! Rivers draw as ribbons along their lines, flat across,
-//! their edges reaching under the banks, in chunks the camera culls.
 //!
 //! The sea draws first in the same pass, from a grid around
 //! the eye: rings of [`OCEAN_SEGMENTS`] cells, a cell apart near the eye
 //! and then each wider by a cell's share of its circumference, so cells
 //! stay square, out to the sea's reach. Its sectors cull on their own;
 //! vertices move by the waves longer than a few of their cells, and pixels
-//! shade every wave longer than a few pixels.
+//! shade every wave longer than a few pixels. It draws through the
+//! terrain's projection, jittered alike, so its shores meet the ground.
 
 use engine_core::collections::HashMap;
-use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
 use std::ops::Range;
 use std::sync::Arc;
 
 use bytemuck::Zeroable;
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::math::max;
-use engine_core::terrain_data::Rivers;
+use engine_core::terrain_data::Fall;
 use engine_core::{
-    Environment, MAX_OCEAN_WAVES, Ocean, OceanStats, RenderSnapshot, RenderTerrains, Water,
-    WaterGrid, WaterStats,
+    Environment, MAX_OCEAN_WAVES, Ocean, OceanStats, RenderSnapshot, RenderTerrain, Water,
+    WaterStats, Wind,
 };
 
-use crate::bindings::{WATER, WATER_DEPTH};
-use crate::gpu_layouts::constants::WATER_DEPTH_RANGE as DEPTH_RANGE;
+use crate::bindings::{WATER, WATER_BEHIND};
+use crate::gpu_layouts::terrain::{TerrainUniform, ViewUniform};
 use crate::profiling::Span;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource, Targets};
 use crate::targets::{FrameSize, ScreenTarget};
-
-/// Quads along each side of a chunk at full detail; coarser chunks draw a
-/// vertex every second, fourth or eighth sample.
-pub(crate) const CHUNK_QUADS: u32 = 32;
-/// Samples between a chunk's vertices by distance: full detail within the
-/// first reach, half within the second, and so on (meters).
-const STRIDES: [(u32, f32); 4] = [(1, 700.0), (2, 1600.0), (4, 3200.0), (8, f32::INFINITY)];
+use crate::terrain::{TerrainWaterDraws, WATER_GRID_INDICES, water_patch_layout};
+use crate::water_falls::{fall_layout, sheets};
+use crate::water_waves::{WaterWaves, WaveShape};
 
 /// Cells around the sea's grid, the sectors it splits into for culling,
 /// and the rings a cell apart at its middle: about the cells around over
@@ -63,131 +65,162 @@ const OCEAN_FIRST_RINGS: u32 = 31;
 const OCEAN_CELL: f32 = 0.3;
 const OCEAN_CELL_PER_HEIGHT: f32 = 0.004;
 
-use crate::gpu_layouts::water::WaterUniform;
+use crate::gpu_layouts::water::{FallVertex, WaterUniform};
 
 /// Bytes of the water group's uniform.
 pub(crate) const WATER_UNIFORM_BYTES: usize = size_of::<WaterUniform>();
 
-/// The sea on the GPU: placeholders for the water group's
-/// textures, its uniform and group, and this frame's rings and the runs of
-/// sectors the camera sees.
+/// One-texel stand-ins for what the water group binds that the sea reads
+/// none of: the terrain's height array and uniforms and tiles' water
+/// blocks; and for the scene's color, which frames blending water read
+/// none of.
+struct Placeholders {
+    surfaces: wgpu::Texture,
+    info: wgpu::Texture,
+    views: wgpu::Buffer,
+    terrains: wgpu::Buffer,
+    scene: wgpu::TextureView,
+}
+
+/// The sea on the GPU: its uniform and group, and this frame's rings and
+/// the runs of sectors the camera sees.
 struct OceanDraw {
-    _textures: [wgpu::Texture; 2],
     uniform: wgpu::Buffer,
     group: wgpu::BindGroup,
     rings: u32,
     runs: Vec<Range<u32>>,
 }
 
-use crate::gpu_layouts::water::ChunkRecord;
-
-/// A chunk holding water: its first sample, and its terrain-local bounds.
-struct Chunk {
-    first: [u32; 2],
-    min: Vec3,
-    max: Vec3,
+/// Tiles' water this frame: its instances, the grid's indices and each
+/// terrain's uniform offset and range of instances.
+struct TileDraws {
+    instances: wgpu::Buffer,
+    indices: wgpu::Buffer,
+    terrains: Vec<(u32, Range<u32>)>,
 }
 
-/// One terrain's water on the GPU, keyed by its grid.
-struct TerrainWater {
-    grid: Arc<WaterGrid>,
-    _textures: [wgpu::Texture; 2],
-    uniform: wgpu::Buffer,
-    group: wgpu::BindGroup,
-    chunks: Vec<Chunk>,
-    // Its rivers' ribbons, keyed by its rivers.
-    rivers: Option<RiverMesh>,
-    // This frame: its instance range for each stride, the rivers' index
-    // ranges the camera sees, and whether it draws.
-    draws: Vec<(u32, Range<u32>)>,
-    river_draws: Vec<Range<u32>>,
-    drawn: bool,
-}
-
-use crate::gpu_layouts::water::RiverVertex;
-
-/// A terrain's rivers' ribbons: their vertices and indices, and each
-/// chunk's index ranges at each of `RIBBON_STRIDES` and its terrain-local
-/// bounds.
-struct RiverMesh {
-    rivers: Arc<Rivers>,
+/// Terrains' falls' sheets: their vertices and triangles' indices, and the
+/// falls they were built from (each terrain's origin and falls).
+struct FallDraws {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
-    chunks: Vec<RibbonChunk>,
+    count: u32,
+    built: Vec<(Vec3, Arc<[Fall]>)>,
 }
 
-/// A chunk of a ribbon: its index range drawing every point, every second,
-/// fourth and eighth, and its terrain-local bounds.
-struct RibbonChunk {
-    ranges: [Range<u32>; 4],
-    low: Vec3,
-    high: Vec3,
-}
-
-/// Where a ribbon's points lie across a river: shares of half its width,
-/// and beyond its edges `RIBBON_EDGE` meters further, under its banks.
-const RIBBON_ACROSS: [f32; 5] = [-1.0, -0.5, 0.0, 0.5, 1.0];
-const RIBBON_EDGE: f32 = 1.5;
-/// River points a ribbon's chunk holds at most.
-const RIBBON_CHUNK: usize = 48;
-/// Meters from a river's head over which its water deepens from nothing:
-/// a stream starts without an edge across it.
-const RIBBON_HEAD: f32 = 9.0;
-/// Ribbons by distance: the points between their rows and
-/// the columns across them they keep, within each reach (meters).
-const RIBBON_STRIDES: [(usize, &[u32], f32); 4] = [
-    (1, &[0, 1, 2, 3, 4, 5, 6], 300.0),
-    (2, &[0, 1, 2, 3, 4, 5, 6], 800.0),
-    (4, &[0, 1, 3, 5, 6], 1600.0),
-    (8, &[0, 3, 6], f32::INFINITY),
-];
-
-/// The opaque depth's copy water reads, and its group.
-struct DepthCopy {
-    texture: wgpu::Texture,
+/// The copies of the opaque scene water reads, the depth and, in frames
+/// drawing the effects' targets, the color; and their group.
+struct BehindCopies {
+    depth: wgpu::Texture,
+    scene: Option<wgpu::Texture>,
     group: wgpu::BindGroup,
 }
 
-/// What water draws this frame: lakes' and rivers' chunks, and the sea's
-/// sectors and their triangles.
+/// What water draws this frame: tiles' patches holding water and their
+/// blocks resident and dropped, and the sea's sectors and their triangles.
 pub(crate) struct WaterFrame {
-    chunks: u32,
+    patches: u32,
+    blocks: [u32; 2],
     sectors: u32,
     triangles: u32,
 }
 
 pub(crate) struct WaterPass {
     pub(crate) layout: crate::pipelines::GroupLayout,
-    depth_layout: crate::pipelines::GroupLayout,
-    depth: ScreenTarget<DepthCopy>,
-    // Each terrain's water by terrain ID, the order it draws in.
-    terrains: BTreeMap<u64, TerrainWater>,
-    instances: wgpu::Buffer,
+    behind_layout: crate::pipelines::GroupLayout,
+    behind: ScreenTarget<BehindCopies>,
+    placeholders: Placeholders,
+    // Created with the first frame drawing water.
+    waves: Option<WaterWaves>,
+    // Tiles' water's uniform, and the group binding it with the terrain
+    // pass's arrays and uniforms, as of their generations.
+    uniform: wgpu::Buffer,
+    group: Option<((u64, u64, u64), wgpu::BindGroup)>,
+    tiles: Option<TileDraws>,
     pipeline_layout: Option<wgpu::PipelineLayout>,
     pipelines: HashMap<Targets, wgpu::RenderPipeline>,
-    river_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
     ocean_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
-    records: Vec<ChunkRecord>,
-    chunks_drawn: u32,
     ocean: Option<OceanDraw>,
+    // Terrains' falls' sheets, as of the falls they were built from, and
+    // what builds them.
+    falls: Option<FallDraws>,
+    fall_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
+    fall_vertices: Vec<FallVertex>,
+    fall_indices: Vec<u32>,
 }
 
 impl WaterPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         Self {
             layout: crate::pipelines::layout(device, &WATER),
-            depth_layout: crate::pipelines::layout(device, &WATER_DEPTH),
-            depth: ScreenTarget::default(),
-            terrains: BTreeMap::new(),
-            instances: chunk_buffer(device, 256),
+            behind_layout: crate::pipelines::layout(device, &WATER_BEHIND),
+            behind: ScreenTarget::default(),
+            placeholders: placeholders(device),
+            waves: None,
+            uniform: crate::buffers::uniform(device, "engine/water", WATER_UNIFORM_BYTES as u64),
+            group: None,
+            tiles: None,
             pipeline_layout: None,
             pipelines: HashMap::default(),
-            river_pipelines: HashMap::default(),
             ocean_pipelines: HashMap::default(),
-            records: Vec::new(),
-            chunks_drawn: 0,
             ocean: None,
+            falls: None,
+            fall_pipelines: HashMap::default(),
+            fall_vertices: Vec::new(),
+            fall_indices: Vec::new(),
         }
+    }
+
+    /// Builds the sheets of `terrains`' falls unless they were built from
+    /// the same falls; drops them where none fall.
+    fn prepare_falls(&mut self, device: &wgpu::Device, terrains: &[RenderTerrain]) {
+        let falling = || terrains.iter().filter(|terrain| !terrain.falls.is_empty());
+        let same = self.falls.as_ref().is_some_and(|built| {
+            built.built.len() == falling().count()
+                && built
+                    .built
+                    .iter()
+                    .zip(falling())
+                    .all(|(a, b)| a.0 == b.origin && Arc::ptr_eq(&a.1, &b.falls))
+        });
+        if same || (self.falls.is_none() && falling().next().is_none()) {
+            return;
+        }
+        sheets(
+            falling().map(|terrain| (terrain.origin, &*terrain.falls)),
+            &mut self.fall_vertices,
+            &mut self.fall_indices,
+        );
+        if self.fall_indices.is_empty() {
+            self.falls = None;
+            return;
+        }
+        let buffer = |label, contents: &[u8], usage| {
+            wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some(label),
+                    contents,
+                    usage,
+                },
+            )
+        };
+        self.falls = Some(FallDraws {
+            vertices: buffer(
+                "engine/water-falls",
+                bytemuck::cast_slice(&self.fall_vertices),
+                wgpu::BufferUsages::VERTEX,
+            ),
+            indices: buffer(
+                "engine/water-fall-indices",
+                bytemuck::cast_slice(&self.fall_indices),
+                wgpu::BufferUsages::INDEX,
+            ),
+            count: self.fall_indices.len() as u32,
+            built: falling()
+                .map(|terrain| (terrain.origin, terrain.falls.clone()))
+                .collect(),
+        });
     }
 
     /// The sea's sectors drawn this frame and their triangles.
@@ -199,119 +232,240 @@ impl WaterPass {
         })
     }
 
-    /// Copies the opaque `depth` into the copy water reads, before it
-    /// draws.
-    fn copy_depth(&self, encoder: &mut wgpu::CommandEncoder, depth: &wgpu::Texture) {
-        if let Some(copy) = self.depth.get()
-            && depth.size() == copy.texture.size()
-        {
-            encoder.copy_texture_to_texture(
-                depth.as_image_copy(),
-                copy.texture.as_image_copy(),
-                depth.size(),
-            );
+    /// Copies the opaque `depth` and, when water refracts it, the
+    /// `scene`'s color into the copies water reads, before it draws.
+    fn copy_behind(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        depth: &wgpu::Texture,
+        scene: Option<&wgpu::Texture>,
+    ) {
+        let Some(copies) = self.behind.get() else {
+            return;
+        };
+        let pairs = [
+            Some((depth, &copies.depth)),
+            scene.zip(copies.scene.as_ref()),
+        ];
+        for (from, to) in pairs.into_iter().flatten() {
+            if from.size() == to.size() {
+                encoder.copy_texture_to_texture(
+                    from.as_image_copy(),
+                    to.as_image_copy(),
+                    from.size(),
+                );
+            }
         }
     }
 
-    /// Prepares this frame's water of `terrains` as `settings` shade it and
-    /// the sea `ocean`, seen from `eye` with the wind's
-    /// `wind` velocity, its waves at the simulation time `seconds` the
-    /// frame presents; `None` when none of it draws.
+    /// Prepares this frame's water: tiles' patches holding water as the
+    /// terrain pass lays them out (`tiles`) and the falls of `terrains`,
+    /// shaded as `settings` say, and
+    /// the sea `ocean`, culled through `cull` and drawn through `view`
+    /// (both eye-relative) over the opaque `depth` and, when `refracts`,
+    /// the color it copies; seen from `eye` in the wind `wind`, its waves
+    /// at the simulation time `seconds` the frame presents; `None` when
+    /// none of it draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        terrains: &RenderTerrains,
+        (tiles, terrains): (Option<TerrainWaterDraws<'_>>, &[RenderTerrain]),
         (settings, ocean): (Water, Ocean),
-        (eye, wind, seconds): (Vec3, [f32; 2], f64),
-        depth: &wgpu::Texture,
+        (eye, wind, seconds): (Vec3, Wind, f64),
+        (cull, view, depth, refracts): (Mat4, Mat4, &wgpu::Texture, bool),
     ) -> Option<WaterFrame> {
-        self.chunks_drawn = 0;
-        self.records.clear();
-        self.terrains
-            .retain(|id, _| terrains.terrains.iter().any(|terrain| terrain.id == *id));
-        // What each terrain's water draws is this frame's, nothing until
-        // its preparation says.
-        for water in self.terrains.values_mut() {
-            water.draws.clear();
-            water.river_draws.clear();
-            water.drawn = false;
+        self.tiles = None;
+        let blocks = tiles.as_ref().map_or([0; 2], |tiles| tiles.blocks);
+        let tiles = tiles.filter(|tiles| settings.enabled && !tiles.terrains.is_empty());
+        self.prepare_falls(device, if settings.enabled { terrains } else { &[] });
+        // Falls draw with tiles' water's group, once any tiles' water has.
+        let falling = self.falls.is_some() && (tiles.is_some() || self.group.is_some());
+        if tiles.is_none() && !ocean.enabled && !falling {
+            self.ocean = None;
+            return None;
         }
-        if settings.enabled {
-            self.prepare_terrains(device, queue, terrains, (settings, ocean), (eye, wind));
+        // Terrains' water and the sea ripple with the same waves.
+        let waves = self.waves.get_or_insert_with(|| WaterWaves::new(device));
+        let shape = WaveShape {
+            wind: wind.velocity,
+            size: settings.ripple_size,
+        };
+        waves.prepare(device, queue, shape, seconds);
+        let repeats = waves.repeats();
+        if let Some(tiles) = tiles {
+            if let Some(waves) = &self.waves
+                && self
+                    .group
+                    .as_ref()
+                    .is_none_or(|(bound, _)| *bound != tiles.generation)
+            {
+                let group = self.tile_group(device, &tiles, waves);
+                self.group = Some((tiles.generation, group));
+            }
+            self.tiles = Some(TileDraws {
+                instances: tiles.instances.clone(),
+                indices: tiles.indices.clone(),
+                terrains: tiles.terrains.to_vec(),
+            });
+            // Terrains' water gives way to the sea where it lies under it.
+            let sea = if ocean.enabled {
+                [ocean.level - eye.y, 1.0, 0.0, 0.0]
+            } else {
+                [0.0; 4]
+            };
+            let [red, green, blue] = settings.color;
+            let uniform = WaterUniform {
+                color: [red, green, blue, settings.clarity],
+                ripples: ripples(settings, wind),
+                foam: [settings.foam, settings.foam_width, 0.0, 0.0],
+                absorption: absorption(settings.color, settings.clarity),
+                waves: repeats,
+                ocean: sea,
+                ..WaterUniform::zeroed()
+            };
+            queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         }
         let sea = self.prepare_ocean(
             device,
             queue,
-            terrains.relative_view_projection,
+            (cull, view),
             (settings, ocean),
             (eye, wind, seconds),
+            repeats,
         );
-        let rivers = self
-            .terrains
-            .values()
-            .any(|water| !water.river_draws.is_empty());
-        if self.records.is_empty() && !sea && !rivers {
+        let patches = self.tiles.as_ref().map_or(0, |tiles| {
+            tiles
+                .terrains
+                .iter()
+                .map(|(_, range)| range.len() as u32)
+                .sum()
+        });
+        if patches == 0 && !sea && !falling {
             return None;
         }
-        // The depth copy, at the depth buffer's size: the frame's.
+        // The copies, at the depth buffer's size: the frame's.
         let size = FrameSize {
             width: depth.width(),
             height: depth.height(),
         };
-        if self.depth.resizes(size) {
-            let texture = crate::targets::texture_2d(
-                device,
-                "engine/water-depth",
-                size.pixels(),
-                1,
-                1,
-                depth.format(),
-                wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-            );
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let group = crate::pipelines::group(
-                device,
-                "engine/water-depth",
-                &WATER_DEPTH,
-                &self.depth_layout,
-                &[("water_depth", crate::pipelines::view(&view))],
-            );
-            self.depth.set(size, DepthCopy { texture, group });
+        let refracted = self
+            .behind
+            .get()
+            .is_some_and(|copies| copies.scene.is_some());
+        if refracted != refracts {
+            self.behind.release();
         }
-        if !self.records.is_empty() {
-            let bytes = std::mem::size_of_val(self.records.as_slice()) as u64;
-            if bytes > self.instances.size() {
-                self.instances = chunk_buffer(device, bytes.next_power_of_two());
-            }
-            queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&self.records));
+        if self.behind.resizes(size) {
+            let copies = self.behind_copies(device, size, depth.format(), refracts);
+            self.behind.set(size, copies);
         }
         let (sectors, triangles) = self.ocean_drawn();
         Some(WaterFrame {
-            chunks: self.chunks_drawn,
+            patches,
+            blocks,
             sectors,
             triangles,
         })
     }
 
-    /// Prepares the sea seen through `view` (eye-relative)
-    /// from `eye`, its ripples as `water`'s, its waves at simulation time
-    /// `seconds`; returns whether any of it draws.
+    /// The copies of the opaque scene at `size`, the depth's of `format`
+    /// and, when water `refracts`, the color's; and their group.
+    fn behind_copies(
+        &self,
+        device: &wgpu::Device,
+        size: FrameSize,
+        format: wgpu::TextureFormat,
+        refracts: bool,
+    ) -> BehindCopies {
+        let copy = |label, format| {
+            crate::targets::texture_2d(
+                device,
+                label,
+                size.pixels(),
+                1,
+                1,
+                format,
+                wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            )
+        };
+        let depth = copy("engine/water-depth", format);
+        let scene = refracts.then(|| copy("engine/water-scene", crate::post::SCENE_FORMAT));
+        let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+        let scene_view = scene
+            .as_ref()
+            .map(|scene| scene.create_view(&wgpu::TextureViewDescriptor::default()));
+        let group = crate::pipelines::group(
+            device,
+            "engine/water-behind",
+            &WATER_BEHIND,
+            &self.behind_layout,
+            &[
+                ("water_depth", crate::pipelines::view(&depth_view)),
+                (
+                    "water_scene",
+                    crate::pipelines::view(scene_view.as_ref().unwrap_or(&self.placeholders.scene)),
+                ),
+            ],
+        );
+        BehindCopies {
+            depth,
+            scene,
+            group,
+        }
+    }
+
+    /// The group tiles' water draws with: the terrain pass's height array,
+    /// views' and terrains' uniforms and water blocks, water's uniform and
+    /// `waves`.
+    fn tile_group(
+        &self,
+        device: &wgpu::Device,
+        tiles: &TerrainWaterDraws<'_>,
+        waves: &WaterWaves,
+    ) -> wgpu::BindGroup {
+        let (moments, sampler) = waves.sampled();
+        crate::pipelines::group(
+            device,
+            "engine/water-group",
+            &WATER,
+            &self.layout,
+            &[
+                ("terrain_heights", crate::pipelines::view(tiles.heights)),
+                ("terrain_view", sized(tiles.views, size_of::<ViewUniform>())),
+                (
+                    "terrain",
+                    sized(tiles.uniforms, size_of::<TerrainUniform>()),
+                ),
+                ("water_surface", crate::pipelines::view(tiles.surfaces)),
+                ("water_info", crate::pipelines::view(tiles.info)),
+                ("water", self.uniform.as_entire_binding()),
+                ("water_waves", crate::pipelines::view(moments)),
+                ("water_wave_sampler", crate::pipelines::sampler(sampler)),
+            ],
+        )
+    }
+
+    /// Prepares the sea culled through `cull` and drawn through `view`
+    /// (both eye-relative) from `eye`, its ripples as `water`'s in `wind`, the
+    /// waves' tiles repeating `repeats` times a meter, its own waves at
+    /// simulation time `seconds`; returns whether any of it draws.
     fn prepare_ocean(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        view: Mat4,
+        (cull, view): (Mat4, Mat4),
         (water, ocean): (Water, Ocean),
-        (eye, wind, seconds): (Vec3, [f32; 2], f64),
+        (eye, wind, seconds): (Vec3, Wind, f64),
+        repeats: [f32; 4],
     ) -> bool {
-        if !ocean.enabled {
+        let (true, Some(waves)) = (ocean.enabled, &self.waves) else {
             self.ocean = None;
             return false;
-        }
+        };
         let draw = self
             .ocean
-            .get_or_insert_with(|| ocean_draw(device, queue, &self.layout));
+            .get_or_insert_with(|| ocean_draw(device, &self.layout, &self.placeholders, waves));
         let waves = ocean.spectrum();
         let amplitude = waves.amplitude();
         // Cells widen as the eye rises over the sea.
@@ -323,7 +477,7 @@ impl WaterPass {
         draw.rings = OCEAN_FIRST_RINGS + widening;
         // Each sector a wedge from the eye out to the reach, as high as the
         // waves rise and fall, culled eye-relative.
-        let planes = crate::terrain::planes(view, false);
+        let planes = crate::terrain::planes(cull, false);
         let (low, high) = (
             ocean.level - eye.y - amplitude,
             ocean.level - eye.y + amplitude,
@@ -373,9 +527,11 @@ impl WaterPass {
             relative_view_projection: view.to_cols_array_2d(),
             origin: [heading[0], heading[1], speed, 0.0],
             color: [red, green, blue, ocean.clarity],
-            ripples: [water.ripples, water.ripple_size, wind[0], wind[1]],
+            ripples: ripples(water, wind),
             // Shores foam as wide as the waves rise.
             foam: [ocean.foam, 0.4 + amplitude, crests, amplitude],
+            absorption: absorption(ocean.color, ocean.clarity),
+            waves: repeats,
             ocean: [
                 ocean.level - eye.y,
                 cell,
@@ -390,132 +546,13 @@ impl WaterPass {
             ],
             ocean_waves,
             ocean_reach,
-            ..WaterUniform::zeroed()
         };
         queue.write_buffer(&draw.uniform, 0, bytemuck::bytes_of(&uniform));
         !draw.runs.is_empty()
     }
 
-    /// Prepares terrains' water chunks the camera sees.
-    fn prepare_terrains(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        terrains: &RenderTerrains,
-        (settings, ocean): (Water, Ocean),
-        (eye, wind): (Vec3, [f32; 2]),
-    ) {
-        // Terrains' water gives way to the sea where it lies under it.
-        let sea = if ocean.enabled {
-            [ocean.level - eye.y, 1.0, 0.0, 0.0]
-        } else {
-            [0.0; 4]
-        };
-        // Chunks cull eye-relative, as terrain's patches do.
-        let planes = crate::terrain::planes(terrains.relative_view_projection, false);
-        for terrain in &terrains.terrains {
-            let Some(grid) = &terrain.water else {
-                self.terrains.remove(&terrain.id);
-                continue;
-            };
-            let water = match self.terrains.entry(terrain.id) {
-                Entry::Occupied(water) if Arc::ptr_eq(&water.get().grid, grid) => water.into_mut(),
-                Entry::Occupied(mut water) => {
-                    water.insert(upload(device, queue, &self.layout, grid));
-                    water.into_mut()
-                }
-                Entry::Vacant(water) => water.insert(upload(device, queue, &self.layout, grid)),
-            };
-            let relative_origin = terrain.origin - eye;
-            // Rivers' ribbons: built when the rivers change,
-            // their chunks culled.
-            match &terrain.rivers {
-                Some(rivers) if !rivers.is_empty() => {
-                    if water
-                        .rivers
-                        .as_ref()
-                        .is_none_or(|mesh| !Arc::ptr_eq(&mesh.rivers, rivers))
-                    {
-                        water.rivers = ribbons(device, queue, rivers);
-                    }
-                }
-                _ => water.rivers = None,
-            }
-            if let Some(mesh) = &water.rivers {
-                for chunk in &mesh.chunks {
-                    let (min, max) = (relative_origin + chunk.low, relative_origin + chunk.high);
-                    if !crate::terrain::visible(&planes, min, max) {
-                        continue;
-                    }
-                    // Coarser rows and fewer columns with distance.
-                    let distance = ((min + max) * 0.5).length();
-                    let tier = RIBBON_STRIDES
-                        .iter()
-                        .position(|(_, _, reach)| distance < *reach)
-                        .unwrap_or(RIBBON_STRIDES.len() - 1);
-                    let range = &chunk.ranges[tier];
-                    if range.is_empty() {
-                        continue;
-                    }
-                    self.chunks_drawn += 1;
-                    match water.river_draws.last_mut() {
-                        Some(last) if last.end == range.start => last.end = range.end,
-                        _ => water.river_draws.push(range.clone()),
-                    }
-                }
-            }
-            // The chunks the camera sees, coarser with distance, grouped by
-            // stride.
-            let mut seen: Vec<(u32, [u32; 2])> = Vec::new();
-            for chunk in &water.chunks {
-                let (min, max) = (relative_origin + chunk.min, relative_origin + chunk.max);
-                if !crate::terrain::visible(&planes, min, max) {
-                    continue;
-                }
-                let distance = ((min + max) * 0.5).length();
-                let stride = STRIDES
-                    .iter()
-                    .find(|(_, reach)| distance < *reach)
-                    .map_or(8, |(stride, _)| *stride);
-                seen.push((stride, chunk.first));
-            }
-            seen.sort_unstable_by_key(|(stride, _)| *stride);
-            for (stride, first) in seen {
-                let start = self.records.len() as u32;
-                self.records.push(ChunkRecord { first, stride });
-                match water.draws.last_mut() {
-                    Some((last, range)) if *last == stride => range.end = start + 1,
-                    _ => water.draws.push((stride, start..start + 1)),
-                }
-            }
-            water.drawn = !water.draws.is_empty() || !water.river_draws.is_empty();
-            self.chunks_drawn += water
-                .draws
-                .iter()
-                .map(|(_, range)| range.len() as u32)
-                .sum::<u32>();
-            let [red, green, blue] = settings.color;
-            let uniform = WaterUniform {
-                relative_view_projection: terrains.relative_view_projection.to_cols_array_2d(),
-                origin: relative_origin.extend(water.grid.spacing).to_array(),
-                grid: [
-                    water.grid.width as u32,
-                    water.grid.height as u32,
-                    CHUNK_QUADS,
-                    0,
-                ],
-                color: [red, green, blue, settings.clarity],
-                ripples: [settings.ripples, settings.ripple_size, wind[0], wind[1]],
-                foam: [settings.foam, settings.foam_width, 0.0, 0.0],
-                ocean: sea,
-                ..WaterUniform::zeroed()
-            };
-            queue.write_buffer(&water.uniform, 0, bytemuck::bytes_of(&uniform));
-        }
-    }
-
     /// Creates the pipelines into `targets` this frame's water and sea
-    /// draw with unless they exist, and lakes' and rivers' when `coming`,
+    /// draw with unless they exist, and tiles' water's when `coming`,
     /// before a bake gives any; `camera` is the main passes'
     /// first group.
     pub(crate) fn ensure_pipeline(
@@ -526,22 +563,17 @@ impl WaterPass {
         (targets, coming): (Targets, bool),
         formats: (wgpu::TextureFormat, wgpu::TextureFormat),
     ) {
-        if (coming || !self.records.is_empty()) && !self.pipelines.contains_key(&targets) {
-            let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Grid);
+        if (coming || self.tiles.is_some()) && !self.pipelines.contains_key(&targets) {
+            let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Tiles);
             self.pipelines.insert(targets, pipeline);
-        }
-        let rivers = coming
-            || self
-                .terrains
-                .values()
-                .any(|water| !water.river_draws.is_empty());
-        if rivers && !self.river_pipelines.contains_key(&targets) {
-            let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::River);
-            self.river_pipelines.insert(targets, pipeline);
         }
         if self.ocean.is_some() && !self.ocean_pipelines.contains_key(&targets) {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Sea);
             self.ocean_pipelines.insert(targets, pipeline);
+        }
+        if self.falls.is_some() && !self.fall_pipelines.contains_key(&targets) {
+            let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Falls);
+            self.fall_pipelines.insert(targets, pipeline);
         }
     }
 
@@ -560,17 +592,18 @@ impl WaterPass {
             crate::pipelines::pipeline_layout(
                 device,
                 &crate::pipeline_layouts::WATER_PIPELINES,
-                &[camera, &self.layout, &self.depth_layout],
+                &[camera, &self.layout, &self.behind_layout],
             )
         });
         let (vertex, fragment) = match surface {
-            Surface::Grid => crate::entries::water(targets),
-            Surface::River => crate::entries::river(targets),
+            Surface::Tiles => crate::entries::water(targets),
             Surface::Sea => crate::entries::ocean(targets),
+            Surface::Falls => crate::entries::falls(targets),
         };
         // The scene color blends premultiplied over the ground, keeping the
-        // ground's ambient share in its alpha; the other targets take the
-        // water's.
+        // ground's ambient share in its alpha (water refracting the scene
+        // covers it whole but where its shores fade); the other targets
+        // take the water's.
         let blended = wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,
@@ -587,15 +620,15 @@ impl WaterPass {
         if let Some(Some(scene)) = color_targets.first_mut() {
             scene.blend = Some(blended);
         }
-        let chunks = [Some(chunk_layout())];
-        let ribbons = [Some(river_layout())];
+        let patches = [Some(water_patch_layout())];
+        let sheets = [Some(fall_layout())];
         crate::pipelines::geometry(
             device,
             &crate::pipelines::Geometry {
                 label: match surface {
-                    Surface::Grid => "engine/water",
-                    Surface::River => "engine/river",
+                    Surface::Tiles => "engine/water",
                     Surface::Sea => "engine/ocean",
+                    Surface::Falls => "engine/water-falls",
                 },
                 layout,
                 module: shader,
@@ -603,13 +636,14 @@ impl WaterPass {
                 vertex,
                 // The sea's vertices come from their indices alone.
                 buffers: match surface {
-                    Surface::Grid => &chunks,
-                    Surface::River => &ribbons,
+                    Surface::Tiles => &patches,
                     Surface::Sea => &[],
+                    Surface::Falls => &sheets,
                 },
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
-                    // Water is seen from above and below alike.
+                    // Water is seen from above and below alike, falls from
+                    // either side.
                     cull_mode: None,
                     ..Default::default()
                 },
@@ -637,7 +671,7 @@ impl WaterPass {
         camera: &wgpu::BindGroup,
         targets: Targets,
     ) -> u32 {
-        let Some(depth) = self.depth.get() else {
+        let Some(behind) = self.behind.get() else {
             return 0;
         };
         let mut draws = 0;
@@ -645,53 +679,42 @@ impl WaterPass {
         if let (Some(ocean), Some(pipeline)) = (&self.ocean, self.ocean_pipelines.get(&targets)) {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, &ocean.group, &[]);
-            pass.set_bind_group(2, &depth.group, &[]);
+            pass.set_bind_group(1, &ocean.group, &[0, 0]);
+            pass.set_bind_group(2, &behind.group, &[]);
             let vertices = ocean.rings * (OCEAN_SEGMENTS / OCEAN_SECTORS) * 6;
             for run in &ocean.runs {
                 pass.draw(0..vertices, run.clone());
                 draws += 1;
             }
         }
-        // Rivers before lakes: where a river runs into a
-        // lake below the lake's surface, the lake's water covers it.
-        if let Some(pipeline) = self.river_pipelines.get(&targets) {
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(2, &depth.group, &[]);
-            for water in self.terrains.values().filter(|water| water.drawn) {
-                let Some(mesh) = &water.rivers else {
-                    continue;
-                };
-                if water.river_draws.is_empty() {
-                    continue;
-                }
-                pass.set_bind_group(1, &water.group, &[]);
-                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                for range in &water.river_draws {
-                    pass.draw_indexed(range.clone(), 0, 0..1);
-                    draws += 1;
-                }
-            }
-        }
-        let Some(pipeline) = self.pipelines.get(&targets) else {
+        let Some((_, group)) = &self.group else {
             return draws;
         };
-        if self.records.is_empty() {
-            return draws;
-        }
-        pass.set_pipeline(pipeline);
-        pass.set_bind_group(0, camera, &[]);
-        pass.set_bind_group(2, &depth.group, &[]);
-        pass.set_vertex_buffer(0, self.instances.slice(..));
-        for water in self.terrains.values().filter(|water| water.drawn) {
-            pass.set_bind_group(1, &water.group, &[]);
-            for (stride, range) in &water.draws {
-                let quads = CHUNK_QUADS / stride;
-                pass.draw(0..quads * quads * 6, range.clone());
+        if let (Some(tiles), Some(pipeline)) = (&self.tiles, self.pipelines.get(&targets)) {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, camera, &[]);
+            pass.set_bind_group(2, &behind.group, &[]);
+            pass.set_vertex_buffer(0, tiles.instances.slice(..));
+            pass.set_index_buffer(tiles.indices.slice(..), wgpu::IndexFormat::Uint16);
+            // Each terrain's patches through its uniform, seen by the
+            // camera's view, the first.
+            for (uniform, range) in &tiles.terrains {
+                pass.set_bind_group(1, group, &[0, *uniform]);
+                pass.draw_indexed(0..WATER_GRID_INDICES, 0, range.clone());
                 draws += 1;
             }
+        }
+        // Falls last, over the water they land in: of its group they read
+        // only water's uniform and waves.
+        if let (Some(falls), Some(pipeline)) = (&self.falls, self.fall_pipelines.get(&targets)) {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, camera, &[]);
+            pass.set_bind_group(1, group, &[0, 0]);
+            pass.set_bind_group(2, &behind.group, &[]);
+            pass.set_vertex_buffer(0, falls.vertices.slice(..));
+            pass.set_index_buffer(falls.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..falls.count, 0, 0..1);
+            draws += 1;
         }
         draws
     }
@@ -722,8 +745,11 @@ impl RenderFeature for WaterPass {
         encode: &Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        // The ground behind the water, before it draws.
-        self.copy_depth(encoder, encode.depth);
+        // The waves, and what lies behind the water, before it draws.
+        if let Some(waves) = &self.waves {
+            waves.encode(encoder, encode.profiler);
+        }
+        self.copy_behind(encoder, encode.depth, encode.scene);
         let mut pass = encode.render_pass(
             encoder,
             node,
@@ -733,26 +759,25 @@ impl RenderFeature for WaterPass {
         self.draw(&mut pass, encode.camera, encode.targets)
     }
 
-    /// Bytes of the water's textures and its depth copy.
+    /// Bytes of the copies and the waves: tiles' water blocks count with
+    /// the terrain's arrays.
     fn capacity_bytes(&self) -> u64 {
-        let depth = self
-            .depth
-            .size()
-            .map_or(0, |size| u64::from(size.width) * u64::from(size.height) * 4);
-        self.terrains
-            .values()
-            .map(|water| {
-                (water.grid.width * water.grid.height * 8) as u64
-                    + water
-                        .rivers
-                        .as_ref()
-                        .map_or(0, |mesh| mesh.vertices.size() + mesh.indices.size())
-            })
-            .sum::<u64>()
-            + depth
+        let copies = self.behind.size().map_or(0, |size| {
+            let texels = u64::from(size.width) * u64::from(size.height);
+            let scene = self
+                .behind
+                .get()
+                .is_some_and(|copies| copies.scene.is_some());
+            texels * if scene { 8 } else { 4 }
+        });
+        let falls = self
+            .falls
+            .as_ref()
+            .map_or(0, |falls| falls.vertices.size() + falls.indices.size());
+        copies + falls + self.waves.as_ref().map_or(0, WaterWaves::capacity_bytes)
     }
 
-    /// Chunks drawn (lakes' and rivers'), and the sea's sectors drawn and
+    /// Tiles' patches holding water drawn, and the sea's sectors drawn and
     /// their triangles.
     fn stats(
         _this: Option<&Self>,
@@ -761,7 +786,9 @@ impl RenderFeature for WaterPass {
     ) -> (WaterStats, OceanStats) {
         (
             WaterStats {
-                chunks: frame.map_or(0, |frame| frame.chunks),
+                patches: frame.map_or(0, |frame| frame.patches),
+                blocks: frame.map_or(0, |frame| frame.blocks[0]),
+                dropped_blocks: frame.map_or(0, |frame| frame.blocks[1]),
             },
             OceanStats {
                 sectors: frame.map_or(0, |frame| frame.sectors),
@@ -771,283 +798,21 @@ impl RenderFeature for WaterPass {
     }
 }
 
-/// What a water pipeline draws: terrains' lakes from their grids, their
-/// rivers' ribbons, or the sea.
+/// What a water pipeline draws: tiles' water, the sea, or falls' sheets.
 #[derive(Clone, Copy)]
 enum Surface {
-    Grid,
-    River,
+    Tiles,
     Sea,
+    Falls,
 }
 
-/// `WaterChunk`'s instance locations: its first sample and stride.
-fn chunk_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Uint32x2, 1 => Uint32];
-    wgpu::VertexBufferLayout {
-        array_stride: size_of::<ChunkRecord>() as u64,
-        step_mode: wgpu::VertexStepMode::Instance,
-        attributes: &ATTRIBUTES,
-    }
-}
-
-/// `grid` on the GPU: its surface heights and its depth and flow as
-/// textures, its uniform and group, and its chunks holding water.
-fn upload(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    layout: &crate::pipelines::GroupLayout,
-    grid: &Arc<WaterGrid>,
-) -> TerrainWater {
-    let (width, height) = (grid.width as u32, grid.height as u32);
-    let texture = |label, format| {
-        crate::targets::texture_2d(
-            device,
-            label,
-            (width, height),
-            1,
-            1,
-            format,
-            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        )
-    };
-    let surface = texture("engine/water-surface", wgpu::TextureFormat::R32Float);
-    let info = texture("engine/water-info", wgpu::TextureFormat::Rgba8Unorm);
-    let unit = |value: f32| (engine_core::math::clamp(value, 0.0, 1.0) * 255.0 + 0.5) as u8;
-    let packed: Vec<u8> = grid
-        .depth
-        .iter()
-        .zip(&grid.flow)
-        .flat_map(|(&depth, &[x, z])| {
-            [
-                unit((max(depth, 0.0) / DEPTH_RANGE).sqrt()),
-                unit(x / 16.0 + 0.5),
-                unit(z / 16.0 + 0.5),
-                0,
-            ]
-        })
-        .collect();
-    let write = |texture: &wgpu::Texture, bytes: &[u8], texel: u32| {
-        queue.write_texture(
-            texture.as_image_copy(),
-            bytes,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * texel),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-    };
-    write(&surface, bytemuck::cast_slice(&grid.surface), 4);
-    write(&info, &packed, 4);
-    let uniform = crate::buffers::uniform(device, "engine/water", size_of::<WaterUniform>() as u64);
-    let group = crate::pipelines::group(
-        device,
-        "engine/water-group",
-        &WATER,
-        layout,
-        &[
-            (
-                "water_surface",
-                crate::pipelines::view(&surface.create_view(&Default::default())),
-            ),
-            (
-                "water_info",
-                crate::pipelines::view(&info.create_view(&Default::default())),
-            ),
-            ("water", uniform.as_entire_binding()),
-        ],
-    );
-    // Chunks holding water, with their surfaces' bounds.
-    let quads = CHUNK_QUADS as usize;
-    let mut chunks = Vec::new();
-    for z in (0..grid.height.saturating_sub(1)).step_by(quads) {
-        for x in (0..grid.width.saturating_sub(1)).step_by(quads) {
-            let Some([low, high]) = grid.block(x, z, quads) else {
-                continue;
-            };
-            let spacing = grid.spacing;
-            chunks.push(Chunk {
-                first: [x as u32, z as u32],
-                min: Vec3::new(x as f32 * spacing, low, z as f32 * spacing),
-                max: Vec3::new(
-                    (x + quads) as f32 * spacing,
-                    high,
-                    (z + quads) as f32 * spacing,
-                ),
-            });
-        }
-    }
-    TerrainWater {
-        grid: Arc::clone(grid),
-        _textures: [surface, info],
-        uniform,
-        group,
-        chunks,
-        rivers: None,
-        draws: Vec::new(),
-        river_draws: Vec::new(),
-        drawn: false,
-    }
-}
-
-/// `rivers`' ribbons on the GPU: at each point of each river
-/// a row of vertices across it at its water's surface, from beyond one
-/// edge to beyond the other, with the water's depth over its bed, its flow
-/// and half its width; stretches without water (falls) left out; chunks of
-/// `RIBBON_CHUNK` points, each drawn at every one of `RIBBON_STRIDES`.
-/// `None` without any water to draw.
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
-fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> Option<RiverMesh> {
-    let mut vertices: Vec<RiverVertex> = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
-    let mut strides: [Vec<u32>; 4] = Default::default();
-    let mut chunks = Vec::new();
-    let columns = RIBBON_ACROSS.len() + 2;
-    for river in rivers.rivers() {
-        let count = river.points.len();
-        if count < 2 {
-            continue;
-        }
-        let first = vertices.len() as u32;
-        for index in 0..count {
-            let point = Vec3::new(
-                river.points[index][0],
-                river.surface[index],
-                river.points[index][1],
-            );
-            let previous = river.points[index.saturating_sub(1)];
-            let next = river.points[(index + 1).min(count - 1)];
-            let run = engine_core::glam::Vec2::new(next[0] - previous[0], next[1] - previous[1])
-                .normalize_or(engine_core::glam::Vec2::X);
-            let side = Vec3::new(-run.y, 0.0, run.x);
-            let (half, mut depth) = (river.half[index], river.depth[index]);
-            if river.head {
-                let along = Vec3::new(
-                    river.points[index][0] - river.points[0][0],
-                    0.0,
-                    river.points[index][1] - river.points[0][1],
-                )
-                .length();
-                depth *= engine_core::math::min(along / RIBBON_HEAD, 1.0);
-            }
-            let flow = [run.x * river.speed[index], run.y * river.speed[index]];
-            let offsets = std::iter::once(-(half + RIBBON_EDGE))
-                .chain(RIBBON_ACROSS.iter().map(|share| share * half))
-                .chain(std::iter::once(half + RIBBON_EDGE));
-            for offset in offsets {
-                let across = offset / engine_core::math::max(half, 1.0e-3);
-                let below = if across.abs() < 1.0 {
-                    depth * (1.0 - across * across)
-                } else {
-                    0.0
-                };
-                vertices.push(RiverVertex {
-                    position: (point + side * offset).to_array(),
-                    water: [below, flow[0], flow[1], half],
-                });
-            }
-        }
-        // Quads between rows of points that carry water between them, in
-        // chunks, at each stride.
-        let wet = |from: usize, to: usize| {
-            (from..to).all(|index| !river.falls_at(index))
-                && (from..=to).all(|index| river.surface[index].is_finite())
-        };
-        for start in (0..count - 1).step_by(RIBBON_CHUNK) {
-            let end = (start + RIBBON_CHUNK).min(count - 1);
-            let mut low = Vec3::splat(f32::INFINITY);
-            let mut high = Vec3::splat(f32::NEG_INFINITY);
-            let mut ranges: [Range<u32>; 4] = Default::default();
-            for (tier, &(stride, kept, _)) in RIBBON_STRIDES.iter().enumerate() {
-                let list = &mut strides[tier];
-                let begin = list.len() as u32;
-                let mut rows: Vec<usize> = (start..end).step_by(stride).collect();
-                rows.push(end);
-                for pair in rows.windows(2) {
-                    let (from, to) = (pair[0], pair[1]);
-                    if !wet(from, to) {
-                        continue;
-                    }
-                    let row = first + (from * columns) as u32;
-                    let next = first + (to * columns) as u32;
-                    for across in kept.windows(2) {
-                        let (a, b) = (row + across[0], row + across[1]);
-                        let (c, d) = (next + across[0], next + across[1]);
-                        list.extend_from_slice(&[a, c, b, b, c, d]);
-                    }
-                    for vertex in [
-                        row,
-                        row + columns as u32 - 1,
-                        next,
-                        next + columns as u32 - 1,
-                    ] {
-                        let position = Vec3::from(vertices[vertex as usize].position);
-                        low = low.min(position);
-                        high = high.max(position);
-                    }
-                }
-                ranges[tier] = begin..list.len() as u32;
-            }
-            if !ranges[0].is_empty() {
-                chunks.push(RibbonChunk { ranges, low, high });
-            }
-        }
-    }
-    // Each stride's quads one after the other, so neighboring chunks drawn
-    // at one stride merge into one draw.
-    let mut bases = [0_u32; 4];
-    for (tier, list) in strides.iter().enumerate() {
-        bases[tier] = indices.len() as u32;
-        indices.extend_from_slice(list);
-    }
-    for chunk in &mut chunks {
-        for (range, base) in chunk.ranges.iter_mut().zip(bases) {
-            *range = range.start + base..range.end + base;
-        }
-    }
-    if indices.is_empty() {
-        return None;
-    }
-    let vertices_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("engine/river-vertices"),
-        size: std::mem::size_of_val(vertices.as_slice()) as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&vertices_buffer, 0, bytemuck::cast_slice(&vertices));
-    let indices_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("engine/river-indices"),
-        size: std::mem::size_of_val(indices.as_slice()) as u64,
-        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&indices_buffer, 0, bytemuck::cast_slice(&indices));
-    Some(RiverMesh {
-        rivers: Arc::clone(rivers),
-        vertices: vertices_buffer,
-        indices: indices_buffer,
-        chunks,
+/// The first `bytes` of `buffer`, bound at a dynamic offset.
+fn sized(buffer: &wgpu::Buffer, bytes: usize) -> wgpu::BindingResource<'_> {
+    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+        buffer,
+        offset: 0,
+        size: wgpu::BufferSize::new(bytes as u64),
     })
-}
-
-/// `RiverVertex`'s locations.
-fn river_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4];
-    wgpu::VertexBufferLayout {
-        array_stride: size_of::<RiverVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &ATTRIBUTES,
-    }
 }
 
 /// The light of the sea around an eye at `eye` under its surface,
@@ -1078,42 +843,95 @@ pub(crate) fn underwater(environment: &Environment, eye: Vec3, seconds: f64) -> 
     [color.x, color.y, color.z, ocean.clarity]
 }
 
-/// The sea's GPU state: its uniform, and one-texel placeholders for the
-/// water group's textures, which only terrains' water reads.
-fn ocean_draw(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    layout: &crate::pipelines::GroupLayout,
-) -> OceanDraw {
-    let texture = |label, format| {
-        crate::targets::texture_2d(
-            device,
-            label,
-            (1, 1),
-            1,
-            1,
-            format,
-            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        )
-    };
-    let surface = texture("engine/ocean-surface", wgpu::TextureFormat::R32Float);
-    let info = texture("engine/ocean-info", wgpu::TextureFormat::Rgba8Unorm);
-    for (texture, bytes) in [(&surface, [0_u8; 4]), (&info, [0_u8; 4])] {
-        queue.write_texture(
-            texture.as_image_copy(),
-            &bytes,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
+/// The water uniform's ripples: their strength in `water`, and how strongly
+/// `wind` gusts and its velocity.
+fn ripples(water: Water, wind: Wind) -> [f32; 4] {
+    [
+        water.ripples,
+        wind.gusts,
+        wind.velocity[0],
+        wind.velocity[1],
+    ]
+}
+
+/// Per meter, how fast water whose light halves over `clarity` meters and
+/// which scatters back `color` takes each channel (rgb): a channel as fast
+/// as the color's luminance exceeds the channel's share of it (at most
+/// eight times), weighted so the light's luminance halves over the
+/// clarity. The channels water's color holds least go first, so the
+/// ground behind it tints toward that color, and water as gray as its
+/// color takes all alike.
+fn absorption(color: [f32; 3], clarity: f32) -> [f32; 4] {
+    const LUMINANCE: [f32; 3] = [0.2126, 0.7152, 0.0722];
+    let luminance = max(
+        color[0] * LUMINANCE[0] + color[1] * LUMINANCE[1] + color[2] * LUMINANCE[2],
+        1.0e-4,
+    );
+    let weights = color.map(|channel| luminance / max(channel, luminance * 0.125));
+    let mean = weights[0] * LUMINANCE[0] + weights[1] * LUMINANCE[1] + weights[2] * LUMINANCE[2];
+    let rate = std::f32::consts::LN_2 / max(clarity, 0.01) / mean;
+    [weights[0] * rate, weights[1] * rate, weights[2] * rate, 0.0]
+}
+
+/// The water group's stand-ins for what the sea reads none of, and the
+/// color's for frames blending water.
+fn placeholders(device: &wgpu::Device) -> Placeholders {
+    let array = |label, format| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
                 width: 1,
                 height: 1,
                 depth_or_array_layers: 1,
             },
-        );
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+    };
+    let scene = array(
+        "engine/water-placeholder-scene",
+        wgpu::TextureFormat::Rgba8Unorm,
+    );
+    Placeholders {
+        scene: scene.create_view(&wgpu::TextureViewDescriptor::default()),
+        surfaces: array("engine/water-placeholder", wgpu::TextureFormat::R32Float),
+        info: array(
+            "engine/water-placeholder-info",
+            wgpu::TextureFormat::Rgba8Snorm,
+        ),
+        views: crate::buffers::uniform(
+            device,
+            "engine/water-placeholder-view",
+            size_of::<ViewUniform>() as u64,
+        ),
+        terrains: crate::buffers::uniform(
+            device,
+            "engine/water-placeholder-terrain",
+            size_of::<TerrainUniform>() as u64,
+        ),
     }
+}
+
+/// The sea's GPU state: its uniform, and its group binding `waves` and
+/// `placeholders` for what only tiles' water reads.
+fn ocean_draw(
+    device: &wgpu::Device,
+    layout: &crate::pipelines::GroupLayout,
+    placeholders: &Placeholders,
+    waves: &WaterWaves,
+) -> OceanDraw {
+    let (moments, sampler) = waves.sampled();
+    let array = |texture: &wgpu::Texture| {
+        texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        })
+    };
+    let (surfaces, info) = (array(&placeholders.surfaces), array(&placeholders.info));
     let uniform = crate::buffers::uniform(device, "engine/ocean", WATER_UNIFORM_BYTES as u64);
     let group = crate::pipelines::group(
         device,
@@ -1121,32 +939,26 @@ fn ocean_draw(
         &WATER,
         layout,
         &[
+            ("terrain_heights", crate::pipelines::view(&surfaces)),
             (
-                "water_surface",
-                crate::pipelines::view(&surface.create_view(&Default::default())),
+                "terrain_view",
+                sized(&placeholders.views, size_of::<ViewUniform>()),
             ),
             (
-                "water_info",
-                crate::pipelines::view(&info.create_view(&Default::default())),
+                "terrain",
+                sized(&placeholders.terrains, size_of::<TerrainUniform>()),
             ),
+            ("water_surface", crate::pipelines::view(&surfaces)),
+            ("water_info", crate::pipelines::view(&info)),
             ("water", uniform.as_entire_binding()),
+            ("water_waves", crate::pipelines::view(moments)),
+            ("water_wave_sampler", crate::pipelines::sampler(sampler)),
         ],
     );
     OceanDraw {
-        _textures: [surface, info],
         uniform,
         group,
         rings: 0,
         runs: Vec::new(),
     }
-}
-
-/// A buffer of `bytes` of chunk records.
-fn chunk_buffer(device: &wgpu::Device, bytes: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("engine/water-chunks"),
-        size: bytes,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
 }

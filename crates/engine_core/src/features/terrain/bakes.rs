@@ -78,7 +78,7 @@ pub(super) fn bake(
     };
     if let Some(baked) = baked {
         match &baked {
-            Baked::Hydrology(found) => state.hydrology = Some(found.stats),
+            Baked::Hydrology(found) => state.hydrology = HydrologyState::baked(found.stats),
             Baked::Erosion(found) => state.erosion = Some(found.stats),
             Baked::Path(_) => {}
         }
@@ -142,7 +142,7 @@ pub(super) fn bake_on_worker(
         match layer {
             Layer::Hydrology(HydrologyStage {
                 baked: Some(found), ..
-            }) => state.hydrology = Some(found.stats),
+            }) => state.hydrology = HydrologyState::baked(found.stats),
             Layer::Erosion(ErosionStage {
                 baked: Some(found), ..
             }) => state.erosion = Some(found.stats),

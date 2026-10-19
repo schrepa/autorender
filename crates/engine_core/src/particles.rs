@@ -42,6 +42,12 @@ pub enum ParticleBlend {
     Alpha,
     /// Adding their light, unlit: sparks, fire, glowing embers.
     Additive,
+    /// Balls of mist thinning out from their middles, each stopping as much
+    /// light as the view crosses of it up to the surfaces behind (its
+    /// alpha is what a view through its middle stops), torn by noise and
+    /// lit by the sky and the sun it scatters forward: spray, steam, fog
+    /// banks.
+    Mist,
 }
 
 settings! {

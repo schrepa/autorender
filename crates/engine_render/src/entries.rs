@@ -228,21 +228,21 @@ pub(crate) fn water(targets: Targets) -> (Entry, Entry) {
     }
 }
 
-/// Rivers' vertex and fragment stages into `targets`.
-pub(crate) fn river(targets: Targets) -> (Entry, Entry) {
-    match targets {
-        Targets::Canvas => (meshes::vs_river, meshes::fs_water),
-        Targets::Post => (meshes::vs_river, meshes::fs_water_post),
-        Targets::Temporal => (meshes::vs_river_temporal, meshes::fs_water_temporal),
-    }
-}
-
 /// The sea's vertex and fragment stages into `targets`.
 pub(crate) fn ocean(targets: Targets) -> (Entry, Entry) {
     match targets {
         Targets::Canvas => (meshes::vs_ocean, meshes::fs_ocean),
         Targets::Post => (meshes::vs_ocean, meshes::fs_ocean_post),
         Targets::Temporal => (meshes::vs_ocean_temporal, meshes::fs_ocean_temporal),
+    }
+}
+
+/// Falls' sheets' vertex and fragment stages into `targets`.
+pub(crate) fn falls(targets: Targets) -> (Entry, Entry) {
+    match targets {
+        Targets::Canvas => (meshes::vs_fall, meshes::fs_fall),
+        Targets::Post => (meshes::vs_fall, meshes::fs_fall_post),
+        Targets::Temporal => (meshes::vs_fall_temporal, meshes::fs_fall_temporal),
     }
 }
 

@@ -264,6 +264,11 @@ fn mismatch(
                 {
                     return Ok(None);
                 }
+                (naga::ImageClass::Storage { format: stored, .. }, Kind::StorageArray(table))
+                    if view == Some(View::D2Array) && format(*stored) == Some(table) =>
+                {
+                    return Ok(None);
+                }
                 (naga::ImageClass::Storage { .. }, _) => {
                     "a storage texture of the shader's format and dimension"
                 }
@@ -657,7 +662,9 @@ impl Resource {
             Kind::Read { .. } | Kind::Write => Resource::StorageBuffer,
             Kind::Texture { .. } => Resource::SampledTexture,
             Kind::Sampler(_) => Resource::Sampler,
-            Kind::Storage(_) | Kind::Storage3d(_) => Resource::StorageTexture,
+            Kind::Storage(_) | Kind::Storage3d(_) | Kind::StorageArray(_) => {
+                Resource::StorageTexture
+            }
         }
     }
 

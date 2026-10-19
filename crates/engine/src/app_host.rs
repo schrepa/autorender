@@ -778,6 +778,7 @@ impl AppHost {
                 .saturating_sub(u64::from(view_width) * u64::from(view_height)),
             jobs: engine_core::JobStats::default(),
             navigation: engine_core::NavStats::default(),
+            physics: engine_core::PhysicsStats::default(),
             disabled_features: self.renderer.disabled_features(),
             render: rendered,
         };
@@ -806,6 +807,13 @@ impl AppHost {
                 .world()
                 .get_resource::<engine_core::Jobs>()
                 .map(engine_core::Jobs::stats)
+                .unwrap_or_default(),
+            physics: self
+                .engine
+                .app
+                .world()
+                .get_resource::<engine_physics::PhysicsWorld>()
+                .map(engine_physics::PhysicsWorld::stats)
                 .unwrap_or_default(),
             ..self.stats
         }

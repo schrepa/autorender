@@ -136,10 +136,6 @@ pub struct RenderTerrain {
     /// but the coarsest morphs into the next over its last quarter
     /// ([`LodRanges`]): where renderers find the ground as drawn.
     pub ranges: Vec<f32>,
-    /// Where its hydrology bake found lakes standing, and
-    /// its rivers.
-    pub water: Option<Arc<engine_terrain::WaterGrid>>,
-    pub rivers: Option<Arc<engine_terrain::Rivers>>,
     /// Whether it is a terrain's surroundings, which grow
     /// no blades: their grassy ground shows as canopy at every distance.
     pub surroundings: bool,
@@ -151,6 +147,9 @@ pub struct RenderTerrain {
     /// Its surface for the GPU to give its tiles control values,
     /// which they then hold none of; `None` where they hold them.
     pub gpu_surface: Option<Arc<engine_terrain::gpu::SurfaceData>>,
+    /// Where its rivers leave their beds (terrain-local): renderers draw
+    /// their jets where water draws.
+    pub falls: Arc<[Fall]>,
 }
 
 /// The frame's terrains.
@@ -200,12 +199,11 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 patches: Vec::new(),
                 reach: Vec::new(),
                 ranges: Vec::new(),
-                water: None,
-                rivers: None,
                 surroundings: false,
                 may_hole: false,
                 hydrology: false,
                 gpu_surface: None,
+                falls: Arc::from(Vec::new()),
             });
         }
         let render = &mut listing.terrains[index];
@@ -258,9 +256,6 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         if enabled {
             render.patches.extend_from_slice(&state.selection.patches);
         }
-        let hydrology = state.baked.as_ref().and_then(|layers| layers.hydrology());
-        render.water = hydrology.map(|hydrology| Arc::clone(&hydrology.water));
-        render.rivers = hydrology.map(|hydrology| Arc::clone(&hydrology.rivers));
         render.gpu_surface = if state.materials {
             None
         } else {
@@ -271,5 +266,6 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
             .reach
             .extend(state.ranges.iter().map(|range| range * LOAD_REACH));
         render.ranges.clone_from(&state.ranges);
+        render.falls = state.falls.clone();
     }
 }

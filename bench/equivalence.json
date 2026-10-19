@@ -8,7 +8,8 @@
     "ocean": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
     "deformation": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
     "navigation": "Only the terrain workloads (highlands, the terrain fixture) hold it. On the frame clock (2026-10-12) highlands' overview repeats its image but its other views and the fixture still vary, and a highlands run takes about 2.5 min to settle, so cells toggling it wait for steadier terrain images; the terrain smokes toggle it.",
-    "world_streaming": "No cell's scene streams world cells; the streaming smoke drives them."
+    "world_streaming": "No cell's scene streams world cells; the streaming smoke drives them.",
+    "physics": "No cell's scene holds rigid bodies, which move only once a scene authors them; the physics smoke switches the section."
   },
   "cells": [
     {

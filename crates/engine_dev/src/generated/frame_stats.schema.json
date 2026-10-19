@@ -506,6 +506,63 @@
       ],
       "type": "object"
     },
+    "PhysicsStats": {
+      "description": "Physics at the last fixed tick, read when the stats are.",
+      "properties": {
+        "awake": {
+          "description": "Of them, awake: moving, or pushed this tick.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bodies": {
+          "description": "Bodies the solver holds.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "contacts": {
+          "description": "Contacts touching between bodies and solids or each other.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "held": {
+          "description": "Of them, held still where the world's solids under them are not\nresident yet.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "solids": {
+          "description": "The world's solids the solver holds for bodies to meet: terrain\ntiles, placed objects and colliders near them.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "water_samples": {
+          "description": "Samples of the world's water the tick's bodies took.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wet": {
+          "description": "Of them, in water.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "bodies",
+        "awake",
+        "held",
+        "wet",
+        "solids",
+        "contacts",
+        "water_samples"
+      ],
+      "type": "object"
+    },
     "ProbeStats": {
       "description": "Reflection probes.",
       "properties": {
@@ -894,17 +951,31 @@
       "type": "object"
     },
     "WaterStats": {
-      "description": "Terrains' lakes and rivers.",
+      "description": "Terrains' water, as their tiles hold it.",
       "properties": {
-        "chunks": {
-          "description": "Chunks of lakes' and rivers' ribbons drawn.",
+        "blocks": {
+          "description": "Blocks of tiles' water resident on the GPU, a patch's each.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped_blocks": {
+          "description": "Blocks this frame dropped for want of the device's texture array\nlayers, whose water does not draw.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "patches": {
+          "description": "Terrain patches holding water drawn.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }
       },
       "required": [
-        "chunks"
+        "patches",
+        "blocks",
+        "dropped_blocks"
       ],
       "type": "object"
     }
@@ -1056,6 +1127,10 @@
     "particles": {
       "$ref": "#/$defs/Drawn",
       "description": "Particles."
+    },
+    "physics": {
+      "$ref": "#/$defs/PhysicsStats",
+      "description": "Rigid bodies at the last fixed tick, read when the stats are."
     },
     "pipelines": {
       "description": "Pipelines the renderer has created.",
@@ -1251,6 +1326,7 @@
     "dropped_view_pixels",
     "jobs",
     "navigation",
+    "physics",
     "disabled_features",
     "draw_calls",
     "upload_bytes",
