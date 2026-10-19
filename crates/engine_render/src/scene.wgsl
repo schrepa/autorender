@@ -41,7 +41,8 @@ struct Lighting {
     // light glows, the roughness beyond which surfaces
     // reflect only the sky, and 1 when screen-space reflections run.
     effects: vec4<f32>,
-    // Contrast and vibrance.
+    // Contrast and vibrance; 1 with the physically based sky; 1 when 8-bit
+    // color writes dither.
     grade: vec4<f32>,
     // Split toning: luminance-normalized gains of shadows and highlights.
     shadow_tint: vec4<f32>,
@@ -226,10 +227,30 @@ fn stable_normalize(value: vec3<f32>) -> vec3<f32> {
     return normalize(value / scale);
 }
 
-// Graded linear color as the canvas stores it: WebGPU canvases are UNORM,
-// so shaders drawing into them encode sRGB themselves.
-fn encoded(color: vec3<f32>) -> vec3<f32> {
-    return encode_srgb(color);
+// Whether 8-bit color writes dither (`lighting.grade.w`).
+fn dithering() -> bool {
+    return lighting.grade.w != 0.0;
+}
+
+// Graded linear color as the canvas stores it at `pixel`: WebGPU canvases
+// are UNORM, so shaders drawing into them encode sRGB themselves, and dither
+// it when 8-bit writes do, by the noise temporally antialiased frames turn.
+fn encoded(color: vec3<f32>, pixel: vec2<f32>) -> vec3<f32> {
+    let value = encode_srgb(color);
+    if !dithering() {
+        return value;
+    }
+    return dithered(value, pixel, camera.options.z, 0u);
+}
+
+// Graded linear color as the sRGB scene target stores it at `pixel`: as it
+// is, or when 8-bit writes dither, dithered in the encoding the target
+// stores.
+fn stored(color: vec3<f32>, pixel: vec2<f32>) -> vec3<f32> {
+    if !dithering() {
+        return color;
+    }
+    return decode_srgb(dithered(encode_srgb(color), pixel, camera.options.z, 0u));
 }
 
 // The sky's light in `direction` without the sun's disc: horizon to zenith

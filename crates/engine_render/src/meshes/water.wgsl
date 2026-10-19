@@ -742,10 +742,10 @@ struct WaterShade {
     fade: f32,
 }
 
-// Water's light and what shows through it as its targets' color: the scene
-// covered but where the shores fade it out.
-fn water_covering(shade: WaterShade) -> vec4<f32> {
-    return vec4<f32>((shade.shaded.color + shade.behind) * shade.fade, shade.fade);
+// Water's light and what shows through it as its targets' color at `pixel`:
+// the scene covered but where the shores fade it out.
+fn water_covering(shade: WaterShade, pixel: vec2<f32>) -> vec4<f32> {
+    return vec4<f32>(stored(shade.shaded.color + shade.behind, pixel) * shade.fade, shade.fade);
 }
 
 // Flowing water's ripples: two sets, each carried
@@ -1169,14 +1169,15 @@ fn water_temporal_output(input: WaterTemporalOutput) -> WaterOutput {
 @fragment
 fn fs_water(input: WaterOutput) -> @location(0) vec4<f32> {
     let shade = shade_water(input, false, false);
-    return vec4<f32>(encoded(shade.shaded.color) * shade.coverage, shade.coverage);
+    return vec4<f32>(encoded(shade.shaded.color, input.clip_position.xy) * shade.coverage,
+        shade.coverage);
 }
 
 @fragment
 fn fs_water_post(input: WaterOutput) -> SceneTargets {
     let shade = shade_water(input, true, false);
-    var targets = scene_targets(shade.shaded);
-    targets.color = water_covering(shade);
+    var targets = scene_targets(shade.shaded, input.clip_position.xy);
+    targets.color = water_covering(shade, input.clip_position.xy);
     return targets;
 }
 
@@ -1184,7 +1185,7 @@ fn fs_water_post(input: WaterOutput) -> SceneTargets {
 fn fs_water_temporal(input: WaterTemporalOutput) -> TemporalTargets {
     let shade = shade_water(water_temporal_output(input), true, false);
     var targets = temporal_targets(shade.shaded, input.clip_position, input.previous);
-    targets.color = water_covering(shade);
+    targets.color = water_covering(shade, input.clip_position.xy);
     return targets;
 }
 
@@ -1343,14 +1344,15 @@ fn vs_sim_water_temporal(@builtin(vertex_index) index: u32) -> WaterTemporalOutp
 @fragment
 fn fs_sim_water(input: WaterOutput) -> @location(0) vec4<f32> {
     let shade = shade_water(input, false, true);
-    return vec4<f32>(encoded(shade.shaded.color) * shade.coverage, shade.coverage);
+    return vec4<f32>(encoded(shade.shaded.color, input.clip_position.xy) * shade.coverage,
+        shade.coverage);
 }
 
 @fragment
 fn fs_sim_water_post(input: WaterOutput) -> SceneTargets {
     let shade = shade_water(input, true, true);
-    var targets = scene_targets(shade.shaded);
-    targets.color = water_covering(shade);
+    var targets = scene_targets(shade.shaded, input.clip_position.xy);
+    targets.color = water_covering(shade, input.clip_position.xy);
     return targets;
 }
 
@@ -1358,6 +1360,6 @@ fn fs_sim_water_post(input: WaterOutput) -> SceneTargets {
 fn fs_sim_water_temporal(input: WaterTemporalOutput) -> TemporalTargets {
     let shade = shade_water(water_temporal_output(input), true, true);
     var targets = temporal_targets(shade.shaded, input.clip_position, input.previous);
-    targets.color = water_covering(shade);
+    targets.color = water_covering(shade, input.clip_position.xy);
     return targets;
 }

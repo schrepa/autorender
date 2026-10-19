@@ -880,9 +880,10 @@ fn surface_texel(shaded: Shaded) -> vec4<f32> {
     return vec4<f32>(octahedral_coordinates(shaded.normal) * 0.5 + 0.5, shaded.roughness, 1.0);
 }
 
-fn scene_targets(shaded: Shaded) -> SceneTargets {
+// `pixel` is the fragment's.
+fn scene_targets(shaded: Shaded, pixel: vec2<f32>) -> SceneTargets {
     var targets: SceneTargets;
-    targets.color = vec4<f32>(shaded.color, shaded.ambient);
+    targets.color = vec4<f32>(stored(shaded.color, pixel), shaded.ambient);
     targets.glow = vec2<f32>(shaded.glow, shaded.reflect);
     targets.surface = surface_texel(shaded);
     return targets;
@@ -893,7 +894,7 @@ fn scene_targets(shaded: Shaded) -> SceneTargets {
 fn temporal_targets(shaded: Shaded, clip_position: vec4<f32>, previous: vec3<f32>)
         -> TemporalTargets {
     var targets: TemporalTargets;
-    targets.color = vec4<f32>(shaded.color, shaded.ambient);
+    targets.color = vec4<f32>(stored(shaded.color, clip_position.xy), shaded.ambient);
     targets.glow = vec2<f32>(shaded.glow, shaded.reflect);
     targets.surface = surface_texel(shaded);
     // This pixel center without the jitter, and the same point last frame.

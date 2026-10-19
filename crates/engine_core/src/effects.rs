@@ -290,6 +290,34 @@ impl Bloom {
 }
 
 settings! {
+    /// Dithering: every write of color into an 8-bit target (the canvas, the
+    /// screen effects' scene and temporal antialiasing's history) adds noise
+    /// of about one step of what the target stores, so smooth gradients such
+    /// as dusk skies, fog and dark interiors show no bands, and temporal
+    /// antialiasing's history settles on the color instead of stopping a few
+    /// steps short. The noise is fixed per pixel, and turns every frame under
+    /// temporal antialiasing, which averages it. Off by default.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneDither")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Dither {
+        /// Whether 8-bit color writes dither.
+        pub enabled: bool = false => any,
+    }
+}
+
+impl Dither {
+    /// What a world without these settings reads as: no dithering.
+    pub fn off() -> Self {
+        Self { enabled: false }
+    }
+}
+
+settings! {
     /// Sun shafts: sunlight scattered by the fog between shadow
     /// casters. Requires shadows; an intensity of 0 turns them
     /// off.

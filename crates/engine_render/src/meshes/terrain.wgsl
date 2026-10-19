@@ -1735,13 +1735,13 @@ fn terrain_resolved(position: vec4<f32>, dither: f32) -> TerrainResolved {
 
 @fragment
 fn fs_terrain_resolve_post(@builtin(position) position: vec4<f32>) -> SceneTargets {
-    return scene_targets(finish(terrain_resolved(position, 0.5).point, vec3<f32>(0.0)));
+    return scene_targets(finish(terrain_resolved(position, 0.5).point, vec3<f32>(0.0)), position.xy);
 }
 
 @fragment
 fn fs_terrain_resolve_post_lit(@builtin(position) position: vec4<f32>) -> SceneTargets {
     let point = terrain_resolved(position, 0.5).point;
-    return scene_targets(finish(point, local_light(point, position.xy)));
+    return scene_targets(finish(point, local_light(point, position.xy)), position.xy);
 }
 
 @fragment
@@ -1781,22 +1781,22 @@ fn terrain_temporal_output(input: TerrainTemporalOutput) -> TerrainOutput {
 
 @fragment
 fn fs_terrain(input: TerrainOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_terrain(input).color), 1.0);
+    return vec4<f32>(encoded(shade_terrain(input).color, input.clip_position.xy), 1.0);
 }
 
 @fragment
 fn fs_terrain_lit(input: TerrainOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_terrain_lit(input).color), 1.0);
+    return vec4<f32>(encoded(shade_terrain_lit(input).color, input.clip_position.xy), 1.0);
 }
 
 @fragment
 fn fs_terrain_post(input: TerrainOutput) -> SceneTargets {
-    return scene_targets(shade_terrain(input));
+    return scene_targets(shade_terrain(input), input.clip_position.xy);
 }
 
 @fragment
 fn fs_terrain_post_lit(input: TerrainOutput) -> SceneTargets {
-    return scene_targets(shade_terrain_lit(input));
+    return scene_targets(shade_terrain_lit(input), input.clip_position.xy);
 }
 
 @fragment

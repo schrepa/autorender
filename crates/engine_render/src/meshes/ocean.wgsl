@@ -283,14 +283,15 @@ fn ocean_temporal_output(input: OceanTemporalOutput) -> OceanOutput {
 @fragment
 fn fs_ocean(input: OceanOutput) -> @location(0) vec4<f32> {
     let shade = shade_ocean(input, false);
-    return vec4<f32>(encoded(shade.shaded.color) * shade.coverage, shade.coverage);
+    return vec4<f32>(encoded(shade.shaded.color, input.clip_position.xy) * shade.coverage,
+        shade.coverage);
 }
 
 @fragment
 fn fs_ocean_post(input: OceanOutput) -> SceneTargets {
     let shade = shade_ocean(input, true);
-    var targets = scene_targets(shade.shaded);
-    targets.color = water_covering(shade);
+    var targets = scene_targets(shade.shaded, input.clip_position.xy);
+    targets.color = water_covering(shade, input.clip_position.xy);
     return targets;
 }
 
@@ -298,6 +299,6 @@ fn fs_ocean_post(input: OceanOutput) -> SceneTargets {
 fn fs_ocean_temporal(input: OceanTemporalOutput) -> TemporalTargets {
     let shade = shade_ocean(ocean_temporal_output(input), true);
     var targets = temporal_targets(shade.shaded, input.clip_position, input.previous);
-    targets.color = water_covering(shade);
+    targets.color = water_covering(shade, input.clip_position.xy);
     return targets;
 }

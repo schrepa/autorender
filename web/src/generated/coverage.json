@@ -748,6 +748,14 @@
       "stats": true
     },
     {
+      "inspector": "Dither",
+      "section": "dither",
+      "smokes": [
+        "taa"
+      ],
+      "stats": false
+    },
+    {
       "inspector": "LocalLightSettings",
       "section": "local_lights",
       "smokes": [

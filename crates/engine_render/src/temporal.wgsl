@@ -16,6 +16,9 @@ struct Resolve {
     current_weight: f32,
     // Zero after a reset: the history must not be read.
     history_valid: u32,
+    // x: this frame's turn of the dither (the camera's `options.z`); yzw
+    // unused.
+    options: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> resolve: Resolve;
@@ -120,6 +123,17 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     output.history = vec4<f32>(color, 1.0);
     let shown = effect_light(color, effects, reflections, bloom, history_sampler, screen, post);
     // The UNORM canvas stores encoded color.
-    output.canvas = vec4<f32>(encode_srgb(shown), 1.0);
+    var encoded = encode_srgb(shown);
+    // Dithered 8-bit writes turn their noise every frame: the history then
+    // averages to the color, where rounding would stop it short by up to
+    // half a step over this frame's weight (five steps at 0.1), and the
+    // canvas shows no bands.
+    if post.sun_direction.w != 0.0 {
+        let turn = resolve.options.x;
+        output.history = vec4<f32>(decode_srgb(dithered(encode_srgb(color), position.xy, turn,
+            1u)), 1.0);
+        encoded = dithered(encoded, position.xy, turn, 2u);
+    }
+    output.canvas = vec4<f32>(encoded, 1.0);
     return output;
 }

@@ -82,8 +82,9 @@ struct TransparentPass {
     layout: crate::pipelines::GroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
     module: wgpu::ShaderModule,
-    // Composites into the canvas and into the scene target (leaving glow).
-    composite: [Option<wgpu::RenderPipeline>; 2],
+    // Composites into the canvas and into the scene target (leaving glow),
+    // then the same dithering their 8-bit writes.
+    composite: [Option<wgpu::RenderPipeline>; 4],
     surface_format: wgpu::TextureFormat,
     depth_format: wgpu::TextureFormat,
     targets: ScreenTarget<Targets>,
@@ -109,7 +110,7 @@ impl TransparentPass {
             layout,
             pipeline_layout,
             module,
-            composite: [None, None],
+            composite: Default::default(),
             surface_format,
             depth_format,
             targets: ScreenTarget::default(),
@@ -180,9 +181,9 @@ impl TransparentPass {
     }
 
     /// Creates the composite into the canvas or, with `post`, the scene
-    /// target beside the glow target.
-    fn ensure_composite(&mut self, device: &wgpu::Device, post: bool) {
-        let index = usize::from(post);
+    /// target beside the glow target, dithering its writes with `dither`.
+    fn ensure_composite(&mut self, device: &wgpu::Device, post: bool, dither: bool) {
+        let index = composite_index(post, dither);
         if self.composite[index].is_some() {
             return;
         }
@@ -216,7 +217,10 @@ impl TransparentPass {
                 write_mask: wgpu::ColorWrites::empty(),
             }));
         }
-        let constants = [("TARGET_IS_SRGB", if format.is_srgb() { 1.0 } else { 0.0 })];
+        let constants = [
+            ("TARGET_IS_SRGB", if format.is_srgb() { 1.0 } else { 0.0 }),
+            ("DITHER", if dither { 1.0 } else { 0.0 }),
+        ];
         self.composite[index] = Some(crate::pipelines::fullscreen(
             device,
             &crate::pipelines::Fullscreen {
@@ -239,12 +243,22 @@ impl TransparentPass {
     }
 
     /// Draws the composite; call [`Self::ensure_composite`] first.
-    fn composite(&self, pass: &mut wgpu::RenderPass<'_>, post: bool) {
+    fn composite(&self, pass: &mut wgpu::RenderPass<'_>, post: bool, dither: bool) {
         let targets = self.targets.get().expect("sized in begin");
-        pass.set_pipeline(self.composite[usize::from(post)].as_ref().expect("ensured"));
+        pass.set_pipeline(
+            self.composite[composite_index(post, dither)]
+                .as_ref()
+                .expect("ensured"),
+        );
         pass.set_bind_group(0, &targets.group, &[]);
         pass.draw(0..3, 0..1);
     }
+}
+
+/// The composite pipeline of frames into the scene target (`post`) or the
+/// canvas, dithering or not.
+fn composite_index(post: bool, dither: bool) -> usize {
+    usize::from(post) + 2 * usize::from(dither)
 }
 
 /// Transparent surfaces and particles: the accumulation targets and their
@@ -257,10 +271,11 @@ pub(crate) struct Transparency {
 }
 
 /// What a frame draws transparent: whether the renderer's transparent mesh
-/// batches draw, and its particles.
+/// batches draw, and its particles; and whether its composite dithers.
 pub(crate) struct TransparencyFrame {
     meshes: bool,
     particles: Option<ParticleFrame>,
+    dither: bool,
 }
 
 impl Transparency {
@@ -316,8 +331,13 @@ impl Transparency {
             .surfaces
             .get_or_insert_with(|| TransparentPass::new(device, surface_format, depth_format));
         surfaces.begin(device, size);
-        surfaces.ensure_composite(device, post);
-        Some(TransparencyFrame { meshes, particles })
+        let dither = snapshot.environment.dither.enabled;
+        surfaces.ensure_composite(device, post, dither);
+        Some(TransparencyFrame {
+            meshes,
+            particles,
+            dither,
+        })
     }
 
     /// The surfaces, which every frame drawing something transparent has.
@@ -390,7 +410,7 @@ impl RenderFeature for Transparency {
                     .span("transparent_composite")
                     .map(Span::render),
             );
-            self.surfaces().composite(&mut pass, post);
+            self.surfaces().composite(&mut pass, post, frame.dither);
             if let (Some(particles_frame), Some(particles)) = (&frame.particles, &self.particles) {
                 particles.draw_additive(&mut pass, encode.camera, particles_frame, post);
             }

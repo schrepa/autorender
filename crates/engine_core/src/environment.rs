@@ -59,6 +59,7 @@ macro_rules! environment_sections {
             shadows: Shadows { opt_in: false, feature: Core },
             ambient_occlusion: AmbientOcclusion { opt_in: false, feature: Core },
             bloom: Bloom { opt_in: false, feature: Core },
+            dither: Dither { opt_in: false, feature: Core },
             local_lights: LocalLightSettings { opt_in: false, feature: Core },
             sun_shafts: SunShafts { opt_in: true, feature: Core },
             reflections: Reflections { opt_in: true, feature: Core },

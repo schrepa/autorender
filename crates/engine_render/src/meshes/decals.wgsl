@@ -183,24 +183,25 @@ fn decal_point(input: DecalOutput) -> SurfacePoint {
     return point;
 }
 
-// Graded color and alpha as the target stores them.
-fn decal_output(color: vec3<f32>, alpha: f32) -> vec4<f32> {
+// Graded color and alpha as the target stores them at `pixel`.
+fn decal_output(color: vec3<f32>, alpha: f32, pixel: vec2<f32>) -> vec4<f32> {
     if DECAL_CANVAS {
-        return vec4<f32>(encoded(color), alpha);
+        return vec4<f32>(encoded(color, pixel), alpha);
     }
-    return vec4<f32>(color, alpha);
+    return vec4<f32>(stored(color, pixel), alpha);
 }
 
 @fragment
 fn fs_decal(input: DecalOutput) -> @location(0) vec4<f32> {
     let point = decal_point(input);
+    let pixel = input.clip_position.xy;
     if DECAL_MULTIPLY {
         // Fog hides what it covers.
         let visible = point.opacity * (1.0 - atmospheric_cover(camera.position.xyz, point.world));
-        return decal_output(mix(vec3<f32>(1.0), point.albedo, visible), 1.0);
+        return decal_output(mix(vec3<f32>(1.0), point.albedo, visible), 1.0, pixel);
     }
     // Covering decals are lit like any surface.
-    return decal_output(finish(point, vec3<f32>(0.0)).color, point.opacity);
+    return decal_output(finish(point, vec3<f32>(0.0)).color, point.opacity, pixel);
 }
 
 // Covering decals of frames with local lights.
@@ -208,5 +209,5 @@ fn fs_decal(input: DecalOutput) -> @location(0) vec4<f32> {
 fn fs_decal_lit(input: DecalOutput) -> @location(0) vec4<f32> {
     let point = decal_point(input);
     return decal_output(finish(point, local_light(point, input.clip_position.xy)).color,
-        point.opacity);
+        point.opacity, input.clip_position.xy);
 }

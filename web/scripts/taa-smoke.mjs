@@ -3,7 +3,7 @@
  * flicker when still, keep detail when moving, and how far CPU-presented
  * frames stray from the capture are measured; its settings are inspected,
  * changed by the paused environment control and observed in ordinary
- * frames. */
+ * frames, as are dithered 8-bit writes'. */
 // @ts-check
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
@@ -176,8 +176,28 @@ try {
   const invalid = await command("environment", { temporal_antialiasing: { enabled: true, samples: 8 } }, false);
   assert.equal(invalid.error.code, "unknown_field", "unknown temporal antialiasing fields are rejected");
   await command("environment", { temporal_antialiasing: { enabled: true } });
-  await run("taa-again", 30);
+  const [again] = await run("taa-again", 30);
   assert.equal((await observed()).temporal_antialiasing.active, true, "turned on again, ordinary frames resolve temporally");
+
+  // Dithered 8-bit writes, off by default and turned on by the paused
+  // environment control: how much they change converged frames, and how
+  // much a still view then flickers, measured.
+  const inspectDither = async () => (await command("inspect", { component: "Dither" })).result.value;
+  assert.deepEqual(await inspectDither(), { enabled: false }, "dithering is off by default");
+  const dither = await command("environment", { dither: { enabled: true } });
+  assert.deepEqual(dither.result.environment_changed, ["dither"]);
+  assert.deepEqual(await inspectDither(), { enabled: true });
+  const [ditherFirst, ditherSecond] = await run("taa-dither", 60);
+  results.dither = await compare([again, ditherFirst]);
+  results.dither_stable = await compare([ditherFirst, ditherSecond]);
+  measurements.push({
+    name: "dither difference", value: results.dither.mean_difference, unit: "levels",
+    note: "mean channel difference between converged still frames without and with dithered 8-bit writes",
+  }, {
+    name: "dithered still view flicker", value: results.dither_stable.changed[24] / results.dither_stable.total * 100, unit: "%",
+    note: "pixels whose largest channel differs by more than 24 levels between two converged still frames with dithering, 300 ms apart",
+  });
+  await command("environment", { dither: { enabled: false } });
 
   // Captures after temporal frames are still exact.
   const after = await capture("exact-after-taa");
@@ -210,7 +230,7 @@ try {
   await writeFile(`${output}/results.json`, JSON.stringify(results, null, 2));
   console.log(JSON.stringify({
     ok: true, artifact: output, ...results,
-    checks: ["captures_independent_of_setting", "settings_inspected", "settings_controlled", "settings_observed", "settings_validated", "captures_exact_after_temporal_frames", "moving_frames_draw", "clean_browser_diagnostics"],
+    checks: ["captures_independent_of_setting", "settings_inspected", "settings_controlled", "settings_observed", "settings_validated", "dither_controlled", "captures_exact_after_temporal_frames", "moving_frames_draw", "clean_browser_diagnostics"],
     measurements,
   }));
 } finally {

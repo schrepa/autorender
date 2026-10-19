@@ -2223,6 +2223,18 @@
       },
       "additionalProperties": false
     },
+    "SceneDither": {
+      "description": "Dithering: every write of color into an 8-bit target (the canvas, the\nscreen effects' scene and temporal antialiasing's history) adds noise\nof about one step of what the target stores, so smooth gradients such\nas dusk skies, fog and dark interiors show no bands, and temporal\nantialiasing's history settles on the color instead of stopping a few\nsteps short. The noise is fixed per pixel, and turns every frame under\ntemporal antialiasing, which averages it. Off by default.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Whether 8-bit color writes dither.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneEmitter": {
       "description": "A particle emitter on this entity.\nOmitted fields take the engine's defaults.",
       "type": "object",
@@ -2464,6 +2476,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneDeformation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dither": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDither"
             },
             {
               "type": "null"

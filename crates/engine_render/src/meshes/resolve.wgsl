@@ -187,22 +187,23 @@ fn shade_resolved_lit(resolved: Resolved) -> Shaded {
 
 @fragment
 fn fs_resolve(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_resolved(resolve_pixel(position)).color), 1.0);
+    return vec4<f32>(encoded(shade_resolved(resolve_pixel(position)).color, position.xy), 1.0);
 }
 
 @fragment
 fn fs_resolve_lit(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_resolved_lit(resolve_pixel(position)).color), 1.0);
+    return vec4<f32>(encoded(shade_resolved_lit(resolve_pixel(position)).color, position.xy),
+        1.0);
 }
 
 @fragment
 fn fs_resolve_post(@builtin(position) position: vec4<f32>) -> SceneTargets {
-    return scene_targets(shade_resolved(resolve_pixel(position)));
+    return scene_targets(shade_resolved(resolve_pixel(position)), position.xy);
 }
 
 @fragment
 fn fs_resolve_post_lit(@builtin(position) position: vec4<f32>) -> SceneTargets {
-    return scene_targets(shade_resolved_lit(resolve_pixel(position)));
+    return scene_targets(shade_resolved_lit(resolve_pixel(position)), position.xy);
 }
 
 @fragment

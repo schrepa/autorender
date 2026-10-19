@@ -206,10 +206,30 @@ impl TemporalPass {
             .filter(|last| last.size == size && last.identity == history.identity);
         let jitter = jitter_clip(jitter_offset(self.frame), size.width, size.height);
         let previous = last.map_or(view_projection, |last| last.view_projection);
+        let camera = CameraUniform::temporal(
+            view_projection,
+            frame.snapshot().camera_position,
+            frame.snapshot().elapsed_seconds,
+            previous,
+            jitter,
+            size.pixels(),
+            u64::from(self.frame),
+        );
         let uniform = ResolveUniform {
             texel: [1.0 / size.width as f32, 1.0 / size.height as f32],
             current_weight: CURRENT_WEIGHT,
             history_valid: u32::from(last.is_some()),
+            // Undithered frames leave the uniform unchanged.
+            options: [
+                if frame.snapshot().environment.dither.enabled {
+                    camera.options[2]
+                } else {
+                    0.0
+                },
+                0.0,
+                0.0,
+                0.0,
+            ],
         };
         if self
             .written
@@ -220,15 +240,7 @@ impl TemporalPass {
         }
         TemporalFrame {
             parity: (self.frame & 1) as usize,
-            camera: CameraUniform::temporal(
-                view_projection,
-                frame.snapshot().camera_position,
-                frame.snapshot().elapsed_seconds,
-                previous,
-                jitter,
-                size.pixels(),
-                u64::from(self.frame),
-            ),
+            camera,
             rasterized: jittered(view_projection, jitter),
             history_valid: last.is_some(),
             motion_valid: last.is_some_and(|last| {

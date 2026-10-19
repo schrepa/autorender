@@ -591,12 +591,14 @@ struct ImpostorTemporalTargets {
     @builtin(frag_depth) depth: f32,
 }
 
-fn impostor_color(shaded: ImpostorShaded) -> ImpostorColor {
-    return ImpostorColor(vec4<f32>(encoded(shaded.shaded.color), 1.0), shaded.depth);
+fn impostor_color(shaded: ImpostorShaded, input: ImpostorOutput) -> ImpostorColor {
+    return ImpostorColor(vec4<f32>(encoded(shaded.shaded.color, input.clip_position.xy), 1.0),
+        shaded.depth);
 }
 
-fn impostor_scene_targets(shaded: ImpostorShaded) -> ImpostorSceneTargets {
-    let targets = scene_targets(shaded.shaded);
+fn impostor_scene_targets(shaded: ImpostorShaded, input: ImpostorOutput)
+        -> ImpostorSceneTargets {
+    let targets = scene_targets(shaded.shaded, input.clip_position.xy);
     return ImpostorSceneTargets(targets.color, targets.glow, targets.surface, shaded.depth);
 }
 
@@ -609,22 +611,22 @@ fn impostor_temporal_targets(shaded: ImpostorShaded, input: ImpostorTemporalOutp
 
 @fragment
 fn fs_impostor(input: ImpostorOutput) -> ImpostorColor {
-    return impostor_color(shade_impostor(input));
+    return impostor_color(shade_impostor(input), input);
 }
 
 @fragment
 fn fs_impostor_lit(input: ImpostorOutput) -> ImpostorColor {
-    return impostor_color(shade_impostor_lit(input));
+    return impostor_color(shade_impostor_lit(input), input);
 }
 
 @fragment
 fn fs_impostor_post(input: ImpostorOutput) -> ImpostorSceneTargets {
-    return impostor_scene_targets(shade_impostor(input));
+    return impostor_scene_targets(shade_impostor(input), input);
 }
 
 @fragment
 fn fs_impostor_post_lit(input: ImpostorOutput) -> ImpostorSceneTargets {
-    return impostor_scene_targets(shade_impostor_lit(input));
+    return impostor_scene_targets(shade_impostor_lit(input), input);
 }
 
 @fragment

@@ -73,8 +73,7 @@ gpu_structs! {
         pub effects: [f32; 4],
         /// The contrast curve's weight (see
         /// [`contrast_weight`](crate::gpu_data::contrast_weight)) and vibrance;
-        /// 1 with the physically based sky; w
-        /// unused.
+        /// 1 with the physically based sky; 1 when 8-bit color writes dither.
         pub grade: [f32; 4],
         /// Luminance-normalized split-toning gains of shadows and highlights; w
         /// unused.
@@ -293,7 +292,8 @@ gpu_structs! {
         /// share of sunlight a hit takes away, the distance within which
         /// surfaces trace, and 1 when they run.
         pub contact: [f32; 4],
-        /// The unit direction toward the sun; w unused.
+        /// The unit direction toward the sun; w: 1 when 8-bit color writes
+        /// dither.
         pub sun_direction: [f32; 4],
     }
 
@@ -306,6 +306,9 @@ gpu_structs! {
         pub current_weight: f32,
         /// Zero when the history must not be read (reset).
         pub history_valid: u32,
+        /// x: this frame's turn of the dither (the camera's `options.z`); yzw
+        /// unused.
+        pub options: [f32; 4],
     }
 
     /// A GPU-presented frame, as `presentation.wgsl` reads it.

@@ -185,26 +185,29 @@ fn cover_temporal_output(input: CoverTemporalOutput) -> CoverOutput {
 
 @fragment
 fn fs_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(finish(cover_surface(input, front), vec3<f32>(0.0)).color), 1.0);
+    return vec4<f32>(encoded(finish(cover_surface(input, front), vec3<f32>(0.0)).color,
+        input.clip_position.xy), 1.0);
 }
 
 @fragment
 fn fs_cover_lit(input: CoverOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
     let point = cover_surface(input, front);
-    return vec4<f32>(encoded(finish(point, local_light(point, input.clip_position.xy)).color),
-        1.0);
+    return vec4<f32>(encoded(finish(point, local_light(point, input.clip_position.xy)).color,
+        input.clip_position.xy), 1.0);
 }
 
 @fragment
 fn fs_cover_post(input: CoverOutput, @builtin(front_facing) front: bool) -> SceneTargets {
-    return scene_targets(finish(cover_surface(input, front), vec3<f32>(0.0)));
+    return scene_targets(finish(cover_surface(input, front), vec3<f32>(0.0)),
+        input.clip_position.xy);
 }
 
 @fragment
 fn fs_cover_post_lit(input: CoverOutput, @builtin(front_facing) front: bool) -> SceneTargets {
     let point = cover_surface(input, front);
-    return scene_targets(finish(point, local_light(point, input.clip_position.xy)));
+    return scene_targets(finish(point, local_light(point, input.clip_position.xy)),
+        input.clip_position.xy);
 }
 
 @fragment

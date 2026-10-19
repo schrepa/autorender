@@ -10,6 +10,9 @@
 // Frames with screen effects composite into the sRGB scene target, which
 // encodes as it stores; others into the UNORM canvas, encoded here.
 override TARGET_IS_SRGB: bool = false;
+// Whether 8-bit color writes dither (the `dithered` noise of a fixed
+// pixel).
+override DITHER: bool = false;
 
 @fragment
 fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
@@ -22,6 +25,11 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     var color = min(sum.rgb / max(sum.a, 1.0e-5), vec3<f32>(1.0));
     if !TARGET_IS_SRGB {
         color = encode_srgb(color);
+        if DITHER {
+            color = dithered(color, position.xy, 0.0, 3u);
+        }
+    } else if DITHER {
+        color = decode_srgb(dithered(encode_srgb(color), position.xy, 0.0, 3u));
     }
     return vec4<f32>(color, 1.0 - reveal);
 }

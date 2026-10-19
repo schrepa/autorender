@@ -256,6 +256,16 @@
       }
     },
     {
+      "name": "metro-dither",
+      "tier": "full",
+      "note": "Metro with dithered 8-bit writes, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "dither": { "enabled": true } },
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
       "name": "metro-local-lights-off",
       "tier": "full",
       "note": "Metro without local lights, its environment section switched by the environment control.",

@@ -80,7 +80,8 @@ fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(grade(clouded_sky(sky_ray(input.ndc)))), 1.0);
+    return vec4<f32>(encoded(grade(clouded_sky(sky_ray(input.ndc))), input.clip_position.xy),
+        1.0);
 }
 
 // Reflection probe captures: the sky's haze without the sun's
@@ -160,7 +161,7 @@ fn fs_view_clouds(input: SkyOutput) -> @location(0) vec4<f32> {
     if covering <= 1.0e-4 {
         discard;
     }
-    return vec4<f32>(encoded(layer.rgb / covering) * covering, layer.a);
+    return vec4<f32>(encoded(layer.rgb / covering, input.clip_position.xy) * covering, layer.a);
 }
 
 // The view's clouds over the screen effects' scene target.
@@ -170,7 +171,11 @@ fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
     if layer.a >= 1.0 - 1.0e-4 {
         discard;
     }
-    return layer;
+    if !dithering() {
+        return layer;
+    }
+    let covering = 1.0 - layer.a;
+    return vec4<f32>(stored(layer.rgb / covering, input.clip_position.xy) * covering, layer.a);
 }
 
 // Screen-effect frames: the sky has no ambient occlusion; its sun glows.
@@ -178,7 +183,7 @@ fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
 fn fs_sky_post(input: SkyOutput) -> SceneTargets {
     let light = clouded_sky(sky_ray(input.ndc));
     var targets: SceneTargets;
-    targets.color = vec4<f32>(grade(light), 0.0);
+    targets.color = vec4<f32>(stored(grade(light), input.clip_position.xy), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);
     targets.surface = SKY_SURFACE;
     return targets;
@@ -190,7 +195,7 @@ fn fs_sky_temporal(input: SkyOutput) -> TemporalTargets {
     let ray = sky_ray(input.ndc);
     let light = clouded_sky(ray);
     var targets: TemporalTargets;
-    targets.color = vec4<f32>(grade(light), 0.0);
+    targets.color = vec4<f32>(stored(grade(light), input.clip_position.xy), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);
     targets.surface = SKY_SURFACE;
     let previous = camera.previous_view_projection * vec4<f32>(ray, 0.0);

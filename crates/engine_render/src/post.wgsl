@@ -677,6 +677,10 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     let effects = screen_effects(occlusion, linear, uv, post);
     let shaded = texel.rgb * effect_shade(texel.a, effects, post);
     let color = effect_light(shaded, effects, reflections, bloom, linear, uv, post);
-    // The UNORM canvas stores encoded color.
-    return vec4<f32>(encode_srgb(color), 1.0);
+    // The UNORM canvas stores encoded color, dithered when 8-bit writes are.
+    var encoded = encode_srgb(color);
+    if post.sun_direction.w != 0.0 {
+        encoded = dithered(encoded, position.xy, 0.0, 1u);
+    }
+    return vec4<f32>(encoded, 1.0);
 }

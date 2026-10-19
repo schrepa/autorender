@@ -480,7 +480,9 @@ impl PostPass {
                 .extend(0.0)
                 .to_array(),
             contact: effects.contact,
-            sun_direction: toward_sun.extend(0.0).to_array(),
+            sun_direction: toward_sun
+                .extend(f32::from(u8::from(snapshot.environment.dither.enabled)))
+                .to_array(),
         };
         if self.written != Some(uniform) {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));

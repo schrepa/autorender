@@ -5,24 +5,25 @@
 
 @fragment
 fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade(fragment(input), front).color), 1.0);
+    return vec4<f32>(encoded(shade(fragment(input), front).color, input.clip_position.xy), 1.0);
 }
 
 @fragment
 fn fs_main_lit(input: VertexOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_lit(fragment(input), front).color), 1.0);
+    return vec4<f32>(encoded(shade_lit(fragment(input), front).color, input.clip_position.xy),
+        1.0);
 }
 
 // The scene target is sRGB: it stores linear color with output encoding.
 @fragment
 fn fs_post(input: VertexOutput, @builtin(front_facing) front: bool) -> SceneTargets {
-    return scene_targets(shade(fragment(input), front));
+    return scene_targets(shade(fragment(input), front), input.clip_position.xy);
 }
 
 @fragment
 fn fs_post_lit(input: VertexOutput, @builtin(front_facing) front: bool) -> SceneTargets {
-    return scene_targets(shade_lit(fragment(input), front));
+    return scene_targets(shade_lit(fragment(input), front), input.clip_position.xy);
 }
 
 @fragment
@@ -71,13 +72,15 @@ fn fs_probe_lit(input: VertexOutput, @builtin(front_facing) front: bool)
 @fragment
 fn fs_main_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade(extended_fragment(input), front).color), 1.0);
+    return vec4<f32>(encoded(shade(extended_fragment(input), front).color,
+        input.clip_position.xy), 1.0);
 }
 
 @fragment
 fn fs_main_lit_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_lit(extended_fragment(input), front).color), 1.0);
+    return vec4<f32>(encoded(shade_lit(extended_fragment(input), front).color,
+        input.clip_position.xy), 1.0);
 }
 
 @fragment
@@ -95,13 +98,13 @@ fn fs_probe_lit_extended(input: ExtendedOutput, @builtin(front_facing) front: bo
 @fragment
 fn fs_post_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> SceneTargets {
-    return scene_targets(shade(extended_fragment(input), front));
+    return scene_targets(shade(extended_fragment(input), front), input.clip_position.xy);
 }
 
 @fragment
 fn fs_post_lit_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> SceneTargets {
-    return scene_targets(shade_lit(extended_fragment(input), front));
+    return scene_targets(shade_lit(extended_fragment(input), front), input.clip_position.xy);
 }
 
 @fragment

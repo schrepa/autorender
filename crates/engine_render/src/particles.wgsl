@@ -306,7 +306,8 @@ fn fs_particle_add(input: ParticleOutput) -> @location(0) vec4<f32> {
     if outside(input) {
         discard;
     }
-    return vec4<f32>(encoded(grade(added(input))), 0.0);
+    // Added light dithers nothing: what it adds to is.
+    return vec4<f32>(encode_srgb(grade(added(input))), 0.0);
 }
 
 struct AddedTargets {

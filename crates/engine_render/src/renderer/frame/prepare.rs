@@ -466,6 +466,8 @@ impl Renderer {
             &snapshot.environment.refraction,
             &snapshot.environment.sky,
         );
+        // Whether 8-bit color writes dither.
+        lighting.grade[3] = f32::from(u8::from(snapshot.environment.dither.enabled));
         // Under the sea, its water veils everything.
         lighting.underwater = crate::water::underwater(
             &snapshot.environment,

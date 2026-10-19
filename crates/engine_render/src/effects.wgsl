@@ -32,7 +32,8 @@ struct Post {
     // of sunlight a hit takes away, the distance within which surfaces
     // trace, and 1 when they run.
     contact: vec4<f32>,
-    // The unit direction toward the sun.
+    // The unit direction toward the sun; w: 1 when 8-bit color writes
+    // dither.
     sun_direction: vec4<f32>,
 }
 
