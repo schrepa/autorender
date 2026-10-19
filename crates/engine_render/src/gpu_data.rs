@@ -116,7 +116,11 @@ impl LightingUniform {
         bloom: &Bloom,
         reflections: &Reflections,
         refraction: &engine_core::Refraction,
-        (sky, highlights): (&engine_core::Sky, &engine_core::Highlights),
+        (sky, highlights, windows): (
+            &engine_core::Sky,
+            &engine_core::Highlights,
+            &engine_core::Windows,
+        ),
         (foliage, temporal): (&engine_core::Foliage, bool),
     ) -> Self {
         let atmosphere = atmosphere.sanitized();
@@ -125,6 +129,7 @@ impl LightingUniform {
         let sky = sky.sanitized();
         let foliage = foliage.sanitized();
         let highlights = highlights.sanitized();
+        let windows = windows.sanitized();
         // With the physically based sky the air hazes what
         // lies far away by its own extinction, thinning with height as its
         // scattering does; no fog. Its colors come from the sky's tables.
@@ -210,6 +215,15 @@ impl LightingUniform {
                 foliage.ground_blend,
             ],
             highlights: sized_highlights(&highlights, &sky),
+            windows: if windows.enabled {
+                let rise = atmosphere.sun_direction.normalize().y;
+                let elevation = engine_core::math::clamp(rise, -1.0, 1.0)
+                    .asin()
+                    .to_degrees();
+                [elevation, windows.dusk, windows.spread, windows.dark]
+            } else {
+                [0.0; 4]
+            },
         }
     }
 }
@@ -450,6 +464,7 @@ impl MaterialUniform {
             uniform.top = [r, g, b, top.coverage];
             uniform.layer = [top.roughness, 0.0, 0.0, 0.0];
         }
+        uniform.layer[1] = material.windows().map_or(0.0, |rooms| rooms as f32);
         let cutoff = match material.alpha_mode() {
             AlphaMode::Mask { cutoff } => cutoff,
             AlphaMode::Opaque | AlphaMode::Blend => 0.5,

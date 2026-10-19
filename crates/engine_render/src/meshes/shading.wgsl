@@ -881,7 +881,8 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
 }
 
 // What a fragment shades: linear color and opacity, world normal and
-// position, both texture coordinate sets, the packed surface and the pixel.
+// position, both texture coordinate sets, the packed surface, the pixel and
+// its slot's origin key (`origin_key`, shifted down).
 struct Fragment {
     color: vec4<f32>,
     normal: vec3<f32>,
@@ -890,6 +891,7 @@ struct Fragment {
     uv1: vec2<f32>,
     surface: u32,
     pixel: vec2<f32>,
+    origin: u32,
 }
 
 // Meshes without a second stream read their first coordinates as second.
@@ -909,6 +911,7 @@ fn fragment(input: VertexOutput) -> Fragment {
     values.uv1 = values.uv;
     values.surface = input.material.z;
     values.pixel = input.clip_position.xy;
+    values.origin = input.material.w >> 16u;
     return values;
 }
 
@@ -927,12 +930,56 @@ fn extended_fragment(input: ExtendedOutput) -> Fragment {
     values.uv1 = input.uv1;
     values.surface = input.material.z;
     values.pixel = input.clip_position.xy;
+    values.origin = input.material.w >> 16u;
     return values;
 }
 
+// How much of their color the windows of unlit rooms keep: the rooms behind
+// the glass are dark.
+const UNLIT_ROOM: f32 = 0.12;
+
+// Light of the rooms of windows switching on through the evening
+// (`lighting.windows`): on a material divided into rooms (`layer.y`
+// across its base color texture, square in its texels), each room of each
+// slot (`input.origin`) lights once the sun sinks below its own elevation,
+// spread around dusk; a share stays dark, and lit rooms glow brighter or
+// dimmer, cool to sodium-warm. Only light the point's texels emit; where
+// they emit by their alpha, unlit rooms' windows darken.
+fn room_light(point: SurfacePoint, input: Fragment) -> SurfacePoint {
+    let rooms = material_maps.layer.y;
+    if !WINDOWS || lighting.windows.z <= 0.0 || rooms <= 0.0 {
+        return point;
+    }
+    var base_uv = input.uv;
+    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
+        base_uv = map_uv(0u, input.uv, input.uv1);
+    }
+    let size = vec2<f32>(textureDimensions(base_color_texture));
+    let room = vec2<i32>(floor(base_uv * vec2<f32>(rooms, rooms * size.y / size.x)));
+    let key = pcg(input.origin ^ pcg(bitcast<u32>(room.x) ^ pcg(bitcast<u32>(room.y))));
+    let switched = lighting.windows.y + lighting.windows.z * (2.0 * unit(key) - 1.0);
+    var lit = point;
+    lit.emission = 0.0;
+    lit.emissive = vec3<f32>(0.0);
+    if lighting.windows.x < switched && unit(pcg(key + 1u)) >= lighting.windows.w {
+        let tint = mix(vec3<f32>(0.78, 0.88, 1.0), vec3<f32>(1.0, 0.72, 0.42),
+            unit(pcg(key + 2u)));
+        let brightness = 0.6 + 0.8 * unit(pcg(key + 3u));
+        lit.emissive = (point.albedo * point.emission + point.emissive) * tint
+            * (brightness / luminance(tint));
+    } else {
+        // The share of the point that is window: its texels' alpha.
+        let window = point.emission / max(unpack4x8unorm(input.surface).z * 16.0, 1e-4);
+        let kept = mix(1.0, UNLIT_ROOM, saturate(window));
+        lit.albedo = point.albedo * kept;
+        lit.diffuse_color = point.diffuse_color * kept;
+    }
+    return lit;
+}
+
 fn shade(input: Fragment, front: bool) -> Shaded {
-    return finish(surface_point(input.color, input.normal, input.world, input.uv, input.uv1,
-        input.surface, front), vec3<f32>(0.0));
+    return finish(room_light(surface_point(input.color, input.normal, input.world, input.uv,
+        input.uv1, input.surface, front), input), vec3<f32>(0.0));
 }
 
 // The share of a lobe of `alpha` a tube keeps when it widens the lobe along
@@ -1080,8 +1127,8 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
 }
 
 fn shade_lit(input: Fragment, front: bool) -> Shaded {
-    let point = surface_point(input.color, input.normal, input.world, input.uv, input.uv1,
-        input.surface, front);
+    let point = room_light(surface_point(input.color, input.normal, input.world, input.uv,
+        input.uv1, input.surface, front), input);
     return finish(point, local_light(point, input.pixel));
 }
 

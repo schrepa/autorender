@@ -280,6 +280,16 @@
       "captures": ["display:16"]
     },
     {
+      "name": "city-windows",
+      "tier": "full",
+      "note": "The city with its facades' rooms lighting one by one around dusk, its environment section switched by the environment control.",
+      "scene": "city",
+      "environment": { "windows": { "enabled": true } },
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
       "name": "metro-highlights",
       "tier": "full",
       "note": "Metro with highlights sized by their lights (the sun's disk, lamps' spheres and neon tubes, the cap), its environment section switched by the environment control.",

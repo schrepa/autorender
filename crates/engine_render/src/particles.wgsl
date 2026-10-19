@@ -62,13 +62,6 @@ struct ParticleOutput {
     @location(6) @interpolate(flat) sunlit: f32,
 }
 
-// PCG hash (Jarzynski and Olano).
-fn pcg(value: u32) -> u32 {
-    let state = value * 747796405u + 2891336453u;
-    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
-
 // Two unit vectors perpendicular to unit `axis` and to each other.
 fn basis(axis: vec3<f32>) -> mat2x3<f32> {
     let helper = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(axis.x) > 0.9);

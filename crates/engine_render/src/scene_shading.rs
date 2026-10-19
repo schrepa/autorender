@@ -22,16 +22,18 @@ impl SceneShading {
     const CLOUD_SHADOWS: u8 = 8;
     const OCCUPANCY: u8 = 16;
     const PROBES: u8 = 32;
+    const WINDOWS: u8 = 64;
 
     /// Every feature, as pipelines given none of the constants look up.
-    pub(crate) const ALL: Self = Self(63);
+    pub(crate) const ALL: Self = Self(127);
 
     /// The features `snapshot`'s settings let its frame hold, read as the
     /// passes filling their uniforms and bindings read them: shadows off
     /// zero the shadow lookups' uniform, and kept levels follow its
     /// settings; horizon maps exist for casting terrains with shadows on;
     /// clouds give shadows while they cover the sky; covers darken with a
-    /// strength; the probe grid lists probes while they are on.
+    /// strength; the probe grid lists probes while they are on; windows
+    /// light room by room while their section is on.
     pub(crate) fn of(snapshot: &RenderSnapshot) -> Self {
         let environment = &snapshot.environment;
         let shadows = environment.shadows.sanitized();
@@ -54,6 +56,7 @@ impl SceneShading {
                 occupancy.enabled && occupancy.strength > 0.0,
             ),
             (Self::PROBES, environment.reflection_probes.enabled),
+            (Self::WINDOWS, environment.windows.enabled),
         ];
         Self(
             features
@@ -64,7 +67,7 @@ impl SceneShading {
     }
 
     /// The override constants of pipelines shading the scene.
-    pub(crate) fn constants(self) -> [(&'static str, f64); 6] {
+    pub(crate) fn constants(self) -> [(&'static str, f64); 7] {
         let set = |bit: u8| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("SHADOW_MAPS", set(Self::SHADOW_MAPS)),
@@ -73,6 +76,7 @@ impl SceneShading {
             ("CLOUD_SHADOWS", set(Self::CLOUD_SHADOWS)),
             ("OCCUPANCY", set(Self::OCCUPANCY)),
             ("PROBES", set(Self::PROBES)),
+            ("WINDOWS", set(Self::WINDOWS)),
         ]
     }
 

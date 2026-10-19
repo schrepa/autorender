@@ -128,6 +128,11 @@ gpu_structs! {
         /// highlight's distribution times visibility reaches (0 caps none),
         /// and the radius of local lights' smallest sphere.
         pub highlights: [f32; 4],
+        /// Windows lighting room by room: the sun's elevation,
+        /// the elevation rooms switch on around and how far either side
+        /// they spread (0 while windows are lit as their textures light
+        /// them), all in degrees, and the share of rooms staying dark.
+        pub windows: [f32; 4],
     }
 
     /// Separate per-instance color, opacity and packed surface; unchanged colors
@@ -188,7 +193,8 @@ gpu_structs! {
         /// pipelines read.
         pub volume: [f32; 4],
         /// The top layer: its linear color and coverage, then its
-        /// roughness.
+        /// roughness; then the rooms across the base color texture of a
+        /// material divided into them (0 for none).
         pub top: [f32; 4],
         pub layer: [f32; 4],
     }

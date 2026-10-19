@@ -798,6 +798,14 @@
       "stats": false
     },
     {
+      "inspector": "Windows",
+      "section": "windows",
+      "smokes": [
+        "agent"
+      ],
+      "stats": false
+    },
+    {
       "inspector": "SunShafts",
       "section": "sun_shafts",
       "smokes": [

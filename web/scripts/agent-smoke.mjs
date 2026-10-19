@@ -179,9 +179,9 @@ try {
   assert.deepEqual((await cli("inspect", { component: "Environment" })).result.value, look.result.value);
   // Opt-in effects start off; an empty section turns one on with its defaults.
   assert.deepEqual([capture.result.rendering.sun_shafts.active, capture.result.rendering.reflections.active], [false, false]);
-  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, sun_shafts: {}, reflections: {}, highlights: { capped: true } });
+  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, sun_shafts: {}, reflections: {}, highlights: { capped: true }, windows: {} });
   assert.equal(night.result.temporary, true);
-  assert.deepEqual([...night.result.environment_changed].sort(), ["atmosphere", "bloom", "highlights", "reflections", "sun_shafts"]);
+  assert.deepEqual([...night.result.environment_changed].sort(), ["atmosphere", "bloom", "highlights", "reflections", "sun_shafts", "windows"]);
   assert.deepEqual(effects(night.result.rendering), [true, true, false]);
   assert.deepEqual([night.result.rendering.sun_shafts.active, night.result.rendering.reflections.active], [true, true]);
   assert.equal(night.observation.tick, after.observation.tick);
@@ -235,7 +235,7 @@ try {
   assert.notDeepEqual(savedLook.atmosphere, nightLook.result.value.atmosphere);
   // The saved environment omits the opt-in effects: they are off again.
   assert.deepEqual([savedLook.sun_shafts.intensity, savedLook.reflections.intensity], [0, 0]);
-  assert.deepEqual([savedLook.highlights.enabled, savedLook.highlights.capped], [false, false]);
+  assert.deepEqual([savedLook.highlights.enabled, savedLook.highlights.capped, savedLook.windows.enabled], [false, false, false]);
   assert.deepEqual([reloaded.result.rendering.sun_shafts.active, reloaded.result.rendering.reflections.active], [false, false]);
   const lamp = await cli("inspect", { entity: "agent-lamp", component: "LocalLight" });
   assert.equal(lamp.result.entity.components.LocalLight.intensity, 20);

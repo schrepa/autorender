@@ -173,6 +173,7 @@ pub(crate) fn import(
             world_tiling: None,
             top: None,
             grounding: None,
+            windows: None,
         });
     }
     Ok(())

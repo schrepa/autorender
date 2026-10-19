@@ -2826,6 +2826,16 @@
             }
           ]
         },
+        "windows": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWindows"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "world_streaming": {
           "anyOf": [
             {
@@ -3544,6 +3554,16 @@
           "format": "float",
           "maximum": 1.0,
           "minimum": 0.0
+        },
+        "windows": {
+          "description": "Divides the material into rooms, this many across its\nbase color texture's width and square in its texels: while the\nenvironment's `windows` are on, each room's light comes on at its own\ntime around dusk. In `[1, 4096]`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 1
         },
         "world_tiling": {
           "description": "Lays the maps from the world's axes, one repeat every\nthis many meters, instead of by texture coordinates:\nno seams and one texel density at any size, for surfaces that stay\nwhere they are, such as rocks. In `(0, 10000]`.",
@@ -6100,6 +6120,42 @@
           },
           "maxItems": 2,
           "minItems": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneWindows": {
+      "description": "Window settings.",
+      "type": "object",
+      "properties": {
+        "dark": {
+          "description": "The share of rooms that stay dark.",
+          "type": "number",
+          "format": "float",
+          "default": 0.10000000149011612,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "dusk": {
+          "description": "The sun's elevation, degrees, around which rooms switch on.",
+          "type": "number",
+          "format": "float",
+          "default": -3.0,
+          "maximum": 90.0,
+          "minimum": -90.0
+        },
+        "enabled": {
+          "description": "Whether lit windows switch on room by room as the sun sets.",
+          "type": "boolean",
+          "default": true
+        },
+        "spread": {
+          "description": "How far either side of `dusk` rooms' elevations spread, degrees.",
+          "type": "number",
+          "format": "float",
+          "default": 12.0,
+          "exclusiveMinimum": 0.0,
+          "maximum": 90.0
         }
       },
       "additionalProperties": false

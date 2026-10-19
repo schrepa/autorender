@@ -31,8 +31,9 @@ struct MaterialMaps {
     // thickness; w holds the material's variant bits.
     volume: vec4<f32>,
     // The top layer: its linear color and coverage, then
-    // its roughness. The meters one repeat of world-mapped maps covers are
-    // in `emissive.w`.
+    // its roughness; then the rooms across the base color texture of a
+    // material divided into them (0 for none). The meters one repeat of
+    // world-mapped maps covers are in `emissive.w`.
     top: vec4<f32>,
     layer: vec4<f32>,
 }

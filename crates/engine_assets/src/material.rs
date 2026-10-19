@@ -316,6 +316,7 @@ pub struct Material {
     world_tiling: Option<f32>,
     top: Option<TopLayer>,
     grounding: Option<Grounding>,
+    windows: Option<u32>,
 }
 
 impl Material {
@@ -332,8 +333,10 @@ impl Material {
     pub const OCCLUSION_STRENGTH: Rule = Rule::range(0.0, 1.0);
     /// each emissive channel,
     pub const EMISSIVE: Rule = Rule::at_least(0.0);
-    /// and the meters one repeat of world-mapped maps covers.
+    /// the meters one repeat of world-mapped maps covers,
     pub const WORLD_TILING: Rule = Rule::above_to(0.0, MAX_WORLD_TILING as f64);
+    /// and the rooms across a window material's base color texture.
+    pub const WINDOWS: Rule = Rule::range(1.0, 4096.0);
 
     pub fn new(color: [f32; 4]) -> Result<Self, AssetError> {
         for (channel, value) in color.iter().enumerate() {
@@ -361,6 +364,7 @@ impl Material {
             world_tiling: None,
             top: None,
             grounding: None,
+            windows: None,
         })
     }
 
@@ -449,6 +453,26 @@ impl Material {
     /// The meters one repeat of world-mapped maps covers, if laid so.
     pub fn world_tiling(&self) -> Option<f32> {
         self.world_tiling
+    }
+
+    /// This material divided into rooms, `rooms` across its base color
+    /// texture's width and square in its texels: while the environment's
+    /// windows switch on, each room's light comes on at its own time
+    /// around dusk. `rooms` is from 1 to [`Self::WINDOWS`]' maximum.
+    pub fn with_windows(mut self, rooms: u32) -> Result<Self, AssetError> {
+        if (rooms as f32).check("windows", Self::WINDOWS).is_err() {
+            return Err(AssetError::InvalidSurface {
+                field: "windows".into(),
+            });
+        }
+        self.windows = Some(rooms);
+        Ok(self)
+    }
+
+    /// The rooms across the base color texture of a material divided into
+    /// them.
+    pub fn windows(&self) -> Option<u32> {
+        self.windows
     }
 
     /// This material with `top` settling on its faces turned up.

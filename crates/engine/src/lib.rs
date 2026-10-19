@@ -70,10 +70,10 @@ mod games {
         TerrainSettings, Terrains, Texture, TextureHandle, TextureRef, TimeOfDay, TimeOfDayPlugin,
         Tint, TopLayer, Track, TrackDepth, Tracks, Transform, TransformEditError, Transmission,
         UvTransform, ViewSync, ViewSyncSystems, VirtualGeometry, Water, WaterKind, WaterObstacle,
-        WaterObstacles, WaterSample, WaterSource, WaterSources, Wind, WorldCells, WorldChanges,
-        WorldStreaming, WorldStreamingPlugin, WorldSync, WorldSyncSystems, Wrap, edit_transform,
-        math, remove_streamed, reset_all_interpolation, reset_interpolation, set_parent,
-        set_parents,
+        WaterObstacles, WaterSample, WaterSource, WaterSources, Wind, Windows, WorldCells,
+        WorldChanges, WorldStreaming, WorldStreamingPlugin, WorldSync, WorldSyncSystems, Wrap,
+        edit_transform, math, remove_streamed, reset_all_interpolation, reset_interpolation,
+        set_parent, set_parents,
     };
 }
 pub use games::*;

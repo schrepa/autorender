@@ -50,6 +50,7 @@ mod ticks;
 mod transform_edits;
 mod virtual_geometry;
 mod water;
+mod windows;
 
 pub use antialiasing::*;
 pub use atmosphere::*;
@@ -115,6 +116,7 @@ pub use statistics::{Distribution, median};
 pub use transform_edits::*;
 pub use virtual_geometry::*;
 pub use water::{WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource, WaterSources};
+pub use windows::*;
 
 use bevy_app::PluginsState;
 use bevy_ecs::{

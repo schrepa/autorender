@@ -489,7 +489,11 @@ impl Renderer {
             &snapshot.environment.bloom,
             &snapshot.environment.reflections,
             &snapshot.environment.refraction,
-            (&snapshot.environment.sky, &snapshot.environment.highlights),
+            (
+                &snapshot.environment.sky,
+                &snapshot.environment.highlights,
+                &snapshot.environment.windows,
+            ),
             (&snapshot.environment.foliage, temporal_frame.is_some()),
         );
         // Whether 8-bit color writes dither.

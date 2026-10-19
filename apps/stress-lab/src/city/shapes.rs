@@ -592,7 +592,14 @@ impl Library {
                     None => Material::new(color),
                 }
                 .and_then(|material| material.with_surface(self.surface(paint.tex)))
-                .and_then(|material| material.with_opacity(opacity))?;
+                .and_then(|material| material.with_opacity(opacity))
+                // Façades' window cells are rooms, eight across.
+                .and_then(|material| match paint.tex {
+                    Tex::Office | Tex::Glass | Tex::Residential | Tex::Industrial => {
+                        material.with_windows(8)
+                    }
+                    _ => Ok(material),
+                })?;
                 let handle = assets.insert_material(material)?;
                 self.materials.insert(key, handle);
                 handle

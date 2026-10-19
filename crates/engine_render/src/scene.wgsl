@@ -94,6 +94,11 @@ struct Lighting {
     // visibility reaches (0 caps none), and the radius of local lights'
     // smallest sphere.
     highlights: vec4<f32>,
+    // Windows lighting room by room: the sun's elevation, the
+    // elevation rooms switch on around and how far either side they spread
+    // (0 while windows are lit as their textures light them), all in
+    // degrees, and the share of rooms staying dark.
+    windows: vec4<f32>,
 }
 // Sun shadows: world to each near cascade and to both
 // far maps (x and y in [-1, 1] across a map, z in [0, 1]).
@@ -170,16 +175,17 @@ struct Shadow {
 
 // The features of the scene shading looks up (`scene_shading::SceneShading`):
 // sun shadow maps and their kept levels, terrains' horizons, clouds'
-// shadows, placed objects' covers, and reflection probes. One switched off
-// compiles its lookups out of the pipelines given it, which then leave what
-// its absent uniforms and bindings would; pipelines not given these keep
-// every lookup.
+// shadows, placed objects' covers, reflection probes, and windows lighting
+// room by room. One switched off compiles its lookups out of the pipelines
+// given it, which then leave what its absent uniforms and bindings would;
+// pipelines not given these keep every lookup.
 override SHADOW_MAPS: bool = true;
 override KEPT_LEVELS: bool = true;
 override TERRAIN_HORIZONS: bool = true;
 override CLOUD_SHADOWS: bool = true;
 override OCCUPANCY: bool = true;
 override PROBES: bool = true;
+override WINDOWS: bool = true;
 
 // How much the covers in occupancy layer `layer` (centered at `center`,
 // `inverse` over its side, heights above `reference`) hide the sky from

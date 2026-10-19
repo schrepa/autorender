@@ -11,7 +11,7 @@
         },
         "materials": {
           "count": 119,
-          "hash": "463c2e42e5cac752"
+          "hash": "c496a0cc7f5f3384"
         },
         "meshes": {
           "count": 9,
@@ -45,7 +45,7 @@
         },
         "Mesh3d": {
           "count": 10000,
-          "hash": "a25cc4add845bb9c"
+          "hash": "531c4239a9b38be0"
         },
         "ParticleEmitter": {
           "count": 307,
@@ -61,7 +61,7 @@
         }
       },
       "entities": 10762,
-      "hash": "108aa48c9db5e4db"
+      "hash": "c18d748952aa5c2d"
     },
     "content dense": {
       "assets": {
@@ -71,7 +71,7 @@
         },
         "materials": {
           "count": 5,
-          "hash": "e041ba7209dae6f3"
+          "hash": "50e61bdc4a00260c"
         },
         "meshes": {
           "count": 5,
@@ -109,7 +109,7 @@
         }
       },
       "entities": 10165,
-      "hash": "d1a13d5c91035c99"
+      "hash": "6ee82e71fbe5f42b"
     },
     "content field": {
       "assets": {
@@ -119,7 +119,7 @@
         },
         "materials": {
           "count": 8,
-          "hash": "e4271ab9d8ef9a58"
+          "hash": "12771b5aebb49315"
         },
         "meshes": {
           "count": 9,
@@ -161,7 +161,7 @@
         }
       },
       "entities": 10378,
-      "hash": "6a7032a82d969f38"
+      "hash": "3881de4901ecbb62"
     },
     "content highlands": {
       "assets": {
@@ -171,7 +171,7 @@
         },
         "materials": {
           "count": 14,
-          "hash": "f38a0e5fc604380e"
+          "hash": "db6b3bf46644301d"
         },
         "meshes": {
           "count": 50,
@@ -225,7 +225,7 @@
         }
       },
       "entities": 10384,
-      "hash": "23bbc47ad82d1f10"
+      "hash": "c4c2125081bc6c03"
     },
     "content metro": {
       "assets": {
@@ -235,7 +235,7 @@
         },
         "materials": {
           "count": 48,
-          "hash": "8325dedc841be6cb"
+          "hash": "a874e4bcdb25100b"
         },
         "meshes": {
           "count": 17,
@@ -273,7 +273,7 @@
         },
         "Mesh3d": {
           "count": 10000,
-          "hash": "fd29d165fb1cb515"
+          "hash": "07faa4713f6564f1"
         },
         "ParticleEmitter": {
           "count": 21,
@@ -301,7 +301,7 @@
         }
       },
       "entities": 15337,
-      "hash": "baa037973d80eb19"
+      "hash": "df33a258173df6c7"
     },
     "terrain frames": 400,
     "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, shaped_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141312, restored_tiles: 12, idle_tiles: 0, banded_tiles: 0, unplaced_tiles: 0, rewatered_tiles: 0, stale_water_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, failed_reads: 0, refused_falls: 0, loading: false } | terrain tiles 854854a0fbb2ae0d patches f92aaf1ed8717440 | surroundings tiles a2eadb7ccd455bc5 patches 8317cdfc9f70e8eb",

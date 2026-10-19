@@ -524,6 +524,10 @@ impl Library {
                 .with_emissive(factor)?
                 .with_emissive_texture(glow)?;
         }
+        // Façades' cells are rooms, eight across.
+        if mat.facade() {
+            material = material.with_windows(8)?;
+        }
         Ok(material)
     }
 

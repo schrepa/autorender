@@ -103,6 +103,12 @@ pub struct SceneMaterial {
     /// The ground staining the base of objects terrains place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grounding: Option<SceneGrounding>,
+    /// Divides the material into rooms, this many across its
+    /// base color texture's width and square in its texels: while the
+    /// environment's `windows` are on, each room's light comes on at its own
+    /// time around dusk. In `[1, 4096]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows: Option<u32>,
 }
 
 /// States the rules the material's builders check on the authored fields
@@ -118,6 +124,7 @@ fn state_material_rules(schema: &mut schemars::Schema) {
         ("emissive", Material::EMISSIVE),
         ("alpha_cutoff", Material::ALPHA_CUTOFF),
         ("world_tiling", Material::WORLD_TILING),
+        ("windows", Material::WINDOWS),
         ("transmission", part(Transmission::rule_of("factor"))),
         ("ior", part(Transmission::rule_of("ior"))),
         ("thickness", part(Transmission::rule_of("thickness"))),
@@ -357,6 +364,7 @@ impl SceneMaterial {
             ior: Some(transmission.ior),
             thickness: Some(transmission.thickness),
             world_tiling: material.world_tiling(),
+            windows: material.windows(),
             top: material.top_layer().map(|top| SceneTopLayer {
                 color: top.color,
                 coverage: top.coverage,
@@ -453,6 +461,11 @@ impl SceneMaterial {
             material = material
                 .with_world_mapping(tiling)
                 .map_err(|error| invalid("world_tiling", error.to_string()))?;
+        }
+        if let Some(rooms) = self.windows {
+            material = material
+                .with_windows(rooms)
+                .map_err(|error| invalid("windows", error.to_string()))?;
         }
         if let Some(top) = self.top {
             material = material
