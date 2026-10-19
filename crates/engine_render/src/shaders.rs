@@ -94,7 +94,9 @@ shaders! {
     SCATTER_CULL_SHADER = [
         "scatter_cull.wgsl",
     ];
+    /// Placed objects set on the ground as drawn.
     SCATTER_SNAP_SHADER = [
+        "terrain_ground.wgsl",
         "scatter_snap.wgsl",
     ];
     OCCUPANCY_SHADER = [

@@ -1,6 +1,7 @@
 // The ground as a terrain draws it (`meshes/terrain_vertex.wgsl`), for
-// what stands on it: ground cover's blades (`cover_grow.wgsl`). Prepended
-// to each, which declares the terrains' `directory` and `heights`.
+// what stands on it: ground cover's blades (`cover_grow.wgsl`) and placed
+// objects (`scatter_snap.wgsl`). Prepended to each, which declares the
+// terrains' `directory` and `heights`.
 
 const NOT_RESIDENT: u32 = 0xffffffffu;
 

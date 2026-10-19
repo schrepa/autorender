@@ -118,9 +118,9 @@ pub(crate) struct ScatterPass {
     snap_group: Cached<SnapKey, wgpu::BindGroup>,
     snapping: bool,
     // What objects were last set on: the group's key, the resident tiles'
-    // revision and the terrains' places, and whether slots were written
-    // since, undoing it.
-    snapped: Option<(SnapKey, u64, Vec<TerrainInfo>)>,
+    // revision, the terrains' places and the eye the ground was seen from,
+    // and whether slots were written since, undoing it.
+    snapped: Option<(SnapKey, u64, Vec<TerrainInfo>, Vec3)>,
     slots_written: bool,
     // Advances when objects' poses or records change.
     version: u64,
@@ -217,7 +217,11 @@ impl ScatterPass {
             pipeline: None,
             snap_layout: crate::pipelines::layout(device, &SCATTER_SNAP),
             snap_pipeline: None,
-            snap: crate::buffers::uniform(device, "engine/scatter-snap", 16),
+            snap: crate::buffers::uniform(
+                device,
+                "engine/scatter-snap",
+                size_of::<crate::gpu_layouts::scatter::SnapUniform>() as u64,
+            ),
             terrains: growable("engine/scatter-terrains", size_of::<TerrainInfo>() as u64),
             snap_group: Cached::default(),
             snapping: false,
@@ -660,14 +664,16 @@ impl ScatterPass {
         });
     }
 
-    /// Plans setting objects on the terrain this frame from `sources`: when
-    /// slots were written or the resident heights or terrains changed since
-    /// they last were; never while the terrain pass holds no heights.
+    /// Plans setting objects on the terrain this frame from `sources`, on
+    /// the ground as drawn seen from `eye`: when slots were written, the
+    /// resident heights or terrains changed or the eye moved since they
+    /// last were; never while the terrain pass holds no heights.
     pub(crate) fn prepare_snap(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         sources: Option<SnapSources<'_>>,
+        eye: Vec3,
     ) {
         self.snapping = false;
         let Some(sources) = sources.filter(|sources| !sources.terrains.is_empty()) else {
@@ -681,8 +687,11 @@ impl ScatterPass {
             self.terrains_generation += 1;
         }
         queue.write_buffer(&self.terrains, 0, bytes);
-        let counts = [self.objects, sources.terrains.len() as u32, 0, 0];
-        queue.write_buffer(&self.snap, 0, bytemuck::cast_slice(&counts));
+        let uniform = crate::gpu_layouts::scatter::SnapUniform {
+            counts: [self.objects, sources.terrains.len() as u32, 0, 0],
+            eye: eye.extend(0.0).to_array(),
+        };
+        queue.write_buffer(&self.snap, 0, bytemuck::bytes_of(&uniform));
         self.snap_pipeline
             .get_or_insert_with(|| snap_pipeline(device, &self.snap_layout));
         let key = (
@@ -693,15 +702,21 @@ impl ScatterPass {
         let unchanged = self
             .snapped
             .as_ref()
-            .is_some_and(|(snapped, revision, terrains)| {
+            .is_some_and(|(snapped, revision, terrains, _)| {
                 *snapped == key && *revision == sources.revision && terrains == sources.terrains
             });
         if unchanged && !self.slots_written {
-            return;
+            // The eye moving only moves objects up or down as the drawn
+            // ground's levels morph under them: no new version.
+            match &mut self.snapped {
+                Some((.., seen)) if *seen != eye => *seen = eye,
+                _ => return,
+            }
+        } else {
+            self.snapped = Some((key, sources.revision, sources.terrains.to_vec(), eye));
+            self.slots_written = false;
+            self.version += 1;
         }
-        self.snapped = Some((key, sources.revision, sources.terrains.to_vec()));
-        self.slots_written = false;
-        self.version += 1;
         if self.snap_group.stale(&key) {
             let group = crate::pipelines::group(
                 device,

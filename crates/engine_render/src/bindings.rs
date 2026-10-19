@@ -1113,7 +1113,7 @@ tables! {
         label: "engine/scatter-snap-layout",
         serves: [SCATTER_SNAP_SHADER @ 0],
         bindings: &[
-            uniform_of(0, "snap", 16, C),
+            uniform_of(0, "snap", size_of::<scatter::SnapUniform>(), C),
             write(1, "records", C),
             write(2, "poses", C),
             read(3, "terrains", C),

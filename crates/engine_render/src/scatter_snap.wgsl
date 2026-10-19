@@ -1,21 +1,27 @@
-// Placed objects on the terrain as drawn: each frame, before
-// culling, every live object's base moves onto its terrain's finest
-// resident heights, as ground cover's roots do (`cover_grow.wgsl`), so
-// objects of coarse tiles sit on the finer ground drawn near the camera and
-// settle as finer tiles arrive. Its pose's height and its bounding sphere
-// follow its base. Objects standing far away hide where
-// tiles of the level holding them instead are resident.
+// Placed objects on the terrain as drawn: each frame the eye moved or
+// objects or the resident heights changed, before culling, every live
+// object's base moves onto its terrain's ground as the terrain draws it at
+// the object's distance (`terrain_ground.wgsl`), as ground cover's roots
+// do (`cover_grow.wgsl`), so objects stand on the ground drawn under them
+// as its levels morph and settle as finer tiles arrive. Its pose's height
+// and its bounding sphere follow its base. Objects standing far away hide
+// where tiles of the level holding them instead are resident.
 
 struct Snap {
     // Slots and terrains.
     counts: vec4<u32>,
+    // The eye (world), whose distance the ground's levels morph by.
+    eye: vec4<f32>,
 }
 
-// A terrain: its origin (world) and level-0 sample spacing, then where its
-// levels start in the directory and how many there are.
+// A terrain: its origin (world) and level-0 sample spacing, where its
+// levels start in the directory and how many there are, and the meters
+// from the eye up to which each of its first eight levels draws
+// (`terrain_ground.wgsl`'s `GroundTerrain`).
 struct TerrainInfo {
     origin: vec4<f32>,
     levels: vec4<u32>,
+    ranges: array<vec4<f32>, 2>,
 }
 
 // `scatter_cull.wgsl`'s record: the bounding sphere, draw group and scale,
@@ -40,7 +46,6 @@ struct Pose {
 }
 
 const DEAD: u32 = 0xffffffffu;
-const NOT_RESIDENT: u32 = 0xffffffffu;
 const TERRAIN_INDEX: u32 = 0x1ffu;
 const NEAR_LEVEL_SHIFT: u32 = 16u;
 const HIDDEN: u32 = 0x80000000u;
@@ -52,37 +57,44 @@ const HIDDEN: u32 = 0x80000000u;
 @group(0) @binding(4) var<storage, read> directory: array<u32>;
 @group(0) @binding(5) var heights: texture_2d_array<f32>;
 
-// The finest resident height of terrain `info` at terrain-local `local`, 1
-// where one is resident there (0 beyond its edges or with none), and its
-// level.
-fn ground_at(info: TerrainInfo, local: vec2<f32>) -> vec3<f32> {
-    let base = info.levels.x;
-    let spacing = info.origin.w;
-    let extent = vec2<f32>(f32(directory[base + 1u]), f32(directory[base + 2u])) * 256.0 * spacing;
+// The ground of terrain `info` at terrain-local `local` from its finest
+// resident level: its height there, its samples blended, whether one is
+// resident there (none beyond its edges), the level and its tile.
+struct FinestGround {
+    height: f32,
+    found: bool,
+    level: u32,
+    tile: LevelTile,
+}
+
+fn finest_ground(info: TerrainInfo, terrain: GroundTerrain, local: vec2<f32>) -> FinestGround {
+    var ground: FinestGround;
+    let extent = vec2<f32>(f32(directory[info.levels.x + 1u]),
+        f32(directory[info.levels.x + 2u])) * 256.0 * info.origin.w;
     if any(local < vec2<f32>(0.0)) || any(local > extent) {
-        return vec3<f32>(0.0);
+        return ground;
     }
     for (var index = 0u; index < info.levels.y; index++) {
-        let header = base + index * 4u;
-        let samples = local / (spacing * f32(1u << index));
-        let tiles = vec2<u32>(directory[header + 1u], directory[header + 2u]);
-        let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-        let layer = directory[directory[header] + tile.y * tiles.x + tile.x];
-        if layer == NOT_RESIDENT {
+        let samples = local / (info.origin.w * f32(1u << index));
+        let tile = level_tile(terrain, index, samples);
+        if tile.layer == NOT_RESIDENT {
             continue;
         }
-        // Layers keep a border sample before the tile's first.
-        let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
-        let corner = min(vec2<u32>(within), vec2<u32>(255u));
-        let f = within - vec2<f32>(corner);
-        let texel = corner + vec2<u32>(1u);
-        let a = textureLoad(heights, texel, layer, 0).r;
-        let b = textureLoad(heights, texel + vec2<u32>(1u, 0u), layer, 0).r;
-        let c = textureLoad(heights, texel + vec2<u32>(0u, 1u), layer, 0).r;
-        let d = textureLoad(heights, texel + vec2<u32>(1u, 1u), layer, 0).r;
-        return vec3<f32>(mix(mix(a, b, f.x), mix(c, d, f.x), f.y), 1.0, f32(index));
+        let within = clamp(samples - vec2<f32>(tile.first), vec2<f32>(0.0), vec2<f32>(256.0));
+        let cell = min(vec2<u32>(within), vec2<u32>(255u));
+        let f = within - vec2<f32>(cell);
+        let corner = tile.first + cell;
+        let a = tile_height(tile, corner);
+        let b = tile_height(tile, corner + vec2<u32>(1u, 0u));
+        let c = tile_height(tile, corner + vec2<u32>(0u, 1u));
+        let d = tile_height(tile, corner + vec2<u32>(1u, 1u));
+        ground.height = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+        ground.found = true;
+        ground.level = index;
+        ground.tile = tile;
+        return ground;
     }
-    return vec3<f32>(0.0);
+    return ground;
 }
 
 @compute @workgroup_size(64)
@@ -96,17 +108,25 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let info = terrains[terrain];
+    let ground_terrain = GroundTerrain(info.levels.x, info.levels.y, info.origin.w,
+        info.ranges);
     let pose = poses[id.x];
-    let ground = ground_at(info, vec2<f32>(pose.r0.w, pose.r2.w) - info.origin.xz);
+    let local = vec2<f32>(pose.r0.w, pose.r2.w) - info.origin.xz;
+    let ground = finest_ground(info, ground_terrain, local);
     // Far away, an object hides where the level holding it instead is
     // resident, or a finer one.
     let near = (record.terrain >> NEAR_LEVEL_SHIFT) & 0x1fu;
-    let hidden = near != 0u && ground.y != 0.0 && u32(ground.z) < near;
+    let hidden = near != 0u && ground.found && ground.level < near;
     records[id.x].terrain = select(record.terrain & ~HIDDEN, record.terrain | HIDDEN, hidden);
-    if ground.y == 0.0 {
+    if !ground.found {
         return;
     }
-    let base = info.origin.y + ground.x - record.sink;
+    // The ground drawn under it morphs by its distance from the eye, as
+    // ground cover's does by its cell's.
+    let away = distance(vec3<f32>(pose.r0.w, info.origin.y + ground.height, pose.r2.w),
+        snap.eye.xyz);
+    let base = info.origin.y
+        + drawn_height(ground_terrain, local, away, ground.level, ground.tile) - record.sink;
     poses[id.x].r1.w = base;
     records[id.x].center.y = record.center.y + (base - pose.r1.w);
 }

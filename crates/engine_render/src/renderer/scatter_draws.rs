@@ -155,7 +155,8 @@ impl Renderer {
                     .insert((terrain.id, tile.key()), Arc::clone(tile), objects);
             }
         }
-        // Objects stand on the finest heights resident this frame.
+        // Objects stand on the ground as each level draws it, of the
+        // heights resident this frame.
         let infos: Vec<TerrainInfo> = terrains
             .iter()
             .enumerate()
@@ -167,6 +168,7 @@ impl Renderer {
                     0,
                     0,
                 ],
+                ranges: crate::ground_cover::morph_ranges(terrain),
             })
             .collect();
         // How each terrain's layers thin with distance this frame:
@@ -242,10 +244,12 @@ impl Renderer {
             revision: sources.revision,
             terrains: &infos,
         });
-        self.features
-            .scatter
-            .get_mut()
-            .prepare_snap(&self.device, &self.queue, sources);
+        self.features.scatter.get_mut().prepare_snap(
+            &self.device,
+            &self.queue,
+            sources,
+            snapshot.camera_position,
+        );
         // Each group's pipeline variant, and the one its fading objects draw
         // with.
         let variants: Vec<Variant> = self
