@@ -65,6 +65,17 @@ fn array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
 }
 
 impl MapTextures {
+    /// Texels along a side of map `map` drawn every frame: a near
+    /// cascade's layer, or the moving map.
+    pub(super) fn drawn_texels(&self, map: usize) -> u32 {
+        let texture = if map < super::MOVING_MAP {
+            &self.textures[0]
+        } else {
+            &self.textures[1]
+        };
+        texture.width()
+    }
+
     /// Maps of `resolution` texels (the near cascades and kept levels half
     /// as many) with `cascades` near layers and `levels` kept levels.
     fn new(device: &wgpu::Device, resolution: u32, cascades: u32, levels: u32) -> Self {

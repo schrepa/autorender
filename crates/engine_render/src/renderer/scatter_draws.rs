@@ -280,12 +280,12 @@ impl Renderer {
         // Frames keeping still casters cast placed objects into the kept map,
         // not the moving one.
         let keeps_still = self.shadows.keeps_still();
-        let maps: Vec<(usize, engine_core::glam::Mat4)> = self
+        let maps: Vec<(usize, engine_core::glam::Mat4, u32)> = self
             .shadows
             .drawn_maps()
             .iter()
-            .copied()
-            .filter(|&(map, _)| !(keeps_still && map == crate::shadows::MOVING_MAP))
+            .filter(|&&(map, _)| !(keeps_still && map == crate::shadows::MOVING_MAP))
+            .map(|&(map, clip)| (map, clip, self.shadows.drawn_map_texels(map)))
             .collect();
         let (device, queue, shadows) = (&self.device, &self.queue, &self.shadows);
         self.features.scatter.prepare(|scatter| {
@@ -295,12 +295,7 @@ impl Renderer {
                     queue,
                     (snapshot.view_projection, snapshot.camera_position),
                     (pixel_error, height, impostors, fade),
-                    (
-                        &maps,
-                        shadows.kept_refresh(),
-                        shadows.level_refresh(),
-                        shadows.map_resolution(),
-                    ),
+                    (&maps, shadows.kept_refresh(), shadows.level_refresh()),
                 )
                 .then_some(ScatterFrame)
         })

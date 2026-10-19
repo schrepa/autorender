@@ -419,9 +419,13 @@ impl ShadowPass {
         self.levels.dirty_all();
     }
 
-    /// The maps' resolution, texels square; 0 without maps.
-    pub(crate) fn map_resolution(&self) -> u32 {
-        self.maps.textures().map_or(0, |maps| maps.resolution)
+    /// Texels along a side of map `map` drawn every frame (see
+    /// [`Self::drawn_maps`]): near cascades hold half the far maps'; 0
+    /// without maps.
+    pub(crate) fn drawn_map_texels(&self, map: usize) -> u32 {
+        self.maps
+            .textures()
+            .map_or(0, |maps| maps.drawn_texels(map))
     }
 
     /// The selected casters' IDs (each map's region `map * capacity`, then

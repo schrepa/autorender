@@ -53,13 +53,12 @@ const FADE_MARGIN: f32 = 0.1;
 use crate::gpu_layouts::scatter::ViewData;
 
 /// The shadow maps placed objects cast into: those drawn every frame
-/// (their world-to-clip matrices), this frame's redraws of the kept map and
-/// of a kept level, and the far maps' texels a side.
+/// (their world-to-clip matrices and texels a side), and this frame's
+/// redraws of the kept map and of a kept level.
 pub(crate) type ShadowViews<'a> = (
-    &'a [(usize, Mat4)],
+    &'a [(usize, Mat4, u32)],
     Option<KeptRefresh>,
     Option<KeptRefresh>,
-    u32,
 );
 
 pub(crate) const NEAR_LEVEL_MASK: u32 = 0x1f;
@@ -482,7 +481,7 @@ impl ScatterPass {
 
     /// Plans this frame's culling: the camera's view, from its
     /// `view_projection` (world) and eye, those of the shadow `maps`
-    /// drawn every frame (their world-to-clip matrices, `resolution` texels
+    /// drawn every frame (their world-to-clip matrices, each its own texels
     /// square), where objects smaller than half a texel cast nothing, and
     /// the regions of the kept map and of a kept level
     /// redrawn this frame, if any. Levels are picked within `pixel_error`
@@ -499,7 +498,7 @@ impl ScatterPass {
         queue: &wgpu::Queue,
         (view_projection, eye): (Mat4, Vec3),
         (pixel_error, height, impostors, fade): (Option<f32>, f32, bool, f32),
-        (maps, kept, level, resolution): ShadowViews<'_>,
+        (maps, kept, level): ShadowViews<'_>,
     ) -> bool {
         self.frame_views.maps.clear();
         if self.resident == 0 {
@@ -513,16 +512,18 @@ impl ScatterPass {
             planes: crate::ground_cover::planes(view_projection),
             limits: [0.0; 4],
         });
-        let half_texel = |clip: Mat4| {
+        // Half a texel of a map `resolution` texels square seen through
+        // `clip`, in world units.
+        let half_texel = |clip: Mat4, resolution: u32| {
             let texels = clip.row(0).truncate().length() * resolution as f32;
             1.0 / engine_core::math::max(texels, 1.0e-12)
         };
-        for &(map, clip) in maps {
+        for &(map, clip, resolution) in maps {
             // An orthographic map: its sides alone bound what casts into it.
             let mut planes = crate::ground_cover::planes(clip);
             planes[4] = [0.0, 0.0, 0.0, 1.0];
             planes[5] = [0.0, 0.0, 0.0, 1.0];
-            let half_texel = half_texel(clip);
+            let half_texel = half_texel(clip, resolution);
             // Near cascades cast the camera's cards.
             let cascade = if map < crate::shadows::MOVING_MAP {
                 1.0
