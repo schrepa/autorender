@@ -3,7 +3,7 @@
 //! field, so inspected values paste back into scenes; angles are in degrees.
 
 use engine_core::{
-    LocalLight, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MIN_SPOT_DEGREES, ParticleBlend,
+    LightRegion, LocalLight, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MIN_SPOT_DEGREES, ParticleBlend,
     ParticleEmitter, Spot, bevy_ecs::world::EntityWorldMut, glam::Vec3,
 };
 use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
@@ -34,6 +34,68 @@ settings! {
         /// A cone; omitted for light in every direction.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub spot: Option<SceneSpot> = None => any,
+        /// The radius of the sphere it shines from while the environment's
+        /// `highlights` are on, scaled with the entity (by its local y axis's
+        /// scale); their `light_radius` where this is smaller.
+        #[serde(skip_serializing_if = "is_zero")]
+        pub radius: f32 = LocalLight::default().radius => same(LocalLight::rule_of("radius")),
+        /// The length of the tube it shines from, up the entity's local y axis
+        /// from its position, scaled with it; 0 for none. Spots shine from
+        /// their sphere alone. Lights take it while the environment's
+        /// `highlights` are on.
+        #[serde(skip_serializing_if = "is_zero")]
+        pub length: f32 = LocalLight::default().length => same(LocalLight::rule_of("length")),
+        /// Where it shines: everywhere, or only inside or only outside
+        /// interiors (interior reflection probes' boxes).
+        #[serde(skip_serializing_if = "is_both")]
+        pub region: SceneLightRegion = SceneLightRegion::Both => any,
+    }
+}
+
+/// Lights omit a zero radius and length.
+fn is_zero(value: &f32) -> bool {
+    *value == 0.0
+}
+
+/// Lights omit the region they shine in by default.
+fn is_both(region: &SceneLightRegion) -> bool {
+    *region == SceneLightRegion::Both
+}
+
+impl Setting for SceneLightRegion {}
+
+/// Where a light shines: interiors are the boxes of interior reflection
+/// probes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum SceneLightRegion {
+    /// Inside and outside interiors alike.
+    #[default]
+    Both,
+    /// Inside interiors only: a cave's or a hall's lamps.
+    Interior,
+    /// Outside interiors only: lamps beside a cave's mouth.
+    Exterior,
+}
+
+impl From<SceneLightRegion> for LightRegion {
+    fn from(region: SceneLightRegion) -> Self {
+        match region {
+            SceneLightRegion::Both => Self::Both,
+            SceneLightRegion::Interior => Self::Interior,
+            SceneLightRegion::Exterior => Self::Exterior,
+        }
+    }
+}
+
+impl From<LightRegion> for SceneLightRegion {
+    fn from(region: LightRegion) -> Self {
+        match region {
+            LightRegion::Both => Self::Both,
+            LightRegion::Interior => Self::Interior,
+            LightRegion::Exterior => Self::Exterior,
+        }
     }
 }
 
@@ -85,6 +147,9 @@ impl SceneLight {
             range: self.range,
             offset: Vec3::from_array(self.offset),
             spot,
+            radius: self.radius,
+            length: self.length,
+            region: self.region.into(),
         }
     }
 }
@@ -101,6 +166,9 @@ impl From<&LocalLight> for SceneLight {
                 inner_angle_degrees: spot.inner_angle.to_degrees(),
                 outer_angle_degrees: spot.outer_angle.to_degrees(),
             }),
+            radius: light.radius,
+            length: light.length,
+            region: light.region.into(),
         }
     }
 }

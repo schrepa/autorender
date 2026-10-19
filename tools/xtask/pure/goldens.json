@@ -269,7 +269,7 @@
         },
         "LocalLight": {
           "count": 2205,
-          "hash": "2fa9d86282203e61"
+          "hash": "d14ffa9dee9ba992"
         },
         "Mesh3d": {
           "count": 10000,
@@ -301,7 +301,7 @@
         }
       },
       "entities": 15337,
-      "hash": "bd6d3fcb1a3679fc"
+      "hash": "baa037973d80eb19"
     },
     "terrain frames": 400,
     "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, shaped_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141312, restored_tiles: 12, idle_tiles: 0, banded_tiles: 0, unplaced_tiles: 0, rewatered_tiles: 0, stale_water_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, failed_reads: 0, refused_falls: 0, loading: false } | terrain tiles 854854a0fbb2ae0d patches f92aaf1ed8717440 | surroundings tiles a2eadb7ccd455bc5 patches 8317cdfc9f70e8eb",

@@ -33,6 +33,10 @@ settings! {
         /// The most a highlight's microfacet distribution times visibility
         /// reaches while `capped`; 0 caps none.
         pub cap: f32 = 100.0 => at_least(0.0),
+        /// The radius of the sphere local lights shine from where theirs is
+        /// smaller ([`crate::LocalLight::radius`]), world units: no lamp is a
+        /// point.
+        pub light_radius: f32 = 0.1 => range(0.0, 100.0),
     }
 }
 

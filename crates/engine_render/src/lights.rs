@@ -16,9 +16,11 @@
 
 use crate::gpu_layouts::constants::GROUP_LIGHTS as LIGHTS;
 pub(crate) use crate::gpu_layouts::constants::LIGHT_BYTES;
-use crate::gpu_layouts::constants::NO_SLOT;
+use crate::gpu_layouts::constants::{
+    KEPT_REGIONS, LIGHT_EXTERIOR, LIGHT_INTERIOR, NO_SLOT, SHAPED_LIGHTS,
+};
 use crate::shaders::entry::lights;
-use engine_core::{RenderLight, glam::Mat4};
+use engine_core::{LightRegion, RenderLight, glam::Mat4};
 
 /// Screen tiles across and down, and exponential depth slices.
 pub(crate) const TILES_X: u32 = 16;
@@ -94,6 +96,20 @@ impl ClusterUniform {
 
 pub(crate) use crate::gpu_layouts::lights::LightInput;
 
+/// How `snapshot`'s lights shade (the clusters' `lights.y`): from their
+/// spheres and tubes while highlights take their lights' sizes, and kept to
+/// their regions where any of them keeps to one (`regions`).
+fn shading_flags(snapshot: &engine_core::RenderSnapshot, regions: bool) -> u32 {
+    let mut flags = 0;
+    if snapshot.environment.highlights.enabled {
+        flags |= SHAPED_LIGHTS;
+    }
+    if regions {
+        flags |= KEPT_REGIONS;
+    }
+    flags
+}
+
 impl From<&RenderLight> for LightInput {
     fn from(light: &RenderLight) -> Self {
         Self {
@@ -104,7 +120,13 @@ impl From<&RenderLight> for LightInput {
             direction: light.direction.to_array(),
             cos_inner: light.cone[0],
             cos_outer: light.cone[1],
-            pad: [0.0; 3],
+            radius: light.shape[0],
+            length: light.shape[1],
+            region: match light.region {
+                LightRegion::Both => 0,
+                LightRegion::Interior => LIGHT_INTERIOR,
+                LightRegion::Exterior => LIGHT_EXTERIOR,
+            },
         }
     }
 }
@@ -129,6 +151,8 @@ mod gpu {
     pub(crate) struct LightFrame {
         count: u32,
         group: usize,
+        // How its lights shade (`shading_flags`).
+        flags: u32,
     }
 
     // Binning and shading groups of each reflection probe face, and the
@@ -157,8 +181,10 @@ mod gpu {
         indices: Growable,
         totals: wgpu::Buffer,
         staged: Vec<LightInput>,
-        // The retained stream and light revision the inputs hold.
+        // The retained stream and light revision the inputs hold, and
+        // whether any of those lights keeps to a region.
         uploaded_revision: Option<(u64, u64)>,
+        regions: bool,
         // Binning groups over (pose generation, pose buffer) and the storage
         // generation of this pass's own buffers they were built with.
         compute_groups: Vec<((u64, usize, u64), wgpu::BindGroup)>,
@@ -222,6 +248,7 @@ mod gpu {
                 ),
                 staged: Vec::new(),
                 uploaded_revision: None,
+                regions: false,
                 compute_groups: Vec::new(),
                 fragment_group: Cached::default(),
                 probe_uniforms: Vec::new(),
@@ -302,6 +329,7 @@ mod gpu {
                     .extend(snapshot.lights.list.iter().map(LightInput::from));
                 queue.write_buffer(&self.inputs, 0, bytemuck::cast_slice(&self.staged));
                 self.uploaded_revision = Some(revision);
+                self.regions = self.staged.iter().any(|light| light.region != 0);
             }
             // List storage grows to what the lists needed when last read
             // back, and to a first guess of a few dozen clusters per light,
@@ -315,7 +343,7 @@ mod gpu {
             if self.indices.grow(device, needed * 4) {
                 self.buffers_generation += 1;
             }
-            let uniform = ClusterUniform::new(
+            let mut uniform = ClusterUniform::new(
                 snapshot.view_projection,
                 size.width,
                 size.height,
@@ -324,6 +352,7 @@ mod gpu {
                 snapshot.environment.local_lights.lights_per_cluster,
                 self.index_capacity(),
             );
+            uniform.lights[1] = shading_flags(snapshot, self.regions);
             if self.written != Some(uniform) {
                 queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
                 self.written = Some(uniform);
@@ -379,6 +408,7 @@ mod gpu {
             Some(LightFrame {
                 count: count as u32,
                 group,
+                flags: uniform.lights[1],
             })
         }
 
@@ -464,6 +494,7 @@ mod gpu {
                 settings.lights_per_cluster,
                 self.index_capacity(),
             );
+            uniform.lights[1] = frame.flags;
             uniform.lights[3] = 1;
             queue.write_buffer(&self.probe_uniforms[face], 0, bytemuck::bytes_of(&uniform));
             let key = (

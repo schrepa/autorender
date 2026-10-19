@@ -216,8 +216,8 @@ impl LightingUniform {
 
 /// The lighting uniform's `highlights`: the sun's angular radius, the
 /// physically based sky's while it is on, as its cosine and sine, the cap
-/// while capped and the local lights' shapes; a point sun and no shapes
-/// while lights take no sizes, and zeros while neither is on.
+/// while capped and local lights' smallest sphere; a point sun and no
+/// sphere while lights take no sizes, and zeros while neither is on.
 fn sized_highlights(highlights: &engine_core::Highlights, sky: &engine_core::Sky) -> [f32; 4] {
     let cap = if highlights.capped {
         highlights.cap
@@ -237,7 +237,7 @@ fn sized_highlights(highlights: &engine_core::Highlights, sky: &engine_core::Sky
         highlights.sun_size
     };
     let (sine, cosine) = engine_core::math::sin_cos(radius.to_radians());
-    [cosine, sine, cap, 1.0]
+    [cosine, sine, cap, highlights.light_radius]
 }
 
 /// A surface as four unsigned 8-bit fractions: roughness,

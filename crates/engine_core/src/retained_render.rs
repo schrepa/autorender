@@ -284,12 +284,7 @@ impl<'a> RenderFrame<'a> {
                 snapshot.lights.dropped += 1;
                 continue;
             };
-            snapshot.lights.list.push(crate::RenderLight {
-                position: model.transform_point3(light.position),
-                direction: model.transform_vector3(light.direction).normalize_or_zero(),
-                slot: None,
-                ..*light
-            });
+            snapshot.lights.list.push(light.posed(model));
         }
         snapshot.particles.clone_from(particles);
         snapshot.decals.clone_from(decals);

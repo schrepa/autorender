@@ -20,13 +20,14 @@ struct Clusters {
     // Tiles across and down, depth slices, and the per-cluster budget
     // (0xffffffff without one).
     counts: vec4<u32>,
-    // Lights, an unused word, the entries `indices` holds, and 1 when only
-    // lights without a slot or on still slots are binned (reflection probe
-    // faces).
+    // Lights; how they shade (SHAPED_LIGHTS: from their spheres and tubes);
+    // the entries `indices` holds; and 1 when only lights without a slot or
+    // on still slots are binned (reflection probe faces).
     lights: vec4<u32>,
 }
 
-// A light as extracted: world position or slot model space.
+// A light as extracted: world position or slot model space, with its
+// sphere's radius and tube's length in the same units.
 struct Input {
     position: vec3<f32>,
     range: f32,
@@ -35,9 +36,14 @@ struct Input {
     direction: vec3<f32>,
     cos_inner: f32,
     cos_outer: f32,
-    pad: array<f32, 3>,
+    radius: f32,
+    length: f32,
+    region: u32,
 }
 
+// A light in world space: for lights without a cone `direction` is their
+// tube's axis, the tube running along it from `position`; the radius of
+// its sphere and its tube's length, and where it shines.
 struct Light {
     position: vec3<f32>,
     range: f32,
@@ -45,7 +51,13 @@ struct Light {
     cos_outer: f32,
     direction: vec3<f32>,
     cos_inner: f32,
+    radius: f32,
+    length: f32,
+    region: u32,
+    pad: u32,
 }
+
+const SHAPED_LIGHTS: u32 = 1u;
 
 // Transposed top three rows of an affine slot pose.
 struct Rows {
@@ -129,6 +141,8 @@ fn place(index: u32, fill: bool) -> LightBox {
     let input = inputs[index];
     var position = input.position;
     var direction = input.direction;
+    // Spheres and tubes scale with the pose's y axis.
+    var size = 1.0;
     if input.slot != NO_SLOT {
         let rows = poses[input.slot];
         position = transformed(rows, vec4<f32>(position, 1.0));
@@ -136,7 +150,9 @@ fn place(index: u32, fill: bool) -> LightBox {
         let length_squared = dot(turned, turned);
         direction = select(vec3<f32>(0.0), turned * inverseSqrt(length_squared),
             length_squared > 0.0);
+        size = length(vec3<f32>(rows.r0.y, rows.r1.y, rows.r2.y));
     }
+    let tube = input.length * size;
     if !fill {
         var light: Light;
         light.position = position;
@@ -145,6 +161,9 @@ fn place(index: u32, fill: bool) -> LightBox {
         light.cos_outer = input.cos_outer;
         light.direction = direction;
         light.cos_inner = input.cos_inner;
+        light.radius = input.radius * size;
+        light.length = tube;
+        light.region = input.region;
         lights[index] = light;
     }
     if clusters.lights.w != 0u && input.slot != NO_SLOT
@@ -155,9 +174,14 @@ fn place(index: u32, fill: bool) -> LightBox {
         return none;
     }
     // The sphere the light reaches: a spot cone's bounding sphere (Wronski)
-    // is smaller and centered along the cone.
+    // is smaller and centered along the cone; a tube's is centered on the
+    // tube, reaching its range past either end.
     var center = position;
     var radius = input.range;
+    if (clusters.lights.y & SHAPED_LIGHTS) != 0u {
+        center += direction * (0.5 * tube);
+        radius += 0.5 * tube;
+    }
     if input.cos_outer > -1.5 && dot(direction, direction) > 0.0 {
         let cos_angle = max(input.cos_outer, 0.0);
         if cos_angle < 0.70710678 {

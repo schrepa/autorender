@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::extraction::{Nearest, Poses};
 use crate::ticks::ScanClock;
 use crate::{GlobalTransforms, RenderSnapshot};
-use engine_settings::{ExtraRules, InvalidSetting, settings};
+use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
 
 /// The widest a spot's cone opens, in degrees from its axis.
 pub const MAX_SPOT_DEGREES: f32 = 89.0;
@@ -89,7 +89,37 @@ settings! {
         pub offset: Vec3 = Vec3::ZERO => range(-1.0e6, 1.0e6),
         /// A cone, or `None` for light in every direction.
         pub spot: Option<Spot> = None => any,
+        /// The radius of the sphere it shines from while [`crate::Highlights`]
+        /// are on, scaled with its entity (by its local y axis's scale);
+        /// their `light_radius` where this is smaller.
+        pub radius: f32 = 0.0 => range(0.0, MAX_LIGHT_RANGE),
+        /// The length of the tube it shines from, up its entity's local y axis
+        /// from its position, scaled with it; 0 for none. Spots shine from
+        /// their sphere alone. Lights take it while [`crate::Highlights`] are
+        /// on.
+        pub length: f32 = 0.0 => range(0.0, MAX_LIGHT_RANGE),
+        /// Where it shines: everywhere, or only inside or only outside
+        /// interiors.
+        pub region: LightRegion = LightRegion::Both => any,
     }
+}
+
+impl Setting for LightRegion {}
+
+/// Where a local light shines. Interiors are the boxes of interior
+/// reflection probes ([`crate::ReflectionProbe::interior`]): with no
+/// shadows of their own, lights would otherwise shine through the walls
+/// and rock around them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LightRegion {
+    /// Inside and outside interiors alike.
+    #[default]
+    Both,
+    /// Inside interiors only: a cave's or a hall's lamps, which then stop
+    /// lighting the ground over them.
+    Interior,
+    /// Outside interiors only: lamps beside a cave's mouth.
+    Exterior,
 }
 
 impl LocalLight {
@@ -101,6 +131,9 @@ impl LocalLight {
             range,
             offset: Vec3::ZERO,
             spot: None,
+            radius: 0.0,
+            length: 0.0,
+            region: LightRegion::Both,
         }
     }
 
@@ -128,6 +161,22 @@ impl LocalLight {
     #[must_use]
     pub fn with_offset(mut self, offset: Vec3) -> Self {
         self.offset = offset;
+        self
+    }
+
+    /// This light shining from a sphere of `radius` and a tube of `length`
+    /// up its entity's local y axis from its position.
+    #[must_use]
+    pub fn with_shape(mut self, radius: f32, length: f32) -> Self {
+        self.radius = radius;
+        self.length = length;
+        self
+    }
+
+    /// This light shining in `region` alone.
+    #[must_use]
+    pub fn with_region(mut self, region: LightRegion) -> Self {
+        self.region = region;
         self
     }
 }
@@ -184,12 +233,18 @@ pub struct RenderLight {
     pub range: f32,
     /// Linear color times intensity and the settings' scale.
     pub color: Vec3,
-    /// Unit cone direction in the same space as `position`; zero for point
-    /// lights.
+    /// Unit cone direction in the same space as `position`; for lights
+    /// without a cone, their tube's axis, or zero without one.
     pub direction: Vec3,
     /// Cosines of the inner and outer cone half-angles; `[-2, -2]` for
     /// point lights.
     pub cone: [f32; 2],
+    /// The radius of the sphere and the length of the tube it shines from,
+    /// in the units of `position`; with `slot`, renderers scale them by the
+    /// pose's y axis, as they turn `direction`.
+    pub shape: [f32; 2],
+    /// Where it shines.
+    pub region: LightRegion,
     /// Frames: the renderable slot whose displayed pose carries this light.
     /// Renderers transform `position` and `direction` by that pose. Owned
     /// snapshots ([`crate::Engine::extract`]) hold every light in world space.
@@ -201,16 +256,19 @@ impl RenderLight {
     pub const POINT: [f32; 2] = [-2.0, -2.0];
 
     fn new(light: &LocalLight, scale: f32, model: Option<Mat4>, slot: Option<u32>) -> Self {
+        // A tube stands along the entity's y axis.
         let (position, direction) = match light.spot {
             Some(spot) => (light.offset, spot.direction),
+            None if light.length > 0.0 => (light.offset, Vec3::Y),
             None => (light.offset, Vec3::ZERO),
         };
-        let (position, direction) = match model {
+        let (position, direction, size) = match model {
             Some(model) => (
                 model.transform_point3(position),
                 model.transform_vector3(direction),
+                model.transform_vector3(Vec3::Y).length(),
             ),
-            None => (position, direction),
+            None => (position, direction, 1.0),
         };
         let cone = light.spot.map_or(Self::POINT, |spot| {
             let outer = crate::math::clamp(spot.outer_angle, 1.0e-3, 1.55);
@@ -222,13 +280,34 @@ impl RenderLight {
                 crate::math::cos(outer),
             ]
         });
+        // Spots shine from their sphere alone.
+        let length = if light.spot.is_some() {
+            0.0
+        } else {
+            light.length
+        };
         Self {
             position,
             range: light.range,
             color: light.color * (light.intensity * scale),
             direction: direction.normalize_or_zero(),
             cone,
+            shape: [light.radius * size, length * size],
+            region: light.region,
             slot,
+        }
+    }
+
+    /// This light of a slot in world space, through the slot's `model`:
+    /// its sphere and tube scale with the model's y axis.
+    pub(crate) fn posed(&self, model: Mat4) -> Self {
+        let size = model.transform_vector3(Vec3::Y).length();
+        Self {
+            position: model.transform_point3(self.position),
+            direction: model.transform_vector3(self.direction).normalize_or_zero(),
+            shape: self.shape.map(|value| value * size),
+            slot: None,
+            ..*self
         }
     }
 }

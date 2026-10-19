@@ -109,7 +109,15 @@ gpu_consts! {
     /// Lights each binning workgroup places (`LIGHTS` of lights.wgsl).
     pub(crate) const GROUP_LIGHTS: u32 = 8 => ["LIGHTS" in LIGHT_SHADER];
     /// Bytes of a binned light (WGSL `Light`).
-    pub(crate) const LIGHT_BYTES: u64 = 48 => ["size_of Light"];
+    pub(crate) const LIGHT_BYTES: u64 = 64 => ["size_of Light"];
+    /// How lights shade (the clusters' `lights.y`): from their spheres and
+    /// tubes, and kept to their regions.
+    pub(crate) const SHAPED_LIGHTS: u32 = 1 => ["SHAPED_LIGHTS" in LIGHT_SHADER, "SHAPED_LIGHTS" in SHADER];
+    pub(crate) const KEPT_REGIONS: u32 = 2 => ["KEPT_REGIONS" in SHADER];
+    /// Where a light shines (`engine_core::LightRegion`): inside
+    /// interiors only, or outside them only; everywhere otherwise.
+    pub(crate) const LIGHT_INTERIOR: u32 = 1 => ["LIGHT_INTERIOR" in SHADER];
+    pub(crate) const LIGHT_EXTERIOR: u32 = 2 => ["LIGHT_EXTERIOR" in SHADER];
 
     // crate::impostors
     /// Frames per side of the octahedral grid, as `meshes/impostors.wgsl`

@@ -16,9 +16,10 @@ gpu_structs! {
         /// Tiles across and down, depth slices, and the per-cluster budget
         /// ([`NO_BUDGET`](crate::lights::NO_BUDGET) without one).
         pub counts: [u32; 4],
-        /// Lights, an unused word, the entries the cluster lists' storage holds,
-        /// and 1 when only lights without a slot or on still slots are binned
-        /// (reflection probe faces).
+        /// Lights; how they shade (bit 1: from their spheres and tubes, bit
+        /// 2: kept to their regions); the entries the cluster lists' storage
+        /// holds; and 1 when only lights without a slot or on still slots are
+        /// binned (reflection probe faces).
         pub lights: [u32; 4],
     }
 
@@ -32,6 +33,10 @@ gpu_structs! {
         pub direction: [f32; 3],
         pub cos_inner: f32,
         pub cos_outer: f32,
-        pub pad: [f32; 3],
+        /// The radius of its sphere and the length of its tube, scaled by
+        /// its slot's pose; where it shines (`LIGHT_BOTH` and on).
+        pub radius: f32,
+        pub length: f32,
+        pub region: u32,
     }
 }

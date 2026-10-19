@@ -91,8 +91,8 @@ struct Lighting {
     // Highlights sized by their lights: the cosine and sine of the sun's
     // angular radius (1 and 0 for a point sun, both 0 while highlights are
     // neither sized nor capped), the most a highlight's distribution times
-    // visibility reaches (0 caps none), and 1 when local lights shade as
-    // their spheres and tubes.
+    // visibility reaches (0 caps none), and the radius of local lights'
+    // smallest sphere.
     highlights: vec4<f32>,
 }
 // Sun shadows: world to each near cascade and to both

@@ -232,9 +232,12 @@ struct Clusters {
     grid: vec4<f32>,
     // Tiles across and down, depth slices, and the per-cluster budget.
     counts: vec4<u32>,
-    // Lights, an unused word, and the listed entries' capacity.
+    // Lights, how they shade, and the listed entries' capacity.
     lights: vec4<u32>,
 }
+// A binned light (`lights.wgsl`): for lights without a cone `direction` is
+// their tube's axis, the tube running along it from `position`; the radius
+// of its sphere and its tube's length, and where it shines.
 struct Light {
     position: vec3<f32>,
     range: f32,
@@ -242,7 +245,17 @@ struct Light {
     cos_outer: f32,
     direction: vec3<f32>,
     cos_inner: f32,
+    radius: f32,
+    length: f32,
+    region: u32,
+    pad: u32,
 }
+// How the clusters' lights shade (`clusters.lights.y`): from their spheres
+// and tubes, and kept to their regions; and the regions they keep to.
+const SHAPED_LIGHTS: u32 = 1u;
+const KEPT_REGIONS: u32 = 2u;
+const LIGHT_INTERIOR: u32 = 1u;
+const LIGHT_EXTERIOR: u32 = 2u;
 @group(3) @binding(0) var<uniform> clusters: Clusters;
 @group(3) @binding(1) var<storage, read> lights: array<Light>;
 // Per cluster: the first entry of its list in `cluster_lights` and its

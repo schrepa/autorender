@@ -1145,10 +1145,11 @@ fn skyscraper(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, heig
             yaw,
             Vec3::ONE,
         );
+        // Its tubes run up the blade from the light.
         let light = NEON_COLORS[color as usize];
         city.extra(
             neon,
-            Extra::Light(LocalLight::point(Vec3::from(light), 6.0, 6.0)),
+            Extra::Light(LocalLight::point(Vec3::from(light), 6.0, 6.0).with_shape(0.0, 3.2)),
         );
     }
     if matches!(style, Style::Box | Style::Fins | Style::Setback) && rng.chance(35) {
@@ -1400,11 +1401,10 @@ fn midrise(city: &mut Metro, anchor: &Anchor, rng: &mut Rng, base: Vec3, height:
         );
         city.extra(
             neon,
-            Extra::Light(LocalLight::point(
-                Vec3::from(NEON_COLORS[color as usize]),
-                5.0,
-                5.0,
-            )),
+            Extra::Light(
+                LocalLight::point(Vec3::from(NEON_COLORS[color as usize]), 5.0, 5.0)
+                    .with_shape(0.0, 3.2),
+            ),
         );
     }
 }

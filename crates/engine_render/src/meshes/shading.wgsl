@@ -710,6 +710,36 @@ fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
     return EnvironmentLight(light, shares);
 }
 
+// Whether `world` lies inside an interior probe's box. Lights keep to
+// the boxes themselves, not to the fade of the sky's and sun's shares over
+// their blend distances, which may reach well into a cave's own walls.
+fn in_interior(world: vec3<f32>) -> bool {
+    let header = probe_words[0];
+    if !PROBES || header.w == 0u {
+        return false;
+    }
+    let grid = probe_words[1];
+    let cell = vec2<i32>(floor((world.xz - bitcast<vec2<f32>>(header.xy))
+        / bitcast<f32>(header.z)));
+    if any(cell < vec2<i32>(0)) || any(vec2<u32>(cell) >= grid.xy) {
+        return false;
+    }
+    let list = probe_words[grid.z + u32(cell.y) * grid.x + u32(cell.x)];
+    let count = select(0u, list.y, list.z != 0u);
+    for (var n = 0u; n < count; n++) {
+        let entry = grid.w + (list.x + n) * PROBE_ENTRY_WORDS;
+        if probe_words[entry + 2u].z == 0u {
+            continue;
+        }
+        let center = bitcast<vec3<f32>>(probe_words[entry].xyz);
+        let extent = bitcast<vec3<f32>>(probe_words[entry + 1u].xyz);
+        if all(abs(world - center) < extent) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Whether highlights take their lights' sizes or the cap
 // (`lighting.highlights`); otherwise lights are points and highlights
 // uncapped.
@@ -905,9 +935,95 @@ fn shade(input: Fragment, front: bool) -> Shaded {
         input.surface, front), vec3<f32>(0.0));
 }
 
+// The share of a lobe of `alpha` a tube keeps when it widens the lobe along
+// itself by half its angular length `angle` (Karis).
+fn tube_energy(alpha: f32, angle: f32) -> f32 {
+    return alpha / saturate(alpha + 0.5 * angle);
+}
+
+// Light `light` at `point` shining from its sphere and tube while `shaped`,
+// and kept to its region while `kept`: interior lamps light only points
+// inside interiors, exterior ones only points outside them (`inside` holds
+// whether the point is, negative until looked up). Diffuse light comes from
+// the tube's ends (Karis's line irradiance, a point's for spheres and
+// points); the highlight from the point of the tube, then of the sphere
+// around it, nearest the lobe's dominant direction, the lobe widened by
+// half their angular sizes and renormalized (Karis) and capped; both
+// windowed by the distance to the tube and faded by the cone.
+fn shaped_light(point: SurfacePoint, light: Light, shaped: bool, kept: bool,
+        inside: ptr<function, f32>) -> vec3<f32> {
+    if kept && light.region != 0u {
+        if *inside < 0.0 {
+            *inside = select(0.0, 1.0, in_interior(point.world));
+        }
+        let in_box = *inside > 0.0;
+        if (light.region == LIGHT_INTERIOR && !in_box)
+            || (light.region == LIGHT_EXTERIOR && in_box) {
+            return vec3<f32>(0.0);
+        }
+    }
+    let radius = select(0.0, max(light.radius, lighting.highlights.w), shaped);
+    let span = select(vec3<f32>(0.0), light.direction * light.length, shaped);
+    let first = light.position - point.world;
+    let last = first + span;
+    let spanned = dot(span, span);
+    // The range reaches from the tube's point nearest the surface.
+    let nearest = first + span * saturate(-dot(first, span) / max(spanned, 1.0e-8));
+    let d2 = dot(nearest, nearest);
+    let r2 = light.range * light.range;
+    if d2 >= r2 {
+        return vec3<f32>(0.0);
+    }
+    let ratio = d2 / r2;
+    let window = saturate(1.0 - ratio * ratio);
+    let first_length = max(length(first), 1.0e-4);
+    let last_length = max(length(last), 1.0e-4);
+    let n_l = saturate(0.5 * (dot(point.normal, first) / first_length
+        + dot(point.normal, last) / last_length));
+    var falloff = window * window
+        / max(0.5 * (first_length * last_length + dot(first, last)), 0.01);
+    if light.cos_outer > -1.5 {
+        let center = first * inverseSqrt(max(dot(first, first), 1.0e-8));
+        falloff *= smoothstep(light.cos_outer, light.cos_inner, dot(-center, light.direction));
+    }
+    if falloff == 0.0 {
+        return vec3<f32>(0.0);
+    }
+    let reflected = dominant_direction(point);
+    var toward = first;
+    if spanned > 1.0e-8 {
+        let across = dot(reflected, span);
+        toward = first + span * saturate((dot(first, reflected) * across - dot(first, span))
+            / max(spanned - across * across, 1.0e-8));
+    }
+    if radius > 0.0 {
+        let to_ray = reflected * dot(toward, reflected) - toward;
+        toward += to_ray * saturate(radius / max(length(to_ray), 1.0e-6));
+    }
+    // Angular sizes as seen from the tube's middle.
+    let distance = max(length(first + 0.5 * span), 1.0e-4);
+    let l = normalize(toward);
+    let n_l_highlight = dot(point.normal, l);
+    var highlight = vec3<f32>(0.0);
+    if n_l_highlight > 0.0 {
+        let half_vector = normalize(point.view + l);
+        let n_h = max(dot(point.normal, half_vector), 0.0);
+        let energy = disk_energy(point.alpha, saturate(radius / distance))
+            * tube_energy(point.alpha, saturate(sqrt(spanned) / distance));
+        let lobe = distribution(n_h, point.alpha)
+            * visibility(point.n_v, n_l_highlight, point.alpha) * energy;
+        highlight = fresnel(point.f0, max(dot(point.view, half_vector), 0.0))
+            * (capped(lobe) * n_l_highlight);
+    }
+    return (point.diffuse_color * n_l + highlight * lighting.sun_color.w) * light.color
+        * falloff;
+}
+
 // Light of the local lights of this pixel's cluster at `point`: windowed
 // inverse-square falloff, spot cones and the same GGX highlights as the sun,
-// fading out over the last tenth of the clustered depth range.
+// fading out over the last tenth of the clustered depth range. While lights
+// shine from their spheres and tubes or highlights are capped, every light,
+// and otherwise lights kept to their regions, shade as `shaped_light`.
 fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
     let depth = dot(clusters.depth.xyz, point.world) + clusters.depth.w;
     let end = clusters.projection.w;
@@ -922,9 +1038,17 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
     let cluster = (slice * counts.y + tile.y) * counts.x + tile.x;
     let range = cluster_ranges[cluster];
     let specular = lighting.sun_color.w;
+    let shaped = (clusters.lights.y & SHAPED_LIGHTS) != 0u;
+    let kept = (clusters.lights.y & KEPT_REGIONS) != 0u;
+    let capped = lighting.highlights.z > 0.0;
+    var inside = -1.0;
     var sum = vec3<f32>(0.0);
     for (var n = 0u; n < range.y; n++) {
         let light = lights[cluster_lights[range.x + n]];
+        if shaped || capped || (kept && light.region != 0u) {
+            sum += shaped_light(point, light, shaped, kept, &inside);
+            continue;
+        }
         let to_light = light.position - point.world;
         let d2 = dot(to_light, to_light);
         let r2 = light.range * light.range;
@@ -948,11 +1072,8 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
         }
         let half_vector = normalize(point.view + l);
         let n_h = max(dot(point.normal, half_vector), 0.0);
-        var lobe = distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha);
-        if sized_highlights() {
-            lobe = capped(lobe);
-        }
-        let highlight = fresnel(point.f0, max(dot(point.view, half_vector), 0.0)) * lobe;
+        let highlight = fresnel(point.f0, max(dot(point.view, half_vector), 0.0))
+            * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha));
         sum += (point.diffuse_color + highlight * specular) * light.color * (falloff * n_l);
     }
     return sum * saturate((end - depth) / (0.1 * end));

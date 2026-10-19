@@ -3108,6 +3108,14 @@
           "type": "boolean",
           "default": true
         },
+        "light_radius": {
+          "description": "The radius of the sphere local lights shine from where theirs is\nsmaller ([`crate::LocalLight::radius`]), world units: no lamp is a\npoint.",
+          "type": "number",
+          "format": "float",
+          "default": 0.10000000149011612,
+          "maximum": 100.0,
+          "minimum": 0.0
+        },
         "sun_size": {
           "description": "The sun's angular radius, degrees, while the physically based sky\nis off; with it on, the sky's own `sun_size`.",
           "type": "number",
@@ -3196,6 +3204,13 @@
           "default": 20.0,
           "exclusiveMinimum": 0.0
         },
+        "length": {
+          "description": "The length of the tube it shines from, up the entity's local y axis\nfrom its position, scaled with it; 0 for none. Spots shine from\ntheir sphere alone. Lights take it while the environment's\n`highlights` are on.",
+          "type": "number",
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0
+        },
         "offset": {
           "description": "Position in the entity's local space, scaled with it.",
           "type": "array",
@@ -3213,6 +3228,13 @@
           "maxItems": 3,
           "minItems": 3
         },
+        "radius": {
+          "description": "The radius of the sphere it shines from while the environment's\n`highlights` are on, scaled with the entity (by its local y axis's\nscale); their `light_radius` where this is smaller.",
+          "type": "number",
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0
+        },
         "range": {
           "description": "World distance beyond which the light has no effect.",
           "type": "number",
@@ -3220,6 +3242,10 @@
           "default": 12.0,
           "exclusiveMinimum": 0.0,
           "maximum": 10000.0
+        },
+        "region": {
+          "description": "Where it shines: everywhere, or only inside or only outside\ninteriors (interior reflection probes' boxes).",
+          "$ref": "#/$defs/SceneLightRegion"
         },
         "spot": {
           "description": "A cone; omitted for light in every direction.",
@@ -3234,6 +3260,26 @@
         }
       },
       "additionalProperties": false
+    },
+    "SceneLightRegion": {
+      "description": "Where a light shines: interiors are the boxes of interior reflection\nprobes.",
+      "oneOf": [
+        {
+          "description": "Inside and outside interiors alike.",
+          "type": "string",
+          "const": "both"
+        },
+        {
+          "description": "Inside interiors only: a cave's or a hall's lamps.",
+          "type": "string",
+          "const": "interior"
+        },
+        {
+          "description": "Outside interiors only: lamps beside a cave's mouth.",
+          "type": "string",
+          "const": "exterior"
+        }
+      ]
     },
     "SceneLocalLights": {
       "description": "Local lighting settings.",
