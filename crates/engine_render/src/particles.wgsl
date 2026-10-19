@@ -58,6 +58,8 @@ struct ParticleOutput {
     // where its noise lies, its own.
     @location(4) @interpolate(flat) center: vec4<f32>,
     @location(5) @interpolate(flat) key: f32,
+    // The share of the sun the shadow maps leave at its middle.
+    @location(6) @interpolate(flat) sunlit: f32,
 }
 
 // PCG hash (Jarzynski and Olano).
@@ -149,6 +151,11 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
     output.softness = max(size, 0.05);
     output.center = vec4<f32>(position, size * MIST_SPREAD);
     output.key = unit(pcg(seed + 5u)) * 256.0;
+    output.sunlit = 1.0;
+    if SHADOW_MAPS && shadow.state.x != 0.0 {
+        output.sunlit = map_visibility(position, lighting.sun.xyz, vec3<f32>(0.0),
+            vec3<f32>(0.0), length(position - camera.position.xyz));
+    }
     return output;
 }
 
@@ -221,16 +228,11 @@ fn fs_particle(input: ParticleOutput) -> TransparentTargets {
         discard;
     }
     // Smoke and spray scatter the sky's light and half the sun's, as much
-    // of it as reaches them past what shadows them.
+    // of it as reaches their middles.
     let eye = camera.position.xyz;
     let distance = length(input.world - eye);
-    var sunlight = lighting.sun_color.rgb * 0.5;
-    if lighting.sun.y > 0.0 {
-        sunlight *= sun_visibility(input.world, lighting.sun.xyz, vec3<f32>(0.0),
-            vec3<f32>(0.0), distance, false);
-    }
     let light = input.color.rgb * (sky_average(vec3<f32>(0.0, 1.0, 0.0)) * lighting.zenith.w
-        + sunlight);
+        + lighting.sun_color.rgb * (0.5 * input.sunlit));
     let view = normalize(input.world - eye);
     let fogged = atmospheric(light, eye, input.world, view).rgb;
     return weighted_particle(grade(fogged), alpha, distance);

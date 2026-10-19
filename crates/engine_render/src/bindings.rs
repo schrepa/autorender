@@ -294,16 +294,18 @@ tables! {
         bindings: &[
             // Fragments read the eye, sky rays and the jitter.
             uniform_of(0, "camera", size_of::<CameraUniform>(), VF),
-            uniform_of(1, "lighting", size_of::<LightingUniform>(), F),
-            uniform_of(2, "shadow", size_of::<ShadowUniform>(), F),
-            texture(3, "near_shadows", Depth, D2Array, F),
-            texture(4, "kept_shadows", Depth, D2, F),
-            texture(5, "moving_shadows", Depth, D2, F),
+            // Particles' vertices look up the sun's shadow maps at their
+            // middles.
+            uniform_of(1, "lighting", size_of::<LightingUniform>(), VF),
+            uniform_of(2, "shadow", size_of::<ShadowUniform>(), VF),
+            texture(3, "near_shadows", Depth, D2Array, VF),
+            texture(4, "kept_shadows", Depth, D2, VF),
+            texture(5, "moving_shadows", Depth, D2, VF),
             sampler(6, "shadow_sampler", Comparison, F),
             // Receiver-plane lookups read four texels.
-            sampler(7, "shadow_texels", NonFiltering, F),
+            sampler(7, "shadow_texels", NonFiltering, VF),
             // The kept shadow levels, one layer each.
-            texture(8, "kept_levels", Depth, D2Array, F),
+            texture(8, "kept_levels", Depth, D2Array, VF),
             texture(9, "refraction_source", Float, D2, F),
             sampler(10, "refraction_sampler", Filtering, F),
             texture(11, "environment_maps", Float, CubeArray, F),
