@@ -211,14 +211,8 @@ impl GroundCoverPass {
             let candidates = engine_core::math::max((density * spacing * spacing).ceil(), 1.0);
             let local = eye - render.origin;
             let reach = tier_reach(&settings, blade, pixels_per_meter);
-            // Blades stand on the ground as each level draws it;
-            // the coarsest never morphs.
-            let mut ranges = [[0.0_f32; 4]; 2];
-            for (level, range) in render.ranges.iter().enumerate().take(8) {
-                if level + 1 < render.ranges.len() {
-                    ranges[level / 4][level % 4] = *range;
-                }
-            }
+            // Blades stand on the ground as each level draws it.
+            let ranges = morph_ranges(render);
             let mut tiers = [(0.0, radius, 1.0); MAX_TIERS];
             let mut count = 1;
             while reach > 0.0 && count < MAX_TIERS {
@@ -504,6 +498,20 @@ impl GroundCoverPass {
         pass.draw_indirect(&self.args, 0);
         1
     }
+}
+
+/// The meters from the eye up to which each of `terrain`'s first eight
+/// levels draws, finest first, as what stands on its ground reads them
+/// (`terrain_ground.wgsl`): the coarsest never morphs, so it and levels
+/// past the eighth read 0.
+pub(crate) fn morph_ranges(terrain: &engine_core::RenderTerrain) -> [[f32; 4]; 2] {
+    let mut ranges = [[0.0_f32; 4]; 2];
+    for (level, range) in terrain.ranges.iter().enumerate().take(8) {
+        if level + 1 < terrain.ranges.len() {
+            ranges[level / 4][level % 4] = *range;
+        }
+    }
+    ranges
 }
 
 /// Pixels a meter spans a meter from the eye along a view `height` pixels

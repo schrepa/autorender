@@ -101,7 +101,6 @@ const PALETTE_ENTRIES: u32 = 170u;
 @group(0) @binding(9) var<storage, read> deformation: array<u32>;
 @group(0) @binding(10) var sky_maps: texture_2d_array<f32>;
 
-const NOT_RESIDENT: u32 = 0xffffffffu;
 const TAU: f32 = 6.2831853;
 
 fn hash(value: u32) -> u32 {
@@ -109,6 +108,11 @@ fn hash(value: u32) -> u32 {
     h = (h ^ (h >> 16u)) * 0x7feb352du;
     h = (h ^ (h >> 15u)) * 0x846ca68bu;
     return h ^ (h >> 16u);
+}
+
+// The terrain cover grows on, as its ground reads.
+fn grown() -> GroundTerrain {
+    return GroundTerrain(grow.counts.x, grow.counts.y, grow.origin.w, grow.ranges);
 }
 
 // What the terrain holds at terrain-local `local`: its height, and the
@@ -121,63 +125,10 @@ struct Ground {
     level: u32,
 }
 
-// A tile of a level: its layer (`NOT_RESIDENT` when not loaded) and its
-// first sample (the level's samples from the terrain's origin).
-struct LevelTile {
-    layer: u32,
-    first: vec2<u32>,
-}
-
-// The tile of `level` holding its sample `samples` (terrain-local).
-fn level_tile(level: u32, samples: vec2<f32>) -> LevelTile {
-    let header = grow.counts.x + level * 4u;
-    let tiles = vec2<u32>(directory[header + 1u], directory[header + 2u]);
-    let tile = min(vec2<u32>(max(samples, vec2<f32>(0.0)) / 256.0), tiles - vec2<u32>(1u));
-    var found: LevelTile;
-    found.layer = directory[directory[header] + tile.y * tiles.x + tile.x];
-    found.first = tile * 256u;
-    return found;
-}
-
-// The height of `tile`'s sample `sample` (its level's, terrain-local);
-// layers keep a border sample before the tile's first.
-fn tile_height(tile: LevelTile, sample: vec2<u32>) -> f32 {
-    let texel = min(sample - tile.first, vec2<u32>(256u)) + vec2<u32>(1u);
-    return textureLoad(heights, texel, tile.layer, 0).r;
-}
-
-// Where `level` stands morphing into the next coarser level `away` meters
-// from the eye: over the last quarter of its range.
-fn level_morph(level: u32, away: f32) -> f32 {
-    if level >= 8u {
-        return 0.0;
-    }
-    let four = select(grow.ranges[0], grow.ranges[1], level >= 4u);
-    let range = dot(four, vec4<f32>(vec4<u32>(level % 4u) == vec4<u32>(0u, 1u, 2u, 3u)));
-    if range <= 0.0 {
-        return 0.0;
-    }
-    return saturate((away - 0.75 * range) / (0.25 * range));
-}
-
-// The height within a cell of corners `a` (0, 0), `b` (1, 0), `c` (0, 1)
-// and `d` (1, 1) at `f`, on the two triangles patches split cells into,
-// from the (0, 1) corner to the (1, 0) one.
-fn triangle_height(a: f32, b: f32, c: f32, d: f32, f: vec2<f32>) -> f32 {
-    if f.x + f.y <= 1.0 {
-        return a + (b - a) * f.x + (c - a) * f.y;
-    }
-    return d + (c - d) * (1.0 - f.x) + (b - d) * (1.0 - f.y);
-}
-
 // The ground at terrain-local `local` as the terrain draws it `away` meters
-// from the eye (`terrain_vertex.wgsl`): its finest resident
-// level, or the coarser one it has morphed into, morphing into the next
-// over the last quarter of its range, its odd samples sliding onto the
-// even ones before them as their heights blend into the coarser level's,
-// read on the triangles its patches draw. Control values come from the
-// nearest sample of the finest resident level. Nothing grows beyond the
-// terrain's far edges.
+// from the eye (`terrain_ground.wgsl`'s `drawn_height`). Control values
+// come from the nearest sample of the finest resident level. Nothing grows
+// beyond the terrain's far edges.
 fn drawn_ground(local: vec2<f32>, away: f32) -> Ground {
     var ground: Ground;
     let base = grow.counts.x;
@@ -190,7 +141,7 @@ fn drawn_ground(local: vec2<f32>, away: f32) -> Ground {
     var tile: LevelTile;
     tile.layer = NOT_RESIDENT;
     for (; level < levels; level++) {
-        tile = level_tile(level, local / (grow.origin.w * f32(1u << level)));
+        tile = level_tile(grown(), level, local / (grow.origin.w * f32(1u << level)));
         if tile.layer != NOT_RESIDENT {
             break;
         }
@@ -203,54 +154,7 @@ fn drawn_ground(local: vec2<f32>, away: f32) -> Ground {
         min(vec2<u32>(round(finest)) - tile.first, vec2<u32>(256u)) + vec2<u32>(1u),
         tile.layer, 0).x;
     ground.found = true;
-    // A level fully morphed draws as the next coarser one.
-    var morph = level_morph(level, away);
-    var coarse: LevelTile;
-    coarse.layer = NOT_RESIDENT;
-    while morph > 0.0 && level + 1u < levels {
-        coarse = level_tile(level + 1u, local / (grow.origin.w * f32(2u << level)));
-        if coarse.layer == NOT_RESIDENT {
-            morph = 0.0;
-            break;
-        }
-        if morph < 1.0 {
-            break;
-        }
-        level += 1u;
-        tile = coarse;
-        coarse.layer = NOT_RESIDENT;
-        morph = level_morph(level, away);
-    }
-    if level + 1u >= levels {
-        morph = 0.0;
-    }
-    // The morphed grid: within each pair of cells from an even sample, the
-    // odd sample between them stands `1 - morph` along.
-    let samples = max(local / (grow.origin.w * f32(1u << level)), vec2<f32>(0.0));
-    let block = floor(samples * 0.5) * 2.0;
-    let within = samples - block;
-    let edge = 1.0 - morph;
-    let second = within >= vec2<f32>(edge);
-    let start = select(vec2<f32>(0.0), vec2<f32>(edge), second);
-    let width = select(vec2<f32>(edge), vec2<f32>(1.0 + morph), second);
-    let f = saturate((within - start) / max(width, vec2<f32>(1.0e-6)));
-    let cell = vec2<u32>(block) + select(vec2<u32>(0u), vec2<u32>(1u), second);
-    var a = tile_height(tile, cell);
-    var b = tile_height(tile, cell + vec2<u32>(1u, 0u));
-    var c = tile_height(tile, cell + vec2<u32>(0u, 1u));
-    var d = tile_height(tile, cell + vec2<u32>(1u, 1u));
-    if morph > 0.0 {
-        // Each corner blends into the coarser level's sample at the even
-        // sample it slides onto: the block's first, or after the block for
-        // the second cell's far corners.
-        let pair = vec2<u32>(block) / 2u;
-        let next = pair + select(vec2<u32>(0u), vec2<u32>(1u), second);
-        a = mix(a, tile_height(coarse, pair), morph);
-        b = mix(b, tile_height(coarse, vec2<u32>(next.x, pair.y)), morph);
-        c = mix(c, tile_height(coarse, vec2<u32>(pair.x, next.y)), morph);
-        d = mix(d, tile_height(coarse, next), morph);
-    }
-    ground.height = triangle_height(a, b, c, d, f);
+    ground.height = drawn_height(grown(), local, away, level, tile);
     return ground;
 }
 
@@ -266,7 +170,7 @@ fn ground_at(local: vec2<f32>) -> Ground {
     }
     for (var index = 0u; index < levels; index++) {
         let samples = max(local / (grow.origin.w * f32(1u << index)), vec2<f32>(0.0));
-        let tile = level_tile(index, samples);
+        let tile = level_tile(grown(), index, samples);
         if tile.layer == NOT_RESIDENT {
             continue;
         }
@@ -291,10 +195,11 @@ fn ground_at(local: vec2<f32>) -> Ground {
 fn drawn_level(local: vec2<f32>, finest: u32, away: f32) -> u32 {
     var level = finest;
     loop {
-        if level + 1u >= grow.counts.y || level_morph(level, away) < 1.0 {
+        if level + 1u >= grow.counts.y || level_morph(grown(), level, away) < 1.0 {
             break;
         }
-        let coarse = level_tile(level + 1u, local / (grow.origin.w * f32(2u << level)));
+        let coarse = level_tile(grown(), level + 1u,
+            local / (grow.origin.w * f32(2u << level)));
         if coarse.layer == NOT_RESIDENT {
             break;
         }
@@ -508,7 +413,8 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         var lowest = 0xffffffffu;
         var highest = 0u;
         for (var level = first_level; level < end_level; level++) {
-            let tile = level_tile(level, middle / (grow.origin.w * f32(1u << level)));
+            let tile = level_tile(grown(), level,
+                middle / (grow.origin.w * f32(1u << level)));
             if tile.layer == NOT_RESIDENT {
                 continue;
             }

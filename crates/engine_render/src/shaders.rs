@@ -67,6 +67,7 @@ shaders! {
     COVER_GROW_SHADER = [
         "math.wgsl",
         "terrain_variety.wgsl",
+        "terrain_ground.wgsl",
         "cover_grow.wgsl",
     ];
     DEFORMATION_SHADER = [
