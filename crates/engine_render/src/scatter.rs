@@ -90,11 +90,12 @@ type SnapKey = (u64, u64, (u64, u64));
 use crate::gpu_layouts::scatter::DrawArgs;
 
 /// One draw group as the renderer lays it out: each level's index count,
-/// first index and base vertex, the levels the camera draws, the coarser
-/// levels' errors, and its impostor's error (mesh units; 0 without one)
-/// and record.
+/// first index and base vertex, and those of the triangles shadow maps
+/// draw of it, the levels the camera draws, the coarser levels' errors,
+/// and its impostor's error (mesh units; 0 without one) and record.
 pub(crate) struct GroupLayout {
     pub levels: Vec<(u32, u32, i32)>,
+    pub casters: Vec<(u32, u32, i32)>,
     pub camera: u32,
     pub errors: [f32; LEVELS as usize - 1],
     pub impostor: (f32, u32),
@@ -179,11 +180,12 @@ struct FrameViews {
     card_args: Vec<[u32; 4]>,
 }
 
-/// Each draw's arguments with no instances, and every list's, rewritten
-/// every frame.
+/// Each draw's arguments with no instances, the camera's and the shadow
+/// maps', and every list's, rewritten every frame.
 #[derive(Default)]
 struct DrawArgsLists {
     template: Vec<DrawArgs>,
+    casters: Vec<DrawArgs>,
     lists: Vec<DrawArgs>,
 }
 
@@ -306,7 +308,7 @@ impl ScatterPass {
     }
 
     /// Lays out the draw groups `groups` holding `counts` live objects:
-    /// each group's lists and the draws' template.
+    /// each group's lists and the draws' templates.
     pub(crate) fn set_groups(
         &mut self,
         device: &wgpu::Device,
@@ -316,6 +318,7 @@ impl ScatterPass {
     ) {
         let mut data = Vec::with_capacity(groups.len());
         self.args.template.clear();
+        self.args.casters.clear();
         let mut ids = 0;
         for (group, &count) in groups.iter().zip(counts) {
             data.push(GroupData {
@@ -329,15 +332,20 @@ impl ScatterPass {
                 pad: [0; 2],
             });
             for level in 0..LEVELS as usize {
-                let (index_count, first_index, base_vertex) =
-                    group.levels.get(level).copied().unwrap_or((0, 0, 0));
-                self.args.template.push(DrawArgs {
-                    index_count,
-                    instance_count: 0,
-                    first_index,
-                    base_vertex,
-                    first_instance: 0,
-                });
+                for (template, ranges) in [
+                    (&mut self.args.template, &group.levels),
+                    (&mut self.args.casters, &group.casters),
+                ] {
+                    let (index_count, first_index, base_vertex) =
+                        ranges.get(level).copied().unwrap_or((0, 0, 0));
+                    template.push(DrawArgs {
+                        index_count,
+                        instance_count: 0,
+                        first_index,
+                        base_vertex,
+                        first_instance: 0,
+                    });
+                }
             }
             ids += count * LEVELS;
         }
@@ -565,8 +573,15 @@ impl ScatterPass {
         queue.write_buffer(&self.views, 0, bytemuck::cast_slice(&views));
         self.frame_views.data = views;
         self.args.lists.clear();
-        for _ in 0..lists {
-            self.args.lists.extend_from_slice(&self.args.template);
+        for list in 0..lists {
+            // The shadow maps' views, after the camera's and before its
+            // fading objects', draw their caster triangles.
+            let shadow = list > 0 && list < view_count;
+            self.args.lists.extend_from_slice(if shadow {
+                &self.args.casters
+            } else {
+                &self.args.template
+            });
         }
         queue.write_buffer(&self.draws, 0, bytemuck::cast_slice(&self.args.lists));
         self.pipeline

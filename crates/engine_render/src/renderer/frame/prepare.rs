@@ -274,8 +274,10 @@ impl Renderer {
                 } else {
                     LOD_LEVELS - 1
                 };
-                let (indices, lods) =
+                let (mut indices, lods) =
                     lod_chain(source, levels, &mut self.mesh_uploads.lod_failures);
+                let index_count = source.indices().len() as u32;
+                let casters = caster_ranges(&mut indices, index_count, &lods);
                 let placement = self
                     .mesh_arena
                     .insert(
@@ -316,9 +318,10 @@ impl Renderer {
                     placement,
                     extended: extras.is_some(),
                     skinned: skin.is_some(),
-                    index_count: source.indices().len() as u32,
+                    index_count,
                     byte_len,
                     lods,
+                    casters,
                 });
                 mesh_upload_bytes += byte_len;
                 if let Some(geometry) = source.virtual_geometry() {
@@ -874,20 +877,24 @@ impl Renderer {
                 |mesh| {
                     let draw = mesh.draw(arena);
                     // Levels of detail of meshes without
-                    // joints, which move their vertices.
+                    // joints, which move their vertices; each level's
+                    // caster triangles.
                     let lods = if mesh.skinned || !snapshot.environment.level_of_detail.enabled {
                         Vec::new()
                     } else {
                         mesh.lods
                             .iter()
-                            .map(|&(offset, count, error)| {
+                            .enumerate()
+                            .map(|(level, &(offset, count, error))| {
+                                let (offset, count) = mesh.caster_range(level + 1, (offset, count));
                                 (draw.first_index + offset, count, error)
                             })
                             .collect()
                     };
+                    let (offset, count) = mesh.caster_range(0, (0, draw.index_count));
                     CasterDraw {
-                        index_count: draw.index_count,
-                        first_index: draw.first_index,
+                        index_count: count,
+                        first_index: draw.first_index + offset,
                         base_vertex: draw.base_vertex,
                         lods,
                     }

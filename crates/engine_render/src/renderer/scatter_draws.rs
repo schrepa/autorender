@@ -94,9 +94,10 @@ type AssetKey = (
 type ScatterKey = (Vec<(u64, Vec<Option<AssetKey>>)>, u64);
 
 /// A placed asset's levels as drawn: each one's index count, first index
-/// and base vertex, its mesh, the coarser ones' errors, and how many the
-/// camera draws.
+/// and base vertex, and those of the triangles shadow maps draw of it,
+/// its mesh, the coarser ones' errors, and how many the camera draws.
 type Levels = (
+    Vec<(u32, u32, i32)>,
     Vec<(u32, u32, i32)>,
     Vec<MeshHandle>,
     [f32; LEVELS as usize - 1],
@@ -459,7 +460,8 @@ impl Renderer {
                 let Some(asset) = asset else {
                     continue;
                 };
-                let Some((levels, meshes, errors, camera)) = self.scatter_levels(asset) else {
+                let Some((levels, casters, meshes, errors, camera)) = self.scatter_levels(asset)
+                else {
                     continue;
                 };
                 let bounds = asset.mesh.mesh.bounds();
@@ -490,6 +492,7 @@ impl Renderer {
                 });
                 layouts.push(GroupLayout {
                     levels,
+                    casters,
                     camera,
                     errors,
                     impostor: (0.0, 0),
@@ -521,7 +524,18 @@ impl Renderer {
             return None;
         }
         let draw = mesh.draw(&self.mesh_arena);
-        let mut levels = vec![(draw.index_count, draw.first_index, draw.base_vertex)];
+        // Level `level` of `mesh` drawn from `draw`, whose own triangles
+        // are `own`, as the camera and as shadow maps draw it.
+        let level = |mesh: &GpuMesh, draw: &MeshDraw<'_>, level: usize, own: (u32, u32)| {
+            let (first, count) = mesh.caster_range(level, own);
+            (
+                (own.1, draw.first_index + own.0, draw.base_vertex),
+                (count, draw.first_index + first, draw.base_vertex),
+            )
+        };
+        let (finest, finest_casters) = level(mesh, &draw, 0, (0, draw.index_count));
+        let mut levels = vec![finest];
+        let mut casters = vec![finest_casters];
         let mut meshes = vec![asset.mesh.handle];
         let mut errors = [0.0; LEVELS as usize - 1];
         if asset.lods.is_empty() {
@@ -530,15 +544,13 @@ impl Renderer {
                     break;
                 }
                 errors[levels.len() - 1] = error;
-                levels.push((
-                    index_count,
-                    draw.first_index + first_index,
-                    draw.base_vertex,
-                ));
+                let (drawn, cast) = level(mesh, &draw, levels.len(), (first_index, index_count));
+                levels.push(drawn);
+                casters.push(cast);
                 meshes.push(asset.mesh.handle);
             }
             let camera = CAMERA_LEVELS.min(levels.len() as u32);
-            return Some((levels, meshes, errors, camera));
+            return Some((levels, casters, meshes, errors, camera));
         }
         for (lod, error) in asset.lods.iter().take(LEVELS as usize - 1) {
             let Some(coarser) = self.meshes.get(&lod.handle) else {
@@ -549,11 +561,13 @@ impl Renderer {
             }
             let coarse = coarser.draw(&self.mesh_arena);
             errors[levels.len() - 1] = *error;
-            levels.push((coarse.index_count, coarse.first_index, coarse.base_vertex));
+            let (drawn, cast) = level(coarser, &coarse, 0, (0, coarse.index_count));
+            levels.push(drawn);
+            casters.push(cast);
             meshes.push(lod.handle);
         }
         let camera = levels.len() as u32;
-        Some((levels, meshes, errors, camera))
+        Some((levels, casters, meshes, errors, camera))
     }
 
     /// The material group and pipeline variant of placed group `draw`.
