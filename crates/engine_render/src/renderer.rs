@@ -34,6 +34,7 @@ use crate::probes::{FACES, ProbePass, face_view_projection};
 use crate::profiling::GpuProfiler;
 use crate::render_features::{Eager, FeatureFrames, Lazy, Ready, RenderFeature, RenderFeatures};
 use crate::retained_uploads::RetainedUploads;
+use crate::scene_shading::SceneShading;
 use crate::shadows::{CasterDraw, ShadowPass};
 use crate::staging::{self, StagingRing};
 use crate::targets::{FrameSize, ScreenTarget, Targets};

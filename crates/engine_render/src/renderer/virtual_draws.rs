@@ -425,7 +425,7 @@ impl Renderer {
             vertex,
             fragment,
             targets: targets.color_targets(canvas),
-            constants: variant.constants().to_vec(),
+            constants: self.mesh_pipelines.shading.with(&variant.constants()),
         }
     }
 }

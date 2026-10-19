@@ -344,7 +344,7 @@ pub(crate) fn face_view_projection(center: Vec3, face: usize) -> Mat4 {
 
 /// Fills `words` with the grid of `probes` (each with its environment cube,
 /// or 0 for an interior not captured yet) that `meshes/shading.wgsl`'s
-/// `environment_light` and `interior_light` read.
+/// `environment_light` walks.
 fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>) {
     words.clear();
     if probes.is_empty() {

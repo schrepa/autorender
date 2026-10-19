@@ -86,6 +86,7 @@ mod gpu {
     use crate::profiling::Span;
     use crate::render_features::{Encode, FeaturePass, RenderFeature};
     use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource};
+    use crate::scene_shading::SceneShading;
     use crate::targets::Targets;
 
     /// A frame's decals: those drawn and those beyond the GPU's binding.
@@ -102,7 +103,9 @@ mod gpu {
         layout: crate::pipelines::GroupLayout,
         // Without and with the local lights' group.
         pipeline_layouts: [Option<wgpu::PipelineLayout>; 2],
+        // The pipelines, and the scene features they are specialized for.
         pipelines: HashMap<PipelineKey, wgpu::RenderPipeline>,
+        shading: SceneShading,
         surface_format: wgpu::TextureFormat,
         // As many records as its room holds.
         records: Growable,
@@ -124,6 +127,7 @@ mod gpu {
                 layout,
                 pipeline_layouts: [None, None],
                 pipelines: HashMap::default(),
+                shading: SceneShading::ALL,
                 surface_format,
                 records: Growable::new(
                     device,
@@ -136,6 +140,15 @@ mod gpu {
                 runs: Vec::new(),
                 groups: Default::default(),
                 parity: 0,
+            }
+        }
+
+        /// Specializes the pipelines for `shading`'s scene features: those
+        /// made for others are dropped, to be created anew.
+        pub(crate) fn specialize(&mut self, shading: SceneShading) {
+            if self.shading != shading {
+                self.shading = shading;
+                self.pipelines.clear();
             }
         }
 
@@ -227,7 +240,13 @@ mod gpu {
                             ),
                         }
                     });
-                let pipeline = pipeline(device, shader, layout, self.surface_format, key);
+                let pipeline = pipeline(
+                    device,
+                    shader,
+                    layout,
+                    (self.surface_format, self.shading),
+                    key,
+                );
                 self.pipelines.insert(key, pipeline);
             }
         }
@@ -334,14 +353,14 @@ mod gpu {
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         layout: &wgpu::PipelineLayout,
-        surface_format: wgpu::TextureFormat,
+        (surface_format, shading): (wgpu::TextureFormat, SceneShading),
         (canvas, blend, lit): PipelineKey,
     ) -> wgpu::RenderPipeline {
         let flag = |on: bool| if on { 1.0 } else { 0.0 };
-        let constants = [
+        let constants = shading.with(&[
             ("DECAL_MULTIPLY", flag(blend == DecalBlend::Multiply)),
             ("DECAL_CANVAS", flag(canvas)),
-        ];
+        ]);
         // Alpha keeps the scene target's ambient share.
         let keep = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::Zero,

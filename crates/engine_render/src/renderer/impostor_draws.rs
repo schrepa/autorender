@@ -200,8 +200,8 @@ impl Renderer {
                 &self.device,
                 &self.mesh_shader,
                 &layout,
-                targets,
-                lit,
+                (targets, lit),
+                self.mesh_pipelines.shading,
                 self.display.format(),
                 DEPTH_FORMAT,
             );

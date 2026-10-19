@@ -49,6 +49,7 @@ use crate::gpu_layouts::terrain::{TerrainUniform, ViewUniform};
 use crate::profiling::Span;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource, Targets};
+use crate::scene_shading::SceneShading;
 use crate::targets::{FrameSize, ScreenTarget};
 use crate::terrain::{TerrainWaterDraws, WATER_GRID_INDICES, water_patch_layout};
 use crate::water_fall_map::FallMap;
@@ -155,6 +156,8 @@ pub(crate) struct WaterPass {
     fall_vertices: Vec<FallVertex>,
     fall_indices: Vec<u32>,
     sim_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
+    // The scene features the pipelines are specialized for.
+    shading: SceneShading,
 }
 
 impl WaterPass {
@@ -179,6 +182,19 @@ impl WaterPass {
             fall_vertices: Vec::new(),
             fall_indices: Vec::new(),
             sim_pipelines: HashMap::default(),
+            shading: SceneShading::ALL,
+        }
+    }
+
+    /// Specializes the pipelines for `shading`'s scene features: those
+    /// made for others are dropped, to be created anew.
+    pub(crate) fn specialize(&mut self, shading: SceneShading) {
+        if self.shading != shading {
+            self.shading = shading;
+            self.pipelines.clear();
+            self.ocean_pipelines.clear();
+            self.fall_pipelines.clear();
+            self.sim_pipelines.clear();
         }
     }
 
@@ -703,7 +719,7 @@ impl WaterPass {
                 }),
                 fragment: Some(crate::pipelines::Fragment {
                     entry: fragment,
-                    constants: &[],
+                    constants: &self.shading.constants(),
                     targets: &color_targets,
                 }),
             },

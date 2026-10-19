@@ -173,6 +173,26 @@ impl Renderer {
         self.instances.release_alternate();
     }
 
+    /// Specializes the pipelines shading the scene for the features
+    /// `snapshot`'s frame can hold: when those change, the pipelines made
+    /// for others are dropped, and created anew with their next draws.
+    /// Decals specialize as they prepare.
+    pub(super) fn specialize_shading(&mut self, snapshot: &RenderSnapshot) {
+        let shading = SceneShading::of(snapshot);
+        if shading != self.mesh_pipelines.shading {
+            self.mesh_pipelines.shading = shading;
+            self.mesh_pipelines.variants.clear();
+            self.structure_keys.variants = None;
+            self.structure_keys.probes = None;
+            self.virtual_draws.pipelines.clear();
+            self.visibility.resolve_pipelines.clear();
+            self.impostors.pipelines.forget_shading();
+        }
+        self.terrain.pipelines.specialize(shading);
+        self.features.ground_cover.get_mut().specialize(shading);
+        self.features.water.get_mut().specialize(shading);
+    }
+
     /// Uploads the frame's new meshes (with their levels of detail and
     /// virtual geometry) and textures, bakes new impostors, and orders the
     /// opaque draws. New textures' mip levels and impostor bakes record into
@@ -1209,10 +1229,12 @@ impl Renderer {
             .filter(|_| lit)
             .map(LightPass::fragment_layout);
         let (device, format) = (&self.device, self.display.format());
+        let shading = self.mesh_pipelines.shading;
         self.features.decals.prepare(
             (device, DecalPass::wanted(snapshot)),
             || DecalPass::new(device, format),
             |decals| {
+                decals.specialize(shading);
                 let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
                 let prepared = decals.prepare(
                     device,

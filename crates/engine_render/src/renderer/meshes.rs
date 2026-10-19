@@ -16,14 +16,16 @@ use crate::pipelines::vertex_attributes;
 /// the first variant needing each (temporal frames' come with the temporal
 /// pass); every pass kind's material variants, whose BASIC entries are the
 /// base pipelines; the sky by its targets, built when a pass first draws it;
-/// and the empty group pipelines skipping a group bind (the visibility pass,
-/// impostor bakes).
+/// the empty group pipelines skipping a group bind (the visibility pass,
+/// impostor bakes); and the scene features every pipeline shading the scene
+/// is specialized for.
 pub(super) struct MeshPipelines {
     pub(super) layouts: [Option<wgpu::PipelineLayout>; 2],
     pub(super) variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
     sky: [Option<wgpu::RenderPipeline>; 4],
     pub(super) empty_layout: crate::pipelines::GroupLayout,
     pub(super) empty_group: wgpu::BindGroup,
+    pub(super) shading: SceneShading,
 }
 
 /// The targets a sky draws into: an opaque pass's, or a reflection probe
@@ -56,6 +58,7 @@ impl MeshPipelines {
             sky: Default::default(),
             empty_layout,
             empty_group,
+            shading: SceneShading::ALL,
         }
     }
 
@@ -329,7 +332,7 @@ impl Renderer {
             layout,
             kind,
             &fragment,
-            variant,
+            (variant, self.mesh_pipelines.shading),
         )
     }
 
@@ -453,16 +456,17 @@ struct MeshFragment {
     mirrored: bool,
 }
 
-/// A mesh pipeline of `kind` over `layout`, shading materials of `variant`.
+/// A mesh pipeline of `kind` over `layout`, shading materials of `variant`
+/// in a scene of `shading`'s features.
 fn mesh_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     kind: PassKind,
     fragment: &MeshFragment,
-    variant: Variant,
+    (variant, shading): (Variant, SceneShading),
 ) -> wgpu::RenderPipeline {
-    let constants = variant.constants();
+    let constants = shading.with(&variant.constants());
     // Extended meshes read a third vertex buffer through
     // their own entry points; skinned meshes a fourth.
     let extended = variant.extended();

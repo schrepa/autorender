@@ -25,6 +25,7 @@ use crate::gpu_layouts::constants::BLADE_BYTES;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::Targets;
 use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
+use crate::scene_shading::SceneShading;
 use crate::terrain::TerrainPass;
 
 /// Uniform offset alignment between terrains' growth.
@@ -54,7 +55,10 @@ pub(crate) struct GroundCoverPass {
     // The growth's and the finish's pipelines, created with the first
     // frame that has cover.
     compute: Option<(wgpu::ComputePipeline, wgpu::ComputePipeline)>,
+    // The blades' pipelines, and the scene features they are specialized
+    // for.
     pipelines: HashMap<(Targets, bool), wgpu::RenderPipeline>,
+    shading: SceneShading,
     blades: crate::buffers::Growable,
     capacity: u32,
     blades_generation: u64,
@@ -86,6 +90,7 @@ impl GroundCoverPass {
             draw_layout: crate::pipelines::layout(device, &COVER_DRAW),
             compute: None,
             pipelines: HashMap::default(),
+            shading: SceneShading::ALL,
             blades: crate::buffers::Growable::new(
                 device,
                 "engine/cover-blades",
@@ -407,6 +412,15 @@ impl GroundCoverPass {
             .get_or_insert_with(|| compute(device, &self.grow_layout));
     }
 
+    /// Specializes the blades' pipelines for `shading`'s scene features:
+    /// those made for others are dropped, to be created anew.
+    pub(crate) fn specialize(&mut self, shading: SceneShading) {
+        if self.shading != shading {
+            self.shading = shading;
+            self.pipelines.clear();
+        }
+    }
+
     /// Creates the pipeline drawing blades into `targets` (`lit` or not)
     /// unless it exists.
     pub(crate) fn ensure_pipeline(
@@ -466,7 +480,7 @@ impl GroundCoverPass {
                 }),
                 fragment: Some(crate::pipelines::Fragment {
                     entry: fragment,
-                    constants: &[],
+                    constants: &self.shading.constants(),
                     targets: &color_targets,
                 }),
             },

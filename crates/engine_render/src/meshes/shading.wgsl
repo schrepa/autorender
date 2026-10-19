@@ -564,32 +564,49 @@ fn box_projected(position: vec3<f32>, direction: vec3<f32>, center: vec3<f32>,
     return position + direction * min(exits.x, min(exits.y, exits.z)) - center;
 }
 
-// The environment's light reflected toward `reflected` off a surface of
-// `normal` and `roughness` at `world`: the reflection probes whose boxes
-// hold it, smallest first, each fading out toward its faces
-// over its blend distance, and the sky's map for what they leave; each map
-// at the level blurred by that roughness, read along the lobe's dominant
+// What the environment gives a surface point: the light it reflects toward
+// the eye, and the shares of the sky's light (x) and the sun's (y) reaching
+// it.
+struct EnvironmentLight {
+    reflected: vec3<f32>,
+    interior: vec2<f32>,
+}
+
+// The environment around `world`, from one walk of the reflection probes
+// whose boxes hold it, smallest first, each fading in over its blend
+// distance inside its faces. Reflected toward `reflected` off a surface of
+// `normal` and `roughness`: those probes' maps, each weighted by what the
+// smaller ones leave, and the sky's map for what they all leave; each map at
+// the level blurred by that roughness, read along the lobe's dominant
 // direction, which leans toward the normal as the surface roughens (Lagarde
-// and de Rousiers).
+// and de Rousiers). Inside interiors' boxes only their shares of the sky and
+// sun reach; all of both elsewhere.
 fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
-        world: vec3<f32>) -> vec3<f32> {
+        world: vec3<f32>) -> EnvironmentLight {
     let smoothness = 1.0 - roughness;
     let lean = smoothness * (sqrt(smoothness) + roughness);
     let direction = normalize(mix(normal, reflected, lean));
     let level = roughness * f32(textureNumLevels(environment_maps) - 1u);
     var light = vec3<f32>(0.0);
     var covered = 0.0;
+    var shares = vec2<f32>(1.0);
     let header = probe_words[0];
-    if header.w != 0u {
+    if PROBES && header.w != 0u {
         let grid = probe_words[1];
         let cell = vec2<i32>(floor((world.xz - bitcast<vec2<f32>>(header.xy))
             / bitcast<f32>(header.z)));
         if all(cell >= vec2<i32>(0)) && all(vec2<u32>(cell) < grid.xy) {
             let list = probe_words[grid.z + u32(cell.y) * grid.x + u32(cell.x)];
-            for (var n = 0u; n < list.y && covered < 0.999; n++) {
+            // Interiors' shares take every probe of the list; reflections
+            // end once covered.
+            let interiors = list.z != 0u;
+            for (var n = 0u; n < list.y && (covered < 0.999 || interiors); n++) {
                 let entry = grid.w + (list.x + n) * PROBE_ENTRY_WORDS;
+                let interior = probe_words[entry + 2u];
                 // Interiors not captured yet reflect nothing.
-                if probe_words[entry + 2u].w == 0u {
+                let reflects = interior.w != 0u && covered < 0.999;
+                let shades = interiors && interior.z != 0u;
+                if !reflects && !shades {
                     continue;
                 }
                 let first = probe_words[entry];
@@ -602,11 +619,18 @@ fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
                 if depth <= 0.0 {
                     continue;
                 }
-                let weight = select(1.0, saturate(depth / blend), blend > 0.0) * (1.0 - covered);
-                let along = box_projected(world, direction, center, extent);
-                light += weight * textureSampleLevel(environment_maps, environment_sampler, along,
-                    second.w, level).rgb;
-                covered += weight;
+                let fade = select(1.0, saturate(depth / blend), blend > 0.0);
+                if reflects {
+                    let weight = fade * (1.0 - covered);
+                    let along = box_projected(world, direction, center, extent);
+                    light += weight * textureSampleLevel(environment_maps, environment_sampler,
+                        along, second.w, level).rgb;
+                    covered += weight;
+                }
+                if shades {
+                    shares = min(shares, mix(vec2<f32>(1.0), bitcast<vec2<f32>>(interior.xy),
+                        fade));
+                }
             }
         }
     }
@@ -614,47 +638,7 @@ fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
         light += (1.0 - covered)
             * textureSampleLevel(environment_maps, environment_sampler, direction, 0, level).rgb;
     }
-    return light;
-}
-
-// The shares of the sky's light (x) and the sun's (y) reaching `world`:
-// inside interiors' boxes, theirs, blending in over each
-// box's blend distance inside its faces; all of both elsewhere.
-fn interior_light(world: vec3<f32>) -> vec2<f32> {
-    var light = vec2<f32>(1.0);
-    let header = probe_words[0];
-    if header.w == 0u {
-        return light;
-    }
-    let grid = probe_words[1];
-    let cell = vec2<i32>(floor((world.xz - bitcast<vec2<f32>>(header.xy))
-        / bitcast<f32>(header.z)));
-    if any(cell < vec2<i32>(0)) || any(vec2<u32>(cell) >= grid.xy) {
-        return light;
-    }
-    let list = probe_words[grid.z + u32(cell.y) * grid.x + u32(cell.x)];
-    if list.z == 0u {
-        return light;
-    }
-    for (var n = 0u; n < list.y; n++) {
-        let entry = grid.w + (list.x + n) * PROBE_ENTRY_WORDS;
-        let shares = probe_words[entry + 2u];
-        if shares.z == 0u {
-            continue;
-        }
-        let first = probe_words[entry];
-        let center = bitcast<vec3<f32>>(first.xyz);
-        let blend = bitcast<f32>(first.w);
-        let extent = bitcast<vec3<f32>>(probe_words[entry + 1u].xyz);
-        let inside = extent - abs(world - center);
-        let depth = min(inside.x, min(inside.y, inside.z));
-        if depth <= 0.0 {
-            continue;
-        }
-        let weight = select(1.0, saturate(depth / blend), blend > 0.0);
-        light = min(light, mix(vec2<f32>(1.0), bitcast<vec2<f32>>(shares.xy), weight));
-    }
-    return light;
+    return EnvironmentLight(light, shares);
 }
 
 // Lit, fogged and graded color of `point` with `local` light added.
@@ -689,10 +673,10 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     }
     // The environment mirrored in the surface, blurred by its roughness,
     // weighted by the environment BRDF.
-    let mirrored = environment_light(reflect(-view, normal), normal, point.roughness,
+    let environment = environment_light(reflect(-view, normal), normal, point.roughness,
         point.world);
     let brdf = environment_brdf(point.f0, point.roughness, point.n_v);
-    let reflection = mirrored * brdf * specular;
+    let reflection = environment.reflected * brdf * specular;
     // Rim light outlines walls against the sky; level surfaces seen at
     // grazing angles (distant ground and roofs) take none.
     let grazing = 1.0 - max(dot(point.geometric, view), 0.0);
@@ -703,7 +687,7 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let covered_sky = occupancy_visibility(point.world);
     // Inside interiors only their shares of the sky and sun
     // reach; what they reflect is their probe's own capture.
-    let interior = interior_light(point.world);
+    let interior = environment.interior;
     let sky_light = (point.diffuse_color * (sky_average(normal) * lighting.zenith.w
         + lighting.horizon.rgb * rim) * interior.x + reflection) * point.occlusion * covered_sky
         + point.diffuse_color * point.bounce * covered_sky * interior.x;

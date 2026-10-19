@@ -145,6 +145,19 @@ struct Shadow {
 // The kept shadow levels, one layer each.
 @group(0) @binding(8) var kept_levels: texture_depth_2d_array;
 
+// The features of the scene shading looks up (`scene_shading::SceneShading`):
+// sun shadow maps and their kept levels, terrains' horizons, clouds'
+// shadows, placed objects' covers, and reflection probes. One switched off
+// compiles its lookups out of the pipelines given it, which then leave what
+// its absent uniforms and bindings would; pipelines not given these keep
+// every lookup.
+override SHADOW_MAPS: bool = true;
+override KEPT_LEVELS: bool = true;
+override TERRAIN_HORIZONS: bool = true;
+override CLOUD_SHADOWS: bool = true;
+override OCCUPANCY: bool = true;
+override PROBES: bool = true;
+
 // How much the covers in occupancy layer `layer` (centered at `center`,
 // `inverse` over its side, heights above `reference`) hide the sky from
 // `world`: their cover there, the more the deeper below their top; none
@@ -180,7 +193,7 @@ fn occupancy_cover(world: vec3<f32>, layer: u32, center: vec2<f32>, inverse: f32
 // over, fading out over the outer two fifths of theirs.
 fn occupancy_visibility(world: vec3<f32>) -> f32 {
     let strength = lighting.occupancy.w;
-    if strength <= 0.0 {
+    if !OCCUPANCY || strength <= 0.0 {
         return 1.0;
     }
     let reach = lighting.occupancy_heights.z;
@@ -622,7 +635,7 @@ fn level_depths(level: u32, point: MapPoint, size: f32) -> vec4<f32> {
 fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         dy: vec3<f32>) -> vec2<f32> {
     let count = u32(shadow.level_state.x);
-    if count == 0u {
+    if !KEPT_LEVELS || count == 0u {
         return vec2<f32>(0.0, 1.0);
     }
     // Light space once; each level scales it.
@@ -728,6 +741,9 @@ fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
 // map's ground, which terrain's own surfaces (`on_terrain`) lie on whatever
 // detail they draw at.
 fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
+    if !TERRAIN_HORIZONS {
+        return 1.0;
+    }
     // Their count: the records' texels over two (`level_state.w`).
     let count = u32(shadow.level_state.w);
     var visible = 1.0;
@@ -759,7 +775,7 @@ fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
 // that what the shadow maps leave. `on_terrain`: the point is terrain's.
 fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
         distance: f32, on_terrain: bool) -> f32 {
-    if shadow.state.x == 0.0 {
+    if !SHADOW_MAPS || shadow.state.x == 0.0 {
         return cloud_passing(world);
     }
     let terrain = terrain_visibility(world, on_terrain);
@@ -793,7 +809,7 @@ fn cloud_shadow_cell(x: u32, z: u32) -> f32 {
 // of its index modulo the cells.
 fn cloud_passing(world: vec3<f32>) -> f32 {
     let strength = lighting.cloud_shadow.w;
-    if strength <= 0.0 || lighting.sun.y <= 0.01 {
+    if !CLOUD_SHADOWS || strength <= 0.0 || lighting.sun.y <= 0.01 {
         return 1.0;
     }
     let rise = max(lighting.cloud_layer.x - world.y, 0.0);

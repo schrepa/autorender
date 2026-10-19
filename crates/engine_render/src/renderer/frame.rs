@@ -271,6 +271,7 @@ impl Renderer {
         let Some(surface) = self.display.acquire(&self.device, &mut self.depth)? else {
             return Ok(self.residency_stats());
         };
+        self.specialize_shading(snapshot);
         let mut prelude = Prelude::default();
         let assets = self.upload_assets(snapshot, kind, &mut prelude.mips);
         let packing = self.pack_instances(frame, kind);

@@ -7,6 +7,7 @@ use super::atlas::TileAtlas;
 use super::patches::{PatchDraws, patch_layout};
 use super::tables::TerrainTables;
 use super::*;
+use crate::scene_shading::SceneShading;
 use crate::shaders::entry::meshes;
 
 /// The generations of what the terrain group binds: the atlas, uniforms,
@@ -39,6 +40,8 @@ pub(crate) struct TerrainPipelines {
     pub(crate) resolve_layout: crate::pipelines::GroupLayout,
     probe_pipelines: HashMap<(bool, bool), wgpu::RenderPipeline>,
     shadow: Option<wgpu::RenderPipeline>,
+    // The scene features the shading pipelines are specialized for.
+    shading: SceneShading,
 }
 
 impl TerrainPipelines {
@@ -53,6 +56,18 @@ impl TerrainPipelines {
             resolve_layout: crate::pipelines::layout(device, &crate::bindings::TERRAIN_RESOLVE),
             probe_pipelines: HashMap::default(),
             shadow: None,
+            shading: SceneShading::ALL,
+        }
+    }
+
+    /// Specializes the pipelines shading terrain for `shading`'s scene
+    /// features: those made for others are dropped, to be created anew.
+    pub(crate) fn specialize(&mut self, shading: SceneShading) {
+        if self.shading != shading {
+            self.shading = shading;
+            self.pipelines.clear();
+            self.resolves.clear();
+            self.probe_pipelines.clear();
         }
     }
 
@@ -205,7 +220,7 @@ impl TerrainPipelines {
             device,
             shader,
             &layout,
-            (vertex, fragment, holes),
+            (vertex, fragment, holes, Some(self.shading)),
             &color_targets,
             depth,
             wgpu::FrontFace::Ccw,
@@ -249,7 +264,7 @@ impl TerrainPipelines {
                 device,
                 shader,
                 &layout,
-                (meshes::vs_terrain, meshes::fs_terrain_ids, holes),
+                (meshes::vs_terrain, meshes::fs_terrain_ids, holes, None),
                 &ids,
                 depth,
                 wgpu::FrontFace::Ccw,
@@ -292,7 +307,7 @@ impl TerrainPipelines {
                 module: shader,
                 vertex: meshes::vs_fullscreen,
                 fragment,
-                constants: &[],
+                constants: &self.shading.constants(),
                 targets: &color_targets,
                 depth: None,
             },
@@ -326,7 +341,7 @@ impl TerrainPipelines {
             device,
             shader,
             &layout,
-            (vertex, fragment, holes),
+            (vertex, fragment, holes, Some(self.shading)),
             &[Some(wgpu::ColorTargetState::from(format))],
             depth,
             wgpu::FrontFace::Cw,
@@ -406,20 +421,30 @@ fn pipeline_layout(
     })
 }
 
+/// A pipeline drawing patches, with holes or without, through `vertex` and
+/// `fragment`, which shades a scene of the features given (pipelines
+/// shading nothing take none).
 fn geometry(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
-    (vertex, fragment, holes): (crate::shaders::Entry, crate::shaders::Entry, bool),
+    (vertex, fragment, holes, shading): (
+        crate::shaders::Entry,
+        crate::shaders::Entry,
+        bool,
+        Option<SceneShading>,
+    ),
     targets: &[Option<wgpu::ColorTargetState>],
     depth: wgpu::TextureFormat,
     front_face: wgpu::FrontFace,
 ) -> wgpu::RenderPipeline {
-    let constants: &[(&str, f64)] = if holes {
+    let holes: &[(&str, f64)] = if holes {
         &[("TERRAIN_HOLES", 1.0)]
     } else {
         &[]
     };
+    let constants = shading.map_or_else(|| holes.to_vec(), |shading| shading.with(holes));
+    let constants = &constants[..];
     crate::pipelines::geometry(
         device,
         &crate::pipelines::Geometry {

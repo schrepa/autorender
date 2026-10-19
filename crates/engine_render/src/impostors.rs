@@ -156,6 +156,7 @@ mod gpu {
     use crate::gpu_data::Variant;
     use crate::mesh_arena::MeshDraw;
     use crate::mipmaps::MipGenerator;
+    use crate::scene_shading::SceneShading;
     use crate::targets::Targets;
 
     /// Fewest triangles a mesh needs for an impostor: a card's pixels cost
@@ -292,6 +293,12 @@ mod gpu {
         /// pass that is gone.
         pub(crate) fn forget_pipelines(&mut self, targets: Targets) {
             self.draw_pipelines.retain(|(kind, _), _| *kind != targets);
+        }
+
+        /// Drops every draw pipeline, specialized for the scene features
+        /// shading looked up before.
+        pub(crate) fn forget_shading(&mut self) {
+            self.draw_pipelines.clear();
         }
     }
 
@@ -873,19 +880,21 @@ mod gpu {
 
     /// An impostor draw pipeline: `layout` binds the camera, the impostors'
     /// group, the poses (with previous poses on temporal frames) and, when
-    /// `lit`, the local lights. `canvas` is the surface's format.
+    /// `lit`, the local lights; it shades a scene of `shading`'s features.
+    /// `canvas` is the surface's format.
     pub(crate) fn draw_pipeline(
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         layout: &wgpu::PipelineLayout,
-        targets: Targets,
-        lit: bool,
+        (targets, lit): (Targets, bool),
+        shading: SceneShading,
         canvas: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
         let vertex = crate::entries::impostor_vertex(targets);
         let fragment = crate::entries::impostor_fragment(targets, lit);
         let color_targets = targets.color_targets(canvas);
+        let constants = shading.constants();
         crate::pipelines::geometry(
             device,
             &crate::pipelines::Geometry {
@@ -914,7 +923,7 @@ mod gpu {
                 }),
                 fragment: Some(crate::pipelines::Fragment {
                     entry: fragment,
-                    constants: &[],
+                    constants: &constants,
                     targets: &color_targets,
                 }),
             },
