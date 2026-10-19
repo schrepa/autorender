@@ -100,7 +100,7 @@ screen_effects! {
         gate: |environment, _| environment.ambient_occlusion.sanitized().enabled(),
         uniform: |settings, on, _| {
             let occlusion = settings.ambient_occlusion.sanitized();
-            [occlusion.radius, occlusion.intensity, 0.0, on]
+            [occlusion.radius, occlusion.intensity, occlusion.far_radius, on]
         },
         reads: [Depth],
     },

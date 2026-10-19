@@ -56,6 +56,21 @@ const SPIRAL: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
 // The largest sampling radius, in full-resolution pixels: close surfaces
 // keep their samples in cache.
 const MAX_PIXELS: f32 = 96.0;
+// The share of the view's height the occlusion radius spans on screen at
+// least, where it grows with distance toward the far radius.
+const GROWN_SHARE: f32 = 0.02;
+
+// The world radius surfaces `distance` from the eye occlude within: the
+// radius, or with a larger far radius (`post.occlusion.z`) one growing with
+// distance to span `GROWN_SHARE` of the view's height, up to the far radius.
+fn occlusion_radius(distance: f32) -> f32 {
+    let near = post.occlusion.x;
+    let far = post.occlusion.z;
+    if far <= near {
+        return near;
+    }
+    return clamp(GROWN_SHARE * post.size.y * distance / post.eye.w, near, far);
+}
 
 // World position of a depth-buffer pixel; w is 0 where only sky is (the
 // cleared depth, 0 with reversed depth).
@@ -121,7 +136,7 @@ fn ambient_visibility(pixel: vec2<i32>, p: vec3<f32>, normal: vec3<f32>, distanc
         return 1.0;
     }
     let last = vec2<i32>(post.size.xy) - 1;
-    let radius = post.occlusion.x;
+    let radius = occlusion_radius(distance);
     let pixels = min(radius * post.eye.w / distance, MAX_PIXELS);
     if pixels < 1.0 {
         return 1.0;

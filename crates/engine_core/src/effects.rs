@@ -241,6 +241,13 @@ settings! {
         pub intensity: f32 = 0.8 => range(0.0, 1.0),
         /// World distance within which geometry occludes.
         pub radius: f32 = 2.5 => above(0.0),
+        /// The radius distant surfaces occlude within at most: beyond where
+        /// `radius` spans a fiftieth of the view's height on screen, the
+        /// radius grows with distance to keep that span, up to this one, so
+        /// distant creases, streets and valleys keep their occlusion. 0, or
+        /// any radius up to `radius`, keeps the radius the same at every
+        /// distance.
+        pub far_radius: f32 = 0.0 => at_least(0.0),
     }
 }
 

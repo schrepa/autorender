@@ -1373,6 +1373,13 @@
       "description": "Ambient occlusion; an intensity of 0 turns it off.",
       "type": "object",
       "properties": {
+        "far_radius": {
+          "description": "The radius distant surfaces occlude within at most: beyond where\n`radius` spans a fiftieth of the view's height on screen, the\nradius grows with distance to keep that span, up to this one, so\ndistant creases, streets and valleys keep their occlusion. 0, or\nany radius up to `radius`, keeps the radius the same at every\ndistance.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "minimum": 0.0
+        },
         "intensity": {
           "description": "How much creases and corners darken the ambient light; 0 turns it\noff.",
           "type": "number",

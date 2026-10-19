@@ -277,7 +277,9 @@ gpu_structs! {
         pub eye: [f32; 4],
         /// Scene target size in pixels, and its inverse.
         pub size: [f32; 4],
-        /// Radius, strength, unused and 1 when ambient occlusion runs.
+        /// Radius, strength, the far radius it grows toward with distance
+        /// (none above the radius: it stays) and 1 when ambient occlusion
+        /// runs.
         pub occlusion: [f32; 4],
         /// Strength and 1 when bloom runs; half-resolution texel size.
         pub bloom: [f32; 4],

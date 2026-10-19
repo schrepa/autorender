@@ -13,8 +13,9 @@ struct Post {
     eye: vec4<f32>,
     // Scene target size in pixels, and its inverse.
     size: vec4<f32>,
-    // Radius in world units, strength, unused, and 1 when ambient occlusion
-    // runs.
+    // Radius in world units, strength, the far radius it grows toward with
+    // distance (none above the radius: it stays), and 1 when ambient
+    // occlusion runs.
     occlusion: vec4<f32>,
     // Strength and 1 when bloom runs; zw: size of a half-resolution texel in
     // texture coordinates.
