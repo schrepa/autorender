@@ -267,10 +267,12 @@ impl Regions {
                 selection(*reach, region, region.texel(self.near_resolution()));
         }
         // The far maps shadow receivers up to the shadow distance, and
-        // sun shafts sample them along view rays.
-        let shafts = snapshot.environment.sun_shafts.sanitized();
-        let far_reach = if shafts.enabled() {
-            math::max(settings.distance, shafts.distance)
+        // sun shafts, where they run, sample them along view rays.
+        let far_reach = if crate::screen_effects::shafts_run(&snapshot.environment) {
+            math::max(
+                settings.distance,
+                snapshot.environment.sun_shafts.sanitized().distance,
+            )
         } else {
             settings.distance
         };

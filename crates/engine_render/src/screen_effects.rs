@@ -19,6 +19,17 @@ pub(crate) struct UniformFrame {
     pub(crate) trace_index: u32,
 }
 
+/// Whether sun shafts run under `environment`: light gathered through the
+/// shadow maps, which they need, from the fog they march, which must
+/// scatter: the physical sky's air has none (its lighting zeroes the fog).
+/// The far shadow maps reach as far as running shafts gather.
+pub(crate) fn shafts_run(environment: &Environment) -> bool {
+    environment.sun_shafts.sanitized().enabled()
+        && environment.shadows.enabled
+        && !environment.sky.sanitized().enabled
+        && environment.atmosphere.sanitized().fog_density > 0.0
+}
+
 /// Builds [`Effects`], which effects a frame runs, from one entry per
 /// effect: its gate, its uniform field (`on` is 1 when it runs) and the
 /// resources the effects pass reads for it.
@@ -124,16 +135,9 @@ screen_effects! {
         },
         reads: [Depth, Scene, Glow, Surface],
     },
-    /// Sun shafts: light gathered through the shadow maps, which they
-    /// need, from the fog they march, which must scatter: the physical
-    /// sky's air has none (its lighting zeroes the fog).
+    /// Sun shafts ([`shafts_run`]).
     shafts {
-        gate: |environment, _| {
-            environment.sun_shafts.sanitized().enabled()
-                && environment.shadows.enabled
-                && !environment.sky.sanitized().enabled
-                && environment.atmosphere.sanitized().fog_density > 0.0
-        },
+        gate: |environment, _| shafts_run(environment),
         uniform: |settings, on, _| {
             let shafts = settings.sun_shafts.sanitized();
             [shafts.intensity, shafts.anisotropy, shafts.distance, on]
