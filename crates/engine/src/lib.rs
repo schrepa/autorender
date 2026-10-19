@@ -57,7 +57,7 @@ mod games {
         FixedPreSimulation, FixedSimulation, FixedSimulationSystems, FixedTickEnd,
         FixedTickEndSystems, FixedTime, Floating, Foliage, FrameReport, FrameTime, GlobalTransform,
         GlobalTransforms, Ground, GroundCover, GroundSample, Grounded, Grounding, Haze, HeightHeld,
-        HierarchyError, InputState, Interior, InterpolateTransform, InterpolationError,
+        HierarchyError, Highlights, InputState, Interior, InterpolateTransform, InterpolationError,
         KeyInterpolation, Keyframes, LevelOfDetail, LocalLight, LocalLightSettings, Material,
         MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, NavAgent, NavAgents, NavStatus,
         NavSystems, NavWalk, Navigation, NavigationPlugin, NightSky, OcclusionCulling, Occupancy,

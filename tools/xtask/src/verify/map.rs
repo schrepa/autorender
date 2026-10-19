@@ -366,6 +366,10 @@ pub(crate) const MAP: &[Rule] = &[
         checks: &[Cells(&["metro-local-lights-off"])],
     },
     Rule {
+        paths: &["crates/engine_core/src/**/highlights*"],
+        checks: &[Cells(&["metro-highlights"])],
+    },
+    Rule {
         paths: &[
             "crates/engine_core/src/**/foliage*",
             "crates/engine_render/src/meshes/cover*",

@@ -2596,6 +2596,16 @@
             }
           ]
         },
+        "highlights": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneHighlights"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "level_of_detail": {
           "anyOf": [
             {
@@ -3076,6 +3086,38 @@
         "low",
         "high"
       ]
+    },
+    "SceneHighlights": {
+      "description": "Highlight settings.",
+      "type": "object",
+      "properties": {
+        "cap": {
+          "description": "The most a highlight's microfacet distribution times visibility\nreaches while `capped`; 0 caps none.",
+          "type": "number",
+          "format": "float",
+          "default": 100.0,
+          "minimum": 0.0
+        },
+        "capped": {
+          "description": "Whether every highlight stops at `cap`, sized or not.",
+          "type": "boolean",
+          "default": false
+        },
+        "enabled": {
+          "description": "Whether highlights take their lights' sizes: the sun's disk and\nlocal lights' spheres and tubes.",
+          "type": "boolean",
+          "default": true
+        },
+        "sun_size": {
+          "description": "The sun's angular radius, degrees, while the physically based sky\nis off; with it on, the sky's own `sun_size`.",
+          "type": "number",
+          "format": "float",
+          "default": 0.27000001072883606,
+          "maximum": 10.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
     },
     "SceneInterpolation": {
       "type": "string",

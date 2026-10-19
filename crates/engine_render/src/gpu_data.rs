@@ -116,7 +116,7 @@ impl LightingUniform {
         bloom: &Bloom,
         reflections: &Reflections,
         refraction: &engine_core::Refraction,
-        sky: &engine_core::Sky,
+        (sky, highlights): (&engine_core::Sky, &engine_core::Highlights),
         (foliage, temporal): (&engine_core::Foliage, bool),
     ) -> Self {
         let atmosphere = atmosphere.sanitized();
@@ -124,6 +124,7 @@ impl LightingUniform {
         let refraction = refraction.sanitized();
         let sky = sky.sanitized();
         let foliage = foliage.sanitized();
+        let highlights = highlights.sanitized();
         // With the physically based sky the air hazes what
         // lies far away by its own extinction, thinning with height as its
         // scattering does; no fog. Its colors come from the sky's tables.
@@ -208,8 +209,35 @@ impl LightingUniform {
                 },
                 foliage.ground_blend,
             ],
+            highlights: sized_highlights(&highlights, &sky),
         }
     }
+}
+
+/// The lighting uniform's `highlights`: the sun's angular radius, the
+/// physically based sky's while it is on, as its cosine and sine, the cap
+/// while capped and the local lights' shapes; a point sun and no shapes
+/// while lights take no sizes, and zeros while neither is on.
+fn sized_highlights(highlights: &engine_core::Highlights, sky: &engine_core::Sky) -> [f32; 4] {
+    let cap = if highlights.capped {
+        highlights.cap
+    } else {
+        0.0
+    };
+    if !highlights.enabled {
+        return if cap > 0.0 {
+            [1.0, 0.0, cap, 0.0]
+        } else {
+            [0.0; 4]
+        };
+    }
+    let radius = if sky.enabled {
+        sky.sun_size
+    } else {
+        highlights.sun_size
+    };
+    let (sine, cosine) = engine_core::math::sin_cos(radius.to_radians());
+    [cosine, sine, cap, 1.0]
 }
 
 /// A surface as four unsigned 8-bit fractions: roughness,

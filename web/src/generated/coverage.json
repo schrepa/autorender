@@ -790,6 +790,12 @@
       "stats": true
     },
     {
+      "inspector": "Highlights",
+      "section": "highlights",
+      "smokes": [],
+      "stats": false
+    },
+    {
       "inspector": "SunShafts",
       "section": "sun_shafts",
       "smokes": [

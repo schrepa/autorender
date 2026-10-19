@@ -710,6 +710,58 @@ fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
     return EnvironmentLight(light, shares);
 }
 
+// Whether highlights take their lights' sizes or the cap
+// (`lighting.highlights`); otherwise lights are points and highlights
+// uncapped.
+fn sized_highlights() -> bool {
+    return any(lighting.highlights.yz != vec2<f32>(0.0));
+}
+
+// The direction a surface's highlight lobe leans to: the view mirrored,
+// toward the normal as the surface roughens (Lagarde and de Rousiers).
+fn dominant_direction(point: SurfacePoint) -> vec3<f32> {
+    let smoothness = 1.0 - point.roughness;
+    let lean = smoothness * (sqrt(smoothness) + point.roughness);
+    return normalize(mix(point.normal, reflect(-point.view, point.normal), lean));
+}
+
+// The share of a lobe of `alpha` a light keeps when it widens the lobe by
+// half its angular size, `sine` the sine of its angular radius: the lobe's
+// peak over the widened lobe's, squared over a disk (Karis).
+fn disk_energy(alpha: f32, sine: f32) -> f32 {
+    let kept = alpha / saturate(alpha + 0.5 * sine);
+    return kept * kept;
+}
+
+// A highlight's distribution times visibility `lobe`, at most the cap
+// (`lighting.highlights.z`, 0 none).
+fn capped(lobe: f32) -> f32 {
+    let cap = lighting.highlights.z;
+    return select(lobe, min(lobe, cap), cap > 0.0);
+}
+
+// The sun's highlight at `point` over the sun's disk (Karis's representative
+// point): lit from the direction within the disk nearest the lobe's
+// dominant direction, the lobe widened by half the disk's angular size and
+// renormalized, and capped. `n_l` is the sun's cosine at the point.
+fn sun_highlight(point: SurfacePoint, sun: vec3<f32>, n_l: f32) -> vec3<f32> {
+    let cosine = lighting.highlights.x;
+    let sine = lighting.highlights.y;
+    let direction = dominant_direction(point);
+    let along = dot(direction, sun);
+    let across = direction - sun * along;
+    let off = length(across);
+    var toward = direction;
+    if along < cosine {
+        toward = select(sun, sun * cosine + across * (sine / off), off > 1.0e-6);
+    }
+    let half_vector = normalize(point.view + toward);
+    let n_h = max(dot(point.normal, half_vector), 0.0);
+    let lobe = distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha)
+        * disk_energy(point.alpha, sine);
+    return fresnel(point.f0, max(dot(point.view, half_vector), 0.0)) * (capped(lobe) * n_l);
+}
+
 // Lit, fogged and graded color of `point` with `local` light added.
 fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let normal = point.normal;
@@ -735,10 +787,14 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let wrapped = lambert + (max((n_l + 0.25) / 1.25, 0.0) - lambert) * facing;
     var highlight = vec3<f32>(0.0);
     if n_l > 0.0 {
-        let half_vector = normalize(view + sun);
-        let n_h = max(dot(normal, half_vector), 0.0);
-        highlight = fresnel(point.f0, max(dot(view, half_vector), 0.0))
-            * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha) * n_l);
+        if sized_highlights() {
+            highlight = sun_highlight(point, sun, n_l);
+        } else {
+            let half_vector = normalize(view + sun);
+            let n_h = max(dot(normal, half_vector), 0.0);
+            highlight = fresnel(point.f0, max(dot(view, half_vector), 0.0))
+                * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha) * n_l);
+        }
     }
     // The environment mirrored in the surface, blurred by its roughness,
     // weighted by the environment BRDF.
@@ -892,8 +948,11 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
         }
         let half_vector = normalize(point.view + l);
         let n_h = max(dot(point.normal, half_vector), 0.0);
-        let highlight = fresnel(point.f0, max(dot(point.view, half_vector), 0.0))
-            * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha));
+        var lobe = distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha);
+        if sized_highlights() {
+            lobe = capped(lobe);
+        }
+        let highlight = fresnel(point.f0, max(dot(point.view, half_vector), 0.0)) * lobe;
         sum += (point.diffuse_color + highlight * specular) * light.color * (falloff * n_l);
     }
     return sum * saturate((end - depth) / (0.1 * end));

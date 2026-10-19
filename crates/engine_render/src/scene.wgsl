@@ -88,6 +88,12 @@ struct Lighting {
     // leaves dissolve with hashed cutoffs this frame, and the meters its
     // bases blend into the ground over; all 0 off.
     foliage: vec4<f32>,
+    // Highlights sized by their lights: the cosine and sine of the sun's
+    // angular radius (1 and 0 for a point sun, both 0 while highlights are
+    // neither sized nor capped), the most a highlight's distribution times
+    // visibility reaches (0 caps none), and 1 when local lights shade as
+    // their spheres and tubes.
+    highlights: vec4<f32>,
 }
 // Sun shadows: world to each near cascade and to both
 // far maps (x and y in [-1, 1] across a map, z in [0, 1]).
