@@ -258,7 +258,7 @@ impl GroundCoverPass {
                     eye: eye.extend(outer).to_array(),
                     grid: [first[0], first[1], cells as i32, candidates as i32],
                     counts: [directory, render.pyramid.levels(), palette, 0],
-                    scale: [settings.density, tried, sky as f32, 0.0],
+                    scale: [settings.density, tried, sky as f32, terrain.cover_tallest()],
                     tier: [inner, radius, reach, scale],
                     planes,
                     deform_grid: shading.grid,

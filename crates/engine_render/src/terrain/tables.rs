@@ -48,6 +48,8 @@ pub(crate) struct TerrainTables {
     covers_written: Vec<CoverEntry>,
     // Each terrain's densest cover and its mean blade height.
     pub(super) cover_densities: Vec<[f32; 2]>,
+    // The tallest blade any material's cover grows.
+    pub(super) cover_tallest: f32,
 }
 
 impl TerrainTables {
@@ -93,6 +95,7 @@ impl TerrainTables {
             ),
             covers_written: Vec::new(),
             cover_densities: Vec::new(),
+            cover_tallest: 0.0,
         }
     }
 
@@ -221,6 +224,10 @@ impl TerrainTables {
                 })
             }));
         }
+        self.cover_tallest = entries
+            .iter()
+            .flat_map(|entry| [entry.shape[1], entry.shape[2]])
+            .fold(0.0, engine_core::math::max);
         if entries.is_empty() || entries == self.covers_written {
             return;
         }

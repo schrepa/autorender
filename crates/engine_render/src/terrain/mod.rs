@@ -451,6 +451,12 @@ impl TerrainPass {
         })
     }
 
+    /// The tallest blade any terrain material's cover grows, as the last
+    /// preparation wrote the covers (meters).
+    pub(crate) fn cover_tallest(&self) -> f32 {
+        self.tables.cover_tallest
+    }
+
     /// Terrain `index`'s place in the directory and palette, its densest
     /// cover (blades per square meter) and that cover's mean blade height
     /// (meters), as the last preparation wrote them, and its sky map's

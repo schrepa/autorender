@@ -36,8 +36,8 @@ struct Grow {
     // capacity.
     counts: vec4<u32>,
     // The density scale, how many of each finest cell's candidates this
-    // tier tries, and the terrain's sky map's layer plus one
-    // (0 until built).
+    // tier tries, the terrain's sky map's layer plus one
+    // (0 until built), and the tallest blade any material grows.
     scale: vec4<f32>,
     // This tier: the meters from the eye it starts at, the
     // radius, where tiers end (0 without tiers), and how many level-0
@@ -112,11 +112,13 @@ fn hash(value: u32) -> u32 {
 }
 
 // What the terrain holds at terrain-local `local`: its height, and the
-// nearest sample's control value at the finest resident level.
+// nearest sample's control value at the finest resident level, which is
+// `level`.
 struct Ground {
     height: f32,
     control: u32,
     found: bool,
+    level: u32,
 }
 
 // A tile of a level: its layer (`NOT_RESIDENT` when not loaded) and its
@@ -276,9 +278,54 @@ fn ground_at(local: vec2<f32>) -> Ground {
         let d = tile_height(tile, corner + vec2<u32>(1u, 1u));
         ground.height = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
         ground.found = true;
+        ground.level = index;
         return ground;
     }
     return ground;
+}
+
+// The level `drawn_ground` stands on `away` meters from the eye at
+// terrain-local `local`, whose finest resident level is `finest`: the
+// first it has not fully morphed out of, or whose coarser level is not
+// resident.
+fn drawn_level(local: vec2<f32>, finest: u32, away: f32) -> u32 {
+    var level = finest;
+    loop {
+        if level + 1u >= grow.counts.y || level_morph(level, away) < 1.0 {
+            break;
+        }
+        let coarse = level_tile(level + 1u, local / (grow.origin.w * f32(2u << level)));
+        if coarse.layer == NOT_RESIDENT {
+            break;
+        }
+        level += 1u;
+    }
+    return level;
+}
+
+// Heights as unsigned integers in the same order, for atomic extremes.
+fn ordered_height(height: f32) -> u32 {
+    let bits = bitcast<u32>(height);
+    return select(bits | 0x80000000u, ~bits, (bits & 0x80000000u) != 0u);
+}
+
+fn ordered_to_height(ordered: u32) -> f32 {
+    return bitcast<f32>(select(~ordered, ordered & 0x7fffffffu, (ordered & 0x80000000u) != 0u));
+}
+
+// Whether a sphere of `radius` centered anywhere in the box from `low` to
+// `high` may lie at least partly inside the view: as `in_view` passes some
+// such sphere only where this does.
+fn box_in_view(low: vec3<f32>, high: vec3<f32>, radius: f32) -> bool {
+    let center = 0.5 * (low + high);
+    let extent = 0.5 * (high - low);
+    for (var plane = 0u; plane < 6u; plane++) {
+        let normal = grow.planes[plane].xyz;
+        if dot(normal, center) + dot(abs(normal), extent) + grow.planes[plane].w < -radius {
+            return false;
+        }
+    }
+    return true;
 }
 
 // How deep tracks sink the ground at world `point`
@@ -308,6 +355,33 @@ fn in_view(center: vec3<f32>, radius: f32) -> bool {
         }
     }
     return true;
+}
+
+// Meters a cell's bound adds to the tallest blade, past the rounding its
+// arithmetic and the candidates' may differ by.
+const CELL_MARGIN: f32 = 0.05;
+
+// The samples of `level` (counted from the terrain's origin at that
+// level) the ground of a cell from terrain-local `corner`, `spacing` wide,
+// can stand on as `drawn_ground` reads it, on that level or morphing into
+// it from the finer one: the first, none before `first`, and how many
+// along each side.
+struct CellSamples {
+    first: vec2<u32>,
+    count: vec2<u32>,
+}
+
+fn cell_samples(corner: vec2<f32>, spacing: f32, level: u32, first: vec2<u32>) -> CellSamples {
+    let per = grow.origin.w * f32(1u << level);
+    // Corners of the pairs of cells from even samples that hold its
+    // points, a thousandth of a sample wider for rounding.
+    let low = max(vec2<u32>(max(floor((corner / per - 0.001) * 0.5), vec2<f32>(0.0))) * 2u,
+        first);
+    let high = vec2<u32>(floor(((corner + vec2<f32>(spacing)) / per + 0.001) * 0.5)) * 2u + 2u;
+    var rect: CellSamples;
+    rect.first = low;
+    rect.count = high + 1u - min(low, high + 1u);
+    return rect;
 }
 
 // Packs a linear color as 8-bit square roots, the blades' encoding.
@@ -341,9 +415,19 @@ fn variety_at(local: vec2<f32>) -> vec2<f32> {
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// The cell's ground at its center, read once for its lanes.
+// The cell's ground at its center, read once for its lanes, and its finest
+// resident level there.
 var<workgroup> cell_height: f32;
 var<workgroup> cell_found: u32;
+var<workgroup> cell_level: u32;
+// The levels whose samples bound the cell's ground (the first in the low
+// half, the last in the high; none past the first when it goes unbounded),
+// the lowest (inverted) and highest ground its candidates may stand on, in
+// `ordered_height`'s order, and whether their blades may show in the view.
+var<workgroup> cell_levels: u32;
+var<workgroup> cell_low: atomic<u32>;
+var<workgroup> cell_high: atomic<u32>;
+var<workgroup> cell_seen: u32;
 
 @compute @workgroup_size(64)
 fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
@@ -369,6 +453,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         let ground = ground_at(corner + vec2<f32>(0.5 * spacing));
         cell_height = ground.height;
         cell_found = u32(ground.found);
+        cell_level = ground.level;
     }
     if workgroupUniformLoad(&cell_found) == 0u {
         return;
@@ -395,6 +480,72 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     let tried = min(u32(grow.scale.y),
         u32(ceil(held * cover_share(nearest, radius_densest, reach, reach))));
     let finest = side * side;
+    // Whether any candidate's blade can show, before any reads its ground:
+    // the samples of every level its ground stands on across the cell
+    // (`drawn_ground`'s, from those drawn nearest to the coarser one the
+    // farthest morph into) bound its root, and the tallest blade its
+    // sphere. Cells whose bound would read more samples than four for
+    // each candidate (each reads four heights or more), or for each lane,
+    // go unbounded. One lane plans it and all read the samples.
+    let middle = corner + vec2<f32>(0.5 * spacing);
+    if lane == 0u {
+        let slack = 0.01 + 1.0e-5 * center_away;
+        let first = drawn_level(middle, cell_level, max(center_away - half_diagonal - slack, 0.0));
+        let last = min(drawn_level(middle, cell_level, center_away + half_diagonal + slack) + 1u,
+            grow.counts.y - 1u);
+        var samples = 0u;
+        for (var level = first; level <= last; level++) {
+            let rect = cell_samples(corner, spacing, level, vec2<u32>(0u));
+            samples += rect.count.x * rect.count.y;
+        }
+        let bounded = samples <= 4u * max(finest * tried, 64u);
+        cell_levels = first | (select(first, last + 1u, bounded) << 16u);
+    }
+    let levels = workgroupUniformLoad(&cell_levels);
+    let first_level = levels & 0xffffu;
+    let end_level = levels >> 16u;
+    if end_level > first_level {
+        var lowest = 0xffffffffu;
+        var highest = 0u;
+        for (var level = first_level; level < end_level; level++) {
+            let tile = level_tile(level, middle / (grow.origin.w * f32(1u << level)));
+            if tile.layer == NOT_RESIDENT {
+                continue;
+            }
+            let rect = cell_samples(corner, spacing, level, tile.first);
+            let count = rect.count.x * rect.count.y;
+            // Rounds of the lanes, so all leave together.
+            for (var start = 0u; start < count; start += 64u) {
+                let index = start + lane;
+                if index < count {
+                    let sample = rect.first
+                        + vec2<u32>(index % rect.count.x, index / rect.count.x);
+                    let height = ordered_height(tile_height(tile, sample));
+                    lowest = min(lowest, height);
+                    highest = max(highest, height);
+                }
+            }
+        }
+        if highest != 0u {
+            atomicMax(&cell_low, ~lowest);
+            atomicMax(&cell_high, highest);
+        }
+        workgroupBarrier();
+        if lane == 0u {
+            // Roots stand 2 cm under the ground; blade spheres center
+            // half their height above them.
+            let tallest = grow.scale.w;
+            let low = ordered_to_height(~atomicLoad(&cell_low));
+            let high = ordered_to_height(atomicLoad(&cell_high));
+            let origin = grow.origin.xyz + vec3<f32>(corner.x, -0.02, corner.y);
+            cell_seen = u32(box_in_view(origin + vec3<f32>(0.0, low, 0.0),
+                origin + vec3<f32>(spacing, high + 0.5 * tallest, spacing),
+                tallest + CELL_MARGIN));
+        }
+        if workgroupUniformLoad(&cell_seen) == 0u {
+            return;
+        }
+    }
     let area = grow.origin.w * grow.origin.w;
     for (var index = lane; index < finest * tried; index += 64u) {
         // A finest cell within the tier's, and its candidate.
