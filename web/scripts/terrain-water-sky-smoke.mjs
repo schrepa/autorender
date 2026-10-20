@@ -215,18 +215,19 @@ try {
     const [noonColor, duskColor] = [await skyColor(page, noon), await skyColor(page, dusk)];
     assert.ok(duskColor[0] / Math.max(duskColor[2], 1) > noonColor[0] / Math.max(noonColor[2], 1),
       `dusk is redder than noon: ${noonColor} ${duskColor}`);
-    // The night sky (stars, moon and cirrus), opt-in, and haze (the air
-    // taking the sky's light), on by default: at night the night sky
-    // changes the view, both read back, and settings out of range are
+    // The night sky (stars, moon and cirrus) and haze (the air taking the
+    // sky's light), both on by default: they read back, at night the night
+    // sky turned off changes the view, and settings out of range are
     // refused.
     await command("environment", { time_of_day: { hours: 23 } });
-    const night = await capture("sky-night");
-    await command("environment", { night_sky: {}, haze: {} });
     const starry = await capture("sky-night-sky");
-    const nightPixels = await differentPixels(page, [night, starry]);
-    assert.ok(nightPixels.changed > 1000, `the night sky shows: ${nightPixels.changed} pixels`);
     assert.equal((await command("inspect", { component: "NightSky" })).result.value.stars, 1);
     assert.equal((await command("inspect", { component: "Haze" })).result.value.enabled, true);
+    await command("environment", { night_sky: { stars: 0, moon: 0, cirrus: 0 } });
+    const night = await capture("sky-night");
+    const nightPixels = await differentPixels(page, [night, starry]);
+    assert.ok(nightPixels.changed > 1000, `the night sky shows: ${nightPixels.changed} pixels`);
+    await command("environment", { night_sky: {} });
     assert.equal((await command("environment", { night_sky: { cirrus: 2 } }, false)).error.path, "$.night_sky.cirrus");
     assert.equal((await command("environment", { haze: { visibility: -1 } }, false)).error.path, "$.haze.visibility");
     // Auto exposure is opt-in: frames meter their exposure, which at night

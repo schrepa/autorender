@@ -85,7 +85,7 @@ macro_rules! environment_sections {
             world_streaming: WorldStreaming { opt_in: false, feature: WorldStreaming },
             sky: Sky { opt_in: true, feature: Core },
             haze: Haze { opt_in: false, feature: Core },
-            night_sky: NightSky { opt_in: true, feature: Core },
+            night_sky: NightSky { opt_in: false, feature: Core },
             time_of_day: TimeOfDay { opt_in: true, feature: TimeOfDay },
             navigation: Navigation { opt_in: false, feature: Navigation },
             physics: Physics { opt_in: false, feature: Physics },

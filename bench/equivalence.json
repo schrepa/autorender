@@ -604,7 +604,7 @@
     {
       "name": "garden-night-sky",
       "tier": "full",
-      "note": "The garden at night under the physically based sky with the night sky's stars, moon and cirrus, switched on by the environment control.",
+      "note": "The garden at night under the physically based sky with the night sky's stars, moon and cirrus, on by default; the environment control switches the sky and the hour.",
       "source": "web/scripts/fixtures/garden.scene.json",
       "environment": { "sky": {}, "time_of_day": { "hours": 23 }, "night_sky": {} },
       "ticks": 30,
