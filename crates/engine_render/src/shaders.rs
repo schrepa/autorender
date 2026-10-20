@@ -295,9 +295,9 @@ entry_points! {
             fs_terrain_probe_lit, fs_cover, fs_cover_lit, fs_cover_post, fs_cover_post_lit,
             fs_cover_temporal, fs_cover_temporal_lit, fs_water, fs_water_post, fs_water_temporal,
             fs_ocean, fs_ocean_post, fs_ocean_temporal, fs_fall, fs_fall_post, fs_fall_temporal,
-            fs_sim_water, fs_sim_water_post, fs_sim_water_temporal, fs_debug_mesh, fs_debug_impostor,
-            fs_debug_terrain, fs_debug_cover, fs_debug_water, fs_debug_ocean, fs_debug_fall,
-            fs_debug_sky
+            fs_sim_water, fs_sim_water_post, fs_sim_water_temporal, fs_debug_mesh,
+            fs_debug_impostor, fs_debug_terrain, fs_debug_cover, fs_debug_water,
+            fs_debug_sim_water, fs_debug_ocean, fs_debug_fall, fs_debug_sky
         ],
         compute: [cs_terrain_vt_feedback],
     }

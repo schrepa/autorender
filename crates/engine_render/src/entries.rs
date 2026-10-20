@@ -259,7 +259,7 @@ pub(crate) fn sim_water(targets: Targets) -> (Entry, Entry) {
         Targets::Canvas => (meshes::vs_sim_water, meshes::fs_sim_water),
         Targets::Post => (meshes::vs_sim_water, meshes::fs_sim_water_post),
         Targets::Temporal => (meshes::vs_sim_water_temporal, meshes::fs_sim_water_temporal),
-        Targets::Debug => (meshes::vs_sim_water, meshes::fs_debug_water),
+        Targets::Debug => (meshes::vs_sim_water, meshes::fs_debug_sim_water),
     }
 }
 

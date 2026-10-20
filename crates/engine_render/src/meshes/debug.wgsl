@@ -296,15 +296,26 @@ fn fs_debug_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> Deb
     return debug_targets(DEBUG_KIND_COVER, 0u, 0u, cover_surface(input, front));
 }
 
-// Water where its shading covers at least half the pixel.
-@fragment
-fn fs_debug_water(input: WaterOutput) -> DebugTargets {
-    let shade = shade_water(input, false);
+// Water where its shading covers at least half the pixel: the bake's,
+// which gives way where water is simulated, or the simulated water's
+// (`simulated`).
+fn debug_water(input: WaterOutput, simulated: bool) -> DebugTargets {
+    let shade = shade_water(input, false, simulated);
     if shade.coverage < 0.5 {
         discard;
     }
     let point = debug_point(input.relative + camera.position.xyz, shade.shaded.normal);
     return debug_targets(DEBUG_KIND_WATER, 0u, 0u, point);
+}
+
+@fragment
+fn fs_debug_water(input: WaterOutput) -> DebugTargets {
+    return debug_water(input, false);
+}
+
+@fragment
+fn fs_debug_sim_water(input: WaterOutput) -> DebugTargets {
+    return debug_water(input, true);
 }
 
 @fragment

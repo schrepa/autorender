@@ -417,14 +417,16 @@ fn shade_fall(input: FallOutput) -> FallShade {
 @fragment
 fn fs_fall(input: FallOutput) -> @location(0) vec4<f32> {
     let shade = shade_fall(input);
-    return vec4<f32>(encoded(shade.shaded.color) * shade.coverage, shade.coverage);
+    return vec4<f32>(encoded(shade.shaded.color, input.clip_position.xy) * shade.coverage,
+        shade.coverage);
 }
 
 @fragment
 fn fs_fall_post(input: FallOutput) -> SceneTargets {
     let shade = shade_fall(input);
-    var targets = scene_targets(shade.shaded);
-    targets.color = vec4<f32>(shade.shaded.color * shade.coverage, shade.coverage);
+    let pixel = input.clip_position.xy;
+    var targets = scene_targets(shade.shaded, pixel);
+    targets.color = vec4<f32>(stored(shade.shaded.color, pixel) * shade.coverage, shade.coverage);
     return targets;
 }
 
@@ -432,6 +434,7 @@ fn fs_fall_post(input: FallOutput) -> SceneTargets {
 fn fs_fall_temporal(input: FallTemporalOutput) -> TemporalTargets {
     let shade = shade_fall(fall_temporal_output(input));
     var targets = temporal_targets(shade.shaded, input.clip_position, input.previous);
-    targets.color = vec4<f32>(shade.shaded.color * shade.coverage, shade.coverage);
+    targets.color = vec4<f32>(stored(shade.shaded.color, input.clip_position.xy) * shade.coverage,
+        shade.coverage);
     return targets;
 }

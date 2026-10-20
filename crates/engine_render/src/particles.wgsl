@@ -221,11 +221,19 @@ fn fs_particle(input: ParticleOutput) -> TransparentTargets {
         discard;
     }
     // Smoke and spray scatter the sky's light and half the sun's, as much
-    // of it as reaches their middles.
+    // of it as reaches them: past the shadow maps' casters at their middles,
+    // past the terrain and the clouds where each of their fragments lies.
     let eye = camera.position.xyz;
     let distance = length(input.world - eye);
+    var sunlit = input.sunlit;
+    if lighting.sun.y > 0.0 {
+        if SHADOW_MAPS && shadow.state.x != 0.0 {
+            sunlit = min(sunlit, terrain_visibility(input.world, false));
+        }
+        sunlit *= cloud_passing(input.world);
+    }
     let light = input.color.rgb * (sky_average(vec3<f32>(0.0, 1.0, 0.0)) * lighting.zenith.w
-        + lighting.sun_color.rgb * (0.5 * input.sunlit));
+        + lighting.sun_color.rgb * (0.5 * sunlit));
     let view = normalize(input.world - eye);
     let fogged = atmospheric(light, eye, input.world, view).rgb;
     return weighted_particle(grade(fogged), alpha, distance);
