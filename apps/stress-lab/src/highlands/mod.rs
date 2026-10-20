@@ -1351,14 +1351,15 @@ fn open_cave(world: &mut World) {
             material: rock.wall,
         },
     ));
-    // The chamber's light, warm and short.
+    // The chamber's light, warm and short, an interior lamp: it lights the
+    // cave alone, not the hillside through the rock.
     let chamber = points[4] - Vec3::new(uphill.x, 0.0, uphill.y) * 6.0 + Vec3::Y * 2.0;
     world.spawn((
         Transform {
             translation: chamber,
             ..Transform::default()
         },
-        LocalLight::point(Vec3::new(1.0, 0.62, 0.3), 40.0, 26.0),
+        LocalLight::point(Vec3::new(1.0, 0.62, 0.3), 40.0, 26.0).with_region(LightRegion::Interior),
     ));
     // An interior over the tube from its first bend in, darkening over its
     // blend from there: the mouth's walls and the blocks framing it stand
