@@ -166,15 +166,6 @@ fn slot_fade(entry: u32) -> u32 {
     return select(0u, (entry >> 24u) | FADE_WORD_ON, FADE_LIST);
 }
 
-// A threshold in [0, 1) at pixel `position` that fades compare their
-// progress with: interleaved gradient noise, turned a different way each
-// temporally antialiased frame (`camera.options.z`) so the resolve blends
-// what fades as it would a coverage.
-fn fade_noise(position: vec2<f32>) -> f32 {
-    return fract(fract(52.9829189 * fract(dot(position, vec2<f32>(0.06711056, 0.00583715))))
-        + camera.options.z);
-}
-
 // Whether a fading object hides the pixel at `position`: one fading in
 // shows where the threshold falls under its progress and one fading out
 // where it does not, so the two cover each pixel once between them.

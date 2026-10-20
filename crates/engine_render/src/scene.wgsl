@@ -923,6 +923,33 @@ fn far_maps_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: v
     return mix(visible, 1.0, fade);
 }
 
+// A threshold in [0, 1) at pixel `position` that fades compare their
+// progress with: interleaved gradient noise, turned a different way each
+// temporally antialiased frame (`camera.options.z`) so the resolve blends
+// what fades as it would a coverage.
+fn fade_noise(position: vec2<f32>) -> f32 {
+    return fract(fract(52.9829189 * fract(dot(position, vec2<f32>(0.06711056, 0.00583715))))
+        + camera.options.z);
+}
+
+// Whether the fragment being shaded dissolves between maps across handover
+// bands: mesh surfaces, set around their sun lookup; others blend the two.
+var<private> handover_dissolves: bool;
+
+// The threshold past which a lookup at `world` in a handover band takes
+// the next map alone, where the fragment dissolves on a temporally
+// antialiased frame, whose camera holds two over the view's pixels in
+// `jitter.zw`: `fade_noise` at its pixel, turning across pixels and frames
+// so the resolve averages the two maps; -1 elsewhere, where both blend.
+fn handover_threshold(world: vec3<f32>) -> f32 {
+    if !handover_dissolves || camera.jitter.z == 0.0 {
+        return -1.0;
+    }
+    let clip = camera.view_projection * vec4<f32>(world, 1.0);
+    let uv = clip.xy / clip.w * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+    return fade_noise(floor(uv * 2.0 / camera.jitter.zw) + vec2<f32>(0.5));
+}
+
 // Visibility of the sun at `world` in the shadow maps. Near cascades cover
 // the first stretch of the view, each three times sharper than the next,
 // and hand over to the next one across the last tenth of
@@ -930,6 +957,7 @@ fn far_maps_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: v
 // its reach; the far maps, the kept one for still casters
 // and the one redrawn every frame, cover the rest and fade out at the
 // shadow distance. Lookups compare four texels with the surface's plane.
+// Across a band, dissolving lookups read one map, blending ones both.
 fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
         distance: f32) -> f32 {
     // The first cascade reaching the fragment. Reflection probe captures
@@ -939,13 +967,26 @@ fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
     let cascade = u32(dot(beyond, vec4<f32>(1.0)));
     let cascades = select(u32(shadow.state.z), 0u, camera.options.x != 0.0);
     if cascade < cascades {
+        let reach = shadow.reach[cascade];
+        let last = cascade + 1u == cascades;
+        let band = select(0.1, CASCADE_HANDOVER, last);
+        let handover = saturate((distance - reach * (1.0 - band)) / (reach * band));
+        var threshold = -1.0;
+        if handover > 0.0 {
+            threshold = handover_threshold(world);
+        }
+        if threshold >= 0.0 && handover > threshold {
+            if last {
+                return far_maps_visibility(world, normal, dx, dy, distance);
+            }
+            let next = cascade_visibility(cascade + 1u, world, normal, dx, dy);
+            if next >= 0.0 {
+                return next;
+            }
+        }
         let visible = cascade_visibility(cascade, world, normal, dx, dy);
         if visible >= 0.0 {
-            let reach = shadow.reach[cascade];
-            let last = cascade + 1u == cascades;
-            let band = select(0.1, CASCADE_HANDOVER, last);
-            let handover = saturate((distance - reach * (1.0 - band)) / (reach * band));
-            if handover <= 0.0 {
+            if handover <= 0.0 || threshold >= 0.0 {
                 return visible;
             }
             if last {
