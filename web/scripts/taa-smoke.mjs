@@ -231,12 +231,13 @@ try {
   await command("environment", { temporal_antialiasing: { enabled: true } });
   assert.deepEqual(await inspect(), { enabled: true, ...defaults });
 
-  // Foliage looks, off by default and turned on by the paused environment
-  // control: masked leaves' hashed cutoffs, which only temporally
-  // antialiased frames take, and their transmission; how much they change
-  // converged frames, measured.
+  // Foliage's looks at their defaults (transmission, variation and the
+  // ground blend on), and those off by default turned on by the paused
+  // environment control: masked leaves' hashed cutoffs, which only
+  // temporally antialiased frames take, and crown depth; how much they
+  // change converged frames, measured.
   const inspectFoliage = async () => (await command("inspect", { component: "Foliage" })).result.value;
-  assert.deepEqual(await inspectFoliage(), { transmission: 0, variation: 0, hashed_cutoff: false, ground_blend: 0, crown_depth: 0 }, "foliage looks are off by default");
+  assert.deepEqual(await inspectFoliage(), { transmission: 1, variation: 1, hashed_cutoff: false, ground_blend: Math.fround(0.4), crown_depth: 0 }, "foliage's defaults");
   const leaves = await command("environment", { foliage: { transmission: 1, hashed_cutoff: true, crown_depth: 2 } });
   assert.deepEqual(leaves.result.environment_changed, ["foliage"]);
   assert.equal((await inspectFoliage()).hashed_cutoff, true);
@@ -244,9 +245,9 @@ try {
   results.foliage = await compare([again, leavesFirst]);
   measurements.push({
     name: "foliage difference", value: results.foliage.mean_difference, unit: "levels",
-    note: "mean channel difference between converged still frames without and with foliage transmission and hashed cutoffs",
+    note: "mean channel difference between converged still frames at foliage's defaults and with hashed cutoffs and crown depth added",
   });
-  await command("environment", { foliage: { transmission: 0, hashed_cutoff: false, crown_depth: 0 } });
+  await command("environment", { foliage: {} });
 
   // Captures after temporal frames are still exact.
   const after = await capture("exact-after-taa");

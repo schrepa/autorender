@@ -3030,7 +3030,7 @@
           "description": "Meters up from the ground over which plants' color and light\nblend into the ground's at their base; 0 turns it off.",
           "type": "number",
           "format": "float",
-          "default": 0.0,
+          "default": 0.4000000059604645,
           "maximum": 4.0,
           "minimum": 0.0
         },
@@ -3043,7 +3043,7 @@
           "description": "Sunlight leaves, needles and blades pass toward the eye, seen\nagainst the sun through them, tinted by their color and shaded\nas the sun is; 0 turns it off.",
           "type": "number",
           "format": "float",
-          "default": 0.0,
+          "default": 1.0,
           "maximum": 4.0,
           "minimum": 0.0
         },
@@ -3051,7 +3051,7 @@
           "description": "How far each plant's leaves stray from its material's color, by\na hash of where it stands, along a gradient from drier to deeper\ngreen; bark keeps its color. 0 turns it off.",
           "type": "number",
           "format": "float",
-          "default": 0.0,
+          "default": 1.0,
           "maximum": 1.0,
           "minimum": 0.0
         }
