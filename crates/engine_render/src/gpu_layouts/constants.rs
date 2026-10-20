@@ -227,6 +227,12 @@ gpu_consts! {
     // crate::ground_cover
     /// Bytes of a blade (`CoverBlade`).
     pub(crate) const BLADE_BYTES: u64 = 32 => ["size_of CoverBlade"];
+    /// Joints along a blade too short on screen to show its curve, which
+    /// the blades' second indirect draw draws straight.
+    pub(crate) const STRAIGHT_JOINTS: u32 = 3 => ["STRAIGHT_JOINTS"];
+    /// The second draw's first vertex, by which the vertex stage tells its
+    /// straight blades from whole ones.
+    pub(crate) const STRAIGHT_FIRST_VERTEX: u32 = 1024 => ["STRAIGHT_FIRST_VERTEX"];
 
     // crate::bindings
     /// A pyramid level's `Extent` of `depth_pyramid.wgsl`.

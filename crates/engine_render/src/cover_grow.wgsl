@@ -57,6 +57,8 @@ struct Grow {
     // Foliage: 1 while blades keep their ground's normal (its bases blend
     // into the ground).
     foliage: vec4<f32>,
+    // The view: pixels a meter spans a meter from the eye (x).
+    view: vec4<f32>,
 }
 
 // A surface material's cover: blades per square meter, the shortest and
@@ -87,9 +89,13 @@ struct CoverBlade {
     tip_color: u32,
 }
 
-// Blades appended this frame, those past capacity included.
+// Blades appended this frame, those past capacity included, and of those
+// kept the ones drawn whole, from the front of `blades`, and the ones
+// drawn straight, from its back.
 struct Counts {
     appended: atomic<u32>,
+    whole: atomic<u32>,
+    straight: atomic<u32>,
 }
 
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
@@ -562,15 +568,22 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         blade.width = spec.shape.w * max(1.0, away / (0.2 * radius_densest));
         blade.root_color = pack_color(palette[entry].far.rgb * variation, 0.0);
         blade.tip_color = pack_color(spec.color.rgb * variation, spec.color.w);
-        let slot = atomicAdd(&counts.appended, 1u);
-        if slot < grow.counts.w {
-            blades[slot] = blade;
+        // Kept blades fill the list from both ends: those whose height
+        // spans fewer than STRAIGHT_PIXELS pixels, where no pixel shows
+        // their curve, from the back, drawn straight with fewer joints.
+        if atomicAdd(&counts.appended, 1u) < grow.counts.w {
+            if height * grow.view.x < STRAIGHT_PIXELS * away {
+                blades[grow.counts.w - 1u - atomicAdd(&counts.straight, 1u)] = blade;
+            } else {
+                blades[atomicAdd(&counts.whole, 1u)] = blade;
+            }
         }
     }
 }
 
-// The indirect draw of the frame's blades: a strip of two vertices per
-// joint each, as many blades as fit.
+// The indirect draws of the frame's blades, strips of two vertices per
+// joint each: the whole ones, then the straight ones, whose vertices count
+// from STRAIGHT_FIRST_VERTEX so the vertex stage tells them apart.
 struct DrawArgs {
     vertex_count: u32,
     instance_count: u32,
@@ -578,15 +591,19 @@ struct DrawArgs {
     first_instance: u32,
 }
 
-@group(0) @binding(8) var<storage, read_write> args: DrawArgs;
+@group(0) @binding(8) var<storage, read_write> args: array<DrawArgs, 2>;
 
-// Joints along a blade (`meshes/cover.wgsl`'s segments and one).
+// Joints along a blade (`meshes/cover.wgsl`'s segments and one), and
+// along a straight one.
 const JOINTS: u32 = 5u;
+const STRAIGHT_JOINTS: u32 = 3u;
+const STRAIGHT_FIRST_VERTEX: u32 = 1024u;
+// Pixels a blade's height spans below which it draws straight.
+const STRAIGHT_PIXELS: f32 = 12.0;
 
 @compute @workgroup_size(1)
 fn finish_cover() {
-    args.vertex_count = 2u * JOINTS;
-    args.instance_count = min(atomicLoad(&counts.appended), grow.counts.w);
-    args.first_vertex = 0u;
-    args.first_instance = 0u;
+    args[0] = DrawArgs(2u * JOINTS, atomicLoad(&counts.whole), 0u, 0u);
+    args[1] = DrawArgs(2u * STRAIGHT_JOINTS, atomicLoad(&counts.straight),
+        STRAIGHT_FIRST_VERTEX, 0u);
 }

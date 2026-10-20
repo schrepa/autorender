@@ -17,6 +17,7 @@ gpu_structs! {
         pub deform: [f32; 4],
         pub ranges: [[f32; 4]; 2],
         pub foliage: [f32; 4],
+        pub view: [f32; 4],
     }
 
     /// WGSL `CoverFrame` of `meshes/cover.wgsl`.
@@ -24,5 +25,6 @@ gpu_structs! {
     pub(crate) struct FrameUniform as ["CoverFrame"] {
         pub wind: [f32; 4],
         pub ground: [f32; 4],
+        pub blades: [u32; 4],
     }
 }

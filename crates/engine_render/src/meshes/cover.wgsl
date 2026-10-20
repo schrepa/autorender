@@ -18,10 +18,12 @@ struct CoverBlade {
 
 // The frame's cover: the wind (x and z, meters per second), and the
 // presentation time now and at the previous frame (seconds); whether
-// blades keep their ground's normal (x, 1: foliage's ground blend).
+// blades keep their ground's normal (x, 1: foliage's ground blend); the
+// blades' capacity, whose last slots the straight ones fill backward (x).
 struct CoverFrame {
     wind: vec4<f32>,
     ground: vec4<f32>,
+    blades: vec4<u32>,
 }
 
 // A blade's facing (radians): its word's bits, or while blades keep their
@@ -39,6 +41,36 @@ fn blade_facing(blade: CoverBlade) -> f32 {
 
 // Segments along a blade; its strip has two vertices at each joint.
 const COVER_SEGMENTS: u32 = 4u;
+// Joints along a blade too short on screen to show its curve, drawn by the
+// blades' second draw (`cover_grow.wgsl`'s `finish_cover`), whose vertices
+// count from STRAIGHT_FIRST_VERTEX.
+const STRAIGHT_JOINTS: u32 = 3u;
+const STRAIGHT_FIRST_VERTEX: u32 = 1024u;
+
+// A vertex of a blade's strip: the blade, how far along it (0 at the
+// root, 1 at the tip) and across it (-1 or 1) the vertex lies.
+struct BladeVertex {
+    blade: CoverBlade,
+    along: f32,
+    across: f32,
+}
+
+// Vertex `vertex` of blade `instance` of its draw: whole blades fill the
+// list from its front, straight ones from its back.
+fn blade_vertex(instance: u32, vertex: u32) -> BladeVertex {
+    var at: BladeVertex;
+    if vertex >= STRAIGHT_FIRST_VERTEX {
+        let joint = vertex - STRAIGHT_FIRST_VERTEX;
+        at.blade = cover_blades[cover_frame.blades.x - 1u - instance];
+        at.along = f32(joint / 2u) / f32(STRAIGHT_JOINTS - 1u);
+        at.across = f32(joint & 1u) * 2.0 - 1.0;
+    } else {
+        at.blade = cover_blades[instance];
+        at.along = f32(vertex / 2u) / f32(COVER_SEGMENTS);
+        at.across = f32(vertex & 1u) * 2.0 - 1.0;
+    }
+    return at;
+}
 
 struct CoverOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -120,10 +152,10 @@ fn cover_color(blade: CoverBlade, along: f32) -> vec3<f32> {
 }
 
 fn cover_output(instance: u32, vertex: u32, time: f32) -> CoverOutput {
-    let blade = cover_blades[instance];
-    let along = f32(vertex / 2u) / f32(COVER_SEGMENTS);
-    let across = f32(vertex & 1u) * 2.0 - 1.0;
-    let point = cover_point(blade, along, across, time);
+    let at = blade_vertex(instance, vertex);
+    let blade = at.blade;
+    let along = at.along;
+    let point = cover_point(blade, along, at.across, time);
     var output: CoverOutput;
     output.clip_position = camera.view_projection * vec4<f32>(point.world, 1.0);
     output.world = point.world;
@@ -149,9 +181,8 @@ fn vs_cover(@builtin(instance_index) instance: u32, @builtin(vertex_index) verte
 fn vs_cover_temporal(@builtin(instance_index) instance: u32,
         @builtin(vertex_index) vertex: u32) -> CoverTemporalOutput {
     let output = cover_output(instance, vertex, cover_frame.wind.z);
-    let blade = cover_blades[instance];
-    let previous = cover_point(blade, output.along, f32(vertex & 1u) * 2.0 - 1.0,
-        cover_frame.wind.w);
+    let at = blade_vertex(instance, vertex);
+    let previous = cover_point(at.blade, at.along, at.across, cover_frame.wind.w);
     var temporal: CoverTemporalOutput;
     temporal.clip_position = output.clip_position;
     temporal.world = output.world;

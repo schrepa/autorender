@@ -37,6 +37,10 @@ use crate::gpu_layouts::ground_cover::GrowUniform;
 
 use crate::gpu_layouts::ground_cover::FrameUniform;
 
+/// Bytes of one of the blades' indirect draws: whole blades', then
+/// straight ones'.
+const DRAW_ARGS: u64 = size_of::<wgpu::util::DrawIndirectArgs>() as u64;
+
 /// One tier of one terrain's growth this frame: its uniform's offset and
 /// its grid's cells along each side.
 struct Growth {
@@ -108,7 +112,7 @@ impl GroundCoverPass {
             args: crate::buffers::storage(
                 device,
                 "engine/cover-draw",
-                16,
+                2 * DRAW_ARGS,
                 wgpu::BufferUsages::INDIRECT,
             ),
             uniforms: crate::buffers::uniform(device, "engine/cover-grow", SLOT),
@@ -263,6 +267,7 @@ impl GroundCoverPass {
                     deform: shading.scale,
                     ranges,
                     foliage: [f32::from(u8::from(grounded)), 0.0, 0.0, 0.0],
+                    view: [pixels_per_meter, 0.0, 0.0, 0.0],
                 };
                 self.growths.push(Growth {
                     offset: (uniforms.len() as u64 * SLOT) as u32,
@@ -311,6 +316,7 @@ impl GroundCoverPass {
         let frame = FrameUniform {
             wind: [wind[0], wind[1], time, previous],
             ground: [f32::from(u8::from(grounded)), 0.0, 0.0, 0.0],
+            blades: [self.capacity, 0, 0, 0],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
         self.compute
@@ -501,8 +507,10 @@ impl GroundCoverPass {
         }
         pass.set_pipeline(pipeline);
         pass.set_bind_group(1, group, &[]);
+        // Whole blades, then straight ones.
         pass.draw_indirect(&self.args, 0);
-        1
+        pass.draw_indirect(&self.args, DRAW_ARGS);
+        2
     }
 }
 
