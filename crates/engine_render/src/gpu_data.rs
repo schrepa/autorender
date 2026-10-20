@@ -193,6 +193,9 @@ impl LightingUniform {
             sea: [0.0; 4],
             cloud_shadow: [0.0; 4],
             cloud_layer: [0.0; 4],
+            night: [0.0; 4],
+            star_turn: [0.0, 0.0, 0.0, 1.0],
+            moon: [0.0; 4],
         }
     }
 }

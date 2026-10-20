@@ -27,6 +27,9 @@ struct SkyUniform {
     // Seconds since the last frame, over which exposure eases;
     // 0 takes it at once.
     frame: vec4<f32>,
+    // The direction toward the moon, and its light: its brightness times
+    // the share of its face the sun lights (0 without one).
+    moon: vec4<f32>,
 }
 
 const SKY_PI: f32 = 3.14159265358979;

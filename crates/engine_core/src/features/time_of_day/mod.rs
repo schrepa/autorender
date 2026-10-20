@@ -57,22 +57,68 @@ impl TimeOfDay {
     /// north is -z turned by [`Self::north`] toward +x, east is +x turned
     /// alike. Below the horizon at night.
     pub fn sun_direction(&self) -> Vec3 {
-        let radians = |degrees: f32| degrees.to_radians();
-        // The sun's declination over the year and its hour angle (west of
-        // the meridian positive).
+        let (declination, hour_angle) = self.sun_place();
+        self.sky_direction(declination, hour_angle)
+    }
+
+    /// The direction toward the moon at [`Self::stepped_hours`], `age` (0
+    /// new, 0.5 full) into its month: east of the sun by its age's share of
+    /// a turn, its declination swinging from the sun's (new) to the
+    /// opposite (full), the tilt of its orbit left out. Below the horizon
+    /// when it has set.
+    pub fn moon_direction(&self, age: f32) -> Vec3 {
+        let (declination, hour_angle) = self.sun_place();
+        let turn = std::f32::consts::TAU * age;
+        let (_, cos_turn) = sin_cos(turn);
+        self.sky_direction(declination * cos_turn, hour_angle - turn)
+    }
+
+    /// The rotation taking world directions into the stars' own frame at
+    /// [`Self::stepped_hours`]: the sky turns about the celestial pole
+    /// (north, raised by the latitude) once a day, as the stars rise and set
+    /// with the sun, and a day further each year from the March equinox
+    /// (day 80).
+    pub fn star_turn(&self) -> glam::Quat {
+        let (sin_latitude, cos_latitude) = sin_cos(self.latitude.to_radians());
+        let pole = Vec3::Y * sin_latitude + self.north_axis() * cos_latitude;
+        let turns = (self.stepped_hours() - 12.0) / 24.0 + (self.day - 80.0) / 365.25;
+        let (sin_half, cos_half) = sin_cos(std::f32::consts::PI * turns);
+        glam::Quat::from_xyzw(
+            pole.x * sin_half,
+            pole.y * sin_half,
+            pole.z * sin_half,
+            cos_half,
+        )
+    }
+
+    // The sun's declination over the year and its hour angle (west of the
+    // meridian positive), radians.
+    fn sun_place(&self) -> (f32, f32) {
         let (_, year) = sin_cos(std::f32::consts::TAU / 365.0 * (self.day + 10.0));
-        let declination = radians(-23.44 * year);
-        let hour_angle = radians(15.0 * (self.stepped_hours() - 12.0));
-        let (sin_latitude, cos_latitude) = sin_cos(radians(self.latitude));
+        (
+            (-23.44 * year).to_radians(),
+            (15.0 * (self.stepped_hours() - 12.0)).to_radians(),
+        )
+    }
+
+    // North in the world: -z turned by `north` toward +x.
+    fn north_axis(&self) -> Vec3 {
+        let (sin_north, cos_north) = sin_cos(self.north.to_radians());
+        Vec3::new(-sin_north, 0.0, -cos_north)
+    }
+
+    // The direction toward what stands at `declination` and `hour_angle`
+    // (radians) in this sky.
+    fn sky_direction(&self, declination: f32, hour_angle: f32) -> Vec3 {
+        let (sin_latitude, cos_latitude) = sin_cos(self.latitude.to_radians());
         let (sin_declination, cos_declination) = sin_cos(declination);
         let (sin_hour, cos_hour) = sin_cos(hour_angle);
         let up = sin_declination * sin_latitude + cos_declination * cos_hour * cos_latitude;
         let north = sin_declination * cos_latitude - cos_declination * cos_hour * sin_latitude;
         let east = -cos_declination * sin_hour;
-        let (sin_north, cos_north) = sin_cos(radians(self.north));
-        let north_axis = Vec3::new(-sin_north, 0.0, -cos_north);
+        let (sin_north, cos_north) = sin_cos(self.north.to_radians());
         let east_axis = Vec3::new(cos_north, 0.0, -sin_north);
-        (Vec3::Y * up + north_axis * north + east_axis * east).normalize_or(Vec3::Y)
+        (Vec3::Y * up + self.north_axis() * north + east_axis * east).normalize_or(Vec3::Y)
     }
 }
 

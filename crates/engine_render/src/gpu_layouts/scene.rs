@@ -84,7 +84,8 @@ gpu_structs! {
         /// glass; zw unused.
         pub refraction: [f32; 4],
         /// Aerial perspective: start, density at height zero,
-        /// height falloff and the sun's glow; the air's color (w unused).
+        /// height falloff and the sun's glow; the air's color, and 1 with
+        /// haze, when fog and the air take the sky's light (w).
         pub aerial: [f32; 4],
         pub aerial_color: [f32; 4],
         /// Occupancy: the map's center (x and z), the inverse of
@@ -107,6 +108,15 @@ gpu_structs! {
         /// clouds); then the clouds' base height.
         pub cloud_shadow: [f32; 4],
         pub cloud_layer: [f32; 4],
+        /// The night sky: the stars' brightness (0 without them), the
+        /// moon's (0 without one), how much of the sky cirrus covers, and
+        /// the share of the moon's face the sun lights.
+        pub night: [f32; 4],
+        /// The unit quaternion turning world directions into the stars' own
+        /// frame.
+        pub star_turn: [f32; 4],
+        /// The direction toward the moon; w unused.
+        pub moon: [f32; 4],
     }
 
     /// Separate per-instance color, opacity and packed surface; unchanged colors

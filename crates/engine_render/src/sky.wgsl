@@ -21,6 +21,9 @@ const VIEW_STEPS: u32 = 30u;
 // Starlight and the glow of the night sky (at unit intensity), which keep
 // nights from black.
 const NIGHT: vec3<f32> = vec3<f32>(0.004, 0.006, 0.012);
+// What the full moon high overhead adds to the night's light (at unit
+// intensity).
+const MOON_NIGHT: vec3<f32> = vec3<f32>(0.006, 0.008, 0.014);
 // Kilometers above the ground scattering starts, avoiding the sphere's
 // own surface.
 const RADIUS_OFFSET: f32 = 0.01;
@@ -273,7 +276,8 @@ fn derive_light() {
     let azimuth = atan2(sun.z, sun.x);
     let toward = view_light(around(azimuth, 0.035));
     let away = view_light(around(azimuth + SKY_PI, 0.035));
-    let night = NIGHT * air.ozone.w;
+    // The night's light, lifted by the moon's while it is up.
+    let night = (NIGHT + MOON_NIGHT * (air.moon.w * max(air.moon.y, 0.0))) * air.ozone.w;
     let ground = air.ground.rgb
         * (sun_color * max(sun.y, 0.0) / SKY_PI + 0.5 * (zenith + horizon)) + night * 0.3;
     let glow = max(luminance(toward - away), 0.0) / max(luminance(sun_color), 1e-4);

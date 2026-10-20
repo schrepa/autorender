@@ -931,7 +931,7 @@ fn texture_entry<'a>(
     (name, pipelines::view(view))
 }
 
-fn inverse_or_identity(matrix: Mat4) -> Mat4 {
+pub(crate) fn inverse_or_identity(matrix: Mat4) -> Mat4 {
     let inverse = matrix.inverse();
     if inverse.is_finite() {
         inverse

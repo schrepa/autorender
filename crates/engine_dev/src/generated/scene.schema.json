@@ -2509,6 +2509,16 @@
             }
           ]
         },
+        "haze": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneHaze"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "level_of_detail": {
           "anyOf": [
             {
@@ -2533,6 +2543,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneNavigation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "night_sky": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneNightSky"
             },
             {
               "type": "null"
@@ -2834,6 +2854,25 @@
         "color",
         "height"
       ]
+    },
+    "SceneHaze": {
+      "description": "Haze: distant surfaces fade into the sky behind them. Fog and the air\ntake the sky's own light, blurred, in each view's direction (looking\ndown, the sky's just above the horizon, so far ground melts into the\nlit haze there), and the air begins at the eye, at least as thick as\n`visibility` asks, thinning with height as the atmosphere's (or the\nphysically based sky's) air does. Opt-in.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Whether fog and the air take the sky's light.",
+          "type": "boolean",
+          "default": true
+        },
+        "visibility": {
+          "description": "The distance (world units) at which the air leaves a fiftieth of\nwhat lies level with the eye; 0 takes twice the view's far\ndistance, so the world fades into the sky before it ends. The air\nis never thinner than the atmosphere's own.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
     },
     "SceneHeightmap": {
       "description": "An imported heightmap: a file of little-endian 16-bit samples, row by row\nalong z (`.r16`), `width` by `height` of them, spanning `size` meters\nfrom terrain-local `min` (x and z). Samples 0 to 65535 map to heights\n`low` to `high`; the layer fades in over `falloff` meters inside its\nedges and combines by `blend`. `source` and `attribution` (up to 1024\ncharacters each) record where its heights came from and the credit\ntheir data requires, as the `terrain_import` tool writes them.",
@@ -3365,6 +3404,45 @@
           "format": "uint32",
           "default": 32768,
           "minimum": 1024
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneNightSky": {
+      "description": "The night sky and the sky's high veil: stars turning with the time\nof day, where the sky behind them is dark; the moon, which the time\nof day places (without one there is none) and the sun lights, giving\nits phase, and whose light brightens the physically based sky's\nnight; and thin cirrus high above at any hour. Opt-in.",
+      "type": "object",
+      "properties": {
+        "cirrus": {
+          "description": "How much of the sky cirrus covers: 0 none.",
+          "type": "number",
+          "format": "float",
+          "default": 0.3499999940395355,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "moon": {
+          "description": "How bright the moon is: 0 hides it, 1 is the full moon's.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 8.0,
+          "minimum": 0.0
+        },
+        "moon_age": {
+          "description": "The moon's age as a share of its month: 0 new, 0.5 full, waning\ntoward 1.",
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "stars": {
+          "description": "How bright the stars are: 0 hides them, 1 is a clear night's.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 8.0,
+          "minimum": 0.0
         }
       },
       "additionalProperties": false

@@ -13,5 +13,8 @@ gpu_structs! {
         pub radii: [f32; 4],
         pub sun: [f32; 4],
         pub frame: [f32; 4],
+        /// The direction toward the moon, and its light: its brightness
+        /// times the share of its face the sun lights (0 without one).
+        pub moon: [f32; 4],
     }
 }

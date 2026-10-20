@@ -93,10 +93,6 @@ fn material_flag(bit: u32, specialized: bool) -> bool {
 // transparent surfaces draw with refraction, a white texel otherwise.
 @group(0) @binding(9) var refraction_source: texture_2d<f32>;
 @group(0) @binding(10) var refraction_sampler: sampler;
-// Environment maps: cubes of the light around, blurred down
-// their levels by roughness; the first holds the sky.
-@group(0) @binding(11) var environment_maps: texture_cube_array<f32>;
-@group(0) @binding(12) var environment_sampler: sampler;
 // Reflection probes whose environment maps surfaces reflect,
 // found through a grid of cells over the ground plane listing the probes
 // whose boxes reach each cell. In vec4 words: [0] the grid's first corner

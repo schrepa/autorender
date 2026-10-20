@@ -51,7 +51,8 @@ struct Lighting {
     // refraction) and the blur radius in pixels of fully rough glass.
     refraction: vec4<f32>,
     // Aerial perspective: start, density at height zero,
-    // height falloff and the sun's glow; the air's own color.
+    // height falloff and the sun's glow; the air's own color, and 1 with
+    // haze (w).
     aerial: vec4<f32>,
     aerial_color: vec4<f32>,
     // Occupancy: the map's center (x and z), the inverse of
@@ -75,6 +76,13 @@ struct Lighting {
     // then the clouds' base height.
     cloud_shadow: vec4<f32>,
     cloud_layer: vec4<f32>,
+    // The night sky: the stars' brightness (0 without them), the moon's (0
+    // without one), how much of the sky cirrus covers and the share of the
+    // moon's face the sun lights; the quaternion turning world directions
+    // into the stars' frame; the direction toward the moon.
+    night: vec4<f32>,
+    star_turn: vec4<f32>,
+    moon: vec4<f32>,
 }
 // Sun shadows: world to each near cascade and to both
 // far maps (x and y in [-1, 1] across a map, z in [0, 1]).
@@ -144,6 +152,10 @@ struct Shadow {
 @group(0) @binding(18) var occupancy_heights: texture_2d_array<f32>;
 // The kept shadow levels, one layer each.
 @group(0) @binding(8) var kept_levels: texture_depth_2d_array;
+// Environment maps: cubes of the light around, blurred down
+// their levels by roughness; the first holds the sky.
+@group(0) @binding(11) var environment_maps: texture_cube_array<f32>;
+@group(0) @binding(12) var environment_sampler: sampler;
 
 // The features of the scene shading looks up (`scene_shading::SceneShading`):
 // sun shadow maps and their kept levels, terrains' horizons, clouds'
@@ -412,9 +424,31 @@ fn air_light(direction: vec3<f32>) -> vec3<f32> {
         + lighting.sun_color.rgb * (lighting.aerial.w * lobe * (0.25 + 0.75 * lobe));
 }
 
+// Haze: the share of the sky's environment map's levels its light behind
+// distant surfaces is blurred to, and the least elevation (its sine) it is
+// looked up at.
+const HAZE_BLUR: f32 = 0.3;
+const HAZE_LIFT: f32 = 0.02;
+
+// Whether fog and the air take the sky's own light behind what they cover
+// (haze, `lighting.aerial_color.w`).
+fn hazy() -> bool {
+    return lighting.aerial_color.w != 0.0;
+}
+
+// The sky's light behind distant surfaces along `direction`: its
+// environment map blurred, looked up no lower than just above the horizon,
+// so the ground below fades into the lit haze there, as the sky behind it
+// does.
+fn sky_behind(direction: vec3<f32>) -> vec3<f32> {
+    let lifted = normalize(vec3<f32>(direction.x, max(direction.y, HAZE_LIFT), direction.z));
+    let level = HAZE_BLUR * f32(textureNumLevels(environment_maps) - 1u);
+    return textureSampleLevel(environment_maps, environment_sampler, lifted, 0, level).rgb;
+}
+
 // What fog and air leave of light `lit` from `point` seen
 // from `eye` looking along `direction`, and how much of it they cover
-// together (w).
+// together (w). With haze both take the sky's light behind the point.
 fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>)
         -> vec4<f32> {
     // Light reaching what lies under the sea dims through the water above
@@ -428,11 +462,16 @@ fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3
         let covered = underwater_cover(length(point - eye));
         return vec4<f32>(mix(light, underwater_light(direction), covered), covered);
     }
+    let behind = hazy();
+    var sky_light = vec3<f32>(0.0);
+    if behind {
+        sky_light = sky_behind(direction);
+    }
     let fogged = fog(eye, point);
     // Without fog, mixing in none of its haze leaves the light.
     var color = light;
     if fogged != 0.0 {
-        color = mix(light, haze(direction), fogged);
+        color = mix(light, select(haze(direction), sky_light, behind), fogged);
     }
     var covered = fogged;
     if lighting.aerial.y > 0.0 {
@@ -441,7 +480,7 @@ fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3
         // Where the air is no depth, mixing in none of it leaves the color.
         if depth != 0.0 {
             let air = 1.0 - exp(-depth);
-            color = mix(color, air_light(direction), air);
+            color = mix(color, select(air_light(direction), sky_light, behind), air);
             covered = fogged + (1.0 - fogged) * air;
         }
     }

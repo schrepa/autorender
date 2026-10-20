@@ -71,3 +71,77 @@ impl Sky {
         }
     }
 }
+
+settings! {
+    /// Haze: distant surfaces fade into the sky behind them. Fog and the air
+    /// take the sky's own light, blurred, in each view's direction (looking
+    /// down, the sky's just above the horizon, so far ground melts into the
+    /// lit haze there), and the air begins at the eye, at least as thick as
+    /// `visibility` asks, thinning with height as the atmosphere's (or the
+    /// physically based sky's) air does. Opt-in.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneHaze")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Haze {
+        /// Whether fog and the air take the sky's light.
+        pub enabled: bool = true => any,
+        /// The distance (world units) at which the air leaves a fiftieth of
+        /// what lies level with the eye; 0 takes twice the view's far
+        /// distance, so the world fades into the sky before it ends. The air
+        /// is never thinner than the atmosphere's own.
+        pub visibility: f32 = 0.0 => at_least(0.0),
+    }
+}
+
+impl Haze {
+    /// What a world without these settings reads as: no haze.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+}
+
+settings! {
+    /// The night sky and the sky's high veil: stars turning with the time
+    /// of day, where the sky behind them is dark; the moon, which the time
+    /// of day places (without one there is none) and the sun lights, giving
+    /// its phase, and whose light brightens the physically based sky's
+    /// night; and thin cirrus high above at any hour. Opt-in.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneNightSky")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct NightSky {
+        /// How bright the stars are: 0 hides them, 1 is a clear night's.
+        pub stars: f32 = 1.0 => range(0.0, 8.0),
+        /// How bright the moon is: 0 hides it, 1 is the full moon's.
+        pub moon: f32 = 1.0 => range(0.0, 8.0),
+        /// The moon's age as a share of its month: 0 new, 0.5 full, waning
+        /// toward 1.
+        pub moon_age: f32 = 0.5 => range(0.0, 1.0),
+        /// How much of the sky cirrus covers: 0 none.
+        pub cirrus: f32 = 0.35 => range(0.0, 1.0),
+    }
+}
+
+impl NightSky {
+    /// What a world without these settings reads as: no stars, moon or
+    /// cirrus.
+    pub fn off() -> Self {
+        Self {
+            stars: 0.0,
+            moon: 0.0,
+            cirrus: 0.0,
+            ..Self::default()
+        }
+    }
+}

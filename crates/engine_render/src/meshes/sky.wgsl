@@ -53,9 +53,9 @@ fn sky_cloud(ray: vec3<f32>) -> vec4<f32> {
     return mix(older, newer, sky_domes.newer.w);
 }
 
-// The sky along `ray` behind its clouds; under the sea, the water's light.
-// While the view marches its own clouds, they cover it
-// after it draws.
+// The sky along `ray` behind its clouds, with the night sky's; under the
+// sea, the water's light. While the view marches its own clouds, they
+// cover it after it draws.
 fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
     if lighting.underwater.w > 0.0 {
         return sky(ray);
@@ -66,10 +66,185 @@ fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
     } else {
         light = sky(ray);
     }
+    light = with_night_sky(light, ray);
     if sky_domes.view.x > 0.5 {
         return light;
     }
     return behind_clouds(light, sky_cloud(ray), ray);
+}
+
+// The night sky's stars: cells along each side of each face of the cube
+// they are hashed on, the share of cells holding one, the light of the
+// brightest, and the sky's luminance above which none shows (they fade in
+// below it, fully from two fifths of it).
+const STAR_CELLS: f32 = 160.0;
+const STAR_SHARE: f32 = 0.4;
+const STAR_LIGHT: f32 = 0.25;
+const STAR_SKY: f32 = 0.1;
+// The moon's angular radius (radians: twice its true quarter degree, the
+// size the eye reads it at) and the light of its full face.
+const MOON_RADIUS: f32 = 0.0091;
+const MOON_LIGHT: f32 = 0.6;
+// Cirrus: the layer's height and how far along a view it fades out by
+// (world units), and the world units its strands drift each second.
+const CIRRUS_HEIGHT: f32 = 9000.0;
+const CIRRUS_REACH: f32 = 90000.0;
+const CIRRUS_DRIFT: vec2<f32> = vec2<f32>(6.0, 1.5);
+
+// `direction` turned by the unit quaternion `turn`.
+fn turned(turn: vec4<f32>, direction: vec3<f32>) -> vec3<f32> {
+    let t = 2.0 * cross(turn.xyz, direction);
+    return direction + turn.w * t + cross(turn.xyz, t);
+}
+
+// Three values in [0, 1) hashed from `cell`.
+fn sky_hash(cell: vec3<u32>) -> vec3<f32> {
+    return vec3<f32>(dither_hash(cell) >> vec3<u32>(8u)) * (1.0 / 16777216.0);
+}
+
+// Smooth value noise in [0, 1] over the plane, its lattice salted by
+// `salt`.
+fn sky_noise(p: vec2<f32>, salt: u32) -> f32 {
+    let cell = floor(p);
+    let f = p - cell;
+    let u = f * f * (3.0 - 2.0 * f);
+    let base = vec2<u32>(vec2<i32>(cell) & vec2<i32>(0xffff));
+    let a = sky_hash(vec3<u32>(base, salt)).x;
+    let b = sky_hash(vec3<u32>(base + vec2<u32>(1u, 0u), salt)).x;
+    let c = sky_hash(vec3<u32>(base + vec2<u32>(0u, 1u), salt)).x;
+    let d = sky_hash(vec3<u32>(base + vec2<u32>(1u, 1u), salt)).x;
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// The stars' light along `star`, a direction in their own frame: a star in
+// STAR_SHARE of the cells of a cube's faces, placed within its cell, its
+// brightness a high power of a uniform value so faint stars far outnumber
+// bright ones, bluish white to warm, drawn as a soft spot of `spread`
+// radians (about a pixel) so it neither vanishes nor shimmers between
+// pixels.
+fn star_light(star: vec3<f32>, spread: f32) -> vec3<f32> {
+    let a = abs(star);
+    var axis = 0u;
+    var uv = star.yz / a.x;
+    if a.y >= a.x && a.y >= a.z {
+        axis = 1u;
+        uv = star.xz / a.y;
+    } else if a.z >= a.x {
+        axis = 2u;
+        uv = star.xy / a.z;
+    }
+    let face = axis * 2u + select(0u, 1u, star[axis] < 0.0);
+    let position = (uv * 0.5 + 0.5) * STAR_CELLS;
+    let cell = floor(position);
+    let hashed = sky_hash(vec3<u32>(vec2<u32>(cell), face));
+    if hashed.x >= STAR_SHARE {
+        return vec3<f32>(0.0);
+    }
+    let center = cell + 0.25 + 0.5 * hashed.yz;
+    // A cell spans about a quarter turn over STAR_CELLS.
+    let offset = (position - center) * (1.5707963 / STAR_CELLS);
+    let spot = exp(-dot(offset, offset) / (2.0 * spread * spread));
+    let bright = pow(hashed.x / STAR_SHARE, 8.0);
+    let warm = fract(hashed.y * 7.31 + hashed.z * 3.17);
+    let tint = mix(vec3<f32>(0.78, 0.86, 1.0), vec3<f32>(1.0, 0.86, 0.68), warm);
+    return tint * (STAR_LIGHT * bright * spot);
+}
+
+// The moon along `ray`, standing along `moon` and lit by the sun along
+// `sun`: its face as a sphere lit where the sun reaches it, which gives its
+// phase, its seas darker, and earthshine faint on the rest; rgb its light,
+// a how much of the ray its disc covers (soft at the rim).
+fn moon_disc(ray: vec3<f32>, moon: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
+    if dot(ray, moon) < cos(MOON_RADIUS * 1.1) {
+        return vec4<f32>(0.0);
+    }
+    let right = normalize(cross(moon, vec3<f32>(1.0e-4, 1.0, 0.0)));
+    let up = cross(right, moon);
+    let local = vec2<f32>(dot(ray, right), dot(ray, up)) / MOON_RADIUS;
+    let r2 = dot(local, local);
+    let cover = 1.0 - smoothstep(0.92, 1.0, sqrt(r2));
+    if cover <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    // The near half's normal faces the eye.
+    let normal = local.x * right + local.y * up - sqrt(max(1.0 - r2, 0.0)) * moon;
+    let lit = saturate(dot(normal, sun) * 2.0);
+    let seas = mix(0.6, 1.0, smoothstep(0.3, 0.7,
+        0.65 * sky_noise(local * 2.2 + 7.0, 3u) + 0.35 * sky_noise(local * 5.3 + 2.0, 4u)));
+    let light = vec3<f32>(1.0, 0.96, 0.9) * (seas * (lit + 0.02) * MOON_LIGHT);
+    return vec4<f32>(light, cover);
+}
+
+// How much cirrus covers along `ray`: fibrous noise on a layer
+// CIRRUS_HEIGHT above the eye, stretched along x and drifting with
+// `seconds`, over `coverage` of the sky, fading toward the horizon.
+fn cirrus_cover(ray: vec3<f32>, coverage: f32, seconds: f32) -> f32 {
+    if ray.y <= 0.02 {
+        return 0.0;
+    }
+    let along = CIRRUS_HEIGHT / ray.y;
+    let fade = 1.0 - smoothstep(0.35 * CIRRUS_REACH, CIRRUS_REACH, along);
+    var p = (ray.xz * along + CIRRUS_DRIFT * seconds) * vec2<f32>(1.0 / 7000.0, 1.0 / 1700.0);
+    var sum = 0.0;
+    var weight = 0.5;
+    for (var octave = 0u; octave < 4u; octave++) {
+        sum += sky_noise(p, 9u + octave) * weight;
+        p = p * 2.03 + vec2<f32>(17.0, 31.0);
+        weight *= 0.5;
+    }
+    let shape = saturate((sum / 0.9375 - (1.0 - coverage)) / 0.3);
+    return shape * shape * fade * 0.6;
+}
+
+// The light cirrus sends along `ray`: the sun's (with the physically based
+// sky, what reaches the layer's height, which outlasts sunset there),
+// scattered forward toward it; the moon's, faintly; and the sky's.
+fn cirrus_light(ray: vec3<f32>) -> vec3<f32> {
+    let sun = lighting.sun.xyz;
+    var sunlight = lighting.sun_color.rgb;
+    if physical_sky() {
+        let r = air_radius(sky_air) + CIRRUS_HEIGHT * 0.001;
+        sunlight = sky_air.ozone.w * air_transmittance(sky_transmittance_table, sky_table_sampler,
+            sky_air, r, sun.y);
+    }
+    let toward = max(dot(ray, sun), 0.0);
+    let forward = 0.25 + 1.4 * pow(toward, 6.0);
+    let moonlight = vec3<f32>(0.8, 0.85, 1.0) * (0.02 * MOON_LIGHT * lighting.night.y
+        * lighting.night.w * saturate(lighting.moon.y * 4.0));
+    return sunlight * (0.3 * forward) + moonlight + 0.5 * (lighting.zenith.rgb + lighting.horizon.rgb);
+}
+
+// `light`, the sky's along `ray`, with the night sky's: stars where the sky
+// in front of them is dark and the moon, both beyond the air and fading
+// into the horizon's haze, then cirrus over both.
+fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
+    let night = lighting.night;
+    if all(night.xyz == vec3<f32>(0.0)) {
+        return light;
+    }
+    var beyond = vec3<f32>(0.0);
+    if night.x > 0.0 {
+        var dark = 1.0 - smoothstep(0.4 * STAR_SKY, STAR_SKY, luminance(light));
+        // The physically based sky's sun is the real one: no stars while it
+        // is up, all of them once it is six degrees down.
+        if physical_sky() {
+            dark *= 1.0 - smoothstep(-0.1, 0.0, lighting.sun.y);
+        }
+        let spread = max(0.8 * camera.options.y, 1.0e-5);
+        beyond = star_light(turned(lighting.star_turn, ray), spread) * (night.x * dark);
+    }
+    if night.y > 0.0 {
+        let disc = moon_disc(ray, lighting.moon.xyz, lighting.sun.xyz);
+        beyond = mix(beyond, disc.rgb * night.y, disc.a);
+    }
+    var sky = light + beyond * smoothstep(-0.01, 0.12, ray.y);
+    if night.z > 0.0 {
+        let cover = cirrus_cover(ray, night.z, camera.position.w);
+        if cover > 0.0 {
+            sky = mix(sky, cirrus_light(ray), cover);
+        }
+    }
+    return sky;
 }
 
 // The view ray through unjittered `ndc`.

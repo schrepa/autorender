@@ -490,6 +490,17 @@ impl Renderer {
         );
         // Whether 8-bit color writes dither.
         lighting.grade[3] = f32::from(u8::from(snapshot.environment.dither.enabled));
+        // The night sky, and haze: the air taking the sky's light.
+        [lighting.night, lighting.star_turn, lighting.moon] = crate::sky::night_lighting(
+            &snapshot.environment,
+            snapshot.environment.atmosphere.sun_direction,
+        );
+        crate::sky::apply_haze(
+            &mut lighting,
+            &snapshot.environment.haze,
+            snapshot.view_projection,
+            snapshot.camera_position,
+        );
         // Under the sea, its water veils everything.
         lighting.underwater = crate::water::underwater(
             &snapshot.environment,
@@ -972,15 +983,19 @@ impl Renderer {
             ),
         ];
         copies.extend(self.features.clouds.get().sky_copies());
+        // The moon's light on the night: its brightness times its lit share.
+        let sun = snapshot.environment.atmosphere.sun_direction;
+        let [night, _, moon] = crate::sky::night_lighting(&snapshot.environment, sun);
         self.features.sky.get_mut().encode(
             &self.device,
             &self.queue,
             (
                 &snapshot.environment.sky,
-                snapshot.environment.atmosphere.sun_direction,
+                sun,
                 snapshot.camera_position,
                 snapshot.environment.atmosphere.exposure,
                 snapshot.presented_seconds,
+                [moon[0], moon[1], moon[2], night[1] * night[3]],
             ),
             &copies,
             &self.profiler,

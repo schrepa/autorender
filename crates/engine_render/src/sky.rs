@@ -207,7 +207,8 @@ impl SkyPass {
         }
     }
 
-    /// Records this frame's sky of `settings` with the sun along `sun` seen
+    /// Records this frame's sky of `settings` with the sun along `sun` (and
+    /// the moon `moon`: its direction and light) seen
     /// from `eye`, or nothing without one: its tables when their air
     /// changed, the sky-view table when the sun, the camera's height or the
     /// air changed, then the light it gives, copied by `copies`. Timed by
@@ -220,7 +221,7 @@ impl SkyPass {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        (settings, sun, eye, exposure, seconds): (&Sky, Vec3, Vec3, f32, f64),
+        (settings, sun, eye, exposure, seconds, moon): (&Sky, Vec3, Vec3, f32, f64, [f32; 4]),
         copies: &[SkyCopy<'_>],
         profiler: &crate::profiling::GpuProfiler,
     ) -> Option<wgpu::CommandEncoder> {
@@ -273,6 +274,7 @@ impl SkyPass {
             // (a first or repeated time, as exact frames are) takes it at
             // once.
             frame: [elapsed, 0.0, 0.0, 0.0],
+            moon,
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         let air: [u32; 20] = bytemuck::cast([
@@ -459,4 +461,65 @@ impl RenderFeature for SkyPass {
             tables: this.map_or(0, |sky| sky.built),
         }
     }
+}
+
+/// The night sky's part of the scene's lighting this frame
+/// ([`engine_core::NightSky`]): the stars' and the moon's brightness,
+/// cirrus' cover and the share of the moon's face the sun along `sun`
+/// lights; the quaternion turning world directions into the stars' frame;
+/// and the direction toward the moon. The time of day turns the stars and
+/// places the moon; without one the stars stand as at its defaults and
+/// there is no moon.
+pub(crate) fn night_lighting(environment: &engine_core::Environment, sun: Vec3) -> [[f32; 4]; 3] {
+    let night = environment.night_sky.sanitized();
+    let day = environment.time_of_day.sanitized();
+    let clock = if day.enabled {
+        day
+    } else {
+        engine_core::TimeOfDay::default()
+    };
+    let moon = (day.enabled && night.moon > 0.0).then(|| day.moon_direction(night.moon_age));
+    let lit = moon.map_or(0.0, |moon| 0.5 - 0.5 * moon.dot(sun.normalize_or_zero()));
+    [
+        [
+            night.stars,
+            moon.map_or(0.0, |_| night.moon),
+            night.cirrus,
+            lit,
+        ],
+        clock.star_turn().to_array(),
+        moon.unwrap_or(Vec3::Y).extend(0.0).to_array(),
+    ]
+}
+
+/// Haze's part of the scene's lighting ([`engine_core::Haze`]): fog and
+/// the air take the sky's light (`aerial_color.w`), and the air begins at
+/// the eye `eye`, at least as thick at its height as the visibility asks
+/// (Koschmieder: a fiftieth of what lies level with the eye is left at
+/// 3.912 over the extinction), twice the distance to the far plane of
+/// `view_projection` unless set.
+pub(crate) fn apply_haze(
+    lighting: &mut crate::gpu_data::LightingUniform,
+    haze: &engine_core::Haze,
+    view_projection: glam::Mat4,
+    eye: Vec3,
+) {
+    let haze = haze.sanitized();
+    if !haze.enabled {
+        return;
+    }
+    let visibility = if haze.visibility > 0.0 {
+        haze.visibility
+    } else {
+        // The far plane's middle: depth 0 with reversed depth.
+        let far = crate::post::inverse_or_identity(view_projection).project_point3(Vec3::ZERO);
+        2.0 * far.distance(eye)
+    };
+    let extinction = 3.912 / engine_core::math::max(visibility, 1.0);
+    // The density at height zero that is `extinction` at the eye's height.
+    let falloff = lighting.aerial[2];
+    let at_zero = extinction * engine_core::math::min(falloff * eye.y, 60.0).exp();
+    lighting.aerial[0] = 0.0;
+    lighting.aerial[1] = engine_core::math::max(lighting.aerial[1], at_zero);
+    lighting.aerial_color[3] = 1.0;
 }

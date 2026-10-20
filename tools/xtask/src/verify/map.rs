@@ -222,6 +222,8 @@ pub(crate) const MAP: &[Rule] = &[
                 "garden-clouds",
                 "garden-sky",
                 "garden-time-of-day",
+                "garden-night-sky",
+                "metro-haze",
                 "metro-sky",
                 "metro-golden",
                 "metro-dusk",

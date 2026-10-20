@@ -934,6 +934,22 @@
       "stats": true
     },
     {
+      "inspector": "Haze",
+      "section": "haze",
+      "smokes": [
+        "terrain-water-sky"
+      ],
+      "stats": false
+    },
+    {
+      "inspector": "NightSky",
+      "section": "night_sky",
+      "smokes": [
+        "terrain-water-sky"
+      ],
+      "stats": false
+    },
+    {
       "inspector": "TimeOfDay",
       "section": "time_of_day",
       "smokes": [

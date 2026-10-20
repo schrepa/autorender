@@ -568,6 +568,26 @@
       "captures": ["exact", "gpu:0.5"]
     },
     {
+      "name": "garden-night-sky",
+      "tier": "full",
+      "note": "The garden at night under the physically based sky with the night sky's stars, moon and cirrus, switched on by the environment control.",
+      "source": "web/scripts/fixtures/garden.scene.json",
+      "environment": { "sky": {}, "time_of_day": { "hours": 23 }, "night_sky": {} },
+      "ticks": 30,
+      "views": ["scene"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
+      "name": "metro-haze",
+      "tier": "full",
+      "note": "Metro with haze, the air taking the sky's light, switched on by the environment control.",
+      "scene": "metro",
+      "environment": { "haze": {} },
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
       "name": "terrain-frames",
       "tier": "full",
       "note": "The terrain fixture streaming on the frame clock (--terrain-clock frames), its water and clouds off: a native A/A of six runs (2026-10-12) differed by at most 1 level on at most 17 pixels, so its streaming, virtual texture, ground cover and placements are judged within a level. With water and clouds on the fixture still varies run to run (with ground cover off, up to 5 levels over 61% of the pixels), so those stay with the wall-clock terrain cell.",
