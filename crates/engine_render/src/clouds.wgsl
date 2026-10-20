@@ -8,7 +8,8 @@
 // green, blue and alpha.
 
 struct CloudUniform {
-    // The camera (world).
+    // The camera (world); w: 1 with the physically based sky, whose sun
+    // lights each cloud where it stands.
     eye: vec4<f32>,
     // The layer's base and top (world meters), its coverage and density.
     layer: vec4<f32>,
@@ -58,6 +59,11 @@ struct CloudView {
 // The composite's indirect draw: its vertices, set to its triangle's once
 // any block meets a cloud, so views without any draw nothing.
 @group(0) @binding(10) var<storage, read_write> composite_draw: array<atomic<u32>, 4>;
+// The physically based sky (`sky_common.wgsl`): its uniform, transmittance
+// table and their sampler, through which its sun lights the clouds.
+@group(0) @binding(11) var<uniform> cloud_air: SkyUniform;
+@group(0) @binding(12) var cloud_transmittance: texture_2d<f32>;
+@group(0) @binding(13) var cloud_table_sampler: sampler;
 
 // Rays below the horizon by this much (sine of their elevation) see no
 // clouds (`scene.wgsl`'s `CLOUD_HORIZON`).
@@ -230,6 +236,19 @@ fn sun_depth(p: vec3<f32>) -> f32 {
     return depth;
 }
 
+// The sunlight at world point `p`: the eye's, or with the physically based
+// sky what passes its air to the point's own place over the planet, so
+// cloud tops keep the low sun's light after the ground has lost it and the
+// planet's shadow rises through the layer.
+fn sunlight_at(p: vec3<f32>) -> vec3<f32> {
+    if clouds.eye.w < 0.5 {
+        return clouds.sun_color.rgb;
+    }
+    let height = cloud_air.radii.w + (p.y - clouds.eye.y) * 0.001;
+    return sunlight_over(cloud_transmittance, cloud_table_sampler, cloud_air,
+        (p.xz - clouds.eye.xz) * 0.001, height, clouds.sun.xyz);
+}
+
 // Henyey-Greenstein's phase function.
 fn henyey_greenstein(cosine: f32, g: f32) -> f32 {
     let g2 = g * g;
@@ -303,9 +322,9 @@ fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32) -> Marched {
         let sky = mix(clouds.horizon.rgb, clouds.zenith.rgb, 0.5 + 0.5 * height);
         let gray = vec3<f32>(dot(sky, vec3<f32>(0.2126, 0.7152, 0.0722)));
         let ambient = mix(sky, gray, 0.6) * (0.5 + 0.7 * height);
-        let diffuse = clouds.sun_color.rgb * (0.06 * (0.4 + 0.6 * height));
-        let source = clouds.sun_color.rgb * (direct * powder * phase * 4.0 * 3.14159) + ambient
-            + diffuse;
+        let sunlight = sunlight_at(p);
+        let diffuse = sunlight * (0.06 * (0.4 + 0.6 * height));
+        let source = sunlight * (direct * powder * phase * 4.0 * 3.14159) + ambient + diffuse;
         let through = exp(-sigma * step);
         light += passing * source * (1.0 - through);
         weighted += passing * (1.0 - through) * here;

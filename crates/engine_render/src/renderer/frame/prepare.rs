@@ -671,7 +671,7 @@ impl Renderer {
                 snapshot.camera_position,
                 snapshot.presented_seconds,
             ),
-            lighting,
+            (lighting, self.features.sky.get().bindings()),
             !kind.gpu_mode,
         );
         // And their march in the view, after the opaque
@@ -686,7 +686,7 @@ impl Renderer {
             ),
             snapshot.view_projection,
             [self.depth.texture.width(), self.depth.texture.height()],
-            lighting,
+            (lighting, self.features.sky.get().bindings()),
             &self.depth.view,
         );
         self.features

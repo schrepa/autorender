@@ -338,15 +338,16 @@ fn cirrus_cover(ray: vec3<f32>, coverage: f32, seconds: f32) -> f32 {
 }
 
 // The light cirrus sends along `ray`: the sun's (with the physically based
-// sky, what reaches the layer's height, which outlasts sunset there),
+// sky, what reaches the layer where the ray meets it, over its own place
+// on the planet, which outlasts sunset there and toward the sunset longest),
 // scattered forward toward it; the moon's, faintly; and the sky's.
 fn cirrus_light(ray: vec3<f32>) -> vec3<f32> {
     let sun = lighting.sun.xyz;
     var sunlight = lighting.sun_color.rgb;
     if physical_sky() {
-        let r = air_radius(sky_air) + CIRRUS_HEIGHT * 0.001;
-        sunlight = sky_air.ozone.w * air_transmittance(sky_transmittance_table, sky_table_sampler,
-            sky_air, r, sun.y);
+        let along = CIRRUS_HEIGHT / max(ray.y, 0.02);
+        sunlight = sunlight_over(sky_transmittance_table, sky_table_sampler, sky_air,
+            ray.xz * (along * 0.001), sky_air.radii.w + CIRRUS_HEIGHT * 0.001, sun);
     }
     let toward = max(dot(ray, sun), 0.0);
     let forward = 0.25 + 1.4 * pow(toward, 6.0);

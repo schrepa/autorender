@@ -83,6 +83,7 @@ shaders! {
         "water_sim.wgsl",
     ];
     CLOUDS_SHADER = [
+        "sky_common.wgsl",
         "clouds.wgsl",
     ];
     /// The physically based sky's tables and light.

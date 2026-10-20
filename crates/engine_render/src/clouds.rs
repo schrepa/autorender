@@ -155,7 +155,7 @@ pub(crate) struct CloudPass {
     // any block meets a cloud.
     composite_args: wgpu::Buffer,
     view_targets: Option<Versioned<ViewTargets>>,
-    view_group: GroupCache<8>,
+    view_group: GroupCache<11>,
     composite_group: GroupCache<4>,
     view_pipeline: Option<wgpu::ComputePipeline>,
     composite_pipeline_layout: Option<wgpu::PipelineLayout>,
@@ -449,16 +449,17 @@ impl CloudPass {
     }
 
     /// Plans this frame's march of `settings`' clouds for an eye at `eye`
-    /// at simulation time `seconds` in `lighting`'s sun and sky: a whole
-    /// dome from the eye, shown alone, when `whole` (exact frames), when
-    /// the domes are new or the clouds changed; otherwise a band of the back
-    /// dome's rows from where it began, which shows once whole.
+    /// at simulation time `seconds` in `lighting`'s sun and sky (the
+    /// physically based one's `air` lighting each cloud where it stands): a
+    /// whole dome from the eye, shown alone, when `whole` (exact frames),
+    /// when the domes are new or the clouds changed; otherwise a band of the
+    /// back dome's rows from where it began, which shows once whole.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (settings, eye, seconds): (&Clouds, glam::Vec3, f64),
-        lighting: &LightingUniform,
+        (lighting, air): (&LightingUniform, crate::sky::AirBindings<'_>),
         whole: bool,
     ) {
         self.rows = 0;
@@ -535,12 +536,12 @@ impl CloudPass {
         uniform.shadow_rows = self.shadow_rows(whole);
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         self.write_domes(queue, eye, &settings);
-        self.prepare_dome_draws(device);
+        self.prepare_dome_draws(device, air);
     }
 
     /// The pipelines and groups this frame's march of the dome binds, and
     /// the noise volume's, which the first march makes.
-    fn prepare_dome_draws(&mut self, device: &wgpu::Device) {
+    fn prepare_dome_draws(&mut self, device: &wgpu::Device, air: crate::sky::AirBindings<'_>) {
         let Some(domes) = &self.domes else {
             return;
         };
@@ -567,6 +568,9 @@ impl CloudPass {
                         ("noise_sampler", crate::pipelines::sampler(noise_sampler)),
                         ("dome", crate::pipelines::view(&domes[index].1)),
                         crate::buffers::entry("shadow_cells", cells),
+                        crate::buffers::entry("cloud_air", air.0),
+                        ("cloud_transmittance", crate::pipelines::view(air.2)),
+                        ("cloud_table_sampler", crate::pipelines::sampler(air.3)),
                     ],
                 )
             })
@@ -595,7 +599,7 @@ impl CloudPass {
         (settings, eye, seconds): (&Clouds, glam::Vec3, f64),
         view_projection: glam::Mat4,
         canvas: [u32; 2],
-        lighting: &LightingUniform,
+        (lighting, air): (&LightingUniform, crate::sky::AirBindings<'_>),
         depth: &Versioned<wgpu::TextureView>,
     ) {
         let settings = settings.sanitized();
@@ -638,7 +642,7 @@ impl CloudPass {
         );
         self.view_job = Some(blocks);
         self.view_blocks = blocks[0] * blocks[1];
-        self.prepare_view_draws(device, depth);
+        self.prepare_view_draws(device, depth, air);
     }
 
     /// Whether this frame marches clouds in the view.
@@ -648,7 +652,12 @@ impl CloudPass {
 
     /// The view march's pipeline and group, up to what the depth buffer
     /// `depth` shows.
-    fn prepare_view_draws(&mut self, device: &wgpu::Device, depth: &Versioned<wgpu::TextureView>) {
+    fn prepare_view_draws(
+        &mut self,
+        device: &wgpu::Device,
+        depth: &Versioned<wgpu::TextureView>,
+        air: crate::sky::AirBindings<'_>,
+    ) {
         let Some(targets) = &self.view_targets else {
             return;
         };
@@ -685,6 +694,15 @@ impl CloudPass {
                 (
                     "composite_draw",
                     Bound::fixed(self.composite_args.as_entire_binding()),
+                ),
+                ("cloud_air", Bound::fixed(air.0.as_entire_binding())),
+                (
+                    "cloud_transmittance",
+                    Bound::fixed(crate::pipelines::view(air.2)),
+                ),
+                (
+                    "cloud_table_sampler",
+                    Bound::fixed(crate::pipelines::sampler(air.3)),
                 ),
             ],
         );
@@ -924,7 +942,8 @@ fn march_uniform(
     let drift = |speed: f32| ((f64::from(speed) * at) % wrap) as f32;
     let seed = (f64::from(settings.seed) * 7919.0 % wrap) as f32;
     CloudUniform {
-        eye: origin.extend(0.0).to_array(),
+        // The physically based sky lights each cloud where it stands.
+        eye: origin.extend(lighting.grade[2]).to_array(),
         layer: [
             settings.base,
             settings.base + settings.thickness,

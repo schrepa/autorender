@@ -110,6 +110,30 @@ fn air_transmittance(table: texture_2d<f32>, table_sampler: sampler, air: SkyUni
     return textureSampleLevel(table, table_sampler, transmittance_uv(air, r, mu), 0.0).rgb;
 }
 
+/// The sunlight, the sun along `sun`, reaching a point `height` km above
+/// the planet's ground and `across` km (world x and z) from the ground
+/// straight below the eye, with the sun standing over that point's own place
+/// on the curved planet: what passes the air to it from `table`, the sun's
+/// disc setting behind the planet's limb there, so its shadow rises past
+/// the point after sunset below.
+fn sunlight_over(table: texture_2d<f32>, table_sampler: sampler, air: SkyUniform,
+        across: vec2<f32>, height: f32, sun: vec3<f32>) -> vec3<f32> {
+    let bottom = air.radii.x;
+    let place = vec3<f32>(across.x, bottom + max(height, 0.0005), across.y);
+    let r = length(place);
+    let mu = dot(place / r, sun);
+    let ratio = bottom / r;
+    let limb = -sqrt(max(1.0 - ratio * ratio, 0.0));
+    // The sun's elevation above the limb, in radians for small angles.
+    let above = (mu - limb) / max(ratio, 1.0e-3);
+    let disc = smoothstep(-air.ground.w, air.ground.w, above);
+    if disc <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    return air.ozone.w * disc
+        * air_transmittance(table, table_sampler, air, r, max(mu, limb + 2.0e-3));
+}
+
 /// The sky-view table's coordinates of a view at zenith cosine `view_cos`
 /// whose azimuth is `light_cos`'s cosine from the sun's, from radius `r`;
 /// `ground` when the view meets the planet.
