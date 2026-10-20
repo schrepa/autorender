@@ -105,10 +105,11 @@ resources! {
     /// The pages terrain's resolves wanted of the virtual texture, read back
     /// later.
     Feedback: Kept,
-    /// Debug views' targets: what drew each pixel, and the fragments that
-    /// passed the depth test there.
+    /// Debug views' targets: what drew each pixel, the fragments that
+    /// passed the depth test there, and terrain's tiles and materials.
     DebugIds: Frame,
     DebugCount: Frame,
+    DebugTerrain: Frame,
 }
 
 // A set holds every resource as a bit of a u64.
@@ -732,7 +733,11 @@ impl FrameShape {
                 Resource::Glow,
                 Resource::Surface,
             ],
-            Targets::Debug => &[Resource::DebugIds, Resource::DebugCount],
+            Targets::Debug => &[
+                Resource::DebugIds,
+                Resource::DebugCount,
+                Resource::DebugTerrain,
+            ],
         }
     }
 }
@@ -822,6 +827,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
         Targets::Debug => &[
             (DebugIds, Clear::Color(TRANSPARENT)),
             (DebugCount, Clear::Color(TRANSPARENT)),
+            (DebugTerrain, Clear::Color(TRANSPARENT)),
         ],
     };
     for phase in Phase::first(shape.phases) {

@@ -106,8 +106,8 @@ impl Renderer {
                     .expect("deferred terrain's frames create it")
                     .view
             }
-            Resource::DebugIds | Resource::DebugCount => {
-                let [ids, count] = self
+            Resource::DebugIds | Resource::DebugCount | Resource::DebugTerrain => {
+                let [ids, count, terrain] = self
                     .features
                     .debug_view
                     .get()
@@ -115,8 +115,10 @@ impl Renderer {
                     .views();
                 if resource == Resource::DebugIds {
                     ids
-                } else {
+                } else if resource == Resource::DebugCount {
                     count
+                } else {
+                    terrain
                 }
             }
             Resource::Accumulated | Resource::Revealed => {

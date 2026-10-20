@@ -4,7 +4,9 @@
 // kind in the low four bits, its level in the next four, then its flags)
 // with the sun's lookup at its point above DEBUG_SOURCE_SHIFT, the object
 // drawn, a detail of it (a cluster, an impostor's record) and its normal;
-// and adds one to the fragments that passed the depth test there. Meshes,
+// adds one to the fragments that passed the depth test there; and writes
+// terrain's numbers into the third target, zeros elsewhere
+// (`meshes/terrain_debug.wgsl`). Meshes,
 // impostors and virtual geometry read their draw's record from a vertex
 // stream of one element (`@location(14)`); the others know their kind.
 
@@ -31,10 +33,18 @@ const DEBUG_SUN_MOVING: u32 = 9u;
 const DEBUG_SUN_HORIZON: u32 = 10u;
 const DEBUG_SUN_BEYOND: u32 = 11u;
 const DEBUG_SHADOWED: u32 = 0x10u;
+// Terrain pixels: on a tile's edge, on a patch's, in their record, with the
+// patch within its tile above DEBUG_PATCH_SHIFT; a material slot holding
+// none.
+const DEBUG_TILE_EDGE: u32 = 0x800u;
+const DEBUG_PATCH_EDGE: u32 = 0x1000u;
+const DEBUG_PATCH_SHIFT: u32 = 24u;
+const DEBUG_NO_MATERIAL: u32 = 0xffu;
 
 struct DebugTargets {
     @location(0) ids: vec4<u32>,
     @location(1) count: f32,
+    @location(2) terrain: vec2<u32>,
 }
 
 // Debug fragments shade nothing; they write what the shaded pipeline would
@@ -46,6 +56,7 @@ fn debug_targets(record: u32, object: u32, detail: u32, point: SurfacePoint) -> 
     targets.ids = vec4<u32>(record | (sun << DEBUG_SOURCE_SHIFT), object, detail,
         pack2x16snorm(octahedral_coordinates(stable_normalize(point.normal))));
     targets.count = 1.0;
+    targets.terrain = vec2<u32>(0u);
     return targets;
 }
 
@@ -253,6 +264,7 @@ fn vs_debug_impostor(input: ImpostorInput, @location(14) draw: vec4<u32>)
 struct DebugImpostorTargets {
     @location(0) ids: vec4<u32>,
     @location(1) count: f32,
+    @location(2) terrain: vec2<u32>,
     @builtin(frag_depth) depth: f32,
 }
 
@@ -276,22 +288,7 @@ fn fs_debug_impostor(input: DebugImpostorOutput) -> DebugImpostorTargets {
     let fading = select(0u, DEBUG_FADING, (input.batch & IMPOSTOR_FADING) != 0u);
     let targets = debug_targets(input.object.x | fading, input.object.y,
         impostor_index(input.batch), point);
-    return DebugImpostorTargets(targets.ids, targets.count, shaded.depth);
-}
-
-// Terrain at its patch's level, with the smooth normal its shading starts
-// from.
-@fragment
-fn fs_debug_terrain(input: TerrainOutput) -> DebugTargets {
-    terrain_holes_test(input.cell, input.holes);
-    let relative = input.relative.xyz;
-    let world = relative + camera.position.xyz;
-    let shading = terrain_shading_level(length(world - terrain.eye.xyz));
-    var point = debug_point(world, terrain_surface_normal(world.xz - terrain.origin.xz, shading));
-    point.on_terrain = true;
-    // Its patch's level, as terrain's levels view reads it.
-    let level = u32(clamp(round(log2(input.relative.w / terrain.anchor.w)), 0.0, 7.0));
-    return debug_targets(DEBUG_KIND_TERRAIN | (level << DEBUG_LEVEL_SHIFT), 0u, 0u, point);
+    return DebugImpostorTargets(targets.ids, targets.count, targets.terrain, shaded.depth);
 }
 
 @fragment
@@ -336,5 +333,6 @@ fn fs_debug_sky(input: SkyOutput) -> DebugTargets {
     var targets: DebugTargets;
     targets.ids = vec4<u32>(DEBUG_KIND_SKY, 0u, 0u, 0u);
     targets.count = 1.0;
+    targets.terrain = vec2<u32>(0u);
     return targets;
 }

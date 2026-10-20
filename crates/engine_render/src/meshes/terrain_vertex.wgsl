@@ -26,7 +26,7 @@ struct TerrainView {
 @group(1) @binding(18) var<uniform> terrain_view: TerrainView;
 
 // One terrain: its anchor less its eye (w: the level-0 spacing), that eye's
-// world position, its origin (w: what it shows), where its levels start in
+// world position, its origin (w: 0), where its levels start in
 // `terrain_directory` and how many there are, where its surface materials
 // start in `terrain_palette`, and its layer of
 // `terrain_sky` plus one, 0 until built.

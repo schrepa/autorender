@@ -5,8 +5,8 @@
  * shadows; it inspects as authored; its surroundings fill the view past its
  * edges; its erosion bake, roads, bridge, tunnel and routes read back;
  * height queries, a tile budget, collision against rendering, the settings
- * section, speed-aware detail, tile memory and banded placing hold; the
- * terrain control's views, the sky visibility map and freezing work; edits,
+ * section, speed-aware detail, tile memory and banded placing hold;
+ * terrain's debug views, the sky visibility map and freezing work; edits,
  * walks and navigation agents cross it and authored objects stand on it;
  * and a place a game names prefetches its tiles. The fixture and what the
  * terrain smokes share: terrain-fixture.mjs.
@@ -349,20 +349,18 @@ try {
   await settle();
   checks.push({ check: "placing bands", objects: bandedObjects });
 
-  // The terrain control: development views change pixels, freezing keeps
-  // the patches while the camera moves away.
+  // Terrain's development views are debug views and change pixels; the
+  // terrain control's freezing keeps the patches while the camera moves
+  // away.
   const baseline = await capture("view-shaded");
-  const levels = await command("terrain", { view: "levels" });
-  assert.equal(levels.result.view, "levels");
-  // The control's state inspects.
-  const debug = (await command("inspect", { component: "TerrainDebug" })).result.value;
-  assert.deepEqual(debug, { freeze: null, view: "levels" }, `the terrain debug state: ${JSON.stringify(debug)}`);
+  const levels = await command("environment", { debug_view: { view: "levels" } });
+  assert.deepEqual(levels.result.environment_changed, ["debug_view"]);
   const levelView = await capture("view-levels");
   assert.ok((await differentPixels(page, [baseline, levelView])).changed > 10_000, "the levels view differs");
-  await command("terrain", { view: "tiles" });
+  await command("environment", { debug_view: { view: "tiles" } });
   await capture("view-tiles");
   // Each surface material in its own color.
-  await command("terrain", { view: "materials" });
+  await command("environment", { debug_view: { view: "materials" } });
   const materialView = await capture("view-materials");
   assert.ok((await differentPixels(page, [baseline, materialView])).changed > 10_000, "the materials view differs");
   // The sky visibility map builds a band of rows a frame
@@ -375,14 +373,15 @@ try {
   }
   // One for the terrain and one for its surroundings.
   assert.equal(sky.terrain.sky_maps, 2, `the sky maps build: ${JSON.stringify(sky)}`);
-  await command("terrain", { view: "sky" });
+  await command("environment", { debug_view: { view: "sky" } });
   const skyView = await capture("view-sky");
   assert.ok((await differentPixels(page, [baseline, skyView])).changed > 10_000, "the sky view differs");
   checks.push({ check: "sky visibility", maps: sky.terrain.sky_maps });
-  await command("terrain", { view: "shaded" });
+  await command("environment", { debug_view: { view: "off" } });
   const frozen = await command("terrain", { freeze: true });
   assert.ok(Array.isArray(frozen.result.frozen_at));
-  assert.deepEqual((await command("inspect", { component: "TerrainDebug" })).result.value.freeze, frozen.result.frozen_at);
+  // The control's state inspects.
+  assert.deepEqual((await command("inspect", { component: "TerrainDebug" })).result.value, { freeze: frozen.result.frozen_at });
   await command("render");
   const selected = async () => (await command("inspect", { component: "Terrains" })).result.value.patches;
   const before = await selected();

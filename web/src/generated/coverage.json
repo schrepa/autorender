@@ -493,9 +493,7 @@
     {
       "op": "terrain",
       "smokes": [
-        "terrain",
-        "terrain-surface",
-        "terrain-water-sky"
+        "terrain"
       ]
     },
     {
@@ -878,6 +876,7 @@
       "section": "terrain",
       "smokes": [
         "agent",
+        "debug-view",
         "jobs",
         "native",
         "plugins",
@@ -1059,7 +1058,9 @@
       "inspector": "DebugView",
       "section": "debug_view",
       "smokes": [
-        "debug-view"
+        "debug-view",
+        "terrain",
+        "terrain-water-sky"
       ],
       "stats": false
     }

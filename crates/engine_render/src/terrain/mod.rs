@@ -183,8 +183,6 @@ pub(crate) struct TerrainFrame {
     pub patches: u32,
     pub triangles: u32,
     pub shadow_patches: u32,
-    /// Terrain shows shaded, not a development view: shading may defer.
-    pub shaded: bool,
 }
 
 /// What `TerrainPass::prepare` needs of the frame's views.
@@ -329,7 +327,7 @@ impl TerrainPass {
     ) -> bool {
         let atlas = &mut self.atlas;
         (atlas.uploads, atlas.controls, atlas.now) = (0, 0, views.now);
-        self.patches.begin(terrains, views.eye);
+        self.patches.begin(views.eye);
         atlas.changed.clear();
         if let Some(synced) = atlas.sync(device, queue, terrains, max_layers) {
             self.tables.write_holes(device, queue, &synced, max_layers);

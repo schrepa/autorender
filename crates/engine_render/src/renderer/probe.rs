@@ -10,13 +10,13 @@ use super::*;
 use crate::gpu_layouts::constants::{
     DEBUG_CASTS, DEBUG_FADING, DEBUG_KEPT, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
     DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SEA, DEBUG_KIND_SKY,
-    DEBUG_KIND_TERRAIN, DEBUG_KIND_VIRTUAL, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_SHADOWED,
-    DEBUG_SOURCE_SHIFT, DEBUG_SUN_BEYOND, DEBUG_SUN_CASCADE, DEBUG_SUN_HORIZON, DEBUG_SUN_KEPT,
-    DEBUG_SUN_LEVEL, DEBUG_SUN_MOVING,
+    DEBUG_KIND_TERRAIN, DEBUG_KIND_VIRTUAL, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL,
+    DEBUG_PATCH_SHIFT, DEBUG_SHADOWED, DEBUG_SOURCE_SHIFT, DEBUG_SUN_BEYOND, DEBUG_SUN_CASCADE,
+    DEBUG_SUN_HORIZON, DEBUG_SUN_KEPT, DEBUG_SUN_LEVEL, DEBUG_SUN_MOVING,
 };
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::max;
-use engine_core::{DrawnKind, PixelProbe, SunLookup};
+use engine_core::{DetailShares, DrawnKind, MaterialShare, PixelProbe, SunLookup, TerrainProbe};
 use std::{cell::RefCell, rc::Rc};
 
 /// Where each texel lands in the read-back: copies start at multiples of
@@ -27,7 +27,8 @@ const IDS: u64 = 0;
 const COUNT: u64 = 256;
 const SCENE: u64 = 512;
 const CANVAS: u64 = 768;
-const DEPTH: u64 = 1024;
+const TERRAIN: u64 = 1024;
+const DEPTH: u64 = 1280;
 /// The bytes buffer copies of several rows start each row at a multiple of.
 const ROW_ALIGNMENT: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
@@ -146,7 +147,8 @@ impl Renderer {
     }
 
     /// Copies what the armed probe keeps of this frame into its read-back:
-    /// of a debug frame what drew the pixel, its fragments and depth; of a
+    /// of a debug frame what drew the pixel, its fragments, terrain's
+    /// numbers and the depth; of a
     /// shaded one its scene target's texel and, where the canvas allows
     /// copies, the canvas's.
     pub(super) fn encode_probe(
@@ -171,9 +173,10 @@ impl Renderer {
                 if state.kind.debug
                     && let Some(debug) = self.features.debug_view.get()
                 {
-                    let [ids, count] = debug.textures();
+                    let [ids, count, terrain] = debug.textures();
                     copy_texel(encoder, (ids, all), pixel, (&armed.buffer, IDS));
                     copy_texel(encoder, (count, all), pixel, (&armed.buffer, COUNT));
+                    copy_texel(encoder, (terrain, all), pixel, (&armed.buffer, TERRAIN));
                 }
                 // The view resized since the probe was armed leaves the
                 // depth out.
@@ -373,6 +376,35 @@ fn sun_lookup(source: u32) -> (SunLookup, u32) {
     }
 }
 
+/// A terrain pixel's numbers (`meshes/terrain_debug.wgsl`): its draw's
+/// `record`, `object` and `detail` words, then the terrain target's texel in
+/// `bytes`.
+fn terrain_probe((record, object, detail): (u32, u32, u32), bytes: &[u8]) -> TerrainProbe {
+    let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
+    let (tiles, ids) = (word(bytes, TERRAIN), word(bytes, TERRAIN + 4));
+    let mut materials: Vec<MaterialShare> = (0..4)
+        .map(|slot| ((ids >> (slot * 8)) & 0xff, share(detail, slot)))
+        .filter(|&(material, share)| material != DEBUG_NO_MATERIAL && share > 0.0)
+        .map(|(material, share)| MaterialShare { material, share })
+        .collect();
+    materials.sort_by(|a, b| b.share.total_cmp(&a.share));
+    let within = record >> DEBUG_PATCH_SHIFT;
+    TerrainProbe {
+        tile: [
+            i32::from((tiles & 0xffff) as u16 as i16),
+            i32::from((tiles >> 16) as u16 as i16),
+        ],
+        patch: [within & 0xf, (within >> 4) & 0xf],
+        materials,
+        sky: share(object, 0),
+        detail: DetailShares {
+            full: share(object, 1),
+            colored: share(object, 2),
+            canopy: share(object, 3),
+        },
+    }
+}
+
 impl Armed {
     /// What the read-back `bytes` hold of the pixel.
     fn result(&self, bytes: &[u8]) -> PixelProbe {
@@ -439,6 +471,8 @@ impl Armed {
             world: (depth > 0.0 && point.w != 0.0).then(|| (point.truncate() / point.w).to_array()),
             shaded: self.scene.then(|| color(SCENE, false)),
             displayed: self.canvas.map(|blue_first| color(CANVAS, blue_first)),
+            terrain: (kind == Some(DrawnKind::Ground))
+                .then(|| terrain_probe((record, object, detail), bytes)),
         }
     }
 }

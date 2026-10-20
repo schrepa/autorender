@@ -324,7 +324,7 @@
           "const": "kinds"
         },
         {
-          "description": "Its level of detail, from the finest: green, yellow, orange, red,\nviolet, blue, cyan and white, for meshes and placed objects (their own\nmesh, then each simplification) and terrain's patches alike;\nimpostor cards magenta, virtual geometry a color per cluster. Frames\nGPU presentation draws (`capture` with `alpha` and `gpu`) show levels\nand cards as play does; exact frames draw every mesh whole.",
+          "description": "Its level of detail, from the finest: red, orange, yellow, green,\ncyan, blue, violet and gray, for meshes and placed objects (their own\nmesh, then each simplification) and terrain's patches alike;\nimpostor cards magenta, virtual geometry a color per cluster. Frames\nGPU presentation draws (`capture` with `alpha` and `gpu`) show levels\nand cards as play does; exact frames draw every mesh whole.",
           "type": "string",
           "const": "levels"
         },
@@ -347,6 +347,31 @@
           "description": "How many fragments passed the depth test there as the frame drew,\nfrom dark blue (one) through green and yellow to white (ten or more).",
           "type": "string",
           "const": "overdraw"
+        },
+        {
+          "description": "Its shading normal, as colors: x red, y green, z blue, each from 0\n(pointing back) to 1 (along the axis); terrain's its smooth\nsurface's.",
+          "type": "string",
+          "const": "normals"
+        },
+        {
+          "description": "Terrain's tiles and patches: tile edges red, patch edges dark, the\nground between gray; everything else as in `cards`.",
+          "type": "string",
+          "const": "tiles"
+        },
+        {
+          "description": "Terrain's surface materials, each in its own color, blended in the\nshares the ground shows them in.",
+          "type": "string",
+          "const": "materials"
+        },
+        {
+          "description": "The share of the sky terrain's ground sees, unlit, from black (none)\nto white (all of it).",
+          "type": "string",
+          "const": "sky"
+        },
+        {
+          "description": "How much detail terrain's ground shows: green where all its\nmaterials' maps show, yellow where their color alone does, red where\ntheir means stand in, blue where it shows as its cover's canopy.",
+          "type": "string",
+          "const": "detail"
         }
       ]
     },

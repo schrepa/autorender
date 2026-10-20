@@ -57,7 +57,6 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
             |debug| {
                 json!(TerrainDebugView {
                     freeze: debug.freeze.map(|point| point.to_array()),
-                    view: debug.view,
                 })
             },
         )
@@ -383,13 +382,12 @@ fn river_flow(found: &engine_core::terrain_data::Hydrology) -> crate::views::Riv
     }
 }
 
-/// Temporarily set terrain's level of detail and view and
-/// render while paused: `pixel_error` replaces the settings', `freeze`
-/// keeps streaming and patches following the camera's
-/// current position while the camera moves on, and `view` shows terrain
-/// shaded or its levels, normals, tiles and patches, materials, sky
-/// visibility or detail. Omitted fields stay as they
-/// are.
+/// Temporarily set terrain's level of detail and render while paused:
+/// `pixel_error` replaces the settings', and `freeze` keeps streaming and
+/// patches following the camera's current position while the camera moves
+/// on. Omitted fields stay as they are. Terrain's levels, normals, tiles
+/// and patches, materials, sky visibility and detail show in the debug
+/// views (the environment's `debug_view` section).
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -399,8 +397,6 @@ pub struct TerrainControl {
     pub pixel_error: Option<f32>,
     #[serde(default)]
     pub freeze: Option<bool>,
-    #[serde(default)]
-    pub view: Option<engine_core::TerrainView>,
 }
 
 impl EngineControl for TerrainControl {
@@ -437,15 +433,11 @@ impl EngineControl for TerrainControl {
         if let Some(freeze) = self.freeze {
             debug.freeze = freeze.then_some(debug.freeze.unwrap_or(eye));
         }
-        if let Some(view) = self.view {
-            debug.view = view;
-        }
         world.insert_resource(debug);
         Ok(result::terrain(TerrainControlResult {
             temporary: true,
             terrain_changed: true,
             frozen_at: debug.freeze.map(|eye| eye.to_array()),
-            view: self.view.map(|_| debug.view),
             pixel_error: world
                 .get_resource::<engine_core::TerrainSettings>()
                 .map(|settings| settings.pixel_error),
@@ -453,7 +445,7 @@ impl EngineControl for TerrainControl {
     }
 }
 
-/// What `terrain` answers: terrain's view and level of detail after.
+/// What `terrain` answers: terrain's level of detail after.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainControlResult {
@@ -463,8 +455,6 @@ pub struct TerrainControlResult {
     pub terrain_changed: bool,
     /// Where streaming stays frozen, where it does (world space).
     pub frozen_at: Option<[f32; 3]>,
-    /// The view terrain shows, where the control named one.
-    pub view: Option<engine_core::TerrainView>,
     /// The settings' pixel error, where terrain settings exist.
     pub pixel_error: Option<f32>,
 }

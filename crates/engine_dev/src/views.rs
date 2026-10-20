@@ -521,14 +521,13 @@ pub struct SkinView {
     pub inverse_binds: usize,
 }
 
-/// What terrain streaming and level of detail follow, and what terrain
-/// shows: the `terrain` control's state.
+/// What terrain streaming and level of detail follow: the `terrain`
+/// control's state.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainDebugView {
     /// Where streaming is frozen; None follows the camera.
     pub freeze: Option<[f32; 3]>,
-    pub view: engine_core::TerrainView,
 }
 
 /// The host input the last frame brought: movement held in [-1, 1], look

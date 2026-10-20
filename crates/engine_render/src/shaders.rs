@@ -45,6 +45,7 @@ shaders! {
         "meshes/water_falls.wgsl",
         "meshes/ocean.wgsl",
         "meshes/debug.wgsl",
+        "meshes/terrain_debug.wgsl",
     ];
     /// Terrain normal maps.
     TERRAIN_NORMALS_SHADER = [

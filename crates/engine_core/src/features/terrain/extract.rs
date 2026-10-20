@@ -163,8 +163,6 @@ pub struct RenderTerrains {
     /// draws camera-relative, from positions less the camera's.
     pub relative_view_projection: Mat4,
     pub stats: TerrainStats,
-    /// What terrain shows ([`TerrainDebug`]).
-    pub view: TerrainView,
 }
 
 /// Lists every terrain's resident tiles and the camera's patches.
@@ -180,9 +178,6 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
     let camera = world.resource::<Camera>();
     listing.relative_view_projection = camera.relative_view_projection(aspect);
     listing.stats = terrains.stats;
-    listing.view = world
-        .get_resource::<TerrainDebug>()
-        .map_or(TerrainView::Shaded, |debug| debug.view);
     let enabled = world
         .get_resource::<TerrainSettings>()
         .is_some_and(|settings| settings.enabled);

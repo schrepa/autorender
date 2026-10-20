@@ -165,40 +165,6 @@ fn terrain_detail(p: vec2<f32>, size: f32, footprint: f32) -> f32 {
     return 0.5 + (terrain_value(p / size) - 0.5) * fade;
 }
 
-// Colors of levels 0 to 7 in the levels view.
-const TERRAIN_LEVEL_COLORS = array<vec3<f32>, 8>(
-    vec3<f32>(0.9, 0.2, 0.2), vec3<f32>(0.95, 0.6, 0.15), vec3<f32>(0.9, 0.9, 0.2),
-    vec3<f32>(0.3, 0.85, 0.3), vec3<f32>(0.2, 0.75, 0.9), vec3<f32>(0.3, 0.4, 0.95),
-    vec3<f32>(0.7, 0.35, 0.95), vec3<f32>(0.85, 0.85, 0.85),
-);
-
-// The albedo of terrain's development views: 1 its levels,
-// 2 its normals, 3 its tiles and patches outlined; `albedo` otherwise.
-fn terrain_view_albedo(albedo: vec3<f32>, normal: vec3<f32>, spacing: f32, cell: vec2<f32>)
-        -> vec3<f32> {
-    let view = u32(terrain.origin.w);
-    if view == 1u {
-        let level = u32(clamp(round(log2(spacing / terrain.anchor.w)), 0.0, 7.0));
-        return TERRAIN_LEVEL_COLORS[level];
-    }
-    if view == 2u {
-        return normal * 0.5 + 0.5;
-    }
-    if view == 3u {
-        let width = fwidth(cell) * 1.5;
-        let patch_edge = abs(fract(cell / 16.0 + 0.5) - 0.5) * 16.0;
-        let tile_edge = abs(fract(cell / 256.0 + 0.5) - 0.5) * 256.0;
-        if any(tile_edge < width * 2.0) {
-            return vec3<f32>(0.95, 0.15, 0.1);
-        }
-        if any(patch_edge < width) {
-            return vec3<f32>(0.1, 0.1, 0.1);
-        }
-        return vec3<f32>(0.6);
-    }
-    return albedo;
-}
-
 // How much of the next coarser level's normals (x) and surface materials
 // (y) still show over layer `layer`'s tile: fading in after
 // it arrived, and wholly the coarser level's materials until its own
@@ -275,13 +241,6 @@ fn terrain_surface_normal(local: vec2<f32>, shading: TerrainShadingLevel) -> vec
         normal = mix(normal, terrain_level_normal(local, shading.level + 1u), shading.blend);
     }
     return stable_normalize(normal);
-}
-
-// A distinct color for surface material `material` in the materials view.
-fn terrain_material_color(material: u32) -> vec3<f32> {
-    let hue = fract(f32(material) * 0.618034 + 0.13);
-    let k = (vec3<f32>(0.0, 2.0, 4.0) / 6.0 + hue) * 6.0;
-    return 0.15 + 0.7 * saturate(abs(k % 6.0 - 3.0) - 1.0);
 }
 
 // Surface material `material` of this fragment's terrain.
@@ -822,9 +781,6 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         (*ground).canopy_color += weight * entry.canopy.rgb;
         (*ground).leaves += weight * entry.canopy.w;
     }
-    if u32(terrain.origin.w) == 4u {
-        color = terrain_material_color(material);
-    }
     (*ground).albedo += weight * color;
     (*ground).roughness += weight * roughness;
     (*ground).occlusion += weight * occlusion;
@@ -836,7 +792,22 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
 // to four materials, each where it has maps raised by its height map as
 // sharply as its height contrast asks, so stones and tufts stand through
 // what they meet before it covers them.
+// Up to four surface materials at `site` from the control values of
+// `shading`'s levels, their slots, and the shares the ground shows them in.
+struct TerrainShares {
+    ids: vec4<u32>,
+    weights: vec4<f32>,
+    first: TerrainSlot,
+    second: TerrainSlot,
+    third: TerrainSlot,
+    fourth: TerrainSlot,
+}
+
 fn terrain_ground(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainGround {
+    return terrain_shared_ground(terrain_shares(site, shading), site);
+}
+
+fn terrain_shares(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainShares {
     var blend: TerrainBlend;
     blend.ids = vec4<u32>(0xffffffffu);
     blend.weights = vec4<f32>(0.0);
@@ -857,12 +828,17 @@ fn terrain_ground(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainGro
     let lifted = max(raised - vec4<f32>(highest - 0.08), vec4<f32>(0.0));
     let weights = mix(blend.weights, lifted / max(dot(lifted, vec4<f32>(1.0)), 1.0e-6),
         saturate(contrast));
+    return TerrainShares(blend.ids, weights, first, second, third, fourth);
+}
+
+// The ground the materials of `shares` make at `site`.
+fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGround {
     var ground: TerrainGround;
     var normal = vec3<f32>(0.0);
-    terrain_slot_ground(&ground, &normal, blend.ids.x, weights.x, first, site);
-    terrain_slot_ground(&ground, &normal, blend.ids.y, weights.y, second, site);
-    terrain_slot_ground(&ground, &normal, blend.ids.z, weights.z, third, site);
-    terrain_slot_ground(&ground, &normal, blend.ids.w, weights.w, fourth, site);
+    terrain_slot_ground(&ground, &normal, shares.ids.x, shares.weights.x, shares.first, site);
+    terrain_slot_ground(&ground, &normal, shares.ids.y, shares.weights.y, shares.second, site);
+    terrain_slot_ground(&ground, &normal, shares.ids.z, shares.weights.z, shares.third, site);
+    terrain_slot_ground(&ground, &normal, shares.ids.w, shares.weights.w, shares.fourth, site);
     ground.normal = stable_normalize(normal);
     return ground;
 }
@@ -1143,22 +1119,11 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
     return relief;
 }
 
-// The surface a terrain fragment shows: its surface materials, varied
-// across the ground so their maps do not repeat evenly, lit by the sky it
-// sees and by the ground around where that hides the sky.
-fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
-    let relative = relative_spacing.xyz;
-    let world = relative + camera.position.xyz;
-    let ray = relative / max(length(relative), 1.0e-6);
-    var look: TerrainLook;
-    look.world_dx = dpdx(world);
-    look.world_dy = dpdy(world);
-    look.ray_dx = dpdx(ray);
-    look.ray_dy = dpdy(ray);
-    look.raw = vec2<bool>(true);
-    look.textured = false;
-    look.dither = 0.5;
-    let point = terrain_point_seen(relative_spacing, cell, look);
+// The surface a terrain fragment `relative` to the eye shows: its surface
+// materials, varied across the ground so their maps do not repeat evenly,
+// lit by the sky it sees and by the ground around where that hides the sky.
+fn terrain_point(relative: vec3<f32>) -> SurfacePoint {
+    let point = terrain_point_seen(relative, terrain_forward_look(relative));
     return widened(point, dpdx(point.normal), dpdy(point.normal));
 }
 
@@ -1177,10 +1142,33 @@ struct TerrainLook {
     dither: f32,
 }
 
-// `terrain_point` before its highlights widen with its normal's turn.
-fn terrain_point_seen(relative_spacing: vec4<f32>, cell: vec2<f32>, look: TerrainLook)
-        -> SurfacePoint {
-    let relative = relative_spacing.xyz;
+// How a fragment of its own triangle `relative` to the eye looks: from
+// the triangle, without the virtual texture.
+fn terrain_forward_look(relative: vec3<f32>) -> TerrainLook {
+    let world = relative + camera.position.xyz;
+    let ray = relative / max(length(relative), 1.0e-6);
+    var look: TerrainLook;
+    look.world_dx = dpdx(world);
+    look.world_dy = dpdy(world);
+    look.ray_dx = dpdx(ray);
+    look.ray_dy = dpdy(ray);
+    look.raw = vec2<bool>(true);
+    look.textured = false;
+    look.dither = 0.5;
+    return look;
+}
+
+// Where the view ray of a fragment `relative` to the eye, seen as `look`
+// says, meets the ground: its site, sunk where the ground's relief and
+// tracks show, the shading levels of its distance and the meters tracks
+// may sink it (`TerrainRelief`).
+struct TerrainSeen {
+    site: TerrainSite,
+    shading: TerrainShadingLevel,
+    deform: f32,
+}
+
+fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     let world = relative + camera.position.xyz;
     let away = length(relative);
     let ray = relative / max(away, 1.0e-6);
@@ -1211,12 +1199,22 @@ fn terrain_point_seen(relative_spacing: vec4<f32>, cell: vec2<f32>, look: Terrai
     // Sunk where the ground's relief and tracks show.
     let relief = terrain_parallax(site, shading);
     site.world = relief.world;
-    let view = u32(terrain.origin.w);
+    return TerrainSeen(site, shading, relief.deform);
+}
+
+// `terrain_point` before its highlights widen with its normal's turn.
+fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
+    let seen = terrain_seen(relative, look);
+    let site = seen.site;
+    let world = relative + camera.position.xyz;
+    let local = world.xz - terrain.origin.xz;
+    let geometric = site.geometric;
+    let footprint = site.footprint;
     // The runtime virtual texture's ground where its pages hold it, its
     // detail and variety baked in; computed here otherwise.
     var ground: TerrainGround;
     var baked = false;
-    if look.textured && view == 0u {
+    if look.textured {
         let texels = terrain_vt_texels(site, look.dither);
         if texels.found {
             ground = terrain_vt_ground(texels, site);
@@ -1227,35 +1225,31 @@ fn terrain_point_seen(relative_spacing: vec4<f32>, cell: vec2<f32>, look: Terrai
     var patchy = 0.5;
     var fine = 0.5;
     if !baked {
-        ground = terrain_ground(site, shading);
+        ground = terrain_ground(site, seen.shading);
         broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
         patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
         fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, footprint);
     }
     var albedo = ground.albedo;
-    // The normals and materials views show the terrain's own normals.
     var normal = ground.normal;
     var occlusion = ground.occlusion;
-    if relief.deform > 0.0 {
+    if seen.deform > 0.0 {
         // Tracks tilt the ground along their walls and rims,
         // and darken it where they press it down.
         let track = terrain_deform_track(site.world.xz);
         let slope = terrain_deform_slope(site.world.xz)
-            * terrain_track_slope_share(track, relief.deform);
+            * terrain_track_slope_share(track, seen.deform);
         // Walls steeper than the map's texels resolve (narrower tracks than
         // a few texels) tilt as steeply as about fifty degrees, not flat on
         // their sides.
         let steep = length(slope);
         let tilt = slope * min(1.0, 1.2 / max(steep, 1.0e-6));
         normal = stable_normalize(normal - vec3<f32>(tilt.x, 0.0, tilt.y));
-        let pressed = saturate(-terrain_track_height(track, relief.deform) / 0.06);
+        let pressed = saturate(-terrain_track_height(track, seen.deform) / 0.06);
         albedo *= 1.0 - 0.15 * pressed;
         occlusion *= 1.0 - 0.25 * pressed;
     }
-    if view == 2u || view == 4u {
-        normal = geometric;
-    }
-    if view < 4u && !baked {
+    if !baked {
         // Plain colors vary at every scale; maps carry their own detail
         // and vary broadly.
         let plain = (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
@@ -1264,21 +1258,10 @@ fn terrain_point_seen(relative_spacing: vec4<f32>, cell: vec2<f32>, look: Terrai
     }
     let sky_map = terrain_sky_map(local);
     let sky = sky_map.r;
-    if view < 4u && !baked {
+    if !baked {
         // Its large-scale variety, as on the blades growing
         // on it.
         albedo *= ground_variety(sky_map.gb, world.xz, ground.vegetated);
-    }
-    albedo = terrain_view_albedo(albedo, normal, relative_spacing.w, cell);
-    if view == 6u {
-        // The detail view: green where all maps show, yellow
-        // where their color alone does, red where their means stand in,
-        // blue where the ground shows as its cover's canopy.
-        let mean = 1.0 - ground.colored;
-        albedo = vec3<f32>(0.1, 0.65, 0.15) * ground.full
-            + vec3<f32>(0.85, 0.75, 0.1) * (ground.colored - ground.full)
-            + vec3<f32>(0.75, 0.12, 0.1) * mean;
-        albedo = mix(albedo, vec3<f32>(0.15, 0.3, 0.9), saturate(ground.canopy));
     }
     let roughness = max(ground.roughness, 0.03);
     var point: SurfacePoint;
@@ -1298,19 +1281,10 @@ fn terrain_point_seen(relative_spacing: vec4<f32>, cell: vec2<f32>, look: Terrai
     point.view = stable_normalize(-relative);
     point.n_v = max(dot(normal, point.view), 1.0e-4);
     point.world = world;
-    point.world_dx = select(smooth_dx, look.world_dx, look.raw.x);
-    point.world_dy = select(smooth_dy, look.world_dy, look.raw.y);
+    point.world_dx = select(site.world_dx, look.world_dx, look.raw.x);
+    point.world_dy = select(site.world_dy, look.world_dy, look.raw.y);
     point.shadow_offset = vec3<f32>(0.0);
     point.on_terrain = true;
-    if view == 5u {
-        // The sky view: how much sky the ground sees, as unlit gray, cubed
-        // so the grade leaves differences visible.
-        point.albedo = vec3<f32>(0.0);
-        point.diffuse_color = vec3<f32>(0.0);
-        point.f0 = vec3<f32>(0.0);
-        point.bounce = vec3<f32>(0.0);
-        point.emissive = vec3<f32>(0.6 * sky * sky * sky);
-    }
     return point;
 }
 
@@ -1724,7 +1698,7 @@ fn terrain_resolved(position: vec4<f32>, dither: f32) -> TerrainResolved {
     look.raw = same;
     look.textured = true;
     look.dither = dither;
-    let seen = terrain_point_seen(vec4<f32>(relative, 0.0), vec2<f32>(0.0), look);
+    let seen = terrain_point_seen(relative, look);
     var resolved: TerrainResolved;
     resolved.point = widened(seen, select(vec3<f32>(0.0), dpdxFine(seen.normal), same.x),
         select(vec3<f32>(0.0), dpdyFine(seen.normal), same.y));
@@ -1759,13 +1733,13 @@ fn fs_terrain_resolve_temporal_lit(@builtin(position) position: vec4<f32>) -> Te
 }
 
 fn shade_terrain(input: TerrainOutput) -> Shaded {
-    let point = terrain_point(input.relative, input.cell);
+    let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell, input.holes);
     return finish(point, vec3<f32>(0.0));
 }
 
 fn shade_terrain_lit(input: TerrainOutput) -> Shaded {
-    let point = terrain_point(input.relative, input.cell);
+    let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell, input.holes);
     return finish(point, local_light(point, input.clip_position.xy));
 }

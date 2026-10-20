@@ -13,6 +13,8 @@ struct DebugViewUniform {
 @group(0) @binding(0) var<uniform> debug_view: DebugViewUniform;
 @group(0) @binding(1) var debug_ids: texture_2d<u32>;
 @group(0) @binding(2) var debug_count: texture_2d<f32>;
+// Terrain's tiles and materials (`meshes/terrain_debug.wgsl`).
+@group(0) @binding(3) var debug_terrain: texture_2d<u32>;
 
 const DEBUG_VIEW_KINDS: u32 = 1u;
 const DEBUG_VIEW_LEVELS: u32 = 2u;
@@ -20,6 +22,11 @@ const DEBUG_VIEW_CARDS: u32 = 3u;
 const DEBUG_VIEW_SHADOWS: u32 = 4u;
 const DEBUG_VIEW_CASTERS: u32 = 5u;
 const DEBUG_VIEW_OVERDRAW: u32 = 6u;
+const DEBUG_VIEW_NORMALS: u32 = 7u;
+const DEBUG_VIEW_TILES: u32 = 8u;
+const DEBUG_VIEW_MATERIALS: u32 = 9u;
+const DEBUG_VIEW_SKY: u32 = 10u;
+const DEBUG_VIEW_DETAIL: u32 = 11u;
 
 // What drew a pixel (`meshes/debug.wgsl`): its kind, level and flags, and
 // the sun's lookup above DEBUG_SOURCE_SHIFT.
@@ -48,18 +55,25 @@ const DEBUG_SUN_MOVING: u32 = 9u;
 const DEBUG_SUN_HORIZON: u32 = 10u;
 const DEBUG_SUN_BEYOND: u32 = 11u;
 const DEBUG_SHADOWED: u32 = 0x10u;
+// Terrain pixels: on a tile's edge, on a patch's, in their record, with the
+// patch within its tile above DEBUG_PATCH_SHIFT; a material slot holding
+// none.
+const DEBUG_TILE_EDGE: u32 = 0x800u;
+const DEBUG_PATCH_EDGE: u32 = 0x1000u;
+const DEBUG_PATCH_SHIFT: u32 = 24u;
+const DEBUG_NO_MATERIAL: u32 = 0xffu;
 
 // What neither a view's subject nor the sky is shown as.
 const DEBUG_OTHER = vec3<f32>(0.4, 0.4, 0.42);
 const DEBUG_SKY = vec3<f32>(0.12, 0.13, 0.16);
 const DEBUG_CARDS = vec3<f32>(0.95, 0.25, 0.85);
 
-// Levels of detail from the finest: green, yellow, orange, red, violet,
-// blue, cyan, white.
+// Levels of detail from the finest: red, orange, yellow, green, cyan, blue,
+// violet, gray.
 const DEBUG_LEVELS = array<vec3<f32>, 8>(
-    vec3<f32>(0.25, 0.85, 0.3), vec3<f32>(0.95, 0.85, 0.2), vec3<f32>(0.95, 0.5, 0.15),
-    vec3<f32>(0.9, 0.2, 0.2), vec3<f32>(0.65, 0.3, 0.9), vec3<f32>(0.3, 0.45, 0.95),
-    vec3<f32>(0.2, 0.8, 0.9), vec3<f32>(0.9, 0.9, 0.9),
+    vec3<f32>(0.9, 0.2, 0.2), vec3<f32>(0.95, 0.6, 0.15), vec3<f32>(0.9, 0.9, 0.2),
+    vec3<f32>(0.3, 0.85, 0.3), vec3<f32>(0.2, 0.75, 0.9), vec3<f32>(0.3, 0.4, 0.95),
+    vec3<f32>(0.7, 0.35, 0.95), vec3<f32>(0.85, 0.85, 0.85),
 );
 
 // Fragments per pixel, none to ten or more: dark blue through green and
@@ -195,6 +209,48 @@ fn debug_sun_color(sun: u32) -> vec3<f32> {
     return select(color, color * 0.45, (sun & DEBUG_SHADOWED) != 0u);
 }
 
+// A distinct color for terrain's surface material `material`.
+fn debug_material_color(material: u32) -> vec3<f32> {
+    let hue = fract(f32(material) * 0.618034 + 0.13);
+    let k = (vec3<f32>(0.0, 2.0, 4.0) / 6.0 + hue) * 6.0;
+    return 0.15 + 0.7 * saturate(abs(k % 6.0 - 3.0) - 1.0);
+}
+
+// Terrain's surface materials (`materials`, a byte each) in their shares
+// (`shares`, a byte each).
+fn debug_materials_color(materials: u32, shares: vec4<f32>) -> vec3<f32> {
+    var color = vec3<f32>(0.0);
+    for (var slot = 0u; slot < 4u; slot++) {
+        let material = (materials >> (slot * 8u)) & 0xffu;
+        if material != DEBUG_NO_MATERIAL {
+            color += shares[slot] * debug_material_color(material);
+        }
+    }
+    return color;
+}
+
+// How much detail terrain's ground shows, from its shares (full, colored,
+// canopy): green where all its maps show, yellow where their color alone
+// does, red where their means stand in, blue toward its cover's canopy.
+fn debug_detail_color(made: vec4<f32>) -> vec3<f32> {
+    let color = vec3<f32>(0.1, 0.65, 0.15) * made.y
+        + vec3<f32>(0.85, 0.75, 0.1) * max(made.z - made.y, 0.0)
+        + vec3<f32>(0.75, 0.12, 0.1) * (1.0 - made.z);
+    return mix(color, vec3<f32>(0.15, 0.3, 0.9), made.w);
+}
+
+// Terrain's tiles and patches as drawn, from its record: tile edges red,
+// patch edges dark, the ground between gray.
+fn debug_tiles_color(record: u32) -> vec3<f32> {
+    if (record & DEBUG_TILE_EDGE) != 0u {
+        return vec3<f32>(0.95, 0.15, 0.1);
+    }
+    if (record & DEBUG_PATCH_EDGE) != 0u {
+        return vec3<f32>(0.1, 0.1, 0.1);
+    }
+    return vec3<f32>(0.6);
+}
+
 // How a pixel's draw casts sun shadows.
 fn debug_caster_color(record: u32) -> vec3<f32> {
     let kind = record & 0xfu;
@@ -257,7 +313,29 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
             color = DEBUG_HEAT[min(count, 10u)];
             surface = false;
         }
-        default: {}
+        case DEBUG_VIEW_NORMALS: {
+            color = select(debug_normal(ids.w) * 0.5 + 0.5, DEBUG_SKY, !surface);
+            surface = false;
+        }
+        default: {
+            // Terrain's views: its ground against everything else.
+            let view = debug_view.view.x;
+            let made = unpack4x8unorm(ids.y);
+            if kind != DEBUG_KIND_TERRAIN {
+                color = select(DEBUG_OTHER, DEBUG_SKY, kind == DEBUG_KIND_SKY);
+            } else if view == DEBUG_VIEW_TILES {
+                color = debug_tiles_color(record);
+            } else if view == DEBUG_VIEW_MATERIALS {
+                color = debug_materials_color(textureLoad(debug_terrain, pixel, 0).y,
+                    unpack4x8unorm(ids.z));
+            } else if view == DEBUG_VIEW_SKY {
+                color = vec3<f32>(made.x);
+            } else if view == DEBUG_VIEW_DETAIL {
+                color = debug_detail_color(made);
+            }
+            // The sky view shows the share unlit.
+            surface = surface && view != DEBUG_VIEW_SKY;
+        }
     }
     if debug_view.view.y != 0u && surface {
         let facing = dot(debug_normal(ids.w), debug_view.sun.xyz);

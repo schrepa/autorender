@@ -1,8 +1,11 @@
-/** Debug views and the pixel probe in the Stress Lab's metro, in real Chrome. */
+/** Debug views and the pixel probe in the Stress Lab's metro, and terrain's
+ * views and numbers on the terrain fixture (terrain-fixture.mjs), in real
+ * Chrome. */
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "./harness.mjs";
+import { openTerrain } from "./terrain-fixture.mjs";
 
 const config = {
   seed: 1337, renderables: 20000, moving_percent: 10, hierarchy: true, interpolation: true, colliders: 0,
@@ -65,7 +68,10 @@ async function shownView() {
   return (await command("inspect", { component: "DebugView" })).result.value.view;
 }
 
-const views = ["kinds", "levels", "cards", "shadows", "casters", "overdraw"];
+const views = ["kinds", "levels", "cards", "shadows", "casters", "overdraw", "normals"];
+// Terrain's own views, which show the terrain fixture's ground.
+const terrainViews = ["levels", "tiles", "materials", "sky", "detail"];
+const report = {};
 // What each drawn pixel's probe may name, and those an entity's slot draws.
 const kinds = ["mesh", "placed", "card", "placed_card", "virtual", "terrain", "cover", "water", "sea", "falls", "sky"];
 const slotted = ["mesh", "card", "virtual"];
@@ -160,14 +166,59 @@ try {
   assert.equal(await shownView(), "cards");
 
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({
-    ok: true, url: url.href, artifact: output,
-    views: Object.fromEntries(Object.entries(shown).map(([view, frame]) =>
-      [view, { draws: frame.rendering.draw_calls, changed_pixels: frame.pixels.changed, pipelines: frame.rendering.pipelines }])),
-    probes, sky,
-    checks: ["setting_discoverable", "views_draw", "views_create_pipelines_when_shown", "off_is_exact", "unknown_view_refused",
-      "probe_answers", "probe_refuses_outside", "probe_keeps_image", "host_switch", "clean_browser_diagnostics"],
-  }));
+  report.views = Object.fromEntries(Object.entries(shown).map(([view, frame]) =>
+    [view, { draws: frame.rendering.draw_calls, changed_pixels: frame.pixels.changed, pipelines: frame.rendering.pipelines }]));
+  report.probes = probes;
+  report.sky = sky;
 } finally {
   await browser.close();
 }
+
+// Terrain's views: each shows the fixture's ground otherwise than shaded,
+// and the probe reads its tile, level, materials, sky and detail.
+const terrain = await openTerrain("debug-view-terrain");
+try {
+  const shaded = await terrain.capture("terrain-shaded");
+  report.terrain_views = {};
+  for (const view of terrainViews) {
+    await terrain.command("environment", { debug_view: { view } });
+    const png = await terrain.capture(`terrain-${view}`);
+    const pixels = await differentPixels(terrain.page, [shaded, png], { tolerance: 8 });
+    assert.ok(pixels.changed > pixels.total / 4, `${view} shows the ground otherwise: ${JSON.stringify(pixels)}`);
+    report.terrain_views[view] = pixels.changed;
+  }
+  // The ground somewhere below the view's middle, where the probe finds it.
+  const { view_width: width, view_height: height } = (await terrain.command("render")).result.rendering;
+  let ground;
+  for (const [x, y] of [[0.5, 0.75], [0.4, 0.8], [0.6, 0.8], [0.5, 0.9], [0.3, 0.7], [0.7, 0.7]]) {
+    const probed = (await terrain.command("probe", { x: Math.floor(width * x), y: Math.floor(height * y) })).result;
+    if (probed.kind === "terrain") {
+      ground = probed;
+      break;
+    }
+  }
+  assert.ok(ground, "the probe finds the fixture's ground");
+  const made = ground.terrain;
+  assert.ok(made && made.tile.every(Number.isInteger) && made.patch.every(value => value >= 0 && value < 16), JSON.stringify(ground));
+  assert.ok(ground.level >= 0 && ground.level < 8, JSON.stringify(ground));
+  assert.ok(made.materials.length > 0 && made.materials.every(share => share.share > 0 && share.share <= 1), JSON.stringify(made));
+  const total = made.materials.reduce((sum, share) => sum + share.share, 0);
+  assert.ok(Math.abs(total - 1) < 0.05, `the materials' shares make the whole: ${JSON.stringify(made.materials)}`);
+  assert.ok(made.sky >= 0 && made.sky <= 1, JSON.stringify(made));
+  assert.ok(made.detail.colored >= made.detail.full - 0.01, JSON.stringify(made.detail));
+  // Off pixels, and pixels not terrain's, read no ground.
+  const above = (await terrain.command("probe", { x: Math.floor(width / 2), y: 1 })).result;
+  assert.equal(above.terrain, null, JSON.stringify(above));
+  await terrain.command("environment", { debug_view: { view: "off" } });
+  assert.deepEqual(terrain.errors, []);
+  report.ground = ground;
+} finally {
+  await terrain.close();
+}
+
+console.log(JSON.stringify({
+  ok: true, url: url.href, artifact: output, ...report,
+  checks: ["setting_discoverable", "views_draw", "views_create_pipelines_when_shown", "off_is_exact", "unknown_view_refused",
+    "probe_answers", "probe_refuses_outside", "probe_keeps_image", "host_switch", "clean_browser_diagnostics",
+    "terrain_views_draw", "terrain_probe"],
+}));

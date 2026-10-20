@@ -448,36 +448,14 @@ impl Terrain {
     }
 }
 
-/// What terrain shows: its material, or for development its
-/// levels of detail, normals or tiles and patches.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum TerrainView {
-    #[default]
-    Shaded,
-    Levels,
-    Normals,
-    Tiles,
-    /// Each surface material in its own color, blended as the ground is.
-    Materials,
-    /// The share of the sky the ground sees, unlit, from
-    /// black (none) to white (all of it).
-    Sky,
-    /// How much detail the ground shows: green where all
-    /// its maps show, yellow where their color alone does, red where their
-    /// means stand in, blue where it shows as its cover's canopy.
-    Detail,
-}
-
 /// Temporary terrain state for development: an eye that
 /// streaming and level of detail follow instead of the camera's, so agents
-/// can look at the patches it selects from elsewhere, and what terrain
-/// shows. Absent, terrain follows the camera, shaded.
+/// can look at the patches it selects from elsewhere. Absent, terrain
+/// follows the camera. What terrain is made of shows in the debug views
+/// (`crate::DebugView`).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct TerrainDebug {
     pub freeze: Option<Vec3>,
-    pub view: TerrainView,
 }
 
 settings! {

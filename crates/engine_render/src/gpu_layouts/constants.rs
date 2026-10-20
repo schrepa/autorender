@@ -275,6 +275,11 @@ gpu_consts! {
     pub(crate) const DEBUG_VIEW_SHADOWS: u32 = 4 => ["DEBUG_VIEW_SHADOWS" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_CASTERS: u32 = 5 => ["DEBUG_VIEW_CASTERS" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_OVERDRAW: u32 = 6 => ["DEBUG_VIEW_OVERDRAW" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_NORMALS: u32 = 7 => ["DEBUG_VIEW_NORMALS" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_TILES: u32 = 8 => ["DEBUG_VIEW_TILES" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_MATERIALS: u32 = 9 => ["DEBUG_VIEW_MATERIALS" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_SKY: u32 = 10 => ["DEBUG_VIEW_SKY" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_DETAIL: u32 = 11 => ["DEBUG_VIEW_DETAIL" in DEBUG_VIEW_SHADER];
     /// What drew a pixel of the debug targets (`meshes/debug.wgsl`): its
     /// kind in the low four bits of its draw's record, its level of detail
     /// in the four above, then flags; the sun's lookup above
@@ -309,6 +314,13 @@ gpu_consts! {
     pub(crate) const DEBUG_SUN_HORIZON: u32 = DEBUG_SUN_MOVING + 1 => ["DEBUG_SUN_HORIZON"];
     pub(crate) const DEBUG_SUN_BEYOND: u32 = DEBUG_SUN_HORIZON + 1 => ["DEBUG_SUN_BEYOND"];
     pub(crate) const DEBUG_SHADOWED: u32 = 0x10 => ["DEBUG_SHADOWED"];
+    /// Terrain pixels (`meshes/terrain_debug.wgsl`): on a tile's edge, on a
+    /// patch's, in their record, with the patch within its tile above
+    /// `DEBUG_PATCH_SHIFT`; a material slot holding none.
+    pub(crate) const DEBUG_TILE_EDGE: u32 = 0x800 => ["DEBUG_TILE_EDGE"];
+    pub(crate) const DEBUG_PATCH_EDGE: u32 = 0x1000 => ["DEBUG_PATCH_EDGE"];
+    pub(crate) const DEBUG_PATCH_SHIFT: u32 = 24 => ["DEBUG_PATCH_SHIFT"];
+    pub(crate) const DEBUG_NO_MATERIAL: u32 = 0xff => ["DEBUG_NO_MATERIAL"];
 
     // Workgroup sides that dispatches divide by.
     pub(crate) const SCATTER_GROUP: u32 = 64 => ["@snap_scatter" in SCATTER_SNAP_SHADER, "@cull_scatter" in SCATTER_CULL_SHADER];

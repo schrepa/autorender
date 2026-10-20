@@ -54,12 +54,9 @@ impl PatchDraws {
         }
     }
 
-    /// Starts a frame of `terrains` seen from `eye`.
-    pub(super) fn begin(&mut self, terrains: &RenderTerrains, eye: Vec3) {
-        self.frame = TerrainFrame {
-            shaded: terrains.view == engine_core::TerrainView::Shaded,
-            ..TerrainFrame::default()
-        };
+    /// Starts a frame seen from `eye`.
+    pub(super) fn begin(&mut self, eye: Vec3) {
+        self.frame = TerrainFrame::default();
         self.eye = eye;
     }
 
@@ -99,16 +96,6 @@ impl PatchDraws {
         self.records.clear();
         let mut uniforms = vec![0_u8; uniform_bytes as usize];
         for (index, terrain) in terrains.terrains.iter().enumerate() {
-            // What the terrain shows: 0 shaded, then its development views.
-            let view = match terrains.view {
-                engine_core::TerrainView::Shaded => 0.0,
-                engine_core::TerrainView::Levels => 1.0,
-                engine_core::TerrainView::Normals => 2.0,
-                engine_core::TerrainView::Tiles => 3.0,
-                engine_core::TerrainView::Materials => 4.0,
-                engine_core::TerrainView::Sky => 5.0,
-                engine_core::TerrainView::Detail => 6.0,
-            };
             let directory = [
                 parts
                     .tables
@@ -128,7 +115,7 @@ impl PatchDraws {
                 0.0,
             ];
             let (mut uniform, anchors) =
-                terrain_uniform(terrain, eye, (view, directory, relief), parts.shading);
+                terrain_uniform(terrain, eye, (directory, relief), parts.shading);
             uniform.cover = match views.cover {
                 None => [0.0; 4],
                 // Surroundings grow no blades: their grassy
@@ -501,7 +488,7 @@ impl Anchors {
 fn terrain_uniform(
     terrain: &RenderTerrain,
     eye: DVec3,
-    (view, directory, relief): (f32, [u32; 4], [f32; 4]),
+    (directory, relief): ([u32; 4], [f32; 4]),
     deformation: crate::deformation::DeformationShading,
 ) -> (TerrainUniform, Anchors) {
     let pyramid = &terrain.pyramid;
@@ -517,7 +504,7 @@ fn terrain_uniform(
     let uniform = TerrainUniform {
         anchor: [relative.x, relative.y, relative.z, pyramid.spacing(0)],
         eye: eye.as_vec3().extend(0.0).to_array(),
-        origin: terrain.origin.extend(view).to_array(),
+        origin: terrain.origin.extend(0.0).to_array(),
         directory,
         relief,
         deform_grid: deformation.grid,

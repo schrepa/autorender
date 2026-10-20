@@ -135,7 +135,12 @@
         "cards",
         "shadows",
         "casters",
-        "overdraw"
+        "overdraw",
+        "normals",
+        "tiles",
+        "materials",
+        "sky",
+        "detail"
       ],
       "what": "the debug view frames show in place of the shaded image, over the scene's"
     }

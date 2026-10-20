@@ -17,8 +17,9 @@ use crate::bindings::DEBUG_VIEW;
 use crate::gpu_layouts::constants::{
     DEBUG_CASTS, DEBUG_KEPT, DEBUG_KIND_CARD, DEBUG_KIND_MESH, DEBUG_KIND_PLACED,
     DEBUG_KIND_PLACED_CARD, DEBUG_KIND_VIRTUAL, DEBUG_LEVEL_SHIFT, DEBUG_VIEW_CARDS,
-    DEBUG_VIEW_CASTERS, DEBUG_VIEW_KINDS, DEBUG_VIEW_LEVELS, DEBUG_VIEW_OVERDRAW,
-    DEBUG_VIEW_SHADOWS,
+    DEBUG_VIEW_CASTERS, DEBUG_VIEW_DETAIL, DEBUG_VIEW_KINDS, DEBUG_VIEW_LEVELS,
+    DEBUG_VIEW_MATERIALS, DEBUG_VIEW_NORMALS, DEBUG_VIEW_OVERDRAW, DEBUG_VIEW_SHADOWS,
+    DEBUG_VIEW_SKY, DEBUG_VIEW_TILES,
 };
 use crate::gpu_layouts::debug_view::DebugViewUniform;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -31,9 +32,13 @@ use crate::targets::{FrameSize, ScreenTarget};
 pub(crate) const IDS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
 /// The fragments that passed the depth test at each pixel, added.
 pub(crate) const COUNT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
+/// Terrain's tile and surface materials at each terrain pixel
+/// (`meshes/terrain_debug.wgsl`).
+pub(crate) const TERRAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
 
 /// The debug targets' states in pipeline order: what drew each pixel,
-/// written over; and one more fragment, added.
+/// written over; one more fragment, added; and terrain's numbers, written
+/// over.
 pub(crate) fn color_targets() -> Vec<Option<wgpu::ColorTargetState>> {
     let add = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
@@ -50,6 +55,7 @@ pub(crate) fn color_targets() -> Vec<Option<wgpu::ColorTargetState>> {
             }),
             write_mask: wgpu::ColorWrites::ALL,
         }),
+        Some(TERRAIN_FORMAT.into()),
     ]
 }
 
@@ -188,14 +194,20 @@ fn view_value(view: DebugViewMode) -> u32 {
         DebugViewMode::Shadows => DEBUG_VIEW_SHADOWS,
         DebugViewMode::Casters => DEBUG_VIEW_CASTERS,
         DebugViewMode::Overdraw => DEBUG_VIEW_OVERDRAW,
+        DebugViewMode::Normals => DEBUG_VIEW_NORMALS,
+        DebugViewMode::Tiles => DEBUG_VIEW_TILES,
+        DebugViewMode::Materials => DEBUG_VIEW_MATERIALS,
+        DebugViewMode::Sky => DEBUG_VIEW_SKY,
+        DebugViewMode::Detail => DEBUG_VIEW_DETAIL,
     }
 }
 
 /// The debug targets at the frame's size, and the group the pass binds.
 struct Targets {
-    textures: [wgpu::Texture; 2],
+    textures: [wgpu::Texture; 3],
     ids: wgpu::TextureView,
     count: wgpu::TextureView,
+    terrain: wgpu::TextureView,
     group: wgpu::BindGroup,
 }
 
@@ -323,8 +335,9 @@ impl DebugViewPass {
         let textures = [
             texture("engine/debug-view-ids", IDS_FORMAT),
             texture("engine/debug-view-count", COUNT_FORMAT),
+            texture("engine/debug-view-terrain", TERRAIN_FORMAT),
         ];
-        let [ids, count] = textures
+        let [ids, count, terrain] = textures
             .each_ref()
             .map(|texture| texture.create_view(&Default::default()));
         let group = crate::pipelines::group(
@@ -339,6 +352,7 @@ impl DebugViewPass {
                 ),
                 ("debug_ids", crate::pipelines::view(&ids)),
                 ("debug_count", crate::pipelines::view(&count)),
+                ("debug_terrain", crate::pipelines::view(&terrain)),
             ],
         );
         self.targets.set(
@@ -347,22 +361,25 @@ impl DebugViewPass {
                 textures,
                 ids,
                 count,
+                terrain,
                 group,
             },
         );
     }
 
-    /// The targets: what drew each pixel, and its fragments.
+    /// The targets: what drew each pixel, its fragments and terrain's
+    /// numbers.
     #[cfg(feature = "dev")]
-    pub(crate) fn textures(&self) -> [&wgpu::Texture; 2] {
+    pub(crate) fn textures(&self) -> [&wgpu::Texture; 3] {
         let targets = self.targets.get().expect("sized in prepare");
-        [&targets.textures[0], &targets.textures[1]]
+        targets.textures.each_ref()
     }
 
-    /// The views of the targets: what drew each pixel, and its fragments.
-    pub(crate) fn views(&self) -> [&wgpu::TextureView; 2] {
+    /// The views of the targets: what drew each pixel, its fragments and
+    /// terrain's numbers.
+    pub(crate) fn views(&self) -> [&wgpu::TextureView; 3] {
         let targets = self.targets.get().expect("sized in prepare");
-        [&targets.ids, &targets.count]
+        [&targets.ids, &targets.count, &targets.terrain]
     }
 
     /// The record of draws as `record` says, for [`RECORD_SLOT`].
@@ -378,13 +395,14 @@ impl RenderFeature for DebugViewPass {
 
     const LABELS: &'static [&'static str] = &["engine/debug-view"];
 
-    /// The view over the whole canvas, from what the main passes drew; the
-    /// depths stay for the pixel probe.
+    /// The view over the whole canvas, from what the main passes drew;
+    /// every target and the depths stay for the pixel probe.
     fn declare(_frame: &DebugViewFrame, shape: &FrameShape, graph: &mut RenderGraph) {
         graph
             .add(Pass::Feature(FeaturePass::DebugView))
             .read(Resource::DebugIds)
             .read(Resource::DebugCount)
+            .read(Resource::DebugTerrain)
             .read(Resource::Depth)
             .color(
                 Resource::Canvas,
@@ -407,10 +425,10 @@ impl RenderFeature for DebugViewPass {
         0
     }
 
-    /// The targets: 18 bytes per pixel.
+    /// The targets: 26 bytes per pixel.
     fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
-            u64::from(size.width) * u64::from(size.height) * 18 + self.records.size()
+            u64::from(size.width) * u64::from(size.height) * 26 + self.records.size()
         })
     }
 

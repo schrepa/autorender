@@ -65,10 +65,6 @@ try {
   await settle();
   checks.push({ check: "virtual texture", pages: textured.terrain.vt_pages, slots: textured.terrain.vt_slots, read: reading.changed, differing: seen.changed, dropped: scarce.terrain.dropped_vt_pages });
 
-  // The checks that follow ran with the terrain control's materials view
-  // (the terrain smoke checks the view itself) when one smoke held them
-  // all, and keep it.
-  await command("terrain", { view: "materials" });
   // Ground cover: the meadow's grass grows near the eye,
   // counted a few frames late; turned off, none grows.
   await command("camera", { position: [-12, 32, -8], target: [10, 30, 6], vertical_fov_radians: 1, near: 0.1, far: 5000 });

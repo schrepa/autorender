@@ -1,7 +1,9 @@
 //! Debug views: frames that show, instead of the shaded image, what drew
 //! each pixel and how: its kind of geometry, its level of detail, whether it
 //! is an impostor card, which sun shadow map decided its shadow, how it
-//! casts sun shadows, or how many fragments covered it. Renderers draw them
+//! casts sun shadows, how many fragments covered it, its normal, or what
+//! terrain's ground is made of: its tiles and patches, surface materials,
+//! the sky it sees and how much detail it shows. Renderers draw them
 //! with pipelines of their own, created the first time a view shows, into
 //! targets of their own; the shaded frame's pipelines, targets and passes
 //! stay as they are, and a world without the settings draws no view.
@@ -52,8 +54,8 @@ modes! {
     /// teal, impostor cards magenta, virtual geometry violet, terrain brown,
     /// ground cover green, water blue, the sky pale blue.
     Kinds = "kinds",
-    /// Its level of detail, from the finest: green, yellow, orange, red,
-    /// violet, blue, cyan and white, for meshes and placed objects (their own
+    /// Its level of detail, from the finest: red, orange, yellow, green,
+    /// cyan, blue, violet and gray, for meshes and placed objects (their own
     /// mesh, then each simplification) and terrain's patches alike;
     /// impostor cards magenta, virtual geometry a color per cluster. Frames
     /// GPU presentation draws (`capture` with `alpha` and `gpu`) show levels
@@ -76,6 +78,23 @@ modes! {
     /// How many fragments passed the depth test there as the frame drew,
     /// from dark blue (one) through green and yellow to white (ten or more).
     Overdraw = "overdraw",
+    /// Its shading normal, as colors: x red, y green, z blue, each from 0
+    /// (pointing back) to 1 (along the axis); terrain's its smooth
+    /// surface's.
+    Normals = "normals",
+    /// Terrain's tiles and patches: tile edges red, patch edges dark, the
+    /// ground between gray; everything else as in `cards`.
+    Tiles = "tiles",
+    /// Terrain's surface materials, each in its own color, blended in the
+    /// shares the ground shows them in.
+    Materials = "materials",
+    /// The share of the sky terrain's ground sees, unlit, from black (none)
+    /// to white (all of it).
+    Sky = "sky",
+    /// How much detail terrain's ground shows: green where all its
+    /// materials' maps show, yellow where their color alone does, red where
+    /// their means stand in, blue where it shows as its cover's canopy.
+    Detail = "detail",
 }
 
 impl Setting for DebugViewMode {}
@@ -170,8 +189,52 @@ pub enum SunLookup {
     Beyond,
 }
 
-/// What drew one pixel and how it looks: the pixel probe's answer.
+/// A surface material's share of a terrain pixel's ground.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct MaterialShare {
+    /// Its index among the terrain's surface materials.
+    pub material: u32,
+    /// Its share, 0 to 1, to 1/255.
+    pub share: f32,
+}
+
+/// How much detail a terrain pixel's ground shows, each a share of its
+/// materials, 0 to 1, to 1/255.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DetailShares {
+    /// Where all their maps show.
+    pub full: f32,
+    /// Where their maps' color shows, with or without the rest.
+    pub colored: f32,
+    /// Where the cover's canopy stands in for the ground.
+    pub canopy: f32,
+}
+
+/// What a terrain pixel's ground is made of, as shading computes it where
+/// no virtual texture page stands in.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct TerrainProbe {
+    /// The tile it lies in at its patch's level ([`PixelProbe::level`]),
+    /// 256 cells a side, counted along x and z from the terrain's origin.
+    pub tile: [i32; 2],
+    /// The patch it lies in within the tile, 16 cells a side, from the
+    /// tile's corner.
+    pub patch: [u32; 2],
+    /// The surface materials shading blends there and their shares,
+    /// heaviest first.
+    pub materials: Vec<MaterialShare>,
+    /// The share of the sky the ground sees, 0 (none) to 1 (all of it), to
+    /// 1/255.
+    pub sky: f32,
+    /// How much detail the ground shows.
+    pub detail: DetailShares,
+}
+
+/// What drew one pixel and how it looks: the pixel probe's answer.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PixelProbe {
     /// The pixel, in physical pixels from the view's top left.
@@ -214,4 +277,6 @@ pub struct PixelProbe {
     /// Its color as displayed, as stored (sRGB, 0 to 255); `None` where
     /// the host's canvas cannot be read back.
     pub displayed: Option<[u8; 3]>,
+    /// What terrain's ground is made of there; `None` off terrain.
+    pub terrain: Option<TerrainProbe>,
 }

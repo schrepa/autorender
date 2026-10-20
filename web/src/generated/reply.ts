@@ -284,6 +284,19 @@ export interface DescribedType {
   name: string;
 }
 
+/**
+ * How much detail a terrain pixel's ground shows, each a share of its
+ * materials, 0 to 1, to 1/255.
+ */
+export interface DetailShares {
+  /** Where the cover's canopy stands in for the ground. */
+  canopy: number;
+  /** Where their maps' color shows, with or without the rest. */
+  colored: number;
+  /** Where all their maps show. */
+  full: number;
+}
+
 /** Stable machine-readable code and affected field; messages are for people. */
 export interface DevError {
   /** What failed, as the catalog names it. */
@@ -527,6 +540,14 @@ export interface KeptArtifact {
   sha256: string;
   /** The fixed tick it shows. */
   tick?: string | null;
+}
+
+/** A surface material's share of a terrain pixel's ground. */
+export interface MaterialShare {
+  /** Its index among the terrain's surface materials. */
+  material: number;
+  /** Its share, 0 to 1, to 1/255. */
+  share: number;
 }
 
 /** An entity drawing nothing for an asset it names that the library lacks. */
@@ -811,6 +832,8 @@ export interface ProbeResult {
    */
   sun: SunLookup;
   sun_index: number;
+  /** What terrain's ground is made of there; `None` off terrain. */
+  terrain?: TerrainProbe | null;
   world?: number[] | null;
 }
 
@@ -1022,7 +1045,7 @@ export interface SweepRays {
   worst: Worst;
 }
 
-/** What `terrain` answers: terrain's view and level of detail after. */
+/** What `terrain` answers: terrain's level of detail after. */
 export interface TerrainControlResult {
   /** Where streaming stays frozen, where it does (world space). */
   frozen_at?: number[] | null;
@@ -1032,8 +1055,6 @@ export interface TerrainControlResult {
   temporary: boolean;
   /** Always true: terrain draws as asked. */
   terrain_changed: boolean;
-  /** The view terrain shows, where the control named one. */
-  view?: TerrainView | null;
 }
 
 /** What `terrain_edit`, `terrain_undo` and `terrain_redo` answer. */
@@ -1055,6 +1076,35 @@ export interface TerrainHeightResult {
  * outside scenes.
  */
 export type TerrainKey = string | number;
+
+/**
+ * What a terrain pixel's ground is made of, as shading computes it where
+ * no virtual texture page stands in.
+ */
+export interface TerrainProbe {
+  /** How much detail the ground shows. */
+  detail: DetailShares;
+  /**
+   * The surface materials shading blends there and their shares,
+   * heaviest first.
+   */
+  materials: MaterialShare[];
+  /**
+   * The patch it lies in within the tile, 16 cells a side, from the
+   * tile's corner.
+   */
+  patch: number[];
+  /**
+   * The share of the sky the ground sees, 0 (none) to 1 (all of it), to
+   * 1/255.
+   */
+  sky: number;
+  /**
+   * The tile it lies in at its patch's level ([`PixelProbe::level`]),
+   * 256 cells a side, counted along x and z from the terrain's origin.
+   */
+  tile: number[];
+}
 
 /** What `terrain_route` answers: the route found, if one reaches. */
 export interface TerrainRouteResult {
@@ -1173,12 +1223,6 @@ export interface TerrainSweepResult {
   /** Those under a resident tile. */
   resident: number;
 }
-
-/**
- * What terrain shows: its material, or for development its
- * levels of detail, normals or tiles and patches.
- */
-export type TerrainView = "shaded" | "levels" | "normals" | "tiles" | "materials" | "sky" | "detail";
 
 /**
  * One texture the authored scene names: its ID, whether the library holds

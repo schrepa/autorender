@@ -30,10 +30,6 @@ try {
   // engine spawns what draws each one.
   assert.equal((await command("inspect", { component: "Terrains" })).result.value.falls, water.falls, `falls spawn as found: ${JSON.stringify(water)}`);
   checks.push({ check: "hydrology", samples: water.samples, channels: water.channel_samples, lakes: water.lake_samples, max_area: water.max_area, falls: water.falls });
-  // The checks of water, the sea, interiors and the sky that follow ran
-  // with the terrain control's materials view (the terrain smoke checks
-  // the view itself) when one smoke held them all, and keep it.
-  await command("terrain", { view: "materials" });
   // Water stands in the bake's lakes: queries find its
   // surface and depth, the overview draws patches of it, it shades pixels
   // and the section refuses water clearer than its range.
@@ -86,16 +82,17 @@ try {
     await command("camera", down(0.3));
     const afloat = (await command("render")).result.rendering;
     assert.ok(afloat.ocean.sectors > 0 && afloat.ocean.triangles > 0, `the sea draws: ${afloat.ocean.sectors} sectors`);
+    // What drew each pixel (the kinds debug view): the sea from just above
+    // its surface, the ground under it from just below, so most of the
+    // view changes across the surface, where a surface drawn off the
+    // queried one leaves both cameras on one side and the views alike.
+    await command("environment", { debug_view: { view: "kinds" } });
     const above = await capture("sea-above");
     await command("camera", down(-0.3));
     const below = await capture("sea-below");
+    await command("environment", { debug_view: { view: "off" } });
     const crossing = await differentPixels(page, [above, below], { tolerance: 24 });
-    // Rivers carve their mouths deep under the sea, which
-    // darkens it from above, and the sky's state (how far its clouds have
-    // marched) sets how far the two views differ: between a quarter and half
-    // of the view changes across the surface, where a surface drawn off the
-    // queried one leaves both cameras on one side and the views alike.
-    assert.ok(crossing.changed > 0.15 * crossing.total, `the drawn surface lies where queries find it: ${crossing.changed} of ${crossing.total} pixels change across it`);
+    assert.ok(crossing.changed > 0.5 * crossing.total, `the drawn surface lies where queries find it: ${crossing.changed} of ${crossing.total} pixels change across it`);
     // Floating entities ride the sea each fixed tick at the
     // tick's time, which frames present: the buoy stands on the surface
     // queries find there.
@@ -242,7 +239,6 @@ try {
     checks.push({ check: "sky", noon: noonColor.map(Math.round), dusk: duskColor.map(Math.round), replaced: replaced.changed, night_sky: nightPixels.changed });
   }
 
-  await command("terrain", { view: "shaded" });
   await settle();
 
   // Long shadows: a low sun behind the dome, with shadow maps
