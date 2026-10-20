@@ -905,10 +905,11 @@ fn pixel_noise(position: vec2<f32>) -> f32 {
 
 // Weighted blended order-independent transparency (McGuire and Bavoil):
 // premultiplied color and coverage times a depth weight, added; and the product
-// of what each surface lets through.
+// of what each surface lets through (x), and of what particles alone do (y),
+// whose coverage temporal antialiasing's resolve answers faster.
 struct TransparentTargets {
     @location(0) accumulated: vec4<f32>,
-    @location(1) revealed: f32,
+    @location(1) revealed: vec2<f32>,
 }
 
 // A transparent contribution of graded `color` covering `opacity` of what
@@ -920,6 +921,13 @@ fn weighted(color: vec3<f32>, opacity: f32, distance: f32) -> TransparentTargets
     let weight = opacity * clamp(10.0 / (1.0e-5 + near * near + far3 * far3), 0.01, 3000.0);
     var targets: TransparentTargets;
     targets.accumulated = vec4<f32>(color * opacity, opacity) * weight;
-    targets.revealed = opacity;
+    targets.revealed = vec2<f32>(opacity, 0.0);
+    return targets;
+}
+
+// `weighted` for a particle, which also marks its coverage.
+fn weighted_particle(color: vec3<f32>, opacity: f32, distance: f32) -> TransparentTargets {
+    var targets = weighted(color, opacity, distance);
+    targets.revealed.y = opacity;
     return targets;
 }

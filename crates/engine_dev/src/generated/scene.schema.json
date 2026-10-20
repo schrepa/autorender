@@ -4619,11 +4619,29 @@
       ]
     },
     "SceneTemporalAntialiasing": {
-      "description": "Temporal antialiasing settings: whether ordinary GPU-presented frames\njitter and resolve against their history. Its targets cost 16 bytes per\ncanvas pixel while it runs. Off by default.",
+      "description": "Temporal antialiasing settings: whether ordinary GPU-presented frames\njitter and resolve against their history, and how the resolve keeps\nmoving edges and particles from smearing. Its targets cost 16 bytes\nper canvas pixel while it runs. Off by default.",
       "type": "object",
       "properties": {
         "enabled": {
           "description": "Whether ordinary GPU-presented frames resolve temporally.",
+          "type": "boolean",
+          "default": false
+        },
+        "nearest_motion": {
+          "description": "Whether each pixel follows the motion of the nearest surface in\nthe 3x3 pixels around it: the edges of nearer surfaces moving over\nfarther ones bring their history along instead of leaving a trail,\nfor nine depth reads a pixel.",
+          "type": "boolean",
+          "default": false
+        },
+        "particle_response": {
+          "description": "How strongly particles' coverage of a pixel favors this frame's\ncolor there: the frame's share is at least this times their\ncoverage, so smoke and spray do not smear as they move. 0 leaves\nthem as any surface.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 4.0,
+          "minimum": 0.0
+        },
+        "rounded_clamp": {
+          "description": "Whether the history keeps within a box rounded between the range\nof the pixel's four edge neighbors and that of all eight: thin and\ndiagonal features flicker less, for four more reads a pixel.",
           "type": "boolean",
           "default": false
         }

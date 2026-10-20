@@ -233,7 +233,7 @@ fn fs_particle(input: ParticleOutput) -> TransparentTargets {
         + sunlight);
     let view = normalize(input.world - eye);
     let fogged = atmospheric(light, eye, input.world, view).rgb;
-    return weighted(grade(fogged), alpha, distance);
+    return weighted_particle(grade(fogged), alpha, distance);
 }
 
 // Mist: a ball of droplets thinning from its middle as a Gaussian, which
@@ -291,7 +291,7 @@ fn fs_particle_mist(input: ParticleOutput) -> TransparentTargets {
     let around = lighting.sun_color.rgb * (0.35 * saturate(sun.y)) + sky * 0.5;
     let light = input.color.rgb * (mix(around, sky, 0.5) + sunlight);
     let fogged = atmospheric(light, eye, closest, direction).rgb;
-    return weighted(grade(fogged), alpha, length(closest - eye));
+    return weighted_particle(grade(fogged), alpha, length(closest - eye));
 }
 
 // Additive particles: their light through the fog, graded.

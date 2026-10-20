@@ -16,7 +16,7 @@ use crate::shaders::entry::temporal;
 use engine_core::{Applied, RenderFrame, RenderSnapshot, glam::Mat4};
 
 use crate::bindings::{TAA_RESOLVE, TEMPORAL_POSES};
-use crate::cached::{Bound, GroupCache};
+use crate::cached::{Bound, GroupCache, Versioned};
 use crate::gpu_data::{
     CameraUniform, ResolveUniform, TEMPORAL_SHADER, jitter_clip, jitter_offset, jittered,
 };
@@ -89,9 +89,12 @@ pub(crate) struct TemporalPass {
     uniform: wgpu::Buffer,
     written: Option<ResolveUniform>,
     targets: ScreenTarget<Targets>,
+    // What frames drawing nothing transparent bind as transparency's
+    // revealage: one texel leaving everything visible.
+    no_particles: wgpu::TextureView,
     // Frames writing history `p` read history `1 - p` through group `p`,
     // over the screen effects' targets.
-    resolve_groups: [GroupCache<9>; 2],
+    resolve_groups: [GroupCache<11>; 2],
     // Pose groups for (current, previous) buffer pairs, index 2 * current +
     // previous.
     pose_groups: [GroupCache<6>; 4],
@@ -105,6 +108,7 @@ impl TemporalPass {
     /// renderer's.
     pub(crate) fn new(
         device: &wgpu::Device,
+        queue: &wgpu::Queue,
         camera_layout: &crate::pipelines::GroupLayout,
         texture_layout: &crate::pipelines::GroupLayout,
         surface_format: wgpu::TextureFormat,
@@ -151,6 +155,29 @@ impl TemporalPass {
             "engine/taa-resolve-uniform",
             size_of::<ResolveUniform>() as u64,
         );
+        let no_particles = crate::targets::texture_2d(
+            device,
+            "engine/taa-no-particles",
+            (1, 1),
+            1,
+            1,
+            crate::transparent::REVEALED_FORMAT,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        queue.write_texture(
+            no_particles.as_image_copy(),
+            &[255; 2],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(2),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
         Self {
             mesh_layout,
             lit_layout: None,
@@ -161,6 +188,7 @@ impl TemporalPass {
             uniform,
             written: None,
             targets: ScreenTarget::default(),
+            no_particles: no_particles.create_view(&Default::default()),
             resolve_groups: Default::default(),
             pose_groups: Default::default(),
             history: None,
@@ -215,20 +243,22 @@ impl TemporalPass {
             size.pixels(),
             u64::from(self.frame),
         );
+        let environment = &frame.snapshot().environment;
+        let settings = environment.temporal_antialiasing.sanitized();
         let uniform = ResolveUniform {
             texel: [1.0 / size.width as f32, 1.0 / size.height as f32],
             current_weight: CURRENT_WEIGHT,
             history_valid: u32::from(last.is_some()),
-            // Undithered frames leave the uniform unchanged.
             options: [
-                if frame.snapshot().environment.dither.enabled {
+                // Undithered frames leave the uniform unchanged.
+                if environment.dither.enabled {
                     camera.options[2]
                 } else {
                     0.0
                 },
-                0.0,
-                0.0,
-                0.0,
+                f32::from(u8::from(settings.nearest_motion)),
+                f32::from(u8::from(settings.rounded_clamp)),
+                settings.particle_response,
             ],
         };
         if self
@@ -339,23 +369,30 @@ impl TemporalPass {
         &self.targets.get().expect("sized in begin").motion
     }
 
-    /// Binds the resolve of `frame` to the screen effects' current targets:
-    /// what the resolve and the next frame read of it.
+    /// Binds the resolve of `frame` to the screen effects' current targets,
+    /// the depth buffer `depth` and transparency's revealage `revealed`
+    /// (`None` in frames drawing nothing transparent): what the resolve and
+    /// the next frame read of it.
     pub(crate) fn prepare_resolve(
         &mut self,
         device: &wgpu::Device,
         post: &PostPass,
         frame: &TemporalFrame,
+        depth: &Versioned<wgpu::TextureView>,
+        revealed: Option<Bound<'_>>,
     ) -> ResolveFrame {
         let resolve = ResolveFrame {
             parity: frame.parity,
             history: frame.history,
+            revealed: revealed.is_some(),
         };
         let Some(targets) = self.targets.get() else {
             return resolve;
         };
         let ([scene, occlusion, bloom, reflections], settings) = post.resolve_inputs();
         let target = |view| Bound::of(targets, crate::pipelines::view(view));
+        let revealed =
+            revealed.unwrap_or_else(|| Bound::fixed(crate::pipelines::view(&self.no_particles)));
         for (parity, group) in self.resolve_groups.iter_mut().enumerate() {
             group.bind(
                 device,
@@ -374,6 +411,8 @@ impl TemporalPass {
                     ("bloom", bloom.clone()),
                     ("reflections", reflections.clone()),
                     ("post", settings.clone()),
+                    ("depth_texture", depth.bound()),
+                    ("revealed", revealed.clone()),
                 ],
             );
         }
@@ -425,10 +464,12 @@ impl TemporalPass {
 }
 
 /// What a frame's resolve writes and leaves: the history texture it writes
-/// (its parity), and the history the next frame reads.
+/// (its parity), and the history the next frame reads; and whether it reads
+/// transparency's revealage.
 pub(crate) struct ResolveFrame {
     parity: usize,
     history: History,
+    revealed: bool,
 }
 
 impl RenderFeature for TemporalPass {
@@ -437,9 +478,11 @@ impl RenderFeature for TemporalPass {
 
     const LABELS: &'static [&'static str] = &["engine/taa-", "engine/temporal"];
 
-    /// The resolve reads the scene, the motion and the history (and the
-    /// effects that run), and writes the canvas and the next history.
-    fn declare(_frame: &ResolveFrame, shape: &FrameShape, graph: &mut RenderGraph) {
+    /// The resolve reads the scene, the motion, the depth buffer and the
+    /// history (and the effects that run, and transparency's revealage where
+    /// something transparent drew), and writes the canvas and the next
+    /// history.
+    fn declare(frame: &ResolveFrame, shape: &FrameShape, graph: &mut RenderGraph) {
         if shape.targets != crate::render_graph::Targets::Temporal {
             return;
         }
@@ -447,7 +490,9 @@ impl RenderFeature for TemporalPass {
             .add(Pass::Feature(FeaturePass::TemporalResolve))
             .read(Resource::Scene)
             .read(Resource::Motion)
+            .read(Resource::Depth)
             .read(Resource::History)
+            .read_if(frame.revealed, Resource::Revealed)
             .read_if(shape.effects.any(), Resource::Effects)
             .color(Resource::Canvas, Access::Clear(Clear::Color(BLACK)))
             .color(Resource::History, Access::Clear(Clear::Color(BLACK)));

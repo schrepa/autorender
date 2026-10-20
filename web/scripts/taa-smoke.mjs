@@ -127,7 +127,9 @@ try {
   // Exact captures do not depend on the setting, which is off by default.
   results.exact_url = await open(still, {});
   const inspect = async () => (await command("inspect", { component: "TemporalAntialiasing" })).result.value;
-  assert.deepEqual(await inspect(), { enabled: false }, "temporal antialiasing is off by default");
+  // The resolve's sturdier options, each off by default.
+  const plain = { nearest_motion: false, rounded_clamp: false, particle_response: 0 };
+  assert.deepEqual(await inspect(), { enabled: false, ...plain }, "temporal antialiasing is off by default");
   const exactOff = await capture("exact-taa-off");
 
   results.taa_url = await open(still, { taa: "on" });
@@ -162,13 +164,13 @@ try {
   // The page's ?taa=on set the world's settings; ordinary frames report what
   // they ran, and the paused environment control turns it off and on.
   const observed = async () => (await command("status")).result.rendering;
-  assert.deepEqual(await inspect(), { enabled: true });
+  assert.deepEqual(await inspect(), { enabled: true, ...plain });
   const temporalFrame = await observed();
   assert.equal(temporalFrame.temporal_antialiasing.active, true, "ordinary frames resolve temporally");
   assert.ok(temporalFrame.render_passes.includes("temporal_resolve"));
   const off = await command("environment", { temporal_antialiasing: { enabled: false } });
   assert.deepEqual(off.result.environment_changed, ["temporal_antialiasing"]);
-  assert.deepEqual(await inspect(), { enabled: false });
+  assert.deepEqual(await inspect(), { enabled: false, ...plain });
   await run("taa-off", 30);
   const plainFrame = await observed();
   assert.equal(plainFrame.temporal_antialiasing.active, false, "turned off, ordinary frames do not resolve temporally");
@@ -198,6 +200,29 @@ try {
     note: "pixels whose largest channel differs by more than 24 levels between two converged still frames with dithering, 300 ms apart",
   });
   await command("environment", { dither: { enabled: false } });
+
+  // The sturdier resolve (the nearest surface's motion, the rounded box and
+  // particles' response), set by the paused environment control: how much
+  // it changes converged still frames, and how much they then flicker.
+  const sturdy = { nearest_motion: true, rounded_clamp: true, particle_response: 2 };
+  const sturdied = await command("environment", { temporal_antialiasing: { enabled: true, ...sturdy } });
+  assert.deepEqual(sturdied.result.environment_changed, ["temporal_antialiasing"]);
+  assert.deepEqual(await inspect(), { enabled: true, ...sturdy });
+  const [sturdyFirst, sturdySecond] = await run("taa-sturdy", 60);
+  assert.equal((await observed()).temporal_antialiasing.active, true, "the sturdier resolve runs");
+  results.sturdy = await compare([again, sturdyFirst]);
+  results.sturdy_stable = await compare([sturdyFirst, sturdySecond]);
+  measurements.push({
+    name: "sturdier resolve difference", value: results.sturdy.mean_difference, unit: "levels",
+    note: "mean channel difference between converged still frames of the plain and the sturdier resolve",
+  }, {
+    name: "sturdier still view flicker", value: results.sturdy_stable.changed[24] / results.sturdy_stable.total * 100, unit: "%",
+    note: "pixels whose largest channel differs by more than 24 levels between two converged still frames of the sturdier resolve, 300 ms apart",
+  });
+  const beyond = await command("environment", { temporal_antialiasing: { enabled: true, particle_response: 9 } }, false);
+  assert.equal(beyond.error.code, "invalid_environment", "a particle response beyond its range is rejected");
+  await command("environment", { temporal_antialiasing: { enabled: true } });
+  assert.deepEqual(await inspect(), { enabled: true, ...plain });
 
   // Captures after temporal frames are still exact.
   const after = await capture("exact-after-taa");
@@ -230,7 +255,7 @@ try {
   await writeFile(`${output}/results.json`, JSON.stringify(results, null, 2));
   console.log(JSON.stringify({
     ok: true, artifact: output, ...results,
-    checks: ["captures_independent_of_setting", "settings_inspected", "settings_controlled", "settings_observed", "settings_validated", "dither_controlled", "captures_exact_after_temporal_frames", "moving_frames_draw", "clean_browser_diagnostics"],
+    checks: ["captures_independent_of_setting", "settings_inspected", "settings_controlled", "settings_observed", "settings_validated", "dither_controlled", "sturdier_resolve_controlled", "captures_exact_after_temporal_frames", "moving_frames_draw", "clean_browser_diagnostics"],
     measurements,
   }));
 } finally {

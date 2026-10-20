@@ -13,11 +13,10 @@ use crate::decals::{DecalFrame, DecalPass};
 use crate::temporal::ResolveFrame;
 use crate::transparent::TransparencyFrame;
 
-/// The screen effects' preparation: what they prepared, the temporal
-/// resolve's, and whether glass refracts.
+/// The screen effects' preparation: what they prepared, and whether glass
+/// refracts.
 struct PostPrep {
     post: Option<Ready<Effects>>,
-    temporal: Option<Ready<ResolveFrame>>,
     refraction: bool,
 }
 
@@ -147,10 +146,10 @@ impl Renderer {
             return;
         }
         if enabled {
-            let (device, camera) = (&self.device, &self.camera.layout);
+            let (device, queue, camera) = (&self.device, &self.queue, &self.camera.layout);
             let (materials, format) = (self.materials.layout(), self.display.format());
             self.features.temporal.create(device, || {
-                TemporalPass::new(device, camera, materials, format)
+                TemporalPass::new(device, queue, camera, materials, format)
             });
         } else {
             self.features.temporal.release();
@@ -665,11 +664,7 @@ impl Renderer {
         prelude.environment = environment;
         let lights = self.prepare_lights(frame, kind, temporal_frame);
         let lit = lights.is_some();
-        let PostPrep {
-            post,
-            temporal,
-            refraction,
-        } = self.prepare_post(snapshot, temporal_frame);
+        let PostPrep { post, refraction } = self.prepare_post(snapshot, temporal_frame);
         let post_frame = post.as_ref().map(|post| *post.frame());
         let transparency = self.prepare_transparency(
             snapshot,
@@ -677,6 +672,7 @@ impl Renderer {
             temporal_frame,
             post_frame,
         );
+        let temporal = self.prepare_resolve(temporal_frame, transparency.is_some());
         let decals = self.prepare_decals(snapshot, temporal_frame, lit, post_frame);
         Features {
             occlusion,
@@ -1134,18 +1130,27 @@ impl Renderer {
         if !needs && let Some(post) = self.features.post.get_mut() {
             post.release_targets();
         }
-        let mut temporal = None;
-        if let (Some(frame), Some(post)) = (temporal_frame, self.features.post.get()) {
-            temporal = self
-                .features
-                .temporal
-                .prepare_created(|pass| Some(pass.prepare_resolve(device, post, frame)));
-        }
-        PostPrep {
-            post,
-            temporal,
-            refraction,
-        }
+        PostPrep { post, refraction }
+    }
+
+    /// Temporal frames' resolve over the screen effects' targets, the depth
+    /// buffer and, when something transparent draws (`transparent`), its
+    /// revealage.
+    fn prepare_resolve(
+        &mut self,
+        temporal_frame: &Option<TemporalFrame>,
+        transparent: bool,
+    ) -> Option<Ready<ResolveFrame>> {
+        let (Some(frame), Some(post)) = (temporal_frame, self.features.post.get()) else {
+            return None;
+        };
+        let revealed = transparent
+            .then(|| self.features.transparency.get().revealed())
+            .flatten();
+        let (device, depth) = (&self.device, &self.depth.view);
+        self.features.temporal.prepare_created(|pass| {
+            Some(pass.prepare_resolve(device, post, frame, depth, revealed))
+        })
     }
 
     /// Transparent surfaces and particles; `None` when nothing transparent

@@ -293,7 +293,15 @@ impl AppHost {
         } = self.overrides;
         let world = self.engine.app.world_mut();
         if let Some(enabled) = temporal_antialiasing {
-            world.insert_resource(engine_core::TemporalAntialiasing { enabled });
+            // The world's other temporal settings stay.
+            let settings = world
+                .get_resource::<engine_core::TemporalAntialiasing>()
+                .copied()
+                .unwrap_or_default();
+            world.insert_resource(engine_core::TemporalAntialiasing {
+                enabled,
+                ..settings
+            });
         }
         if let Some(enabled) = occlusion_culling {
             world.insert_resource(engine_core::OcclusionCulling { enabled });

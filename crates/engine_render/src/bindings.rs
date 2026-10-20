@@ -1229,6 +1229,10 @@ tables! {
             texture(6, "bloom", Float, D2, F),
             uniform_of(7, "post", size_of::<PostUniform>(), F),
             texture(8, "reflections", Float, D2, F),
+            // The nearest surface around each pixel, and what particles
+            // leave visible.
+            texture(9, "depth_texture", Depth, D2, F),
+            texture(10, "revealed", Unfilterable, D2, F),
         ],
     };
 

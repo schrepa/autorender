@@ -49,7 +49,10 @@ impl StressWorld for HighlandsWorld {
         // A brisk wind sways the highlands' grass and spruces,
         // and drives clouds over them twice as fast aloft; their blades and far
         // trees, thinner than pixels, resolve over frames.
-        world.insert_resource(TemporalAntialiasing { enabled: true });
+        world.insert_resource(TemporalAntialiasing {
+            enabled: true,
+            ..TemporalAntialiasing::default()
+        });
         world.insert_resource(Wind {
             velocity: [5.5, 2.0],
             gusts: 0.55,

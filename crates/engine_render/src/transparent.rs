@@ -15,7 +15,7 @@
 use engine_core::{Drawn, RenderSnapshot};
 
 use crate::bindings::TRANSPARENT_COMPOSITE;
-use crate::cached::Versioned;
+use crate::cached::{Bound, Versioned};
 use crate::gpu_data::TRANSPARENT_SHADER;
 use crate::particles::{ParticleFrame, ParticlePass};
 use crate::profiling::Span;
@@ -28,8 +28,10 @@ use crate::targets::{FrameSize, ScreenTarget};
 
 /// Weighted premultiplied color and coverage, added.
 pub(crate) const ACCUMULATED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// The fraction of the opaque color still visible, multiplied.
-pub(crate) const REVEALED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+/// The fraction of the opaque color still visible, multiplied, and the
+/// fraction particles leave visible, which temporal antialiasing's resolve
+/// reads.
+pub(crate) const REVEALED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
 
 /// The accumulation pass's color targets and their blending.
 pub(crate) fn accumulation_targets() -> [Option<wgpu::ColorTargetState>; 2] {
@@ -166,11 +168,11 @@ impl TransparentPass {
         self.targets.release();
     }
 
-    /// Target bytes: 8 accumulated and 1 revealed per pixel.
+    /// Target bytes: 8 accumulated and 2 revealed per pixel.
     fn capacity_bytes(&self) -> u64 {
-        self.targets
-            .size()
-            .map_or(0, |size| u64::from(size.width) * u64::from(size.height) * 9)
+        self.targets.size().map_or(0, |size| {
+            u64::from(size.width) * u64::from(size.height) * 10
+        })
     }
 
     /// The accumulation pass's targets, accumulated color and revealage,
@@ -350,6 +352,16 @@ impl Transparency {
     /// The accumulation pass's targets, accumulated color and revealage.
     pub(crate) fn views(&self) -> [&wgpu::TextureView; 2] {
         self.surfaces().views()
+    }
+
+    /// The revealage, whose second channel holds what particles leave
+    /// visible, while frames draw something transparent.
+    pub(crate) fn revealed(&self) -> Option<Bound<'_>> {
+        let targets = self.surfaces.as_ref()?.targets.get()?;
+        Some(Bound::of(
+            targets,
+            crate::pipelines::view(&targets.revealed),
+        ))
     }
 }
 

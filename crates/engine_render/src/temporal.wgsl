@@ -1,9 +1,13 @@
 // Temporal antialiasing resolve, prepended with effects.wgsl.
 // One full-screen triangle per display frame blends this frame's jittered
-// color with the previous output, reprojected by per-pixel motion. The
+// color with the previous output, reprojected by per-pixel motion, or by
+// that of the nearest surface around each pixel. The
 // history is clamped to the box of the current pixel and its four edge
-// neighbors in YCoCg, which bounds ghosting from disocclusion, changed
-// shading and approximate motion. Pixels whose reprojection leaves the
+// neighbors in YCoCg, or one rounded toward its eight neighbors' (Karis,
+// "High Quality Temporal Supersampling", 2014), which bounds ghosting from
+// disocclusion, changed shading and approximate motion. Where particles
+// cover a pixel, this frame's color may weigh more (as FSR 2's reactive
+// mask does). Pixels whose reprojection leaves the
 // viewport, and every pixel after a reset, show this frame's color alone.
 // Ambient occlusion darkens this frame's color before blending, so the
 // history averages its noise; bloom reaches the canvas only.
@@ -16,8 +20,10 @@ struct Resolve {
     current_weight: f32,
     // Zero after a reset: the history must not be read.
     history_valid: u32,
-    // x: this frame's turn of the dither (the camera's `options.z`); yzw
-    // unused.
+    // This frame's turn of the dither (the camera's `options.z`); 1 when
+    // pixels follow the motion of the nearest surface around them; 1 when
+    // the history keeps within the rounded box; and the least weight of this
+    // frame's color per unit of particles' coverage (0: none).
     options: vec4<f32>,
 }
 
@@ -37,6 +43,12 @@ struct Resolve {
 // Reflections at half resolution; like bloom and sun shafts,
 // they reach the canvas only.
 @group(0) @binding(8) var reflections: texture_2d<f32>;
+// The depth buffer (reversed: nearer surfaces are greater), for the nearest
+// surface around each pixel.
+@group(0) @binding(9) var depth_texture: texture_depth_2d;
+// Transparency's revealage: y is the share of each pixel particles leave
+// visible (1 where none drew).
+@group(0) @binding(10) var revealed: texture_2d<f32>;
 
 // Below this motion (a 64th of a pixel) the history is read at the pixel
 // itself: static pixels skip resampling.
@@ -88,6 +100,32 @@ fn sample_history(uv: vec2<f32>) -> vec3<f32> {
     return color / sum;
 }
 
+// The motion of the nearest surface among `pixel` and its eight neighbors
+// (`last` the last pixel): where a nearer surface's edge moves over a
+// farther one, the pixels around the edge follow it, so its history comes
+// along instead of trailing behind.
+fn nearest_motion(pixel: vec2<i32>, last: vec2<i32>) -> vec2<f32> {
+    var nearest = pixel;
+    var depth = textureLoad(depth_texture, pixel, 0);
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let at = clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), last);
+            let here = textureLoad(depth_texture, at, 0);
+            if here > depth {
+                depth = here;
+                nearest = at;
+            }
+        }
+    }
+    return textureLoad(motion, nearest, 0).xy;
+}
+
+// This frame's color at `pixel` offset by `offset` (within the target,
+// `last` its last pixel), darkened by `shade`, in YCoCg.
+fn neighbor(pixel: vec2<i32>, offset: vec2<i32>, last: vec2<i32>, shade: f32) -> vec3<f32> {
+    return ycocg(textureLoad(scene, clamp(pixel + offset, vec2<i32>(0), last), 0).rgb * shade);
+}
+
 @fragment
 fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     let pixel = vec2<i32>(position.xy);
@@ -98,25 +136,46 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     let shade = effect_shade(texel.a, effects, post);
     let current = texel.rgb * shade;
     var color = current;
-    let offset = textureLoad(motion, pixel, 0).xy;
+    let last = vec2<i32>(textureDimensions(scene)) - 1;
+    var offset = textureLoad(motion, pixel, 0).xy;
+    if resolve.options.y != 0.0 {
+        offset = nearest_motion(pixel, last);
+    }
     let uv = position.xy * resolve.texel + offset;
     // NaN motion fails these comparisons too.
     if resolve.history_valid != 0u && all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0)) {
-        let last = vec2<i32>(textureDimensions(scene)) - 1;
         let center = ycocg(current);
         let left = ycocg(textureLoad(scene, max(pixel - vec2<i32>(1, 0), vec2<i32>(0)), 0).rgb * shade);
         let right = ycocg(textureLoad(scene, min(pixel + vec2<i32>(1, 0), last), 0).rgb * shade);
         let up = ycocg(textureLoad(scene, max(pixel - vec2<i32>(0, 1), vec2<i32>(0)), 0).rgb * shade);
         let down = ycocg(textureLoad(scene, min(pixel + vec2<i32>(0, 1), last), 0).rgb * shade);
-        let low = min(center, min(min(left, right), min(up, down)));
-        let high = max(center, max(max(left, right), max(up, down)));
+        var low = min(center, min(min(left, right), min(up, down)));
+        var high = max(center, max(max(left, right), max(up, down)));
+        // Rounded: halfway from the cross's range to that of all eight
+        // neighbors, which a thin diagonal feature's history stays inside.
+        if resolve.options.z != 0.0 {
+            let a = neighbor(pixel, vec2<i32>(-1, -1), last, shade);
+            let b = neighbor(pixel, vec2<i32>(1, -1), last, shade);
+            let c = neighbor(pixel, vec2<i32>(-1, 1), last, shade);
+            let d = neighbor(pixel, vec2<i32>(1, 1), last, shade);
+            low = 0.5 * (low + min(low, min(min(a, b), min(c, d))));
+            high = 0.5 * (high + max(high, max(max(a, b), max(c, d))));
+        }
         var past: vec3<f32>;
         if all(abs(offset) < resolve.texel * STILL_PIXELS) {
             past = textureLoad(history, pixel, 0).rgb;
         } else {
             past = sample_history(uv);
         }
-        color = mix(rgb(clamp(ycocg(past), low, high)), current, resolve.current_weight);
+        // Particles have no motion of their own: where they cover the
+        // pixel, this frame's color weighs at least their coverage times
+        // the response.
+        var weight = resolve.current_weight;
+        if resolve.options.w > 0.0 {
+            let particles = 1.0 - textureLoad(revealed, pixel, 0).y;
+            weight = max(weight, min(resolve.options.w * particles, 1.0));
+        }
+        color = mix(rgb(clamp(ycocg(past), low, high)), current, weight);
     }
     color = max(color, vec3<f32>(0.0));
     var output: Outputs;
