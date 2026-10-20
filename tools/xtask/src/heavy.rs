@@ -32,7 +32,7 @@ pub const HELD: (&str, &str) = ("ENGINE_HEAVY_LOCK_HELD", "1");
 const FOREIGN_CHROME_WAIT: Duration = Duration::from_secs(15 * 60);
 /// How long a lock folder may lack its owner file: a holder that stopped
 /// between making the folder and writing the file.
-const OWNERLESS: Duration = Duration::from_secs(60);
+pub(crate) const OWNERLESS: Duration = Duration::from_secs(60);
 
 /// The lock, held until dropped: released where this process took it, left
 /// alone where a parent holds it.
@@ -304,7 +304,7 @@ fn describe(held: Option<&Value>) -> String {
 
 /// Whether process `pid` runs; a process whose state cannot be read counts
 /// as running.
-fn alive(pid: u64) -> bool {
+pub(crate) fn alive(pid: u64) -> bool {
     let listed = if cfg!(windows) {
         Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])

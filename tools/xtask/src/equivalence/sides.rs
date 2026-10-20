@@ -156,8 +156,8 @@ pub(super) fn commit_side(root: &Path, role: &str, rev: &str) -> Result<Side, St
     if kept_tree.exists() {
         fs::remove_dir_all(&kept_tree).map_err(|error| error.to_string())?;
     }
-    for folder in ["bench", "web/scripts/fixtures"] {
-        copy_folder(&tree.join(folder), &kept_tree.join(folder))?;
+    for folder in crate::checkouts::RUN_FILES {
+        crate::checkouts::copy_folder(&tree.join(folder), &kept_tree.join(folder))?;
     }
     let build = json!({
         "sha": sha,
@@ -187,34 +187,8 @@ pub(super) fn commit_side(root: &Path, role: &str, rev: &str) -> Result<Side, St
 pub(super) fn checkout_tree(root: &Path, name: &str, sha: &str) -> Result<PathBuf, String> {
     measure::ensure_commit(root, sha, None)?;
     let tree = root.join(FOLDER).join(name);
-    if !tree.join(".git").exists() {
-        let path = tree.display().to_string();
-        git(
-            root,
-            &["worktree", "add", "--detach", "--force", &path, sha],
-        )?;
-    } else if git(&tree, &["rev-parse", "HEAD"])? != sha {
-        git(&tree, &["checkout", "--detach", "--force", sha])?;
-    }
+    crate::checkouts::check_out(root, &tree, sha)?;
     Ok(tree)
-}
-
-/// Copies the folder `from` into `into`, every file under it.
-fn copy_folder(from: &Path, into: &Path) -> Result<(), String> {
-    fs::create_dir_all(into).map_err(|error| error.to_string())?;
-    for entry in
-        fs::read_dir(from).map_err(|error| format!("cannot read {}: {error}", from.display()))?
-    {
-        let path = entry.map_err(|error| error.to_string())?.path();
-        let target = into.join(path.file_name().unwrap_or_default());
-        if path.is_dir() {
-            copy_folder(&path, &target)?;
-        } else {
-            fs::copy(&path, &target)
-                .map_err(|error| format!("cannot copy {}: {error}", path.display()))?;
-        }
-    }
-    Ok(())
 }
 
 /// Removes kept builds past the `keep` used last (but those of `using`),

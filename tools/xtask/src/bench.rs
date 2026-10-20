@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -727,4 +727,39 @@ pub fn glob(pattern: &str, path: &str) -> bool {
     let pattern: Vec<&str> = pattern.split('/').collect();
     let path: Vec<&str> = path.split('/').collect();
     segments(&pattern, &path)
+}
+
+/// The generated files of the commit checked out in `source`, as its own
+/// `cargo xtask bench assets` makes them: their folder and SHA-256.
+pub(crate) fn generated(root: &Path, source: &Path, sha: &str) -> Result<(String, String), String> {
+    eprintln!("Generating the files workloads read at {sha}.");
+    let target = root.join("target").join("measure").join("target");
+    let made = Command::new("cargo")
+        .args(["xtask", "bench", "assets"])
+        .env("CARGO_TARGET_DIR", &target)
+        .current_dir(source)
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|error| format!("cannot run cargo: {error}"))?;
+    let printed = String::from_utf8_lossy(&made.stdout);
+    let summary = printed
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|_| made.status.success());
+    match summary {
+        Some(summary) => match (
+            summary["folder"].as_str(),
+            summary["generated_hash"].as_str(),
+        ) {
+            (Some(folder), Some(hash)) => Ok((folder.to_owned(), hash.to_owned())),
+            _ => Err(format!(
+                "`cargo xtask bench assets` at {sha} printed no folder and generated_hash"
+            )),
+        },
+        None => Err(format!(
+            "`cargo xtask bench assets` at {sha} failed ({}): measured commits need it",
+            made.status
+        )),
+    }
 }

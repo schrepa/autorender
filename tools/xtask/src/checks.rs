@@ -163,7 +163,7 @@ pub fn run(
         let source = checkout(root, sha, None)?;
         // Its pages read the files git does not hold, which a measured
         // commit's checkout has too; without them they fail to load.
-        if let Err(error) = crate::measure::generated(root, &source, sha) {
+        if let Err(error) = crate::bench::generated(root, &source, sha) {
             eprintln!("The files {sha}'s pages read are missing: {error}");
         }
         eprintln!("Starting the development server of {sha}.");

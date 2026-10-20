@@ -192,12 +192,14 @@ pub fn parse_iso(text: &str) -> Option<SystemTime> {
     Some(UNIX_EPOCH + Duration::from_secs(u64::try_from(seconds).ok()?))
 }
 
-/// One commit built and ready to measure: its checkout, its program and
-/// build identity, its composed shaders' hash, and the generated files its
-/// own tree makes.
+/// One commit built and ready to measure: the files its runs read, its
+/// program and build identity, its composed shaders' hash, and the
+/// generated files its own tree makes.
 struct Build {
     sha: String,
-    source: PathBuf,
+    /// Where its runs read its bench files and fixtures: their working
+    /// folder.
+    files: PathBuf,
     program: PathBuf,
     build: Value,
     shader_hash: String,
@@ -266,29 +268,57 @@ pub(crate) fn dxc() -> Option<PathBuf> {
         .find(|file| file.is_file())
 }
 
-/// The commit `sha`: its source checked out under `target/measure/source/`,
-/// built into `target/measure/builds/`, where a build of the same commit is
-/// reused (its program unchanged), and its generated files made by its own
-/// tree's `cargo xtask bench assets`.
+/// The commit `sha` built into `target/measure/builds/<sha>/`, beside the
+/// files its runs read (`tree/`) and the folder and SHA-256 of the
+/// generated files its own tree's `cargo xtask bench assets` makes
+/// (`generated.json`): built in the reused checkout
+/// ([`crate::checkouts::reused`]), so cargo recompiles only what changed
+/// since the commit built before, and reused while its program is
+/// unchanged.
 fn prepare_build(
     root: &Path,
     sha: &str,
     pull: Option<u64>,
     backend: &str,
 ) -> Result<Build, String> {
-    let source = crate::checkouts::checkout(root, sha, pull)?;
+    crate::checkouts::lease(root, sha)?;
     let folder = root.join("target").join("measure").join("builds").join(sha);
     let program = folder.join(program_name());
-    let identity = folder.join("build.json");
-    let kept = read_json(&identity).ok().filter(|build| {
-        program.is_file() && file_hash(&program).ok().as_deref() == build["artifact_hash"].as_str()
-    });
-    let mut build = match kept {
-        Some(build) => {
+    let files = folder.join("tree");
+    let made = folder.join("generated.json");
+    let kept = read_json(&folder.join("build.json"))
+        .ok()
+        .zip(read_json(&made).ok())
+        .filter(|(build, generated)| {
+            program.is_file()
+                && file_hash(&program).ok().as_deref() == build["artifact_hash"].as_str()
+                && files.is_dir()
+                && generated["folder"]
+                    .as_str()
+                    .is_some_and(|assets| Path::new(assets).join("complete").is_file())
+                && generated["generated_hash"].is_string()
+        });
+    let (mut build, generated) = match kept {
+        Some(kept) => {
             eprintln!("Reusing the build of {sha}.");
-            build
+            kept
         }
-        None => build_arm(root, &source, &folder, sha, backend)?,
+        None => {
+            let tree = crate::checkouts::reused(root, sha, pull)?;
+            let build = build_arm(root, tree.path(), &folder, sha, backend)?;
+            let (assets, generated_hash) = bench::generated(root, tree.path(), sha)?;
+            if files.exists() {
+                fs::remove_dir_all(&files)
+                    .map_err(|error| format!("cannot remove {}: {error}", files.display()))?;
+            }
+            for part in crate::checkouts::RUN_FILES {
+                crate::checkouts::copy_folder(&tree.path().join(part), &files.join(part))?;
+            }
+            let generated = json!({"folder": assets, "generated_hash": generated_hash});
+            fs::write(&made, generated.to_string())
+                .map_err(|error| format!("cannot write {}: {error}", made.display()))?;
+            (build, generated)
+        }
     };
     // D3D12 compiles the engine's shaders with DXC, beside the program.
     if cfg!(windows) {
@@ -312,51 +342,16 @@ fn prepare_build(
         .ok()
         .and_then(|value| value["shader_hash"].as_str().map(str::to_owned))
         .ok_or_else(|| format!("the program of {sha} printed no shader hash: {printed}"))?;
-    let (assets, generated_hash) = generated(root, &source, sha)?;
+    let text = |key: &str| generated[key].as_str().unwrap_or_default().to_owned();
     Ok(Build {
         sha: sha.to_owned(),
-        source,
+        assets: text("folder"),
+        generated_hash: text("generated_hash"),
+        files,
         program,
         build,
         shader_hash,
-        assets,
-        generated_hash,
     })
-}
-
-/// The generated files of the commit checked out in `source`, as its own
-/// `cargo xtask bench assets` makes them: their folder and SHA-256.
-pub(crate) fn generated(root: &Path, source: &Path, sha: &str) -> Result<(String, String), String> {
-    eprintln!("Generating the files workloads read at {sha}.");
-    let target = root.join("target").join("measure").join("target");
-    let made = Command::new("cargo")
-        .args(["xtask", "bench", "assets"])
-        .env("CARGO_TARGET_DIR", &target)
-        .current_dir(source)
-        .stderr(Stdio::inherit())
-        .output()
-        .map_err(|error| format!("cannot run cargo: {error}"))?;
-    let printed = String::from_utf8_lossy(&made.stdout);
-    let summary = printed
-        .lines()
-        .rev()
-        .find_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(|_| made.status.success());
-    match summary {
-        Some(summary) => match (
-            summary["folder"].as_str(),
-            summary["generated_hash"].as_str(),
-        ) {
-            (Some(folder), Some(hash)) => Ok((folder.to_owned(), hash.to_owned())),
-            _ => Err(format!(
-                "`cargo xtask bench assets` at {sha} printed no folder and generated_hash"
-            )),
-        },
-        None => Err(format!(
-            "`cargo xtask bench assets` at {sha} failed ({}): measured commits need it",
-            made.status
-        )),
-    }
 }
 
 /// Builds the program from `source` into `folder`, with its symbols, and
@@ -369,8 +364,8 @@ fn build_arm(
     backend: &str,
 ) -> Result<Value, String> {
     eprintln!("Building {PACKAGE} at {sha}.");
-    // One target folder for every arm: dependencies build once, and each
-    // commit's own crates build beside the others'.
+    // One target folder for every commit, built in one checkout: cargo
+    // recompiles only the crates that changed since the commit built before.
     let target = root.join("target").join("measure").join("target");
     let features = FEATURES.join(",");
     let started = Instant::now();
@@ -790,7 +785,7 @@ fn measure_run(
     let started_at = iso(SystemTime::now());
     let environment = backend_environment(&machine.backend);
     let run = run_host(
-        &side.build.source,
+        &side.build.files,
         &side.build.program,
         &arguments,
         &environment,
@@ -958,7 +953,7 @@ fn profile_run(side: &Side, machine: &Machine, folder: &Path) -> Value {
     }
     let unavailable = |why: String| json!({"arm": side.role, "unavailable": reason(&why)});
     let run = match run_host(
-        &side.build.source,
+        &side.build.files,
         &side.build.program,
         &arguments,
         &environment,
@@ -1005,11 +1000,14 @@ fn shader_report(root: &Path, role: &str, build: &Build, folder: &Path) -> Value
     let into = folder.join(format!("shaders-{role}"));
     let target = root.join("target").join("measure").join("target");
     let into_text = into.display().to_string();
-    let status = Command::new("cargo")
-        .args(["xtask", "gpu", "--report", &into_text])
-        .env("CARGO_TARGET_DIR", &target)
-        .current_dir(&build.source)
-        .status();
+    let status = crate::checkouts::reused(root, &build.sha, None).and_then(|tree| {
+        Command::new("cargo")
+            .args(["xtask", "gpu", "--report", &into_text])
+            .env("CARGO_TARGET_DIR", &target)
+            .current_dir(tree.path())
+            .status()
+            .map_err(|error| format!("cannot run cargo: {error}"))
+    });
     let report = into.join("report.json");
     match status {
         Ok(status) if status.success() && report.is_file() => {
