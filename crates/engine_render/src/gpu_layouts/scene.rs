@@ -124,8 +124,8 @@ gpu_structs! {
         pub foliage: [f32; 4],
         /// Highlights sized by their lights: the cosine and
         /// sine of the sun's angular radius (1 and 0 for a point sun, both 0
-        /// while highlights are neither sized nor capped), the most a
-        /// highlight's distribution times visibility reaches (0 caps none),
+        /// while highlights are neither sized nor capped), the exposed
+        /// brightness local lights' highlights ease toward (0 caps none),
         /// and the radius of local lights' smallest sphere.
         pub highlights: [f32; 4],
         /// Windows lighting room by room: the sun's elevation,

@@ -745,11 +745,10 @@ fn in_interior(world: vec3<f32>) -> bool {
     return false;
 }
 
-// Whether highlights take their lights' sizes or the cap
-// (`lighting.highlights`); otherwise lights are points and highlights
-// uncapped.
+// Whether the sun's highlight spreads over its disk (`lighting.highlights.y`,
+// the sine of its angular radius); otherwise the sun is a point.
 fn sized_highlights() -> bool {
-    return any(lighting.highlights.yz != vec2<f32>(0.0));
+    return lighting.highlights.y != 0.0;
 }
 
 // The direction a surface's highlight lobe leans to: the view mirrored,
@@ -768,17 +767,26 @@ fn disk_energy(alpha: f32, sine: f32) -> f32 {
     return kept * kept;
 }
 
-// A highlight's distribution times visibility `lobe`, at most the cap
-// (`lighting.highlights.z`, 0 none).
-fn capped(lobe: f32) -> f32 {
+// The share of a local light's highlight light `light` the cap keeps
+// (`lighting.highlights.z`, an exposed brightness; 0 caps none): all of it
+// up to half the cap, then less and less, so the brightest lamps'
+// highlights ease toward the cap in their own color instead of blooming
+// white, and dim lamps' highlights keep all they had.
+fn cap_share(light: vec3<f32>) -> f32 {
     let cap = lighting.highlights.z;
-    return select(lobe, min(lobe, cap), cap > 0.0);
+    let bright = luminance(light) * lighting.horizon.w;
+    let knee = 0.5 * cap;
+    if cap <= 0.0 || bright <= knee {
+        return 1.0;
+    }
+    let over = bright - knee;
+    return (knee + over / (1.0 + over / knee)) / bright;
 }
 
 // The sun's highlight at `point` over the sun's disk (Karis's representative
 // point): lit from the direction within the disk nearest the lobe's
 // dominant direction, the lobe widened by half the disk's angular size and
-// renormalized, and capped. `n_l` is the sun's cosine at the point.
+// renormalized. `n_l` is the sun's cosine at the point.
 fn sun_highlight(point: SurfacePoint, sun: vec3<f32>, n_l: f32) -> vec3<f32> {
     let cosine = lighting.highlights.x;
     let sine = lighting.highlights.y;
@@ -794,7 +802,7 @@ fn sun_highlight(point: SurfacePoint, sun: vec3<f32>, n_l: f32) -> vec3<f32> {
     let n_h = max(dot(point.normal, half_vector), 0.0);
     let lobe = distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha)
         * disk_energy(point.alpha, sine);
-    return fresnel(point.f0, max(dot(point.view, half_vector), 0.0)) * (capped(lobe) * n_l);
+    return fresnel(point.f0, max(dot(point.view, half_vector), 0.0)) * (lobe * n_l);
 }
 
 // Lit, fogged and graded color of `point` with `local` light added.
@@ -1069,7 +1077,8 @@ fn shaped_light(point: SurfacePoint, light: Light, shaped: bool, kept: bool,
         let lobe = distribution(n_h, point.alpha)
             * visibility(point.n_v, n_l_highlight, point.alpha) * energy;
         highlight = fresnel(point.f0, max(dot(point.view, half_vector), 0.0))
-            * (capped(lobe) * n_l_highlight);
+            * (lobe * n_l_highlight);
+        highlight *= cap_share(highlight * (lighting.sun_color.w * falloff) * light.color);
     }
     return (point.diffuse_color * n_l + highlight * lighting.sun_color.w) * light.color
         * falloff;
