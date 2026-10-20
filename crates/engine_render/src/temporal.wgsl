@@ -47,7 +47,8 @@ struct Resolve {
 // surface around each pixel.
 @group(0) @binding(9) var depth_texture: texture_depth_2d;
 // Transparency's revealage: y is the share of each pixel particles leave
-// visible (1 where none drew).
+// visible (1 where none drew); one texel leaving everything visible in
+// frames drawing nothing transparent.
 @group(0) @binding(10) var revealed: texture_2d<f32>;
 
 // Below this motion (a 64th of a pixel) the history is read at the pixel
@@ -172,7 +173,9 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
         // the response.
         var weight = resolve.current_weight;
         if resolve.options.w > 0.0 {
-            let particles = 1.0 - textureLoad(revealed, pixel, 0).y;
+            // Frames drawing nothing transparent bind one texel for all.
+            let texel = min(pixel, vec2<i32>(textureDimensions(revealed)) - 1);
+            let particles = 1.0 - textureLoad(revealed, texel, 0).y;
             weight = max(weight, min(resolve.options.w * particles, 1.0));
         }
         color = mix(rgb(clamp(ycocg(past), low, high)), current, weight);
