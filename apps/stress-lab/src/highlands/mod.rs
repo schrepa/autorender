@@ -970,6 +970,10 @@ struct CaveOpened;
 /// The cave's half width and half height (meters).
 const CAVE_RADIUS: [f32; 2] = [6.0, 4.5];
 
+/// How far the cave's interior reaches past its walls (meters): the
+/// distance it darkens over toward its faces.
+const CAVE_MARGIN: f32 = 1.5;
+
 /// Terrain-local point of the hillside around `center`, from `inner + 150`
 /// to `inner + 600` meters out, whose slope across forty meters comes
 /// nearest thirty degrees.
@@ -1338,6 +1342,7 @@ fn open_cave(world: &mut World) {
     let Ok(mesh) = caves::cave(&points, CAVE_RADIUS, 79) else {
         return;
     };
+    let (low, high) = cave_interior(&mesh, &points, Vec3::new(uphill.x, 0.0, uphill.y));
     let Ok(mesh) = world.resource_mut::<AssetLibrary>().insert_mesh(mesh) else {
         return;
     };
@@ -1361,22 +1366,13 @@ fn open_cave(world: &mut World) {
         },
         LocalLight::point(Vec3::new(1.0, 0.62, 0.3), 40.0, 26.0).with_region(LightRegion::Interior),
     ));
-    // An interior over the tube from its first bend in, darkening over its
-    // blend from there: the mouth's walls and the blocks framing it stand
-    // in the open.
-    let (low, high) = points[1..].iter().fold(
-        (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
-        |(low, high), &point| (low.min(point), high.max(point)),
-    );
-    let reach = Vec3::new(CAVE_RADIUS[0], CAVE_RADIUS[1], CAVE_RADIUS[0]) * 1.2;
-    let (low, high) = (low - reach, high + reach);
     world.spawn((
         Transform {
             translation: (low + high) * 0.5,
             ..Transform::default()
         },
         ReflectionProbe::new((high - low) * 0.5)
-            .with_blend(6.0)
+            .with_blend(CAVE_MARGIN)
             .with_interior(Interior {
                 sky: 0.05,
                 sun: 0.16,
@@ -1406,6 +1402,28 @@ fn open_cave(world: &mut World) {
     block(-1.0, 10.0, -1.5, 6.0, 1);
     block(-1.0, -10.0, -1.5, 6.0, 2);
     world.insert_resource(CaveOpened);
+}
+
+/// The box of the cave `mesh`'s interior, around its walls from its first
+/// bend in (`points[1]`, `inward` from `points[0]`) and CAVE_MARGIN wider on
+/// every side, the distance it darkens over, so its shares of the sky and
+/// sun reach the walls whole; the mouth's walls and the blocks framing it
+/// stand in the open.
+fn cave_interior(mesh: &Mesh, points: &[Vec3], inward: Vec3) -> (Vec3, Vec3) {
+    let bend = (points[1] - points[0]).dot(inward);
+    let (low, high) = mesh
+        .vertices()
+        .iter()
+        .map(|vertex| points[0] + Vec3::from(vertex.position))
+        .filter(|&point| (point - points[0]).dot(inward) >= bend)
+        .fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(low, high), point| (low.min(point), high.max(point)),
+        );
+    (
+        low - Vec3::splat(CAVE_MARGIN),
+        high + Vec3::splat(CAVE_MARGIN),
+    )
 }
 
 /// Boulder, spruce and cliff shapes the placement layers choose from.
