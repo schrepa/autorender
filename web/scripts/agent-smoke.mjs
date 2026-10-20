@@ -233,9 +233,10 @@ try {
   assert.deepEqual(savedLook.bloom, look.result.value.bloom);
   assert.deepEqual(savedLook.shadows, look.result.value.shadows);
   assert.notDeepEqual(savedLook.atmosphere, nightLook.result.value.atmosphere);
-  // The saved environment omits the opt-in effects: they are off again.
+  // The saved environment omits the opt-in effects: they are off again,
+  // and highlights take their defaults, sized and uncapped.
   assert.deepEqual([savedLook.sun_shafts.intensity, savedLook.reflections.intensity], [0, 0]);
-  assert.deepEqual([savedLook.highlights.enabled, savedLook.highlights.capped, savedLook.windows.enabled], [false, false, false]);
+  assert.deepEqual([savedLook.highlights.enabled, savedLook.highlights.capped, savedLook.windows.enabled], [true, false, false]);
   assert.deepEqual([reloaded.result.rendering.sun_shafts.active, reloaded.result.rendering.reflections.active], [false, false]);
   const lamp = await cli("inspect", { entity: "agent-lamp", component: "LocalLight" });
   assert.equal(lamp.result.entity.components.LocalLight.intensity, 20);

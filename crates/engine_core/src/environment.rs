@@ -62,7 +62,7 @@ macro_rules! environment_sections {
             dither: Dither { opt_in: false, feature: Core },
             auto_exposure: AutoExposure { opt_in: true, feature: Core },
             local_lights: LocalLightSettings { opt_in: false, feature: Core },
-            highlights: Highlights { opt_in: true, feature: Core },
+            highlights: Highlights { opt_in: false, feature: Core },
             windows: Windows { opt_in: true, feature: Core },
             sun_shafts: SunShafts { opt_in: true, feature: Core },
             reflections: Reflections { opt_in: true, feature: Core },

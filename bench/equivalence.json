@@ -292,7 +292,7 @@
     {
       "name": "metro-highlights",
       "tier": "full",
-      "note": "Metro with highlights sized by their lights (the sun's disk, lamps' spheres and neon tubes, the cap), its environment section switched by the environment control.",
+      "note": "Metro with highlights sized by their lights (the sun's disk, lamps' spheres and neon tubes), on by default, and capped, its environment section switched by the environment control.",
       "scene": "metro",
       "environment": { "highlights": { "enabled": true, "capped": true } },
       "ticks": 30,
