@@ -147,10 +147,10 @@ const MOON_SEAS = array<vec4<f32>, 15>(
 // highlands), Copernicus, Kepler and Aristarchus, each's place, angular
 // radius (degrees) and brightness above the highlands.
 const MOON_CRATERS = array<vec4<f32>, 4>(
-    vec4<f32>(-11.2, -43.3, 2.5, 0.5),
-    vec4<f32>(-20.0, 9.6, 2.0, 0.3),
-    vec4<f32>(-38.0, 8.1, 1.6, 0.25),
-    vec4<f32>(-47.5, 23.7, 1.6, 0.45),
+    vec4<f32>(-11.2, -43.3, 3.0, 0.3),
+    vec4<f32>(-20.0, 9.6, 3.0, 0.15),
+    vec4<f32>(-38.0, 8.1, 2.5, 0.1),
+    vec4<f32>(-47.5, 23.7, 2.5, 0.15),
 );
 // The moon's glow in the air around it, as shares of its face's light: a
 // narrow aureole and a wide halo (the forward lobes they fall off by).
