@@ -257,6 +257,7 @@ impl Renderer {
                 sky: Eager::new(sky),
                 environment: Eager::new(environment),
                 probes: Eager::new(probes),
+                exposure: Lazy::default(),
             },
             graph: Default::default(),
             gpu_frame: false,

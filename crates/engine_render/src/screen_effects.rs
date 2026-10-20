@@ -30,6 +30,13 @@ pub(crate) fn shafts_run(environment: &Environment) -> bool {
         && environment.atmosphere.sanitized().fog_density > 0.0
 }
 
+/// Whether frames under `environment` draw into the screen effects'
+/// targets for what reads the scene there: an effect, or auto exposure's
+/// meter.
+pub(crate) fn targets_read(environment: &Environment) -> bool {
+    Effects::of(environment).any() || environment.auto_exposure.enabled
+}
+
 /// Builds [`Effects`], which effects a frame runs, from one entry per
 /// effect: its gate, its uniform field (`on` is 1 when it runs) and the
 /// resources the effects pass reads for it.

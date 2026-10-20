@@ -459,6 +459,7 @@ impl RenderFeature for SkyPass {
     ) -> engine_core::SkyStats {
         engine_core::SkyStats {
             tables: this.map_or(0, |sky| sky.built),
+            ..engine_core::SkyStats::default()
         }
     }
 }

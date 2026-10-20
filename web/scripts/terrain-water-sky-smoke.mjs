@@ -228,6 +228,22 @@ try {
     assert.equal((await command("inspect", { component: "Haze" })).result.value.enabled, true);
     assert.equal((await command("environment", { night_sky: { cirrus: 2 } }, false)).error.path, "$.night_sky.cirrus");
     assert.equal((await command("environment", { haze: { visibility: -1 } }, false)).error.path, "$.haze.visibility");
+    // Auto exposure is opt-in: frames meter their exposure, which at night
+    // rises above the authored one within its limit, where the physically
+    // based sky's own adaptation rose further; settings out of range are
+    // refused.
+    let exposure = (await command("environment", { auto_exposure: {} })).result.rendering.sky.exposure;
+    assert.equal(exposure.active, true, "frames meter their exposure");
+    // Its state reads back a few frames late.
+    for (let frame = 0; frame < 60 && exposure.metered === 0; frame++) {
+      exposure = (await command("render")).result.rendering.sky.exposure;
+    }
+    assert.ok(exposure.stops > 0 && exposure.stops <= 400, `the night's exposure within its limits: ${JSON.stringify(exposure)}`);
+    const exposed = await capture("sky-night-exposed");
+    const metered = await differentPixels(page, [starry, exposed]);
+    assert.ok(metered.changed > 1000, `the meter's exposure replaces the sky's: ${metered.changed} pixels`);
+    assert.equal((await command("environment", { auto_exposure: { strength: 2 } }, false)).error.path, "$.auto_exposure.strength");
+    await command("environment", { auto_exposure: { enabled: false } });
     await command("environment", { night_sky: { stars: 0, moon: 0, cirrus: 0 }, haze: { enabled: false } });
     const view = (await command("inspect", { component: "Sky" })).result.value;
     assert.equal(view.enabled, true);
@@ -236,7 +252,7 @@ try {
     const off = (await command("environment", { sky: { enabled: false }, time_of_day: { enabled: false } })).result.rendering;
     assert.equal(off.sky.tables, 0, "without the sky nothing builds");
     await command("camera", overview);
-    checks.push({ check: "sky", noon: noonColor.map(Math.round), dusk: duskColor.map(Math.round), replaced: replaced.changed, night_sky: nightPixels.changed });
+    checks.push({ check: "sky", noon: noonColor.map(Math.round), dusk: duskColor.map(Math.round), replaced: replaced.changed, night_sky: nightPixels.changed, exposure: exposure.stops, exposed: metered.changed });
   }
 
   await settle();

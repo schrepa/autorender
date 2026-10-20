@@ -85,6 +85,8 @@ resources! {
     Pyramid: Kept,
     /// Ambient occlusion, bloom, reflections and sun shafts.
     Effects: Frame,
+    /// Auto exposure's histogram and state: the exposure later frames show.
+    Exposure: Kept,
     /// Environment maps and reflection probes' cubes.
     Probes: Kept,
     /// The view's marched clouds.
@@ -335,6 +337,7 @@ passes! {
     cloud_composite: Feature(FeaturePass::CloudComposite),
     transparent: Feature(FeaturePass::Transparent),
     transparent_composite: Feature(FeaturePass::TransparentComposite),
+    exposure: Feature(FeaturePass::Exposure),
     effects: Feature(FeaturePass::Effects),
     composite: Feature(FeaturePass::Composite),
     temporal_resolve: Feature(FeaturePass::TemporalResolve),

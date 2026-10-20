@@ -399,6 +399,10 @@ pub(crate) const MAP: &[Rule] = &[
         ],
     },
     Rule {
+        paths: &["crates/engine_render/src/**/exposure*"],
+        checks: &[Smoke("terrain-water-sky"), Cells(&["metro-auto-exposure"])],
+    },
+    Rule {
         paths: &["crates/engine_render/src/**/transparent*"],
         checks: &[Cells(&["metro-no-refraction", "garden-refraction"])],
     },

@@ -1259,6 +1259,21 @@ tables! {
         ],
     };
 
+    /// Auto exposure (`exposure.wgsl`): its settings, the scene color and
+    /// depth it meters, its histogram, its state and the scene's lighting.
+    const EXPOSURE: Table = Table {
+        label: "engine/exposure-layout",
+        serves: [EXPOSURE_SHADER @ 0],
+        bindings: &[
+            uniform(0, "settings", C),
+            texture(1, "scene_color", Float, D2, C),
+            texture(2, "scene_depth", Depth, D2, C),
+            write(3, "bins", C),
+            write(4, "state", C),
+            uniform(5, "lighting", C),
+        ],
+    };
+
     /// The debug views' pass (`debug_view.wgsl`): the view, and what drew
     /// each pixel with the fragments there and terrain's tiles and
     /// materials.

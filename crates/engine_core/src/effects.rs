@@ -325,6 +325,71 @@ impl Dither {
 }
 
 settings! {
+    /// Auto exposure: the eye adapting to the light in view. Each frame a
+    /// meter reads the frame drawn (a grid of samples, the middle of the view
+    /// counting more than its corners and the sky less than the rest) and
+    /// averages their light in stops, leaving out shares of the darkest and
+    /// the brightest. Later frames' exposure, eased quickly when the view
+    /// grows brighter and slowly when it grows darker, as eyes do, rises over
+    /// the atmosphere's authored exposure by two parts. The time of day's:
+    /// under the physically based sky, its own adaptation to its light (up to
+    /// 4 stops), but at most `night` stops with the sun 14 degrees or more
+    /// below the horizon, easing there from 4 degrees below, so dusk dims as
+    /// before and night keeps dark. The view's: that average against what the
+    /// light falling on level ground gives an open view, beyond a stop either
+    /// way, so a cave by day brightens and a view of the bright sky darkens;
+    /// at night dark views stay dark. Opt-in.
+    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneAutoExposure")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct AutoExposure {
+        /// Whether exposure follows the meter.
+        pub enabled: bool = true => any,
+        /// How far exposure follows the view: 0 not at all, 1 brings its
+        /// average all the way to within a stop of what its light gives an
+        /// open view.
+        pub strength: f32 = 1.0 => range(0.0, 1.0),
+        /// Stops added to the exposure: positive brightens the view,
+        /// negative darkens it.
+        pub compensation: f32 = 0.0 => range(-8.0, 8.0),
+        /// The most stops the time of day raises exposure at night.
+        pub night: f32 = 1.0 => range(0.0, 16.0),
+        /// The most stops a dark view raises exposure, as a cave by day; none
+        /// at night, easing as the time of day's limit does.
+        pub brighten: f32 = 3.0 => range(0.0, 16.0),
+        /// The most stops a bright view lowers exposure.
+        pub darken: f32 = 1.0 => range(0.0, 16.0),
+        /// Seconds over which exposure goes most of the way (all but 1/e)
+        /// toward its new value after the view grows brighter.
+        pub to_brighter: f32 = 0.5 => range(0.0, 60.0),
+        /// The same after the view grows darker.
+        pub to_darker: f32 = 2.0 => range(0.0, 60.0),
+        /// The share of the darkest samples the meter's average leaves out.
+        pub skip_dark: f32 = 0.3 => range(0.0, 0.45),
+        /// The share of the brightest samples it leaves out (the sun, lamps).
+        pub skip_bright: f32 = 0.05 => range(0.0, 0.45),
+        /// How many times what the view's corners count the middle counts.
+        pub center: f32 = 2.0 => range(1.0, 16.0),
+        /// How much the sky counts against what stands under it.
+        pub sky: f32 = 0.5 => range(0.0, 1.0),
+    }
+}
+
+impl AutoExposure {
+    /// What a world without these settings reads as: the authored exposure.
+    pub fn off() -> Self {
+        Self {
+            enabled: false,
+            ..Self::default()
+        }
+    }
+}
+
+settings! {
     /// Sun shafts: sunlight scattered by the fog between shadow
     /// casters. Requires shadows; an intensity of 0 turns them
     /// off.

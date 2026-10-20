@@ -230,6 +230,37 @@
       ],
       "type": "object"
     },
+    "ExposureStats": {
+      "description": "Auto exposure's meter.",
+      "properties": {
+        "active": {
+          "description": "Whether this frame metered its exposure.",
+          "type": "boolean"
+        },
+        "metered": {
+          "description": "The meter's average of the light in view before exposure, in\nhundredths of a stop (log2 of linear light), read back alike.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "stops": {
+          "description": "The exposure frames show, in hundredths of a stop above the\natmosphere's authored exposure (below it when negative), read back a\nfew frames late; 0 in frames not metering.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "view": {
+          "description": "How much brighter the view is than the light falling on level\nground gives an open view, in hundredths of a stop, read back alike:\nnegative in a cave by day.",
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "active",
+        "stops",
+        "metered",
+        "view"
+      ],
+      "type": "object"
+    },
     "GroundCoverStats": {
       "description": "Ground cover.",
       "properties": {
@@ -670,8 +701,12 @@
       "type": "object"
     },
     "SkyStats": {
-      "description": "The physically based sky.",
+      "description": "The physically based sky, and the exposure frames show.",
       "properties": {
+        "exposure": {
+          "$ref": "#/$defs/ExposureStats",
+          "description": "Auto exposure's meter, which replaces the sky's own adaptation."
+        },
         "tables": {
           "description": "Tables this frame built: two when its air changed, one more when the\nsun, the camera's height or the air changed; none without the sky.",
           "format": "uint32",
@@ -680,7 +715,8 @@
         }
       },
       "required": [
-        "tables"
+        "tables",
+        "exposure"
       ],
       "type": "object"
     },
@@ -1222,7 +1258,7 @@
     },
     "sky": {
       "$ref": "#/$defs/SkyStats",
-      "description": "The physically based sky."
+      "description": "The physically based sky, and the exposure frames show."
     },
     "subpixel_culling": {
       "$ref": "#/$defs/CullingStats",

@@ -21,6 +21,7 @@ use crate::clouds::CloudPass;
 use crate::debug_view::DebugViewPass;
 use crate::decals::DecalPass;
 use crate::environment::Environment;
+use crate::exposure::ExposurePass;
 use crate::ground_cover::GroundCoverPass;
 use crate::lights::LightPass;
 use crate::materials::MaterialStore;
@@ -718,4 +719,7 @@ render_features! {
     /// sky's, the capture in progress and the grid surfaces read; the
     /// renderer's probe-captures pass draws the scene into their faces.
     probes: Eager<ProbePass> => [],
+    /// Auto exposure: a meter of the frame drawn and the exposure later
+    /// frames show, created with the first frame metering.
+    exposure: Lazy<ExposurePass> => [Exposure],
 }

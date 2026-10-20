@@ -20,6 +20,19 @@ fn decode_srgb(encoded: vec3<f32>) -> vec3<f32> {
     return select(high, low, encoded <= vec3<f32>(0.04045));
 }
 
+// Narkowicz's fit of the ACES filmic curve.
+fn filmic(x: vec3<f32>) -> vec3<f32> {
+    return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
+}
+
+// The exposed light the filmic curve shows as `shown` (0 to 1): `filmic`'s
+// inverse, its quadratic solved for x.
+fn unfilmic(shown: f32) -> f32 {
+    let a = 2.51 - 2.43 * shown;
+    let b = 0.03 - 0.59 * shown;
+    return (sqrt(b * b + 0.56 * a * shown) - b) / (2.0 * a);
+}
+
 // Three independent 32-bit hashes of `seed` (Jarzynski and Olano's pcg3d,
 // "Hash Functions for GPU Rendering", JCGT 2020).
 fn dither_hash(seed: vec3<u32>) -> vec3<u32> {

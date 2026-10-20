@@ -780,6 +780,14 @@
       "stats": false
     },
     {
+      "inspector": "AutoExposure",
+      "section": "auto_exposure",
+      "smokes": [
+        "terrain-water-sky"
+      ],
+      "stats": false
+    },
+    {
       "inspector": "LocalLightSettings",
       "section": "local_lights",
       "smokes": [

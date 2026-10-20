@@ -300,7 +300,14 @@ impl Renderer {
                 snapshot,
             ),
             world_streaming: snapshot.cells,
-            sky: crate::sky::SkyPass::stats(Some(self.features.sky.get()), None, snapshot),
+            sky: engine_core::SkyStats {
+                exposure: crate::exposure::ExposurePass::stats(
+                    self.features.exposure.get(),
+                    features.frames.exposure.as_ref().map(Ready::frame),
+                    snapshot,
+                ),
+                ..crate::sky::SkyPass::stats(Some(self.features.sky.get()), None, snapshot)
+            },
             occlusion_culling: CullingStats {
                 active: gpu_mode && self.gpu_presentation.occlusion(),
                 instances: if gpu_mode && snapshot.environment.occlusion_culling.enabled {
@@ -410,7 +417,12 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.gpu_post_bytes",
-            self.features.post.get().map_or(0, PostPass::capacity_bytes) as f64,
+            (self.features.post.get().map_or(0, PostPass::capacity_bytes)
+                + self
+                    .features
+                    .exposure
+                    .get()
+                    .map_or(0, crate::exposure::ExposurePass::capacity_bytes)) as f64,
         );
         engine_profile::counter(
             "memory.gpu_environment_bytes",

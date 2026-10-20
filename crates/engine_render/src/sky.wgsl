@@ -27,6 +27,13 @@ const MOON_NIGHT: vec3<f32> = vec3<f32>(0.006, 0.008, 0.014);
 // Kilometers above the ground scattering starts, avoiding the sphere's
 // own surface.
 const RADIUS_OFFSET: f32 = 0.01;
+// The light falling at noon exposure adapts toward, a multiple of the
+// sun's intensity, and the share of the adaptation setting that is the
+// power of the light's ratio exposure rises by.
+const NOON_LIGHT: f32 = 1.1;
+const ADAPTATION_POWER: f32 = 0.75;
+// The most exposure rises by, as a multiple.
+const ADAPTATION_MOST: f32 = 16.0;
 
 struct Medium {
     scattering: vec3<f32>,
@@ -285,8 +292,9 @@ fn derive_light() {
     // part of the way, by at most 16 times.
     let falling = luminance(sun_color) * max(sun.y, 0.0)
         + SKY_PI * luminance(0.5 * (zenith + horizon));
-    let noon = air.ozone.w * 1.1;
-    let adapted = clamp(pow(noon / max(falling, 1e-5), air.radii.z * 0.75), 1.0, 16.0);
+    let noon = air.ozone.w * NOON_LIGHT;
+    let adapted = clamp(pow(noon / max(falling, 1e-5), air.radii.z * ADAPTATION_POWER), 1.0,
+        ADAPTATION_MOST);
     // Exposure eases toward its target over about a second,
     // from where it stood last frame, as eyes adapt.
     let wanted = air.sun.w * adapted;

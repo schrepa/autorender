@@ -11,7 +11,7 @@
 use crate::bindings::{
     CAMERA, CAMERA_TERRAIN, CLOUD_COMPOSITE, CLOUD_MARCH, CLOUD_NOISE, CLOUD_SKY, CLOUD_VIEW,
     COVER_DRAW, COVER_GROW, DEBUG_VIEW, DECALS, DEFORMATION, EMPTY, ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER,
-    ENVIRONMENT_SKY, IMPOSTOR_BAKE, IMPOSTOR_DRAW, LIGHT_BINNING, LIGHT_SHADING, MATERIAL, MIPMAPS,
+    ENVIRONMENT_SKY, EXPOSURE, IMPOSTOR_BAKE, IMPOSTOR_DRAW, LIGHT_BINNING, LIGHT_SHADING, MATERIAL, MIPMAPS,
     OCCUPANCY, PARTICLES, POST, PRESENTATION_COMPACT, PRESENTATION_COMPOSE, PRESENTATION_CULL,
     PRESENTATION_FADES, PRESENTATION_LEVEL, PRESENTATION_SKIN_BOUNDS, PRESENTATION_TESTS,
     PYRAMID_DOWN, PYRAMID_FIRST, RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES,
@@ -147,6 +147,8 @@ pipeline_layouts! {
     TRANSPARENT_COMPOSITE_PIPELINES = [TRANSPARENT_COMPOSITE];
     /// The debug views' pass, built only while a debug view shows.
     DEBUG_VIEW_PIPELINES = [DEBUG_VIEW];
+    /// Auto exposure's meter and adaptation, built only while it is on.
+    EXPOSURE_PIPELINES = [EXPOSURE];
     /// Compute and screen passes of one group each.
     LIGHT_BINNING_PIPELINES = [LIGHT_BINNING];
     MIPMAP_PIPELINES = [MIPMAPS];
@@ -191,5 +193,6 @@ pipeline_layouts! {
 /// Distinct pipeline layouts the renderer may build: one more costs every
 /// Firefox start about 150 ms, so raising it is a decision, not a side
 /// effect. Water's simulation builds its layout only once water is
-/// simulated; the debug views' layout counts though no start builds it.
-pub const LAYOUT_BUDGET: usize = 73;
+/// simulated; the debug views' and auto exposure's layouts count though no
+/// start builds them unless they are on.
+pub const LAYOUT_BUDGET: usize = 74;

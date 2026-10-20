@@ -612,6 +612,16 @@
       "captures": ["exact", "gpu:0.5"]
     },
     {
+      "name": "metro-auto-exposure",
+      "tier": "full",
+      "note": "Metro with auto exposure, its meter setting the exposure of later frames, switched on by the environment control: exact frames take what the meter asks at once, ordinary ones ease toward it.",
+      "scene": "metro",
+      "environment": { "auto_exposure": {} },
+      "ticks": 30,
+      "views": ["overview"],
+      "captures": ["exact", "display:60"]
+    },
+    {
       "name": "metro-haze",
       "tier": "full",
       "note": "Metro with haze, the air taking the sky's light, switched on by the environment control.",

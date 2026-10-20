@@ -1169,6 +1169,50 @@
       "direction": null
     },
     {
+      "name": "sky.exposure.active",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "boolean",
+      "direction": null
+    },
+    {
+      "name": "sky.exposure.metered",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value, read back a few frames late: the meter's average of the light in view before exposure, log2",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "hundredths of a stop",
+      "direction": null
+    },
+    {
+      "name": "sky.exposure.stops",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value, read back a few frames late: the exposure frames show over the authored one, log2",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "hundredths of a stop",
+      "direction": null
+    },
+    {
+      "name": "sky.exposure.view",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value, read back a few frames late: how much brighter the view is than the light falling on level ground gives an open view, log2",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "hundredths of a stop",
+      "direction": null
+    },
+    {
       "name": "sky.tables",
       "kind": "work",
       "rule": "shown",

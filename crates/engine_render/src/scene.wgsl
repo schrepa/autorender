@@ -520,11 +520,6 @@ fn atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32 {
     return fogged + (1.0 - fogged) * (1.0 - exp(-depth));
 }
 
-// Narkowicz's fit of the ACES filmic curve.
-fn filmic(x: vec3<f32>) -> vec3<f32> {
-    return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
-}
-
 // The grade of every shaded color: exposure; the
 // filmic curve, half per channel and half on the brightest channel, which
 // keeps the hue and saturation of bright colors; contrast as an S-curve in a

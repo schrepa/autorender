@@ -50,9 +50,9 @@ mod games {
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaMode, AmbientOcclusion, AnimatedProperty,
         AnimationChannel, AnimationClip, AnimationPlayer, AnimationPlugin, AnimationSystems, App,
-        AssetBudget, AssetError, AssetLibrary, Atmosphere, Bloom, Camera, ClipHandle, Clouds,
-        ContactShadows, Cover, Cube, DebugView, DebugViewMode, Decal, DecalBlend, DecalSettings,
-        Deformation, DeformationPlugin, Deformer, Dither, Engine, EngineConfig,
+        AssetBudget, AssetError, AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, ClipHandle,
+        Clouds, ContactShadows, Cover, Cube, DebugView, DebugViewMode, Decal, DecalBlend,
+        DecalSettings, Deformation, DeformationPlugin, Deformer, Dither, Engine, EngineConfig,
         EngineEntityCommands, Environment, Feature, Filter, FixedPostSimulation,
         FixedPreSimulation, FixedSimulation, FixedSimulationSystems, FixedTickEnd,
         FixedTickEndSystems, FixedTime, Floating, Foliage, FrameReport, FrameTime, GlobalTransform,
@@ -136,9 +136,10 @@ pub mod render {
 pub mod stats {
     pub use engine_core::{
         Applied, CellStats, CloudStats, CullingStats, DeformationStats, DetailStats, Drawn,
-        ErosionStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats, Names,
-        NavStats, OccupancyStats, OceanStats, PathStats, PhysicsStats, ProbeStats, RenderStats,
-        ShadowStats, SkyStats, TerrainRenderStats, TerrainStats, VirtualGeometryStats, WaterStats,
+        ErosionStats, ExposureStats, FrameStats, GroundCoverStats, HydrologyStats, JobStats,
+        LightStats, Names, NavStats, OccupancyStats, OceanStats, PathStats, PhysicsStats,
+        ProbeStats, RenderStats, ShadowStats, SkyStats, TerrainRenderStats, TerrainStats,
+        VirtualGeometryStats, WaterStats,
     };
 }
 

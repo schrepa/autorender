@@ -107,6 +107,12 @@ impl CameraBindings {
         &self.lighting_buffer
     }
 
+    /// Writes the next lighting whatever was written before, as something
+    /// copied over it.
+    pub(super) fn forget_lighting(&mut self) {
+        self.lighting = None;
+    }
+
     /// Writes `lighting` unless already written; returns the bytes written.
     pub(super) fn write_lighting(&mut self, queue: &wgpu::Queue, lighting: LightingUniform) -> u64 {
         if self.lighting == Some(lighting) {

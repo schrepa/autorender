@@ -42,6 +42,7 @@ mod virtual_streaming;
 
 mod buffers;
 mod environment;
+mod exposure;
 mod gpu_presentation;
 mod ground_cover;
 mod materials;

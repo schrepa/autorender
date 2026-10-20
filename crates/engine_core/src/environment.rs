@@ -60,6 +60,7 @@ macro_rules! environment_sections {
             ambient_occlusion: AmbientOcclusion { opt_in: false, feature: Core },
             bloom: Bloom { opt_in: false, feature: Core },
             dither: Dither { opt_in: false, feature: Core },
+            auto_exposure: AutoExposure { opt_in: true, feature: Core },
             local_lights: LocalLightSettings { opt_in: false, feature: Core },
             highlights: Highlights { opt_in: true, feature: Core },
             windows: Windows { opt_in: true, feature: Core },

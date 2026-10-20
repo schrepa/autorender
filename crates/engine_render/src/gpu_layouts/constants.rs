@@ -253,6 +253,23 @@ gpu_consts! {
     pub(crate) const LIGHT_TEXELS: u32 = 384 => ["LIGHT_TEXELS" in CLOUDS_SHADER];
     pub(crate) const LIGHT_HEIGHTS: u32 = 16 => ["LIGHT_HEIGHTS" in CLOUDS_SHADER];
 
+    // crate::sky
+    /// The light falling at noon the physically based sky's exposure adapts
+    /// toward, a multiple of the sun's intensity, and the share of its
+    /// adaptation setting that is the power of the light's ratio exposure
+    /// rises by, and the most it rises by, as a multiple (auto exposure's
+    /// time of day follows them).
+    pub(crate) const NOON_LIGHT: f32 = 1.1 => ["NOON_LIGHT" in SKY_SHADER];
+    pub(crate) const ADAPTATION_POWER: f32 = 0.75 => ["ADAPTATION_POWER" in SKY_SHADER];
+    pub(crate) const ADAPTATION_MOST: f32 = 16.0 => ["ADAPTATION_MOST" in SKY_SHADER];
+
+    // crate::exposure
+    /// Bins of auto exposure's histogram of light in stops, and the samples
+    /// its meter reads across and down the view, in workgroups of a side.
+    pub(crate) const EXPOSURE_BINS: u32 = 128 => ["EXPOSURE_BINS" in EXPOSURE_SHADER];
+    pub(crate) const EXPOSURE_GRID: u32 = 128 => ["EXPOSURE_GRID" in EXPOSURE_SHADER];
+    pub(crate) const EXPOSURE_GROUP: u32 = 16 => ["@meter_exposure" in EXPOSURE_SHADER];
+
     // crate::gpu_data::Variant: the bits of a material's variant passes
     // drawn rarely read from its uniform.
     pub(crate) const VARIANT_MAPS: u16 = 1 => ["VARIANT_MAPS" in SHADER];

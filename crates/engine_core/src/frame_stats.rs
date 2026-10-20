@@ -183,7 +183,7 @@ pub struct RenderStats {
     pub clouds: CloudStats,
     /// World streaming.
     pub world_streaming: crate::CellStats,
-    /// The physically based sky.
+    /// The physically based sky, and the exposure frames show.
     pub sky: SkyStats,
     /// Occlusion culling.
     pub occlusion_culling: CullingStats,
@@ -517,11 +517,32 @@ pub struct CloudStats {
     pub view_blocks: u32,
 }
 
-/// The physically based sky.
+/// The physically based sky, and the exposure frames show.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SkyStats {
     /// Tables this frame built: two when its air changed, one more when the
     /// sun, the camera's height or the air changed; none without the sky.
     pub tables: u32,
+    /// Auto exposure's meter, which replaces the sky's own adaptation.
+    pub exposure: ExposureStats,
+}
+
+/// Auto exposure's meter.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ExposureStats {
+    /// Whether this frame metered its exposure.
+    pub active: bool,
+    /// The exposure frames show, in hundredths of a stop above the
+    /// atmosphere's authored exposure (below it when negative), read back a
+    /// few frames late; 0 in frames not metering.
+    pub stops: i32,
+    /// The meter's average of the light in view before exposure, in
+    /// hundredths of a stop (log2 of linear light), read back alike.
+    pub metered: i32,
+    /// How much brighter the view is than the light falling on level
+    /// ground gives an open view, in hundredths of a stop, read back alike:
+    /// negative in a cave by day.
+    pub view: i32,
 }

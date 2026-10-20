@@ -183,6 +183,7 @@ layout_modules! {
     debug_view,
     deformation,
     decals,
+    exposure,
     ground_cover,
     impostors,
     lights,

@@ -5,6 +5,7 @@
 //! submits it, and `frame_stats` reports it.
 
 use super::*;
+use crate::exposure::{ExposureFrame, ExposurePass};
 use crate::gpu_presentation::{CullingView, GpuPrepared, PresentationInputs, RecordsKey, Staging};
 use crate::ground_cover::CoverFrame;
 use crate::render_graph::{self, Effects, FeaturePass, FrameShape, Node, Pass, Phase, Resource};
@@ -219,6 +220,36 @@ impl Renderer {
         self.render_inner(frame, false)
     }
 
+    /// Auto exposure's meter of frames drawing into the screen effects'
+    /// targets (`drawn`), whose exposure the prelude's `inputs` copy over the
+    /// lighting's, after the physically based sky's.
+    fn prepare_exposure(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        drawn: bool,
+        inputs: &mut Option<wgpu::CommandEncoder>,
+    ) -> Option<Ready<ExposureFrame>> {
+        let needs = drawn && snapshot.environment.auto_exposure.enabled;
+        let (device, queue) = (&self.device, &self.queue);
+        let (post, depth) = (self.features.post.get(), &self.depth.view);
+        let lighting = self.camera.lighting_buffer();
+        self.features.exposure.prepare(
+            (device, needs),
+            || ExposurePass::new(device),
+            |exposure| {
+                let targets = (post?.scene(), depth);
+                let frame = exposure.prepare((device, queue), snapshot, targets, lighting);
+                let encoder = inputs.get_or_insert_with(|| {
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("engine/exposure-copy"),
+                    })
+                });
+                exposure.show(encoder, lighting);
+                Some(frame)
+            },
+        )
+    }
+
     /// Where the frame's main passes draw: the debug targets of frames
     /// showing a debug view, the temporal targets of temporal frames, the
     /// screen effects' targets of frames with effects, otherwise the canvas.
@@ -297,6 +328,17 @@ impl Renderer {
         let assets = self.upload_assets(snapshot, kind, &mut prelude.mips);
         let packing = self.pack_instances(frame, kind);
         let profile_writes = engine_profile::span("render", "queue_writes");
+        // With auto exposure off again, the lighting takes its authored
+        // exposure back over the one the meter copied.
+        if !snapshot.environment.auto_exposure.enabled
+            && self
+                .features
+                .exposure
+                .get_mut()
+                .is_some_and(ExposurePass::stop_showing)
+        {
+            self.camera.forget_lighting();
+        }
         let writes = self.write_frame_data(frame, kind, &packing, &mut prelude.poses);
         // Profiling captures time this frame's passes from here.
         self.profiler.begin_frame(&self.device);
@@ -307,6 +349,8 @@ impl Renderer {
             (&packing.temporal_frame, &writes.lighting),
             &mut prelude,
         );
+        let drawn = features.frames.post.is_some();
+        features.frames.exposure = self.prepare_exposure(snapshot, drawn, &mut prelude.inputs);
         drop(profile_writes);
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let view = surface

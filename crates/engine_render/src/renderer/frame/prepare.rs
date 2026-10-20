@@ -1154,9 +1154,9 @@ impl Renderer {
         snapshot: &RenderSnapshot,
         temporal_frame: &Option<TemporalFrame>,
     ) -> PostPrep {
-        // Screen effects; temporal frames apply them in their
-        // resolve, whose history averages the occlusion noise.
-        let effects = Effects::of(&snapshot.environment).any();
+        // Screen effects, which temporal frames apply in their resolve (whose
+        // history averages the occlusion noise), and auto exposure's meter.
+        let effects = crate::screen_effects::targets_read(&snapshot.environment);
         // Glass refracts the opaque color of the scene target:
         // frames drawing it render into the target.
         let refraction = snapshot.environment.refraction.enabled()

@@ -179,6 +179,12 @@ shaders! {
         "effects.wgsl",
         "post.wgsl",
     ];
+    /// Auto exposure's meter and adaptation.
+    EXPOSURE_SHADER = [
+        "color.wgsl",
+        "sky_common.wgsl",
+        "exposure.wgsl",
+    ];
     /// The debug views' pass, showing the debug targets.
     DEBUG_VIEW_SHADER = [
         "fullscreen.wgsl",
@@ -397,6 +403,9 @@ entry_points! {
             fs_occlusion, fs_effects_filter, fs_reflections, fs_reflections_filter, fs_bloom_first,
             fs_bloom_down, fs_levels_first, fs_levels_down, fs_bloom_up, fs_composite
         ],
+    }
+    exposure = EXPOSURE_SHADER {
+        compute: [meter_exposure, adapt_exposure],
     }
     debug_view = DEBUG_VIEW_SHADER {
         vertex: [vs_fullscreen],

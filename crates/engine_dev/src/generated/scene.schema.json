@@ -1774,6 +1774,106 @@
       },
       "additionalProperties": false
     },
+    "SceneAutoExposure": {
+      "description": "Auto exposure: the eye adapting to the light in view. Each frame a\nmeter reads the frame drawn (a grid of samples, the middle of the view\ncounting more than its corners and the sky less than the rest) and\naverages their light in stops, leaving out shares of the darkest and\nthe brightest. Later frames' exposure, eased quickly when the view\ngrows brighter and slowly when it grows darker, as eyes do, rises over\nthe atmosphere's authored exposure by two parts. The time of day's:\nunder the physically based sky, its own adaptation to its light (up to\n4 stops), but at most `night` stops with the sun 14 degrees or more\nbelow the horizon, easing there from 4 degrees below, so dusk dims as\nbefore and night keeps dark. The view's: that average against what the\nlight falling on level ground gives an open view, beyond a stop either\nway, so a cave by day brightens and a view of the bright sky darkens;\nat night dark views stay dark. Opt-in.",
+      "type": "object",
+      "properties": {
+        "brighten": {
+          "description": "The most stops a dark view raises exposure, as a cave by day; none\nat night, easing as the time of day's limit does.",
+          "type": "number",
+          "format": "float",
+          "default": 3.0,
+          "maximum": 16.0,
+          "minimum": 0.0
+        },
+        "center": {
+          "description": "How many times what the view's corners count the middle counts.",
+          "type": "number",
+          "format": "float",
+          "default": 2.0,
+          "maximum": 16.0,
+          "minimum": 1.0
+        },
+        "compensation": {
+          "description": "Stops added to the exposure: positive brightens the view,\nnegative darkens it.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 8.0,
+          "minimum": -8.0
+        },
+        "darken": {
+          "description": "The most stops a bright view lowers exposure.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 16.0,
+          "minimum": 0.0
+        },
+        "enabled": {
+          "description": "Whether exposure follows the meter.",
+          "type": "boolean",
+          "default": true
+        },
+        "night": {
+          "description": "The most stops the time of day raises exposure at night.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 16.0,
+          "minimum": 0.0
+        },
+        "skip_bright": {
+          "description": "The share of the brightest samples it leaves out (the sun, lamps).",
+          "type": "number",
+          "format": "float",
+          "default": 0.05000000074505806,
+          "maximum": 0.45,
+          "minimum": 0.0
+        },
+        "skip_dark": {
+          "description": "The share of the darkest samples the meter's average leaves out.",
+          "type": "number",
+          "format": "float",
+          "default": 0.30000001192092896,
+          "maximum": 0.45,
+          "minimum": 0.0
+        },
+        "sky": {
+          "description": "How much the sky counts against what stands under it.",
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "strength": {
+          "description": "How far exposure follows the view: 0 not at all, 1 brings its\naverage all the way to within a stop of what its light gives an\nopen view.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "to_brighter": {
+          "description": "Seconds over which exposure goes most of the way (all but 1/e)\ntoward its new value after the view grows brighter.",
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "maximum": 60.0,
+          "minimum": 0.0
+        },
+        "to_darker": {
+          "description": "The same after the view grows darker.",
+          "type": "number",
+          "format": "float",
+          "default": 2.0,
+          "maximum": 60.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneBloom": {
       "description": "Bloom; an intensity of 0 turns it off.",
       "type": "object",
@@ -2515,6 +2615,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneAtmosphere"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "auto_exposure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAutoExposure"
             },
             {
               "type": "null"

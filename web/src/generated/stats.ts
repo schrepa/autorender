@@ -139,7 +139,7 @@ export interface FrameStats {
   shadows: ShadowStats;
   /** Milliseconds the frame spent in fixed and variable simulation. */
   simulation_ms: number;
-  /** The physically based sky. */
+  /** The physically based sky, and the exposure frames show. */
   sky: SkyStats;
   /** Sub-pixel culling. */
   subpixel_culling: CullingStats;
@@ -299,6 +299,29 @@ export interface Drawn {
   dropped: number;
   /** Items breaking their rules, which no frame draws. */
   invalid: number;
+}
+
+/** Auto exposure's meter. */
+export interface ExposureStats {
+  /** Whether this frame metered its exposure. */
+  active: boolean;
+  /**
+   * The meter's average of the light in view before exposure, in
+   * hundredths of a stop (log2 of linear light), read back alike.
+   */
+  metered: number;
+  /**
+   * The exposure frames show, in hundredths of a stop above the
+   * atmosphere's authored exposure (below it when negative), read back a
+   * few frames late; 0 in frames not metering.
+   */
+  stops: number;
+  /**
+   * How much brighter the view is than the light falling on level
+   * ground gives an open view, in hundredths of a stop, read back alike:
+   * negative in a cave by day.
+   */
+  view: number;
 }
 
 /** Ground cover. */
@@ -477,8 +500,10 @@ export interface ShadowStats {
   near_casters: number | null;
 }
 
-/** The physically based sky. */
+/** The physically based sky, and the exposure frames show. */
 export interface SkyStats {
+  /** Auto exposure's meter, which replaces the sky's own adaptation. */
+  exposure: ExposureStats;
   /**
    * Tables this frame built: two when its air changed, one more when the
    * sun, the camera's height or the air changed; none without the sky.
