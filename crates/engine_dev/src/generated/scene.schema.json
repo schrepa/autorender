@@ -2419,7 +2419,7 @@
         "enabled": {
           "description": "Whether 8-bit color writes dither.",
           "type": "boolean",
-          "default": false
+          "default": true
         }
       },
       "additionalProperties": false

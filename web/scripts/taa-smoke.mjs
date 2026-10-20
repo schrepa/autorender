@@ -181,16 +181,18 @@ try {
   const [again] = await run("taa-again", 30);
   assert.equal((await observed()).temporal_antialiasing.active, true, "turned on again, ordinary frames resolve temporally");
 
-  // Dithered 8-bit writes, off by default and turned on by the paused
-  // environment control: how much they change converged frames, and how
-  // much a still view then flickers, measured.
+  // Dithered 8-bit writes, on by default and turned off and on again by
+  // the paused environment control: how much they change converged frames,
+  // and how much a still view flickers with them, measured.
   const inspectDither = async () => (await command("inspect", { component: "Dither" })).result.value;
-  assert.deepEqual(await inspectDither(), { enabled: false }, "dithering is off by default");
-  const dither = await command("environment", { dither: { enabled: true } });
-  assert.deepEqual(dither.result.environment_changed, ["dither"]);
-  assert.deepEqual(await inspectDither(), { enabled: true });
+  assert.deepEqual(await inspectDither(), { enabled: true }, "dithering is on by default");
+  const undithered = await command("environment", { dither: { enabled: false } });
+  assert.deepEqual(undithered.result.environment_changed, ["dither"]);
+  assert.deepEqual(await inspectDither(), { enabled: false });
+  const [unditheredFirst] = await run("taa-undithered", 60);
+  await command("environment", { dither: { enabled: true } });
   const [ditherFirst, ditherSecond] = await run("taa-dither", 60);
-  results.dither = await compare([again, ditherFirst]);
+  results.dither = await compare([unditheredFirst, ditherFirst]);
   results.dither_stable = await compare([ditherFirst, ditherSecond]);
   measurements.push({
     name: "dither difference", value: results.dither.mean_difference, unit: "levels",
@@ -199,7 +201,6 @@ try {
     name: "dithered still view flicker", value: results.dither_stable.changed[24] / results.dither_stable.total * 100, unit: "%",
     note: "pixels whose largest channel differs by more than 24 levels between two converged still frames with dithering, 300 ms apart",
   });
-  await command("environment", { dither: { enabled: false } });
 
   // The sturdier resolve (the nearest surface's motion, the rounded box and
   // particles' response), set by the paused environment control: how much

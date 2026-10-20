@@ -257,11 +257,11 @@
       }
     },
     {
-      "name": "metro-dither",
+      "name": "metro-dither-off",
       "tier": "full",
-      "note": "Metro with dithered 8-bit writes, its environment section switched by the environment control.",
+      "note": "Metro without dithered 8-bit writes, on by default, its environment section switched by the environment control.",
       "scene": "metro",
-      "environment": { "dither": { "enabled": true } },
+      "environment": { "dither": { "enabled": false } },
       "ticks": 30,
       "views": ["overview"],
       "captures": ["exact", "gpu:0.5"]

@@ -313,7 +313,7 @@ settings! {
     #[serde(default, deny_unknown_fields)]
     pub struct Dither {
         /// Whether 8-bit color writes dither.
-        pub enabled: bool = false => any,
+        pub enabled: bool = true => any,
     }
 }
 

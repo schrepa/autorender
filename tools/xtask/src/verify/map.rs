@@ -348,7 +348,7 @@ pub(crate) const MAP: &[Rule] = &[
             Cells(&[
                 "metro-ambient-occlusion-off",
                 "metro-bloom-off",
-                "metro-dither",
+                "metro-dither-off",
                 "metro-no-shafts",
                 "metro-no-reflections",
                 "metro-no-refraction",
