@@ -309,7 +309,8 @@ fn upsampled_shafts(texel: vec2<i32>) -> f32 {
 // One half-resolution pass for the screen effects that need smoothing: the
 // filtered occlusion (x; 1 without occlusion), the sun shafts brought up
 // from quarter resolution (y; 0 without shafts) and the filtered contact
-// shadows (z; 1 without them).
+// shadows (z; 1 without them); and the inverse distance of the surface the
+// texel stands for (w; 0 for sky), which full resolution compares.
 @fragment
 fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let texel = vec2<i32>(position.xy);
@@ -321,7 +322,9 @@ fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec
     if post.shafts.w != 0.0 {
         shafts_light = upsampled_shafts(texel);
     }
-    return vec4<f32>(visible.x, shafts_light, visible.y, 0.0);
+    let pixel = min(texel * 2, vec2<i32>(post.size.xy) - 1);
+    return vec4<f32>(visible.x, shafts_light, visible.y,
+        inverse_distance_at(depth_texture, pixel, post));
 }
 
 // Reflection rays walk at most this many cells of the depth pyramid.
@@ -689,7 +692,7 @@ fn fs_bloom_up(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32>
 fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let texel = textureLoad(scene, vec2<i32>(position.xy), 0);
     let uv = position.xy * post.size.zw;
-    let effects = screen_effects(occlusion, linear, uv, post);
+    let effects = screen_effects(occlusion, depth_texture, vec2<i32>(position.xy), post);
     let shaded = texel.rgb * effect_shade(texel.a, effects, post);
     let color = effect_light(shaded, effects, reflections, bloom, linear, uv, post);
     // The UNORM canvas stores encoded color, dithered when 8-bit writes are.

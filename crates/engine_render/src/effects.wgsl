@@ -45,20 +45,60 @@ fn shaft_pixel(texel: vec2<i32>) -> vec2<i32> {
     return texel * 4 + vec2<i32>(1);
 }
 
+// How near a half-resolution texel's surface must lie to a pixel's, as a
+// share of the pixel's inverse distance from the eye, for the pixel to
+// take the texel's effects.
+const EFFECTS_PLANE: f32 = 0.1;
+
+// The inverse distance from the eye of what `depth` (reversed: 0 where
+// only sky is) shows at `pixel`; 0 for sky, which lies infinitely far.
+fn inverse_distance_at(depth: texture_depth_2d, pixel: vec2<i32>, settings: Post) -> f32 {
+    let value = textureLoad(depth, pixel, 0);
+    if value <= 0.0 {
+        return 0.0;
+    }
+    let uv = (vec2<f32>(pixel) + 0.5) * settings.size.zw;
+    let point = settings.inverse_view_projection
+        * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, value, 1.0);
+    return 1.0 / max(length(point.xyz / point.w - settings.eye.xyz), 1.0e-4);
+}
+
 // The ambient occlusion's visibility (x), the sun shafts' light (y) and the
-// contact shadows' visibility (z) at `uv`, which the half-resolution filter
-// of post.wgsl writes together: four bilinear taps around the pixel smooth
-// them over three texels.
-fn screen_effects(effects: texture_2d<f32>, linear: sampler, uv: vec2<f32>,
+// contact shadows' visibility (z) at full-resolution `pixel`, which the
+// half-resolution filter of post.wgsl writes together with the inverse
+// distance of each texel's surface (w): the four texels around the pixel,
+// weighted bilinearly and by how near their surface lies to the pixel's
+// own (from `depth`), so no effect darkens or lights across a silhouette;
+// where none lies near, the bilinear weights alone.
+fn screen_effects(effects: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2<i32>,
         settings: Post) -> vec3<f32> {
     if settings.occlusion.w == 0.0 && settings.shafts.w == 0.0 && settings.contact.w == 0.0 {
         return vec3<f32>(1.0, 0.0, 1.0);
     }
-    let t = settings.bloom.zw * 0.5;
-    return (textureSampleLevel(effects, linear, uv - t, 0.0).rgb
-        + textureSampleLevel(effects, linear, uv + vec2<f32>(t.x, -t.y), 0.0).rgb
-        + textureSampleLevel(effects, linear, uv + vec2<f32>(-t.x, t.y), 0.0).rgb
-        + textureSampleLevel(effects, linear, uv + t, 0.0).rgb) * 0.25;
+    let size = textureDimensions(effects);
+    let position = (vec2<f32>(pixel) + 0.5) * vec2<f32>(size) / settings.size.xy - 0.5;
+    let first = vec2<i32>(floor(position));
+    let f = position - floor(position);
+    let last = vec2<i32>(size) - 1;
+    let own = inverse_distance_at(depth, pixel, settings);
+    let tolerance = max(EFFECTS_PLANE * own, 1.0e-7);
+    var near = vec3<f32>(0.0);
+    var near_total = 0.0;
+    var plain = vec3<f32>(0.0);
+    for (var y = 0; y < 2; y++) {
+        for (var x = 0; x < 2; x++) {
+            let texel = textureLoad(effects, clamp(first + vec2<i32>(x, y), vec2<i32>(0), last), 0);
+            let bilinear = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
+            let weight = bilinear * saturate(1.25 - abs(texel.w - own) / tolerance);
+            near += texel.rgb * weight;
+            near_total += weight;
+            plain += texel.rgb * bilinear;
+        }
+    }
+    if near_total < 1.0e-3 {
+        return plain;
+    }
+    return near / near_total;
 }
 
 // The factor darkening a pixel whose light has an ambient share of
