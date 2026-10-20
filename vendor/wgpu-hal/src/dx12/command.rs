@@ -951,6 +951,36 @@ impl crate::CommandEncoder for super::CommandEncoder {
         });
 
         let list = self.list.as_ref().unwrap();
+        // A pass drawing into a layer of a texture array waits for earlier
+        // passes' writes to that texture: on some drivers (an RTX's, D3D12) a
+        // pass drawing one layer right after a pass drew another lost part of
+        // its clear and draws in tile-sized blocks, differently every run,
+        // though the specification asks for no barrier between them.
+        let layered: Vec<_> = desc
+            .color_attachments
+            .iter()
+            .flatten()
+            .map(|cat| cat.target.view)
+            .chain(
+                desc.depth_stencil_attachment
+                    .as_ref()
+                    .map(|ds| ds.target.view),
+            )
+            .filter(|view| unsafe { view.texture.GetDesc() }.DepthOrArraySize > 1)
+            .map(|view| Direct3D12::D3D12_RESOURCE_BARRIER {
+                Type: Direct3D12::D3D12_RESOURCE_BARRIER_TYPE_ALIASING,
+                Flags: Direct3D12::D3D12_RESOURCE_BARRIER_FLAG_NONE,
+                Anonymous: Direct3D12::D3D12_RESOURCE_BARRIER_0 {
+                    Aliasing: mem::ManuallyDrop::new(Direct3D12::D3D12_RESOURCE_ALIASING_BARRIER {
+                        pResourceBefore: mem::ManuallyDrop::new(None),
+                        pResourceAfter: unsafe { borrow_interface_temporarily(&view.texture) },
+                    }),
+                },
+            })
+            .collect();
+        if !layered.is_empty() {
+            unsafe { list.ResourceBarrier(&layered) };
+        }
         unsafe {
             list.OMSetRenderTargets(
                 desc.color_attachments.len() as u32,

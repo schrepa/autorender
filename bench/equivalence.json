@@ -100,11 +100,7 @@
       "options": { "terrain-clock": "frames" },
       "ticks": 30,
       "views": ["overview"],
-      "captures": ["exact", "gpu:0.5"],
-      "unstable": {
-        "overview exact": "On the host's wall clock a different image every A/A run (2026-10-12). On the frame clock the same image in all 6 runs of an A/A (2026-10-12, a58d955), but this workload's other views still vary on it (highlands-views), so the overview stays judged by the base's runs until more A/A runs show it holds.",
-        "overview gpu:0.5": "As the exact capture: a different image every run on the wall clock, the same in 6 of 6 on the frame clock (2026-10-12), kept unstable with highlands-views."
-      }
+      "captures": ["exact", "gpu:0.5"]
     },
     {
       "name": "garden",
@@ -203,13 +199,7 @@
       "options": { "terrain-clock": "frames" },
       "ticks": 30,
       "views": ["close", "away"],
-      "captures": ["exact", "gpu:0.5"],
-      "unstable": {
-        "close exact": "A different image every run on the wall clock (full-tier A/A, 2026-10-12); on the frame clock still 3 distinct images in 3 base runs (A/A on a58d955): what streams near the eye still depends on more than the frames drawn.",
-        "close gpu:0.5": "As close exact: every run differs on the wall clock, 3 images in 3 runs on the frame clock (2026-10-12).",
-        "away exact": "A different image every run on the wall clock (2026-10-12); on the frame clock one image in 3 base runs but a second among the 3 runs after them (A/A on a58d955).",
-        "away gpu:0.5": "As away exact: every run differs on the wall clock, 2 images in 6 runs on the frame clock (2026-10-12)."
-      }
+      "captures": ["exact", "gpu:0.5"]
     },
     {
       "name": "metro-shadows-off",

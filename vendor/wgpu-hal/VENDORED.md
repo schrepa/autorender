@@ -6,7 +6,7 @@ entries and development dependencies are omitted; the workspace patches
 crates.io's `wgpu-hal` with this copy (`[patch.crates-io]` in the root
 `Cargo.toml`).
 
-The one change: on D3D12, DXC's output is also kept on disk, so a later
+Two changes. First, on D3D12, DXC's output is also kept on disk, so a later
 process skips compiling the shaders an earlier one compiled (about 12–17 s of
 an 18–21 s Metro start on the native host, every launch). Upstream keeps it
 in memory only, for the device's lifetime.
@@ -28,8 +28,17 @@ in memory only, for the device's lifetime.
 - `src/dx12/mod.rs`: the module. `Cargo.toml`: `dx12` adds the `windows`
   feature `Win32_System_Com` (to free DXC's commit string).
 
+Second, on D3D12 a render pass drawing into a layer of a texture array (or a
+slice of a 3D texture) first records an aliasing barrier on that texture
+(`src/dx12/command.rs`, `begin_render_pass`). On an RTX's driver, a pass
+drawing one layer right after a pass drew another lost part of its clear
+and draws in tile-sized blocks, in different blocks every run (the engine's
+occupancy maps, two layers drawn in consecutive passes, came out differently
+run to run; on Vulkan, or with the barrier, always the same). The
+specification asks for no barrier between such passes.
+
 To upgrade: copy the new release's `src`, `build.rs`, license files,
 `README.md` and `Cargo.toml` (dropping `[[example]]` entries and
-development dependencies), reapply the four changes above, and check that
+development dependencies), reapply the changes above, and check that
 the key still names every argument `compile_dxc` passes DXC. A version change
 alone invalidates every file (the key holds the crate's version).
