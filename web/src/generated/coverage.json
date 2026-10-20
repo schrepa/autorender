@@ -792,7 +792,9 @@
     {
       "inspector": "Highlights",
       "section": "highlights",
-      "smokes": [],
+      "smokes": [
+        "agent"
+      ],
       "stats": false
     },
     {
