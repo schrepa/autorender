@@ -215,9 +215,10 @@ try {
     const [noonColor, duskColor] = [await skyColor(page, noon), await skyColor(page, dusk)];
     assert.ok(duskColor[0] / Math.max(duskColor[2], 1) > noonColor[0] / Math.max(noonColor[2], 1),
       `dusk is redder than noon: ${noonColor} ${duskColor}`);
-    // The night sky (stars, moon and cirrus) and haze (the air taking the
-    // sky's light) are opt-in: at night they change the view, read back,
-    // and settings out of range are refused.
+    // The night sky (stars, moon and cirrus), opt-in, and haze (the air
+    // taking the sky's light), on by default: at night the night sky
+    // changes the view, both read back, and settings out of range are
+    // refused.
     await command("environment", { time_of_day: { hours: 23 } });
     const night = await capture("sky-night");
     await command("environment", { night_sky: {}, haze: {} });

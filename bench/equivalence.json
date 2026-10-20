@@ -622,11 +622,11 @@
       "captures": ["exact", "display:60"]
     },
     {
-      "name": "metro-haze",
+      "name": "metro-haze-off",
       "tier": "full",
-      "note": "Metro with haze, the air taking the sky's light, switched on by the environment control.",
+      "note": "Metro without haze, the air taking the sky's light, on by default, switched off by the environment control.",
       "scene": "metro",
-      "environment": { "haze": {} },
+      "environment": { "haze": { "enabled": false } },
       "ticks": 30,
       "views": ["overview"],
       "captures": ["exact", "gpu:0.5"]
