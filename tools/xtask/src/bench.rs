@@ -98,7 +98,7 @@ pub fn bench(root: &Path, options: &[String]) -> Result<(), String> {
             );
             Ok(())
         }
-        _ => Err("usage: cargo xtask bench check | assets".into()),
+        _ => Err("usage: cargo xtask bench check | assets | budgets ...".into()),
     }
 }
 
@@ -460,7 +460,8 @@ fn stats_leaves() -> Vec<String> {
 
 /// Checks `bench/` against the code: the catalog names exactly what
 /// measurements report, the option files name known options and values,
-/// and the shader paths cover every shader.
+/// the shader paths cover every shader, and the budgets name scenes,
+/// device classes and catalog metrics ([`crate::budgets::problems`]).
 pub fn check(root: &Path) -> Result<(), String> {
     let mut problems = Vec::new();
     let catalog = catalog(root)?;
@@ -540,9 +541,15 @@ pub fn check(root: &Path) -> Result<(), String> {
     }
     problems.extend(option_file_problems(root)?);
     problems.extend(shader_path_problems(root)?);
+    let covered = |metric: &str| {
+        catalog
+            .iter()
+            .any(|entry| covers(entry["name"].as_str().unwrap_or_default(), metric))
+    };
+    problems.extend(crate::budgets::problems(root, &covered)?);
     if problems.is_empty() {
         println!(
-            "bench/ matches the code: {} catalog entries, the option files and shader paths.",
+            "bench/ matches the code: {} catalog entries, the option files, shader paths and budgets.",
             catalog.len()
         );
         Ok(())

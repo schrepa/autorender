@@ -99,6 +99,12 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Equivalence, Tools("measure")],
     },
+    // The budgets measure reports are judged against, which lint's bench
+    // check holds to the scenes and the catalog.
+    Rule {
+        paths: &["bench/budgets.json"],
+        checks: &[],
+    },
     // The math everything computes with.
     Rule {
         paths: &["crates/engine_math/**"],

@@ -4,6 +4,7 @@
 mod ambiguities;
 mod authoring;
 mod bench;
+mod budgets;
 mod checkouts;
 mod checks;
 mod coverage;
@@ -108,6 +109,9 @@ fn execute() -> Result<(), Failure> {
         corpus.extend(options);
         return pure::pure(&root, &corpus);
     }
+    if task == "bench" && options.first().is_some_and(|option| option == "budgets") {
+        return budgets::judge(&root, &options[1..]);
+    }
     if task == "bench" {
         return Ok(bench::bench(&root, &options)?);
     }
@@ -201,7 +205,8 @@ fn commands() -> Vec<(String, &'static str)> {
         ("core-smoke [--bless]".into(), "Run the core smoke (the caches corpus of pure): tools/coresmoke in the dev profile, debug assertions on, checks the incremental caches against fresh engines under seeded random edits, and holds a deterministic terrain streaming trace (written to target/coresmoke/terrain-trace.txt) and the Stress Lab's content digests to their goldens; a failure prints the seed and the edits"),
         ("gpu".into(), "Check the renderer's shaders against its Rust GPU layouts and bindings"),
         ("gpu --report DIR [--no-rga]".into(), "Report every shader entry point's cost offline, on any machine: naga's counts and SPIR-V, and with Radeon GPU Analyzer (downloaded once, Windows and Linux) its AMD machine code, registers and memory on RDNA 2, 3 and 4"),
-        ("bench check".into(), "Check bench/ against the code: the metric catalog names what measurements report, the scene and settings files known options, the shader paths every shader"),
+        ("bench check".into(), "Check bench/ against the code: the metric catalog names what measurements report, the scene and settings files known options, the shader paths every shader, the budgets known scenes, device classes and metrics, each with its source"),
+        ("bench budgets --report REPORT.json --device integrated|discrete [--arm base|candidate] [--today YYYY-MM-DD] [--write]".into(), "Judge a measure report against bench/budgets.json: for each workload named after a budgeted scene, the median over the arm's settled runs (the candidate's by default) of each budgeted metric (GPU pass groups' ms, memory pools' bytes, draw, instance and triangle counts) against the device class's soft and hard limits, waivers in force (until a date) excusing a hard one; prints every verdict as JSON; exit 3 when a hard limit is broken without a waiver. With --write, writes the device class's budgets of each scene the report measured instead: each metric's median, soft and hard limits above it by the headroom tools/xtask/src/budgets.rs declares (more for times than for bytes and counts), and where the runs were measured"),
         ("bench assets".into(), "Build the files workloads read that git does not hold into target/bench-assets/<inputs hash>/ (reused while the generators are unchanged) and write them into web/public/stress for the page; prints the folder and its generated_hash"),
         ("measure --task TASK.json --profile PROFILE.json --out REPORT.json [--extend REPORT.json] [--formats FORMATS.json]".into(), "Run an engine-factory measure task on the native host from this checkout (the task's tools commit): build each commit it names, run each workload's two arms (each its commit's program from that commit's tree, with its own switches, scene, settings and generated files) in alternating rounds until its clean pairs, profile each arm and report the shaders where the task wants them, run the task's checks, and write the factory's measure report, checked against FORMATS (the factory's /api/formats) when given"),
         ("equivalence [--base REV] [--candidate REV] [--tier smoke|full] [--cells NAME,...] [--aa] [--repeat N] [--keep N] [--gpu discrete|integrated] [--browser | --both [--hosts]]".into(), "Whether a change leaves what the engine draws and does as it was: the base (the merge-base with origin/main, or --base) and the candidate (the working tree, or --candidate) each build the Stress Lab, then every cell of bench/equivalence.json's tier runs on both, settled and captured, natively (default), in headless Chrome against each side's development server (--browser) or both (--both; --hosts measures how the candidate's native and Chrome images differ); captures compare by hash then pixel, judged work counters by their rule, digests by part; an unstable capture (its reason in the matrix) passes when it matches one of the base's --repeat runs or lies no farther from them than they lie from each other; --aa runs the base against itself; each cell holds the heavy-run lock; exit 0 equal, 3 different, 1 could not check"),
