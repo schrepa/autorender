@@ -25,8 +25,9 @@ use serde_json::{Value, json};
 use crate::protocol::{Route, ToolsQuery};
 use crate::reply::{Observation, Reply, SceneObservation};
 use crate::results::{
-    AssetsResult, DescribeResult, DescribedType, DistributionResult, EntityComponents, EntityRow,
-    InspectResult, StatusLimits, StatusResult, TextureAsset, TextureState, TypeKind, result,
+    AssetsResult, AuthoredEntity, DescribeResult, DescribedType, DistributionResult,
+    EntityComponents, EntityRow, InspectResult, MissingAsset, StatusLimits, StatusResult,
+    TextureAsset, TextureState, TypeKind, result,
 };
 use crate::{
     DevError, DevRequest, MAX_DESCRIPTION_BYTES, MAX_INSPECTOR_BYTES, MAX_INSPECTORS,
@@ -934,6 +935,7 @@ fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, DevError>
             }
         })
         .collect();
+    let (missing, missing_total) = missing_assets(world, assets);
     Ok(AssetsResult {
         meshes: assets.mesh_count(),
         materials: assets.material_count(),
@@ -943,5 +945,62 @@ fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, DevError>
         resident_cpu_bytes: assets.resident_bytes(),
         readiness: "synchronous",
         ownership: "library payload excludes retained snapshots and allocator metadata",
+        missing,
+        missing_total,
     })
+}
+
+/// What `assets` lacks of each mesh and decal of `world` naming one that is
+/// missing, as rendering resolves them: a mesh's material, then its mesh,
+/// then the material's textures; a decal's material, then its textures.
+fn missing_assets(world: &World, assets: &AssetLibrary) -> (Vec<MissingAsset>, usize) {
+    let lacking = |material: MaterialHandle| -> Option<&'static str> {
+        let Some(found) = assets.material(material) else {
+            return Some("material");
+        };
+        found
+            .textures()
+            .any(|texture| assets.texture(texture).is_none())
+            .then_some("texture")
+    };
+    let transforms = world.get_resource::<GlobalTransforms>();
+    let position = |entity: Entity| {
+        transforms
+            .and_then(|transforms| transforms.get(entity))
+            .and_then(|global| global.matrix())
+            .map(|matrix| matrix.w_axis.truncate().to_array())
+    };
+    let mut found: Vec<(Entity, &'static str, &'static str)> = Vec::new();
+    if let Some(mut meshes) = world.try_query::<(Entity, &Mesh3d)>() {
+        for (entity, mesh3d) in meshes.iter(world) {
+            let missing = match assets.material(mesh3d.material) {
+                None => Some("material"),
+                Some(_) if assets.mesh(mesh3d.mesh).is_none() => Some("mesh"),
+                Some(_) => lacking(mesh3d.material),
+            };
+            if let Some(missing) = missing {
+                found.push((entity, "mesh", missing));
+            }
+        }
+    }
+    if let Some(mut decals) = world.try_query::<(Entity, &engine_core::Decal)>() {
+        for (entity, decal) in decals.iter(world) {
+            if let Some(missing) = lacking(decal.material) {
+                found.push((entity, "decal", missing));
+            }
+        }
+    }
+    found.sort_unstable_by_key(|(entity, ..)| *entity);
+    let total = found.len();
+    let listed = found
+        .into_iter()
+        .take(crate::protocol::bounds::MAX_PAGE_SIZE)
+        .map(|(entity, draws, missing)| MissingAsset {
+            entity: AuthoredEntity::of(world, entity),
+            draws,
+            missing,
+            position: position(entity),
+        })
+        .collect();
+    (listed, total)
 }

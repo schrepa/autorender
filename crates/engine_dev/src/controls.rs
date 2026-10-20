@@ -1,7 +1,11 @@
+use crate::features::EngineControl;
 use crate::protocol::bounds;
+use crate::results::{DebugMissingAssetResult, result};
 use crate::{BrowserControl, DevError, bounded};
-use engine_core::{Camera, glam::Vec3};
+use engine_core::{AssetLibrary, Camera, Engine, Mesh3d, glam::Vec3};
+use engine_scene::SceneInstance;
 use engine_settings::ErrorCode;
+use serde_json::Value;
 
 impl BrowserControl {
     /// `source`, a request naming control `op`, as hosts take it on a host
@@ -133,7 +137,9 @@ impl BrowserControl {
             | Self::Pause { .. }
             | Self::Resume { .. }
             | Self::DebugPanic { .. }
-            | Self::DebugFault { .. } => {}
+            | Self::DebugFault { .. }
+            | Self::DebugDeviceLoss { .. }
+            | Self::DebugMissingAsset { .. } => {}
         }
         Ok(())
     }
@@ -183,4 +189,55 @@ pub fn validated_camera(
         ));
     }
     Ok(camera)
+}
+
+/// The `debug_missing_asset` control: removes the mesh the scene's entity
+/// `entity` draws from the asset library.
+pub(crate) struct MissingAsset {
+    pub(crate) entity: String,
+}
+
+impl EngineControl for MissingAsset {
+    fn changed(&self) -> &'static str {
+        "asset removed"
+    }
+
+    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
+        let scene = scene.ok_or_else(|| {
+            DevError::new(
+                ErrorCode::NoScene,
+                "$.entity",
+                "the meshes it removes are authored entities'",
+            )
+        })?;
+        let world = engine.app.world_mut();
+        let mesh = crate::inspect::authored_entity(world, scene, &self.entity)
+            .and_then(|entity| world.get::<Mesh3d>(entity))
+            .map(|mesh3d| mesh3d.mesh)
+            .ok_or_else(|| {
+                DevError::new(
+                    ErrorCode::UnknownEntity,
+                    "$.entity",
+                    format!("no entity {} drawing a mesh in the scene", self.entity),
+                )
+            })?;
+        let entities = world.try_query::<&Mesh3d>().map_or(0, |mut meshes| {
+            meshes
+                .iter(world)
+                .filter(|mesh3d| mesh3d.mesh == mesh)
+                .count()
+        });
+        let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {
+            DevError::new(
+                ErrorCode::MissingResource,
+                "$",
+                "AssetLibrary is not installed",
+            )
+        })?;
+        assets.remove_mesh(mesh);
+        Ok(result::debug_missing_asset(DebugMissingAssetResult {
+            temporary: true,
+            entities,
+        }))
+    }
 }

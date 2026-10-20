@@ -72,6 +72,16 @@ impl Renderer {
         }
     }
 
+    /// Loses the device, as a driver reset or a removed GPU would, to check
+    /// what hosts do then: it reports the loss once its queue's work is
+    /// done, natively at once, browsers in a later task; the renderer then
+    /// fails for good.
+    #[cfg(feature = "dev")]
+    pub fn lose_device(&mut self) {
+        self.device.destroy();
+        crate::platform::poll(&self.device);
+    }
+
     /// Injects a fault into the lazily created feature named `feature`, to
     /// check that the renderer disables it alone: its next creation makes
     /// an invalid buffer of its own, which its first frame uses.

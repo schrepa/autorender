@@ -63,6 +63,14 @@ export interface AssetsResult {
   materials: number;
   /** Meshes the library holds. */
   meshes: number;
+  /**
+   * Entities drawing nothing for an asset they name that the library
+   * lacks, in entity order, the first `MAX_PAGE_SIZE` of them; frame
+   * statistics' `missing_assets` counts them per frame.
+   */
+  missing: MissingAsset[];
+  /** Every such entity. */
+  missing_total: number;
   /** What the byte counts leave out. */
   ownership: string;
   /** When assets are ready: `synchronous`, as they are inserted. */
@@ -208,6 +216,14 @@ export interface DebugFaultResult {
    * frame.
    */
   injected: boolean;
+}
+
+/** What `debug_missing_asset` answers once it rendered. */
+export interface DebugMissingAssetResult {
+  /** The entities drawing the removed mesh, which draw nothing now. */
+  entities: number;
+  /** Controls change the session's world, not the scene's source. */
+  temporary: boolean;
 }
 
 /** What `deform` answers: the track pressed and the log after. */
@@ -513,6 +529,20 @@ export interface KeptArtifact {
   tick?: string | null;
 }
 
+/** An entity drawing nothing for an asset it names that the library lacks. */
+export interface MissingAsset {
+  /** What it draws: `mesh` or `decal`. */
+  draws: string;
+  entity: AuthoredEntity;
+  /**
+   * What the library lacks: its `mesh`, its `material` or one of the
+   * material's `texture`s.
+   */
+  missing: string;
+  /** Where it stands in the world; `None` without a valid transform. */
+  position?: number[] | null;
+}
+
 /** What `nav_go` answers: where the agent now walks. */
 export interface NavGoResult {
   /** Where it walks (world x and z); null where it stopped. */
@@ -588,6 +618,7 @@ export interface OpResults {
   collision_events: CollisionEventsResult;
   culling: CullingResult;
   debug_fault: DebugFaultResult;
+  debug_missing_asset: DebugMissingAssetResult;
   deform: DeformResult;
   deformation_query: DeformationQueryResult;
   describe: DescribeResult;

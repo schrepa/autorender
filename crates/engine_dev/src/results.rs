@@ -11,9 +11,10 @@ use serde_json::Value;
 use crate::views::{CollisionWorldView, PresentationStateView};
 use crate::{InspectorDescriptor, InspectorKind};
 
-/// Ops whose results are still built as untyped JSON, sorted. The list only
-/// shrinks: a new op's result is typed, in `results!` below.
-pub const UNTYPED_RESULTS: &[&str] = &["benchmark", "debug_panic", "reload"];
+/// Ops whose results are still built as untyped JSON, and the debug controls
+/// that never answer ok (they stop the engine or its renderer), sorted. The
+/// first only shrink: a new op's result is typed, in `results!` below.
+pub const UNTYPED_RESULTS: &[&str] = &["benchmark", "debug_device_loss", "debug_panic", "reload"];
 
 /// Declares each typed op's result type, `op: Type`: handlers hand a result
 /// on through `result::op`, which takes nothing else.
@@ -64,6 +65,7 @@ results! {
     camera: crate::results::CameraResult,
     render: crate::results::RenderResult,
     debug_fault: crate::results::DebugFaultResult,
+    debug_missing_asset: crate::results::DebugMissingAssetResult,
     input: crate::results::InputResult,
     step: crate::results::StepResult,
     environment: crate::results::EnvironmentResult,
@@ -140,6 +142,26 @@ pub struct AssetsResult {
     pub readiness: &'static str,
     /// What the byte counts leave out.
     pub ownership: &'static str,
+    /// Entities drawing nothing for an asset they name that the library
+    /// lacks, in entity order, the first `MAX_PAGE_SIZE` of them; frame
+    /// statistics' `missing_assets` counts them per frame.
+    pub missing: Vec<MissingAsset>,
+    /// Every such entity.
+    pub missing_total: usize,
+}
+
+/// An entity drawing nothing for an asset it names that the library lacks.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct MissingAsset {
+    pub entity: AuthoredEntity,
+    /// What it draws: `mesh` or `decal`.
+    pub draws: &'static str,
+    /// What the library lacks: its `mesh`, its `material` or one of the
+    /// material's `texture`s.
+    pub missing: &'static str,
+    /// Where it stands in the world; `None` without a valid transform.
+    pub position: Option<[f32; 3]>,
 }
 
 /// One texture the authored scene names: its ID, whether the library holds
@@ -433,6 +455,16 @@ pub struct DebugFaultResult {
     /// Always true: the fault waits for the feature's next creation or
     /// frame.
     pub injected: bool,
+}
+
+/// What `debug_missing_asset` answers once it rendered.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct DebugMissingAssetResult {
+    /// Controls change the session's world, not the scene's source.
+    pub temporary: bool,
+    /// The entities drawing the removed mesh, which draw nothing now.
+    pub entities: usize,
 }
 
 /// What `input` answers: the batch waits for the next step.

@@ -724,6 +724,18 @@
       ]
     },
     {
+      "op": "debug_device_loss",
+      "smokes": [
+        "host-parity"
+      ]
+    },
+    {
+      "op": "debug_missing_asset",
+      "smokes": [
+        "host-parity"
+      ]
+    },
+    {
       "op": "probe",
       "smokes": [
         "debug-view",

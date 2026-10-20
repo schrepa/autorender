@@ -413,6 +413,11 @@ impl<G: Game> GameHost<G> {
 
 #[cfg(feature = "dev")]
 impl<G: Game> GameHost<G> {
+    /// Loses the renderer's GPU device, as a driver reset would.
+    pub(crate) fn lose_device(&mut self) {
+        self.app.renderer.lose_device();
+    }
+
     /// Arms the renderer's pixel probe at `pixel`: the next two frames
     /// keep what it reads.
     pub(crate) fn arm_probe(&mut self, pixel: (u32, u32)) {

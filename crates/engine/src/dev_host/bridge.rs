@@ -51,7 +51,14 @@ pub(crate) enum Pending {
     /// The pixel probe's read-back, `waits` waits so far, for the request
     /// whose last frame replied `reply`.
     Probe { reply: Value, waits: u32 },
+    /// The renderer's report of the GPU device it lost, `waits` waits so
+    /// far: a frame then fails.
+    DeviceLoss { waits: u32 },
 }
+
+/// Waits for the host's next frame the report of a lost device takes at
+/// most: browsers report it in a later task.
+const LOSS_WAITS: u32 = 120;
 
 /// Waits for the host's next frame a pixel probe's read-back takes at most.
 const PROBE_WAITS: u32 = 120;
@@ -340,7 +347,29 @@ impl<G: Game> GameHost<G> {
                 }
                 self.dev_probe(reply, waits, context)
             }
+            Pending::DeviceLoss { waits } => self.dev_device_lost(waits, context),
         }
+    }
+
+    /// A frame after the device was lost, `waits` waits so far: its failure,
+    /// which answers the request, or another wait while the renderer has yet
+    /// to hear of the loss.
+    fn dev_device_lost(&mut self, waits: u32, context: &HostContext) -> Step {
+        let reply = self.dev_invoke(&json!({"op": "render"}), context);
+        if reply["ok"] != true {
+            return self.dev_done(reply, context);
+        }
+        if waits >= LOSS_WAITS {
+            return self.dev_refused(
+                ErrorCode::RenderFailed,
+                "$",
+                "the renderer drew on after losing its device",
+            );
+        }
+        self.dev_effect(
+            Pending::DeviceLoss { waits: waits + 1 },
+            Effect::Wait { within_ms: 1000.0 },
+        )
     }
 
     /// Starts the pixel probe `control` names on the view `context`
@@ -522,6 +551,13 @@ impl<G: Game> GameHost<G> {
                     artifact: None,
                 });
                 self.dev_effect(Pending::Shown { reply }, Effect::Show)
+            }
+            "debug_device_loss" => {
+                self.lose_device();
+                self.dev_effect(
+                    Pending::DeviceLoss { waits: 0 },
+                    Effect::Wait { within_ms: 1000.0 },
+                )
             }
             "probe" => self.dev_probe_start(control, context),
             "game" => {

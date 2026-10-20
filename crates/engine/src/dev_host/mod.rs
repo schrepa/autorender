@@ -87,6 +87,7 @@ impl DevHost {
                 | BrowserControl::Reload { .. }
                 | BrowserControl::DebugPanic { .. }
                 | BrowserControl::Probe { .. }
+                | BrowserControl::DebugDeviceLoss { .. }
         )
     }
 

@@ -117,6 +117,8 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("reload", "status"),
     ("debug_panic", "status"),
     ("debug_fault", "status"),
+    ("debug_device_loss", "status"),
+    ("debug_missing_asset", ""),
     ("probe", ""),
 ];
 
@@ -568,6 +570,20 @@ pub enum BrowserControl {
         )]
         feature: String,
     },
+    /// Loses the GPU device, as a driver reset or a removed GPU would, to
+    /// check what the host does then: the renderer fails for good, and the
+    /// first frame after, as every later one, fails `render_failed` with a
+    /// message naming the loss, which this control answers with.
+    DebugDeviceLoss {},
+    /// Removes the mesh the scene's entity `entity` (its authored ID) draws
+    /// from the asset library, as a game unloading it would, and renders
+    /// while paused: every entity drawing that mesh then draws nothing,
+    /// which frame statistics' `missing_assets` counts and `assets` lists,
+    /// each entity with its position. Answers how many entities draw it.
+    DebugMissingAsset {
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 192)))]
+        entity: String,
+    },
     /// What drew pixel (`x`, `y`) of the view (physical pixels from its top
     /// left) and how it looks: renders a frame of the debug views' targets,
     /// then a shaded one, as `capture` renders them (with `alpha` and `gpu`,
@@ -651,12 +667,16 @@ impl BrowserControl {
             Self::Render {} => Control::Host(HostControl::Render),
             Self::DebugPanic {} => Control::Host(HostControl::DebugPanic),
             Self::DebugFault { feature } => Control::Host(HostControl::DebugFault { feature }),
+            Self::DebugMissingAsset { entity } => {
+                Control::Feature(Box::new(crate::controls::MissingAsset { entity }))
+            }
             control @ (Self::Benchmark { .. }
             | Self::Frames { .. }
             | Self::Pause { .. }
             | Self::Resume { .. }
             | Self::Capture { .. }
             | Self::Probe { .. }
+            | Self::DebugDeviceLoss { .. }
             | Self::Game { .. }
             | Self::Reload { .. }) => Control::Host(HostControl::Loop(control)),
         }
@@ -688,7 +708,9 @@ impl BrowserControl {
             | Self::Game { .. }
             | Self::Reload { .. }
             | Self::DebugPanic { .. }
-            | Self::DebugFault { .. } => true,
+            | Self::DebugFault { .. }
+            | Self::DebugDeviceLoss { .. }
+            | Self::DebugMissingAsset { .. } => true,
             Self::Pause { .. } | Self::Resume { .. } => false,
         }
     }

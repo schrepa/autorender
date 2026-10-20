@@ -8,8 +8,14 @@
  * step that removes it (`host`: a difference of the transports, which
  * stays). A divergence that no longer shows fails the check until its entry
  * goes. A fault injected into the screen effects (`debug_fault`) disables
- * them alone on both, which render on without them. Last, `debug_panic`
- * stops the engine on both: each answers
+ * them alone on both, which render on without them. A mesh removed from an
+ * authored scene's asset library (`debug_missing_asset`) leaves its entity
+ * drawing nothing, which both count and list alike, with the entity's
+ * authored identity and position. A lost GPU device
+ * (`debug_device_loss`) fails the renderer for good on both: each answers
+ * `render_failed` naming the loss, the frames after it alike, while the
+ * engine answers on. Last, `debug_panic` stops the engine on both: each
+ * answers
  * `runtime_panicked` with the same report, and the page shows it stopped
  * and calls into its module no more. Builds `stress-lab` natively
  * (`--profile quick --features dev`) and opens the development server's
@@ -104,6 +110,12 @@ const CASES = [
   ["frames after the fault", { op: "frames", count: 30, interval_ms: 1000 / 60 }],
   ["status after the fault", { op: "status" }],
   ["fault in no lazy feature", { op: "debug_fault", feature: "water" }, "error"],
+  ["missing asset without scene", { op: "debug_missing_asset", entity: "box" }, "error"],
+  // Losing the GPU device fails the renderer for good: the frame after it
+  // answers the loss, as every later one; the engine answers on.
+  ["device loss", { op: "debug_device_loss" }, "error"],
+  ["render after the loss", { op: "render" }, "error"],
+  ["status after the loss", { op: "status" }],
   // A panic stops the engine on both hosts, which then answer everything
   // with the panic's report: last, as nothing runs after it.
   ["debug panic", { op: "debug_panic" }, "error"],
@@ -194,6 +206,13 @@ try {
   for (const reply of [fault.web, fault.native]) {
     assert.deepEqual(reply.result?.rendering?.disabled_features, ["post"], JSON.stringify(reply.result?.rendering));
   }
+  // Both name the lost device, in the frame after the loss and the next.
+  for (const name of ["device loss", "render after the loss"]) {
+    for (const reply of [replies[name].web, replies[name].native]) {
+      assert.equal(reply.error?.code, "render_failed", JSON.stringify(reply));
+      assert.match(reply.error.message, /GPU device lost/, reply.error.message);
+    }
+  }
   // Both report the engine's own panic, where it happened; the page says the
   // engine stopped and calls into its module no more (nothing fails after).
   const panic = replies["debug panic"];
@@ -264,10 +283,31 @@ try {
   assert.ok(web.ok && native.ok, JSON.stringify({ web: web.error, native: native.error }));
   assert.equal(web.result.assets.textures.count, 1, JSON.stringify(web.result.assets));
   assert.deepEqual(web.result.assets.textures, native.result.assets.textures, "the PNG decodes to the same texture on both hosts");
+  // A mesh a game unloads: its entity draws nothing, which both hosts count
+  // and list alike, by the entity's authored identity and position.
+  const missing = {};
+  for (const [host, session] of [["web", imagesWeb], ["native", imagesNative]]) {
+    await session.execute({ op: "pause" });
+    const removed = await session.execute({ op: "debug_missing_asset", entity: "box" });
+    assert.ok(removed.ok, JSON.stringify(removed.error));
+    assert.deepEqual([removed.result.temporary, removed.result.entities], [true, 1], JSON.stringify(removed.result));
+    assert.equal(removed.result.rendering.missing_assets, 1, JSON.stringify(removed.result.rendering));
+    const status = await session.execute({ op: "status" });
+    assert.equal(status.result.rendering.missing_assets, 1, JSON.stringify(status.result.rendering));
+    const listed = await session.execute({ op: "assets" });
+    assert.equal(listed.result.missing_total, 1);
+    missing[host] = listed.result.missing;
+  }
+  assert.deepEqual(missing.web, missing.native, "both hosts list the missing mesh alike");
+  const [entry] = missing.web;
+  assert.deepEqual([entry.entity.id, entry.entity.scene, entry.draws, entry.missing], ["box", "host-parity", "mesh", "mesh"], JSON.stringify(entry));
+  assert.deepEqual(entry.position, [0, 0, 0]);
+  const unknown = await answer(imagesNative, { op: "debug_missing_asset", entity: "nothing" });
+  assert.deepEqual([unknown.error?.code, unknown.error?.path], ["unknown_entity", "$.entity"]);
 } finally {
   await imagesWeb?.close();
   await imagesNative?.close();
   await rm(folder, { recursive: true, force: true });
   await rm(scenePath, { force: true });
 }
-console.log("host parity smoke passed: a partially transparent PNG decodes to the same texture on both hosts");
+console.log("host parity smoke passed: a partially transparent PNG decodes to the same texture on both hosts, and both list a missing mesh alike");

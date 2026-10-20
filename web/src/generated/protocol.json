@@ -24,6 +24,8 @@
     "reload",
     "debug_panic",
     "debug_fault",
+    "debug_device_loss",
+    "debug_missing_asset",
     "probe"
   ],
   "errors": {
