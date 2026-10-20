@@ -517,11 +517,16 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             continue;
         }
         // The control value's two materials share the candidates by
-        // their blend.
+        // their blend, the second's up to half.
         let pick = unit(hash(seed ^ 0x27d4eb2fu));
         let share = f32((ground.control >> 16u) & 0xffu) * (1.0 / 255.0);
-        let material = select(ground.control & 0xffu, (ground.control >> 8u) & 0xffu,
-            pick < share);
+        let second = pick < share;
+        let material = select(ground.control & 0xffu, (ground.control >> 8u) & 0xffu, second);
+        // A material's blades shorten where it gives way: full height where
+        // it holds half the ground or more, none where it holds none, so
+        // cover tapers into paths, rock and other cover rather than
+        // standing full height to their edges.
+        let edge = smoothstep(0.0, 0.5, select(1.0 - share, share, second));
         let entry = min(grow.counts.z + material, PALETTE_ENTRIES - 1u);
         let spec = covers[entry];
         let falloff = cover_share(away, radius_densest, reach, cover_end(world_xz, reach));
@@ -535,7 +540,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         let pressed = min(pressed_at(world_xz), palette[entry].relief.y);
         let standing = 1.0 - 0.85 * smoothstep(0.01, 0.06, pressed);
         let height = mix(spec.shape.y, spec.shape.z, unit(hash(seed ^ 0xc2b2ae35u))) * rise
-            * standing;
+            * standing * edge;
         if height < 0.02 {
             continue;
         }
