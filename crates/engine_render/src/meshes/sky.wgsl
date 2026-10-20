@@ -114,6 +114,44 @@ const AIR_EXTINCTION: vec3<f32> = vec3<f32>(0.07, 0.15, 0.28);
 // size the eye reads it at) and the light of its full face.
 const MOON_RADIUS: f32 = 0.0091;
 const MOON_LIGHT: f32 = 0.6;
+// The brightest the moon's face shows after the exposure: in a dark sky
+// the eye adapts to it, so its seas stay apart from its highlands rather
+// than all of it burning white.
+const MOON_SHOWN: f32 = 0.9;
+// The north celestial pole in the galaxy's frame (the J2000 equatorial
+// pole by the IAU's galactic coordinates), which the moon's north faces.
+const CELESTIAL_POLE: vec3<f32> = vec3<f32>(-0.4838350, 0.7469822, 0.4559838);
+// The moon's seas as the earth sees them: each one's centre in
+// selenographic longitude (degrees east of the near side's centre) and
+// latitude, its angular radius on the moon (degrees) and how much darker
+// than the highlands it is; Oceanus Procellarum and Mare Frigoris as
+// overlapping discs.
+const MOON_SEAS = array<vec4<f32>, 15>(
+    vec4<f32>(-16.0, 33.0, 18.0, 0.45),
+    vec4<f32>(17.5, 28.0, 11.0, 0.42),
+    vec4<f32>(31.0, 8.5, 13.0, 0.45),
+    vec4<f32>(59.0, 17.0, 8.0, 0.5),
+    vec4<f32>(51.0, -8.0, 12.0, 0.4),
+    vec4<f32>(35.0, -15.0, 6.0, 0.4),
+    vec4<f32>(-17.0, -21.0, 11.0, 0.35),
+    vec4<f32>(-39.0, -24.0, 7.0, 0.4),
+    vec4<f32>(-50.0, 12.0, 22.0, 0.42),
+    vec4<f32>(-62.0, 30.0, 14.0, 0.4),
+    vec4<f32>(-40.0, -3.0, 12.0, 0.38),
+    vec4<f32>(-15.0, 56.0, 7.0, 0.32),
+    vec4<f32>(15.0, 57.0, 7.0, 0.32),
+    vec4<f32>(4.0, 13.0, 5.0, 0.35),
+    vec4<f32>(-28.0, 0.0, 8.0, 0.32),
+);
+// Its bright young craters: Tycho (whose rays cross the southern
+// highlands), Copernicus, Kepler and Aristarchus, each's place, angular
+// radius (degrees) and brightness above the highlands.
+const MOON_CRATERS = array<vec4<f32>, 4>(
+    vec4<f32>(-11.2, -43.3, 2.5, 0.5),
+    vec4<f32>(-20.0, 9.6, 2.0, 0.3),
+    vec4<f32>(-38.0, 8.1, 1.6, 0.25),
+    vec4<f32>(-47.5, 23.7, 1.6, 0.45),
+);
 // The moon's glow in the air around it, as shares of its face's light: a
 // narrow aureole and a wide halo (the forward lobes they fall off by).
 const MOON_AUREOLE: f32 = 0.06;
@@ -269,28 +307,84 @@ fn star_light(star: vec3<f32>, spread: f32) -> vec3<f32> {
     return star_field(star, STAR_CELLS, share, 8.0, STAR_LIGHT, 0u, spread);
 }
 
+// A place on the moon at selenographic `longitude` and `latitude`
+// (degrees) as a unit vector: x toward its east limb, y its north, z the
+// centre of its near side, which faces the earth.
+fn moon_place(longitude: f32, latitude: f32) -> vec3<f32> {
+    let lon = radians(longitude);
+    let lat = radians(latitude);
+    return vec3<f32>(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
+}
+
+// The moon's albedo at `place` on its near side (moon_place's frame), the
+// highlands' 1: its seas darker, softly edged, with a little mottling; its
+// bright craters, Tycho's rays reaching across the south.
+fn moon_albedo(place: vec3<f32>, local: vec2<f32>) -> f32 {
+    var seas = MOON_SEAS;
+    // Shores wander: the distance to each sea's centre shifts with
+    // low-frequency noise over the face, and fades over some 16 degrees.
+    let wander = 0.16 * (sky_noise(place.xy * 2.5 + 11.0, 5u) - 0.5)
+        + 0.08 * (sky_noise(place.xy * 6.0 + 3.0, 6u) - 0.5);
+    var dark = 0.0;
+    for (var index = 0u; index < 15u; index++) {
+        let sea = seas[index];
+        let reach = radians(sea.z);
+        let along = acos(clamp(dot(place, moon_place(sea.x, sea.y)), -1.0, 1.0)) + wander;
+        dark = max(dark, sea.w * (1.0 - smoothstep(reach - 0.14, reach + 0.14, along)));
+    }
+    var craters = MOON_CRATERS;
+    var bright = 0.0;
+    for (var index = 0u; index < 4u; index++) {
+        let crater = craters[index];
+        let apart = acos(clamp(dot(place, moon_place(crater.x, crater.y)), -1.0, 1.0));
+        let spot = apart / radians(crater.z);
+        bright += crater.w * exp(-spot * spot);
+    }
+    // Tycho's rays: thin streaks around it, fading over a third of a turn.
+    let tycho = moon_place(-11.2, -43.3);
+    let east = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), tycho));
+    let north = cross(tycho, east);
+    let around = atan2(dot(place, north), dot(place, east));
+    let apart = acos(clamp(dot(place, tycho), -1.0, 1.0));
+    let streaks = pow(0.5 + 0.5 * sin(around * 11.0 + 1.3), 8.0)
+        + pow(0.5 + 0.5 * sin(around * 7.0 + 4.1), 10.0);
+    bright += 0.12 * streaks * exp(-apart / 0.5) * smoothstep(0.03, 0.08, apart);
+    let mottle = mix(0.9, 1.0, smoothstep(0.3, 0.7,
+        0.65 * sky_noise(local * 2.2 + 7.0, 3u) + 0.35 * sky_noise(local * 5.3 + 2.0, 4u)));
+    return mottle * (1.0 - dark) + bright;
+}
+
 // The moon along `ray`, standing along `moon` and lit by the sun along
-// `sun`: its face as a sphere lit where the sun reaches it, which gives its
-// phase, its seas darker, and earthshine faint on the rest; rgb its light,
+// `sun`: its near side, its north toward the celestial pole, as a sphere
+// lit where the sun reaches it, which gives its phase; its seas and bright
+// craters where they are, and earthshine faint on the rest; rgb its light,
 // a how much of the ray its disc covers (soft at the rim).
 fn moon_disc(ray: vec3<f32>, moon: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
     if dot(ray, moon) < cos(MOON_RADIUS * 1.1) {
         return vec4<f32>(0.0);
     }
-    let right = normalize(cross(moon, vec3<f32>(1.0e-4, 1.0, 0.0)));
-    let up = cross(right, moon);
+    // Celestial north in the world: the galaxy's frame turned back.
+    let back = vec4<f32>(-lighting.star_turn.xyz, lighting.star_turn.w);
+    let pole = turned(back, CELESTIAL_POLE);
+    var up = pole - moon * dot(pole, moon);
+    if dot(up, up) < 1.0e-8 {
+        up = cross(moon, vec3<f32>(1.0, 0.0, 0.0));
+    }
+    up = normalize(up);
+    let right = cross(moon, up);
     let local = vec2<f32>(dot(ray, right), dot(ray, up)) / MOON_RADIUS;
     let r2 = dot(local, local);
     let cover = 1.0 - smoothstep(0.92, 1.0, sqrt(r2));
     if cover <= 0.0 {
         return vec4<f32>(0.0);
     }
-    // The near half's normal faces the eye.
-    let normal = local.x * right + local.y * up - sqrt(max(1.0 - r2, 0.0)) * moon;
+    // The near half faces the eye: its east limb on the right.
+    let facing = sqrt(max(1.0 - r2, 0.0));
+    let normal = local.x * right + local.y * up - facing * moon;
     let lit = saturate(dot(normal, sun) * 2.0);
-    let seas = mix(0.6, 1.0, smoothstep(0.3, 0.7,
-        0.65 * sky_noise(local * 2.2 + 7.0, 3u) + 0.35 * sky_noise(local * 5.3 + 2.0, 4u)));
-    let light = vec3<f32>(1.0, 0.96, 0.9) * (seas * (lit + 0.02) * MOON_LIGHT);
+    let albedo = moon_albedo(vec3<f32>(local.x, local.y, facing), local);
+    let shown = min(MOON_LIGHT, MOON_SHOWN / max(lighting.horizon.w, 1.0e-3));
+    let light = vec3<f32>(1.0, 0.96, 0.9) * (albedo * (lit + 0.02) * shown);
     return vec4<f32>(light, cover);
 }
 
