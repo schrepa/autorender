@@ -289,6 +289,13 @@ pub struct ShadowStats {
     pub levels_pending: u32,
     /// Casters the kept levels drew, read back like the near map's.
     pub level_casters: Option<u32>,
+    /// Sky occlusion's maps of still meshes seen from the sky
+    /// (`sky_occlusion`), drawn around the camera: two per direction in use
+    /// at most, and until a direction's are drawn it counts as open sky.
+    pub sky_maps: u32,
+    /// Sky occlusion's maps this frame drew: one at most, while the camera
+    /// strays from them or their still meshes change.
+    pub sky_drawn: u32,
 }
 
 /// Local lights.

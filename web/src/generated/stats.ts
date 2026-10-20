@@ -498,6 +498,17 @@ export interface ShadowStats {
    * the first read-back.
    */
   near_casters: number | null;
+  /**
+   * Sky occlusion's maps this frame drew: one at most, while the camera
+   * strays from them or their still meshes change.
+   */
+  sky_drawn: number;
+  /**
+   * Sky occlusion's maps of still meshes seen from the sky
+   * (`sky_occlusion`), drawn around the camera: two per direction in use
+   * at most, and until a direction's are drawn it counts as open sky.
+   */
+  sky_maps: number;
 }
 
 /** The physically based sky, and the exposure frames show. */

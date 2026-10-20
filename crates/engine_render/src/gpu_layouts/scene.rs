@@ -2,6 +2,8 @@
 
 use bytemuck::{Pod, Zeroable};
 
+use super::constants::SKY_LAYERS;
+
 /// Most near shadow cascades.
 pub(crate) const MAX_CASCADES: usize = engine_core::MAX_SHADOW_CASCADES as usize;
 /// Most kept shadow levels.
@@ -296,9 +298,16 @@ gpu_structs! {
         /// map's: their part of the view swept toward the sun; unused planes
         /// pass everything.
         pub planes: [[[f32; 4]; CASTER_PLANES]; MAX_CASCADES + 1],
+        /// The sky map redrawn this frame (`SKY_REFRESH`): world to its
+        /// space, its right, up and away-from-the-sky axes; its rectangle
+        /// there; and (x) the depth beyond which casters hide no sky from
+        /// its receivers.
+        pub sky: [[f32; 4]; 3],
+        pub sky_rect: [f32; 4],
+        pub sky_depths: [f32; 4],
     }
 
-    /// WGSL `Post` uniform of `effects.wgsl`: 240
+    /// WGSL `Post` uniform of `effects.wgsl`: 256
     /// bytes.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct PostUniform as ["Post"] {
@@ -330,6 +339,24 @@ gpu_structs! {
         /// The unit direction toward the sun; w: 1 when 8-bit color writes
         /// dither.
         pub sun_direction: [f32; 4],
+        /// Sky occlusion: the share of hidden sky's light taken away, the
+        /// least share any point keeps, and (w) 1 when it runs.
+        pub sky: [f32; 4],
+    }
+
+    /// Sky occlusion's maps as the screen effects' occlusion pass reads them
+    /// (`post.wgsl`): one per direction near the camera, then one per
+    /// direction reaching farther.
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct SkyUniform as ["Sky" in POST_SHADER] {
+        /// World to each map's clip space.
+        pub clips: [[[f32; 4]; 4]; SKY_LAYERS],
+        /// Each map's unit direction toward the sky, and (w) how much it
+        /// counts: 0 until drawn, fading in to 1 over its first frames.
+        pub directions: [[f32; 4]; SKY_LAYERS],
+        /// Directions in use, the near and the far maps' texels in world
+        /// units, and their reach (half a side) over their distances.
+        pub counts: [f32; 4],
     }
 
     /// Temporal antialiasing's resolve, as `temporal.wgsl` reads it.

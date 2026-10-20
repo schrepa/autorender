@@ -151,6 +151,18 @@ screen_effects! {
         },
         reads: [Depth, ShadowMaps],
     },
+    /// Sky occlusion: sky light fading where still meshes hide the sky, from
+    /// the shadow pass's sky maps (`shadows::sky`), which need shadows.
+    sky {
+        gate: |environment, _| {
+            environment.sky_occlusion.sanitized().darkens() && environment.shadows.enabled
+        },
+        uniform: |settings, on, _| {
+            let sky = settings.sky_occlusion.sanitized();
+            [sky.strength, sky.floor, 0.0, on]
+        },
+        reads: [Depth, ShadowMaps],
+    },
     /// Contact shadows, traced with the occlusion toward a sun above the
     /// horizon.
     contact {

@@ -1169,6 +1169,28 @@
       "direction": null
     },
     {
+      "name": "shadows.sky_drawn",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadows.sky_maps",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "sky.exposure.active",
       "kind": "work",
       "rule": "equal",

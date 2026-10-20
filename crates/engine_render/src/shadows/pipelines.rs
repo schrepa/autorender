@@ -3,7 +3,7 @@
 //! placed objects' impostor cards and the clear of kept-map
 //! tiles, with the view matrices and selection uniform they read.
 
-use super::{LEVEL_VIEW, SHADOW_FORMAT, VIEW_STRIDE};
+use super::{SHADOW_FORMAT, SKY_VIEW, VIEW_STRIDE};
 use crate::bindings::{SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW};
 use crate::gpu_data::Vertex;
 use crate::gpu_data::{SHADOW_SHADER, ShadowCullUniform};
@@ -247,7 +247,7 @@ impl ShadowPipelines {
             false,
         );
         let view_buffer =
-            crate::buffers::uniform(device, "engine/shadow-views", LEVEL_VIEW + VIEW_STRIDE);
+            crate::buffers::uniform(device, "engine/shadow-views", SKY_VIEW + VIEW_STRIDE);
         let view_group = group(
             device,
             "engine/shadow-view-group",

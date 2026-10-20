@@ -306,17 +306,23 @@ const WRITE_FILLERS: u64 = 32;
 /// Bytes of each filler buffer range (the storage offset alignment).
 const FILLER_BYTES: u64 = 256;
 
+/// Bytes of the uniform filler: as large as the largest uniform a shared
+/// layout's filled bindings may declare.
+const UNIFORM_FILLER_BYTES: u64 = 4096;
+
 /// Resources standing in for the bindings of a shared layout a pass does not
-/// read: the smallest buffers, 2D textures and sampler. Read and written
-/// storage have separate buffers, since one buffer may not be both in a
-/// dispatch or draw.
+/// read: the smallest buffers, 2D textures (and a depth array) and samplers.
+/// Read and written storage have separate buffers, since one buffer may not
+/// be both in a dispatch or draw.
 pub(crate) struct Fillers {
     uniform: wgpu::Buffer,
     read: wgpu::Buffer,
     write: wgpu::Buffer,
     texture: wgpu::TextureView,
     depth: wgpu::TextureView,
+    depth_array: wgpu::TextureView,
     sampler: wgpu::Sampler,
+    comparison: wgpu::Sampler,
 }
 
 impl Fillers {
@@ -339,12 +345,12 @@ impl Fillers {
                 format,
                 wgpu::TextureUsages::TEXTURE_BINDING,
             )
-            .create_view(&Default::default())
         };
+        let depth = texture("engine/filler-depth", wgpu::TextureFormat::Depth32Float);
         Self {
             uniform: buffer(
                 "engine/filler-uniform",
-                FILLER_BYTES,
+                UNIFORM_FILLER_BYTES,
                 wgpu::BufferUsages::UNIFORM,
             ),
             read: buffer(
@@ -357,10 +363,21 @@ impl Fillers {
                 WRITE_FILLERS * FILLER_BYTES,
                 wgpu::BufferUsages::STORAGE,
             ),
-            texture: texture("engine/filler-texture", wgpu::TextureFormat::Rgba8Unorm),
-            depth: texture("engine/filler-depth", wgpu::TextureFormat::Depth32Float),
+            texture: texture("engine/filler-texture", wgpu::TextureFormat::Rgba8Unorm)
+                .create_view(&Default::default()),
+            depth_array: depth.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("engine/filler-depth-array"),
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            }),
+            depth: depth.create_view(&Default::default()),
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/filler-sampler"),
+                ..Default::default()
+            }),
+            comparison: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("engine/filler-comparison"),
+                compare: Some(wgpu::CompareFunction::LessEqual),
                 ..Default::default()
             }),
         }
@@ -382,10 +399,15 @@ impl Fillers {
                 view: View::D2,
             } => wgpu::BindingResource::TextureView(&self.depth),
             Kind::Texture {
+                sample: Sample::Depth,
+                view: View::D2Array,
+            } => wgpu::BindingResource::TextureView(&self.depth_array),
+            Kind::Texture {
                 sample: Sample::Float | Sample::Unfilterable,
                 view: View::D2,
             } => wgpu::BindingResource::TextureView(&self.texture),
             Kind::Sampler(Sampling::Filtering) => wgpu::BindingResource::Sampler(&self.sampler),
+            Kind::Sampler(Sampling::Comparison) => wgpu::BindingResource::Sampler(&self.comparison),
             kind @ (Kind::Texture { .. }
             | Kind::Storage(_)
             | Kind::Storage3d(_)

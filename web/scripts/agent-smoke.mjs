@@ -179,9 +179,12 @@ try {
   assert.deepEqual((await cli("inspect", { component: "Environment" })).result.value, look.result.value);
   // Opt-in effects start off; an empty section turns one on with its defaults.
   assert.deepEqual([capture.result.rendering.sun_shafts.active, capture.result.rendering.reflections.active], [false, false]);
-  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, sun_shafts: {}, reflections: {}, highlights: { capped: false }, windows: {} });
+  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, sun_shafts: {}, reflections: {}, highlights: { capped: false }, windows: {}, sky_occlusion: { strength: 0.5, floor: 0.1 } });
   assert.equal(night.result.temporary, true);
-  assert.deepEqual([...night.result.environment_changed].sort(), ["atmosphere", "bloom", "highlights", "reflections", "sun_shafts", "windows"]);
+  assert.deepEqual([...night.result.environment_changed].sort(), ["atmosphere", "bloom", "highlights", "reflections", "sky_occlusion", "sun_shafts", "windows"]);
+  // Sky occlusion runs by default beside the shadows, its maps counted.
+  assert.ok(night.result.rendering.shadows.sky_maps <= 26);
+  assert.ok(night.result.rendering.shadows.sky_drawn <= 1);
   assert.deepEqual(effects(night.result.rendering), [true, true, false]);
   assert.deepEqual([night.result.rendering.sun_shafts.active, night.result.rendering.reflections.active], [true, true]);
   assert.equal(night.observation.tick, after.observation.tick);

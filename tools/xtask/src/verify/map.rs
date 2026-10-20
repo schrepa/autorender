@@ -370,6 +370,13 @@ pub(crate) const MAP: &[Rule] = &[
         checks: &[Cells(&["metro-highlights-uncapped"])],
     },
     Rule {
+        paths: &[
+            "crates/engine_core/src/**/sky_occlusion*",
+            "crates/engine_render/src/shadows/sky*",
+        ],
+        checks: &[Cells(&["metro-sky-occlusion-off"])],
+    },
+    Rule {
         paths: &["crates/engine_core/src/**/windows*"],
         checks: &[Cells(&["city-windows"])],
     },

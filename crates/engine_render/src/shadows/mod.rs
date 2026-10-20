@@ -22,10 +22,14 @@
 //! selection: [`ShadowPass::encode_selection`], then
 //! [`ShadowPass::encode_maps`].
 //!
+//! Sky occlusion's maps (`sky`) are drawn by the same pass: still mesh
+//! casters seen from fixed directions of the sky, one map a frame at most,
+//! selected beside the sun's maps.
+//!
 //! Its parts: the maps and their lookups (`maps`), each frame's caster
 //! groups (`casters`), where the maps look (`regions`), the selection of
-//! each map's casters (`selection`) and the depth pipelines (`pipelines`).
-//! What the kept map holds is `shadow_fit::KeptMap`.
+//! each map's casters (`selection`), the depth pipelines (`pipelines`) and
+//! the sky maps (`sky`). What the kept map holds is `shadow_fit::KeptMap`.
 
 #![expect(
     clippy::expect_used,
@@ -37,6 +41,7 @@ mod maps;
 mod pipelines;
 mod regions;
 mod selection;
+mod sky;
 
 use std::cell::Cell;
 
@@ -62,6 +67,8 @@ use crate::gpu_layouts::constants::REFRESH;
 use crate::gpu_layouts::constants::SHADOW_GROUP as GROUP;
 use crate::gpu_layouts::constants::SHADOW_MAPS as MAPS;
 use crate::gpu_layouts::constants::SHADOW_SKINNED_GROUP as SKINNED_GROUP;
+use crate::gpu_layouts::constants::SKY_MAP;
+use crate::gpu_layouts::constants::SKY_REFRESH;
 use crate::gpu_layouts::constants::STILLNESS;
 pub(crate) use crate::gpu_layouts::constants::VIRTUAL_SHADOW_PLANES;
 use casters::CasterGroups;
@@ -71,12 +78,14 @@ use maps::{ShadowMaps, map_pass};
 use pipelines::ShadowPipelines;
 use regions::{Regions, SelectionCounts};
 use selection::Selection;
+use sky::{SkyDraw, SkyMaps};
 
 // Uniform offset alignment between view matrices: each near cascade's, the
-// far maps', then the redrawn kept level's.
+// far maps', the redrawn kept level's, then the redrawn sky map's.
 const VIEW_STRIDE: u64 = 256;
 const FAR_VIEW: u64 = MAX_CASCADES as u64 * VIEW_STRIDE;
 const LEVEL_VIEW: u64 = FAR_VIEW + VIEW_STRIDE;
+const SKY_VIEW: u64 = LEVEL_VIEW + VIEW_STRIDE;
 
 /// A shadow map drawn this frame whose virtual casters' clusters virtual
 /// geometry selects: its planes around where casters can
@@ -256,6 +265,8 @@ pub(crate) struct ShadowFrame {
     // yet.
     level_refresh: Option<LevelRefresh>,
     level_pending: u32,
+    // The sky map redrawn.
+    sky: Option<SkyDraw>,
     pose_index: usize,
 }
 
@@ -321,6 +332,11 @@ pub(crate) struct ShadowPass {
     // The storage each frame lists its mesh casters in, which borrow the
     // frame's meshes and materials, kept from frame to frame.
     caster_storage: Cell<Vec<Caster<'static>>>,
+    // Sky occlusion's maps, the caster groups' generation they hold, and
+    // the redrawn sky map's view matrix last written.
+    sky: SkyMaps,
+    sky_groups: u64,
+    written_sky_view: Option<Mat4>,
 }
 
 impl ShadowPass {
@@ -350,7 +366,21 @@ impl ShadowPass {
             written_views: None,
             written_cull: None,
             caster_storage: Cell::default(),
+            sky: SkyMaps::new(device),
+            sky_groups: 0,
+            written_sky_view: None,
         }
+    }
+
+    /// What the screen effects' occlusion pass binds of sky occlusion: its
+    /// maps, their comparison sampler and its lookup uniform.
+    pub(crate) fn sky_bindings(&self) -> [(&'static str, crate::cached::Bound<'_>); 3] {
+        self.sky.bindings()
+    }
+
+    /// Sky maps drawn around the camera, and drawn this frame.
+    pub(crate) fn sky_counts(&self) -> (u32, u32) {
+        self.sky.counts()
     }
 
     /// Advances whenever the caster groups change.
@@ -502,8 +532,16 @@ impl ShadowPass {
             poses,
             ..
         } = inputs;
-        self.kept.merge(self.selection.take_dirty_tiles());
-        self.levels.merge(self.selection.take_level_tiles());
+        // Dirty tiles mark still casters that changed: the sky maps hold
+        // them too.
+        let dirty = self.selection.take_dirty_tiles();
+        let level_dirty = self.selection.take_level_tiles();
+        let still_changed = dirty
+            .iter()
+            .chain(level_dirty.iter().flatten())
+            .any(|&word| word != 0);
+        self.kept.merge(dirty);
+        self.levels.merge(level_dirty);
         self.virtual_views.clear();
         self.drawn_maps.clear();
         self.keeps_still = false;
@@ -514,6 +552,7 @@ impl ShadowPass {
             if !settings.enabled {
                 self.maps.release();
             }
+            self.sky.release(queue);
             self.kept.keep_while(settings.enabled);
             // Shadows off: lookups see state.x 0.
             self.maps.write_uniform(queue, bytemuck::Zeroable::zeroed());
@@ -678,6 +717,35 @@ impl ShadowPass {
             },
             &mut self.virtual_views,
         );
+        // Sky occlusion's map redrawn this frame, after still casters or the
+        // caster groups changed.
+        let groups_changed = self.sky_groups != self.groups_generation;
+        self.sky_groups = self.groups_generation;
+        let sky = self.sky.prepare(
+            device,
+            queue,
+            &snapshot.environment.sky_occlusion.sanitized(),
+            eye,
+            still_changed || groups_changed,
+        );
+        let mut cull = cull;
+        if let Some(draw) = sky {
+            cull.sky = draw.rows;
+            cull.sky_rect = draw.rect;
+            cull.sky_depths = [draw.depth, 0.0, 0.0, 0.0];
+            cull.mode |= SKY_REFRESH;
+            if self.written_sky_view != Some(draw.clip) {
+                let mut view = [0.0_f32; 20];
+                view[..16].copy_from_slice(&draw.clip.to_cols_array());
+                view[16..].copy_from_slice(&wind);
+                queue.write_buffer(
+                    &pipelines.view_buffer,
+                    SKY_VIEW,
+                    bytemuck::cast_slice(&view),
+                );
+                self.written_sky_view = Some(draw.clip);
+            }
+        }
         if self
             .written_cull
             .is_none_or(|written| bytemuck::bytes_of(&written) != bytemuck::bytes_of(&cull))
@@ -722,6 +790,7 @@ impl ShadowPass {
             refresh,
             level_refresh: regions.level_draw().map(|draw| draw.refresh),
             level_pending: self.levels.pending(),
+            sky,
             pose_index: poses.parity,
         })
     }
@@ -917,6 +986,7 @@ impl ShadowPass {
                 MOVING_MAP => ("shadow_moving", true, true),
                 KEPT_MAP => ("shadow_kept", true, true),
                 KEPT_LEVELS => ("shadow_levels", true, true),
+                SKY_MAP => ("shadow_sky", true, true),
                 cascade => ("shadow_near", cascade == 0, cascade == last_cascade),
             };
             (begin || end)
@@ -981,6 +1051,13 @@ impl ShadowPass {
             pass.set_pipeline(&pipelines.clear);
             pass.draw(0..3, 0..1);
             draw_selected(&mut pass, KEPT_LEVELS);
+        }
+        // Sky occlusion's map redrawn this frame: its still mesh casters
+        // alone, neither terrain, placed objects nor virtual geometry.
+        if let Some(view) = frame.sky.and_then(|draw| self.sky.layer_view(draw.layer)) {
+            let mut pass = map_pass(encoder, view, wgpu::LoadOp::Clear(1.0), writes(SKY_MAP));
+            pass.set_bind_group(0, &pipelines.view_group, &[SKY_VIEW as u32]);
+            draw_meshes(&mut pass, SKY_MAP);
         }
         self.caster_storage.set(recycle(casters));
         draws.get()

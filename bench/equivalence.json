@@ -234,6 +234,16 @@
       }
     },
     {
+      "name": "metro-sky-occlusion-off",
+      "tier": "full",
+      "note": "Metro without sky occlusion, its environment section switched by the environment control.",
+      "scene": "metro",
+      "environment": { "sky_occlusion": { "enabled": false } },
+      "ticks": 30,
+      "views": ["overview", "close"],
+      "captures": ["exact", "gpu:0.5"]
+    },
+    {
       "name": "metro-bloom-off",
       "tier": "full",
       "note": "Metro without bloom, its environment section switched by the environment control.",

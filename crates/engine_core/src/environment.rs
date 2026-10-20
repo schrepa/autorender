@@ -58,6 +58,7 @@ macro_rules! environment_sections {
         $then! {
             shadows: Shadows { opt_in: false, feature: Core },
             ambient_occlusion: AmbientOcclusion { opt_in: false, feature: Core },
+            sky_occlusion: SkyOcclusion { opt_in: false, feature: Core },
             bloom: Bloom { opt_in: false, feature: Core },
             dither: Dither { opt_in: false, feature: Core },
             auto_exposure: AutoExposure { opt_in: true, feature: Core },

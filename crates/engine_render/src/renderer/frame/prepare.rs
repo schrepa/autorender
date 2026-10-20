@@ -1172,9 +1172,9 @@ impl Renderer {
                     device,
                     queue,
                     snapshot,
-                    size,
-                    depth,
+                    (size, depth),
                     temporal_frame.is_some(),
+                    self.shadows.sky_bindings(),
                 ))
             },
         );

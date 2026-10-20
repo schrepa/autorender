@@ -689,6 +689,18 @@
             "integer",
             "null"
           ]
+        },
+        "sky_drawn": {
+          "description": "Sky occlusion's maps this frame drew: one at most, while the camera\nstrays from them or their still meshes change.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sky_maps": {
+          "description": "Sky occlusion's maps of still meshes seen from the sky\n(`sky_occlusion`), drawn around the camera: two per direction in use\nat most, and until a direction's are drawn it counts as open sky.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
@@ -696,7 +708,9 @@
         "draws",
         "kept_redraw",
         "level_tiles",
-        "levels_pending"
+        "levels_pending",
+        "sky_maps",
+        "sky_drawn"
       ],
       "type": "object"
     },

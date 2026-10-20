@@ -11,7 +11,7 @@ pub(crate) use crate::gpu_layouts::constants::PYRAMID_EXTENT_BYTES;
 use crate::gpu_layouts::impostors::{ImpostorBakeUniform, ImpostorRecord};
 use crate::gpu_layouts::scene::{
     CameraUniform, ColorData, GroundData, LightingUniform, MaterialUniform, PoseData, PostUniform,
-    ResolveUniform, ShadowCullUniform, ShadowUniform,
+    ResolveUniform, ShadowCullUniform, ShadowUniform, SkyUniform,
 };
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::gpu_layouts::{
@@ -1215,6 +1215,11 @@ tables! {
             // Scene levels and a bloom level halved beside them.
             texture(14, "scene_levels", Float, D2, F),
             texture(15, "bloom_source", Float, D2, F),
+            // Sky occlusion's maps, their comparison sampler and where each
+            // looks, which the occlusion pass reads.
+            texture(16, "sky_maps", Depth, D2Array, F),
+            sampler(17, "sky_sampler", Comparison, F),
+            uniform_of(18, "sky", size_of::<SkyUniform>(), F),
         ],
     };
 

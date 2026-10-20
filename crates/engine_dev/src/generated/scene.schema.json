@@ -2881,6 +2881,16 @@
             }
           ]
         },
+        "sky_occlusion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSkyOcclusion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "subpixel_culling": {
           "anyOf": [
             {
@@ -4922,6 +4932,58 @@
           "default": 0.27000001072883606,
           "maximum": 10.0,
           "minimum": 0.01
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneSkyOcclusion": {
+      "description": "Sky occlusion settings: the sky's light, and its reflections, fade\nwhere still meshes hide the sky, so caves, tunnels and buildings go\ndark inside away from their openings. Only meshes of entities that\nstay still hide the sky, while shadows are enabled: not terrain, not\nwhat terrain placement layers place, not moving or skinned meshes,\nvirtual geometry, particles or water. A cave must be a mesh of its\nown.",
+      "type": "object",
+      "properties": {
+        "directions": {
+          "description": "Directions of the sky looked along: 5, 9 or 13, others round down\nto one of them. Fewer cost less; more give smoother light near\nopenings.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 13,
+          "maximum": 13,
+          "minimum": 5
+        },
+        "enabled": {
+          "description": "Whether the sky's light fades where still meshes hide the sky.",
+          "type": "boolean",
+          "default": true
+        },
+        "far_distance": {
+          "description": "Meters from the camera within which meshes hide the sky at all,\nthrough coarser maps beyond `near_distance` (texels a 192nd of\nit), fading out over a third as far again: farther, sky light is\nas without sky occlusion.",
+          "type": "number",
+          "format": "float",
+          "default": 400.0,
+          "maximum": 4000.0,
+          "minimum": 64.0
+        },
+        "floor": {
+          "description": "The share of the sky's light a point keeps however little sky\nit sees: 0 lets the deepest cave go black; a little more stands\nin for light bouncing in from lit surfaces.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "near_distance": {
+          "description": "Meters from the camera within which sharp maps decide whether\nmeshes hide the sky, their texels a 192nd of it (0.25 m at 48 m):\nshorter is sharper, for small rooms and narrow openings, longer\nkeeps more of the view sharp.",
+          "type": "number",
+          "format": "float",
+          "default": 48.0,
+          "maximum": 256.0,
+          "minimum": 8.0
+        },
+        "strength": {
+          "description": "How much of the sky's light, and of its reflections, hidden sky\ntakes away: 1 all of it, 0 none.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0
         }
       },
       "additionalProperties": false

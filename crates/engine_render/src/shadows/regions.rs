@@ -10,7 +10,7 @@ use engine_core::{
 };
 
 use super::{
-    FAR_VIEW, KEPT_LEVELS, KEPT_MAP, LEVEL_REFRESH, LEVEL_VIEW, MAPS, MOVING_MAP, REFRESH,
+    FAR_VIEW, KEPT_LEVELS, KEPT_MAP, LEVEL_REFRESH, LEVEL_VIEW, MAPS, MOVING_MAP, REFRESH, SKY_MAP,
     STILLNESS, VIEW_STRIDE, VIRTUAL_SHADOW_PLANES, VirtualShadowView,
 };
 use crate::gpu_data::{CASTER_PLANES, MAX_CASCADES, MAX_LEVELS, ShadowCullUniform, ShadowUniform};
@@ -147,13 +147,15 @@ impl Regions {
     /// than rounding, and a whole texel in the moving map, whose casters are
     /// drawn every frame: its outlines may then move by one texel, and it
     /// draws half the geometry. Kept levels draw within half
-    /// the finest one's texel.
+    /// the finest one's texel, and the sky map draws meshes whole: its
+    /// texels differ, near and far, from frame to frame.
     pub(super) fn errors(&self) -> [f32; MAPS] {
         let far = self.far.texel(self.resolution);
         std::array::from_fn(|map| match map {
             MOVING_MAP => far,
             KEPT_MAP => far * 0.5,
             KEPT_LEVELS => self.level_texel * 0.5,
+            SKY_MAP => 0.0,
             cascade => self.near().get(cascade).map_or(0.0, |(_, region)| {
                 region.texel(self.near_resolution()) * 0.5
             }),
@@ -418,6 +420,10 @@ impl Regions {
             }),
             level_tiles: std::array::from_fn(|index| counts.levels.tiles(index)),
             planes,
+            // The sky map's, set where a frame redraws one.
+            sky: [[0.0; 4]; 3],
+            sky_rect: [0.0; 4],
+            sky_depths: [0.0; 4],
         }
     }
 

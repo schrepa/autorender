@@ -43,6 +43,25 @@
 // in `source`.
 @group(0) @binding(15) var bloom_source: texture_2d<f32>;
 
+// Sky occlusion's maps (`shadows::sky`): still meshes seen from fixed
+// directions of the sky, one layer each near the camera, then one each
+// reaching farther; their comparison sampler; and where each looks.
+const SKY_DIRECTIONS: u32 = 13u;
+const SKY_LAYERS: u32 = 26u;
+struct Sky {
+    // World to each map's clip space.
+    clips: array<mat4x4<f32>, SKY_LAYERS>,
+    // Each map's unit direction toward the sky, and (w) how much it counts:
+    // 0 until drawn, fading in to 1 over its first frames.
+    directions: array<vec4<f32>, SKY_LAYERS>,
+    // Directions in use, the near and the far maps' texels in world units,
+    // and their reach over their distances.
+    counts: vec4<f32>,
+}
+@group(0) @binding(16) var sky_maps: texture_depth_2d_array;
+@group(0) @binding(17) var sky_sampler: sampler_comparison;
+@group(0) @binding(18) var<uniform> sky: Sky;
+
 const TAU: f32 = 6.2831853;
 const SAMPLES: u32 = 8u;
 // Unit directions of the occlusion samples: one per eighth of a turn, in the
@@ -163,9 +182,58 @@ fn ambient_visibility(pixel: vec2<i32>, p: vec3<f32>, normal: vec3<f32>, distanc
     return 1.0 - post.occlusion.y * obscurance;
 }
 
+// How much of map `layer` sees the sky along its direction from `p`, a
+// surface point facing `normal`, as (seen, counted): seen the share of the
+// 2x2 texels around it no caster lies above, lifted a texel toward the sky
+// and off the surface so its own surface hides none of it; counted 0 where
+// the map does not reach or was never drawn, fading in from its edges.
+fn sky_seen(layer: u32, p: vec3<f32>, normal: vec3<f32>, texel: f32) -> vec2<f32> {
+    let toward = sky.directions[layer];
+    if toward.w <= 0.0 {
+        return vec2<f32>(1.0, 0.0);
+    }
+    let lifted = p + normal * (1.5 * texel) + toward.xyz * texel;
+    let clip = sky.clips[layer] * vec4<f32>(lifted, 1.0);
+    let edge = max(abs(clip.x), abs(clip.y));
+    let counted = toward.w * (1.0 - smoothstep(0.85, 1.0, edge)) * select(1.0, 0.0, clip.z >= 1.0);
+    if counted <= 0.0 {
+        return vec2<f32>(1.0, 0.0);
+    }
+    let uv = vec2<f32>(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
+    let seen = textureSampleCompareLevel(sky_maps, sky_sampler, uv, layer, clip.z);
+    return vec2<f32>(seen, counted);
+}
+
+// The share of the sky's light that reaches `p`, a surface point facing
+// `normal`: each direction in use weighted by how squarely the surface faces
+// it, seen through the near map where it reaches, the far map beyond and
+// open sky past both; at least sky occlusion's floor.
+fn sky_visibility(p: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let count = u32(sky.counts.x);
+    if post.sky.w == 0.0 || count == 0u {
+        return 1.0;
+    }
+    var sum = 0.0;
+    var total = 0.0;
+    for (var direction = 0u; direction < count; direction++) {
+        let weight = max(dot(normal, sky.directions[direction].xyz), 0.0) + 0.05;
+        let near = sky_seen(direction, p, normal, sky.counts.y);
+        var seen = near.x;
+        if near.y < 1.0 {
+            let far = sky_seen(direction + SKY_DIRECTIONS, p, normal, sky.counts.z);
+            seen = mix(mix(1.0, far.x, far.y), near.x, near.y);
+        }
+        sum += weight * seen;
+        total += weight;
+    }
+    let visible = max(sum / total, post.sky.y);
+    return 1.0 - post.sky.x * (1.0 - visible);
+}
+
 // Ambient occlusion and contact shadows at half resolution: writes the
-// occlusion's visibility, the distance from the eye, which the filter
-// compares, and the contact shadows' visibility.
+// occlusion's visibility (with what sky occlusion leaves of the sky's
+// light), the distance from the eye, which the filter compares, and the
+// contact shadows' visibility.
 @fragment
 fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let last = vec2<i32>(post.size.xy) - 1;
@@ -202,8 +270,11 @@ fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     // would let the temporal resolve's clamp chase changing darkness, which
     // flickers.
     let noise = fract(52.9829189 * fract(dot(position.xy, vec2<f32>(0.06711056, 0.00583715))));
-    return vec4<f32>(ambient_visibility(pixel, p, normal, distance, noise), distance,
-        contact_visibility(p, normal, distance, noise), 0.0);
+    var visible = sky_visibility(p, normal);
+    if post.occlusion.w != 0.0 {
+        visible *= ambient_visibility(pixel, p, normal, distance, noise);
+    }
+    return vec4<f32>(visible, distance, contact_visibility(p, normal, distance, noise), 0.0);
 }
 
 // How far, relative to its own, a neighbor's inverse distance may lie from
@@ -318,7 +389,7 @@ fn upsampled_shafts(texel: vec2<i32>) -> f32 {
 fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let texel = vec2<i32>(position.xy);
     var visible = vec2<f32>(1.0);
-    if post.occlusion.w != 0.0 || post.contact.w != 0.0 {
+    if post.occlusion.w != 0.0 || post.contact.w != 0.0 || post.sky.w != 0.0 {
         visible = filtered_occlusion(texel);
     }
     var shafts_light = 0.0;

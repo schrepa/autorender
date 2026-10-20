@@ -36,6 +36,10 @@ struct Post {
     // The unit direction toward the sun; w: 1 when 8-bit color writes
     // dither.
     sun_direction: vec4<f32>,
+    // Sky occlusion: the share of hidden sky's light taken away, the least
+    // share any point keeps, and (w) 1 when it runs: the occlusion pass
+    // then folds it into the occlusion's visibility.
+    sky: vec4<f32>,
 }
 
 // The full-resolution pixel quarter-resolution sun shaft texel `texel`
@@ -72,7 +76,8 @@ fn inverse_distance_at(depth: texture_depth_2d, pixel: vec2<i32>, settings: Post
 // where none lies near, the bilinear weights alone.
 fn screen_effects(effects: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2<i32>,
         settings: Post) -> vec3<f32> {
-    if settings.occlusion.w == 0.0 && settings.shafts.w == 0.0 && settings.contact.w == 0.0 {
+    if settings.occlusion.w == 0.0 && settings.shafts.w == 0.0 && settings.contact.w == 0.0
+        && settings.sky.w == 0.0 {
         return vec3<f32>(1.0, 0.0, 1.0);
     }
     let size = textureDimensions(effects);
@@ -102,9 +107,10 @@ fn screen_effects(effects: texture_2d<f32>, depth: texture_depth_2d, pixel: vec2
 }
 
 // The factor darkening a pixel whose light has an ambient share of
-// `ambient` (the scene target's alpha) by the occlusion's `visible` share.
+// `ambient` (the scene target's alpha) by the occlusion's `visible` share,
+// which holds what sky occlusion leaves of the sky's light too.
 fn occlusion_factor(ambient: f32, visible: f32, settings: Post) -> f32 {
-    if settings.occlusion.w == 0.0 {
+    if settings.occlusion.w == 0.0 && settings.sky.w == 0.0 {
         return 1.0;
     }
     return 1.0 - ambient * (1.0 - visible);

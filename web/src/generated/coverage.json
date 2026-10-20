@@ -763,6 +763,14 @@
       "stats": true
     },
     {
+      "inspector": "SkyOcclusion",
+      "section": "sky_occlusion",
+      "smokes": [
+        "agent"
+      ],
+      "stats": false
+    },
+    {
       "inspector": "Bloom",
       "section": "bloom",
       "smokes": [

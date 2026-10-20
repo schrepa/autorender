@@ -698,6 +698,8 @@ pub(crate) use crate::gpu_layouts::scene::ShadowCullUniform;
 
 pub(crate) use crate::gpu_layouts::scene::PostUniform;
 
+pub(crate) use crate::gpu_layouts::scene::SkyUniform;
+
 /// Levels of a full mip chain down to 1x1 for a `width` x `height` texture.
 pub(crate) fn mip_levels(width: u32, height: u32) -> u32 {
     u32::BITS - width.max(height).max(1).leading_zeros()

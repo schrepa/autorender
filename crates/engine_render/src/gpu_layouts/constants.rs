@@ -79,17 +79,24 @@ gpu_consts! {
     // crate::shadows
     // Near cascades are maps 0 to MAX_CASCADES - 1; the far maps follow, then
     // the kept levels, one map of selected casters for the one
-    // redrawn.
+    // redrawn, then the sky map redrawn this frame (`shadows::sky`).
     pub(crate) const MOVING_MAP: usize = MAX_CASCADES => ["MOVING_MAP" in SHADOW_SHADER];
     pub(crate) const KEPT_MAP: usize = MAX_CASCADES + 1 => ["KEPT_MAP" in SHADOW_SHADER];
     pub(crate) const KEPT_LEVELS: usize = MAX_CASCADES + 2 => ["KEPT_LEVELS" in SHADOW_SHADER];
-    pub(crate) const SHADOW_MAPS: usize = MAX_CASCADES + 3 => ["MAPS" in SHADOW_SHADER];
+    pub(crate) const SKY_MAP: usize = MAX_CASCADES + 3 => ["SKY_MAP" in SHADOW_SHADER];
+    pub(crate) const SHADOW_MAPS: usize = MAX_CASCADES + 4 => ["MAPS" in SHADOW_SHADER];
     pub(crate) const SHADOW_GROUP: u32 = 256 => ["@select_casters" in SHADOW_SHADER];
     pub(crate) const SHADOW_SKINNED_GROUP: u32 = 64 => ["@select_skinned" in SHADOW_SHADER];
     // Mode bits of the selection pass.
     pub(crate) const STILLNESS: u32 = 1 => ["STILLNESS" in SHADOW_SHADER];
     pub(crate) const REFRESH: u32 = 2 => ["REFRESH" in SHADOW_SHADER];
     pub(crate) const LEVEL_REFRESH: u32 = 4 => ["LEVEL_REFRESH" in SHADOW_SHADER];
+    pub(crate) const SKY_REFRESH: u32 = 8 => ["SKY_REFRESH" in SHADOW_SHADER];
+    /// Directions of the sky that sky occlusion tests at most, and its
+    /// maps: one per direction near the camera, then one per direction
+    /// reaching farther.
+    pub(crate) const SKY_DIRECTIONS: usize = 13 => ["SKY_DIRECTIONS" in POST_SHADER];
+    pub(crate) const SKY_LAYERS: usize = 2 * SKY_DIRECTIONS => ["SKY_LAYERS" in POST_SHADER];
 
     // crate::shadow_fit
     /// Tiles across each side of the kept far map: kept casters

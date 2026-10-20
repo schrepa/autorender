@@ -147,7 +147,7 @@ pub(crate) struct PostPass {
     targets: ScreenTarget<Targets>,
     // Occlusion, filter, reflection and shaft bindings over the depth
     // buffer and targets (and reflections', the pyramid).
-    occlusion_group: GroupCache<2>,
+    occlusion_group: GroupCache<5>,
     effects_filter_group: GroupCache<4>,
     reflections_group: GroupCache<8>,
     filter_group: GroupCache<3>,
@@ -362,42 +362,20 @@ impl PostPass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         snapshot: &RenderSnapshot,
-        size: FrameSize,
-        depth: &Versioned<wgpu::TextureView>,
+        (size, depth): (FrameSize, &Versioned<wgpu::TextureView>),
         temporal: bool,
+        sky: [(&'static str, Bound<'_>); 3],
     ) -> Effects {
         if self.targets.resizes(size) {
             let targets = self.create_targets(device, size);
             self.targets.set(size, targets);
         }
         let frame = Effects::of(&snapshot.environment);
+        self.bind_occlusion(device, frame, depth, sky);
         let targets = self.targets.get().expect("sized above");
         let post = || Bound::fixed(self.uniform.as_entire_binding());
         let target = |view| Bound::of(targets, pipelines::view(view));
         let shared = (&POST, &self.layout);
-        if frame.occlusion || frame.contact {
-            self.occlusion_group.bind_filled(
-                device,
-                "engine/post-occlusion-group",
-                shared,
-                [("post", post()), ("depth_texture", depth.bound())],
-                &self.fillers,
-            );
-        }
-        if frame.occlusion || frame.shafts || frame.contact {
-            self.effects_filter_group.bind_filled(
-                device,
-                "engine/post-effects-filter-group",
-                shared,
-                [
-                    ("post", post()),
-                    ("depth_texture", depth.bound()),
-                    ("shafts", target(&targets.shafts)),
-                    ("raw_occlusion", target(&targets.raw_occlusion)),
-                ],
-                &self.fillers,
-            );
-        }
         self.trace_index = if temporal {
             (self.trace_index + 1) % 4
         } else {
@@ -483,12 +461,58 @@ impl PostPass {
             sun_direction: toward_sun
                 .extend(f32::from(u8::from(snapshot.environment.dither.enabled)))
                 .to_array(),
+            sky: effects.sky,
         };
         if self.written != Some(uniform) {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
             self.written = Some(uniform);
         }
         frame
+    }
+
+    /// The groups of the occlusion pass (with sky occlusion's maps `sky`)
+    /// and of the filter after it, where `frame` runs them.
+    fn bind_occlusion(
+        &mut self,
+        device: &wgpu::Device,
+        frame: Effects,
+        depth: &Versioned<wgpu::TextureView>,
+        sky: [(&'static str, Bound<'_>); 3],
+    ) {
+        let targets = self.targets.get().expect("sized in begin");
+        let post = || Bound::fixed(self.uniform.as_entire_binding());
+        let target = |view| Bound::of(targets, pipelines::view(view));
+        let shared = (&POST, &self.layout);
+        if frame.occlusion || frame.contact || frame.sky {
+            let [sky_maps, sky_sampler, sky] = sky;
+            self.occlusion_group.bind_filled(
+                device,
+                "engine/post-occlusion-group",
+                shared,
+                [
+                    ("post", post()),
+                    ("depth_texture", depth.bound()),
+                    sky_maps,
+                    sky_sampler,
+                    sky,
+                ],
+                &self.fillers,
+            );
+        }
+        if frame.occlusion || frame.shafts || frame.contact || frame.sky {
+            self.effects_filter_group.bind_filled(
+                device,
+                "engine/post-effects-filter-group",
+                shared,
+                [
+                    ("post", post()),
+                    ("depth_texture", depth.bound()),
+                    ("shafts", target(&targets.shafts)),
+                    ("raw_occlusion", target(&targets.raw_occlusion)),
+                ],
+                &self.fillers,
+            );
+        }
     }
 
     // A group of the shared layout binding `resources` by name, filled
@@ -553,7 +577,7 @@ impl PostPass {
         profiler: &GpuProfiler,
     ) {
         let targets = self.targets.get().expect("sized in begin");
-        if (frame.occlusion || frame.contact)
+        if (frame.occlusion || frame.contact || frame.sky)
             && let Some(group) = self.occlusion_group.get()
         {
             let mut pass = fullscreen_pass(
@@ -643,7 +667,7 @@ impl PostPass {
         }
         // The occlusion and contact shadows filtered and the shafts at half
         // resolution, together (1, 0 and 1 where off).
-        if (frame.occlusion || frame.shafts || frame.contact)
+        if (frame.occlusion || frame.shafts || frame.contact || frame.sky)
             && let Some(group) = self.effects_filter_group.get()
         {
             let mut pass = fullscreen_pass(

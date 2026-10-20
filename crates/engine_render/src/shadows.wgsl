@@ -12,7 +12,9 @@
 // region of the one redrawn this frame, and the tiles they leave or come to
 // rest in are marked dirty too. Casters with virtual geometry
 // go to the maps drawn every frame, whose views select their clusters, and
-// never to the kept map.
+// never to the kept map. Still casters (on CPU-prepared frames every caster
+// without joints) also go to the sky map redrawn this frame, looking down
+// from one of sky occlusion's directions instead of from the sun.
 
 struct Cull {
     // World to light space: the sun's right, up and away-from-sun axes.
@@ -58,6 +60,12 @@ struct Cull {
     // cascade's receivers, then the moving map's (MOVING_VOLUME): their
     // part of the view swept toward the sun. Unused planes pass all.
     planes: array<array<vec4<f32>, 8>, 5>,
+    // The sky map redrawn this frame (SKY_REFRESH): world to its space (its
+    // right, up and away-from-the-sky axes), its rectangle there, and (x)
+    // the depth beyond which casters hide no sky from its receivers.
+    sky: array<vec4<f32>, 3>,
+    sky_rect: vec4<f32>,
+    sky_depths: vec4<f32>,
 }
 
 const MOVING_VOLUME: u32 = 4u;
@@ -172,11 +180,14 @@ const DIRTY_WORDS: u32 = 32u;
 // World units of kept-level footprints: light-space corners rounded
 // outward to them, as signed 16-bit pairs.
 const FOOTPRINT_UNIT: f32 = 4.0;
-// Near cascades are maps 0 to 3; the far maps follow, then the kept levels.
+// Near cascades are maps 0 to 3; the far maps follow, then the kept levels,
+// then the sky map redrawn this frame.
 const MOVING_MAP: u32 = 4u;
 const KEPT_MAP: u32 = 5u;
 const KEPT_LEVELS: u32 = 6u;
-const MAPS: u32 = 7u;
+const SKY_MAP: u32 = 7u;
+const MAPS: u32 = 8u;
+const SKY_REFRESH: u32 = 8u;
 
 fn mix_key(key: u32, value: u32) -> u32 {
     var x = (key ^ value) * 0x9e3779b1u;
@@ -431,6 +442,17 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
             append(MOVING_MAP, batch.group, candidate.slot);
         }
     }
+    // Sky occlusion's map, which keeps what stays: its box seen from the sky.
+    if (cull.mode & SKY_REFRESH) != 0u && (kept || !classify) {
+        let sky_center = vec3<f32>(dot(cull.sky[0].xyz, world_center),
+            dot(cull.sky[1].xyz, world_center), dot(cull.sky[2].xyz, world_center));
+        let sky_half = vec3<f32>(dot(abs(cull.sky[0].xyz), world_half),
+            dot(abs(cull.sky[1].xyz), world_half), dot(abs(cull.sky[2].xyz), world_half));
+        if overlaps(cull.sky_rect, sky_center - sky_half, sky_center + sky_half,
+            cull.sky_depths.x) {
+            append(SKY_MAP, batch.group, candidate.slot);
+        }
+    }
 }
 
 // Totals of this frame's casters of the near cascades together, the moving
@@ -446,9 +468,10 @@ fn count_casters(@builtin(local_invocation_index) lane: u32) {
     }
     workgroupBarrier();
     // Every lane sums every 256th draw, of the near cascades, the moving
-    // map, the kept map or the kept levels.
+    // map, the kept map or the kept levels: every map but the last, the sky
+    // map, which shadows do not count.
     var totals = vec4<u32>(0u);
-    let draws = MAPS * cull.groups;
+    let draws = (MAPS - 1u) * cull.groups;
     for (var draw = lane; draw < draws; draw += COUNT_LANES) {
         let map = draw / cull.groups;
         totals[select(0u, map + 1u - MOVING_MAP, map >= MOVING_MAP)]
