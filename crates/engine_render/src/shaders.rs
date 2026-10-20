@@ -322,7 +322,7 @@ entry_points! {
         ],
     }
     clouds = CLOUDS_SHADER {
-        compute: [make_noise, shadow_clouds, march_clouds, march_view],
+        compute: [make_noise, shadow_clouds, light_clouds, march_clouds, march_view],
     }
     sky = SKY_SHADER {
         compute: [build_transmittance, build_multiple, build_sky_view, derive_light],

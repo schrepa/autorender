@@ -231,6 +231,10 @@ gpu_consts! {
 
     /// Cells along a side of the cloud shadows' grid.
     pub(crate) const SHADOW_CELLS: u32 = 128 => ["CLOUD_SHADOW_CELLS"];
+    /// Columns along a side of the clouds' light map, and the heights
+    /// through the layer each holds.
+    pub(crate) const LIGHT_TEXELS: u32 = 384 => ["LIGHT_TEXELS" in CLOUDS_SHADER];
+    pub(crate) const LIGHT_HEIGHTS: u32 = 16 => ["LIGHT_HEIGHTS" in CLOUDS_SHADER];
 
     // crate::gpu_data::Variant: the bits of a material's variant passes
     // drawn rarely read from its uniform.
@@ -295,7 +299,7 @@ gpu_consts! {
     // Workgroup sides that dispatches divide by.
     pub(crate) const SCATTER_GROUP: u32 = 64 => ["@snap_scatter" in SCATTER_SNAP_SHADER, "@cull_scatter" in SCATTER_CULL_SHADER];
     pub(crate) const DEFORMATION_GROUP: u32 = 8 => ["@press" in DEFORMATION_SHADER, "@slopes" in DEFORMATION_SHADER, "@scroll" in DEFORMATION_SHADER, "@wipe" in DEFORMATION_SHADER, "@rebase" in DEFORMATION_SHADER];
-    pub(crate) const CLOUD_GROUP: u32 = 8 => ["@march_view" in CLOUDS_SHADER, "@march_clouds" in CLOUDS_SHADER, "@shadow_clouds" in CLOUDS_SHADER];
+    pub(crate) const CLOUD_GROUP: u32 = 8 => ["@march_view" in CLOUDS_SHADER, "@march_clouds" in CLOUDS_SHADER, "@shadow_clouds" in CLOUDS_SHADER, "@light_clouds" in CLOUDS_SHADER];
     pub(crate) const NOISE_GROUP: u32 = 4 => ["@make_noise" in CLOUDS_SHADER];
     pub(crate) const SKY_TABLE_GROUP: u32 = 8 => ["@build_transmittance" in SKY_SHADER, "@build_multiple" in SKY_SHADER, "@build_sky_view" in SKY_SHADER];
     pub(crate) const CONTROL_GROUP: u32 = 8 => ["@tile_control" in TERRAIN_CONTROL_SHADER];

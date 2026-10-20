@@ -825,8 +825,9 @@ tables! {
     };
 
     /// The clouds' march into their dome (`clouds.wgsl`): the
-    /// layer, sun and sky, the noise volume and its sampler, the dome, and
-    /// the physically based sky's uniform, transmittance table and sampler.
+    /// layer, sun and sky, the noise volume and its sampler, the dome, the
+    /// physically based sky's uniform, transmittance table and sampler, and
+    /// the light map.
     const CLOUD_MARCH: Table = Table {
         label: "engine/cloud-march-layout",
         serves: [CLOUDS_SHADER @ 0],
@@ -839,14 +840,15 @@ tables! {
             uniform_of(11, "cloud_air", size_of::<sky::SkyUniform>(), C),
             texture(12, "cloud_transmittance", Float, D2, C),
             sampler(13, "cloud_table_sampler", Filtering, C),
+            write(14, "light_cells", C),
         ],
     };
 
     /// The view's march of the clouds (`clouds.wgsl`'s
     /// `march_view`): the march from the camera, the noise volume and its
     /// sampler, the view, its depth buffer, the marched blocks' clouds and
-    /// their distances, and the physically based sky's uniform,
-    /// transmittance table and sampler.
+    /// their distances, the physically based sky's uniform, transmittance
+    /// table and sampler, and the light map.
     const CLOUD_VIEW: Table = Table {
         label: "engine/cloud-view-layout",
         serves: [CLOUDS_SHADER @ 0],
@@ -862,6 +864,7 @@ tables! {
             uniform_of(11, "cloud_air", size_of::<sky::SkyUniform>(), C),
             texture(12, "cloud_transmittance", Float, D2, C),
             sampler(13, "cloud_table_sampler", Filtering, C),
+            write(14, "light_cells", C),
         ],
     };
 
