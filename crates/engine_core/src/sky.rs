@@ -78,7 +78,7 @@ settings! {
     /// down, the sky's just above the horizon, so far ground melts into the
     /// lit haze there), and the air begins at the eye, at least as thick as
     /// `visibility` asks, thinning with height as the atmosphere's (or the
-    /// physically based sky's) air does. Opt-in.
+    /// physically based sky's) air does, as thick as `strength` makes it.
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -94,6 +94,9 @@ settings! {
         /// distance, so the world fades into the sky before it ends. The air
         /// is never thinner than the atmosphere's own.
         pub visibility: f32 = 0.0 => at_least(0.0),
+        /// How thick the air is, as a multiple of what `visibility` (or the
+        /// atmosphere's own air) makes it: 0 clear, 1 as thick as that.
+        pub strength: f32 = 0.7 => range(0.0, 4.0),
     }
 }
 

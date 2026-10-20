@@ -498,7 +498,7 @@ pub(crate) fn night_lighting(environment: &engine_core::Environment, sun: Vec3) 
 /// the eye `eye`, at least as thick at its height as the visibility asks
 /// (Koschmieder: a fiftieth of what lies level with the eye is left at
 /// 3.912 over the extinction), twice the distance to the far plane of
-/// `view_projection` unless set.
+/// `view_projection` unless set; then as thick as its strength makes it.
 pub(crate) fn apply_haze(
     lighting: &mut crate::gpu_data::LightingUniform,
     haze: &engine_core::Haze,
@@ -521,6 +521,6 @@ pub(crate) fn apply_haze(
     let falloff = lighting.aerial[2];
     let at_zero = extinction * engine_core::math::min(falloff * eye.y, 60.0).exp();
     lighting.aerial[0] = 0.0;
-    lighting.aerial[1] = engine_core::math::max(lighting.aerial[1], at_zero);
+    lighting.aerial[1] = engine_core::math::max(lighting.aerial[1], at_zero) * haze.strength;
     lighting.aerial_color[3] = 1.0;
 }
