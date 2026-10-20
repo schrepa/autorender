@@ -12,4 +12,5 @@ export const HOST_PARAMETERS: Record<string, string> = {
   engine_build: "the watched build a development session is pinned to",
   workers: "N job workers, or off for none",
   jobcache: "off, verify, or the MiB of job outputs the page keeps",
+  environment: "development sessions: environment sections (JSON, as the environment control takes them) merged over the scene's once it starts",
 };
