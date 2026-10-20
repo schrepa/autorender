@@ -65,6 +65,8 @@ impl StressWorld for HighlandsWorld {
             shadows: 0.6,
             ..Clouds::default()
         });
+        // The eye adapts: the cave brightens by day, the night keeps dark.
+        world.insert_resource(AutoExposure::default());
     }
 
     fn shadows(&self, bounds: (Vec3, Vec3)) -> Shadows {
