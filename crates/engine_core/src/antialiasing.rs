@@ -27,7 +27,7 @@ settings! {
         /// the 3x3 pixels around it: the edges of nearer surfaces moving over
         /// farther ones bring their history along instead of leaving a trail,
         /// for nine depth reads a pixel.
-        pub nearest_motion: bool = false => any,
+        pub nearest_motion: bool = true => any,
         /// Whether the history keeps within a box rounded between the range
         /// of the pixel's four edge neighbors and that of all eight: thin and
         /// diagonal features flicker less, for four more reads a pixel.
@@ -36,7 +36,7 @@ settings! {
         /// color there: the frame's share is at least this times their
         /// coverage, so smoke and spray do not smear as they move. 0 leaves
         /// them as any surface.
-        pub particle_response: f32 = 0.0 => range(0.0, 4.0),
+        pub particle_response: f32 = 2.0 => range(0.0, 4.0),
     }
 }
 

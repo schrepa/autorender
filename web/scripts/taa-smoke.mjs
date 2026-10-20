@@ -127,9 +127,10 @@ try {
   // Exact captures do not depend on the setting, which is off by default.
   results.exact_url = await open(still, {});
   const inspect = async () => (await command("inspect", { component: "TemporalAntialiasing" })).result.value;
-  // The resolve's sturdier options, each off by default.
-  const plain = { nearest_motion: false, rounded_clamp: false, particle_response: 0 };
-  assert.deepEqual(await inspect(), { enabled: false, ...plain }, "temporal antialiasing is off by default");
+  // The resolve's options at their defaults: the nearest surface's motion
+  // and particles' response on, the rounded box off.
+  const defaults = { nearest_motion: true, rounded_clamp: false, particle_response: 2 };
+  assert.deepEqual(await inspect(), { enabled: false, ...defaults }, "temporal antialiasing is off by default");
   const exactOff = await capture("exact-taa-off");
 
   results.taa_url = await open(still, { taa: "on" });
@@ -164,13 +165,13 @@ try {
   // The page's ?taa=on set the world's settings; ordinary frames report what
   // they ran, and the paused environment control turns it off and on.
   const observed = async () => (await command("status")).result.rendering;
-  assert.deepEqual(await inspect(), { enabled: true, ...plain });
+  assert.deepEqual(await inspect(), { enabled: true, ...defaults });
   const temporalFrame = await observed();
   assert.equal(temporalFrame.temporal_antialiasing.active, true, "ordinary frames resolve temporally");
   assert.ok(temporalFrame.render_passes.includes("temporal_resolve"));
   const off = await command("environment", { temporal_antialiasing: { enabled: false } });
   assert.deepEqual(off.result.environment_changed, ["temporal_antialiasing"]);
-  assert.deepEqual(await inspect(), { enabled: false, ...plain });
+  assert.deepEqual(await inspect(), { enabled: false, ...defaults });
   await run("taa-off", 30);
   const plainFrame = await observed();
   assert.equal(plainFrame.temporal_antialiasing.active, false, "turned off, ordinary frames do not resolve temporally");
@@ -202,20 +203,25 @@ try {
     note: "pixels whose largest channel differs by more than 24 levels between two converged still frames with dithering, 300 ms apart",
   });
 
-  // The sturdier resolve (the nearest surface's motion, the rounded box and
-  // particles' response), set by the paused environment control: how much
-  // it changes converged still frames, and how much they then flicker.
+  // The bare resolve (every option off) against the sturdiest (the
+  // nearest surface's motion, the rounded box and particles' response),
+  // each set by the paused environment control: how much the options
+  // change converged still frames, and how much those then flicker.
+  const bare = { nearest_motion: false, rounded_clamp: false, particle_response: 0 };
+  await command("environment", { temporal_antialiasing: { enabled: true, ...bare } });
+  assert.deepEqual(await inspect(), { enabled: true, ...bare });
+  const [bareFirst] = await run("taa-bare", 60);
   const sturdy = { nearest_motion: true, rounded_clamp: true, particle_response: 2 };
   const sturdied = await command("environment", { temporal_antialiasing: { enabled: true, ...sturdy } });
   assert.deepEqual(sturdied.result.environment_changed, ["temporal_antialiasing"]);
   assert.deepEqual(await inspect(), { enabled: true, ...sturdy });
   const [sturdyFirst, sturdySecond] = await run("taa-sturdy", 60);
   assert.equal((await observed()).temporal_antialiasing.active, true, "the sturdier resolve runs");
-  results.sturdy = await compare([again, sturdyFirst]);
+  results.sturdy = await compare([bareFirst, sturdyFirst]);
   results.sturdy_stable = await compare([sturdyFirst, sturdySecond]);
   measurements.push({
     name: "sturdier resolve difference", value: results.sturdy.mean_difference, unit: "levels",
-    note: "mean channel difference between converged still frames of the plain and the sturdier resolve",
+    note: "mean channel difference between converged still frames of the bare and the sturdiest resolve",
   }, {
     name: "sturdier still view flicker", value: results.sturdy_stable.changed[24] / results.sturdy_stable.total * 100, unit: "%",
     note: "pixels whose largest channel differs by more than 24 levels between two converged still frames of the sturdier resolve, 300 ms apart",
@@ -223,7 +229,7 @@ try {
   const beyond = await command("environment", { temporal_antialiasing: { enabled: true, particle_response: 9 } }, false);
   assert.equal(beyond.error.code, "invalid_environment", "a particle response beyond its range is rejected");
   await command("environment", { temporal_antialiasing: { enabled: true } });
-  assert.deepEqual(await inspect(), { enabled: true, ...plain });
+  assert.deepEqual(await inspect(), { enabled: true, ...defaults });
 
   // Foliage looks, off by default and turned on by the paused environment
   // control: masked leaves' hashed cutoffs, which only temporally
