@@ -99,6 +99,7 @@ struct Lighting {
     // (0 while windows are lit as their textures light them), all in
     // degrees, and the share of rooms staying dark.
     windows: vec4<f32>,
+    night_shape: vec4<f32>,
 }
 // Sun shadows: world to each near cascade and to both
 // far maps (x and y in [-1, 1] across a map, z in [0, 1]).

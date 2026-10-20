@@ -115,7 +115,8 @@ gpu_structs! {
         /// The unit quaternion turning world directions into the galaxy's
         /// frame: x toward its centre, z toward its north pole.
         pub star_turn: [f32; 4],
-        /// The direction toward the moon; w unused.
+        /// The direction toward the moon, and its size as a multiple of its
+        /// usual angular radius.
         pub moon: [f32; 4],
         /// Foliage: its transmission, its plants' variation, 1 where
         /// masked leaves dissolve with hashed cutoffs this frame (a
@@ -133,6 +134,10 @@ gpu_structs! {
         /// they spread (0 while windows are lit as their textures light
         /// them), all in degrees, and the share of rooms staying dark.
         pub windows: [f32; 4],
+        /// The night sky's shapes: cirrus' height above the eye and drift
+        /// along x and z each second (world units), and how many stars
+        /// show, as a multiple.
+        pub night_shape: [f32; 4],
     }
 
     /// Separate per-instance color, opacity and packed surface; unchanged colors

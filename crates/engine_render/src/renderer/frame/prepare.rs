@@ -499,10 +499,7 @@ impl Renderer {
         // Whether 8-bit color writes dither.
         lighting.grade[3] = f32::from(u8::from(snapshot.environment.dither.enabled));
         // The night sky, and haze: the air taking the sky's light.
-        [lighting.night, lighting.star_turn, lighting.moon] = crate::sky::night_lighting(
-            &snapshot.environment,
-            snapshot.environment.atmosphere.sun_direction,
-        );
+        crate::sky::apply_night(&mut lighting, &snapshot.environment);
         crate::sky::apply_haze(
             &mut lighting,
             &snapshot.environment.haze,

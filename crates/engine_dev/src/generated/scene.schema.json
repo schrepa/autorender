@@ -3792,6 +3792,30 @@
           "maximum": 1.0,
           "minimum": 0.0
         },
+        "cirrus_drift": {
+          "description": "How far cirrus' strands drift each second along x and z, world\nunits.",
+          "type": "array",
+          "default": [
+            6.0,
+            1.5
+          ],
+          "items": {
+            "type": "number",
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": -1000.0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "cirrus_height": {
+          "description": "How high above the eye cirrus floats, world units.",
+          "type": "number",
+          "format": "float",
+          "default": 9000.0,
+          "maximum": 50000.0,
+          "minimum": 500.0
+        },
         "moon": {
           "description": "How bright the moon is: 0 hides it, 1 is the full moon's.",
           "type": "number",
@@ -3806,6 +3830,22 @@
           "format": "float",
           "default": 0.5,
           "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "moon_size": {
+          "description": "How large the moon shows, as a multiple of its usual size (twice\nthe true moon's, as the eye reads it).",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 4.0,
+          "minimum": 0.25
+        },
+        "star_density": {
+          "description": "How many stars show, as a multiple of a clear night's.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 2.0,
           "minimum": 0.0
         },
         "stars": {

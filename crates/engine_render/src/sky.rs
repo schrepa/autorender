@@ -468,9 +468,9 @@ impl RenderFeature for SkyPass {
 /// ([`engine_core::NightSky`]): the stars' and the moon's brightness,
 /// cirrus' cover and the share of the moon's face the sun along `sun`
 /// lights; the quaternion turning world directions into the galaxy's frame;
-/// and the direction toward the moon. The time of day turns the stars and
-/// places the moon; without one the stars stand as at its defaults and
-/// there is no moon.
+/// and the direction toward the moon, with its size. The time of day turns
+/// the stars and places the moon; without one the stars stand as at its
+/// defaults and there is no moon.
 pub(crate) fn night_lighting(environment: &engine_core::Environment, sun: Vec3) -> [[f32; 4]; 3] {
     let night = environment.night_sky.sanitized();
     let day = environment.time_of_day.sanitized();
@@ -489,8 +489,26 @@ pub(crate) fn night_lighting(environment: &engine_core::Environment, sun: Vec3) 
             lit,
         ],
         clock.star_turn().to_array(),
-        moon.unwrap_or(Vec3::Y).extend(0.0).to_array(),
+        moon.unwrap_or(Vec3::Y).extend(night.moon_size).to_array(),
     ]
+}
+
+/// The night sky's part of `lighting` under `environment`'s sun
+/// ([`night_lighting`]), and the sky's shapes: cirrus' height and drift,
+/// and the stars' density.
+pub(crate) fn apply_night(
+    lighting: &mut crate::gpu_data::LightingUniform,
+    environment: &engine_core::Environment,
+) {
+    [lighting.night, lighting.star_turn, lighting.moon] =
+        night_lighting(environment, environment.atmosphere.sun_direction);
+    let night = environment.night_sky.sanitized();
+    lighting.night_shape = [
+        night.cirrus_height,
+        night.cirrus_drift[0],
+        night.cirrus_drift[1],
+        night.star_density,
+    ];
 }
 
 /// Haze's part of the scene's lighting ([`engine_core::Haze`]): fog and

@@ -204,6 +204,7 @@ impl LightingUniform {
             night: [0.0; 4],
             star_turn: [0.0, 0.0, 0.0, 1.0],
             moon: [0.0; 4],
+            night_shape: [0.0; 4],
             foliage: [
                 foliage.transmission,
                 foliage.variation,

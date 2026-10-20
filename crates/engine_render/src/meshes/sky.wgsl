@@ -110,8 +110,9 @@ const GRAIN_LIGHT: f32 = 0.05;
 // channel (as optical depth): what the analytic sky's stars and moon lose
 // toward the horizon.
 const AIR_EXTINCTION: vec3<f32> = vec3<f32>(0.07, 0.15, 0.28);
-// The moon's angular radius (radians: twice its true quarter degree, the
-// size the eye reads it at) and the light of its full face.
+// The moon's usual angular radius (radians: twice its true quarter degree,
+// the size the eye reads it at), which the night sky's moon size scales,
+// and the light of its full face.
 const MOON_RADIUS: f32 = 0.0091;
 const MOON_LIGHT: f32 = 0.6;
 // The brightest the moon's face shows after the exposure: in a dark sky
@@ -156,11 +157,9 @@ const MOON_CRATERS = array<vec4<f32>, 4>(
 // narrow aureole and a wide halo (the forward lobes they fall off by).
 const MOON_AUREOLE: f32 = 0.06;
 const MOON_HALO: f32 = 0.012;
-// Cirrus: the layer's height and how far along a view it fades out by
-// (world units), and the world units its strands drift each second.
-const CIRRUS_HEIGHT: f32 = 9000.0;
+// Cirrus: how far along a view it fades out by (world units); its height
+// and drift are the night sky's (`lighting.night_shape`).
 const CIRRUS_REACH: f32 = 90000.0;
-const CIRRUS_DRIFT: vec2<f32> = vec2<f32>(6.0, 1.5);
 
 // `direction` turned by the unit quaternion `turn`.
 fn turned(turn: vec4<f32>, direction: vec3<f32>) -> vec3<f32> {
@@ -303,7 +302,7 @@ fn star_field(star: vec3<f32>, cells: f32, share: f32, fall: f32, light: f32, sa
 // cells hold one toward the galaxy's plane, as more of its stars lie along
 // the line of sight there.
 fn star_light(star: vec3<f32>, spread: f32) -> vec3<f32> {
-    let share = STAR_SHARE * (0.6 + 0.8 * exp(-6.0 * star.z * star.z));
+    let share = STAR_SHARE * lighting.night_shape.w * (0.6 + 0.8 * exp(-6.0 * star.z * star.z));
     return star_field(star, STAR_CELLS, share, 8.0, STAR_LIGHT, 0u, spread);
 }
 
@@ -360,7 +359,8 @@ fn moon_albedo(place: vec3<f32>, local: vec2<f32>) -> f32 {
 // craters where they are, and earthshine faint on the rest; rgb its light,
 // a how much of the ray its disc covers (soft at the rim).
 fn moon_disc(ray: vec3<f32>, moon: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
-    if dot(ray, moon) < cos(MOON_RADIUS * 1.1) {
+    let radius = MOON_RADIUS * lighting.moon.w;
+    if dot(ray, moon) < cos(radius * 1.1) {
         return vec4<f32>(0.0);
     }
     // Celestial north in the world: the galaxy's frame turned back.
@@ -372,7 +372,7 @@ fn moon_disc(ray: vec3<f32>, moon: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
     }
     up = normalize(up);
     let right = cross(moon, up);
-    let local = vec2<f32>(dot(ray, right), dot(ray, up)) / MOON_RADIUS;
+    let local = vec2<f32>(dot(ray, right), dot(ray, up)) / radius;
     let r2 = dot(local, local);
     let cover = 1.0 - smoothstep(0.92, 1.0, sqrt(r2));
     if cover <= 0.0 {
@@ -421,16 +421,17 @@ fn beyond_air(ray: vec3<f32>) -> vec3<f32> {
     return exp(-AIR_EXTINCTION * (mass - 1.0)) * smoothstep(-0.01, 0.0, ray.y);
 }
 
-// How much cirrus covers along `ray`: fibrous noise on a layer
-// CIRRUS_HEIGHT above the eye, stretched along x and drifting with
-// `seconds`, over `coverage` of the sky, fading toward the horizon.
+// How much cirrus covers along `ray`: fibrous noise on a layer its height
+// above the eye, stretched along x and drifting with `seconds`, over
+// `coverage` of the sky, fading toward the horizon.
 fn cirrus_cover(ray: vec3<f32>, coverage: f32, seconds: f32) -> f32 {
     if ray.y <= 0.02 {
         return 0.0;
     }
-    let along = CIRRUS_HEIGHT / ray.y;
+    let along = lighting.night_shape.x / ray.y;
     let fade = 1.0 - smoothstep(0.35 * CIRRUS_REACH, CIRRUS_REACH, along);
-    var p = (ray.xz * along + CIRRUS_DRIFT * seconds) * vec2<f32>(1.0 / 7000.0, 1.0 / 1700.0);
+    var p = (ray.xz * along + lighting.night_shape.yz * seconds)
+        * vec2<f32>(1.0 / 7000.0, 1.0 / 1700.0);
     var sum = 0.0;
     var weight = 0.5;
     for (var octave = 0u; octave < 4u; octave++) {
@@ -450,9 +451,10 @@ fn cirrus_light(ray: vec3<f32>) -> vec3<f32> {
     let sun = lighting.sun.xyz;
     var sunlight = lighting.sun_color.rgb;
     if physical_sky() {
-        let along = CIRRUS_HEIGHT / max(ray.y, 0.02);
+        let height = lighting.night_shape.x;
+        let along = height / max(ray.y, 0.02);
         sunlight = sunlight_over(sky_transmittance_table, sky_table_sampler, sky_air,
-            ray.xz * (along * 0.001), sky_air.radii.w + CIRRUS_HEIGHT * 0.001, sun);
+            ray.xz * (along * 0.001), sky_air.radii.w + height * 0.001, sun);
     }
     let toward = max(dot(ray, sun), 0.0);
     let forward = 0.25 + 1.4 * pow(toward, 6.0);

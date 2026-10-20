@@ -133,6 +133,16 @@ settings! {
         pub moon_age: f32 = 0.5 => range(0.0, 1.0),
         /// How much of the sky cirrus covers: 0 none.
         pub cirrus: f32 = 0.35 => range(0.0, 1.0),
+        /// How many stars show, as a multiple of a clear night's.
+        pub star_density: f32 = 1.0 => range(0.0, 2.0),
+        /// How large the moon shows, as a multiple of its usual size (twice
+        /// the true moon's, as the eye reads it).
+        pub moon_size: f32 = 1.0 => range(0.25, 4.0),
+        /// How high above the eye cirrus floats, world units.
+        pub cirrus_height: f32 = 9000.0 => range(500.0, 50_000.0),
+        /// How far cirrus' strands drift each second along x and z, world
+        /// units.
+        pub cirrus_drift: [f32; 2] = [6.0, 1.5] => range(-1000.0, 1000.0),
     }
 }
 
