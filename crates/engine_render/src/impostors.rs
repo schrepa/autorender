@@ -19,6 +19,7 @@
 pub(crate) use crate::gpu_layouts::constants::IMPOSTOR_FRAMES;
 pub(crate) use crate::gpu_layouts::constants::IMPOSTOR_HEMISPHERE as HEMISPHERE;
 use crate::gpu_layouts::constants::IMPOSTOR_MASKED as MASKED;
+use crate::gpu_layouts::constants::IMPOSTOR_ROOMS as ROOMS;
 use engine_core::glam::Vec3;
 
 /// How an atlas lays out its impostors: texels across a frame of the first
@@ -63,13 +64,13 @@ pub(crate) use crate::gpu_layouts::impostors::ImpostorRecord;
 
 impl ImpostorRecord {
     /// The record of a mesh with bounds `min` to `max` baked into `layer` of
-    /// an atlas of `shape`, whose material emits `emissive` and is `masked`
-    /// (alpha tested).
+    /// an atlas of `shape`, whose material emits `emissive`, is `masked`
+    /// (alpha tested) and is divided into `rooms`.
     pub(crate) fn new(
         min: Vec3,
         max: Vec3,
         layer: u32,
-        (emissive, masked): ([f32; 3], bool),
+        (emissive, masked, rooms): ([f32; 3], bool, bool),
         shape: AtlasShape,
     ) -> Self {
         let center = (min + max) * 0.5;
@@ -82,7 +83,7 @@ impl ImpostorRecord {
             extent: half.to_array(),
             layer,
             emissive,
-            flags: shape.flags() | if masked { MASKED } else { 0 },
+            flags: shape.flags() | if masked { MASKED } else { 0 } | if rooms { ROOMS } else { 0 },
         }
     }
 
@@ -471,11 +472,15 @@ mod gpu {
                 .material
                 .as_ref()
                 .map_or([0.0; 3], Material::emissive);
+            let rooms = source
+                .material
+                .as_ref()
+                .is_some_and(|material| material.windows().is_some());
             let record = ImpostorRecord::new(
                 source.bounds.0,
                 source.bounds.1,
                 layer,
-                (emissive, source.variant.alpha_mask()),
+                (emissive, source.variant.alpha_mask(), rooms),
                 shape,
             );
             let uniform = wgpu::util::DeviceExt::create_buffer_init(

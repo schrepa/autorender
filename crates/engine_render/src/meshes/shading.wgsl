@@ -954,6 +954,9 @@ fn extended_fragment(input: ExtendedOutput) -> Fragment {
 // How much of their color the windows of unlit rooms keep: the rooms behind
 // the glass are dark.
 const UNLIT_ROOM: f32 = 0.12;
+// The coolest and the warmest light of lit rooms.
+const COOL_ROOM: vec3<f32> = vec3<f32>(0.78, 0.88, 1.0);
+const WARM_ROOM: vec3<f32> = vec3<f32>(1.0, 0.72, 0.42);
 
 // Light of the rooms of windows switching on through the evening
 // (`lighting.windows`): on a material divided into rooms (`layer.y`
@@ -979,8 +982,7 @@ fn room_light(point: SurfacePoint, input: Fragment) -> SurfacePoint {
     lit.emission = 0.0;
     lit.emissive = vec3<f32>(0.0);
     if lighting.windows.x < switched && unit(pcg(key + 1u)) >= lighting.windows.w {
-        let tint = mix(vec3<f32>(0.78, 0.88, 1.0), vec3<f32>(1.0, 0.72, 0.42),
-            unit(pcg(key + 2u)));
+        let tint = mix(COOL_ROOM, WARM_ROOM, unit(pcg(key + 2u)));
         let brightness = 0.6 + 0.8 * unit(pcg(key + 3u));
         lit.emissive = (point.albedo * point.emission + point.emissive) * tint
             * (brightness / luminance(tint));
@@ -992,6 +994,29 @@ fn room_light(point: SurfacePoint, input: Fragment) -> SurfacePoint {
         lit.diffuse_color = point.diffuse_color * kept;
     }
     return lit;
+}
+
+// Windows on the card of a far building whose material is divided into
+// rooms (`IMPOSTOR_ROOMS`), its rooms finer than the card's texels: the
+// share of rooms `room_light` lights at this sun's elevation lights the
+// point's `window` share in the rooms' mean color and brightness, and the
+// rest of that share darkens as unlit rooms' windows do, so far buildings
+// switch on and go dark with the near ones.
+fn far_rooms(point: SurfacePoint, window: f32) -> SurfacePoint {
+    if !WINDOWS || lighting.windows.z <= 0.0 {
+        return point;
+    }
+    let lit = saturate(0.5 - 0.5 * (lighting.windows.x - lighting.windows.y)
+        / lighting.windows.z) * (1.0 - lighting.windows.w);
+    let tint = mix(COOL_ROOM, WARM_ROOM, 0.5);
+    var far = point;
+    far.emission = 0.0;
+    far.emissive = (point.albedo * point.emission + point.emissive) * tint
+        * (lit / luminance(tint));
+    let kept = mix(1.0, UNLIT_ROOM, window * (1.0 - lit));
+    far.albedo = point.albedo * kept;
+    far.diffuse_color = point.diffuse_color * kept;
+    return far;
 }
 
 fn shade(input: Fragment, front: bool) -> Shaded {

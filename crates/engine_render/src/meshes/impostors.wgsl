@@ -12,6 +12,10 @@
 //
 // Frames, records and their directions: `impostor_frames.wgsl`.
 
+// The flag of records whose material is divided into rooms
+// (`far_rooms`), above the masked one.
+const IMPOSTOR_ROOMS: u32 = 0x40000u;
+
 // One record per draw group; groups without an impostor never draw one.
 @group(1) @binding(11) var<storage, read> impostor_records: array<ImpostorRecord>;
 @group(1) @binding(12) var impostor_albedo: texture_2d_array<f32>;
@@ -543,6 +547,11 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     // cards still shade them.
     let reach = select(1.0, 0.25, (record.flags & IMPOSTOR_HEMISPHERE) != 0u);
     point.shadow_offset = lighting.sun.xyz * (reach * length(input.depth_axis.xyz));
+    if (record.flags & IMPOSTOR_ROOMS) != 0u {
+        // As on meshes, the window share is what emits by texture alpha.
+        let window = select(0.0, saturate(emissive.a * unpremultiply), slot_surface.z > 0.0);
+        point = far_rooms(point, window);
+    }
     return widened(point, dpdx(point.normal), dpdy(point.normal));
 }
 

@@ -128,6 +128,9 @@ gpu_consts! {
     pub(crate) const IMPOSTOR_HEMISPHERE: u32 = 1 << 16 => ["IMPOSTOR_HEMISPHERE"];
     /// The flag of impostor records whose material is masked.
     pub(crate) const IMPOSTOR_MASKED: u32 = 1 << 17 => ["IMPOSTOR_MASKED"];
+    /// The flag of impostor records whose material is divided into rooms
+    /// (`Material::windows`).
+    pub(crate) const IMPOSTOR_ROOMS: u32 = 1 << 18 => ["IMPOSTOR_ROOMS"];
 
     // crate::decals
     /// `DecalRecord::pose` of decals drawn from their own matrix.
