@@ -112,8 +112,8 @@ gpu_structs! {
         /// moon's (0 without one), how much of the sky cirrus covers, and
         /// the share of the moon's face the sun lights.
         pub night: [f32; 4],
-        /// The unit quaternion turning world directions into the stars' own
-        /// frame.
+        /// The unit quaternion turning world directions into the galaxy's
+        /// frame: x toward its centre, z toward its north pole.
         pub star_turn: [f32; 4],
         /// The direction toward the moon; w unused.
         pub moon: [f32; 4],

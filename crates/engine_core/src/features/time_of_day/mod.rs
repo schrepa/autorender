@@ -73,21 +73,35 @@ impl TimeOfDay {
         self.sky_direction(declination * cos_turn, hour_angle - turn)
     }
 
-    /// The rotation taking world directions into the stars' own frame at
-    /// [`Self::stepped_hours`]: the sky turns about the celestial pole
-    /// (north, raised by the latitude) once a day, as the stars rise and set
-    /// with the sun, and a day further each year from the March equinox
-    /// (day 80).
+    /// The rotation taking world directions into the galaxy's frame at
+    /// [`Self::stepped_hours`]: x toward the galactic centre, z toward the
+    /// north galactic pole, y toward galactic longitude 90 degrees. The sky
+    /// turns about the celestial pole (north, raised by the latitude) as
+    /// the stars rise and set: the local sidereal time is the sun's hour
+    /// angle plus its right ascension, which grows a day's share each day
+    /// from the March equinox (day 80).
     pub fn star_turn(&self) -> glam::Quat {
         let (sin_latitude, cos_latitude) = sin_cos(self.latitude.to_radians());
-        let pole = Vec3::Y * sin_latitude + self.north_axis() * cos_latitude;
-        let turns = (self.stepped_hours() - 12.0) / 24.0 + (self.day - 80.0) / 365.25;
-        let (sin_half, cos_half) = sin_cos(std::f32::consts::PI * turns);
-        glam::Quat::from_xyzw(
-            pole.x * sin_half,
-            pole.y * sin_half,
-            pole.z * sin_half,
-            cos_half,
+        let (sin_north, cos_north) = sin_cos(self.north.to_radians());
+        let north = self.north_axis();
+        let east = Vec3::new(cos_north, 0.0, -sin_north);
+        // Where the celestial equator crosses the meridian, and its pole.
+        let meridian = Vec3::Y * cos_latitude - north * sin_latitude;
+        let pole = Vec3::Y * sin_latitude + north * cos_latitude;
+        let sidereal = (self.stepped_hours() - 12.0) / 24.0 + (self.day - 80.0) / 365.25;
+        let (sin_turn, cos_turn) = sin_cos(std::f32::consts::TAU * sidereal);
+        // The equatorial frame in the world: right ascension 0h and 6h on
+        // the equator, and the pole; 0h stands on the meridian at sidereal
+        // time 0 and moves west.
+        let equatorial = [
+            meridian * cos_turn - east * sin_turn,
+            meridian * sin_turn + east * cos_turn,
+            pole,
+        ];
+        let galactic = galactic_axes()
+            .map(|axis| equatorial[0] * axis.x + equatorial[1] * axis.y + equatorial[2] * axis.z);
+        glam::Quat::from_mat3(
+            &glam::Mat3::from_cols(galactic[0], galactic[1], galactic[2]).transpose(),
         )
     }
 
@@ -120,6 +134,29 @@ impl TimeOfDay {
         let east_axis = Vec3::new(cos_north, 0.0, -sin_north);
         (Vec3::Y * up + self.north_axis() * north + east_axis * east).normalize_or(Vec3::Y)
     }
+}
+
+/// The galactic frame's axes in equatorial coordinates (J2000: x toward
+/// right ascension 0h, z toward the north celestial pole): toward the
+/// galactic centre, toward longitude 90 degrees and toward the north
+/// galactic pole, from the IAU's definition of galactic coordinates
+/// (Blaauw et al. 1960) as the Hipparcos catalogue states it for J2000:
+/// the pole at right ascension 192.85948 and declination 27.12825 degrees,
+/// the centre at 266.405 and -28.93617.
+fn galactic_axes() -> [Vec3; 3] {
+    let toward = |right_ascension: f32, declination: f32| {
+        let (sin_ascension, cos_ascension) = sin_cos(right_ascension.to_radians());
+        let (sin_declination, cos_declination) = sin_cos(declination.to_radians());
+        Vec3::new(
+            cos_declination * cos_ascension,
+            cos_declination * sin_ascension,
+            sin_declination,
+        )
+    };
+    let pole = toward(192.859_48, 27.128_25);
+    let centre = toward(266.405, -28.936_17);
+    let centre = (centre - pole * centre.dot(pole)).normalize_or(Vec3::X);
+    [centre, pole.cross(centre), pole]
 }
 
 /// Advances the time of day by the frame's time.

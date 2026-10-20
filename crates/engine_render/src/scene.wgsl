@@ -79,7 +79,8 @@ struct Lighting {
     // The night sky: the stars' brightness (0 without them), the moon's (0
     // without one), how much of the sky cirrus covers and the share of the
     // moon's face the sun lights; the quaternion turning world directions
-    // into the stars' frame; the direction toward the moon.
+    // into the galaxy's frame (x toward its centre, z its north pole); the
+    // direction toward the moon.
     night: vec4<f32>,
     star_turn: vec4<f32>,
     moon: vec4<f32>,

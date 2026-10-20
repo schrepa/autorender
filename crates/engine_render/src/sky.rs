@@ -466,7 +466,7 @@ impl RenderFeature for SkyPass {
 /// The night sky's part of the scene's lighting this frame
 /// ([`engine_core::NightSky`]): the stars' and the moon's brightness,
 /// cirrus' cover and the share of the moon's face the sun along `sun`
-/// lights; the quaternion turning world directions into the stars' frame;
+/// lights; the quaternion turning world directions into the galaxy's frame;
 /// and the direction toward the moon. The time of day turns the stars and
 /// places the moon; without one the stars stand as at its defaults and
 /// there is no moon.
