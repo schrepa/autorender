@@ -70,7 +70,9 @@ impl Renderer {
         }
         .limits
         .storage_buffers;
+        // Debug views draw every cluster forward.
         if !snapshot.environment.virtual_geometry.visibility_buffer
+            || kind.targets() == Some(Targets::Debug)
             || self.device.limits().max_storage_buffers_per_shader_stage < needed
             || self
                 .virtual_draws

@@ -77,6 +77,19 @@ export interface AssetsResult {
   textures: number;
 }
 
+/**
+ * An entity by its authored identity: its ID and scene, and its name,
+ * where it has them.
+ */
+export interface AuthoredEntity {
+  /** Its authored ID, where it has one. */
+  id?: string | null;
+  /** Its display name. */
+  name?: string | null;
+  /** The scene it was authored in. */
+  scene?: string | null;
+}
+
 /** What `camera` answers once it rendered. */
 export interface CameraResult {
   /** Always true: the camera is the one asked for. */
@@ -318,6 +331,12 @@ export interface DistributionResult {
   /** Null without values, or with one not a finite number of at least 0. */
   distribution?: Distribution | null;
 }
+
+/**
+ * What drew a pixel, as the pixel probe reads it from a debug view's
+ * targets.
+ */
+export type DrawnKind = "sea" | "mesh" | "placed" | "card" | "placed_card" | "virtual" | "terrain" | "cover" | "water" | "falls" | "sky";
 
 /** What a host does for the request under way. */
 export type Effect = { kind: "pause"; paused: boolean } | { kind: "wait"; within_ms: number } | { kind: "frame"; timestamp: number } | { kind: "show" } | { args: Record<string, unknown>; kind: "game"; name: string } | { kind: "source" };
@@ -584,6 +603,7 @@ export interface OpResults {
   overlap: OverlapResult;
   pause: StatusResult;
   present: PresentResult;
+  probe: ProbeResult;
   raycast: RaycastResult;
   render: RenderResult;
   resume: StatusResult;
@@ -696,6 +716,71 @@ export interface PresentationStateView {
   presented_store_bytes: number;
   /** Fixed tick at that extraction; does not imply GPU submission/completion. */
   tick?: string | null;
+}
+
+/**
+ * What `probe` answers: what drew the pixel and how it looks, with the
+ * entity whose renderer slot drew it, where one did.
+ */
+export interface ProbeResult {
+  /**
+   * Whether what drew it casts sun shadows, and for placed objects
+   * whether the kept map holds them.
+   */
+  casts_shadows: boolean;
+  /**
+   * Its depth in the depth buffer (reversed: 1 nearest, 0 the far
+   * plane), and where that lies in the world; `None` at the far plane.
+   */
+  depth: number;
+  /**
+   * A part of the object: virtual geometry's cluster, an impostor
+   * card's record.
+   */
+  detail?: number | null;
+  /**
+   * Its color as displayed, as stored (sRGB, 0 to 255); `None` where
+   * the host's canvas cannot be read back.
+   */
+  displayed?: number[] | null;
+  /** The entity drawn; `None` where no entity's slot drew the pixel. */
+  entity?: AuthoredEntity | null;
+  /** Whether it is an impostor card fading in or out over its mesh. */
+  fading: boolean;
+  /** Fragments that passed the depth test there as the frame drew it. */
+  fragments: number;
+  kept_shadows: boolean;
+  /** What drew it; `None` where nothing did. */
+  kind?: DrawnKind | null;
+  /**
+   * Its level of detail: meshes' and placed objects' 0 for their own
+   * mesh and 1 up for their simplifications, impostor cards' the level
+   * past the simplifications, terrain's patch level.
+   */
+  level: number;
+  /** Its shading normal, unit length; `None` for the sky. */
+  normal?: number[] | null;
+  /**
+   * The object it drew: an entity's renderer slot (meshes, cards and
+   * virtual geometry) or the placed object's index.
+   */
+  object?: number | null;
+  /** The pixel, in physical pixels from the view's top left. */
+  pixel: number[];
+  /**
+   * Its shaded color as the opaque passes drew it, before screen
+   * effects, as stored (sRGB, 0 to 255); `None` where the frame draws
+   * no screen effects.
+   */
+  shaded?: number[] | null;
+  shadowed: boolean;
+  /**
+   * Which lookup decided its sun shadow, which cascade or level among
+   * several, and whether it leaves the pixel in shadow.
+   */
+  sun: SunLookup;
+  sun_index: number;
+  world?: number[] | null;
 }
 
 /** Where a ray hit. */
@@ -874,6 +959,9 @@ export interface StepResult {
   /** Fixed ticks advanced. */
   ticks: number;
 }
+
+/** Which lookup decided a pixel's sun shadow, in the order shading looks. */
+export type SunLookup = "none" | "cascade" | "level" | "kept" | "moving" | "horizon" | "beyond";
 
 /** A point swept and its height. */
 export interface SweepExample {

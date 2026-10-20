@@ -310,6 +310,46 @@
       },
       "additionalProperties": false
     },
+    "DebugViewMode": {
+      "description": "What a debug view shows each pixel as.",
+      "oneOf": [
+        {
+          "description": "The shaded image: no debug view.",
+          "type": "string",
+          "const": "off"
+        },
+        {
+          "description": "What drew it, a color per kind: meshes gray-blue, placed objects\nteal, impostor cards magenta, virtual geometry violet, terrain brown,\nground cover green, water blue, the sky pale blue.",
+          "type": "string",
+          "const": "kinds"
+        },
+        {
+          "description": "Its level of detail, from the finest: green, yellow, orange, red,\nviolet, blue, cyan and white, for meshes and placed objects (their own\nmesh, then each simplification) and terrain's patches alike;\nimpostor cards magenta, virtual geometry a color per cluster. Frames\nGPU presentation draws (`capture` with `alpha` and `gpu`) show levels\nand cards as play does; exact frames draw every mesh whole.",
+          "type": "string",
+          "const": "levels"
+        },
+        {
+          "description": "Impostor cards magenta (cards fading over their meshes pink) over\neverything else gray: where cards stand in for meshes.",
+          "type": "string",
+          "const": "cards"
+        },
+        {
+          "description": "Which sun shadow lookup decided it: the near cascades green, from\nbright (the first) to dark, the kept levels cyan to blue, the kept far\nmap indigo, the moving map orange, a terrain's horizon purple, past\nthe shadow distance gray; darker where it lies in shadow, black\nwithout sun shadows.",
+          "type": "string",
+          "const": "shadows"
+        },
+        {
+          "description": "How it casts sun shadows: meshes red, placed objects orange (yellow\nwhere the kept map holds them), virtual geometry violet, impostor\ncards casting cards of their own magenta, terrain brown, what casts\nnone gray.",
+          "type": "string",
+          "const": "casters"
+        },
+        {
+          "description": "How many fragments passed the depth test there as the frame drew,\nfrom dark blue (one) through green and yellow to white (ten or more).",
+          "type": "string",
+          "const": "overdraw"
+        }
+      ]
+    },
     "Deformer": {
       "description": "Presses tracks into deformable ground as a scene's `deformer`\nfield: each fixed tick, while its entity's world position lies at most\n`contact` meters above the terrain under it (or below it), it presses a\nfootprint from where it pressed the tick before. Put it where an object\nmeets the ground: a wheel's or a foot's lowest point.",
       "type": "object",
@@ -2097,6 +2137,23 @@
       },
       "additionalProperties": false
     },
+    "SceneDebugView": {
+      "description": "Debug view settings: what frames show each pixel as, for agents and\npeople finding out why a pixel looks as it does. Off by default; a\nview draws with its own pipelines, created the first time it shows,\nand leaves screen effects, decals, transparent surfaces and temporal\nantialiasing out.",
+      "type": "object",
+      "properties": {
+        "shade": {
+          "description": "Whether its colors darken where surfaces turn from the sun, so\nshapes read.",
+          "type": "boolean",
+          "default": true
+        },
+        "view": {
+          "description": "What each pixel shows.",
+          "$ref": "#/$defs/DebugViewMode",
+          "default": "off"
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneDecal": {
       "description": "A decal on this entity.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected\ndown its y onto the opaque surfaces inside it that face its +y.",
       "type": "object",
@@ -2463,6 +2520,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneContactShadows"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "debug_view": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDebugView"
             },
             {
               "type": "null"

@@ -9,6 +9,7 @@
 )]
 
 use super::*;
+use crate::debug_view::{DrawKind, DrawRecord, bind_record};
 
 /// What the opaque passes draw.
 #[derive(Clone, Copy)]
@@ -304,6 +305,9 @@ impl Renderer {
         if !gpu_mode {
             pass.set_vertex_buffer(1, self.instances.slots().slice(..));
         }
+        // Debug views' draws read their records.
+        let debug = self.debug_records(state);
+        let casts = state.shape.shadows;
         let mut draws = 0;
         let mut binds = BatchBinds::default();
         for &index in &self.draw_order.order {
@@ -328,6 +332,7 @@ impl Renderer {
                         .gpu_presentation
                         .draw_source(batch, index, phase, level);
                     binds.bindings.ids(pass, 1, ids);
+                    bind_record(pass, debug, DrawRecord::of(DrawKind::Mesh, level, casts));
                     let timed = self
                         .profiler
                         .begin_draw(pass, || draw_label(batch, phase, Some(level)));
@@ -336,6 +341,7 @@ impl Renderer {
                     draws += 1;
                 }
             } else {
+                bind_record(pass, debug, DrawRecord::of(DrawKind::Mesh, 0, casts));
                 let timed = self
                     .profiler
                     .begin_draw(pass, || draw_label(batch, phase, None));
@@ -361,6 +367,11 @@ impl Renderer {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
             pass.set_vertex_buffer(0, ids.slice(..));
+            bind_record(
+                pass,
+                debug,
+                DrawRecord::of(DrawKind::Card, LOD_LEVELS, casts),
+            );
             pass.draw_indirect(args, offset);
             draws += 1;
             // Cards fading over their meshes, once.
@@ -371,37 +382,56 @@ impl Renderer {
                 draws += 1;
             }
         }
-        // Virtual geometry: each bin's selected
-        // clusters, in phase one, then each bin's twin of clusters
-        // the retest found visible in phase two; bins the visibility
-        // buffer resolves draw below.
         if let Some(first_bin) = virtual_first {
-            let index = match temporal_pass {
-                Some((frame, _)) => {
-                    let previous = if frame.motion_valid {
-                        1 - frame.parity
-                    } else {
-                        frame.parity
-                    };
-                    2 * frame.parity + previous
-                }
-                None => 0,
-            };
-            let group = self.virtual_draws.pose_groups[index]
-                .get()
-                .expect("built above");
-            pass.set_bind_group(2, group, &[]);
-            for (bin, (material, variant)) in self.virtual_draws.bins.iter().enumerate() {
-                if self.visibility.bins.get(bin) == Some(&true) {
-                    continue;
-                }
-                pass.set_pipeline(&self.virtual_draws.pipelines[&(opaque_kind, *variant)]);
-                pass.set_bind_group(1, self.materials.binding(*material).0, &[]);
-                let (stream, args, offset) = self.virtual_draws.pass.bin_source(first_bin + bin);
-                pass.set_vertex_buffer(0, stream);
-                pass.draw_indirect(args, offset);
-                draws += 1;
+            draws += self.draw_virtual_bins(state, pass, first_bin);
+        }
+        draws
+    }
+
+    /// Virtual geometry's bins from the `first_bin`th: each bin's selected
+    /// clusters, in phase one, then each bin's twin of clusters the retest
+    /// found visible in phase two; bins the visibility buffer resolves draw
+    /// in its resolves. Returns the draws.
+    fn draw_virtual_bins(
+        &self,
+        state: &FrameState<'_>,
+        pass: &mut wgpu::RenderPass<'_>,
+        first_bin: usize,
+    ) -> u32 {
+        let index = match state
+            .packing
+            .temporal_frame
+            .as_ref()
+            .zip(self.features.temporal.get())
+        {
+            Some((frame, _)) => {
+                let previous = if frame.motion_valid {
+                    1 - frame.parity
+                } else {
+                    frame.parity
+                };
+                2 * frame.parity + previous
             }
+            None => 0,
+        };
+        let group = self.virtual_draws.pose_groups[index]
+            .get()
+            .expect("built above");
+        pass.set_bind_group(2, group, &[]);
+        let record = DrawRecord::of(DrawKind::Virtual, 0, state.shape.shadow_clusters);
+        bind_record(pass, self.debug_records(state), record);
+        let opaque_kind = state.passes.opaque_kind;
+        let mut draws = 0;
+        for (bin, (material, variant)) in self.virtual_draws.bins.iter().enumerate() {
+            if self.visibility.bins.get(bin) == Some(&true) {
+                continue;
+            }
+            pass.set_pipeline(&self.virtual_draws.pipelines[&(opaque_kind, *variant)]);
+            pass.set_bind_group(1, self.materials.binding(*material).0, &[]);
+            let (stream, args, offset) = self.virtual_draws.pass.bin_source(first_bin + bin);
+            pass.set_vertex_buffer(0, stream);
+            pass.draw_indirect(args, offset);
+            draws += 1;
         }
         draws
     }

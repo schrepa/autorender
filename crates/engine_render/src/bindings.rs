@@ -15,8 +15,8 @@ use crate::gpu_layouts::scene::{
 };
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::gpu_layouts::{
-    clouds, deformation, ground_cover, occupancy, scatter, sky, terrain, terrain_horizons,
-    terrain_sky, water,
+    clouds, debug_view, deformation, ground_cover, occupancy, scatter, sky, terrain,
+    terrain_horizons, terrain_sky, water,
 };
 
 /// Shader stages, as bits.
@@ -1243,6 +1243,18 @@ tables! {
         bindings: &[
             texture(0, "accumulated", Unfilterable, D2, F),
             texture(1, "revealed", Unfilterable, D2, F),
+        ],
+    };
+
+    /// The debug views' pass (`debug_view.wgsl`): the view, and what drew
+    /// each pixel with the fragments there.
+    const DEBUG_VIEW: Table = Table {
+        label: "engine/debug-view-layout",
+        serves: [DEBUG_VIEW_SHADER @ 0],
+        bindings: &[
+            uniform_of(0, "debug_view", size_of::<debug_view::DebugViewUniform>(), F),
+            texture(1, "debug_ids", Uint, D2, F),
+            texture(2, "debug_count", Unfilterable, D2, F),
         ],
     };
 

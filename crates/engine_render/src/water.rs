@@ -679,7 +679,10 @@ impl WaterPass {
             },
         };
         let mut color_targets = targets.color_targets(canvas);
-        if let Some(Some(scene)) = color_targets.first_mut() {
+        // Debug views write what drew each pixel over what is behind.
+        if let Some(Some(scene)) = color_targets.first_mut()
+            && targets != Targets::Debug
+        {
             scene.blend = Some(blended);
         }
         let patches = [Some(water_patch_layout())];

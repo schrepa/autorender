@@ -9,6 +9,7 @@ use std::sync::Arc;
 use super::frame::FrameState;
 use super::scatter_pool::{ScatterPool, TileObjects};
 use super::*;
+use crate::debug_view::{DebugViewPass, DrawKind, DrawRecord, bind_record};
 use crate::gpu_data::{ColorData, pack_color, pack_surface};
 use crate::impostors::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord};
 use crate::occupancy::{Cover, OccupancyFrame};
@@ -602,6 +603,11 @@ impl Renderer {
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
         pass.set_bind_group(2, &groups[usize::from(temporal)], &[]);
+        // Debug views' draws read their records: placed objects cast into
+        // the kept map in frames keeping still casters.
+        let debug = self
+            .debug_records(state)
+            .map(|records| (records, state.shape.shadows, self.shadows.keeps_still()));
         let mut draws = 0;
         for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
             if draw.count == 0 {
@@ -613,7 +619,7 @@ impl Renderer {
             };
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
-            draws += self.draw_scatter_levels(pass, (index, draw), 0, true);
+            draws += self.draw_scatter_levels(pass, (index, draw), 0, true, debug);
         }
         // Objects fading between how the camera shows them,
         // at the levels the camera draws.
@@ -632,7 +638,7 @@ impl Renderer {
             };
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
-            draws += self.draw_scatter_levels(pass, (index, draw), fading, true);
+            draws += self.draw_scatter_levels(pass, (index, draw), fading, true, debug);
         }
         // Impostors: every group's cards in one draw, over
         // the poses and lights the meshes bound.
@@ -646,6 +652,10 @@ impl Renderer {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
             pass.set_vertex_buffer(0, cards);
+            if let Some((records, casts, _)) = debug {
+                let record = DrawRecord::of(DrawKind::PlacedCard, 0, casts);
+                bind_record(pass, Some(records), record);
+            }
             pass.draw_indirect(args, offset);
             draws += 1;
         }
@@ -701,7 +711,7 @@ impl Renderer {
                 pass.set_pipeline(&casters[usize::from(masked)]);
                 bound = Some(masked);
             }
-            draws += self.draw_scatter_levels(pass, (index, draw), view, false);
+            draws += self.draw_scatter_levels(pass, (index, draw), view, false, None);
         }
         if let (Some(pipeline), Some(group)) = (cards, self.impostors.placed.group())
             && let Some((cards, args, offset)) = self.features.scatter.get().card_source(view)
@@ -717,13 +727,16 @@ impl Renderer {
 
     /// Draws group `draw` (the `index`th) at each of its levels from
     /// `view`'s lists, binding each level's mesh, with its extra stream
-    /// when `extras`; returns the draws.
+    /// when `extras` and, in debug views, each level's record of `debug`'s
+    /// records, the group casting sun shadows where they say and its
+    /// casters kept; returns the draws.
     fn draw_scatter_levels(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         (index, draw): (usize, &ScatterDraw),
         view: usize,
         extras: bool,
+        debug: Option<(&DebugViewPass, bool, bool)>,
     ) -> u32 {
         let mut draws = 0;
         for (level, handle) in draw.meshes.iter().enumerate() {
@@ -744,6 +757,14 @@ impl Renderer {
             }
             pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
             pass.set_vertex_buffer(1, ids);
+            if let Some((records, casts, kept)) = debug {
+                let casts = casts && draw.casts.is_some();
+                let record = DrawRecord {
+                    kept: casts && kept,
+                    ..DrawRecord::of(DrawKind::Placed, level, casts)
+                };
+                bind_record(pass, Some(records), record);
+            }
             pass.draw_indexed_indirect(args, offset);
             draws += 1;
         }

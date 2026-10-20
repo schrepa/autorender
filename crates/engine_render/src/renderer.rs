@@ -57,6 +57,8 @@ mod instances;
 mod meshes;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+#[cfg(feature = "dev")]
+mod probe;
 mod probe_captures;
 mod queries;
 mod scatter_draws;

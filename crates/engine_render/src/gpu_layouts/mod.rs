@@ -180,6 +180,7 @@ macro_rules! layout_modules {
 layout_modules! {
     scene,
     clouds,
+    debug_view,
     deformation,
     decals,
     ground_cover,

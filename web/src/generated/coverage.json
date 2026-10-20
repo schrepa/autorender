@@ -56,6 +56,7 @@
       "kind": "resource",
       "smokes": [
         "agent",
+        "debug-view",
         "host-parity",
         "lod",
         "terrain",
@@ -313,6 +314,7 @@
       "smokes": [
         "agent",
         "collision",
+        "debug-view",
         "gpu-presentation",
         "hierarchy",
         "host-parity",
@@ -365,6 +367,7 @@
       "smokes": [
         "agent",
         "collision",
+        "debug-view",
         "hierarchy",
         "host-parity",
         "interpolation",
@@ -449,6 +452,7 @@
       "op": "present",
       "smokes": [
         "collision",
+        "debug-view",
         "gpu-presentation",
         "host-parity",
         "interpolation",
@@ -471,6 +475,7 @@
       "smokes": [
         "agent",
         "culling",
+        "debug-view",
         "gpu-presentation",
         "host-parity",
         "lod",
@@ -663,6 +668,7 @@
         "agent",
         "collision",
         "culling",
+        "debug-view",
         "gpu-presentation",
         "hierarchy",
         "host-parity",
@@ -682,6 +688,7 @@
     {
       "op": "game",
       "smokes": [
+        "debug-view",
         "host-parity",
         "jobs",
         "lod",
@@ -714,6 +721,13 @@
       "op": "debug_fault",
       "smokes": [
         "host-parity"
+      ]
+    },
+    {
+      "op": "probe",
+      "smokes": [
+        "debug-view",
+        "surfaces"
       ]
     }
   ],
@@ -807,6 +821,7 @@
       "inspector": "ReflectionProbeSettings",
       "section": "reflection_probes",
       "smokes": [
+        "debug-view",
         "lod",
         "terrain-water-sky"
       ],
@@ -824,6 +839,7 @@
       "inspector": "LevelOfDetail",
       "section": "level_of_detail",
       "smokes": [
+        "debug-view",
         "lod",
         "terrain"
       ],
@@ -936,6 +952,7 @@
       "inspector": "Sky",
       "section": "sky",
       "smokes": [
+        "debug-view",
         "host-parity",
         "terrain-water-sky"
       ],
@@ -1009,6 +1026,14 @@
         "taa"
       ],
       "stats": true
+    },
+    {
+      "inspector": "DebugView",
+      "section": "debug_view",
+      "smokes": [
+        "debug-view"
+      ],
+      "stats": false
     }
   ]
 }

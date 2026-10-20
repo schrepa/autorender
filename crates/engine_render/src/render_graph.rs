@@ -105,6 +105,10 @@ resources! {
     /// The pages terrain's resolves wanted of the virtual texture, read back
     /// later.
     Feedback: Kept,
+    /// Debug views' targets: what drew each pixel, and the fragments that
+    /// passed the depth test there.
+    DebugIds: Frame,
+    DebugCount: Frame,
 }
 
 // A set holds every resource as a bit of a u64.
@@ -333,6 +337,7 @@ passes! {
     effects: Feature(FeaturePass::Effects),
     composite: Feature(FeaturePass::Composite),
     temporal_resolve: Feature(FeaturePass::TemporalResolve),
+    debug_view: Feature(FeaturePass::DebugView),
     probe_captures: ProbeCaptures,
 }
 
@@ -666,6 +671,8 @@ pub(crate) enum Targets {
     /// Into the screen effects' and motion targets, resolved with the
     /// history into the canvas.
     Temporal,
+    /// Into the debug views' targets, which their pass shows in the canvas.
+    Debug,
 }
 
 /// What a frame runs, from which [`plan`] declares its passes.
@@ -704,12 +711,13 @@ pub(crate) struct FrameShape {
 }
 
 impl FrameShape {
-    /// The main passes' color: the canvas, or the effects' scene target.
+    /// The main passes' color: the canvas, the effects' scene target, or
+    /// what drew each pixel.
     pub(crate) fn scene(&self) -> Resource {
-        if self.targets == Targets::Canvas {
-            Resource::Canvas
-        } else {
-            Resource::Scene
+        match self.targets {
+            Targets::Canvas => Resource::Canvas,
+            Targets::Post | Targets::Temporal => Resource::Scene,
+            Targets::Debug => Resource::DebugIds,
         }
     }
 
@@ -724,6 +732,7 @@ impl FrameShape {
                 Resource::Glow,
                 Resource::Surface,
             ],
+            Targets::Debug => &[Resource::DebugIds, Resource::DebugCount],
         }
     }
 }
@@ -737,11 +746,11 @@ pub(crate) const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 /// The far plane's depth (reversed): `gpu_data::FAR_DEPTH`.
 const FAR: f32 = 0.0;
 
-/// Declares the passes of a frame of `shape` into `graph`, but for the
-/// features' (`crate::render_features`), which declare their own.
-pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
+/// Declares the work a frame of `shape` does before its opaque passes into
+/// `graph`: GPU presentation, shadow casters and maps, cluster selection,
+/// terrain's horizons, tracks and the virtual texture's bakes.
+fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
     use Resource::*;
-    graph.clear();
     let gpu = shape.gpu;
     if gpu {
         graph.add(Pass::Presentation).write(Poses).write(Visible);
@@ -787,6 +796,15 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     if shape.vt_bakes {
         graph.add(Pass::VtBakes).write(Pages);
     }
+}
+
+/// Declares the passes of a frame of `shape` into `graph`, but for the
+/// features' (`crate::render_features`), which declare their own.
+pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
+    use Resource::*;
+    graph.clear();
+    plan_before_opaque(graph, shape);
+    let gpu = shape.gpu;
     // The main passes' color targets, in pipeline target order.
     let targets: &[(Resource, Clear)] = match shape.targets {
         Targets::Canvas => &[(Canvas, Clear::Color(shape.canvas_clear))],
@@ -800,6 +818,10 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             (Motion, Clear::Color(TRANSPARENT)),
             (Glow, Clear::Color(TRANSPARENT)),
             (Surface, Clear::Color(TRANSPARENT)),
+        ],
+        Targets::Debug => &[
+            (DebugIds, Clear::Color(TRANSPARENT)),
+            (DebugCount, Clear::Color(TRANSPARENT)),
         ],
     };
     for phase in Phase::first(shape.phases) {

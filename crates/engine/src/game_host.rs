@@ -314,6 +314,11 @@ impl<G: Game> GameHost<G> {
         self.app.set_subpixel_culling(enabled);
     }
 
+    /// The debug view frames show, in this and later engines.
+    pub fn set_debug_view(&mut self, view: engine_core::DebugViewMode) {
+        self.app.set_debug_view(view);
+    }
+
     /// What terrain times its work by, in this and later engines.
     pub fn set_terrain_clock(&mut self, clock: crate::host::TerrainClock) {
         self.app.set_terrain_clock(clock);
@@ -408,6 +413,36 @@ impl<G: Game> GameHost<G> {
 
 #[cfg(feature = "dev")]
 impl<G: Game> GameHost<G> {
+    /// Arms the renderer's pixel probe at `pixel`: the next two frames
+    /// keep what it reads.
+    pub(crate) fn arm_probe(&mut self, pixel: (u32, u32)) {
+        self.app.renderer.arm_probe(pixel);
+    }
+
+    /// What the armed pixel probe found, with the entity whose slot drew
+    /// the pixel, once its read-back arrived; why it failed otherwise.
+    pub(crate) fn probe_result(
+        &mut self,
+    ) -> Option<Result<engine_dev::results::ProbeResult, String>> {
+        use engine_core::DrawnKind;
+        let probe = match self.app.renderer.probe_result()? {
+            Ok(probe) => probe,
+            Err(error) => return Some(Err(error.to_string())),
+        };
+        // Meshes, their cards and virtual geometry draw entities' slots.
+        let slot = probe.object.filter(|_| {
+            matches!(
+                probe.kind,
+                Some(DrawnKind::Mesh | DrawnKind::Card | DrawnKind::Virtual)
+            )
+        });
+        let engine = self.app.engine();
+        let entity = slot
+            .and_then(|slot| engine.render_entity(slot))
+            .map(|entity| engine_dev::results::AuthoredEntity::of(engine.app.world(), entity));
+        Some(Ok(engine_dev::results::ProbeResult { probe, entity }))
+    }
+
     pub fn dev_command(&mut self, request: &str, width: u32, height: u32, paused: bool) -> String {
         if self.development.submits_frame(request, paused) {
             self.game.before_frame(self.app.engine_mut());

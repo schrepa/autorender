@@ -1,0 +1,340 @@
+// Debug views (`engine_core::DebugView`): pipelines of their own drawing,
+// in place of each pixel's shading, what drew it into the debug targets,
+// which `debug_view.wgsl` shows. A fragment writes its draw's record (its
+// kind in the low four bits, its level in the next four, then its flags)
+// with the sun's lookup at its point above DEBUG_SOURCE_SHIFT, the object
+// drawn, a detail of it (a cluster, an impostor's record) and its normal;
+// and adds one to the fragments that passed the depth test there. Meshes,
+// impostors and virtual geometry read their draw's record from a vertex
+// stream of one element (`@location(14)`); the others know their kind.
+
+// The kinds whose fragments know them; the others' come from their records.
+const DEBUG_KIND_TERRAIN: u32 = 6u;
+const DEBUG_KIND_COVER: u32 = 7u;
+const DEBUG_KIND_WATER: u32 = 8u;
+const DEBUG_KIND_SEA: u32 = 9u;
+const DEBUG_KIND_FALLS: u32 = 10u;
+const DEBUG_KIND_SKY: u32 = 11u;
+const DEBUG_LEVEL_SHIFT: u32 = 4u;
+// A card fading in or out over its mesh.
+const DEBUG_FADING: u32 = 0x100u;
+// The sun's lookup: none (no sun shadows), the near cascades from the
+// first, the kept levels from the finest, the kept far map, the moving map,
+// a terrain's horizon, past the shadow distance; DEBUG_SHADOWED where it
+// leaves the point in shadow.
+const DEBUG_SOURCE_SHIFT: u32 = 16u;
+const DEBUG_SUN_NONE: u32 = 0u;
+const DEBUG_SUN_CASCADE: u32 = 1u;
+const DEBUG_SUN_LEVEL: u32 = 5u;
+const DEBUG_SUN_KEPT: u32 = 8u;
+const DEBUG_SUN_MOVING: u32 = 9u;
+const DEBUG_SUN_HORIZON: u32 = 10u;
+const DEBUG_SUN_BEYOND: u32 = 11u;
+const DEBUG_SHADOWED: u32 = 0x10u;
+
+struct DebugTargets {
+    @location(0) ids: vec4<u32>,
+    @location(1) count: f32,
+}
+
+// Debug fragments shade nothing; they write what the shaded pipeline would
+// show of `point`, drawn by `record`'s draw, with `object` and `detail`.
+fn debug_targets(record: u32, object: u32, detail: u32, point: SurfacePoint) -> DebugTargets {
+    let sun = debug_sun(point.world + point.shadow_offset, point.geometric, point.world_dx,
+        point.world_dy, point.distance, point.on_terrain);
+    var targets: DebugTargets;
+    targets.ids = vec4<u32>(record | (sun << DEBUG_SOURCE_SHIFT), object, detail,
+        pack2x16snorm(octahedral_coordinates(stable_normalize(point.normal))));
+    targets.count = 1.0;
+    return targets;
+}
+
+// A point of `world` with `normal` for kinds without a surface point:
+// where it lies, how it moves per pixel and how far from the eye.
+fn debug_point(world: vec3<f32>, normal: vec3<f32>) -> SurfacePoint {
+    var point: SurfacePoint;
+    point.world = world;
+    point.world_dx = dpdx(world);
+    point.world_dy = dpdy(world);
+    point.geometric = normal;
+    point.normal = normal;
+    point.distance = length(world - camera.position.xyz);
+    return point;
+}
+
+// `source` with DEBUG_SHADOWED where the lookup leaves under half the sun.
+fn debug_shadowed(source: u32, visible: f32) -> u32 {
+    return source | select(0u, DEBUG_SHADOWED, visible < 0.5);
+}
+
+// The finest kept level `level_visibility` reads at `world`: the first
+// whose window and depth band hold the point, while its texels are not too
+// small for a pixel's footprint there.
+fn debug_kept_level(world: vec3<f32>, normal: vec3<f32>) -> u32 {
+    let axes = mat3x3<f32>(shadow.light[0].xyz, shadow.light[1].xyz, shadow.light[2].xyz);
+    let light = world * axes;
+    let light_normal = normal * axes;
+    let footprint = max(pixel_footprint(world, normal), 1.0e-6);
+    let margin = 2.0 / shadow.level_state.y;
+    for (var level = 0u; level < u32(shadow.level_state.x); level++) {
+        let window = shadow.level_windows[level];
+        if 2.0 * window.z / footprint <= 0.35 {
+            continue;
+        }
+        let scales = shadow.level_scales[level];
+        let at = light + light_normal * window.z;
+        let position = vec3<f32>(at.xy * scales.x, (at.z - scales.y) * scales.z);
+        let local = position.xy - window.xy;
+        if all(local >= vec2<f32>(margin)) && all(local <= vec2<f32>(1.0 - margin))
+            && position.z > 0.0 && position.z < 1.0 {
+            return level;
+        }
+    }
+    return 0u;
+}
+
+// Which lookup decides the sun at the surface point `world` (a DEBUG_SUN_
+// value), in `sun_visibility`'s order, with DEBUG_SHADOWED where it leaves
+// the point in shadow: a terrain's horizon, then the near cascade holding
+// the point, then past the shadow distance nothing, else the far maps,
+// whichever leaves less: the moving map, or for still casters the kept
+// levels where one holds the point and the kept far map elsewhere.
+fn debug_sun(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
+        distance: f32, on_terrain: bool) -> u32 {
+    if shadow.state.x == 0.0 {
+        return DEBUG_SUN_NONE;
+    }
+    if terrain_visibility(world, on_terrain) <= 0.0 {
+        return DEBUG_SUN_HORIZON | DEBUG_SHADOWED;
+    }
+    let beyond = select(vec4<f32>(0.0), vec4<f32>(1.0), vec4<f32>(distance) >= shadow.reach);
+    let cascade = u32(dot(beyond, vec4<f32>(1.0)));
+    let cascades = select(u32(shadow.state.z), 0u, camera.options.x != 0.0);
+    if cascade < cascades {
+        let visible = cascade_visibility(cascade, world, normal, dx, dy);
+        if visible >= 0.0 {
+            return debug_shadowed(DEBUG_SUN_CASCADE + cascade, visible);
+        }
+    }
+    if distance >= shadow.offsets.x {
+        return DEBUG_SUN_BEYOND;
+    }
+    let size = shadow.sizes.y;
+    let point = map_point(shadow.far, world + normal * shadow.offsets.y, dx, dy, size,
+        shadow.offsets.z);
+    let uv = point.texel / size;
+    let inside = all(abs(uv * 2.0 - vec2<f32>(1.0)) < vec2<f32>(1.0)) && point.depth < 1.0;
+    let corner = gather_uv(point, size);
+    var moving = 1.0;
+    var kept = 1.0;
+    if inside {
+        moving = plane_visibility(textureGather(moving_shadows, shadow_texels, corner), point);
+        kept = plane_visibility(textureGather(kept_shadows, shadow_texels, corner), point);
+    }
+    if shadow.state.y == 0.0 {
+        return debug_shadowed(DEBUG_SUN_MOVING, moving);
+    }
+    let levels = level_visibility(world, normal, dx, dy);
+    let still = levels.x + levels.y * kept;
+    if moving < still {
+        return debug_shadowed(DEBUG_SUN_MOVING, moving);
+    }
+    if levels.y < 1.0 {
+        return debug_shadowed(DEBUG_SUN_LEVEL + debug_kept_level(world, normal), still);
+    }
+    return debug_shadowed(DEBUG_SUN_KEPT, still);
+}
+
+// Meshes' and virtual geometry's vertex outputs with the second stream's
+// (white and the first coordinates for meshes without one), and the
+// object: the draw's record, the slot and the cluster.
+struct DebugOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
+    @location(3) color: vec4<f32>,
+    @location(4) uv1: vec2<f32>,
+    @location(5) @interpolate(flat) object: vec4<u32>,
+}
+
+fn debug_output(vertex: VertexOutput, color: vec4<f32>, uv1: vec2<f32>, object: vec4<u32>)
+        -> DebugOutput {
+    var output: DebugOutput;
+    output.clip_position = vertex.clip_position;
+    output.normal_u = vertex.normal_u;
+    output.world_v = vertex.world_v;
+    output.material = vertex.material;
+    output.color = color;
+    output.uv1 = uv1;
+    output.object = object;
+    return output;
+}
+
+@vertex
+fn vs_debug_affine(input: AffineVertexInput, @location(14) draw: vec4<u32>) -> DebugOutput {
+    return debug_output(vertex_affine(input), vec4<f32>(1.0), input.uv,
+        vec4<u32>(draw.x, slot_index(input.slot), 0u, 0u));
+}
+
+@vertex
+fn vs_debug_affine_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
+        @location(10) uv1: vec2<f32>, @location(14) draw: vec4<u32>) -> DebugOutput {
+    return debug_output(vertex_affine(input), color, uv1,
+        vec4<u32>(draw.x, slot_index(input.slot), 0u, 0u));
+}
+
+@vertex
+fn vs_debug_affine_skinned(input: AffineVertexInput, @location(9) color: vec4<f32>,
+        @location(10) uv1: vec2<f32>, @location(11) joints: vec4<u32>,
+        @location(12) weights: vec4<f32>, @location(14) draw: vec4<u32>) -> DebugOutput {
+    return debug_output(vertex_affine_skinned(input, joints, weights), color, uv1,
+        vec4<u32>(draw.x, slot_index(input.slot), 0u, 0u));
+}
+
+@vertex
+fn vs_debug_virtual(input: VirtualInput, @location(14) draw: vec4<u32>) -> DebugOutput {
+    let vertex = vertex_virtual(input);
+    return debug_output(vertex, vec4<f32>(1.0), vec2<f32>(vertex.normal_u.w, vertex.world_v.w),
+        vec4<u32>(draw.x, slot_index(input.slot), input.cluster, 0u));
+}
+
+// What the shaded pipelines' fragment leaves of the material's point: its
+// fades and masks discard as theirs do.
+@fragment
+fn fs_debug_mesh(input: DebugOutput, @builtin(front_facing) front: bool) -> DebugTargets {
+    var extended: ExtendedOutput;
+    extended.clip_position = input.clip_position;
+    extended.normal_u = input.normal_u;
+    extended.world_v = input.world_v;
+    extended.material = input.material;
+    extended.color = input.color;
+    extended.uv1 = input.uv1;
+    let values = extended_fragment(extended);
+    let point = surface_point(values.color, values.normal, values.world, values.uv, values.uv1,
+        values.surface, front);
+    return debug_targets(input.object.x, input.object.y, input.object.z, point);
+}
+
+// Impostor cards' outputs and the object: the draw's record and the slot.
+struct DebugImpostorOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) frames_ab: vec4<f32>,
+    @location(1) frame_c: vec2<f32>,
+    @location(2) world: vec3<f32>,
+    @location(3) @interpolate(flat) normal_x: vec4<f32>,
+    @location(4) @interpolate(flat) normal_y: vec4<f32>,
+    @location(5) @interpolate(flat) normal_z: vec3<f32>,
+    @location(6) @interpolate(flat) depth_axis: vec4<f32>,
+    @location(7) @interpolate(flat) material: vec4<u32>,
+    @location(8) @interpolate(flat) batch: u32,
+    @location(9) @interpolate(flat) object: vec2<u32>,
+}
+
+@vertex
+fn vs_debug_impostor(input: ImpostorInput, @location(14) draw: vec4<u32>)
+        -> DebugImpostorOutput {
+    let card = impostor_card(input).output;
+    var output: DebugImpostorOutput;
+    output.clip_position = card.clip_position;
+    output.frames_ab = card.frames_ab;
+    output.frame_c = card.frame_c;
+    output.world = card.world;
+    output.normal_x = card.normal_x;
+    output.normal_y = card.normal_y;
+    output.normal_z = card.normal_z;
+    output.depth_axis = card.depth_axis;
+    output.material = card.material;
+    output.batch = card.batch;
+    output.object = vec2<u32>(draw.x, input.slot & ~MOVED_SLOT);
+    return output;
+}
+
+struct DebugImpostorTargets {
+    @location(0) ids: vec4<u32>,
+    @location(1) count: f32,
+    @builtin(frag_depth) depth: f32,
+}
+
+// A card fragment at the depth its shaded pipeline writes, fading cards
+// flagged.
+@fragment
+fn fs_debug_impostor(input: DebugImpostorOutput) -> DebugImpostorTargets {
+    var card: ImpostorOutput;
+    card.clip_position = input.clip_position;
+    card.frames_ab = input.frames_ab;
+    card.frame_c = input.frame_c;
+    card.world = input.world;
+    card.normal_x = input.normal_x;
+    card.normal_y = input.normal_y;
+    card.normal_z = input.normal_z;
+    card.depth_axis = input.depth_axis;
+    card.material = input.material;
+    card.batch = input.batch;
+    let point = impostor_point(card);
+    let shaded = impostor_shaded(card, point, vec3<f32>(0.0));
+    let fading = select(0u, DEBUG_FADING, (input.batch & IMPOSTOR_FADING) != 0u);
+    let targets = debug_targets(input.object.x | fading, input.object.y,
+        impostor_index(input.batch), point);
+    return DebugImpostorTargets(targets.ids, targets.count, shaded.depth);
+}
+
+// Terrain at its patch's level, with the smooth normal its shading starts
+// from.
+@fragment
+fn fs_debug_terrain(input: TerrainOutput) -> DebugTargets {
+    terrain_holes_test(input.cell, input.holes);
+    let relative = input.relative.xyz;
+    let world = relative + camera.position.xyz;
+    let shading = terrain_shading_level(length(world - terrain.eye.xyz));
+    var point = debug_point(world, terrain_surface_normal(world.xz - terrain.origin.xz, shading));
+    point.on_terrain = true;
+    // Its patch's level, as terrain's levels view reads it.
+    let level = u32(clamp(round(log2(input.relative.w / terrain.anchor.w)), 0.0, 7.0));
+    return debug_targets(DEBUG_KIND_TERRAIN | (level << DEBUG_LEVEL_SHIFT), 0u, 0u, point);
+}
+
+@fragment
+fn fs_debug_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> DebugTargets {
+    return debug_targets(DEBUG_KIND_COVER, 0u, 0u, cover_surface(input, front));
+}
+
+// Water where its shading covers at least half the pixel.
+@fragment
+fn fs_debug_water(input: WaterOutput) -> DebugTargets {
+    let shade = shade_water(input, false);
+    if shade.coverage < 0.5 {
+        discard;
+    }
+    let point = debug_point(input.relative + camera.position.xyz, shade.shaded.normal);
+    return debug_targets(DEBUG_KIND_WATER, 0u, 0u, point);
+}
+
+@fragment
+fn fs_debug_ocean(input: OceanOutput) -> DebugTargets {
+    let shade = shade_ocean(input, false);
+    if shade.coverage < 0.5 {
+        discard;
+    }
+    let point = debug_point(input.relative + camera.position.xyz, shade.shaded.normal);
+    return debug_targets(DEBUG_KIND_SEA, 0u, 0u, point);
+}
+
+@fragment
+fn fs_debug_fall(input: FallOutput) -> DebugTargets {
+    let shade = shade_fall(input);
+    if shade.coverage < 0.5 {
+        discard;
+    }
+    let point = debug_point(input.relative + camera.position.xyz, shade.shaded.normal);
+    return debug_targets(DEBUG_KIND_FALLS, 0u, 0u, point);
+}
+
+// The sky over the pixels nothing covers: no sun lookup, no normal.
+@fragment
+fn fs_debug_sky(input: SkyOutput) -> DebugTargets {
+    var targets: DebugTargets;
+    targets.ids = vec4<u32>(DEBUG_KIND_SKY, 0u, 0u, 0u);
+    targets.count = 1.0;
+    return targets;
+}

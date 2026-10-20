@@ -684,7 +684,7 @@ pub(crate) struct RetainedRender {
     frames: Vec<SlotFrame>,
     // Slots visited by the current preparation, one bit each.
     visited: Vec<u64>,
-    entities: EntityHashMap<usize>,
+    pub(crate) entities: EntityHashMap<usize>,
     free: Vec<usize>,
     // Slot cached per query row. Freeing a slot clears every entry naming it,
     // so a matching Entity alone proves the cached slot is still its own.

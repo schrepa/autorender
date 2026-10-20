@@ -36,12 +36,37 @@ impl Setting {
     }
 }
 
+/// A setting's values, its default first: words, each with the value it
+/// sets (`None` keeping what the game chose), or `(named Type)`, the names
+/// of a type with `NAMES` and `named`, each setting the value it names.
+macro_rules! words {
+    ([$($word:literal => $value:expr),+ $(,)?]) => {
+        &[$($word),+]
+    };
+    ((named $named:path)) => {
+        <$named>::NAMES
+    };
+}
+
+/// The value `value`, one of a setting's values (`words!`), sets; `None`
+/// when it is none of them.
+macro_rules! parse {
+    ($value:ident, [$($word:literal => $set:expr),+ $(,)?]) => {
+        match $value {
+            $($word => Some($set),)+
+            _ => None,
+        }
+    };
+    ($value:ident, (named $named:path)) => {
+        <$named>::named($value).map(Some)
+    };
+}
+
 /// Declares the settings: [`HostSettings`]' fields, [`SETTINGS`], the
 /// parser and what applying them calls on a game's host.
 macro_rules! settings {
     ($(
-        $field:ident: $ty:ty = $name:literal, $what:literal,
-        [$($word:literal => $value:expr),+ $(,)?] => $apply:ident;
+        $field:ident: $ty:ty = $name:literal, $what:literal, $values:tt => $apply:ident;
     )*) => {
         /// The engine switches a host was given; one not given keeps what
         /// the game and its scene chose.
@@ -53,7 +78,7 @@ macro_rules! settings {
         /// Every engine switch hosts take.
         pub const SETTINGS: &[Setting] = &[$(Setting {
             name: $name,
-            values: &[$($word),+],
+            values: words!($values),
             what: $what,
         }),*];
 
@@ -63,16 +88,11 @@ macro_rules! settings {
             pub fn set(&mut self, name: &str, value: &str) -> Result<bool, String> {
                 match name {
                     $($name => {
-                        self.$field = match value {
-                            $($word => $value,)+
-                            _ => {
-                                return Err(format!(
-                                    "{} is {}, not {value}",
-                                    $name,
-                                    [$($word),+].join(" or ")
-                                ));
-                            }
+                        let Some(parsed) = parse!(value, $values) else {
+                            let values: &[&str] = words!($values);
+                            return Err(format!("{} is {}, not {value}", $name, values.join(" or ")));
                         };
+                        self.$field = parsed;
                         Ok(true)
                     })*
                     _ => Ok(false),
@@ -112,6 +132,9 @@ settings! {
     terrain_clock: TerrainClock = "terrain-clock",
         "what terrain times its work by: the host's clock, or frames alone, each a slice of samples_per_frame with none between them",
         ["wall" => Some(TerrainClock::Wall), "frames" => Some(TerrainClock::Frames)] => set_terrain_clock;
+    debug_view: engine_core::DebugViewMode = "debug-view",
+        "the debug view frames show in place of the shaded image, over the scene's",
+        (named engine_core::DebugViewMode) => set_debug_view;
 }
 
 impl HostSettings {

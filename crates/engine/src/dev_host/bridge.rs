@@ -48,7 +48,13 @@ pub(crate) enum Pending {
     },
     /// A benchmark sampling.
     Benchmark(Box<BenchmarkRun>),
+    /// The pixel probe's read-back, `waits` waits so far, for the request
+    /// whose last frame replied `reply`.
+    Probe { reply: Value, waits: u32 },
 }
+
+/// Waits for the host's next frame a pixel probe's read-back takes at most.
+const PROBE_WAITS: u32 = 120;
 
 /// A benchmark under way: frames of its mode the engine runs, each paired
 /// with the host's wait for its next frame (the page's next animation
@@ -328,6 +334,75 @@ impl<G: Game> GameHost<G> {
                 self.dev_refused(ErrorCode::SourceIo, "$", &message)
             }
             Pending::Benchmark(run) => self.dev_benchmark(run, &outcome, context),
+            Pending::Probe { reply, waits } => {
+                if let Some(message) = outcome.failed {
+                    return self.dev_refused(ErrorCode::RenderFailed, "$", &message);
+                }
+                self.dev_probe(reply, waits, context)
+            }
+        }
+    }
+
+    /// Starts the pixel probe `control` names on the view `context`
+    /// describes: a frame of the debug views' targets, then a shaded one, as
+    /// `capture` renders them; then its answer, or a wait for it.
+    fn dev_probe_start(&mut self, control: &Map<String, Value>, context: &HostContext) -> Step {
+        let pixel = |field: &str| {
+            control
+                .get(field)
+                .and_then(Value::as_u64)
+                .map_or(0, |value| u32::try_from(value).unwrap_or(u32::MAX))
+        };
+        let (x, y) = (pixel("x"), pixel("y"));
+        for (path, value, size) in [("$.x", x, context.width), ("$.y", y, context.height)] {
+            if value >= size {
+                return self.dev_refused(
+                    ErrorCode::OutOfRange,
+                    path,
+                    &format!("the view is {} by {} pixels", context.width, context.height),
+                );
+            }
+        }
+        let frame = match control.get("alpha") {
+            Some(alpha) if control.get("gpu") == Some(&json!(true)) => {
+                json!({"op": "present", "alpha": alpha, "gpu": true})
+            }
+            Some(alpha) => json!({"op": "present", "alpha": alpha}),
+            None => json!({"op": "render"}),
+        };
+        self.arm_probe((x, y));
+        let mut reply = Value::Null;
+        for _ in 0..2 {
+            reply = self.dev_invoke(&frame, context);
+            if reply["ok"] != true {
+                return self.dev_done(reply, context);
+            }
+        }
+        self.dev_probe(reply, 0, context)
+    }
+
+    /// The pixel probe's answer once its read-back arrived, in the reply of
+    /// its last frame `reply`; otherwise a wait for the host's next frame,
+    /// the `waits`th, while it may still arrive.
+    fn dev_probe(&mut self, mut reply: Value, waits: u32, context: &HostContext) -> Step {
+        match self.probe_result() {
+            Some(Ok(probe)) => {
+                reply["result"] = result::probe(probe);
+                self.dev_done(reply, context)
+            }
+            Some(Err(message)) => self.dev_refused(ErrorCode::RenderFailed, "$", &message),
+            None if waits >= PROBE_WAITS => self.dev_refused(
+                ErrorCode::RenderFailed,
+                "$",
+                "the pixel probe's read-back did not arrive",
+            ),
+            None => self.dev_effect(
+                Pending::Probe {
+                    reply,
+                    waits: waits + 1,
+                },
+                Effect::Wait { within_ms: 1000.0 },
+            ),
         }
     }
 
@@ -448,6 +523,7 @@ impl<G: Game> GameHost<G> {
                 });
                 self.dev_effect(Pending::Shown { reply }, Effect::Show)
             }
+            "probe" => self.dev_probe_start(control, context),
             "game" => {
                 let name = text("name");
                 let args = control

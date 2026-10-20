@@ -106,6 +106,19 @@ impl Renderer {
                     .expect("deferred terrain's frames create it")
                     .view
             }
+            Resource::DebugIds | Resource::DebugCount => {
+                let [ids, count] = self
+                    .features
+                    .debug_view
+                    .get()
+                    .expect("debug views' frames create it")
+                    .views();
+                if resource == Resource::DebugIds {
+                    ids
+                } else {
+                    count
+                }
+            }
             Resource::Accumulated | Resource::Revealed => {
                 let [accumulated, revealed] = self.features.transparency.get().views();
                 if resource == Resource::Accumulated {
@@ -190,7 +203,7 @@ impl Renderer {
             .light_frame()
             .and(self.features.lights.get())
             .map(LightPass::fragment_group);
-        let scene = (state.shape.targets != Targets::Canvas)
+        let scene = matches!(state.shape.targets, Targets::Post | Targets::Temporal)
             .then(|| self.features.post.get())
             .flatten()
             .map(crate::post::PostPass::scene_texture);

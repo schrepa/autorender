@@ -52,6 +52,9 @@ pub mod bounds {
     /// Values a distribution request names at most, within the request's
     /// bytes (`MAX_REQUEST_BYTES`).
     pub const MAX_VALUES: usize = 1024;
+    /// A pixel of the view, in physical pixels: views stay within the
+    /// largest texture devices allow.
+    pub const PIXEL: Rule = Rule::Range(0.0, 16_384.0);
 }
 
 /// The schema transform stating a stamp's `field` rule on the request field
@@ -114,6 +117,7 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("reload", "status"),
     ("debug_panic", "status"),
     ("debug_fault", "status"),
+    ("probe", ""),
 ];
 
 /// A query, as the handler it runs in takes it: [`DevRequest::route`].
@@ -564,6 +568,34 @@ pub enum BrowserControl {
         )]
         feature: String,
     },
+    /// What drew pixel (`x`, `y`) of the view (physical pixels from its top
+    /// left) and how it looks: renders a frame of the debug views' targets,
+    /// then a shaded one, as `capture` renders them (with `alpha` and `gpu`,
+    /// GPU-presented frames, which draw levels of detail and impostor
+    /// cards as play does), and reads both back at the pixel: what drew it,
+    /// its object and the entity that is, its level of detail, normal,
+    /// depth and world position, the sun shadow lookup deciding it, the
+    /// fragments covering it, and its shaded and displayed colors.
+    Probe {
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PIXEL)))]
+        x: u32,
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PIXEL)))]
+        y: u32,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "deserialize_optional_alpha"
+        )]
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(with = "f64", transform = stated(bounds::ALPHA))
+        )]
+        alpha: Option<f64>,
+        /// With `alpha`, GPU-presented frames instead of the exact CPU
+        /// path.
+        #[serde(default)]
+        gpu: bool,
+    },
 }
 
 impl BrowserControl {
@@ -624,6 +656,7 @@ impl BrowserControl {
             | Self::Pause { .. }
             | Self::Resume { .. }
             | Self::Capture { .. }
+            | Self::Probe { .. }
             | Self::Game { .. }
             | Self::Reload { .. }) => Control::Host(HostControl::Loop(control)),
         }
@@ -651,6 +684,7 @@ impl BrowserControl {
             | Self::Input { .. }
             | Self::Render { .. }
             | Self::Capture { .. }
+            | Self::Probe { .. }
             | Self::Game { .. }
             | Self::Reload { .. }
             | Self::DebugPanic { .. }

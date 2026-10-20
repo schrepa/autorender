@@ -18,6 +18,7 @@ use std::task::{Context, Poll, Waker};
 use engine_core::RenderSnapshot;
 
 use crate::clouds::CloudPass;
+use crate::debug_view::DebugViewPass;
 use crate::decals::DecalPass;
 use crate::environment::Environment;
 use crate::ground_cover::GroundCoverPass;
@@ -704,6 +705,9 @@ render_features! {
     /// Temporal antialiasing's resolve into the canvas, created while the
     /// setting is on.
     temporal: Lazy<TemporalPass> => [TemporalResolve],
+    /// Debug views: what drew each pixel shown in the canvas, created with
+    /// the first frame showing one.
+    debug_view: Lazy<DebugViewPass> => [DebugView],
     /// The physically based sky: its tables and the light it gives, built
     /// before the frame, in its prelude.
     sky: Eager<SkyPass> => [],

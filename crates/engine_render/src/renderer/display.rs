@@ -17,6 +17,10 @@ pub(super) struct Display {
     pub(super) max_layers: u32,
     pub(super) suspended: bool,
     reconfigure_next_frame: bool,
+    // The pixel probe of development sessions, which reads back what the
+    // display showed.
+    #[cfg(feature = "dev")]
+    pub(super) probe: super::probe::Probe,
 }
 
 impl Display {
@@ -65,6 +69,8 @@ impl Display {
             max_layers,
             suspended: extent.is_none(),
             reconfigure_next_frame: false,
+            #[cfg(feature = "dev")]
+            probe: super::probe::Probe::default(),
         })
     }
 

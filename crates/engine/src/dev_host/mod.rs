@@ -86,6 +86,7 @@ impl DevHost {
                 | BrowserControl::Game { .. }
                 | BrowserControl::Reload { .. }
                 | BrowserControl::DebugPanic { .. }
+                | BrowserControl::Probe { .. }
         )
     }
 

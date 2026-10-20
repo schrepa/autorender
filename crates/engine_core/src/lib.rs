@@ -15,6 +15,7 @@ mod clouds;
 mod commands;
 mod contact_shadows;
 mod culling;
+mod debug_view;
 mod decals;
 mod effects;
 mod entity_indices;
@@ -57,6 +58,7 @@ pub use clock::*;
 pub use clouds::*;
 pub use commands::*;
 pub use contact_shadows::*;
+pub use debug_view::*;
 pub use decals::*;
 pub use effects::*;
 /// What the mesh simplifier refuses, as level-of-detail generation runs it.
@@ -748,6 +750,15 @@ impl Engine {
     /// development tools read the GPU's per-instance state by.
     pub fn render_slot(&self, entity: Entity) -> Option<u32> {
         self.retained.slot_of(entity)
+    }
+
+    /// The entity drawing in renderer slot `slot`, while one does: what
+    /// development tools name a pixel's object by, a scan.
+    pub fn render_entity(&self, slot: u32) -> Option<Entity> {
+        self.retained
+            .entities
+            .iter()
+            .find_map(|(&entity, &held)| (held as u32 == slot).then_some(entity))
     }
 
     pub fn frustum_culling(&self) -> bool {

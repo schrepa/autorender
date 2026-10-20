@@ -82,6 +82,13 @@ impl PassKind {
 
     /// The vertex stage drawing meshes of `streams` in this pass.
     pub(crate) fn vertex_entry(self, streams: Streams) -> Entry {
+        if self.targets() == Some(Targets::Debug) {
+            return match streams {
+                Streams::Basic => meshes::vs_debug_affine,
+                Streams::Extended => meshes::vs_debug_affine_extended,
+                Streams::Skinned => meshes::vs_debug_affine_skinned,
+            };
+        }
         match (self.slots(), streams) {
             (Slots::Retained, Streams::Basic) => meshes::vs_affine,
             (Slots::Retained, Streams::Extended) => meshes::vs_affine_extended,
@@ -108,6 +115,7 @@ impl PassKind {
             (MeshPass::Opaque(Targets::Temporal), true, false) => meshes::fs_temporal_lit,
             (MeshPass::Opaque(Targets::Temporal), false, true) => meshes::fs_temporal_extended,
             (MeshPass::Opaque(Targets::Temporal), true, true) => meshes::fs_temporal_lit_extended,
+            (MeshPass::Opaque(Targets::Debug), _, _) => meshes::fs_debug_mesh,
             (MeshPass::Transparent, false, false) => meshes::fs_transparent,
             (MeshPass::Transparent, true, false) => meshes::fs_transparent_lit,
             (MeshPass::Transparent, false, true) => meshes::fs_transparent_extended,
@@ -130,6 +138,7 @@ pub(crate) fn sky_fragment(targets: Option<Targets>) -> Entry {
         Some(Targets::Canvas) => meshes::fs_sky,
         Some(Targets::Post) => meshes::fs_sky_post,
         Some(Targets::Temporal) => meshes::fs_sky_temporal,
+        Some(Targets::Debug) => meshes::fs_debug_sky,
         None => meshes::fs_probe_sky,
     }
 }
@@ -140,6 +149,7 @@ pub(crate) fn virtual_vertex(targets: Targets) -> Entry {
     match targets {
         Targets::Canvas | Targets::Post => meshes::vs_virtual,
         Targets::Temporal => meshes::vs_virtual_temporal,
+        Targets::Debug => meshes::vs_debug_virtual,
     }
 }
 
@@ -150,11 +160,12 @@ pub(crate) const VISIBILITY_FRAGMENT: Entry = meshes::fs_visibility;
 /// tiles.
 pub(crate) const RESOLVE_VERTEX: Entry = meshes::vs_resolve;
 
-/// The resolve's fragment stage into `targets`, `lit` or not.
+/// The resolve's fragment stage into `targets`, `lit` or not; debug views
+/// draw every cluster forward and resolve none.
 pub(crate) fn resolve_fragment(targets: Targets, lit: bool) -> Entry {
     match (targets, lit) {
-        (Targets::Canvas, false) => meshes::fs_resolve,
-        (Targets::Canvas, true) => meshes::fs_resolve_lit,
+        (Targets::Canvas | Targets::Debug, false) => meshes::fs_resolve,
+        (Targets::Canvas | Targets::Debug, true) => meshes::fs_resolve_lit,
         (Targets::Post, false) => meshes::fs_resolve_post,
         (Targets::Post, true) => meshes::fs_resolve_post_lit,
         (Targets::Temporal, false) => meshes::fs_resolve_temporal,
@@ -167,6 +178,7 @@ pub(crate) fn impostor_vertex(targets: Targets) -> Entry {
     match targets {
         Targets::Canvas | Targets::Post => meshes::vs_impostor,
         Targets::Temporal => meshes::vs_impostor_temporal,
+        Targets::Debug => meshes::vs_debug_impostor,
     }
 }
 
@@ -179,6 +191,7 @@ pub(crate) fn impostor_fragment(targets: Targets, lit: bool) -> Entry {
         (Targets::Post, true) => meshes::fs_impostor_post_lit,
         (Targets::Temporal, false) => meshes::fs_impostor_temporal,
         (Targets::Temporal, true) => meshes::fs_impostor_temporal_lit,
+        (Targets::Debug, _) => meshes::fs_debug_impostor,
     }
 }
 
@@ -214,6 +227,7 @@ pub(crate) fn terrain(targets: Option<Targets>, lit: bool) -> (Entry, Entry) {
         (Some(Targets::Temporal), true) => {
             (meshes::vs_terrain_temporal, meshes::fs_terrain_temporal_lit)
         }
+        (Some(Targets::Debug), _) => (meshes::vs_terrain, meshes::fs_debug_terrain),
         (None, false) => (meshes::vs_terrain, meshes::fs_terrain_probe),
         (None, true) => (meshes::vs_terrain, meshes::fs_terrain_probe_lit),
     }
@@ -225,6 +239,7 @@ pub(crate) fn water(targets: Targets) -> (Entry, Entry) {
         Targets::Canvas => (meshes::vs_water, meshes::fs_water),
         Targets::Post => (meshes::vs_water, meshes::fs_water_post),
         Targets::Temporal => (meshes::vs_water_temporal, meshes::fs_water_temporal),
+        Targets::Debug => (meshes::vs_water, meshes::fs_debug_water),
     }
 }
 
@@ -234,6 +249,7 @@ pub(crate) fn ocean(targets: Targets) -> (Entry, Entry) {
         Targets::Canvas => (meshes::vs_ocean, meshes::fs_ocean),
         Targets::Post => (meshes::vs_ocean, meshes::fs_ocean_post),
         Targets::Temporal => (meshes::vs_ocean_temporal, meshes::fs_ocean_temporal),
+        Targets::Debug => (meshes::vs_ocean, meshes::fs_debug_ocean),
     }
 }
 
@@ -243,6 +259,7 @@ pub(crate) fn sim_water(targets: Targets) -> (Entry, Entry) {
         Targets::Canvas => (meshes::vs_sim_water, meshes::fs_sim_water),
         Targets::Post => (meshes::vs_sim_water, meshes::fs_sim_water_post),
         Targets::Temporal => (meshes::vs_sim_water_temporal, meshes::fs_sim_water_temporal),
+        Targets::Debug => (meshes::vs_sim_water, meshes::fs_debug_water),
     }
 }
 
@@ -252,6 +269,7 @@ pub(crate) fn falls(targets: Targets) -> (Entry, Entry) {
         Targets::Canvas => (meshes::vs_fall, meshes::fs_fall),
         Targets::Post => (meshes::vs_fall, meshes::fs_fall_post),
         Targets::Temporal => (meshes::vs_fall_temporal, meshes::fs_fall_temporal),
+        Targets::Debug => (meshes::vs_fall, meshes::fs_debug_fall),
     }
 }
 
@@ -265,6 +283,7 @@ pub(crate) fn cover(targets: Targets, lit: bool) -> (Entry, Entry) {
         (Targets::Post, true) => (meshes::vs_cover, meshes::fs_cover_post_lit),
         (Targets::Temporal, false) => (meshes::vs_cover_temporal, meshes::fs_cover_temporal),
         (Targets::Temporal, true) => (meshes::vs_cover_temporal, meshes::fs_cover_temporal_lit),
+        (Targets::Debug, _) => (meshes::vs_cover, meshes::fs_debug_cover),
     }
 }
 

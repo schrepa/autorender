@@ -53,9 +53,11 @@ impl Renderer {
         }
         self.gpu_frame = gpu_mode;
         self.apply_temporal_antialiasing(snapshot.environment.temporal_antialiasing.enabled);
+        let debug = self.shows_debug_view(snapshot);
         // Temporal frames resolve through the screen effects' targets.
         let temporal = display
             && gpu_mode
+            && !debug
             && self.features.temporal.get().is_some()
             && !self.features.post.disabled();
         if !temporal && let Some(pass) = self.features.temporal.get_mut() {
@@ -131,6 +133,7 @@ impl Renderer {
                 gpu_mode,
                 temporal,
                 display,
+                debug,
                 instance_count: self.plan.ordered_instances.len(),
             },
             gpu,
@@ -697,6 +700,11 @@ impl Renderer {
         prelude.sky = self.prepare_sky(snapshot);
         let (environment, probe_list) = self.prepare_environment(snapshot, lighting);
         prelude.environment = environment;
+        // Debug views shade no lights and leave screen effects, transparent
+        // surfaces and decals out; the features keep what they made.
+        if kind.debug {
+            return Features::debug(occlusion, gpu_prepared, shadow_frame, probe_list);
+        }
         let lights = self.prepare_lights(frame, kind, temporal_frame);
         let lit = lights.is_some();
         let PostPrep { post, refraction } = self.prepare_post(snapshot, temporal_frame);
@@ -1296,14 +1304,14 @@ impl Renderer {
 
         // Pipelines of the material variants this frame draws.
         let lit_frame = light_frame.is_some() && self.features.lights.get().is_some();
-        let targets = self.frame_targets(temporal_frame, post_frame);
+        let targets = self.frame_targets(kind, temporal_frame, post_frame);
         let opaque_kind = PassKind::opaque(targets, lit_frame);
         let transparent_kind = PassKind::transparent(lit_frame);
         self.ensure_variants(opaque_kind, transparent_kind);
         // Reflection probes capture once their slots stand
         // still: their pipelines are prepared with the first frame that has
         // probes, not in the middle of play.
-        if gpu_mode && !probe_list.is_empty() {
+        if gpu_mode && !kind.debug && !probe_list.is_empty() {
             self.ensure_probe_pipelines(PassKind::probe(lit_frame));
         }
         // Impostors: this frame's records, group and pipeline.
@@ -1383,21 +1391,6 @@ impl Renderer {
         (virtual_frame, resolving)
     }
 
-    /// Where the frame's main passes draw: the temporal targets of temporal
-    /// frames, the screen effects' targets of frames with
-    /// effects, otherwise the canvas.
-    fn frame_targets(
-        &self,
-        temporal_frame: &Option<TemporalFrame>,
-        post_frame: Option<Effects>,
-    ) -> Targets {
-        match (temporal_frame, post_frame) {
-            (Some(_), Some(_)) if self.features.temporal.get().is_some() => Targets::Temporal,
-            (_, Some(_)) => Targets::Post,
-            (_, None) => Targets::Canvas,
-        }
-    }
-
     /// The frame's shape: which passes its render graph
     /// declares, from what each feature prepared.
     pub(super) fn frame_shape(
@@ -1407,7 +1400,7 @@ impl Renderer {
         (virtual_frame, resolving, scatter, terrain): (bool, bool, bool, bool),
     ) -> FrameShape {
         let post = features.post_frame();
-        let targets = self.frame_targets(&packing.temporal_frame, post);
+        let targets = self.frame_targets(kind, &packing.temporal_frame, post);
         // Occlusion culling draws in two phases: what the
         // last test left visible, then, after the depth pyramid of those
         // depths and the test, what the test newly finds visible.
@@ -1436,7 +1429,7 @@ impl Renderer {
             lights: features.light_frame().is_some(),
             refraction: features.refraction && post.is_some(),
             effects: post.unwrap_or_default(),
-            probes: kind.gpu_mode && !features.probe_list.is_empty(),
+            probes: kind.gpu_mode && !kind.debug && !features.probe_list.is_empty(),
         }
     }
 
@@ -1446,6 +1439,10 @@ impl Renderer {
         &mut self,
         targets: Targets,
     ) -> Option<Ready<CloudFrame>> {
+        // Debug views show what drew each pixel, clouds aside.
+        if targets == Targets::Debug {
+            return None;
+        }
         let target = self.cloud_target(targets);
         let (device, shader) = (&self.device, &self.mesh_shader);
         let (camera, depth) = (&self.camera.layout, &self.depth.view);

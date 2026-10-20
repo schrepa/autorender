@@ -58,6 +58,8 @@ impl Renderer {
             self.virtual_draws.pass.after_submit();
         }
         self.features.after_submit(&state.features.frames);
+        #[cfg(feature = "dev")]
+        self.map_probe();
         self.profiler.submitted();
         frame.present(&self.queue);
         // Native interfaces run finished work's callbacks, read-backs and

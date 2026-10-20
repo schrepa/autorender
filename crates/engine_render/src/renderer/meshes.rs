@@ -22,7 +22,7 @@ use crate::pipelines::vertex_attributes;
 pub(super) struct MeshPipelines {
     pub(super) layouts: [Option<wgpu::PipelineLayout>; 2],
     pub(super) variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
-    sky: [Option<wgpu::RenderPipeline>; 4],
+    sky: [Option<wgpu::RenderPipeline>; 5],
     pub(super) empty_layout: crate::pipelines::GroupLayout,
     pub(super) empty_group: wgpu::BindGroup,
     pub(super) shading: SceneShading,
@@ -42,7 +42,8 @@ impl SkyTargets {
             Self::Frame(Targets::Canvas) => 0,
             Self::Frame(Targets::Post) => 1,
             Self::Frame(Targets::Temporal) => 2,
-            Self::Probe => 3,
+            Self::Frame(Targets::Debug) => 3,
+            Self::Probe => 4,
         }
     }
 }
@@ -202,7 +203,12 @@ impl Renderer {
         let key = (self.structure_key(), opaque, transparent);
         if self.structure_keys.variants != Some(key) {
             let mut missing = Vec::new();
+            // Debug views draw no transparent surfaces.
+            let debug = opaque.targets() == Some(Targets::Debug);
             for batch in &self.plan.batches {
+                if batch.transparent && debug {
+                    continue;
+                }
                 let kind = if batch.transparent {
                     transparent
                 } else {
@@ -487,6 +493,12 @@ fn mesh_pipeline(
         Streams::Extended => 3,
         Streams::Basic => 2,
     };
+    // Debug views read the draw's record.
+    let buffers = if kind.targets() == Some(Targets::Debug) {
+        crate::debug_view::with_record(&layouts[..buffers])
+    } else {
+        layouts[..buffers].to_vec()
+    };
     // Entry points and variant bits name the pipeline in captures.
     let label = format!(
         "engine/mesh {} {} {:#06x}",
@@ -502,7 +514,7 @@ fn mesh_pipeline(
             module: shader,
             vertex_constants: &constants,
             vertex: vertex_entry,
-            buffers: &layouts[..buffers],
+            buffers: &buffers,
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: if fragment.mirrored {

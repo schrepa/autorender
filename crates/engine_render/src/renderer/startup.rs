@@ -253,6 +253,7 @@ impl Renderer {
                 transparency: Eager::new(crate::transparent::Transparency::default()),
                 post: Lazy::default(),
                 temporal: Lazy::default(),
+                debug_view: Lazy::default(),
                 sky: Eager::new(sky),
                 environment: Eager::new(environment),
                 probes: Eager::new(probes),

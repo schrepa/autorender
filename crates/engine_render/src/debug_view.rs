@@ -1,0 +1,419 @@
+//! Debug views (`engine_core::DebugView`): frames whose main passes draw,
+//! with pipelines of their own (`Targets::Debug`, `meshes/debug.wgsl`),
+//! what drew each pixel into the debug targets, which this feature's pass
+//! then shows in the canvas as the view says (`debug_view.wgsl`). A feature
+//! of the renderer (`crate::render_features`) created with the first frame
+//! showing a view; frames without one create and draw nothing of it.
+
+#![expect(
+    clippy::expect_used,
+    reason = "the pass binds the targets its frame made"
+)]
+
+use engine_core::{DebugView, DebugViewMode, RenderSnapshot};
+use wgpu::util::DeviceExt;
+
+use crate::bindings::DEBUG_VIEW;
+use crate::gpu_layouts::constants::{
+    DEBUG_CASTS, DEBUG_KEPT, DEBUG_KIND_CARD, DEBUG_KIND_MESH, DEBUG_KIND_PLACED,
+    DEBUG_KIND_PLACED_CARD, DEBUG_KIND_VIRTUAL, DEBUG_LEVEL_SHIFT, DEBUG_VIEW_CARDS,
+    DEBUG_VIEW_CASTERS, DEBUG_VIEW_KINDS, DEBUG_VIEW_LEVELS, DEBUG_VIEW_OVERDRAW,
+    DEBUG_VIEW_SHADOWS,
+};
+use crate::gpu_layouts::debug_view::DebugViewUniform;
+use crate::render_features::{Encode, FeaturePass, RenderFeature};
+use crate::render_graph::{Access, Clear, FrameShape, Node, Pass, RenderGraph, Resource};
+use crate::shaders::entry::debug_view;
+use crate::targets::{FrameSize, ScreenTarget};
+
+/// What drew each pixel: its draw's record with the sun's lookup, the
+/// object, a detail of it and its normal.
+pub(crate) const IDS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
+/// The fragments that passed the depth test at each pixel, added.
+pub(crate) const COUNT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
+
+/// The debug targets' states in pipeline order: what drew each pixel,
+/// written over; and one more fragment, added.
+pub(crate) fn color_targets() -> Vec<Option<wgpu::ColorTargetState>> {
+    let add = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    };
+    vec![
+        Some(IDS_FORMAT.into()),
+        Some(wgpu::ColorTargetState {
+            format: COUNT_FORMAT,
+            blend: Some(wgpu::BlendState {
+                color: add,
+                alpha: add,
+            }),
+            write_mask: wgpu::ColorWrites::ALL,
+        }),
+    ]
+}
+
+/// The vertex stream slot of the draw's record that meshes, impostors and
+/// virtual geometry read in debug views (`@location(14)` of
+/// `meshes/debug.wgsl`): one element, which every instance repeats.
+pub(crate) const RECORD_SLOT: u32 = 4;
+
+const RECORD_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![14 => Uint32x4];
+
+/// The record stream's layout: no stride, so every vertex and instance
+/// reads the element bound.
+pub(crate) fn record_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: 0,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &RECORD_ATTRIBUTES,
+    }
+}
+
+/// `buffers`, a pipeline's vertex streams, with the record stream at
+/// [`RECORD_SLOT`] for debug views.
+pub(crate) fn with_record<'a>(
+    buffers: &[Option<wgpu::VertexBufferLayout<'a>>],
+) -> Vec<Option<wgpu::VertexBufferLayout<'a>>> {
+    let mut streams = buffers.to_vec();
+    streams.resize(RECORD_SLOT as usize, None);
+    streams.push(Some(record_layout()));
+    streams
+}
+
+/// Binds `record` at [`RECORD_SLOT`] of `pass` in frames showing a debug
+/// view, which hold `records`.
+pub(crate) fn bind_record(
+    pass: &mut wgpu::RenderPass<'_>,
+    records: Option<&DebugViewPass>,
+    record: DrawRecord,
+) {
+    if let Some(records) = records {
+        pass.set_vertex_buffer(RECORD_SLOT, records.record(record));
+    }
+}
+
+/// What a draw reading its record draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DrawKind {
+    Mesh,
+    Placed,
+    Card,
+    PlacedCard,
+    Virtual,
+}
+
+impl DrawKind {
+    const ALL: [Self; 5] = [
+        Self::Mesh,
+        Self::Placed,
+        Self::Card,
+        Self::PlacedCard,
+        Self::Virtual,
+    ];
+
+    /// Its kind in the debug targets.
+    fn kind(self) -> u32 {
+        match self {
+            Self::Mesh => DEBUG_KIND_MESH,
+            Self::Placed => DEBUG_KIND_PLACED,
+            Self::Card => DEBUG_KIND_CARD,
+            Self::PlacedCard => DEBUG_KIND_PLACED_CARD,
+            Self::Virtual => DEBUG_KIND_VIRTUAL,
+        }
+    }
+}
+
+/// Levels of detail a record names: four bits.
+const LEVELS: u32 = 16;
+
+/// A draw's record: what it draws, at which level of detail, whether it
+/// casts sun shadows and, for placed objects, whether the kept map holds
+/// them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DrawRecord {
+    pub kind: DrawKind,
+    pub level: u32,
+    pub casts: bool,
+    pub kept: bool,
+}
+
+impl DrawRecord {
+    /// The record of draws of `kind` at `level`, casting sun shadows where
+    /// `casts`.
+    pub(crate) fn of(kind: DrawKind, level: usize, casts: bool) -> Self {
+        Self {
+            kind,
+            level: level.min(LEVELS as usize - 1) as u32,
+            casts,
+            kept: false,
+        }
+    }
+
+    /// Its place among the records: by kind, level, casting and keeping.
+    fn index(self) -> u64 {
+        let kind = DrawKind::ALL
+            .iter()
+            .position(|kind| *kind == self.kind)
+            .unwrap_or_default() as u64;
+        ((kind * u64::from(LEVELS) + u64::from(self.level.min(LEVELS - 1))) * 2
+            + u64::from(self.casts))
+            * 2
+            + u64::from(self.kept)
+    }
+
+    /// The record's first word in the debug targets.
+    fn word(self) -> u32 {
+        let mut word = self.kind.kind() | (self.level.min(LEVELS - 1) << DEBUG_LEVEL_SHIFT);
+        if self.casts {
+            word |= DEBUG_CASTS;
+        }
+        if self.kept {
+            word |= DEBUG_KEPT;
+        }
+        word
+    }
+}
+
+/// Bytes of a record: four words.
+const RECORD_BYTES: u64 = 16;
+
+/// The view's value in the pass's uniform (`DEBUG_VIEW_*`).
+fn view_value(view: DebugViewMode) -> u32 {
+    match view {
+        DebugViewMode::Off => 0,
+        DebugViewMode::Kinds => DEBUG_VIEW_KINDS,
+        DebugViewMode::Levels => DEBUG_VIEW_LEVELS,
+        DebugViewMode::Cards => DEBUG_VIEW_CARDS,
+        DebugViewMode::Shadows => DEBUG_VIEW_SHADOWS,
+        DebugViewMode::Casters => DEBUG_VIEW_CASTERS,
+        DebugViewMode::Overdraw => DEBUG_VIEW_OVERDRAW,
+    }
+}
+
+/// The debug targets at the frame's size, and the group the pass binds.
+struct Targets {
+    textures: [wgpu::Texture; 2],
+    ids: wgpu::TextureView,
+    count: wgpu::TextureView,
+    group: wgpu::BindGroup,
+}
+
+impl Drop for Targets {
+    fn drop(&mut self) {
+        for texture in &self.textures {
+            texture.destroy();
+        }
+    }
+}
+
+/// The debug views' pass, its targets and the records draws read.
+pub(crate) struct DebugViewPass {
+    layout: crate::pipelines::GroupLayout,
+    pipeline: wgpu::RenderPipeline,
+    uniform: wgpu::Buffer,
+    records: wgpu::Buffer,
+    targets: ScreenTarget<Targets>,
+}
+
+/// A frame showing a debug view.
+pub(crate) struct DebugViewFrame;
+
+impl DebugViewPass {
+    pub(crate) fn new(device: &wgpu::Device, canvas: wgpu::TextureFormat) -> Self {
+        let layout = crate::pipelines::layout(device, &DEBUG_VIEW);
+        let pipeline_layout = crate::pipelines::pipeline_layout(
+            device,
+            &crate::pipeline_layouts::DEBUG_VIEW_PIPELINES,
+            &[&layout],
+        );
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("engine/debug-view.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(crate::gpu_data::DEBUG_VIEW_SHADER.into()),
+        });
+        let pipeline = crate::pipelines::fullscreen(
+            device,
+            &crate::pipelines::Fullscreen {
+                label: "engine/debug-view",
+                layout: &pipeline_layout,
+                module: &module,
+                vertex: debug_view::vs_fullscreen,
+                fragment: debug_view::fs_debug_view,
+                constants: &[],
+                targets: &[Some(canvas.into())],
+                depth: None,
+            },
+        );
+        // Every record, in the order of their indices.
+        let mut words = Vec::new();
+        for kind in DrawKind::ALL {
+            for level in 0..LEVELS {
+                for casts in [false, true] {
+                    for kept in [false, true] {
+                        let record = DrawRecord {
+                            kind,
+                            level,
+                            casts,
+                            kept,
+                        };
+                        words.extend([record.word(), 0, 0, 0]);
+                    }
+                }
+            }
+        }
+        let records = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("engine/debug-view-records"),
+            contents: bytemuck::cast_slice(&words),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        Self {
+            layout,
+            pipeline,
+            uniform: crate::buffers::uniform(
+                device,
+                "engine/debug-view-uniform",
+                size_of::<DebugViewUniform>() as u64,
+            ),
+            records,
+            targets: ScreenTarget::default(),
+        }
+    }
+
+    /// Prepares a frame of `size` showing `settings`' view (the kinds of
+    /// what drew each pixel when it shows none), its colors shaded by the
+    /// sun toward `sun`.
+    pub(crate) fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        size: FrameSize,
+        settings: DebugView,
+        sun: [f32; 3],
+    ) -> Option<DebugViewFrame> {
+        self.begin(device, size);
+        let view = if settings.showing() {
+            settings.view
+        } else {
+            DebugViewMode::Kinds
+        };
+        let uniform = DebugViewUniform {
+            view: [view_value(view), u32::from(settings.shade), 0, 0],
+            sun: [sun[0], sun[1], sun[2], 0.0],
+        };
+        queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
+        Some(DebugViewFrame)
+    }
+
+    /// Sizes the targets to `size`.
+    fn begin(&mut self, device: &wgpu::Device, size: FrameSize) {
+        if !self.targets.resizes(size) {
+            return;
+        }
+        let texture = |label, format| {
+            crate::targets::texture_2d(
+                device,
+                label,
+                size.pixels(),
+                1,
+                1,
+                format,
+                crate::targets::RENDER_TARGET | wgpu::TextureUsages::COPY_SRC,
+            )
+        };
+        let textures = [
+            texture("engine/debug-view-ids", IDS_FORMAT),
+            texture("engine/debug-view-count", COUNT_FORMAT),
+        ];
+        let [ids, count] = textures
+            .each_ref()
+            .map(|texture| texture.create_view(&Default::default()));
+        let group = crate::pipelines::group(
+            device,
+            "engine/debug-view-group",
+            &DEBUG_VIEW,
+            &self.layout,
+            &[
+                (
+                    "debug_view",
+                    wgpu::BindingResource::Buffer(self.uniform.as_entire_buffer_binding()),
+                ),
+                ("debug_ids", crate::pipelines::view(&ids)),
+                ("debug_count", crate::pipelines::view(&count)),
+            ],
+        );
+        self.targets.set(
+            size,
+            Targets {
+                textures,
+                ids,
+                count,
+                group,
+            },
+        );
+    }
+
+    /// The targets: what drew each pixel, and its fragments.
+    #[cfg(feature = "dev")]
+    pub(crate) fn textures(&self) -> [&wgpu::Texture; 2] {
+        let targets = self.targets.get().expect("sized in prepare");
+        [&targets.textures[0], &targets.textures[1]]
+    }
+
+    /// The views of the targets: what drew each pixel, and its fragments.
+    pub(crate) fn views(&self) -> [&wgpu::TextureView; 2] {
+        let targets = self.targets.get().expect("sized in prepare");
+        [&targets.ids, &targets.count]
+    }
+
+    /// The record of draws as `record` says, for [`RECORD_SLOT`].
+    pub(crate) fn record(&self, record: DrawRecord) -> wgpu::BufferSlice<'_> {
+        let offset = record.index() * RECORD_BYTES;
+        self.records.slice(offset..offset + RECORD_BYTES)
+    }
+}
+
+impl RenderFeature for DebugViewPass {
+    type Frame = DebugViewFrame;
+    type Stats = ();
+
+    const LABELS: &'static [&'static str] = &["engine/debug-view"];
+
+    /// The view over the whole canvas, from what the main passes drew; the
+    /// depths stay for the pixel probe.
+    fn declare(_frame: &DebugViewFrame, shape: &FrameShape, graph: &mut RenderGraph) {
+        graph
+            .add(Pass::Feature(FeaturePass::DebugView))
+            .read(Resource::DebugIds)
+            .read(Resource::DebugCount)
+            .read(Resource::Depth)
+            .color(
+                Resource::Canvas,
+                Access::Clear(Clear::Color(shape.canvas_clear)),
+            );
+    }
+
+    fn encode(
+        &self,
+        _frame: &DebugViewFrame,
+        node: &Node,
+        encode: &Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        let targets = self.targets.get().expect("sized in prepare");
+        let mut pass = encode.render_pass(encoder, node, "engine/debug-view", None);
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &targets.group, &[]);
+        pass.draw(0..3, 0..1);
+        0
+    }
+
+    /// The targets: 18 bytes per pixel.
+    fn capacity_bytes(&self) -> u64 {
+        self.targets.size().map_or(0, |size| {
+            u64::from(size.width) * u64::from(size.height) * 18 + self.records.size()
+        })
+    }
+
+    /// Frames report the view's pass among their passes.
+    fn stats(_this: Option<&Self>, _frame: Option<&DebugViewFrame>, _snapshot: &RenderSnapshot) {}
+}

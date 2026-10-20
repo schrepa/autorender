@@ -248,6 +248,50 @@ gpu_consts! {
     /// Words of an entry of the reflection probes' grid lists.
     pub(crate) const PROBE_ENTRY_WORDS: usize = 3 => ["PROBE_ENTRY_WORDS" in SHADER];
 
+    // crate::debug_view
+    /// Views of the debug view's pass (`debug_view.wgsl`), by
+    /// `engine_core::DebugViewMode`.
+    pub(crate) const DEBUG_VIEW_KINDS: u32 = 1 => ["DEBUG_VIEW_KINDS" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_LEVELS: u32 = 2 => ["DEBUG_VIEW_LEVELS" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_CARDS: u32 = 3 => ["DEBUG_VIEW_CARDS" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_SHADOWS: u32 = 4 => ["DEBUG_VIEW_SHADOWS" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_CASTERS: u32 = 5 => ["DEBUG_VIEW_CASTERS" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_OVERDRAW: u32 = 6 => ["DEBUG_VIEW_OVERDRAW" in DEBUG_VIEW_SHADER];
+    /// What drew a pixel of the debug targets (`meshes/debug.wgsl`): its
+    /// kind in the low four bits of its draw's record, its level of detail
+    /// in the four above, then flags; the sun's lookup above
+    /// `DEBUG_SOURCE_SHIFT`.
+    pub(crate) const DEBUG_KIND_MESH: u32 = 1 => ["DEBUG_KIND_MESH"];
+    pub(crate) const DEBUG_KIND_PLACED: u32 = 2 => ["DEBUG_KIND_PLACED"];
+    pub(crate) const DEBUG_KIND_CARD: u32 = 3 => ["DEBUG_KIND_CARD"];
+    pub(crate) const DEBUG_KIND_PLACED_CARD: u32 = 4 => ["DEBUG_KIND_PLACED_CARD"];
+    pub(crate) const DEBUG_KIND_VIRTUAL: u32 = 5 => ["DEBUG_KIND_VIRTUAL"];
+    pub(crate) const DEBUG_KIND_TERRAIN: u32 = 6 => ["DEBUG_KIND_TERRAIN"];
+    pub(crate) const DEBUG_KIND_COVER: u32 = 7 => ["DEBUG_KIND_COVER"];
+    pub(crate) const DEBUG_KIND_WATER: u32 = 8 => ["DEBUG_KIND_WATER"];
+    pub(crate) const DEBUG_KIND_SEA: u32 = 9 => ["DEBUG_KIND_SEA"];
+    pub(crate) const DEBUG_KIND_FALLS: u32 = 10 => ["DEBUG_KIND_FALLS"];
+    pub(crate) const DEBUG_KIND_SKY: u32 = 11 => ["DEBUG_KIND_SKY"];
+    pub(crate) const DEBUG_LEVEL_SHIFT: u32 = 4 => ["DEBUG_LEVEL_SHIFT"];
+    /// A card fading in or out; a draw casting sun shadows; placed objects'
+    /// casters the kept map holds.
+    pub(crate) const DEBUG_FADING: u32 = 0x100 => ["DEBUG_FADING"];
+    pub(crate) const DEBUG_CASTS: u32 = 0x200 => ["DEBUG_CASTS"];
+    pub(crate) const DEBUG_KEPT: u32 = 0x400 => ["DEBUG_KEPT"];
+    /// The sun's lookup at a pixel: none, the near cascades from the first,
+    /// the kept levels from the finest, the kept far map, the moving map, a
+    /// terrain's horizon, past the shadow distance; and the flag of a point
+    /// it leaves in shadow.
+    pub(crate) const DEBUG_SOURCE_SHIFT: u32 = 16 => ["DEBUG_SOURCE_SHIFT"];
+    pub(crate) const DEBUG_SUN_NONE: u32 = 0 => ["DEBUG_SUN_NONE"];
+    pub(crate) const DEBUG_SUN_CASCADE: u32 = 1 => ["DEBUG_SUN_CASCADE"];
+    pub(crate) const DEBUG_SUN_LEVEL: u32 = DEBUG_SUN_CASCADE + MAX_CASCADES as u32 => ["DEBUG_SUN_LEVEL"];
+    pub(crate) const DEBUG_SUN_KEPT: u32 = DEBUG_SUN_LEVEL + MAX_LEVELS as u32 => ["DEBUG_SUN_KEPT"];
+    pub(crate) const DEBUG_SUN_MOVING: u32 = DEBUG_SUN_KEPT + 1 => ["DEBUG_SUN_MOVING"];
+    pub(crate) const DEBUG_SUN_HORIZON: u32 = DEBUG_SUN_MOVING + 1 => ["DEBUG_SUN_HORIZON"];
+    pub(crate) const DEBUG_SUN_BEYOND: u32 = DEBUG_SUN_HORIZON + 1 => ["DEBUG_SUN_BEYOND"];
+    pub(crate) const DEBUG_SHADOWED: u32 = 0x10 => ["DEBUG_SHADOWED"];
+
     // Workgroup sides that dispatches divide by.
     pub(crate) const SCATTER_GROUP: u32 = 64 => ["@snap_scatter" in SCATTER_SNAP_SHADER, "@cull_scatter" in SCATTER_CULL_SHADER];
     pub(crate) const DEFORMATION_GROUP: u32 = 8 => ["@press" in DEFORMATION_SHADER, "@slopes" in DEFORMATION_SHADER, "@scroll" in DEFORMATION_SHADER, "@wipe" in DEFORMATION_SHADER, "@rebase" in DEFORMATION_SHADER];

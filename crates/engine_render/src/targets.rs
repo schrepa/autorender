@@ -4,6 +4,7 @@
 //! frame's size, which screen-sized targets are made at.
 
 use crate::cached::Versioned;
+use crate::debug_view::{COUNT_FORMAT as DEBUG_COUNT_FORMAT, IDS_FORMAT as DEBUG_IDS_FORMAT};
 use crate::post::{GLOW_FORMAT, SCENE_FORMAT, SURFACE_FORMAT};
 pub(crate) use crate::render_graph::Targets;
 use crate::temporal::MOTION_FORMAT;
@@ -11,20 +12,26 @@ use crate::temporal::MOTION_FORMAT;
 impl Targets {
     /// The color target formats in pipeline order: the canvas's `canvas`
     /// format; the screen effects' scene, glow and surface targets;
-    /// temporal frames' motion target after the scene.
+    /// temporal frames' motion target after the scene; the debug views'
+    /// targets.
     pub(crate) fn formats(self, canvas: wgpu::TextureFormat) -> Vec<wgpu::TextureFormat> {
         match self {
             Self::Canvas => vec![canvas],
             Self::Post => vec![SCENE_FORMAT, GLOW_FORMAT, SURFACE_FORMAT],
             Self::Temporal => vec![SCENE_FORMAT, MOTION_FORMAT, GLOW_FORMAT, SURFACE_FORMAT],
+            Self::Debug => vec![DEBUG_IDS_FORMAT, DEBUG_COUNT_FORMAT],
         }
     }
 
-    /// Opaque, unblended color target states of [`Self::formats`].
+    /// Color target states of [`Self::formats`]: opaque and unblended, but
+    /// for the debug views' fragments, which add up.
     pub(crate) fn color_targets(
         self,
         canvas: wgpu::TextureFormat,
     ) -> Vec<Option<wgpu::ColorTargetState>> {
+        if self == Self::Debug {
+            return crate::debug_view::color_targets();
+        }
         self.formats(canvas)
             .into_iter()
             .map(|format| Some(format.into()))

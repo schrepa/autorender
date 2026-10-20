@@ -136,8 +136,7 @@ fn virtual_corner(cluster: u32, vertex: u32) -> VirtualCorner {
 // Where collapsed corners go: one point outside the view.
 const COLLAPSED = vec4<f32>(2.0, 2.0, 0.5, 1.0);
 
-@vertex
-fn vs_virtual(input: VirtualInput) -> VertexOutput {
+fn vertex_virtual(input: VirtualInput) -> VertexOutput {
     let corner = virtual_corner(input.cluster, input.vertex);
     let index = slot_index(input.slot);
     let slot = colors[index];
@@ -147,6 +146,11 @@ fn vs_virtual(input: VirtualInput) -> VertexOutput {
         output.clip_position = COLLAPSED;
     }
     return output;
+}
+
+@vertex
+fn vs_virtual(input: VirtualInput) -> VertexOutput {
+    return vertex_virtual(input);
 }
 
 @vertex

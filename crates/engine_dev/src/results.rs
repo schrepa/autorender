@@ -75,6 +75,7 @@ results! {
     terrain_redo: crate::features::terrain::TerrainEdited,
     frames: crate::results::FramesResult,
     capture: crate::results::CaptureResult,
+    probe: crate::results::ProbeResult,
     game: crate::results::GameResult,
     pause: crate::results::StatusResult,
     resume: crate::results::StatusResult,
@@ -498,6 +499,45 @@ pub struct CaptureResult {
     /// frame instead).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact: Option<KeptArtifact>,
+}
+
+/// What `probe` answers: what drew the pixel and how it looks, with the
+/// entity whose renderer slot drew it, where one did.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct ProbeResult {
+    #[serde(flatten)]
+    pub probe: engine_core::PixelProbe,
+    /// The entity drawn; `None` where no entity's slot drew the pixel.
+    pub entity: Option<AuthoredEntity>,
+}
+
+/// An entity by its authored identity: its ID and scene, and its name,
+/// where it has them.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct AuthoredEntity {
+    /// Its authored ID, where it has one.
+    pub id: Option<String>,
+    /// The scene it was authored in.
+    pub scene: Option<String>,
+    /// Its display name.
+    pub name: Option<String>,
+}
+
+impl AuthoredEntity {
+    /// `entity` of `world` by the identity its scene gave it.
+    pub fn of(
+        world: &engine_core::bevy_ecs::world::World,
+        entity: engine_core::bevy_ecs::entity::Entity,
+    ) -> Self {
+        let metadata = world.get::<engine_scene::SceneEntity>(entity);
+        Self {
+            id: metadata.map(|metadata| metadata.authored_id.clone()),
+            scene: metadata.map(|metadata| metadata.scene_id.clone()),
+            name: metadata.map(|metadata| metadata.name.clone()),
+        }
+    }
 }
 
 /// A file a host kept of a frame: where it is, its type, size and hash, and

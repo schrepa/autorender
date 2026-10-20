@@ -238,7 +238,7 @@ impl TerrainPipelines {
 
     /// Creates the visibility pipeline of patches with `holes` or without
     /// and the resolve into `targets` (`lit` or not) of deferred shading
-    /// unless they exist; canvas targets shade forward.
+    /// unless they exist; canvas and debug targets shade forward.
     fn ensure_deferred(
         &mut self,
         device: &wgpu::Device,
@@ -276,7 +276,7 @@ impl TerrainPipelines {
             (Targets::Post, true) => meshes::fs_terrain_resolve_post_lit,
             (Targets::Temporal, false) => meshes::fs_terrain_resolve_temporal,
             (Targets::Temporal, true) => meshes::fs_terrain_resolve_temporal_lit,
-            (Targets::Canvas, _) => return,
+            (Targets::Canvas | Targets::Debug, _) => return,
         };
         if self.resolves.contains_key(&(targets, lit)) {
             return;

@@ -124,6 +124,20 @@
         "frames"
       ],
       "what": "what terrain times its work by: the host's clock, or frames alone, each a slice of samples_per_frame with none between them"
+    },
+    {
+      "default": "off",
+      "name": "debug-view",
+      "values": [
+        "off",
+        "kinds",
+        "levels",
+        "cards",
+        "shadows",
+        "casters",
+        "overdraw"
+      ],
+      "what": "the debug view frames show in place of the shaded image, over the scene's"
     }
   ]
 }

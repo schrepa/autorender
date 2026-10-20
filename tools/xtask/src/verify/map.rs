@@ -311,6 +311,16 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Smoke("streaming")],
     },
+    // Debug views and the pixel probe.
+    Rule {
+        paths: &[
+            "crates/engine_core/src/**/debug_view*",
+            "crates/engine_render/src/**/debug_view*",
+            "crates/engine_render/src/**/meshes/debug*",
+            "crates/engine_render/src/**/renderer/probe*",
+        ],
+        checks: &[Smoke("debug-view"), Shaders],
+    },
     Rule {
         paths: &[
             "crates/engine_core/src/**/decals*",

@@ -191,6 +191,7 @@ struct Overrides {
     temporal_antialiasing: Option<bool>,
     occlusion_culling: Option<bool>,
     subpixel_culling: Option<bool>,
+    debug_view: Option<engine_core::DebugViewMode>,
 }
 
 /// What a submitted frame shows. Only development controls submit exact
@@ -290,6 +291,7 @@ impl AppHost {
             temporal_antialiasing,
             occlusion_culling,
             subpixel_culling,
+            debug_view,
         } = self.overrides;
         let world = self.engine.app.world_mut();
         if let Some(enabled) = temporal_antialiasing {
@@ -308,6 +310,13 @@ impl AppHost {
         }
         if let Some(enabled) = subpixel_culling {
             world.insert_resource(engine_core::SubpixelCulling { enabled });
+        }
+        if let Some(view) = debug_view {
+            let settings = world
+                .get_resource::<engine_core::DebugView>()
+                .copied()
+                .unwrap_or_default();
+            world.insert_resource(engine_core::DebugView { view, ..settings });
         }
     }
 
@@ -386,6 +395,14 @@ impl AppHost {
             .world()
             .get_resource::<engine_core::OcclusionCulling>()
             .is_some_and(|settings| settings.enabled)
+    }
+
+    /// The debug view frames show, in this and later engines: sets the
+    /// world's [`engine_core::DebugView`] settings' view (a scene
+    /// environment's `debug_view` section). Off by default.
+    pub fn set_debug_view(&mut self, view: engine_core::DebugViewMode) {
+        self.overrides.debug_view = Some(view);
+        self.apply_overrides();
     }
 
     /// Sub-pixel culling of GPU-presented frames, in this and later engines:

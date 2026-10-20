@@ -65,7 +65,7 @@ impl BrowserControl {
                     "$.interval_ms",
                 )?;
             }
-            Self::Capture { alpha, gpu, .. } => match alpha {
+            Self::Capture { alpha, gpu, .. } | Self::Probe { alpha, gpu, .. } => match alpha {
                 Some(alpha) => {
                     validated_presentation_alpha(*alpha)?;
                 }
@@ -73,7 +73,7 @@ impl BrowserControl {
                     return Err(DevError::new(
                         ErrorCode::InvalidRequest,
                         "$.gpu",
-                        "a GPU-presented capture needs an alpha",
+                        "GPU-presented frames need an alpha",
                     ));
                 }
                 None => {}

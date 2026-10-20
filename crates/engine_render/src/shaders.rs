@@ -44,6 +44,7 @@ shaders! {
         "meshes/water.wgsl",
         "meshes/water_falls.wgsl",
         "meshes/ocean.wgsl",
+        "meshes/debug.wgsl",
     ];
     /// Terrain normal maps.
     TERRAIN_NORMALS_SHADER = [
@@ -176,6 +177,11 @@ shaders! {
         "effects.wgsl",
         "post.wgsl",
     ];
+    /// The debug views' pass, showing the debug targets.
+    DEBUG_VIEW_SHADER = [
+        "fullscreen.wgsl",
+        "debug_view.wgsl",
+    ];
     /// Environment maps after the scene declarations.
     ENVIRONMENT_SHADER = [
         "scene.wgsl",
@@ -259,7 +265,9 @@ entry_points! {
             vs_impostor_bake_extended, vs_impostor, vs_impostor_temporal, vs_terrain,
             vs_terrain_temporal, vs_terrain_vt_bake, vs_fullscreen, vs_cover,
             vs_cover_temporal, vs_water, vs_water_temporal, vs_ocean,
-            vs_ocean_temporal, vs_fall, vs_fall_temporal, vs_sim_water, vs_sim_water_temporal
+            vs_ocean_temporal, vs_fall, vs_fall_temporal, vs_sim_water, vs_sim_water_temporal,
+            vs_debug_affine, vs_debug_affine_extended, vs_debug_affine_skinned, vs_debug_virtual,
+            vs_debug_impostor
         ],
         fragment: [
             fs_visibility, fs_main, fs_main_lit, fs_post, fs_post_lit, fs_temporal, fs_temporal_lit,
@@ -279,7 +287,9 @@ entry_points! {
             fs_terrain_probe_lit, fs_cover, fs_cover_lit, fs_cover_post, fs_cover_post_lit,
             fs_cover_temporal, fs_cover_temporal_lit, fs_water, fs_water_post, fs_water_temporal,
             fs_ocean, fs_ocean_post, fs_ocean_temporal, fs_fall, fs_fall_post, fs_fall_temporal,
-            fs_sim_water, fs_sim_water_post, fs_sim_water_temporal
+            fs_sim_water, fs_sim_water_post, fs_sim_water_temporal, fs_debug_mesh, fs_debug_impostor,
+            fs_debug_terrain, fs_debug_cover, fs_debug_water, fs_debug_ocean, fs_debug_fall,
+            fs_debug_sky
         ],
         compute: [cs_terrain_vt_feedback],
     }
@@ -385,6 +395,10 @@ entry_points! {
             fs_occlusion, fs_effects_filter, fs_reflections, fs_reflections_filter, fs_bloom_first,
             fs_bloom_down, fs_levels_first, fs_levels_down, fs_bloom_up, fs_composite
         ],
+    }
+    debug_view = DEBUG_VIEW_SHADER {
+        vertex: [vs_fullscreen],
+        fragment: [fs_debug_view],
     }
     environment = ENVIRONMENT_SHADER {
         vertex: [vs_environment],

@@ -366,6 +366,15 @@ impl Renderer {
             constants,
         } = self.virtual_stages(kind, variant, false);
         let targets = &targets[..];
+        let mut buffers = vec![Some(wgpu::VertexBufferLayout {
+            array_stride: crate::virtual_geometry::VISIBLE_BYTES,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &VIRTUAL_ATTRIBUTES,
+        })];
+        // Debug views read the draw's record.
+        if kind.targets() == Some(Targets::Debug) {
+            buffers = crate::debug_view::with_record(&buffers);
+        }
         crate::pipelines::geometry(
             &self.device,
             &crate::pipelines::Geometry {
@@ -374,11 +383,7 @@ impl Renderer {
                 module: &self.mesh_shader,
                 vertex_constants: &[],
                 vertex,
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: crate::virtual_geometry::VISIBLE_BYTES,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &VIRTUAL_ATTRIBUTES,
-                })],
+                buffers: &buffers,
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),

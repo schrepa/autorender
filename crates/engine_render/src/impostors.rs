@@ -885,6 +885,10 @@ mod gpu {
         )
     }
 
+    /// A card's visible slot and draw group, per instance.
+    const CARD_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+        wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32];
+
     /// An impostor draw pipeline: `layout` binds the camera, the impostors'
     /// group, the poses (with previous poses on temporal frames) and, when
     /// `lit`, the local lights; it shades a scene of `shading`'s features.
@@ -902,6 +906,15 @@ mod gpu {
         let fragment = crate::entries::impostor_fragment(targets, lit);
         let color_targets = targets.color_targets(canvas);
         let constants = shading.constants();
+        let mut buffers = vec![Some(wgpu::VertexBufferLayout {
+            array_stride: 8,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &CARD_ATTRIBUTES,
+        })];
+        // Debug views read the draw's record.
+        if targets == Targets::Debug {
+            buffers = crate::debug_view::with_record(&buffers);
+        }
         crate::pipelines::geometry(
             device,
             &crate::pipelines::Geometry {
@@ -910,11 +923,7 @@ mod gpu {
                 module: shader,
                 vertex_constants: &[],
                 vertex,
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: 8,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32],
-                })],
+                buffers: &buffers,
                 // Mirrored poses turn cards around.
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,

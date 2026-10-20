@@ -299,7 +299,7 @@ impl Renderer {
                     cull,
                     view,
                     &self.depth.texture,
-                    targets != crate::render_graph::Targets::Canvas,
+                    matches!(targets, Targets::Post | Targets::Temporal),
                 ),
             )?;
             water.ensure_pipeline(device, shader, camera, (targets, false), formats);

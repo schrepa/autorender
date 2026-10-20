@@ -10,6 +10,7 @@ use crate::ground_cover::CoverFrame;
 use crate::render_graph::{self, Effects, FeaturePass, FrameShape, Node, Pass, Phase, Resource};
 use crate::shadows::{MapSources, ShadowFrame, ShadowInputs};
 
+mod debug;
 mod encode;
 mod opaque;
 mod prepare;
@@ -55,6 +56,9 @@ pub(super) struct FrameKind {
     pub(super) temporal: bool,
     /// Shown as the page's next frame, not a preview or capture.
     pub(super) display: bool,
+    /// Showing a debug view: drawn into the debug targets, without screen
+    /// effects, decals, transparent surfaces or temporal antialiasing.
+    pub(super) debug: bool,
     pub(super) instance_count: usize,
 }
 
@@ -215,6 +219,23 @@ impl Renderer {
         self.render_inner(frame, false)
     }
 
+    /// Where the frame's main passes draw: the debug targets of frames
+    /// showing a debug view, the temporal targets of temporal frames, the
+    /// screen effects' targets of frames with effects, otherwise the canvas.
+    fn frame_targets(
+        &self,
+        kind: FrameKind,
+        temporal_frame: &Option<TemporalFrame>,
+        post_frame: Option<Effects>,
+    ) -> Targets {
+        match (temporal_frame, post_frame) {
+            _ if kind.debug => Targets::Debug,
+            (Some(_), Some(_)) if self.features.temporal.get().is_some() => Targets::Temporal,
+            (_, Some(_)) => Targets::Post,
+            (_, None) => Targets::Canvas,
+        }
+    }
+
     /// [`Self::render_frame`] for ordinary display frames. With temporal
     /// antialiasing enabled, GPU-presented frames rasterize with a sub-pixel
     /// jitter and blend with the reprojected output of the previous display
@@ -341,6 +362,7 @@ impl Renderer {
             (virtual_frame, resolving, scatter, terrain),
         );
         features.frames.clouds = self.prepare_cloud_composite(shape.targets);
+        features.frames.debug_view = self.prepare_debug_view(snapshot, kind);
         let mut state = FrameState {
             snapshot,
             frame,
@@ -390,6 +412,8 @@ impl Renderer {
             }
         }
         self.graph = graph;
+        #[cfg(feature = "dev")]
+        self.encode_probe(&state, &mut encoder, surface.texture());
         // ...and the prelude's command buffers, whose spans must exist before
         // the frame resolves its queries.
         for (span, held) in Prelude::SPANS.into_iter().zip(state.prelude.held()) {
