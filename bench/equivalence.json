@@ -280,11 +280,11 @@
       "captures": ["exact", "gpu:0.5"]
     },
     {
-      "name": "metro-highlights",
+      "name": "metro-highlights-uncapped",
       "tier": "full",
-      "note": "Metro with highlights sized by their lights (the sun's disk, lamps' spheres and neon tubes), on by default, and capped, its environment section switched by the environment control.",
+      "note": "Metro with highlights sized by their lights (the sun's disk, lamps' spheres and neon tubes) but uncapped, both on by default, its environment section switched by the environment control.",
       "scene": "metro",
-      "environment": { "highlights": { "enabled": true, "capped": true } },
+      "environment": { "highlights": { "capped": false } },
       "ticks": 30,
       "views": ["overview", "close"],
       "captures": ["exact", "gpu:0.5"]

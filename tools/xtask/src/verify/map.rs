@@ -367,7 +367,7 @@ pub(crate) const MAP: &[Rule] = &[
     },
     Rule {
         paths: &["crates/engine_core/src/**/highlights*"],
-        checks: &[Cells(&["metro-highlights"])],
+        checks: &[Cells(&["metro-highlights-uncapped"])],
     },
     Rule {
         paths: &["crates/engine_core/src/**/windows*"],

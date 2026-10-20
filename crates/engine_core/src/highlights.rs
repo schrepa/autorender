@@ -30,7 +30,7 @@ settings! {
         pub enabled: bool = true => any,
         /// Whether local lights' highlights ease toward `cap`, sized or
         /// not; the sun's stay as they are.
-        pub capped: bool = false => any,
+        pub capped: bool = true => any,
         /// The sun's angular radius, degrees, while the physically based sky
         /// is off; with it on, the sky's own `sun_size`.
         pub sun_size: f32 = 0.27 => range(0.0, 10.0),
@@ -51,6 +51,7 @@ impl Highlights {
     pub fn off() -> Self {
         Self {
             enabled: false,
+            capped: false,
             ..Self::default()
         }
     }

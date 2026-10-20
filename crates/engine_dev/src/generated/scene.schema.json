@@ -3254,7 +3254,7 @@
         "capped": {
           "description": "Whether local lights' highlights ease toward `cap`, sized or\nnot; the sun's stay as they are.",
           "type": "boolean",
-          "default": false
+          "default": true
         },
         "enabled": {
           "description": "Whether highlights take their lights' sizes: the sun's disk and\nlocal lights' spheres and tubes.",
