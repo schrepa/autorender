@@ -176,13 +176,16 @@ fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     }
     let p = center.xyz;
     // The normal from the nearer neighbor on each axis keeps silhouettes
-    // from bending it.
+    // from bending it. On the screen's edges the neighbor past the edge is
+    // the pixel itself, which gives no direction: the one inside stands in.
     let right = world_at(min(pixel + vec2<i32>(1, 0), last)).xyz - p;
     let left = p - world_at(max(pixel - vec2<i32>(1, 0), vec2<i32>(0))).xyz;
     let down = world_at(min(pixel + vec2<i32>(0, 1), last)).xyz - p;
     let up = p - world_at(max(pixel - vec2<i32>(0, 1), vec2<i32>(0))).xyz;
-    let across = select(right, left, dot(left, left) < dot(right, right));
-    let along = select(down, up, dot(up, up) < dot(down, down));
+    let across = select(right, left,
+        pixel.x == last.x || (pixel.x > 0 && dot(left, left) < dot(right, right)));
+    let along = select(down, up,
+        pixel.y == last.y || (pixel.y > 0 && dot(up, up) < dot(down, down)));
     let to_eye = post.eye.xyz - p;
     let distance = length(to_eye);
     var normal = cross(along, across);
