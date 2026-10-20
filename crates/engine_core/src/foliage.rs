@@ -33,10 +33,12 @@ settings! {
         /// Meters up from the ground over which plants' color and light
         /// blend into the ground's at their base; 0 turns it off.
         pub ground_blend: f32 = 0.4 => range(0.0, 4.0),
-        /// Meters into a crown the sun's light reaches: masked leaves and
-        /// needles, and the cards baked from them, fade into the sun's
-        /// shadow over this depth behind the first caster toward the sun
-        /// instead of all at once; 0 turns it off.
+        /// Meters into a crown over which the sun's light halves: masked
+        /// leaves and needles, and the cards baked from them, take the sun
+        /// through their crown from its sun-facing side, down along the
+        /// sun and across from where the crown meets sunlit air, instead
+        /// of the first caster toward the sun shadowing them whole; 0
+        /// turns it off.
         pub crown_depth: f32 = 0.0 => range(0.0, 8.0),
     }
 }

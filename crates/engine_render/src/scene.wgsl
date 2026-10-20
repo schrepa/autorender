@@ -578,8 +578,9 @@ fn far_visibility(world: vec3<f32>) -> f32 {
 const RECEIVER_MARGIN: f32 = 2.0 / 65535.0;
 
 // A receiver in a shadow map: its position in texels, its depth, how its
-// depth changes per texel along the map's axes, and the depth past the
-// first caster over which it fades into shadow (0: at once).
+// depth changes per texel along the map's axes, and, inside a crown, the
+// depth past the first caster over which its light halves (0: shadowed
+// whole at once).
 struct MapPoint {
     texel: vec2<f32>,
     depth: f32,
@@ -591,9 +592,9 @@ struct MapPoint {
 // `crown`), set around its sun lookup; 0 elsewhere.
 var<private> crown_light: f32;
 
-// The depth over which a receiver inside a crown fades into shadow in a map
-// whose depth changes by `per_meter` per meter along the sun: the crown
-// depth's worth, as light reaches past a crown's first leaves.
+// The depth over which light halves inside a crown in a map whose depth
+// changes by `per_meter` per meter along the sun: the crown depth's worth,
+// as light reaches past a crown's first leaves.
 fn crown_softness(per_meter: f32) -> f32 {
     return crown_light * shadow.offsets.w * abs(per_meter);
 }
@@ -640,8 +641,8 @@ fn gather_uv(point: MapPoint, size: f32) -> vec2<f32> {
 // Visibility of `point` from the four texel depths around it, gathered at
 // `gather_uv`, in gather order (least u and greatest v, both greatest,
 // greatest u and least v, both least), each compared with the receiver's
-// plane at the texel's center and weighted bilinearly. A soft point fades
-// into shadow over its softness behind a texel's caster.
+// plane at the texel's center and weighted bilinearly. A soft point's
+// light halves every softness behind a texel's caster.
 fn plane_visibility(depths: vec4<f32>, point: MapPoint) -> f32 {
     let corner = point.texel - vec2<f32>(0.5);
     let f = corner - floor(corner);
@@ -650,7 +651,7 @@ fn plane_visibility(depths: vec4<f32>, point: MapPoint) -> f32 {
     let plane = point.depth + point.slope.x * du + point.slope.y * dv - RECEIVER_MARGIN;
     var lit = select(vec4<f32>(0.0), vec4<f32>(1.0), plane <= depths);
     if point.soft > 0.0 {
-        lit = saturate(vec4<f32>(1.0) + (depths - plane) / point.soft);
+        lit = exp2(-max(plane - depths, vec4<f32>(0.0)) / point.soft);
     }
     return mix(mix(lit.w, lit.z, f.x), mix(lit.x, lit.y, f.x), f.y);
 }
@@ -668,7 +669,51 @@ fn cascade_visibility(cascade: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec
         return -1.0;
     }
     let corner = gather_uv(point, size);
-    return plane_visibility(textureGather(near_shadows, shadow_texels, corner, cascade), point);
+    let visible = plane_visibility(textureGather(near_shadows, shadow_texels, corner, cascade),
+        point);
+    if point.soft > 0.0 && visible < 1.0 {
+        return crown_spread(cascade, point, size, visible);
+    }
+    return visible;
+}
+
+// Taps across a near cascade around a receiver inside a crown: as many, on a
+// spiral out to CROWN_REACH crown depths, each a golden angle round from
+// the last.
+const CROWN_TAPS: u32 = 8u;
+const CROWN_REACH: f32 = 2.0;
+const CROWN_SPIRAL_TURN: f32 = 2.39996323;
+
+// The sun a receiver inside a crown takes in near cascade `cascade`, of
+// which `visible` reaches it along the sun: also what comes from the
+// crown's sun-facing silhouette across the map, halving every crown depth
+// of the way across to a tap and down past the caster there, the most any
+// tap finds; so leaves under a crown's outer tiers on its sun-facing side
+// light as its top does, and its far side and middle stay dim.
+fn crown_spread(cascade: u32, point: MapPoint, size: f32, visible: f32) -> f32 {
+    let clip_from_world = shadow.near[cascade];
+    let depth_per_meter = max(abs((clip_from_world * vec4<f32>(shadow.light[2].xyz, 0.0)).z),
+        1.0e-12);
+    let crown = point.soft / depth_per_meter;
+    let texels = length(vec3<f32>(clip_from_world[0].x, clip_from_world[1].x,
+        clip_from_world[2].x)) * 0.5 * size;
+    // The spiral turns with the receiver's texel, and across temporally
+    // antialiased frames.
+    let turn = fade_noise(floor(point.texel) + vec2<f32>(0.5)) * 2.0 * PI;
+    var lit = visible;
+    for (var tap = 0u; tap < CROWN_TAPS; tap++) {
+        let across = CROWN_REACH * crown * sqrt((f32(tap) + 0.5) / f32(CROWN_TAPS));
+        let angle = turn + f32(tap) * CROWN_SPIRAL_TURN;
+        let texel = vec2<i32>(floor(point.texel
+            + vec2<f32>(cos(angle), sin(angle)) * across * texels));
+        if any(texel < vec2<i32>(0)) || any(texel >= vec2<i32>(i32(size))) {
+            continue;
+        }
+        let caster = textureLoad(near_shadows, texel, cascade, 0);
+        let down = max(point.depth - caster, 0.0) / depth_per_meter;
+        lit = max(lit, exp2(-(across + down) / crown));
+    }
+    return lit;
 }
 
 // Kept levels hand over to the next coarser map across this
