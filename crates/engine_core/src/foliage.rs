@@ -1,7 +1,7 @@
 //! How foliage looks: the leaves and needles of masked materials (and
 //! the impostor cards baked from them) and ground cover's blades.
-//! Transmission, variation and the ground blend start on; hashed cutoffs
-//! and crown depth start off.
+//! Transmission, variation, the ground blend and crown depth start on;
+//! hashed cutoffs start off.
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ settings! {
         /// sun and across from where the crown meets sunlit air, instead
         /// of the first caster toward the sun shadowing them whole; 0
         /// turns it off.
-        pub crown_depth: f32 = 0.0 => range(0.0, 8.0),
+        pub crown_depth: f32 = 2.0 => range(0.0, 8.0),
     }
 }
 

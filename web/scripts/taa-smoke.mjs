@@ -231,21 +231,21 @@ try {
   await command("environment", { temporal_antialiasing: { enabled: true } });
   assert.deepEqual(await inspect(), { enabled: true, ...defaults });
 
-  // Foliage's looks at their defaults (transmission, variation and the
-  // ground blend on), and those off by default turned on by the paused
-  // environment control: masked leaves' hashed cutoffs, which only
-  // temporally antialiased frames take, and crown depth; how much they
-  // change converged frames, measured.
+  // Foliage's looks at their defaults (transmission, variation, the ground
+  // blend and crown depth on), and masked leaves' hashed cutoffs, off by
+  // default and turned on by the paused environment control, which only
+  // temporally antialiased frames take; how much they change converged
+  // frames, measured.
   const inspectFoliage = async () => (await command("inspect", { component: "Foliage" })).result.value;
-  assert.deepEqual(await inspectFoliage(), { transmission: 1, variation: 1, hashed_cutoff: false, ground_blend: Math.fround(0.4), crown_depth: 0 }, "foliage's defaults");
-  const leaves = await command("environment", { foliage: { transmission: 1, hashed_cutoff: true, crown_depth: 2 } });
+  assert.deepEqual(await inspectFoliage(), { transmission: 1, variation: 1, hashed_cutoff: false, ground_blend: Math.fround(0.4), crown_depth: 2 }, "foliage's defaults");
+  const leaves = await command("environment", { foliage: { hashed_cutoff: true } });
   assert.deepEqual(leaves.result.environment_changed, ["foliage"]);
   assert.equal((await inspectFoliage()).hashed_cutoff, true);
   const [leavesFirst] = await run("taa-foliage", 60);
   results.foliage = await compare([again, leavesFirst]);
   measurements.push({
     name: "foliage difference", value: results.foliage.mean_difference, unit: "levels",
-    note: "mean channel difference between converged still frames at foliage's defaults and with hashed cutoffs and crown depth added",
+    note: "mean channel difference between converged still frames at foliage's defaults and with hashed cutoffs added",
   });
   await command("environment", { foliage: {} });
 

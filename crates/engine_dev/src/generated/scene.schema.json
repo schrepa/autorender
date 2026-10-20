@@ -3022,7 +3022,7 @@
           "description": "Meters into a crown over which the sun's light halves: masked\nleaves and needles, and the cards baked from them, take the sun\nthrough their crown from its sun-facing side, down along the\nsun and across from where the crown meets sunlit air, instead\nof the first caster toward the sun shadowing them whole; 0\nturns it off.",
           "type": "number",
           "format": "float",
-          "default": 0.0,
+          "default": 2.0,
           "maximum": 8.0,
           "minimum": 0.0
         },
