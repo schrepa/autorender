@@ -69,7 +69,7 @@ pub use placement::{
     Placing, merge_placed,
 };
 pub use pyramid::{Pyramid, PyramidError, TileKey};
-pub use rivers::{BANK_OFFSET, RIVER_STEP, Rivers};
+pub use rivers::{BANK_OFFSET, NAPPE_FACE, RIVER_STEP, Rivers};
 pub use select::{
     LodRanges, Patch, Selection, WantedTile, WantedView, select_patches, wanted_tiles,
 };

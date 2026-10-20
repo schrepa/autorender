@@ -42,6 +42,7 @@ shaders! {
         "fullscreen.wgsl",
         "meshes/cover.wgsl",
         "meshes/water.wgsl",
+        "meshes/water_falls.wgsl",
         "meshes/ocean.wgsl",
     ];
     /// Terrain normal maps.

@@ -745,7 +745,7 @@ impl RiverFlow {
                         / (2.0 * max(half[point], 0.1) * depth[point])
                 })
                 .collect();
-            let mut foam = foam_along(&depth, &speed, &self.along[river], &line.falls);
+            let mut foam = foam_along(&depth, &speed, (&self.along[river], &line.cut), &line.falls);
             self.whiten_spills(river, &mut foam);
             out[river] = Some(River {
                 points: line.points.clone(),
@@ -761,6 +761,8 @@ impl RiverFlow {
                     .unwrap_or_else(|| line.discharge.clone()),
                 foam,
                 falls: line.falls.clone(),
+                sheeted: line.sheeted.clone(),
+                nappes: line.nappes.clone(),
                 head: line.head,
             });
         }

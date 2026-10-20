@@ -1024,6 +1024,7 @@ tables! {
             uniform_of(52, "water", size_of::<water::WaterUniform>(), VF),
             texture(53, "water_waves", Float, D2Array, F),
             sampler(54, "water_wave_sampler", Filtering, F),
+            texture(55, "water_fall_map", Float, D2, F),
         ],
     };
 
@@ -1402,7 +1403,9 @@ shared_groups! {
             sky_table_sampler, sky_clouds_old, sky_domes
         ],
         view_clouds: 46..50 [view_clouds, view_cloud_front, view_cloud_depth, view_cloud_sampler],
-        water: 50..55 [water_surface, water_info, water, water_waves, water_wave_sampler],
+        water: 50..56 [
+            water_surface, water_info, water, water_waves, water_wave_sampler, water_fall_map
+        ],
     }
     SHADER @ 2 {
         poses: 0..6 [poses, colors, previous_poses, palette, previous_palette, grounds],

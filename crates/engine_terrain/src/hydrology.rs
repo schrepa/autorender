@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::layers::HeightImage;
-use crate::rivers::{Channels, MIN_DEPTH, RiverLine, Rivers, trace};
+use crate::rivers::{Channels, MIN_DEPTH, RiverLine, Rivers, trace, wander};
 
 settings! {
     /// A layer that bakes where water runs over the layers below it and cuts
@@ -113,9 +113,12 @@ pub struct HydrologyStats {
 /// and where it lands at last (terrain-local meters), its water's path from
 /// one to the other: through the air on each jet and down the chutes
 /// between where one jet lands in the chute the next leaves (a cascade),
-/// the seconds after leaving the lip its water passes each point of it, and
-/// whether it flies through the air from each point to the next; the
-/// meters across the river at its lip, the area draining over it (square
+/// the seconds after leaving the lip its water passes each point of it,
+/// whether it flies through the air from each point to the next, whether it
+/// leaps clear of a step's face there as a nappe, the meters across its
+/// water there and how much of the sky it sees there (0 to 1, the ground
+/// around hiding the rest); the meters across the river at its lip,
+/// the area draining over it (square
 /// meters), the water's speed as it lands at last (meters a second) and the
 /// discharge it carries (cubic meters a second).
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -125,13 +128,17 @@ pub struct Fall {
     pub path: Vec<[f32; 3]>,
     pub times: Vec<f32>,
     pub aloft: Vec<bool>,
+    pub nappes: Vec<bool>,
+    pub widths: Vec<f32>,
+    pub sky: Vec<f32>,
     pub width: f32,
     pub area: f32,
     pub speed: f32,
     pub discharge: f32,
 }
 
-/// The meters a river must fall from a lip to leave its bed.
+/// The meters a steep stretch of river must fall to fall as a cascade
+/// ([`Fall`]); stretches leaping off a ledge fall as one however low.
 pub const FALL_HEIGHT: f32 = 6.0;
 
 /// The ranges the baked images encode, from 0 to 65535: base-10 logarithms
@@ -474,7 +481,7 @@ pub(crate) fn bake(
     for (position, &sample) in order.iter().enumerate() {
         rank[sample as usize] = position as u32;
     }
-    let lines = trace(
+    let mut lines = trace(
         &Channels {
             area: &area,
             receivers: &receivers,
@@ -500,6 +507,8 @@ pub(crate) fn bake(
             (half, max(depth, MIN_DEPTH))
         },
     );
+    // Steep stretches wander from side to side, widening and narrowing.
+    wander(&mut lines, heights, (width, spacing));
     let mut lake_samples = 0;
     let mut max_area = 0.0_f32;
     let mut flow = Vec::with_capacity(count);
@@ -891,6 +900,9 @@ crate::codec::record!(Fall {
     path,
     times,
     aloft,
+    nappes,
+    widths,
+    sky,
     width,
     area,
     speed,

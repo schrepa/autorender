@@ -186,6 +186,7 @@ fn skirt(surface: &mut [f32], info: &mut [u32], heights: &[f32]) {
                 pack(
                     flow * share,
                     white * share,
+                    false,
                     lakes * 2 > count,
                     width * share,
                 ),
@@ -199,14 +200,20 @@ fn skirt(surface: &mut [f32], info: &mut [u32], heights: &[f32]) {
 }
 
 /// One sample's flow (meters a second along x and z), whitewater (0 to 1),
-/// kind and the half width of a river's water there (meters) packed as the
-/// four signed bytes of an RGBA8 snorm texel, low first: the flow as a
-/// share of [`WATER_FLOW_RANGE`] either way, the whitewater, and 127 where a
-/// lake holds the water, else the width as 126ths of [`WATER_WIDTH_RANGE`].
-/// Still water packs to zero.
-pub fn pack(flow: Vec2, white: f32, lake: bool, width: f32) -> u32 {
+/// whether a fall's sheet runs over it, kind and the half width of a
+/// river's water there (meters) packed as the four signed bytes of an RGBA8
+/// snorm texel, low first: the flow as a share of [`WATER_FLOW_RANGE`]
+/// either way, the whitewater (negative, a step from zero at least, where a
+/// sheet runs over it), and 127 where a lake holds the water, else the
+/// width as 126ths of [`WATER_WIDTH_RANGE`]. Still water packs to zero.
+pub fn pack(flow: Vec2, white: f32, sheeted: bool, lake: bool, width: f32) -> u32 {
     let byte =
         |value: f32| u32::from((engine_math::clamp(value, -1.0, 1.0) * 127.0).round() as i8 as u8);
+    let white = if sheeted {
+        -engine_math::max(white, 1.0 / 127.0)
+    } else {
+        white
+    };
     let kind = if lake {
         127
     } else {
@@ -226,7 +233,7 @@ pub fn unpack(info: u32) -> (Vec2, f32, bool, f32) {
     let lake = kind > 126.5;
     (
         Vec2::new(share(0), share(8)) * WATER_FLOW_RANGE,
-        share(16),
+        share(16).abs(),
         lake,
         if lake {
             WATER_WIDTH_RANGE
@@ -287,7 +294,7 @@ pub(crate) fn water_rows(
                 // above the lake beside it.
                 Some(level) if !(flowing && river.inside < 0.0 && river.surface > level) => {
                     surface[at] = level;
-                    info[at] = pack(Vec2::ZERO, 0.0, true, 0.0);
+                    info[at] = pack(Vec2::ZERO, 0.0, false, true, 0.0);
                 }
                 _ if flowing => {
                     let ground = heights[row * stride + column];
@@ -297,7 +304,7 @@ pub(crate) fn water_rows(
                         continue;
                     }
                     surface[at] = river.surface;
-                    info[at] = pack(river.flow, river.white, false, river.width);
+                    info[at] = pack(river.flow, river.white, river.sheeted, false, river.width);
                 }
                 _ => {}
             }

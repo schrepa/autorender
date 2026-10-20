@@ -217,7 +217,7 @@
         },
         "Terrain": {
           "count": 1,
-          "hash": "6d12d3e63c79bc45"
+          "hash": "c4b581c621a098b9"
         },
         "Transform": {
           "count": 10314,
@@ -225,7 +225,7 @@
         }
       },
       "entities": 10382,
-      "hash": "23bbc47ad82d1f10"
+      "hash": "323c1baf0c051ec1"
     },
     "content metro": {
       "assets": {
@@ -304,8 +304,8 @@
       "hash": "bd6d3fcb1a3679fc"
     },
     "terrain frames": 400,
-    "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, shaped_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141312, restored_tiles: 12, idle_tiles: 0, banded_tiles: 0, unplaced_tiles: 0, rewatered_tiles: 0, stale_water_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, failed_reads: 0, loading: false } | terrain tiles 854854a0fbb2ae0d patches f92aaf1ed8717440 | surroundings tiles a2eadb7ccd455bc5 patches 8317cdfc9f70e8eb",
-    "terrain trace": "6b198568a545e190"
+    "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, shaped_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141416, restored_tiles: 12, idle_tiles: 0, banded_tiles: 0, unplaced_tiles: 0, rewatered_tiles: 0, stale_water_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, failed_reads: 0, loading: false } | terrain tiles 854854a0fbb2ae0d patches a3ccf2220c09bee5 | surroundings tiles a2eadb7ccd455bc5 patches 8317cdfc9f70e8eb",
+    "terrain trace": "4cc2e40bbb205354"
   },
   "gltf": {
     "gltf prefab": {
@@ -902,48 +902,48 @@
     },
     "bake 6": {
       "bridges": 2,
-      "deepest cut": 2.4002151489257812,
+      "deepest cut": 2.4009933471679688,
       "highest fill": 0.0,
       "length": 300.0,
       "samples": 76,
-      "steepest": 0.016534805297851562,
+      "steepest": 0.016530990600585938,
       "tunnels": 1
     },
-    "bakes": "96fb9a165543f8f6",
-    "etr1": "ef8ef0c195e72e88",
-    "far 2/0/0": "3d0b75e603cf71da",
+    "bakes": "8a4cfefdfed5ef88",
+    "etr1": "7eeef521b6e1d4ae",
+    "far 2/0/0": "9274f6d3fa07ac49",
     "far objects 2/0/0": 2565,
-    "surroundings 2/0/0": "2a75944cd21cb756",
+    "surroundings 2/0/0": "81ed4ae410573d2a",
     "surroundings 2/0/1": "a7d37523f501270c",
-    "surroundings 2/1/0": "bd065b4e16070d51",
-    "surroundings 2/1/1": "0d068079afb9d862",
-    "surroundings 3/0/0": "8606428fe9f3e0b3",
+    "surroundings 2/1/0": "cb87c345dcb6178e",
+    "surroundings 2/1/1": "a7d09fe63322fe28",
+    "surroundings 3/0/0": "91d3034e074aa946",
     "surroundings tiles": 8,
-    "tile 0/0/0": "da4589a4fafc0936",
-    "tile 0/0/1": "723b88d05519dfd0",
-    "tile 0/0/2": "d237987dcca583ba",
-    "tile 0/0/3": "bb1e6846baf4229e",
-    "tile 0/1/0": "38414f5f0fd16a82",
-    "tile 0/1/1": "7322fc989cd21c50",
+    "tile 0/0/0": "67360c6e4c13274f",
+    "tile 0/0/1": "790d6d8f044e91b6",
+    "tile 0/0/2": "fc8fd665a1e651d5",
+    "tile 0/0/3": "6398f87a76648d24",
+    "tile 0/1/0": "344581b689397522",
+    "tile 0/1/1": "385058ea6c8ea18e",
     "tile 0/1/2": "78fba651af308467",
-    "tile 0/1/3": "c238f6da92a92406",
-    "tile 0/2/0": "ede7ec264c38c62a",
-    "tile 0/2/1": "b3b3c5d96f02afc9",
-    "tile 0/2/2": "041cf8d282c2e6b2",
-    "tile 0/2/3": "4de3e0c64d645568",
-    "tile 0/3/0": "b9877654aa1498b5",
-    "tile 0/3/1": "77612cdf47720dbe",
-    "tile 0/3/2": "7ba4b213aaa35573",
-    "tile 0/3/3": "5b0b7e00df4e45e3",
-    "tile 1/0/0": "7b408d6b1af8d58a",
-    "tile 1/0/1": "8c824b904096bec7",
-    "tile 1/1/0": "903b4833898e700b",
-    "tile 1/1/1": "d9d3d416c6dac6d7",
-    "tile 2/0/0": "cf47728d90345719",
-    "tile objects": 12697,
+    "tile 0/1/3": "ed38f8d3d4799fdf",
+    "tile 0/2/0": "ad41d88b59e6bb1a",
+    "tile 0/2/1": "8b532fb86fc487ac",
+    "tile 0/2/2": "ec1238c67e9f5d7e",
+    "tile 0/2/3": "df59c65156419fad",
+    "tile 0/3/0": "69ad772a9b3f3d1c",
+    "tile 0/3/1": "4ae7d9da30797579",
+    "tile 0/3/2": "d1625475ffb920bb",
+    "tile 0/3/3": "b44303bc36b1b126",
+    "tile 1/0/0": "968c8e8e0f6e04ba",
+    "tile 1/0/1": "c1571727fd9aa09f",
+    "tile 1/1/0": "15fffe139144fc36",
+    "tile 1/1/1": "b5c500f9d3225238",
+    "tile 2/0/0": "e0ee237ce863cfc2",
+    "tile objects": 12711,
     "tiles": 21,
     "walk": {
-      "length": 228.93650817871094,
+      "length": 228.92881774902344,
       "level": 0,
       "points": 61
     }

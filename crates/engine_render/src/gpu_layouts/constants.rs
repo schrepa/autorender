@@ -203,6 +203,11 @@ gpu_consts! {
     /// Workgroup side of the moments' levels.
     pub(crate) const WAVE_LEVEL_GROUP: u32 = 8 => ["@average_level" in WATER_WAVES_SHADER];
 
+    // crate::water_fall_map
+    /// How many times longer along falling water than across it water
+    /// reads falling water's map.
+    pub(crate) const FALL_MAP_STRETCH: f32 = 4.0 => ["FALL_MAP_STRETCH"];
+
     // crate::ground_cover
     /// Bytes of a blade (`CoverBlade`).
     pub(crate) const BLADE_BYTES: u64 = 32 => ["size_of CoverBlade"];

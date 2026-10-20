@@ -342,7 +342,7 @@ fn normal_pair(tile: u32, x: u32, z: u32) -> [f64; 2] {
 }
 
 /// A 32-bit integer hash (Wellons's lowbias32).
-fn hash(mut value: u32) -> u32 {
+pub(crate) fn hash(mut value: u32) -> u32 {
     value ^= value >> 16;
     value = value.wrapping_mul(0x7feb_352d);
     value ^= value >> 15;

@@ -22,10 +22,15 @@ use std::ops::Range;
 
 use engine_math::{max, min};
 use glam::Vec2;
+
+use crate::noise::gradient_value;
 use serde::Serialize;
 
 /// Meters between a river's points.
 pub const RIVER_STEP: f32 = 3.0;
+/// The share of a stretch over which a step's face the water leaps clear of
+/// falls (a river's `nappes`).
+pub const NAPPE_FACE: f32 = 0.3;
 /// Segments of a river whose water [`Rivers::differs_from`] bounds at a
 /// time.
 const STRETCH: usize = 16;
@@ -44,6 +49,34 @@ const BANK_ROUNDING: f32 = 1.5;
 /// The least water a river holds at its middle (meters): shallower points
 /// are streams'.
 pub const MIN_DEPTH: f32 = 0.35;
+/// Steep channels' beds and banks are rough rock: bumps ROUGH_SIZE meters
+/// across rise out of them, as its bed falls through ROUGH_SLOPES a meter:
+/// none at the first or less, up to ROUGHEST of the channel's depth (at
+/// most ROUGH_MOST meters) at the second or more. Stones and ledges the
+/// water breaks over, never hollows under it.
+const ROUGH_SIZE: f32 = 2.5;
+const ROUGHEST: f32 = 0.6;
+const ROUGH_MOST: f32 = 0.8;
+const ROUGH_SLOPES: [f32; 2] = [0.15, 0.5];
+const ROUGH_SEED: u32 = 0x5eed_b0e1;
+
+/// How far rock rises out of river `river`'s bed at `point`, on its segment
+/// `segment`: as rough as the bed falls steeply there.
+fn roughness(river: &River, segment: usize, point: Vec2) -> f32 {
+    let (a, b) = (
+        Vec2::from(river.points[segment]),
+        Vec2::from(river.points[segment + 1]),
+    );
+    let falls = (river.cut[segment] - river.cut[segment + 1]) / max(a.distance(b), 1.0e-3);
+    let steep = smoothstep((falls - ROUGH_SLOPES[0]) / (ROUGH_SLOPES[1] - ROUGH_SLOPES[0]));
+    if steep <= 0.0 {
+        return 0.0;
+    }
+    let deep = max(river.channel[segment], river.channel[segment + 1]);
+    let bump = gradient_value(point.x / ROUGH_SIZE, point.y / ROUGH_SIZE, ROUGH_SEED);
+    steep * min(ROUGHEST * deep, ROUGH_MOST) * max(bump, 0.0)
+}
+
 /// Samples past a river's edge its water's surface reaches in a tile, under
 /// the banks, so the triangle holding its shore has water at every corner.
 pub(crate) const WATER_PAST: f32 = 1.5;
@@ -79,6 +112,10 @@ fn slack(reach: f32) -> (f32, f32) {
 /// solves its flow in its channel. Where it leaves its bed over a
 /// drop and falls through the air its points carry no surface (`NaN`) and
 /// the stretches between them are `falls`: a [`crate::Fall`] holds its jet.
+/// The points a fall's sheet runs over are `sheeted`, and those whose
+/// stretch to the next leaps clear of a step's face `nappes`: there the
+/// water and its channel fall within the first [`NAPPE_FACE`] of the
+/// stretch, its rock standing near vertical under the water.
 /// Its channel is cut to its water's surface, and beneath its jets straight
 /// from the lip's water to where the jet lands (`cut`), so no ground stands
 /// between the pools a fall leaves and lands in.
@@ -97,6 +134,8 @@ pub(crate) struct River {
     pub discharge: Vec<f32>,
     pub foam: Vec<f32>,
     pub falls: Vec<bool>,
+    pub sheeted: Vec<bool>,
+    pub nappes: Vec<bool>,
     pub head: bool,
 }
 
@@ -104,6 +143,25 @@ impl River {
     /// Whether the stretch from point `index` to the next falls.
     pub(crate) fn falls_at(&self, index: usize) -> bool {
         self.falls.get(index).copied().unwrap_or(false)
+    }
+
+    /// How far along its segment from point `segment` its water and channel
+    /// have come `t` of the way along it: as far, but down a step's face
+    /// the water leaps clear of all of the way within its first
+    /// [`NAPPE_FACE`].
+    pub(crate) fn shaped(&self, segment: usize, t: f32) -> f32 {
+        if self.nappes.get(segment).copied().unwrap_or(false) {
+            smoothstep(t / NAPPE_FACE)
+        } else {
+            t
+        }
+    }
+
+    /// Whether a fall's sheet runs over the stretch from point `index` to
+    /// the next.
+    pub(crate) fn sheeted_at(&self, index: usize) -> bool {
+        self.sheeted.get(index).copied().unwrap_or(false)
+            && self.sheeted.get(index + 1).copied().unwrap_or(false)
     }
 
     /// The way the river runs (a unit vector along x and z) `t` of the way
@@ -397,7 +455,9 @@ impl Rivers {
         } else {
             0.0
         };
-        let at = |values: &[f32]| values[segment] + (values[segment + 1] - values[segment]) * t;
+        let reached = river.shaped(segment, t);
+        let at =
+            |values: &[f32]| values[segment] + (values[segment + 1] - values[segment]) * reached;
         let direction = if length > 0.0 {
             river.heading(segment, t)
         } else {
@@ -648,8 +708,11 @@ impl Rivers {
                 if distance_squared > squared {
                     continue;
                 }
-                let at =
-                    |values: &[f32]| values[segment] + (values[segment + 1] - values[segment]) * t;
+                let reached = river.shaped(segment, t);
+                let at = |values: &[f32]| {
+                    values[segment] + (values[segment + 1] - values[segment]) * reached
+                };
+                let rough = roughness(river, segment, point);
                 let point = RiverCut {
                     distance: distance_squared.sqrt(),
                     surface: at(&river.cut),
@@ -657,6 +720,8 @@ impl Rivers {
                     depth: at(&river.depth),
                     channel: at(&river.channel),
                     fill: at(&river.fill),
+                    rough,
+                    river: near.river,
                 };
                 shaped[sample].add(&point, heights[sample], spacing);
             }
@@ -718,7 +783,8 @@ impl Rivers {
                 if distance_squared > squared {
                     continue;
                 }
-                let along = |values: [f32; 2]| values[0] + (values[1] - values[0]) * t;
+                let reached = river.shaped(segment, t);
+                let along = |values: [f32; 2]| values[0] + (values[1] - values[0]) * reached;
                 let half = along(halves);
                 let half = if stream {
                     half
@@ -738,6 +804,7 @@ impl Rivers {
                     bed,
                     flow: river.heading(segment, t) * speed,
                     white: along([river.foam[segment], river.foam[segment + 1]]),
+                    sheeted: river.sheeted_at(segment),
                     width: half * along([river.fill[segment], river.fill[segment + 1]]),
                 };
             }
@@ -812,6 +879,11 @@ impl Rivers {
             }) {
                 continue;
             }
+            let rough = roughness(
+                &self.rivers[segment[0] as usize],
+                segment[1] as usize,
+                point,
+            );
             let river = self.on_segment(segment, point);
             let cut = RiverCut {
                 distance: river.distance,
@@ -820,6 +892,8 @@ impl Rivers {
                 depth: river.depth,
                 channel: river.channel,
                 fill: river.fill,
+                rough,
+                river: segment[0],
             };
             shaping.add(&cut, ground, spacing);
         }
@@ -897,8 +971,8 @@ impl SpanSegment {
 /// A river's water at a sample as [`Rivers::water_row`] finds it: meters
 /// from its edge (negative within its water), and there its surface and
 /// its channel's bed (terrain-local meters), its flow along x and z (meters
-/// a second), its whitewater (0 to 1) and the half width of its water
-/// (meters).
+/// a second), its whitewater (0 to 1), whether a fall's sheet runs over it
+/// and the half width of its water (meters).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RiverWater {
     pub(crate) inside: f32,
@@ -906,6 +980,7 @@ pub(crate) struct RiverWater {
     pub(crate) bed: f32,
     pub(crate) flow: Vec2,
     pub(crate) white: f32,
+    pub(crate) sheeted: bool,
     pub(crate) width: f32,
 }
 
@@ -917,6 +992,7 @@ impl RiverWater {
         bed: f32::NAN,
         flow: Vec2::ZERO,
         white: 0.0,
+        sheeted: false,
         width: 0.0,
     };
 }
@@ -924,7 +1000,9 @@ impl RiverWater {
 /// What [`Rivers::cap`] reads of a segment at a point: its distance, and
 /// there the level its channel is cut to (its water's surface, or beneath
 /// a jet the line it is cut to), half the river's width, the water's depth,
-/// the channel's and the share of its half width the water spans. Streams
+/// the channel's, the share of its half width the water spans, how far
+/// rock rises out of its bed and banks ([`roughness`]) and the river's
+/// number. Streams
 /// keep their own width at every level, too narrow for coarse samples to
 /// carve (their water fades out there), and shape their banks over a short
 /// reach.
@@ -935,6 +1013,8 @@ struct RiverCut {
     depth: f32,
     channel: f32,
     fill: f32,
+    rough: f32,
+    river: u32,
 }
 
 impl RiverCut {
@@ -969,16 +1049,20 @@ impl RiverCut {
         }
         let across = self.distance / half;
         let bed = self.surface - self.depth;
-        Some((self.distance - half, bed + self.shaped() * across * across))
+        Some((
+            self.distance - half,
+            bed + self.shaped() * across * across + self.rough,
+        ))
     }
 
-    /// `height` beyond the channel's edge as its banks shape it at a level
-    /// whose samples lie `spacing` meters apart: ground above the channel's
-    /// top cut to a bank rising from it, ground below it built up to it at
-    /// the edge, each easing back to the ground; `None` beyond their reach,
-    /// within the channel or where its water is airborne.
+    /// The meters `height` lies beyond the channel's edge, and as its banks
+    /// shape it there at a level whose samples lie `spacing` meters apart:
+    /// ground above the channel's top cut to a bank rising from it, ground
+    /// below it built up to it at the edge, each easing back to the ground;
+    /// `None` beyond their reach, within the channel or where its water is
+    /// airborne.
     #[inline(always)]
-    fn bank(&self, height: f32, spacing: f32) -> Option<f32> {
+    fn bank(&self, height: f32, spacing: f32) -> Option<(f32, f32)> {
         let (half, reach) = self.widths(spacing);
         let beyond = self.distance - half;
         if !self.surface.is_finite() || beyond <= 0.0 || beyond >= reach {
@@ -987,7 +1071,10 @@ impl RiverCut {
         let top = self.surface - self.depth + self.shaped();
         let out = beyond / reach;
         if height < top {
-            return Some(top + (height - top) * smoothstep(out));
+            return Some((
+                beyond,
+                top + (height - top) * smoothstep(out) + self.rough * (1.0 - out),
+            ));
         }
         // Rounding no more than the bank is wide, so the edge keeps the
         // channel's top.
@@ -996,19 +1083,46 @@ impl RiverCut {
             top + beyond * BANK_SLOPE,
             max(min(BANK_ROUNDING, beyond), 1.0e-3),
         );
-        Some(cut + (height - cut) * smoothstep(max(out * 2.0 - 1.0, 0.0)))
+        let eased = smoothstep(max(out * 2.0 - 1.0, 0.0));
+        Some((
+            beyond,
+            cut + (height - cut) * eased + self.rough * (1.0 - eased),
+        ))
     }
 }
 
 /// How rivers shape the ground at a point: the channel holding it (meters
-/// within its edge and its ground there) and its banks' deepest cut and
-/// highest build.
+/// within its edge and its ground there), and the banks of the
+/// [`BANKED`] rivers whose edges lie nearest, each its own nearest
+/// segment's (a steep river's segments up and down stream would build its
+/// banks into walls of their higher levels, or cut them into trenches of
+/// their lower ones): the deepest cut and the highest build of them hold.
 #[derive(Clone, Copy, Debug)]
 struct Shaping {
     inside: f32,
     channel: f32,
-    cut: f32,
-    built: f32,
+    banks: [Bank; BANKED],
+}
+
+/// Rivers whose banks shape a point at once.
+const BANKED: usize = 2;
+
+/// A river's bank at a point: the river's number, meters from its nearest
+/// edge, and the ground its bank shapes there.
+#[derive(Clone, Copy, Debug)]
+struct Bank {
+    river: u32,
+    beyond: f32,
+    height: f32,
+}
+
+impl Bank {
+    /// No river's bank.
+    const NONE: Self = Self {
+        river: u32::MAX,
+        beyond: f32::INFINITY,
+        height: f32::NAN,
+    };
 }
 
 impl Shaping {
@@ -1016,14 +1130,14 @@ impl Shaping {
     const NONE: Self = Self {
         inside: f32::INFINITY,
         channel: f32::NAN,
-        cut: f32::INFINITY,
-        built: f32::NEG_INFINITY,
+        banks: [Bank::NONE; BANKED],
     };
 
     /// Adds segment `cut` at ground `height`, at a level whose samples lie
     /// `spacing` meters apart: the first channel the point lies deepest
     /// within holds it, as [`Rivers::water_row`] gives it that channel's
-    /// water.
+    /// water; beside them, each river's segment whose edge lies nearest
+    /// shapes its bank, the nearest rivers' banks kept.
     #[inline(always)]
     fn add(&mut self, cut: &RiverCut, height: f32, spacing: f32) {
         if let Some((inside, channel)) = cut.channel(spacing) {
@@ -1031,25 +1145,46 @@ impl Shaping {
                 self.inside = inside;
                 self.channel = channel;
             }
-        } else if let Some(shaped) = cut.bank(height, spacing) {
-            if shaped > height {
-                self.built = max(self.built, shaped);
-            } else {
-                self.cut = min(self.cut, shaped);
+        } else if let Some((beyond, shaped)) = cut.bank(height, spacing) {
+            let bank = Bank {
+                river: cut.river,
+                beyond,
+                height: shaped,
+            };
+            let slot = self
+                .banks
+                .iter()
+                .position(|held| held.river == cut.river)
+                .or_else(|| {
+                    // Another river's: in the slot of the farthest bank,
+                    // unless it lies farther still.
+                    (0..BANKED)
+                        .max_by(|&a, &b| self.banks[a].beyond.total_cmp(&self.banks[b].beyond))
+                });
+            if let Some(slot) = slot
+                && beyond < self.banks[slot].beyond
+            {
+                self.banks[slot] = bank;
             }
         }
     }
 
     /// Ground `height` as the rivers shape it: the channel's where one
-    /// holds it, else built up where a bank builds, else cut.
+    /// holds it, else built up where a bank builds, else cut as deep as a
+    /// bank cuts it.
     fn height(&self, height: f32) -> f32 {
         if self.inside.is_finite() {
-            self.channel
-        } else if self.built > height {
-            self.built
-        } else {
-            min(height, self.cut)
+            return self.channel;
         }
+        let (mut cut, mut built) = (height, f32::NEG_INFINITY);
+        for bank in self.banks.iter().filter(|bank| bank.beyond.is_finite()) {
+            if bank.height > height {
+                built = max(built, bank.height);
+            } else {
+                cut = min(cut, bank.height);
+            }
+        }
+        if built > height { built } else { cut }
     }
 }
 
@@ -1231,6 +1366,86 @@ fn smooth_line(points: &[Vec2], values: [&[f32]; 3]) -> RiverLine {
     out
 }
 
+/// Steep stretches of rivers' lines wander from side to side, as water
+/// tumbling down rock jogs along its joints instead of running straight,
+/// and widen and narrow as the rock lets them: each point moves across its
+/// line by up to WANDER of its half width (at least WANDER_LEAST meters of
+/// it), as smooth noise along the line WANDER_LENGTH half widths long says
+/// (with a finer octave WANDER_FINE as long and as strong), and its width
+/// changes by up to WIDENING of itself over WIDENING_LENGTH half widths;
+/// as far as the bed falls through WANDER_SLOPES a meter, read across
+/// WANDER_REACH points either side, and not at all at the line's ends,
+/// where rivers meet.
+const WANDER: f32 = 2.5;
+const WANDER_LEAST: f32 = 2.0;
+const WANDER_LENGTH: f32 = 12.0;
+const WANDER_FINE: f32 = 0.4;
+const WIDENING: f32 = 0.6;
+const WIDENING_LENGTH: f32 = 6.0;
+const WANDER_SLOPES: [f32; 2] = [0.12, 0.35];
+const WANDER_REACH: usize = 5;
+const WANDER_SEED: u32 = 0x77a4_d3e1;
+const WIDENING_SEED: u32 = 0x1b87_3593;
+
+/// `lines` wandering, widening and narrowing where their beds (the grid's
+/// `heights`, `width` samples a row and `spacing` meters apart) fall
+/// steeply.
+pub(crate) fn wander(lines: &mut [RiverLine], heights: &[f32], (width, spacing): (usize, f32)) {
+    let rows = heights.len() / width;
+    let height_at = |point: Vec2| {
+        let x = min(max(point.x / spacing, 0.0), (width - 1) as f32);
+        let z = min(max(point.y / spacing, 0.0), (rows - 1) as f32);
+        let (column, row) = (x.floor() as usize, z.floor() as usize);
+        let (right, below) = ((column + 1).min(width - 1), (row + 1).min(rows - 1));
+        let (fx, fz) = (x - column as f32, z - row as f32);
+        let top = heights[row * width + column]
+            + (heights[row * width + right] - heights[row * width + column]) * fx;
+        let bottom = heights[below * width + column]
+            + (heights[below * width + right] - heights[below * width + column]) * fx;
+        top + (bottom - top) * fz
+    };
+    for line in lines.iter_mut() {
+        let count = line.points.len();
+        if count < 4 {
+            continue;
+        }
+        let along = crate::hydraulics::distances(&line.points);
+        let total = along[count - 1];
+        let original = line.points.clone();
+        let shift = (original[0].x.to_bits() ^ original[0].y.to_bits().rotate_left(13)) % 977;
+        for index in 1..count - 1 {
+            let (a, b) = (
+                index.saturating_sub(WANDER_REACH),
+                (index + WANDER_REACH).min(count - 1),
+            );
+            let falls = max(height_at(original[a]) - height_at(original[b]), 0.0)
+                / max(along[b] - along[a], 1.0e-3);
+            let steep =
+                smoothstep((falls - WANDER_SLOPES[0]) / (WANDER_SLOPES[1] - WANDER_SLOPES[0]));
+            if steep <= 0.0 {
+                continue;
+            }
+            let half = max(line.half[index], WANDER_LEAST);
+            let length = WANDER_LENGTH * half;
+            let ends = smoothstep(min(along[index], total - along[index]) / length);
+            let row = shift as f32 * 0.37;
+            let bend = gradient_value(along[index] / length, row, WANDER_SEED)
+                + WANDER_FINE
+                    * gradient_value(
+                        along[index] / (WANDER_FINE * length),
+                        row + 5.3,
+                        WANDER_SEED,
+                    );
+            let widening =
+                gradient_value(along[index] / (WIDENING_LENGTH * half), row, WIDENING_SEED);
+            let shaped = steep * ends;
+            line.points[index] =
+                original[index] + across(&original, index) * (WANDER * half * bend * shaped);
+            line.half[index] *= 1.0 + WIDENING * widening * shaped;
+        }
+    }
+}
+
 /// The way across a river's line at point `index` (a unit vector, left of
 /// the way it runs).
 pub(crate) fn across(points: &[Vec2], index: usize) -> Vec2 {
@@ -1255,6 +1470,8 @@ crate::codec::record!(River {
     discharge,
     foam,
     falls,
+    sheeted,
+    nappes,
     head,
 });
 // Rivers travel without the grid that finds them, which readers build

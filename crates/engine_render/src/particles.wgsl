@@ -2,9 +2,10 @@
 // function of its emitter, its index and presentation time: particle k of an
 // emitter is born at k / rate seconds, and the emitter's instances draw the
 // latest births, one lane each. Billboards face the camera, or streak along
-// their motion. Alpha particles are lit by the sun and sky and accumulate as
-// weighted blended transparency, as mist does, each particle of it a ball
-// soft through its depth; additive ones add their light.
+// their motion. Alpha particles are lit by the sky and by the sun past what
+// shadows them, and accumulate as weighted blended transparency, as mist
+// does, each particle of it a ball soft through its depth; additive ones
+// add their light.
 
 struct Particles {
     // Camera right (xyz) and up (xyz), unit and world space.
@@ -219,13 +220,20 @@ fn fs_particle(input: ParticleOutput) -> TransparentTargets {
     if alpha <= 1.0e-3 {
         discard;
     }
-    // Smoke and spray scatter the sky's light and half the sun's.
+    // Smoke and spray scatter the sky's light and half the sun's, as much
+    // of it as reaches them past what shadows them.
     let eye = camera.position.xyz;
+    let distance = length(input.world - eye);
+    var sunlight = lighting.sun_color.rgb * 0.5;
+    if lighting.sun.y > 0.0 {
+        sunlight *= sun_visibility(input.world, lighting.sun.xyz, vec3<f32>(0.0),
+            vec3<f32>(0.0), distance, false);
+    }
     let light = input.color.rgb * (sky_average(vec3<f32>(0.0, 1.0, 0.0)) * lighting.zenith.w
-        + lighting.sun_color.rgb * 0.5);
+        + sunlight);
     let view = normalize(input.world - eye);
     let fogged = atmospheric(light, eye, input.world, view).rgb;
-    return weighted(grade(fogged), alpha, length(input.world - eye));
+    return weighted(grade(fogged), alpha, distance);
 }
 
 // Mist: a ball of droplets thinning from its middle as a Gaussian, which

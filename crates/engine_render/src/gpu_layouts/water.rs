@@ -44,7 +44,7 @@ gpu_structs! {
         pub fade: f32,
     }
 
-    /// WGSL `FallInput` of `meshes/water.wgsl`: a vertex of a waterfall's
+    /// WGSL `FallInput` of `meshes/water_falls.wgsl`: a vertex of a waterfall's
     /// sheet (`crate::water_falls`): where it stands (world space), the
     /// sheet's face there, turned out from the rock it falls from, and the
     /// way its water runs and how fast (w, meters a second); where across
@@ -53,7 +53,10 @@ gpu_structs! {
     /// and the sheet's half width at the lip (meters); and the seconds
     /// since it last took off where it flies, less those since it last
     /// landed down a chute, the sheet's thickness there (meters), its
-    /// fall's number and 1 where its water flies.
+    /// fall's number and 1 where its water flies; and how white its water
+    /// has turned, how far the air has broken it up and how much of it shows
+    /// (0 to 1 each), and 1 where it is a boil; and how much of the sky it
+    /// sees (0 to 1).
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct FallVertex {
         pub position: [f32; 3],
@@ -61,5 +64,7 @@ gpu_structs! {
         pub tangent: [f32; 4],
         pub jet: [f32; 4],
         pub fall: [f32; 4],
+        pub state: [f32; 4],
+        pub sky: f32,
     }
 }

@@ -51,6 +51,7 @@ use crate::render_features::{Encode, FeaturePass, RenderFeature};
 use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource, Targets};
 use crate::targets::{FrameSize, ScreenTarget};
 use crate::terrain::{TerrainWaterDraws, WATER_GRID_INDICES, water_patch_layout};
+use crate::water_fall_map::FallMap;
 use crate::water_falls::{fall_layout, sheets};
 use crate::water_waves::{WaterWaves, WaveShape};
 
@@ -132,6 +133,7 @@ pub(crate) struct WaterPass {
     placeholders: Placeholders,
     // Created with the first frame drawing water.
     waves: Option<WaterWaves>,
+    fall_map: Option<FallMap>,
     // Tiles' water's uniform, and the group binding it with the terrain
     // pass's arrays and uniforms, as of their generations.
     uniform: wgpu::Buffer,
@@ -157,6 +159,7 @@ impl WaterPass {
             behind: ScreenTarget::default(),
             placeholders: placeholders(device),
             waves: None,
+            fall_map: None,
             uniform: crate::buffers::uniform(device, "engine/water", WATER_UNIFORM_BYTES as u64),
             group: None,
             tiles: None,
@@ -293,14 +296,16 @@ impl WaterPass {
         };
         waves.prepare(device, queue, shape, seconds);
         let repeats = waves.repeats();
+        self.fall_map
+            .get_or_insert_with(|| FallMap::new(device, queue));
         if let Some(tiles) = tiles {
-            if let Some(waves) = &self.waves
+            if let (Some(waves), Some(map)) = (&self.waves, &self.fall_map)
                 && self
                     .group
                     .as_ref()
                     .is_none_or(|(bound, _)| *bound != tiles.generation)
             {
-                let group = self.tile_group(device, &tiles, waves);
+                let group = self.tile_group(device, &tiles, (waves, map));
                 self.group = Some((tiles.generation, group));
             }
             self.tiles = Some(TileDraws {
@@ -416,13 +421,13 @@ impl WaterPass {
     }
 
     /// The group tiles' water draws with: the terrain pass's height array,
-    /// views' and terrains' uniforms and water blocks, water's uniform and
-    /// `waves`.
+    /// views' and terrains' uniforms and water blocks, water's uniform,
+    /// `waves` and falling water's `map`.
     fn tile_group(
         &self,
         device: &wgpu::Device,
         tiles: &TerrainWaterDraws<'_>,
-        waves: &WaterWaves,
+        (waves, map): (&WaterWaves, &FallMap),
     ) -> wgpu::BindGroup {
         let (moments, sampler) = waves.sampled();
         crate::pipelines::group(
@@ -442,6 +447,7 @@ impl WaterPass {
                 ("water", self.uniform.as_entire_binding()),
                 ("water_waves", crate::pipelines::view(moments)),
                 ("water_wave_sampler", crate::pipelines::sampler(sampler)),
+                ("water_fall_map", crate::pipelines::view(map.view())),
             ],
         )
     }
@@ -459,13 +465,13 @@ impl WaterPass {
         (eye, wind, seconds): (Vec3, Wind, f64),
         repeats: [f32; 4],
     ) -> bool {
-        let (true, Some(waves)) = (ocean.enabled, &self.waves) else {
+        let (true, Some(waves), Some(map)) = (ocean.enabled, &self.waves, &self.fall_map) else {
             self.ocean = None;
             return false;
         };
-        let draw = self
-            .ocean
-            .get_or_insert_with(|| ocean_draw(device, &self.layout, &self.placeholders, waves));
+        let draw = self.ocean.get_or_insert_with(|| {
+            ocean_draw(device, &self.layout, &self.placeholders, (waves, map))
+        });
         let waves = ocean.spectrum();
         let amplitude = waves.amplitude();
         // Cells widen as the eye rises over the sea.
@@ -774,7 +780,13 @@ impl RenderFeature for WaterPass {
             .falls
             .as_ref()
             .map_or(0, |falls| falls.vertices.size() + falls.indices.size());
-        copies + falls + self.waves.as_ref().map_or(0, WaterWaves::capacity_bytes)
+        copies
+            + falls
+            + self.waves.as_ref().map_or(0, WaterWaves::capacity_bytes)
+            + self
+                .fall_map
+                .as_ref()
+                .map_or(0, |_| FallMap::capacity_bytes())
     }
 
     /// Tiles' patches holding water drawn, and the sea's sectors drawn and
@@ -916,13 +928,14 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
     }
 }
 
-/// The sea's GPU state: its uniform, and its group binding `waves` and
-/// `placeholders` for what only tiles' water reads.
+/// The sea's GPU state: its uniform, and its group binding `waves`,
+/// falling water's `map` and `placeholders` for what only tiles' water
+/// reads.
 fn ocean_draw(
     device: &wgpu::Device,
     layout: &crate::pipelines::GroupLayout,
     placeholders: &Placeholders,
-    waves: &WaterWaves,
+    (waves, map): (&WaterWaves, &FallMap),
 ) -> OceanDraw {
     let (moments, sampler) = waves.sampled();
     let array = |texture: &wgpu::Texture| {
@@ -953,6 +966,7 @@ fn ocean_draw(
             ("water", uniform.as_entire_binding()),
             ("water_waves", crate::pipelines::view(moments)),
             ("water_wave_sampler", crate::pipelines::sampler(sampler)),
+            ("water_fall_map", crate::pipelines::view(map.view())),
         ],
     );
     OceanDraw {

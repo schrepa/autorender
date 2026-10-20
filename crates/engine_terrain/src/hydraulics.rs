@@ -12,11 +12,15 @@
 //! holds its water back: from such an outlet, its level rises upstream
 //! against friction until its own uniform flow stands higher (backwater),
 //! so rivers meet their confluences and lakes at one level.
-//! Where the ground drops away faster than water leaving the lip can fall,
-//! the river leaves its bed as a jet on the parabola its speed and gravity
-//! give, and lands in a pool where the jet meets the water below; where it
-//! lands in a steep chute another jet leaves soon after, the jets and the
-//! chutes between fall as one cascade. Foam forms
+//! Where a river runs steep its bed falls in steps, as rock does: irregular
+//! ledges with the bed between falling more gently and a pocket scoured
+//! under each ledge's face; steep channels run narrower, and water skimming
+//! down them meets the friction of the rough rock. Off faces steeper than
+//! water clings to, and higher than its critical depth twice over, the river
+//! leaves its bed as a jet on the parabola its speed and gravity give, and
+//! lands where the jet meets the water below. A steep stretch falls as one
+//! cascade: its water clinging to the rock and leaping off its ledges. Foam
+//! forms
 //! where water runs faster than its waves (Froude number above one), where
 //! it slows back through a hydraulic jump and where it lands from a fall,
 //! and rides the current downstream, thinning as it goes.
@@ -24,7 +28,7 @@
 //! Every step uses only IEEE arithmetic and `libm`'s functions, so the same
 //! bake gives the same bits natively and in the browser.
 
-use engine_math::{max, min};
+use engine_math::{clamp, max, min};
 use glam::{Vec2, Vec3};
 
 use crate::hydrology::{FALL_HEIGHT, Fall};
@@ -42,9 +46,60 @@ pub(crate) const TRICKLE: f32 = 1.0e-3;
 /// slope read across.
 const SMOOTHING: f32 = 9.0;
 const SLOPE_REACH: f32 = 12.0;
-/// The steepest drop (rise over run) a river follows down its bed; falls
-/// steeper than this over at least [`FALL_HEIGHT`] throw the water clear.
-const JET_SLOPE: f32 = 1.0;
+/// The steepest drop (rise over run) a river's water clings to its bed
+/// down: off steeper faces at least LEAP_DEPTHS critical depths and
+/// LEAP_LEAST meters high it leaps clear as a nappe (Chanson: nappe flow
+/// holds below about 0.49 critical depths a step's height at 45 degrees);
+/// down gentler ones it skims over the rock.
+const CLING_SLOPE: f32 = 1.2;
+const LEAP_DEPTHS: f32 = 2.0;
+const LEAP_LEAST: f32 = 1.5;
+/// Off a step's face (a drop at a crest, [`stepped`]) the water leaps clear
+/// as a nappe where the face stands LEAP_DEPTHS critical depths high or
+/// more, and at least NAPPE_LEAST meters; lower, it skims over it.
+const NAPPE_LEAST: f32 = 0.4;
+/// Where a river's bed falls STEPPED or more a meter (its smooth fit read
+/// across SLOPE_REACH) it falls in steps, as rock does: crests a share of
+/// the channel's width apart (STEP_SPACING), and STEP_RUN meters apart at
+/// the least and most, each step's face taking a share of what the bed
+/// falls from its crest to the next (STEP_SHARE), at most STEP_HIGHEST
+/// meters, and the bed between falling the rest: ledges of rock the water
+/// skims over. SLIDES of the crests start slides instead, the bed falling
+/// evenly to a crest SLIDE_SPACING widths on (at most SLIDE_LONGEST meters):
+/// smooth rock the water runs down whole; and LEDGES of them stand over a
+/// face as high as STEP_SHARE says up to LEDGE_HIGHEST meters, the next
+/// crest LEDGE_RUN meters on: the drops the water leaps off. Under each
+/// face the water landing there scours a pocket POCKET_SHARE of the face
+/// deep (at most POCKET_DEEPEST meters), as long as the face is high but
+/// at least half the channel's width.
+const STEPPED: f32 = 0.25;
+const STEP_SPACING: [f32; 2] = [0.5, 2.0];
+const STEP_RUN: [f32; 2] = [3.0, 12.0];
+const STEP_SHARE: [f32; 2] = [0.15, 0.7];
+const STEP_HIGHEST: f32 = 2.0;
+const SLIDES: f32 = 0.3;
+const SLIDE_SPACING: [f32; 2] = [1.5, 3.5];
+const SLIDE_LONGEST: f32 = 30.0;
+const LEDGES: f32 = 0.12;
+const LEDGE_RUN: [f32; 2] = [10.0, 25.0];
+const LEDGE_HIGHEST: f32 = 8.0;
+const POCKET_SHARE: f32 = 0.35;
+const POCKET_DEEPEST: f32 = 2.5;
+/// How much wider a channel runs where its pocket is a meter or more deep:
+/// the pools under steps open out, the crests between them close in.
+const POCKET_WIDENING: f32 = 0.3;
+/// Channels narrow as they steepen, their width as the slope to the -3/16
+/// (Finnegan et al. 2005), from NARROWING_FROM a meter down to NARROWEST
+/// of their width.
+const NARROWING_FROM: f32 = 0.05;
+const NARROWEST: f32 = 0.55;
+/// Darcy's friction factor of water skimming down a stepped or rough steep
+/// bed (Chanson: about 1, against a smooth chute's hundredths): over beds
+/// falling through SKIMMING a meter (from the first to the second) the
+/// water comes to stand as deep as that friction holds it, and runs no
+/// faster.
+const SKIMMING_FRICTION: f32 = 1.0;
+const SKIMMING: [f32; 2] = [0.1, 0.3];
 /// Meters the water may stand over its channel's top where a lake or the
 /// river it joins holds it back before the banks cap it.
 const BANK_FLOOD: f32 = 0.3;
@@ -59,15 +114,27 @@ const FOAM_SECONDS: f32 = 6.0;
 /// RAPIDS_WHITE: whiter than that, it has landed from a fall.
 const RAPIDS: [f32; 2] = [1.2, 3.5];
 const RAPIDS_WHITE: f32 = 0.7;
-/// A fall's jet sampled every this many meters along its flight.
-const JET_STEP: f32 = 1.0;
-/// The most meters of chute between where one jet lands and the next
-/// leaves for the two to fall as one cascade, and the least that chute's
-/// water falls a meter.
-const CASCADE_GAP: f32 = 80.0;
-const CASCADE_SLOPE: f32 = 0.35;
-/// The slowest water runs down a cascade's chutes (meters a second), so
-/// its seconds there stay finite.
+/// Water skimming down a steep bed takes in air once its turbulence reaches
+/// its surface, INCEPTION_DEPTHS of its depths down the steep bed (at least
+/// INCEPTION_LEAST meters), and comes to hold an air fraction of about 0.9
+/// sin of the bed's angle (Chanson): it whitens as that fraction rises
+/// through AIRED, to RAPIDS_WHITE. Beds falling STEEP_AIR a meter or more
+/// are steep.
+const INCEPTION_DEPTHS: f32 = 6.0;
+const INCEPTION_LEAST: f32 = 1.0;
+const AIRED: [f32; 2] = [0.15, 0.55];
+const STEEP_AIR: f32 = 0.1;
+/// A fall's jet sampled at least every this many meters of its run and of
+/// its drop, so a plunge's curve bends smoothly.
+const JET_STEP: f32 = 0.5;
+/// Stretches whose bed falls CASCADE_SLOPE or more a meter fall as
+/// cascades, white water clinging to the rock; gentler stretches no more
+/// than BRIDGE widths long between them are the cascade's pools, which it
+/// runs on through.
+const CASCADE_SLOPE: f32 = 0.45;
+const BRIDGE: f32 = 2.0;
+/// The slowest water runs down a cascade (meters a second), so its seconds
+/// there stay finite.
 const SLOWEST: f32 = 0.5;
 /// The least share of its channel's half width a river's water spans (its
 /// channel shaped shallower where its flow would run narrower), the least
@@ -104,6 +171,44 @@ pub(crate) struct Reach<'a> {
 fn normal_depth(discharge: f32, width: f32, slope: f32, roughness: f32) -> f32 {
     let per_meter = discharge / width;
     libm::powf(per_meter * roughness / slope.sqrt(), 0.6)
+}
+
+/// The depth (meters) `discharge` stands over `width` meters skimming down
+/// `slope` against SKIMMING_FRICTION: q = d (8 g d S / f)^1/2.
+fn skimming_depth(discharge: f32, width: f32, slope: f32) -> f32 {
+    let per_meter = discharge / width;
+    libm::cbrtf(per_meter * per_meter * SKIMMING_FRICTION / (8.0 * GRAVITY * slope))
+}
+
+/// The share of its width a channel keeps falling `slope` a meter.
+fn narrowing(slope: f32) -> f32 {
+    let steeper = max(slope, NARROWING_FROM) / NARROWING_FROM;
+    min(max(libm::powf(steeper, -3.0 / 16.0), NARROWEST), 1.0)
+}
+
+/// `low` to `high` by `share`.
+fn between([low, high]: [f32; 2], share: f32) -> f32 {
+    low + (high - low) * share
+}
+
+/// 0 at or below `low`, rising smoothly to 1 at `high`.
+fn ramp(value: f32, [low, high]: [f32; 2]) -> f32 {
+    let t = min(max((value - low) / (high - low), 0.0), 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// A number in [0, 1) hashed from `key`.
+fn unit_of(key: u32) -> f32 {
+    let mut h = key;
+    h = (h ^ (h >> 16)).wrapping_mul(0x7feb_352d);
+    h = (h ^ (h >> 15)).wrapping_mul(0x846c_a68b);
+    ((h ^ (h >> 16)) >> 8) as f32 / 16_777_216.0
+}
+
+/// The key of a river's point at `point`: its place, so the same ground
+/// steps alike in every bake.
+fn place_key(point: Vec2) -> u32 {
+    point.x.to_bits().wrapping_mul(0x8da6_b343) ^ point.y.to_bits().wrapping_mul(0xd816_3841)
 }
 
 /// The depth (meters) at which `discharge` crosses `width` meters as fast as
@@ -190,8 +295,9 @@ fn falling_fit(values: &mut [f32], weights: &[f32]) {
 }
 
 /// `values` averaged over [`SMOOTHING`] meters either side of each point
-/// (`along` meters from the first), never rising along them.
-fn smoothed(values: &[f32], along: &[f32]) -> Vec<f32> {
+/// (`along` meters from the first) but where `kept` (a stepped bed's, whose
+/// ledges smoothing would wear away), never rising along them.
+fn smoothed(values: &[f32], along: &[f32], kept: &[bool]) -> Vec<f32> {
     let count = values.len();
     let mut out = Vec::with_capacity(count);
     let (mut first, mut last) = (0, 0);
@@ -206,6 +312,10 @@ fn smoothed(values: &[f32], along: &[f32]) -> Vec<f32> {
         }
         while last + 1 < count && along[last + 1] - along[index] <= reach {
             last += 1;
+        }
+        if kept[index] {
+            out.push(values[index]);
+            continue;
         }
         let sum: f32 = values[first..=last].iter().sum();
         out.push(sum / (last - first + 1) as f32);
@@ -260,11 +370,11 @@ pub(crate) fn distances(points: &[Vec2]) -> Vec<f32> {
 }
 
 /// The stretches of `targets` (the highest each point's water may stand)
-/// dropping steeper than [`JET_SLOPE`] by [`FALL_HEIGHT`] or more: each its
-/// first and last point.
-fn drops(targets: &[f32], along: &[f32]) -> Vec<(usize, usize)> {
+/// dropping steeper than CLING_SLOPE by at least `least` at their first
+/// point: each its first and last point.
+fn drops(targets: &[f32], along: &[f32], least: &[f32]) -> Vec<(usize, usize)> {
     let steep = |index: usize| {
-        targets[index] - targets[index + 1] > JET_SLOPE * (along[index + 1] - along[index])
+        targets[index] - targets[index + 1] > CLING_SLOPE * (along[index + 1] - along[index])
     };
     let mut found = Vec::new();
     let mut index = 0;
@@ -277,7 +387,7 @@ fn drops(targets: &[f32], along: &[f32]) -> Vec<(usize, usize)> {
         while index + 1 < targets.len() && steep(index) {
             index += 1;
         }
-        if targets[lip] - targets[index] >= FALL_HEIGHT {
+        if targets[lip] - targets[index] >= least[lip] {
             found.push((lip, index));
         }
     }
@@ -301,6 +411,118 @@ fn tops(reach: &Reach<'_>) -> Vec<f32> {
         .collect()
 }
 
+/// A river's bed as a smooth fit gives it: its level at each point and how
+/// fast it falls there (meters a meter, read across SLOPE_REACH).
+struct Plan {
+    top: Vec<f32>,
+    slopes: Vec<f32>,
+}
+
+impl Plan {
+    /// The smooth fit of `targets`, `along` meters from the first.
+    fn of(targets: &[f32], along: &[f32]) -> Self {
+        let count = targets.len();
+        let mut level = targets.to_vec();
+        falling_fit(&mut level, &vec![1.0; count]);
+        let top = smoothed(&level, along, &vec![false; count]);
+        let slopes = slopes(&top, along);
+        Self { top, slopes }
+    }
+}
+
+/// What steps make of a river's bed: the meters each point's bed is scoured
+/// below its channel (pockets under the steps' faces), the points whose
+/// stepped level its fit keeps as it stands, and the meters each crest's
+/// face drops to the next point (none elsewhere).
+struct Steps {
+    pocket: Vec<f32>,
+    kept: Vec<bool>,
+    face: Vec<f32>,
+}
+
+/// Steps `targets` where `plan` falls STEPPED or more a meter, along a
+/// river at `points`, `along` meters from its first and `widths` across,
+/// where `river` (streams step none).
+fn stepped(
+    targets: &mut [f32],
+    plan: &Plan,
+    (points, along, widths): (&[Vec2], &[f32], &[f32]),
+    river: impl Fn(usize) -> bool,
+) -> Steps {
+    let count = targets.len();
+    let mut steps = Steps {
+        pocket: vec![0.0; count],
+        kept: vec![false; count],
+        face: vec![0.0; count],
+    };
+    let steep = |index: usize| plan.slopes[index] >= STEPPED && river(index);
+    let mut crest = 0;
+    while crest + 1 < count {
+        if !steep(crest) {
+            crest += 1;
+            continue;
+        }
+        // The next crest a share of the width on, while the bed stays
+        // steep: the face drops a share of what the bed falls to it (a
+        // slide's none), the bed below falling the rest.
+        let key = place_key(points[crest]);
+        let kind = unit_of(key ^ 0x2f6b_7a91);
+        let (slide, ledge) = (kind < SLIDES, kind >= 1.0 - LEDGES);
+        let spacing = if ledge {
+            between(LEDGE_RUN, unit_of(key))
+        } else if slide {
+            min(
+                widths[crest] * between(SLIDE_SPACING, unit_of(key)),
+                SLIDE_LONGEST,
+            )
+        } else {
+            clamp(
+                widths[crest] * between(STEP_SPACING, unit_of(key)),
+                STEP_RUN[0],
+                STEP_RUN[1],
+            )
+        };
+        let mut next = crest + 1;
+        while next + 1 < count && steep(next) && along[next] - along[crest] < spacing {
+            next += 1;
+        }
+        let fall = max(plan.top[crest] - plan.top[next], 0.0);
+        let face = if slide {
+            0.0
+        } else {
+            min(
+                between(STEP_SHARE, unit_of(key ^ 0x68e3_1da4)) * fall,
+                if ledge { LEDGE_HIGHEST } else { STEP_HIGHEST },
+            )
+        };
+        let run = max(along[next] - along[crest + 1], 1.0e-3);
+        steps.face[crest] = face;
+        targets[crest] = min(targets[crest], plan.top[crest]);
+        steps.kept[crest] = true;
+        for index in crest + 1..=next {
+            let share = (along[index] - along[crest + 1]) / run;
+            targets[index] = min(
+                targets[index],
+                plan.top[crest] - face - (fall - face) * share,
+            );
+            steps.kept[index] = true;
+        }
+        // The pocket the water landing under the face scours, deepest at
+        // the face.
+        let deepest = min(POCKET_SHARE * face, POCKET_DEEPEST);
+        let length = max(face, 0.5 * widths[crest]);
+        for index in crest + 1..next {
+            let from = (along[index] - along[crest + 1]) / length;
+            if from >= 1.0 {
+                break;
+            }
+            steps.pocket[index] = max(steps.pocket[index], deepest * (1.0 - from * from));
+        }
+        crest = next;
+    }
+    steps
+}
+
 /// The discharge each square meter drained yields (cubic meters a second)
 /// for `reaches`' rivers to run `fill` of the way up their channels where
 /// their channels' slope is typical: at every point of a river (streams
@@ -317,7 +539,7 @@ pub(crate) fn filling_yield(reaches: &[Reach<'_>], fill: f32, roughness: f32) ->
         let along = distances(&line.points);
         let mut level = tops(reach);
         falling_fit(&mut level, &vec![1.0; count]);
-        let top = smoothed(&level, &along);
+        let top = smoothed(&level, &along, &vec![false; count]);
         for (index, &slope) in slopes(&top, &along).iter().enumerate() {
             if line.depth[index] < MIN_DEPTH {
                 continue;
@@ -346,10 +568,11 @@ fn stretch(
     (targets, along): (&[f32], &[f32]),
     (widths, channels, discharges): (&[f32], &[f32], &[f32]),
     (source, outlet): (Option<f32>, Option<f32>),
-    flow: &Flow,
+    (flow, steps): (&Flow, &Steps),
     profile: &mut Profile,
 ) {
     let start = range.start;
+    let (kept, pocket) = (&steps.kept[range.clone()], &steps.pocket[range.clone()]);
     let along = &along[range.clone()];
     let mut level = targets[range.clone()].to_vec();
     let mut weights = vec![1.0_f32; level.len()];
@@ -367,26 +590,27 @@ fn stretch(
         weights[last] = 1.0e4;
     }
     falling_fit(&mut level, &weights);
-    let top = smoothed(&level, along);
+    let top = smoothed(&level, along, kept);
     let count = top.len();
     let slopes = slopes(&top, along);
-    // The water as deep as uniform flow down the top's slope runs, up to
-    // the channel's depth, standing that deep over a bed the channel's
-    // depth below its top, but never rising downstream: where it would
-    // stand higher than the water above it (a riffle opening into a pool),
-    // it stands at that water's level, as deep over a bed scoured deeper.
+    // The water as deep as uniform flow down the top's slope runs (down
+    // steep beds as deep as skimming over the rock holds it), up to the
+    // channel's depth, standing that deep over a bed the channel's depth
+    // below its top, but never rising downstream: where it would stand
+    // higher than the water above it (a riffle opening into a pool), it
+    // stands at that water's level, as deep over a bed scoured deeper.
     let mut bed = Vec::with_capacity(count);
     let mut surface: Vec<f32> = Vec::with_capacity(count);
     for index in 0..count {
         let (width, discharge) = (widths[start + index], discharges[start + index]);
         let channel = max(channels[start + index], SHALLOWEST);
-        let depth = min(
-            max(
-                normal_depth(discharge, width, slopes[index], flow.roughness),
-                SHALLOWEST,
-            ),
-            channel,
+        let uniform = max(
+            normal_depth(discharge, width, slopes[index], flow.roughness),
+            SHALLOWEST,
         );
+        let skimming =
+            skimming_depth(discharge, width, slopes[index]) * ramp(slopes[index], SKIMMING);
+        let depth = min(max(uniform, skimming), channel);
         let own = top[index] - channel + depth;
         let level = surface.last().map_or(own, |&above| min(own, above));
         surface.push(level);
@@ -416,6 +640,17 @@ fn stretch(
                 break;
             }
             surface[index] = min(level, top[index] + BANK_FLOOD);
+        }
+    }
+    // Under each step's face the bed is scoured deeper, and the water stands
+    // in the pocket as high as it leaves it.
+    let mut leaving = f32::NAN;
+    for index in (0..count).rev() {
+        if pocket[index] > 0.0 && leaving.is_finite() {
+            bed[index] -= pocket[index];
+            surface[index] = max(leaving, surface[index] - pocket[index]);
+        } else {
+            leaving = surface[index];
         }
     }
     for index in 0..count {
@@ -463,7 +698,8 @@ fn jet(
     };
     let reach = from + (to - from) * min(max(share, 0.0), 1.0);
     let direction = (points[lip + 1] - points[lip]).normalize_or(Vec2::X);
-    let steps = max((reach / JET_STEP).ceil(), 1.0) as usize;
+    let drop = surface - height(reach);
+    let steps = max(((reach + drop) / JET_STEP).ceil(), 1.0) as usize;
     let path = (0..=steps)
         .map(|step| {
             let run = reach * step as f32 / steps as f32;
@@ -484,83 +720,190 @@ struct Jet {
     landing_speed: f32,
 }
 
-/// The falls of `jets`, in order down a river along `points`, `along`
-/// meters from its first, its water as `profile` runs it: each jet a fall,
-/// but jets landing in a chute the next leaves within CASCADE_GAP meters,
-/// its water falling CASCADE_SLOPE a meter or more, fall as one cascade,
-/// their paths joined by the chutes' water. The river is `widths` across,
-/// carries `discharges` and drains `areas`.
+/// The falls of a river at `points`, its water as `profile` runs it and
+/// leaping off its ledges as `jets` do: every stretch whose bed falls
+/// CASCADE_SLOPE or more a meter (`slopes`, its smooth fit's) or that
+/// leaps, falling FALL_HEIGHT or more or leaping at all, falls as one: its
+/// water's path down it, clinging to the rock on its water and through the
+/// air on each jet and clear of each step's face it leaps (`nappes`, from
+/// its points), and the seconds it takes; and the points their sheets run
+/// over. The river is `widths` across, carries `discharges` and drains
+/// `areas`; where `river` is false streams run, which fall in none.
 fn cascades(
     jets: &[Jet],
-    (points, along): (&[Vec2], &[f32]),
+    (points, slopes, nappes_at): (&[Vec2], &[f32], &[bool]),
     profile: &Profile,
     (widths, discharges, areas): (&[f32], &[f32], &[f32]),
-) -> Vec<Fall> {
+    river: impl Fn(usize) -> bool,
+) -> (Vec<Fall>, Vec<bool>) {
+    let count = points.len();
+    let along = distances(points);
+    let leaping = |at: usize| jets.iter().find(|jet| jet.lip == at);
+    let steep = |at: usize| river(at) && slopes[at] >= CASCADE_SLOPE;
     let mut falls = Vec::new();
+    let mut sheeted = vec![false; count];
     let mut first = 0;
-    while first < jets.len() {
+    while first < count {
+        if !(steep(first) || leaping(first).is_some()) {
+            first += 1;
+            continue;
+        }
+        // Down the stretch while it stays steep, through each jet and each
+        // of its pools.
         let mut last = first;
-        while let Some(next) = jets.get(last + 1) {
-            let landed = jets[last].landing;
-            let run = along[next.lip] - along[landed];
-            let fallen = profile.surface[landed] - profile.surface[next.lip];
-            if !(run <= CASCADE_GAP && fallen >= CASCADE_SLOPE * run) {
+        let mut at = first;
+        while at < count {
+            if let Some(jet) = leaping(at) {
+                last = jet.landing.min(count - 1);
+                at = jet.landing;
+            } else if steep(at) {
+                last = at;
+                at += 1;
+            } else if let Some(next) = (at + 1..count)
+                .take_while(|&next| along[next] - along[at] <= BRIDGE * widths[at])
+                .find(|&next| steep(next) || leaping(next).is_some())
+            {
+                last = next - 1;
+                at = next;
+            } else {
                 break;
             }
-            last += 1;
         }
         let (mut path, mut times, mut aloft) = (Vec::new(), Vec::new(), Vec::new());
-        let mut time = 0.0;
-        for (index, jet) in jets[first..=last].iter().enumerate() {
-            // Through the air, as long as its run at the speed it left at.
-            let lip = Vec2::new(jet.path[0][0], jet.path[0][2]);
-            let leaving = time;
-            for point in &jet.path {
-                let run = Vec2::new(point[0], point[2]).distance(lip);
-                time = leaving + run / jet.speed;
-                path.push(*point);
-                times.push(time);
-                aloft.push(true);
-            }
-            // It lands, and runs down the chute to the next lip.
-            if let Some(landed) = aloft.last_mut() {
-                *landed = false;
-            }
-            let Some(next) = jets.get(first + index + 1).filter(|_| first + index < last) else {
-                continue;
-            };
-            let mut previous = Vec3::from_array(path[path.len() - 1]);
-            for (at, place) in points
-                .iter()
-                .enumerate()
-                .take(next.lip + 1)
-                .skip(jet.landing)
-            {
-                let point = Vec3::new(place.x, profile.surface[at], place.y);
-                time += previous.distance(point) / max(profile.speed[at], SLOWEST);
-                previous = point;
-                if at < next.lip {
-                    path.push(point.to_array());
-                    times.push(time);
-                    aloft.push(false);
+        let (mut across, mut nappes) = (Vec::new(), Vec::new());
+        let (mut time, mut previous, mut landing_speed) = (0.0, None, None);
+        let mut at = first;
+        while at <= last {
+            if let Some(jet) = leaping(at) {
+                // Through the air, as long as its run at the speed it
+                // left at.
+                let lip = Vec3::from_array(jet.path[0]);
+                if let Some(previous) = previous {
+                    time += lip.distance(previous) / max(profile.speed[at], SLOWEST);
                 }
+                let leaving = time;
+                for point in &jet.path {
+                    let run = Vec2::new(point[0] - lip.x, point[2] - lip.z).length();
+                    time = leaving + run / jet.speed;
+                    path.push(*point);
+                    times.push(time);
+                    aloft.push(true);
+                    nappes.push(false);
+                    across.push(widths[at]);
+                }
+                if let Some(landed) = aloft.last_mut() {
+                    *landed = false;
+                }
+                previous = path.last().copied().map(Vec3::from_array);
+                landing_speed = Some(jet.landing_speed);
+                at = jet.landing;
+                continue;
             }
+            let point = Vec3::new(points[at].x, profile.surface[at], points[at].y);
+            if let Some(previous) = previous {
+                time += point.distance(previous) / max(profile.speed[at], SLOWEST);
+            }
+            path.push(point.to_array());
+            times.push(time);
+            aloft.push(false);
+            nappes.push(at < last && nappes_at[at]);
+            across.push(widths[at]);
+            previous = Some(point);
+            landing_speed = None;
+            at += 1;
         }
-        let (top, bottom) = (jets[first].lip, &jets[last]);
-        falls.push(Fall {
-            top: jets[first].path[0],
-            bottom: bottom.path[bottom.path.len() - 1],
-            path,
-            times,
-            aloft,
-            width: widths[top],
-            area: areas[top],
-            speed: bottom.landing_speed,
-            discharge: discharges[top],
-        });
+        let leaps = aloft.iter().any(|&flying| flying);
+        let drop = path
+            .first()
+            .zip(path.last())
+            .map_or(0.0, |(top, bottom)| top[1] - bottom[1]);
+        if path.len() >= 2 && (leaps || drop >= FALL_HEIGHT) {
+            falls.push(Fall {
+                top: path[0],
+                bottom: path[path.len() - 1],
+                path,
+                times,
+                aloft,
+                nappes,
+                widths: across,
+                sky: Vec::new(),
+                width: widths[first],
+                area: areas[first],
+                speed: landing_speed.unwrap_or(profile.speed[last]),
+                discharge: discharges[first],
+            });
+            sheeted[first..=last].fill(true);
+        }
         first = last + 1;
     }
-    falls
+    (falls, sheeted)
+}
+
+/// The least each point's face must fall for a river's water to leap off
+/// it, carrying `discharges` over `widths`: its critical depth twice over,
+/// and at least LEAP_LEAST meters.
+fn leaping_heights(discharges: &[f32], widths: &[f32]) -> Vec<f32> {
+    discharges
+        .iter()
+        .zip(widths)
+        .map(|(&discharge, &width)| max(LEAP_DEPTHS * critical_depth(discharge, width), LEAP_LEAST))
+        .collect()
+}
+
+/// The levels a river's channel is cut to where its water stands at
+/// `surface`, its points `along` meters from its first: that water, and
+/// beneath each of `jets` the line straight from the lip's water to where
+/// the jet lands.
+fn cut_beneath(surface: &[f32], jets: &[Jet], along: &[f32]) -> Vec<f32> {
+    let mut cut = surface.to_vec();
+    for jet in jets {
+        let (high, low) = (surface[jet.lip], surface[jet.landing]);
+        let run = max(along[jet.landing] - along[jet.lip], 1.0e-3);
+        for (index, level) in cut
+            .iter_mut()
+            .enumerate()
+            .take(jet.landing)
+            .skip(jet.lip + 1)
+        {
+            *level = high + (low - high) * (along[index] - along[jet.lip]) / run;
+        }
+    }
+    cut
+}
+
+/// The meters across a river half `half` wide.
+fn widths(half: &[f32]) -> Vec<f32> {
+    half.iter().map(|&half| max(2.0 * half, 0.2)).collect()
+}
+
+/// The half widths of river `line`'s channel, narrower as its smooth fit
+/// `plan` steepens and wider over the pockets its steps scour, and the
+/// steps its highest levels `targets` fall in, `along` meters from its
+/// first point (streams step none).
+fn steps_of(
+    line: &RiverLine,
+    plan: &Plan,
+    along: &[f32],
+    targets: &mut [f32],
+) -> (Vec<f32>, Steps) {
+    let half: Vec<f32> = line
+        .half
+        .iter()
+        .zip(&plan.slopes)
+        .map(|(&half, &slope)| half * narrowing(slope))
+        .collect();
+    let steps = stepped(
+        targets,
+        plan,
+        (&line.points, along, &widths(&half)),
+        |index| line.depth[index] >= MIN_DEPTH,
+    );
+    let half = half
+        .iter()
+        .zip(&steps.pocket)
+        .map(|(&half, &pocket)| half * (1.0 + POCKET_WIDENING * min(pocket, 1.0)))
+        .collect();
+    (half, steps)
 }
 
 /// `reach`'s river as `flow` runs it, and the falls where it leaves its bed.
@@ -569,13 +912,17 @@ pub(crate) fn river(reach: &Reach<'_>, flow: &Flow) -> (River, Vec<Fall>) {
     let count = line.points.len();
     let along = distances(&line.points);
     let stream = |index: usize| line.depth[index] < MIN_DEPTH;
-    let targets = tops(reach);
-    let widths: Vec<f32> = line.half.iter().map(|&half| max(2.0 * half, 0.2)).collect();
+    let mut targets = tops(reach);
+    // Steep channels run narrower, and fall in steps.
+    let plan = Plan::of(&targets, &along);
+    let (half, steps) = steps_of(line, &plan, &along, &mut targets);
+    let widths = widths(&half);
     let discharges: Vec<f32> = line
         .area
         .iter()
         .map(|&area| max(area * flow.yield_rate, TRICKLE))
         .collect();
+    let least = leaping_heights(&discharges, &widths);
     let mut profile = Profile {
         surface: vec![f32::NAN; count],
         depth: vec![0.0; count],
@@ -586,7 +933,7 @@ pub(crate) fn river(reach: &Reach<'_>, flow: &Flow) -> (River, Vec<Fall>) {
     let mut jets = Vec::new();
     // Stretch by stretch down the river, each fall's jet landing where the
     // next begins.
-    let drops: Vec<(usize, usize)> = drops(&targets, &along)
+    let drops: Vec<(usize, usize)> = drops(&targets, &along, &least)
         .into_iter()
         .filter(|&(lip, _)| !stream(lip))
         .collect();
@@ -601,7 +948,7 @@ pub(crate) fn river(reach: &Reach<'_>, flow: &Flow) -> (River, Vec<Fall>) {
             (&targets, &along),
             (&widths, &line.depth, &discharges),
             (source, None),
-            flow,
+            (flow, &steps),
             &mut profile,
         );
         // The lip passes its flow at least as fast as its waves.
@@ -635,47 +982,47 @@ pub(crate) fn river(reach: &Reach<'_>, flow: &Flow) -> (River, Vec<Fall>) {
             (&targets, &along),
             (&widths, &line.depth, &discharges),
             (source, reach.outlet),
-            flow,
+            (flow, &steps),
             &mut profile,
         );
     } else if start < count {
         profile.surface[start] = targets[start];
         profile.depth[start] = SHALLOWEST;
     }
-    let falls = cascades(
+    // Off a step's face high enough, where no jet leaves, the water leaps
+    // clear as a nappe.
+    let nappes: Vec<bool> = (0..count)
+        .map(|index| {
+            !stream(index)
+                && !airborne[index]
+                && steps.face[index]
+                    >= max(
+                        LEAP_DEPTHS * critical_depth(discharges[index], widths[index]),
+                        NAPPE_LEAST,
+                    )
+        })
+        .collect();
+    let (falls, sheeted) = cascades(
         &jets,
-        (&line.points, &along),
+        (&line.points, &plan.slopes, &nappes),
         &profile,
         (&widths, &discharges, &line.area),
+        |index| !stream(index),
     );
-    // Beneath each jet its channel is cut straight from the lip's water to
-    // where the jet lands.
-    let mut cut = profile.surface.clone();
-    for jet in &jets {
-        let (high, low) = (profile.surface[jet.lip], profile.surface[jet.landing]);
-        let run = max(along[jet.landing] - along[jet.lip], 1.0e-3);
-        for (index, level) in cut
-            .iter_mut()
-            .enumerate()
-            .take(jet.landing)
-            .skip(jet.lip + 1)
-        {
-            *level = high + (low - high) * (along[index] - along[jet.lip]) / run;
-        }
-    }
+    let cut = cut_beneath(&profile.surface, &jets, &along);
     // Points in the air carry no surface; stretches leaving them are falls.
     for index in 0..count {
         if airborne[index] && index > 0 && airborne[index - 1] {
             profile.surface[index] = f32::NAN;
         }
     }
-    let foam = foam(&profile, &along, &airborne);
+    let foam = foam(&profile, &along, &airborne, &cut);
     let fill = fills(&profile.depth, &line.depth, &along);
     let river = River {
         points: line.points.iter().map(|point| point.to_array()).collect(),
         surface: profile.surface,
         cut,
-        half: line.half.clone(),
+        half,
         channel: line.depth.clone(),
         fill,
         depth: profile.depth,
@@ -683,6 +1030,8 @@ pub(crate) fn river(reach: &Reach<'_>, flow: &Flow) -> (River, Vec<Fall>) {
         discharge: profile.discharge,
         foam,
         falls: airborne,
+        sheeted,
+        nappes,
         head: line.head && reach.source.is_none(),
     };
     (river, falls)
@@ -694,14 +1043,17 @@ pub(crate) fn river(reach: &Reach<'_>, flow: &Flow) -> (River, Vec<Fall>) {
 /// least FILL_LEAST and no more than leaves its banks FREEBOARD over it
 /// (the bound that wins where water too shallow for both runs), then
 /// averaged over FILL_SMOOTHING meters either side within each point's
-/// bounds. Its channel is shaped as deep as that share of its width needs
-/// (`Rivers::cap`).
+/// bounds, never so narrow that its banks stand higher over its water than
+/// its channel's own, or FREEBOARD over water deeper than its channel (a
+/// pool scoured under a step). Its channel is shaped as deep as that share
+/// of its width needs (`Rivers::cap`).
 fn fills(depth: &[f32], channel: &[f32], along: &[f32]) -> Vec<f32> {
     let count = depth.len();
     let bounds = |index: usize| {
         let depth = max(depth[index], SHALLOWEST);
         let most = (depth / (depth + FREEBOARD)).sqrt();
-        (min(FILL_LEAST, most), most)
+        let banked = (depth / max(max(channel[index], SHALLOWEST), depth + FREEBOARD)).sqrt();
+        (min(max(FILL_LEAST, banked), most), most)
     };
     let own: Vec<f32> = (0..count)
         .map(|index| {
@@ -726,12 +1078,13 @@ fn fills(depth: &[f32], channel: &[f32], along: &[f32]) -> Vec<f32> {
     out
 }
 
-/// How much foam rides each point of `profile`: rapids whiten water running
-/// faster than its waves, a hydraulic jump where it slows back, and water
-/// landing from a fall, each carried on downstream at the river's speed and
-/// thinning over [`FOAM_SECONDS`].
-fn foam(profile: &Profile, along: &[f32], airborne: &[bool]) -> Vec<f32> {
-    foam_along(&profile.depth, &profile.speed, along, airborne)
+/// How much foam rides each point of `profile`, its bed cut to `levels`:
+/// rapids whiten water running faster than its waves, a hydraulic jump
+/// where it slows back, water skimming down steep rock where it takes in
+/// air, and water landing from a fall, each carried on downstream at the
+/// river's speed and thinning over [`FOAM_SECONDS`].
+fn foam(profile: &Profile, along: &[f32], airborne: &[bool], levels: &[f32]) -> Vec<f32> {
+    foam_along(&profile.depth, &profile.speed, (along, levels), airborne)
 }
 
 /// Foam `entering` `river` at its start from the rivers ending there,
@@ -748,11 +1101,12 @@ pub(crate) fn foam_entering(river: &mut River, entering: f32) {
     }
 }
 
-/// [`foam`] of water `depth` deep running at `speed` at each point.
+/// [`foam`] of water `depth` deep running at `speed` at each point, its bed
+/// cut to `levels` there.
 pub(crate) fn foam_along(
     depth: &[f32],
     speed: &[f32],
-    along: &[f32],
+    (along, levels): (&[f32], &[f32]),
     airborne: &[bool],
 ) -> Vec<f32> {
     let count = along.len();
@@ -760,9 +1114,22 @@ pub(crate) fn foam_along(
         let depth = max(depth[index], SHALLOWEST);
         speed[index] / (GRAVITY * depth).sqrt()
     };
+    // How fast the bed falls at a point, across its neighbors.
+    let slope = |index: usize| {
+        let (before, after) = (index.saturating_sub(1), (index + 1).min(count - 1));
+        max(levels[before] - levels[after], 0.0) / max(along[after] - along[before], 1.0e-3)
+    };
     let mut foam = vec![0.0_f32; count];
     let mut carried = 0.0_f32;
+    // Meters the bed has run steep down to the point.
+    let mut steep = 0.0_f32;
     for index in 0..count {
+        let falls = slope(index);
+        steep = if falls >= STEEP_AIR && index > 0 {
+            steep + along[index] - along[index - 1]
+        } else {
+            0.0
+        };
         if airborne[index] && index > 0 && airborne[index - 1] {
             carried = 1.0;
             continue;
@@ -777,13 +1144,22 @@ pub(crate) fn foam_along(
         } else {
             0.0
         };
+        // Past its inception point steep water holds about 0.9 sin of the
+        // bed's angle of air.
+        let air = 0.9 * falls / (1.0 + falls * falls).sqrt();
+        let inception = max(
+            INCEPTION_DEPTHS * max(depth[index], SHALLOWEST),
+            INCEPTION_LEAST,
+        );
+        let whitened = min(max((air - AIRED[0]) / (AIRED[1] - AIRED[0]), 0.0), 1.0);
+        let aired = whitened * min(steep / inception, 1.0) * RAPIDS_WHITE;
         // Foam rides the current, and lands with the jet that carried it.
         if index > 0 && !airborne[index - 1] {
             let run = along[index] - along[index - 1];
             let seconds = run / max(speed[index - 1], 0.05);
             carried *= libm::expf(-seconds / FOAM_SECONDS);
         }
-        carried = max(carried, max(rapids, jump));
+        carried = max(carried, max(max(rapids, jump), aired));
         foam[index] = carried;
     }
     foam

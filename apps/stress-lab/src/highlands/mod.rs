@@ -17,6 +17,7 @@
 mod bodies;
 mod caves;
 mod hiker;
+mod looks;
 mod rocks;
 mod trees;
 mod world;
@@ -28,6 +29,7 @@ use engine::prelude::*;
 use engine::terrain::*;
 
 use crate::kit::{StressConfig, StressFile};
+use looks::{LOOKS, Look};
 pub(crate) use world::HighlandsWorld;
 
 /// The images the page fetches for this scene, from `stress/terrain/`:
@@ -73,186 +75,6 @@ pub const ROCK_FILES: [&str; 6] = [
 /// repeats show less across a face many meters wide.
 const BOULDER_SCAN_TILING: f32 = 1.8;
 const CLIFF_SCAN_TILING: f32 = 2.5;
-
-/// How one surface material looks: its name; the material whose maps it
-/// uses (whose files start with that name, its own unless it borrows
-/// another's); its linear color and roughness without maps, and the color
-/// its maps' colors are multiplied by; the meters its maps repeat over; how
-/// sharply its heights win where it blends; how it lies on steep ground;
-/// the cover growing where it lies; the meters its
-/// heights sink between its stones and tufts; and the
-/// meters tracks sink it at most.
-struct Look {
-    name: &'static str,
-    maps: &'static str,
-    color: [f32; 3],
-    roughness: f32,
-    tint: [f32; 3],
-    tiling: f32,
-    height_contrast: f32,
-    projection: SurfaceProjection,
-    cover: Option<Cover>,
-    relief: f32,
-    deform: f32,
-}
-
-const LOOKS: [Look; 10] = [
-    Look {
-        name: "grass",
-        maps: "grass",
-        color: [0.105, 0.135, 0.045],
-        roughness: 0.92,
-        tint: [1.0, 1.0, 1.0],
-        tiling: 3.0,
-        height_contrast: 0.35,
-        projection: SurfaceProjection::Top,
-        cover: Some(Cover {
-            density: 140.0,
-            height: [0.1, 0.34],
-            width: 0.035,
-            color: [0.16, 0.23, 0.06],
-            sway: 0.6,
-        }),
-        relief: 0.03,
-        deform: 0.04,
-    },
-    Look {
-        name: "dry_grass",
-        maps: "dry_grass",
-        color: [0.2, 0.16, 0.08],
-        roughness: 0.92,
-        tint: [0.9, 0.9, 0.9],
-        tiling: 3.5,
-        height_contrast: 0.35,
-        projection: SurfaceProjection::Top,
-        cover: Some(Cover {
-            density: 70.0,
-            height: [0.14, 0.46],
-            width: 0.025,
-            color: [0.34, 0.27, 0.12],
-            sway: 0.7,
-        }),
-        relief: 0.03,
-        deform: 0.03,
-    },
-    Look {
-        name: "dirt",
-        maps: "dirt",
-        color: [0.21, 0.165, 0.11],
-        roughness: 0.92,
-        tint: [1.0, 1.0, 1.0],
-        tiling: 3.0,
-        height_contrast: 0.5,
-        projection: SurfaceProjection::Top,
-        cover: None,
-        relief: 0.05,
-        deform: 0.06,
-    },
-    Look {
-        name: "scree",
-        maps: "scree",
-        color: [0.2, 0.19, 0.18],
-        roughness: 0.82,
-        tint: [0.78, 0.74, 0.68],
-        tiling: 4.0,
-        height_contrast: 0.8,
-        projection: SurfaceProjection::Top,
-        cover: None,
-        relief: 0.12,
-        deform: 0.02,
-    },
-    Look {
-        name: "rock",
-        maps: "rock",
-        color: [0.25, 0.235, 0.22],
-        roughness: 0.82,
-        tint: [0.74, 0.7, 0.64],
-        tiling: 8.0,
-        height_contrast: 0.7,
-        projection: SurfaceProjection::Biplanar,
-        cover: None,
-        relief: 0.0,
-        deform: 0.0,
-    },
-    Look {
-        name: "snow",
-        maps: "snow",
-        color: [0.82, 0.84, 0.88],
-        roughness: 0.55,
-        tint: [1.0, 1.0, 1.0],
-        tiling: 6.0,
-        height_contrast: 0.4,
-        projection: SurfaceProjection::Top,
-        cover: None,
-        relief: 0.04,
-        deform: 0.3,
-    },
-    // Needle litter under the spruces: the dirt's maps, darkened toward
-    // olive, so forests read as dark stands from afar.
-    Look {
-        name: "forest_floor",
-        maps: "dirt",
-        color: [0.03, 0.036, 0.022],
-        roughness: 0.95,
-        tint: [0.18, 0.23, 0.15],
-        tiling: 3.0,
-        height_contrast: 0.5,
-        projection: SurfaceProjection::Top,
-        cover: None,
-        relief: 0.06,
-        deform: 0.05,
-    },
-    // Grass where water gathers: deeper green, taller and
-    // denser, in hollows and along streams.
-    Look {
-        name: "wet_grass",
-        maps: "grass",
-        color: [0.07, 0.13, 0.04],
-        roughness: 0.85,
-        tint: [0.72, 0.95, 0.68],
-        tiling: 3.0,
-        height_contrast: 0.35,
-        projection: SurfaceProjection::Top,
-        cover: Some(Cover {
-            density: 170.0,
-            height: [0.16, 0.5],
-            width: 0.035,
-            color: [0.1, 0.2, 0.05],
-            sway: 0.6,
-        }),
-        relief: 0.03,
-        deform: 0.07,
-    },
-    // Stream and river beds: the scree's stones, washed darker and wetter.
-    Look {
-        name: "riverbed",
-        maps: "scree",
-        color: [0.13, 0.13, 0.12],
-        roughness: 0.55,
-        tint: [0.55, 0.56, 0.54],
-        tiling: 3.0,
-        height_contrast: 0.9,
-        projection: SurfaceProjection::Top,
-        cover: None,
-        relief: 0.1,
-        deform: 0.03,
-    },
-    // Roads: packed gravel, the scree's stones finer and
-    // warmer, where no grass grows.
-    Look {
-        name: "road",
-        maps: "scree",
-        color: [0.27, 0.24, 0.2],
-        roughness: 0.9,
-        tint: [0.92, 0.85, 0.74],
-        tiling: 1.6,
-        height_contrast: 0.6,
-        projection: SurfaceProjection::Top,
-        cover: None,
-        relief: 0.03,
-        deform: 0.04,
-    },
-];
 
 /// Level-0 tiles along each axis, and their sample spacing: 8,192 meters.
 const TILES: u32 = 32;
@@ -1830,7 +1652,8 @@ fn rules() -> Biomes {
             // under them, so their faces stand in the slope
             // instead of over it; standing on two-kilometer tiles and half
             // of them on the pinned four-kilometer ones, so cliff bands show
-            // from afar.
+            // from afar. None stand by rivers, whose channels the finer
+            // tiles cut deeper than the ground they stand on.
             PlacementLayer {
                 id: "cliffs".into(),
                 assets: (0..CLIFFS)
@@ -1845,6 +1668,7 @@ fn rules() -> Biomes {
                 mask: Mask::Multiply(vec![
                     Mask::Slope([36.0, 46.0]),
                     remap(noise(260.0, 31, 2), 0.45, 0.65),
+                    Mask::Invert(Box::new(Mask::River([16.0, 10.0]))),
                 ]),
                 scale: [12.0, 30.0],
                 align: 0.15,
@@ -1856,6 +1680,33 @@ fn rules() -> Biomes {
                     level: 4,
                     share: 0.5,
                 }),
+            },
+            // Boulders in steep channels, breaking the white water running
+            // down them, as cascades' beds hold them (Montgomery and
+            // Buffington).
+            PlacementLayer {
+                id: "channel_boulders".into(),
+                assets: boulders(1.0),
+                density: 300.0,
+                footprint: 3.0,
+                materials: vec![
+                    "riverbed".into(),
+                    "wet_rock".into(),
+                    "moss".into(),
+                    "rock".into(),
+                ],
+                mask: Mask::Multiply(vec![
+                    Mask::River([-0.5, -2.0]),
+                    Mask::Slope([14.0, 24.0]),
+                    remap(noise(14.0, 61, 2), 0.35, 0.7),
+                ]),
+                scale: [0.6, 1.6],
+                align: 0.7,
+                face: 0.0,
+                sink: 0.3,
+                bed: 0.3,
+                level: 0,
+                far: None,
             },
             PlacementLayer {
                 id: "outcrops".into(),
@@ -1953,6 +1804,39 @@ fn rules() -> Biomes {
                         ]),
                         0.55,
                         0.75,
+                    ),
+                ),
+                // Where rivers run steep, their spray keeps the rock beside
+                // them wet, and moss grows on it in patches.
+                layer(
+                    "wet_rock",
+                    remap(
+                        Mask::Add(vec![
+                            Mask::Multiply(vec![
+                                Mask::River([10.0, 2.0]),
+                                Mask::Slope([24.0, 34.0]),
+                            ]),
+                            scaled(noise(9.0, 51, 2), 0.45),
+                            Mask::Constant(-0.1),
+                        ]),
+                        0.55,
+                        0.8,
+                    ),
+                ),
+                layer(
+                    "moss",
+                    remap(
+                        Mask::Add(vec![
+                            Mask::Multiply(vec![
+                                Mask::River([7.0, 1.0]),
+                                Mask::Slope([20.0, 30.0]),
+                                Mask::Invert(Box::new(Mask::Slope([50.0, 65.0]))),
+                            ]),
+                            scaled(noise(5.0, 52, 2), 0.7),
+                            Mask::Constant(-0.45),
+                        ]),
+                        0.5,
+                        0.7,
                     ),
                 ),
                 layer(

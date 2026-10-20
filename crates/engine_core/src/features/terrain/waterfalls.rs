@@ -1,9 +1,10 @@
-//! Waterfalls: where terrains' hydrology bakes find rivers leaving their beds,
-//! the engine spawns their spray and mist and despawns them as terrains'
-//! bakes finish and terrains go. The water pass draws the jets themselves
-//! from the terrains' falls (the renderer's `water_falls`). Fine spray
-//! leaves each lip at the jet's speed and falls under gravity along it,
-//! droplets splash up where the jet lands, and mist billows up there, as
+//! Waterfalls: where terrains' hydrology bakes find rivers falling down steep
+//! rock and off its ledges, the engine spawns their spray and mist and
+//! despawns them as terrains' bakes finish and terrains go. The water pass
+//! draws the falling water itself from the terrains' falls (the renderer's
+//! `water_falls`). Fine spray leaves each ledge at the jet's speed and falls
+//! under gravity along it, droplets splash up where each jet lands and where
+//! the water reaches the foot of the rock, and mist billows up there, as
 //! much as the falling water's power stirs (particles). Water that does not
 //! draw spawns none.
 
@@ -43,6 +44,10 @@ const SPLASH_WATTS: f32 = 2.0e3;
 const SPLASH_RATE: [f32; 2] = [20.0, 600.0];
 const MIST_WATTS: f32 = 1.5e5;
 const MIST_RATE: [f32; 2] = [1.0, 12.0];
+/// Watts each puff bursting out of a landing stands for, and the fewest and
+/// most a landing bursts out a second.
+const BURST_WATTS: f32 = 6.0e4;
+const BURST_RATE: [f32; 2] = [2.0, 24.0];
 
 /// Each jet of fall `fall`: where it leaves (the index of its path's point),
 /// where it lands, and the speed it lands at (meters a second).
@@ -71,11 +76,14 @@ fn jets(fall: &Fall) -> Vec<(usize, usize, f32)> {
     found
 }
 
-/// A fall's emitters at `origin`, seeded by `seed`: fine spray leaving its
-/// lip at the jet's speed, falling under gravity along the jet's parabola;
-/// and where each of its jets lands, droplets splashing up and out, as fast
-/// as a share of its landing speed throws them, and mist billowing up, as
-/// much as the jet's power stirs, its puffs as big as the fall is wide.
+/// A fall's emitters at `origin`, seeded by `seed`: fine spray leaving each
+/// lip it leaps off at the jet's speed, falling under gravity along the
+/// jet's parabola; and where each jet lands, and where the water clinging
+/// down its rock reaches its foot, droplets splashing up and out, as fast
+/// as a share of the landing speed throws them, mist bursting out low over
+/// the pool, and mist billowing up, as much as the falling water's power
+/// stirs, its puffs as big as the fall is wide; each as dim as the ground
+/// around hides the sky from the water there (the fall's `sky`).
 fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmitter)> {
     let width = fall.width;
     let at = |point: Vec3| Transform {
@@ -83,41 +91,58 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
         ..Transform::default()
     };
     let point = |index: usize| Vec3::from_array(fall.path[index]);
-    let jets = jets(fall);
-    let Some(&(lip, landing, _)) = jets.first() else {
-        return Vec::new();
-    };
-    let (top, bottom) = (point(lip), point(landing));
-    let flight = Vec3::new(bottom.x - top.x, 0.0, bottom.z - top.z);
-    let (reach, drop) = (flight.length(), max(top.y - bottom.y, 0.1));
-    // The jet leaves the lip level at the speed that lands it `reach` away
-    // `drop` below: drop = g reach^2 / (2 v^2).
-    let speed = max(reach * (GRAVITY / (2.0 * drop)).sqrt(), 0.5);
-    let seconds = (2.0 * drop / GRAVITY).sqrt();
-    let mut spawned = vec![(
-        at(top),
-        ParticleEmitter {
-            rate: 30.0 + 10.0 * width,
-            lifetime: seconds,
-            speed,
-            direction: flight.normalize_or(Vec3::X),
-            spread: 0.2,
-            acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
-            size: [0.05, 0.12],
-            color: [[0.9, 0.93, 0.97, 0.6], [0.94, 0.96, 1.0, 0.15]],
-            emission: 1.0,
-            blend: ParticleBlend::Alpha,
-            stretch: 0.04,
-            offset: Vec3::ZERO,
-            radius: 0.45 * width,
-            seed: seed.wrapping_mul(97),
-        },
-    )];
+    let sky = |index: usize| fall.sky.get(index).copied().unwrap_or(1.0);
+    let mut landings = Vec::new();
+    let mut spawned = Vec::new();
+    for (number, &(lip, landing, landing_speed)) in jets(fall).iter().enumerate() {
+        let (top, bottom) = (point(lip), point(landing));
+        let flight = Vec3::new(bottom.x - top.x, 0.0, bottom.z - top.z);
+        let (reach, drop) = (flight.length(), max(top.y - bottom.y, 0.1));
+        // The jet leaves the lip level at the speed that lands it `reach`
+        // away `drop` below: drop = g reach^2 / (2 v^2).
+        let speed = max(reach * (GRAVITY / (2.0 * drop)).sqrt(), 0.5);
+        let seconds = (2.0 * drop / GRAVITY).sqrt();
+        spawned.push((
+            at(top),
+            ParticleEmitter {
+                rate: 30.0 + 10.0 * width,
+                lifetime: seconds,
+                speed,
+                direction: flight.normalize_or(Vec3::X),
+                spread: 0.2,
+                acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
+                size: [0.05, 0.12],
+                color: [[0.9, 0.93, 0.97, 0.6], [0.94, 0.96, 1.0, 0.15]],
+                emission: 1.0,
+                blend: ParticleBlend::Alpha,
+                stretch: 0.04,
+                offset: Vec3::ZERO,
+                radius: 0.45 * width,
+                seed: seed.wrapping_mul(97).wrapping_add(number as u32),
+            },
+        ));
+        landings.push((bottom, drop, landing_speed, sky(landing)));
+    }
+    // Water clinging to its rock to the end lands at its foot, from the
+    // last place it landed or its lip, unless its last jet lands there.
+    let last = fall.path.len() - 1;
+    let clinging = jets(fall)
+        .last()
+        .is_none_or(|&(_, landing, _)| landing + 1 < last);
+    if last >= 1 && clinging && !fall.aloft.get(last - 1).copied().unwrap_or(false) {
+        let from = landings.last().map_or(point(0).y, |&(landed, ..)| landed.y);
+        landings.push((
+            point(last),
+            max(from - point(last).y, 0.1),
+            fall.speed,
+            sky(last),
+        ));
+    }
     let puffs = clamp(width / 10.0, 0.6, 2.5);
-    for (number, &(lip, landing, landing_speed)) in jets.iter().enumerate() {
-        let landed = point(landing);
-        let drop = max(point(lip).y - landed.y, 0.1);
+    for (number, &(landed, drop, landing_speed, open)) in landings.iter().enumerate() {
         let power = WATER_DENSITY * GRAVITY * fall.discharge * drop;
+        let lit =
+            |[red, green, blue, alpha]: [f32; 4]| [red * open, green * open, blue * open, alpha];
         let key = seed.wrapping_mul(131).wrapping_add(number as u32);
         spawned.push((
             at(landed),
@@ -129,13 +154,32 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
                 spread: 0.9,
                 acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
                 size: [0.06, 0.16],
-                color: [[0.92, 0.95, 0.98, 0.65], [0.95, 0.97, 1.0, 0.0]],
+                color: [lit([0.92, 0.95, 0.98, 0.65]), lit([0.95, 0.97, 1.0, 0.0])],
                 emission: 1.0,
                 blend: ParticleBlend::Alpha,
                 stretch: 0.05,
                 offset: Vec3::ZERO,
                 radius: 0.35 * width,
                 seed: key.wrapping_mul(31) ^ 0x5bd1_e995,
+            },
+        ));
+        spawned.push((
+            at(landed + Vec3::Y * 0.5),
+            ParticleEmitter {
+                rate: clamp(power / BURST_WATTS, BURST_RATE[0], BURST_RATE[1]),
+                lifetime: 1.6,
+                speed: clamp(landing_speed * 0.3, 2.0, 6.0),
+                direction: Vec3::Y,
+                spread: 1.45,
+                acceleration: Vec3::new(0.0, 0.6, 0.0),
+                size: [1.5 * puffs, 5.0 * puffs],
+                color: [lit([0.94, 0.96, 1.0, 0.25]), lit([1.0, 1.0, 1.0, 0.0])],
+                emission: 1.0,
+                blend: ParticleBlend::Mist,
+                stretch: 0.0,
+                offset: Vec3::ZERO,
+                radius: 0.3 * width,
+                seed: key.wrapping_mul(7) ^ 0x2c1b_3c6d,
             },
         ));
         spawned.push((
@@ -148,7 +192,7 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
                 spread: 1.3,
                 acceleration: Vec3::new(0.0, 0.3, 0.0),
                 size: [4.0 * puffs, 11.0 * puffs],
-                color: [[0.94, 0.96, 1.0, 0.4], [1.0, 1.0, 1.0, 0.0]],
+                color: [lit([0.94, 0.96, 1.0, 0.3]), lit([1.0, 1.0, 1.0, 0.0])],
                 emission: 1.0,
                 blend: ParticleBlend::Mist,
                 stretch: 0.0,
