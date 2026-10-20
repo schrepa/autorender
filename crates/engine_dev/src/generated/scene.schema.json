@@ -2883,6 +2883,14 @@
       "description": "Foliage looks.",
       "type": "object",
       "properties": {
+        "crown_depth": {
+          "description": "Meters into a crown the sun's light reaches: masked leaves and\nneedles, and the cards baked from them, fade into the sun's\nshadow over this depth behind the first caster toward the sun\ninstead of all at once; 0 turns it off.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 8.0,
+          "minimum": 0.0
+        },
         "ground_blend": {
           "description": "Meters up from the ground over which plants' color and light\nblend into the ground's at their base; 0 turns it off.",
           "type": "number",

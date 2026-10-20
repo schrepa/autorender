@@ -55,6 +55,10 @@ struct SurfacePoint {
     // How much of the point is leaf, needle or blade (`leafiness`): zero
     // but for masked foliage, its cards and ground cover.
     leaf: f32,
+    // How much of the point lies inside a crown, which the sun's light
+    // reaches into (scene.wgsl's `crown_light`): masked foliage's leaf
+    // share and its cards'; zero elsewhere, blades too.
+    crown: f32,
 }
 
 // Shaded light of a surface: graded color (and its linear light before the
@@ -533,6 +537,7 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     point.alpha = point.roughness * point.roughness;
     if ALPHA_MASK {
         point.leaf = leafiness(point.albedo);
+        point.crown = point.leaf;
         point.albedo *= plant_tint(fragment_plant, point.leaf);
     }
     point.f0 = mix(vec3<f32>(0.04), point.albedo, metalness);
@@ -853,8 +858,10 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
         * lighting.sun_color.rgb;
     var visible = 1.0;
     if any(sunlit != vec3<f32>(0.0)) && point.sun_shade != 1.0 && interior.y != 0.0 {
+        crown_light = point.crown;
         visible = sun_visibility(point.world + point.shadow_offset, point.geometric,
             point.world_dx, point.world_dy, point.distance, point.on_terrain);
+        crown_light = 0.0;
     }
     let sun_light = sunlit * visible * (1.0 - point.sun_shade) * interior.y;
     let emitted = (point.albedo * point.emission + point.emissive) * lighting.effects.x;

@@ -220,7 +220,8 @@ gpu_structs! {
         /// Steepest receiver plane (depth per texel) of each near cascade.
         pub near_limits: [f32; 4],
         /// Distance where shadows are gone, the normal offset (world units) of
-        /// far lookups and the far maps' steepest receiver plane; w unused.
+        /// far lookups, the far maps' steepest receiver plane, and the meters
+        /// into crowns the sun reaches (foliage's crown depth).
         pub offsets: [f32; 4],
         /// Texels a side of the near cascades and the far maps; zw unused.
         pub sizes: [f32; 4],

@@ -116,7 +116,8 @@ struct Shadow {
     // Steepest receiver plane (depth per texel) of each near cascade.
     near_limits: vec4<f32>,
     // x: distance where shadows are gone; y: normal offset of far lookups;
-    // z: steepest receiver plane of the far maps.
+    // z: steepest receiver plane of the far maps; w: meters into crowns the
+    // sun reaches (`crown_softness`).
     offsets: vec4<f32>,
     // Texels a side of the near cascades (x) and the far maps (y).
     sizes: vec4<f32>,
@@ -581,12 +582,25 @@ fn far_visibility(world: vec3<f32>) -> f32 {
 // only make shadow edges blockier. The margin left covers depth rounding.
 const RECEIVER_MARGIN: f32 = 2.0 / 65535.0;
 
-// A receiver in a shadow map: its position in texels, its depth, and how its
-// depth changes per texel along the map's axes.
+// A receiver in a shadow map: its position in texels, its depth, how its
+// depth changes per texel along the map's axes, and the depth past the
+// first caster over which it fades into shadow (0: at once).
 struct MapPoint {
     texel: vec2<f32>,
     depth: f32,
     slope: vec2<f32>,
+    soft: f32,
+}
+
+// How much of the fragment being shaded lies inside a crown (its surface's
+// `crown`), set around its sun lookup; 0 elsewhere.
+var<private> crown_light: f32;
+
+// The depth over which a receiver inside a crown fades into shadow in a map
+// whose depth changes by `per_meter` per meter along the sun: the crown
+// depth's worth, as light reaches past a crown's first leaves.
+fn crown_softness(per_meter: f32) -> f32 {
+    return crown_light * shadow.offsets.w * abs(per_meter);
 }
 
 // How depth changes per texel along a map's axes where the surface moves
@@ -617,6 +631,7 @@ fn map_point(clip_from_world: mat4x4<f32>, world: vec3<f32>, dx: vec3<f32>, dy: 
     point.depth = clip.z;
     point.slope = texel_slope(clip_from_world * vec4<f32>(dx, 0.0),
         clip_from_world * vec4<f32>(dy, 0.0), vec2<f32>(0.5, -0.5) * size, limit);
+    point.soft = crown_softness((clip_from_world * vec4<f32>(shadow.light[2].xyz, 0.0)).z);
     return point;
 }
 
@@ -630,14 +645,18 @@ fn gather_uv(point: MapPoint, size: f32) -> vec2<f32> {
 // Visibility of `point` from the four texel depths around it, gathered at
 // `gather_uv`, in gather order (least u and greatest v, both greatest,
 // greatest u and least v, both least), each compared with the receiver's
-// plane at the texel's center and weighted bilinearly.
+// plane at the texel's center and weighted bilinearly. A soft point fades
+// into shadow over its softness behind a texel's caster.
 fn plane_visibility(depths: vec4<f32>, point: MapPoint) -> f32 {
     let corner = point.texel - vec2<f32>(0.5);
     let f = corner - floor(corner);
     let du = vec4<f32>(-f.x, 1.0 - f.x, 1.0 - f.x, -f.x);
     let dv = vec4<f32>(1.0 - f.y, 1.0 - f.y, -f.y, -f.y);
     let plane = point.depth + point.slope.x * du + point.slope.y * dv - RECEIVER_MARGIN;
-    let lit = select(vec4<f32>(0.0), vec4<f32>(1.0), plane <= depths);
+    var lit = select(vec4<f32>(0.0), vec4<f32>(1.0), plane <= depths);
+    if point.soft > 0.0 {
+        lit = saturate(vec4<f32>(1.0) + (depths - plane) / point.soft);
+    }
     return mix(mix(lit.w, lit.z, f.x), mix(lit.x, lit.y, f.x), f.y);
 }
 
@@ -740,6 +759,7 @@ fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         let level_scale = vec3<f32>(scales.x, scales.x, scales.z);
         point.slope = texel_slope(vec4<f32>(light_dx * level_scale, 0.0),
             vec4<f32>(light_dy * level_scale, 0.0), vec2<f32>(1.0, -1.0) * size, window.w);
+        point.soft = crown_softness(scales.z);
         let here = plane_visibility(level_depths(level, point, size), point);
         let edge = min(min(local.x, local.y), min(1.0 - local.x, 1.0 - local.y));
         let weight = (1.0 - saturate(1.0 - edge / LEVEL_HANDOVER)) * fine;

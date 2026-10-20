@@ -512,6 +512,7 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     var point: SurfacePoint;
     point.albedo = albedo_color;
     point.leaf = leaf;
+    point.crown = leaf;
     point.opacity = color.a;
     point.emission = slot_surface.z * 16.0 * emissive.a * unpremultiply;
     point.emissive = record.emissive * emissive.rgb * unpremultiply;

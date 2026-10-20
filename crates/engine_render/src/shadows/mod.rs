@@ -687,6 +687,7 @@ impl ShadowPass {
         }
         let mut lookup = regions.lookup_uniform(&settings, classify, &self.levels);
         lookup.level_state[3] = self.horizon_records;
+        lookup.offsets[3] = snapshot.environment.foliage.sanitized().crown_depth;
         self.maps.write_uniform(queue, lookup);
         // Bindings: poses of this frame, and the selection inputs.
         for (parity, group) in self.pose_groups.iter_mut().enumerate() {
