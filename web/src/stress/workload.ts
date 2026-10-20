@@ -304,10 +304,12 @@ if (params.has("config")) {
     if (source.length > 2000) throw new Error("Workload link is too large.");
     const parsed = JSON.parse(source) as Partial<StressConfig>;
     // Links from before scenes existed build the tower field.
-    // and before compressed textures, without them.
+    // and before compressed textures, without them, and before rigid
+    // bodies, with none.
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       parsed.scene ??= "field";
       parsed.compressed_textures ??= false;
+      parsed.bodies ??= 0;
     }
     if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" || Object.keys(parsed).length !== Object.keys(baseline).length ||
         Object.entries(baseline).some(([key, value]) => typeof parsed[key as keyof StressConfig] !== typeof value) || !scenes.includes(parsed.scene as StressScene)) {
