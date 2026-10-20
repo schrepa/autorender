@@ -499,12 +499,17 @@ async function start() {
     pause.setAttribute("aria-pressed", "true");
     await window.__engineDev!.request({ op: "render" });
     // ?environment={...}: sections merged over the scene's, so a look can be
-    // tried from a link. The page fails with why the engine refused them.
+    // tried from a link. The environment control wants the host paused, so
+    // a playing session pauses for it and plays on. The page fails with why
+    // the engine refused them.
     const environment = new URLSearchParams(location.search).get("environment");
     if (environment) {
+      const playing = !paused;
+      setPaused(true);
       const reply = await window.__engineDev!.request({
         op: "environment", version: window.__engineDev!.version, merge: true, ...JSON.parse(environment) as Record<string, unknown>,
       });
+      if (playing) setPaused(false);
       if (!reply.ok) throw new Error(`?environment: ${reply.error?.message ?? "refused"} (${reply.error?.path ?? "$"})`);
     }
   }
