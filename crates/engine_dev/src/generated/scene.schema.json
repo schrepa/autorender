@@ -5727,6 +5727,22 @@
           "default": 0.30000001192092896,
           "maximum": 1.0,
           "minimum": 0.0
+        },
+        "simulated": {
+          "description": "The meters across the square around the camera over which\nrivers run as the shallow-water equations say, from the water\nthe bake stands there; 0 none, the bake's water standing\neverywhere.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 1024.0,
+          "minimum": 0.0
+        },
+        "simulation_cell": {
+          "description": "The meters across the simulation's cells.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 8.0,
+          "minimum": 0.25
         }
       },
       "additionalProperties": false

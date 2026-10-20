@@ -22,6 +22,8 @@ const INTERNAL: &[&str] = &[
     "GroundedAt",
     "MAX_DEV_TICKS",
     "SimplifyError",
+    "WaterInflow",
+    "WaterWindow",
     "atmosphere_fields",
     "engine_features",
     "install",

@@ -35,6 +35,13 @@ settings! {
         pub foam: f32 = 0.6 => range(0.0, 1.0),
         /// The meters of water shallower than which shores foam.
         pub foam_width: f32 = 0.6 => range(0.05, 10.0),
+        /// The meters across the square around the camera over which
+        /// rivers run as the shallow-water equations say, from the water
+        /// the bake stands there; 0 none, the bake's water standing
+        /// everywhere.
+        pub simulated: f32 = 0.0 => range(0.0, 1024.0),
+        /// The meters across the simulation's cells.
+        pub simulation_cell: f32 = 1.0 => range(0.25, 8.0),
     }
 }
 

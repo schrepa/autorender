@@ -150,6 +150,9 @@ pub struct RenderTerrain {
     /// Where its rivers leave their beds (terrain-local): renderers draw
     /// their jets where water draws.
     pub falls: Arc<[Fall]>,
+    /// The square around the camera its water is simulated over: renderers
+    /// run the simulation there and draw its water instead of the bake's.
+    pub water_window: Option<Arc<WaterWindow>>,
 }
 
 /// The frame's terrains.
@@ -204,6 +207,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 hydrology: false,
                 gpu_surface: None,
                 falls: Arc::from(Vec::new()),
+                water_window: None,
             });
         }
         let render = &mut listing.terrains[index];
@@ -267,5 +271,6 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
             .extend(state.ranges.iter().map(|range| range * LOAD_REACH));
         render.ranges.clone_from(&state.ranges);
         render.falls = state.falls.clone();
+        render.water_window = state.hydrology.window.clone();
     }
 }

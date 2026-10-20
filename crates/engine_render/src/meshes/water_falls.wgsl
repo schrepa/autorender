@@ -227,6 +227,17 @@ struct FallShade {
 
 fn shade_fall(input: FallOutput) -> FallShade {
     let world = input.relative + camera.position.xyz;
+    // Where water is simulated, its water runs over the rock itself: of
+    // the sheets, only what falls high over the simulated water below
+    // draws, as a fall's curtain does.
+    var kept = 1.0;
+    if water_simulated(world.xz) {
+        kept = smoothstep(SIM_SHEETS_ABOVE.x, SIM_SHEETS_ABOVE.y,
+            world.y - sim_water_lowest_at(world.xz));
+        if kept < 0.01 {
+            discard;
+        }
+    }
     let time = camera.position.w;
     let side = input.jet.x;
     let flown = input.jet.y;
@@ -351,7 +362,7 @@ fn shade_fall(input: FallOutput) -> FallShade {
     // A boil's foam breaks into patches toward its rim.
     let rim = input.state.w * smoothstep(0.25, 0.7, out);
     let coverage = cover * mix(clear, 1.0, patches) * smoothstep(-0.3, 0.0, flown) * meeting
-        * input.state.z * mix(1.0, smoothstep(0.3, 0.6, near.x), rim);
+        * input.state.z * mix(1.0, smoothstep(0.3, 0.6, near.x), rim) * kept;
     // White water scatters the sun forward through itself: thin, it glows
     // with the sun behind it.
     let sun = lighting.sun.xyz;

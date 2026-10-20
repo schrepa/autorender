@@ -26,13 +26,16 @@ pub(super) const AHEAD_MAX: f32 = 1000.0;
 
 pub(super) const JUMP: f32 = 100.0;
 
-/// What a terrain's last hydrology bake found, and its rivers' flow once a
-/// solid stood in them: their water as what stands there now holds it
-/// back. A new bake's rivers flow anew.
+/// What a terrain's last hydrology bake found, its rivers' flow once a
+/// solid stood in them (their water as what stands there now holds it
+/// back), and the square around the camera its water is simulated over,
+/// where water asks for one. A new bake's rivers flow anew, and its
+/// simulated water starts over from them.
 #[derive(Default)]
 pub(super) struct HydrologyState {
     pub(super) stats: Option<HydrologyStats>,
     pub(super) flow: Option<engine_terrain::RiverFlow>,
+    pub(super) window: Option<Arc<WaterWindow>>,
 }
 
 impl HydrologyState {
@@ -41,6 +44,7 @@ impl HydrologyState {
         Self {
             stats: Some(stats),
             flow: None,
+            window: None,
         }
     }
 }

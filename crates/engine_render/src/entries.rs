@@ -237,6 +237,15 @@ pub(crate) fn ocean(targets: Targets) -> (Entry, Entry) {
     }
 }
 
+/// Simulated water's vertex and fragment stages into `targets`.
+pub(crate) fn sim_water(targets: Targets) -> (Entry, Entry) {
+    match targets {
+        Targets::Canvas => (meshes::vs_sim_water, meshes::fs_sim_water),
+        Targets::Post => (meshes::vs_sim_water, meshes::fs_sim_water_post),
+        Targets::Temporal => (meshes::vs_sim_water_temporal, meshes::fs_sim_water_temporal),
+    }
+}
+
 /// Falls' sheets' vertex and fragment stages into `targets`.
 pub(crate) fn falls(targets: Targets) -> (Entry, Entry) {
     match targets {

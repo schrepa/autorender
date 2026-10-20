@@ -68,6 +68,7 @@ mod visibility;
 mod water;
 mod water_fall_map;
 mod water_falls;
+mod water_sim;
 mod water_waves;
 pub use platform::{AdapterInfo, RenderError, RenderTarget, read_range};
 #[cfg(not(target_arch = "wasm32"))]

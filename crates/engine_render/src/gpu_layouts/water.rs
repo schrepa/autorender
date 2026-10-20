@@ -21,6 +21,15 @@ gpu_structs! {
         pub ocean_grid: [f32; 4],
         pub ocean_waves: [[f32; 4]; MAX_OCEAN_WAVES],
         pub ocean_reach: [[f32; 4]; MAX_OCEAN_WAVES / 4],
+        pub sim: [f32; 4],
+    }
+
+    /// WGSL `SimFrame` of `water_sim.wgsl`.
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct SimFrame as ["SimFrame" in WATER_SIM_SHADER] {
+        pub shape: [u32; 4],
+        pub step: [f32; 4],
+        pub shift: [i32; 4],
     }
 
     /// WGSL `WaveFrame` of `water_waves.wgsl`.

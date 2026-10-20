@@ -76,6 +76,10 @@ shaders! {
     WATER_WAVES_SHADER = [
         "water_waves.wgsl",
     ];
+    /// Water simulated by the shallow-water equations around the camera.
+    WATER_SIM_SHADER = [
+        "water_sim.wgsl",
+    ];
     CLOUDS_SHADER = [
         "clouds.wgsl",
     ];
@@ -252,7 +256,7 @@ entry_points! {
             vs_impostor_bake_extended, vs_impostor, vs_impostor_temporal, vs_terrain,
             vs_terrain_temporal, vs_terrain_vt_bake, vs_fullscreen, vs_cover,
             vs_cover_temporal, vs_water, vs_water_temporal, vs_ocean,
-            vs_ocean_temporal, vs_fall, vs_fall_temporal
+            vs_ocean_temporal, vs_fall, vs_fall_temporal, vs_sim_water, vs_sim_water_temporal
         ],
         fragment: [
             fs_visibility, fs_main, fs_main_lit, fs_post, fs_post_lit, fs_temporal, fs_temporal_lit,
@@ -271,7 +275,8 @@ entry_points! {
             fs_terrain_post_lit, fs_terrain_temporal, fs_terrain_temporal_lit, fs_terrain_probe,
             fs_terrain_probe_lit, fs_cover, fs_cover_lit, fs_cover_post, fs_cover_post_lit,
             fs_cover_temporal, fs_cover_temporal_lit, fs_water, fs_water_post, fs_water_temporal,
-            fs_ocean, fs_ocean_post, fs_ocean_temporal, fs_fall, fs_fall_post, fs_fall_temporal
+            fs_ocean, fs_ocean_post, fs_ocean_temporal, fs_fall, fs_fall_post, fs_fall_temporal,
+            fs_sim_water, fs_sim_water_post, fs_sim_water_temporal
         ],
         compute: [cs_terrain_vt_feedback],
     }
@@ -295,6 +300,12 @@ entry_points! {
     }
     water_waves = WATER_WAVES_SHADER {
         compute: [evolve_rows, transform_columns, average_level],
+    }
+    water_sim = WATER_SIM_SHADER {
+        compute: [
+            sim_reconstruct, sim_exchange, sim_update, sim_inflow, sim_carry, sim_restart, sim_churn,
+            sim_churned
+        ],
     }
     clouds = CLOUDS_SHADER {
         compute: [make_noise, shadow_clouds, march_clouds, march_view],

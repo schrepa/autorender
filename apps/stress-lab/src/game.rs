@@ -13,6 +13,11 @@ use crate::{
     create_workload_with, look, set_view, stress_reflections, stress_shafts,
 };
 
+/// The action simulating water around the camera, or stopping (KeyJ), and
+/// the meters across the window it simulates (`Water::simulated`).
+const SIMULATE_WATER: ActionId = ActionId::new(1).expect("an action's index");
+const SIMULATED_WATER: f32 = 512.0;
+
 /// The Stress Lab beside its engine.
 pub struct StressLab {
     // One more each time a configuration rebuilds the workload.
@@ -30,6 +35,8 @@ pub struct StressLab {
     visibility_buffer: bool,
     // An authored scene in place of a workload, when the page loads one.
     authored: Option<AuthoredScene>,
+    // Whether the key simulating water was held last frame.
+    simulate_held: bool,
 }
 
 impl StressLab {
@@ -62,6 +69,7 @@ impl StressLab {
             impostors: true,
             visibility_buffer: false,
             authored,
+            simulate_held: false,
         }
     }
 
@@ -237,12 +245,24 @@ impl StressLab {
 }
 
 impl Game for StressLab {
+    const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0), ("KeyJ", 1)];
+
     fn before_frame(&mut self, engine: &mut Engine) {
-        engine
-            .app
-            .world_mut()
-            .resource_mut::<FrameMetrics>()
-            .begin_frame();
+        let world = engine.app.world_mut();
+        world.resource_mut::<FrameMetrics>().begin_frame();
+        // Water simulated around the camera, or as baked, each press.
+        let held = world.resource::<ActionInput>().pressed(SIMULATE_WATER);
+        if held
+            && !self.simulate_held
+            && let Some(mut water) = world.get_resource_mut::<Water>()
+        {
+            water.simulated = if water.simulated > 0.0 {
+                0.0
+            } else {
+                SIMULATED_WATER
+            };
+        }
+        self.simulate_held = held;
     }
 
     /// The workload's overview, or the authored scene's player back where

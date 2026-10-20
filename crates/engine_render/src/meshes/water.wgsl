@@ -43,7 +43,9 @@
 // vector (xy, radians per meter), height and phase at the eye; and how far
 // each wave's points move along it, four to a vector. For terrains' water,
 // `ocean` holds the sea's level less the eye and whether it is on, below
-// which their water gives way to it.
+// which their water gives way to it. Where water is simulated around the
+// camera (`water_sim.rs`), `sim` holds its square's first corner along x
+// and z, the meters across a cell and the cells along a side (none, zero).
 struct WaterUniform {
     relative_view_projection: mat4x4<f32>,
     origin: vec4<f32>,
@@ -56,6 +58,7 @@ struct WaterUniform {
     ocean_grid: vec4<f32>,
     ocean_waves: array<vec4<f32>, 16>,
     ocean_reach: array<vec4<f32>, 4>,
+    sim: vec4<f32>,
 }
 @group(1) @binding(52) var<uniform> water: WaterUniform;
 // The waves' moments, a layer a tile, with their levels
@@ -67,6 +70,14 @@ struct WaterUniform {
 // bubbles (a), FALL_MAP meters across and along the water as it leaves its
 // lip; read with the waves' sampler, repeating.
 @group(1) @binding(55) var water_fall_map: texture_2d<f32>;
+// The simulated water: each cell's surface (world meters), its flow along x
+// and z (square meters a second) and the level a lake holds it at, row by
+// row; and the ground at the cells' corners, a row of cells and one more at
+// a time.
+@group(1) @binding(56) var<storage, read> water_sim_cells: array<vec4<f32>>;
+@group(1) @binding(57) var<storage, read> water_sim_ground: array<f32>;
+// The foam the simulated water carries, row by row (`water_sim.wgsl`).
+@group(1) @binding(58) var<storage, read> water_sim_foam: array<f32>;
 // What lies behind the water, copied from the opaque scene before it
 // draws: its depth and, in frames drawing the effects' targets, its color.
 @group(2) @binding(22) var water_depth: texture_depth_2d;
@@ -161,6 +172,9 @@ struct WaterOutput {
     @location(3) shore: vec2<f32>,
     // How fast its surface falls along x and z (meters a meter).
     @location(4) slope: vec2<f32>,
+    // Simulated water's foam (0 none, 1 white all over); none for tiles'
+    // water.
+    @location(5) sim: f32,
 }
 
 struct WaterTemporalOutput {
@@ -170,7 +184,8 @@ struct WaterTemporalOutput {
     @location(2) foam: vec3<f32>,
     @location(3) shore: vec2<f32>,
     @location(4) slope: vec2<f32>,
-    @location(5) previous: vec3<f32>,
+    @location(5) sim: f32,
+    @location(6) previous: vec3<f32>,
 }
 
 // The texel of block `block` holding its sample `sample` (x and y), and its
@@ -323,6 +338,7 @@ fn water_output(input: WaterPatchInput) -> WaterOutput {
     output.foam = vec3<f32>(abs(info.z), width, select(0.0, 1.0, info.z < 0.0));
     output.shore = fine_shoaling * (1.0 - ground.morph) + coarse_shoaling * ground.morph;
     output.slope = fine_slope * (1.0 - ground.morph) + coarse_slope * ground.morph;
+    output.sim = 0.0;
     return output;
 }
 
@@ -342,6 +358,7 @@ fn vs_water_temporal(input: WaterPatchInput) -> WaterTemporalOutput {
     temporal.foam = output.foam;
     temporal.shore = output.shore;
     temporal.slope = output.slope;
+    temporal.sim = output.sim;
     temporal.previous = (camera.previous_view_projection
         * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw;
     return temporal;
@@ -914,9 +931,26 @@ fn water_flowing_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, tiles: vec3<f
     return water_blended(first, second, carried.blend);
 }
 
-// Tiles' water at `input`, refracting the scene's color when `refracts`.
-fn shade_water(input: WaterOutput, refracts: bool) -> WaterShade {
+// Whether water is simulated at `point` (x and z): within the middles of
+// the simulation's first and last cells, where its water stands instead of
+// the bake's.
+fn water_simulated(point: vec2<f32>) -> bool {
+    let cells = water.sim.w;
+    if cells < 2.0 {
+        return false;
+    }
+    let low = water.sim.xy + 0.5 * water.sim.z;
+    let high = water.sim.xy + (cells - 0.5) * water.sim.z;
+    return all(point >= low) && all(point <= high);
+}
+
+// Tiles' water at `input`, refracting the scene's color when `refracts`;
+// or the simulated water, when `simulated`.
+fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShade {
     let world = input.relative + camera.position.xyz;
+    if !simulated && water_simulated(world.xz) {
+        discard;
+    }
     // Meters of water over the ground: the shore's dry side holds none.
     let depth = input.water.x;
     if depth <= 0.0 {
@@ -926,6 +960,18 @@ fn shade_water(input: WaterOutput, refracts: bool) -> WaterShade {
     let time = camera.position.w;
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
+    // Simulated water shows no surface stretched sheer between cells far
+    // apart in height, down a cliff from the water above to the pool
+    // below: the falls' sheets show what falls there.
+    var falling = 0.0;
+    if simulated {
+        let facing = cross(world_dx, world_dy);
+        let upright = abs(facing.y) / max(length(facing), 1.0e-12);
+        falling = 1.0 - smoothstep(SIM_SHEER.x, SIM_SHEER.y, upright);
+        if falling > 0.99 {
+            discard;
+        }
+    }
     // Still water's waves run with the wind as they evolve; flowing water's
     // run with it, carried along in two sets that cross-fade; between, the
     // two blend, so nothing changes at once where a river meets a lake.
@@ -1015,7 +1061,11 @@ fn shade_water(input: WaterOutput, refracts: bool) -> WaterShade {
     // Under a fall's sheet the sheet draws the water's foam.
     let lining = WATER_SHORE_LACE * shore * sqrt(shore) * water.foam.x / 0.6
         * (1.0 - input.foam.z);
-    let plunge = smoothstep(WATER_PLUNGE, 0.95, input.foam.x) * smoothstep(0.0, 0.05, depth);
+    // Simulated water shows the foam it carries as the lace falls' landings
+    // churn up.
+    let plunge = max(smoothstep(WATER_PLUNGE, 0.95, input.foam.x) * smoothstep(0.0, 0.05, depth),
+        select(0.0, smoothstep(SIM_FOAM_SHOWN.x, SIM_FOAM_SHOWN.y, input.sim) * SIM_FOAM_LACE,
+            simulated));
     // Lace lies on the surface as seen from above: where the surface itself
     // falls steeply (water running down a chute), it would stretch down it,
     // so it gives way there.
@@ -1088,7 +1138,8 @@ fn shade_water(input: WaterOutput, refracts: bool) -> WaterShade {
     // nothing where it meets the shore and around what stands in it.
     let wet = smoothstep(0.0, 0.03, depth) * WATER_WET;
     let let_through = (1.0 - lit.reflectance) * (1.0 - foam);
-    let fade = smoothstep(0.0, WATER_SHORE, min(depth, max(input.relative.y - own.y, 0.0)));
+    let fade = smoothstep(0.0, WATER_SHORE, min(depth, max(input.relative.y - own.y, 0.0)))
+        * (1.0 - falling);
     var result: WaterShade;
     result.shaded = lit.shaded;
     result.coverage = max(max(1.0 - (1.0 - lit.reflectance) * luminance(transmit), wet), foam)
@@ -1107,6 +1158,7 @@ fn water_temporal_output(input: WaterTemporalOutput) -> WaterOutput {
     output.foam = input.foam;
     output.shore = input.shore;
     output.slope = input.slope;
+    output.sim = input.sim;
     return output;
 }
 
@@ -1116,13 +1168,13 @@ fn water_temporal_output(input: WaterTemporalOutput) -> WaterOutput {
 // ground there.
 @fragment
 fn fs_water(input: WaterOutput) -> @location(0) vec4<f32> {
-    let shade = shade_water(input, false);
+    let shade = shade_water(input, false, false);
     return vec4<f32>(encoded(shade.shaded.color) * shade.coverage, shade.coverage);
 }
 
 @fragment
 fn fs_water_post(input: WaterOutput) -> SceneTargets {
-    let shade = shade_water(input, true);
+    let shade = shade_water(input, true, false);
     var targets = scene_targets(shade.shaded);
     targets.color = water_covering(shade);
     return targets;
@@ -1130,7 +1182,181 @@ fn fs_water_post(input: WaterOutput) -> SceneTargets {
 
 @fragment
 fn fs_water_temporal(input: WaterTemporalOutput) -> TemporalTargets {
-    let shade = shade_water(water_temporal_output(input), true);
+    let shade = shade_water(water_temporal_output(input), true, false);
+    var targets = temporal_targets(shade.shaded, input.clip_position, input.previous);
+    targets.color = water_covering(shade);
+    return targets;
+}
+
+// Simulated water (`water_sim.rs`): a vertex at each cell's middle, its
+// water's surface, depth and flow, the slopes of its surface and depth
+// read across its neighbors, and the foam the water carries, as tiles'
+// water holds them; shaded as tiles' water is. Its white water is its
+// foam's alone, churned up where the water churns and carried off with it.
+//
+// Meters of water under which a cell is dry; the half width its shores'
+// foam reads it as (a river's); the depth over which its velocity is
+// desingularized; the foam over which it shows as lace, from the first to
+// the second; how much of the lace a fall's landing churns up its most
+// shows; and how white its most streaks water running down steeply.
+const SIM_WET: f32 = 0.01;
+const SIM_HALF_WIDTH: f32 = 8.0;
+const SIM_THIN_WATER: f32 = 0.05;
+const SIM_FOAM_SHOWN: vec2<f32> = vec2<f32>(0.15, 1.2);
+const SIM_FOAM_LACE: f32 = 0.7;
+const SIM_FOAM_STREAKED: f32 = 0.6;
+// How upright (the up part of its triangles' normal) the simulated water's
+// surface stands where it gives way, from the first to the second: down a
+// cliff, between cells far apart in height, the falls' sheets show it; and
+// the meters over the simulated water below past which those sheets show,
+// from the first to the second.
+const SIM_SHEER: vec2<f32> = vec2<f32>(0.45, 0.5);
+const SIM_SHEETS_ABOVE: vec2<f32> = vec2<f32>(3.0, 6.0);
+
+// Cell (i, j) of the simulated water, the nearest inside its square for
+// one past its edge.
+fn sim_water_cell(i: i32, j: i32) -> vec4<f32> {
+    let n = i32(water.sim.w);
+    let at = clamp(vec2<i32>(i, j), vec2<i32>(0), vec2<i32>(n - 1));
+    return water_sim_cells[u32(at.y * n + at.x)];
+}
+
+// The ground at cell (i, j)'s middle: its corners' mean.
+fn sim_water_ground(i: i32, j: i32) -> f32 {
+    let n = i32(water.sim.w);
+    let at = clamp(vec2<i32>(i, j), vec2<i32>(0), vec2<i32>(n - 1));
+    let row = u32(n + 1);
+    let corner = u32(at.y) * row + u32(at.x);
+    return 0.25 * (water_sim_ground[corner] + water_sim_ground[corner + 1u]
+        + water_sim_ground[corner + row] + water_sim_ground[corner + row + 1u]);
+}
+
+// Cell (i, j)'s water's surface and depth. A dry cell beside wet ones on
+// ground as high as their surface carries that surface over it, as deep
+// as it stands over the ground (none or less), so the shore falls where
+// the surface meets the ground; one on lower ground lies on it, as far
+// under water as the shallowest of them stands over theirs, so the water
+// ends halfway down to it; one beside none, a meter below its ground.
+fn sim_water_level(i: i32, j: i32) -> vec2<f32> {
+    let ground = sim_water_ground(i, j);
+    let surface = sim_water_cell(i, j).x;
+    if surface - ground > SIM_WET {
+        return vec2<f32>(surface, surface - ground);
+    }
+    var sum = 0.0;
+    var count = 0.0;
+    var shallowest = 1.0e9;
+    for (var k = 0; k < 4; k++) {
+        let step = select(vec2<i32>(0, 2 * (k - 2) - 1), vec2<i32>(2 * k - 1, 0), k < 2);
+        let other = sim_water_cell(i + step.x, j + step.y).x;
+        let deep = other - sim_water_ground(i + step.x, j + step.y);
+        if deep > SIM_WET {
+            sum += other;
+            count += 1.0;
+            shallowest = min(shallowest, deep);
+        }
+    }
+    if count == 0.0 {
+        return vec2<f32>(ground - 1.0, -1.0);
+    }
+    let level = sum / count;
+    if ground >= level {
+        return vec2<f32>(level, level - ground);
+    }
+    return vec2<f32>(ground, -shallowest);
+}
+
+// The lowest the simulated water stands about `point` (x and z): over the
+// cells around the one holding it, each wet one's surface or each dry
+// one's ground.
+fn sim_water_lowest_at(point: vec2<f32>) -> f32 {
+    let at = vec2<i32>(floor((point - water.sim.xy) / water.sim.z));
+    var lowest = 1.0e9;
+    for (var dj = -1; dj <= 1; dj++) {
+        for (var di = -1; di <= 1; di++) {
+            let ground = sim_water_ground(at.x + di, at.y + dj);
+            let surface = sim_water_cell(at.x + di, at.y + dj).x;
+            lowest = min(lowest, select(ground, surface, surface - ground > SIM_WET));
+        }
+    }
+    return lowest;
+}
+
+// The surface beside a cell standing at `here`, from its neighbor at
+// `other`: the neighbor's where it is wet, else the cell's own, so shores
+// tilt no surface.
+fn sim_water_beside(here: vec2<f32>, other: vec2<f32>) -> f32 {
+    return select(here.x, other.x, other.y > SIM_WET);
+}
+
+fn sim_water_output(index: u32) -> WaterOutput {
+    let n = u32(water.sim.w);
+    let i = i32(index % n);
+    let j = i32(index / n);
+    let cell = water.sim.z;
+    let here = sim_water_level(i, j);
+    let depth = here.y;
+    let flow = sim_water_cell(i, j).yz;
+    let velocity = select(vec2<f32>(0.0), flow / max(depth, SIM_THIN_WATER), depth > SIM_WET);
+    let east = sim_water_level(i + 1, j);
+    let west = sim_water_level(i - 1, j);
+    let north = sim_water_level(i, j + 1);
+    let south = sim_water_level(i, j - 1);
+    let world = vec3<f32>(water.sim.x + (f32(i) + 0.5) * cell, here.x,
+        water.sim.y + (f32(j) + 0.5) * cell);
+    var output: WaterOutput;
+    output.relative = world - camera.position.xyz;
+    output.clip_position = terrain_view.relative_view_projection * vec4<f32>(output.relative, 1.0);
+    output.water = vec3<f32>(depth, velocity);
+    output.slope = vec2<f32>(sim_water_beside(here, west) - sim_water_beside(here, east),
+        sim_water_beside(here, south) - sim_water_beside(here, north)) / (2.0 * cell);
+    output.shore = vec2<f32>(west.y - east.y, south.y - north.y) / (2.0 * cell);
+    // White water: the foam the water carries, streaking it where it runs
+    // down steeply.
+    let foam = water_sim_foam[u32(j) * n + u32(i)];
+    output.foam = vec3<f32>(min(foam, 1.0) * SIM_FOAM_STREAKED, SIM_HALF_WIDTH, 0.0);
+    output.sim = foam;
+    return output;
+}
+
+@vertex
+fn vs_sim_water(@builtin(vertex_index) index: u32) -> WaterOutput {
+    return sim_water_output(index);
+}
+
+@vertex
+fn vs_sim_water_temporal(@builtin(vertex_index) index: u32) -> WaterTemporalOutput {
+    let output = sim_water_output(index);
+    var temporal: WaterTemporalOutput;
+    temporal.clip_position = output.clip_position;
+    temporal.relative = output.relative;
+    temporal.water = output.water;
+    temporal.foam = output.foam;
+    temporal.shore = output.shore;
+    temporal.slope = output.slope;
+    temporal.sim = output.sim;
+    temporal.previous = (camera.previous_view_projection
+        * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw;
+    return temporal;
+}
+
+@fragment
+fn fs_sim_water(input: WaterOutput) -> @location(0) vec4<f32> {
+    let shade = shade_water(input, false, true);
+    return vec4<f32>(encoded(shade.shaded.color) * shade.coverage, shade.coverage);
+}
+
+@fragment
+fn fs_sim_water_post(input: WaterOutput) -> SceneTargets {
+    let shade = shade_water(input, true, true);
+    var targets = scene_targets(shade.shaded);
+    targets.color = water_covering(shade);
+    return targets;
+}
+
+@fragment
+fn fs_sim_water_temporal(input: WaterTemporalOutput) -> TemporalTargets {
+    let shade = shade_water(water_temporal_output(input), true, true);
     var targets = temporal_targets(shade.shaded, input.clip_position, input.previous);
     targets.color = water_covering(shade);
     return targets;

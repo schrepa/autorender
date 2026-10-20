@@ -53,6 +53,7 @@ use crate::targets::{FrameSize, ScreenTarget};
 use crate::terrain::{TerrainWaterDraws, WATER_GRID_INDICES, water_patch_layout};
 use crate::water_fall_map::FallMap;
 use crate::water_falls::{fall_layout, sheets};
+use crate::water_sim::WaterSim;
 use crate::water_waves::{WaterWaves, WaveShape};
 
 /// Cells around the sea's grid, the sectors it splits into for culling,
@@ -81,6 +82,7 @@ struct Placeholders {
     views: wgpu::Buffer,
     terrains: wgpu::Buffer,
     scene: wgpu::TextureView,
+    sim: wgpu::Buffer,
 }
 
 /// The sea on the GPU: its uniform and group, and this frame's rings and
@@ -134,10 +136,13 @@ pub(crate) struct WaterPass {
     // Created with the first frame drawing water.
     waves: Option<WaterWaves>,
     fall_map: Option<FallMap>,
+    // Water simulated around the camera, where water asks for it.
+    sim: WaterSim,
     // Tiles' water's uniform, and the group binding it with the terrain
-    // pass's arrays and uniforms, as of their generations.
+    // pass's arrays and uniforms and the simulation's water, as of their
+    // generations.
     uniform: wgpu::Buffer,
-    group: Option<((u64, u64, u64), wgpu::BindGroup)>,
+    group: Option<(GroupGenerations, wgpu::BindGroup)>,
     tiles: Option<TileDraws>,
     pipeline_layout: Option<wgpu::PipelineLayout>,
     pipelines: HashMap<Targets, wgpu::RenderPipeline>,
@@ -149,6 +154,7 @@ pub(crate) struct WaterPass {
     fall_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
     fall_vertices: Vec<FallVertex>,
     fall_indices: Vec<u32>,
+    sim_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
 }
 
 impl WaterPass {
@@ -160,6 +166,7 @@ impl WaterPass {
             placeholders: placeholders(device),
             waves: None,
             fall_map: None,
+            sim: WaterSim::new(device),
             uniform: crate::buffers::uniform(device, "engine/water", WATER_UNIFORM_BYTES as u64),
             group: None,
             tiles: None,
@@ -171,6 +178,7 @@ impl WaterPass {
             fall_pipelines: HashMap::default(),
             fall_vertices: Vec::new(),
             fall_indices: Vec::new(),
+            sim_pipelines: HashMap::default(),
         }
     }
 
@@ -298,15 +306,22 @@ impl WaterPass {
         let repeats = waves.repeats();
         self.fall_map
             .get_or_insert_with(|| FallMap::new(device, queue));
+        // Rivers simulated where a terrain's window stands.
+        let window = terrains
+            .iter()
+            .find_map(|terrain| terrain.water_window.as_ref())
+            .filter(|_| settings.enabled);
+        self.sim.prepare(device, queue, window, seconds);
+        let sim_generation = self.sim.drawn().1;
         if let Some(tiles) = tiles {
             if let (Some(waves), Some(map)) = (&self.waves, &self.fall_map)
                 && self
                     .group
                     .as_ref()
-                    .is_none_or(|(bound, _)| *bound != tiles.generation)
+                    .is_none_or(|(bound, _)| *bound != (tiles.generation, sim_generation))
             {
                 let group = self.tile_group(device, &tiles, (waves, map));
-                self.group = Some((tiles.generation, group));
+                self.group = Some(((tiles.generation, sim_generation), group));
             }
             self.tiles = Some(TileDraws {
                 instances: tiles.instances.clone(),
@@ -327,6 +342,14 @@ impl WaterPass {
                 absorption: absorption(settings.color, settings.clarity),
                 waves: repeats,
                 ocean: sea,
+                sim: window.map_or([0.0; 4], |window| {
+                    [
+                        window.origin[0],
+                        window.origin[1],
+                        window.cell,
+                        window.cells as f32,
+                    ]
+                }),
                 ..WaterUniform::zeroed()
             };
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
@@ -430,6 +453,14 @@ impl WaterPass {
         (waves, map): (&WaterWaves, &FallMap),
     ) -> wgpu::BindGroup {
         let (moments, sampler) = waves.sampled();
+        let (sim_cells, sim_ground, sim_foam) = self.sim.drawn().0.map_or(
+            (
+                &self.placeholders.sim,
+                &self.placeholders.sim,
+                &self.placeholders.sim,
+            ),
+            |drawn| (drawn.cells, drawn.ground, drawn.foam),
+        );
         crate::pipelines::group(
             device,
             "engine/water-group",
@@ -448,6 +479,9 @@ impl WaterPass {
                 ("water_waves", crate::pipelines::view(moments)),
                 ("water_wave_sampler", crate::pipelines::sampler(sampler)),
                 ("water_fall_map", crate::pipelines::view(map.view())),
+                crate::buffers::entry("water_sim_cells", sim_cells),
+                crate::buffers::entry("water_sim_ground", sim_ground),
+                crate::buffers::entry("water_sim_foam", sim_foam),
             ],
         )
     }
@@ -552,6 +586,7 @@ impl WaterPass {
             ],
             ocean_waves,
             ocean_reach,
+            sim: [0.0; 4],
         };
         queue.write_buffer(&draw.uniform, 0, bytemuck::bytes_of(&uniform));
         !draw.runs.is_empty()
@@ -581,6 +616,10 @@ impl WaterPass {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Falls);
             self.fall_pipelines.insert(targets, pipeline);
         }
+        if self.sim.drawn().0.is_some() && !self.sim_pipelines.contains_key(&targets) {
+            let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Sim);
+            self.sim_pipelines.insert(targets, pipeline);
+        }
     }
 
     /// The pipeline of `surface` into `targets`.
@@ -605,6 +644,7 @@ impl WaterPass {
             Surface::Tiles => crate::entries::water(targets),
             Surface::Sea => crate::entries::ocean(targets),
             Surface::Falls => crate::entries::falls(targets),
+            Surface::Sim => crate::entries::sim_water(targets),
         };
         // The scene color blends premultiplied over the ground, keeping the
         // ground's ambient share in its alpha (water refracting the scene
@@ -635,6 +675,7 @@ impl WaterPass {
                     Surface::Tiles => "engine/water",
                     Surface::Sea => "engine/ocean",
                     Surface::Falls => "engine/water-falls",
+                    Surface::Sim => "engine/water-sim-draw",
                 },
                 layout,
                 module: shader,
@@ -643,7 +684,7 @@ impl WaterPass {
                 // The sea's vertices come from their indices alone.
                 buffers: match surface {
                     Surface::Tiles => &patches,
-                    Surface::Sea => &[],
+                    Surface::Sea | Surface::Sim => &[],
                     Surface::Falls => &sheets,
                 },
                 primitive: wgpu::PrimitiveState {
@@ -710,6 +751,20 @@ impl WaterPass {
                 draws += 1;
             }
         }
+        // The simulated water, its cells' middles drawn from its buffers
+        // through the camera's view.
+        if let (Some(drawn), Some(pipeline)) =
+            (self.sim.drawn().0, self.sim_pipelines.get(&targets))
+        {
+            let quads = drawn.window.cells.saturating_sub(1);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, camera, &[]);
+            pass.set_bind_group(1, group, &[0, 0]);
+            pass.set_bind_group(2, &behind.group, &[]);
+            pass.set_index_buffer(drawn.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..quads * quads * 6, 0, 0..1);
+            draws += 1;
+        }
         // Falls last, over the water they land in: of its group they read
         // only water's uniform and waves.
         if let (Some(falls), Some(pipeline)) = (&self.falls, self.fall_pipelines.get(&targets)) {
@@ -751,10 +806,12 @@ impl RenderFeature for WaterPass {
         encode: &Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        // The waves, and what lies behind the water, before it draws.
+        // The waves, the simulated water's steps and what lies behind the
+        // water, before it draws.
         if let Some(waves) = &self.waves {
             waves.encode(encoder, encode.profiler);
         }
+        self.sim.encode(encoder, encode.profiler);
         self.copy_behind(encoder, encode.depth, encode.scene);
         let mut pass = encode.render_pass(
             encoder,
@@ -782,6 +839,7 @@ impl RenderFeature for WaterPass {
             .map_or(0, |falls| falls.vertices.size() + falls.indices.size());
         copies
             + falls
+            + self.sim.capacity_bytes()
             + self.waves.as_ref().map_or(0, WaterWaves::capacity_bytes)
             + self
                 .fall_map
@@ -810,12 +868,18 @@ impl RenderFeature for WaterPass {
     }
 }
 
-/// What a water pipeline draws: tiles' water, the sea, or falls' sheets.
+/// The generations of what water's group binds: the terrain pass's arrays
+/// and uniforms, and the simulation's water.
+type GroupGenerations = ((u64, u64, u64), u64);
+
+/// What a water pipeline draws: tiles' water, the sea, falls' sheets or
+/// simulated water.
 #[derive(Clone, Copy)]
 enum Surface {
     Tiles,
     Sea,
     Falls,
+    Sim,
 }
 
 /// The first `bytes` of `buffer`, bound at a dynamic offset.
@@ -925,6 +989,12 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
             "engine/water-placeholder-terrain",
             size_of::<TerrainUniform>() as u64,
         ),
+        sim: crate::buffers::storage(
+            device,
+            "engine/water-placeholder-sim",
+            16,
+            wgpu::BufferUsages::empty(),
+        ),
     }
 }
 
@@ -967,6 +1037,9 @@ fn ocean_draw(
             ("water_waves", crate::pipelines::view(moments)),
             ("water_wave_sampler", crate::pipelines::sampler(sampler)),
             ("water_fall_map", crate::pipelines::view(map.view())),
+            crate::buffers::entry("water_sim_cells", &placeholders.sim),
+            crate::buffers::entry("water_sim_ground", &placeholders.sim),
+            crate::buffers::entry("water_sim_foam", &placeholders.sim),
         ],
     );
     OceanDraw {

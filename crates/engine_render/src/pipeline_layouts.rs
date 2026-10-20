@@ -20,7 +20,7 @@ use crate::bindings::{
     TERRAIN_VT_BAKE, TERRAIN_VT_CAMERA, TERRAIN_VT_FEEDBACK, TERRAIN_VT_TERRAIN,
     TRANSPARENT_COMPOSITE, Table, VIRTUAL_BIN, VIRTUAL_POSES, VIRTUAL_SEED, VIRTUAL_SELECT,
     VIRTUAL_SHADOW, VIRTUAL_TRAVERSE, VISIBILITY_CLASSIFY, VISIBILITY_PASS, VISIBILITY_RESOLVE,
-    WATER, WATER_BEHIND, WATER_WAVES,
+    WATER, WATER_BEHIND, WATER_SIM, WATER_WAVES,
 };
 
 /// What a pipeline layout keeps within, for each stage (and, for dynamic
@@ -160,6 +160,8 @@ pipeline_layouts! {
     DEFORMATION_PIPELINES = [DEFORMATION];
     /// Water's waves: their spectra evolved, transformed and averaged.
     WATER_WAVE_PIPELINES = [WATER_WAVES];
+    /// Water's simulation: faces, fluxes, cells and inflows.
+    WATER_SIM_PIPELINES = [WATER_SIM];
     COVER_GROW_PIPELINES = [COVER_GROW];
     OCCUPANCY_PIPELINES = [OCCUPANCY];
     SCATTER_SNAP_PIPELINES = [SCATTER_SNAP];
@@ -186,5 +188,6 @@ pipeline_layouts! {
 
 /// Distinct pipeline layouts the renderer may build: one more costs every
 /// Firefox start about 150 ms, so raising it is a decision, not a side
-/// effect.
-pub const LAYOUT_BUDGET: usize = 71;
+/// effect. Water's simulation builds its layout only once water is
+/// simulated.
+pub const LAYOUT_BUDGET: usize = 72;

@@ -203,6 +203,12 @@ gpu_consts! {
     /// Workgroup side of the moments' levels.
     pub(crate) const WAVE_LEVEL_GROUP: u32 = 8 => ["@average_level" in WATER_WAVES_SHADER];
 
+    // crate::water_sim
+    /// Workgroup side of the simulation's passes over cells and faces.
+    pub(crate) const WATER_SIM_GROUP: u32 = 8 => ["WATER_SIM_GROUP" in WATER_SIM_SHADER, "@sim_reconstruct" in WATER_SIM_SHADER, "@sim_exchange" in WATER_SIM_SHADER, "@sim_update" in WATER_SIM_SHADER, "@sim_carry" in WATER_SIM_SHADER, "@sim_restart" in WATER_SIM_SHADER, "@sim_churn" in WATER_SIM_SHADER, "@sim_churned" in WATER_SIM_SHADER];
+    /// Inflowing cells a workgroup of the simulation's inflow pass takes.
+    pub(crate) const WATER_SIM_INFLOW_GROUP: u32 = 64 => ["WATER_SIM_INFLOW_GROUP" in WATER_SIM_SHADER, "@sim_inflow" in WATER_SIM_SHADER];
+
     // crate::water_fall_map
     /// How many times longer along falling water than across it water
     /// reads falling water's map.

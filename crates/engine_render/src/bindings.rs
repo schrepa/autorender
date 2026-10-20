@@ -1025,6 +1025,9 @@ tables! {
             texture(53, "water_waves", Float, D2Array, F),
             sampler(54, "water_wave_sampler", Filtering, F),
             texture(55, "water_fall_map", Float, D2, F),
+            read(56, "water_sim_cells", VF),
+            read(57, "water_sim_ground", VF),
+            read(58, "water_sim_foam", V),
         ],
     };
 
@@ -1037,6 +1040,23 @@ tables! {
         bindings: &[
             texture(22, "water_depth", Depth, D2, F),
             texture(23, "water_scene", Float, D2, F),
+        ],
+    };
+
+    /// Water's simulation (`water_sim.wgsl`): the stage's frame, the ground,
+    /// the cells' two states, their faces, the fluxes through them, the
+    /// cells rivers flow in at and the foam the water carries.
+    const WATER_SIM: Table = Table {
+        label: "engine/water-sim-layout",
+        serves: [WATER_SIM_SHADER @ 0],
+        bindings: &[
+            uniform_of(0, "frame", size_of::<water::SimFrame>(), C),
+            read(1, "sim_ground", C),
+            write(2, "sim_cells", C),
+            write(3, "sim_faces", C),
+            write(4, "sim_fluxes", C),
+            read(5, "sim_inflows", C),
+            write(6, "sim_foam", C),
         ],
     };
 
@@ -1403,8 +1423,9 @@ shared_groups! {
             sky_table_sampler, sky_clouds_old, sky_domes
         ],
         view_clouds: 46..50 [view_clouds, view_cloud_front, view_cloud_depth, view_cloud_sampler],
-        water: 50..56 [
-            water_surface, water_info, water, water_waves, water_wave_sampler, water_fall_map
+        water: 50..59 [
+            water_surface, water_info, water, water_waves, water_wave_sampler, water_fall_map,
+            water_sim_cells, water_sim_ground, water_sim_foam
         ],
     }
     SHADER @ 2 {

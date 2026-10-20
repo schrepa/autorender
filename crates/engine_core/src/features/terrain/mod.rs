@@ -61,6 +61,7 @@ mod streaming;
 mod surroundings;
 mod tile_map;
 mod water;
+mod water_sim;
 mod water_source;
 mod waterfalls;
 mod wind;
@@ -84,6 +85,7 @@ pub(crate) use streaming::*;
 pub use surroundings::*;
 use tile_map::TileMap;
 pub use water::*;
+pub use water_sim::{WaterInflow, WaterWindow};
 pub use wind::*;
 
 use crate::collections::{HashMap, HashSet};
@@ -150,8 +152,13 @@ impl bevy_app::Plugin for TerrainPlugin {
             )
             .add_systems(
                 crate::WorldSync,
-                // Bridges spawn before waterfalls.
-                (bridges::sync, waterfalls::sync)
+                // Bridges spawn before waterfalls; water's simulation
+                // windows follow the camera.
+                (
+                    bridges::sync,
+                    waterfalls::sync,
+                    water_sim::place_water_windows,
+                )
                     .chain()
                     .in_set(crate::WorldSyncSystems::Spawn),
             );
