@@ -39,17 +39,28 @@ fn air_light_along(ray: vec3<f32>, disc: bool) -> vec3<f32> {
     return air_sky(sky_view_table, sky_transmittance_table, sky_table_sampler, sky_air, ray, disc);
 }
 
+// A dome at `uv` through four filtered taps half a texel apart: a tent
+// over the texels around, which softens the noise of the march's per-ray
+// offsets where thin, brightly lit edges change from texel to texel.
+fn dome_at(dome: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
+    let half_texel = 0.5 / vec2<f32>(textureDimensions(dome));
+    return 0.25 * (textureSampleLevel(dome, sky_cloud_sampler, uv - half_texel, 0.0)
+        + textureSampleLevel(dome, sky_cloud_sampler, uv + half_texel, 0.0)
+        + textureSampleLevel(dome, sky_cloud_sampler, uv + vec2<f32>(half_texel.x, -half_texel.y), 0.0)
+        + textureSampleLevel(dome, sky_cloud_sampler, uv + vec2<f32>(-half_texel.x, half_texel.y), 0.0));
+}
+
 // The clouds along `ray`: their light and the share of the sky passing,
 // the newer dome blending in over the older, each looked up where it sees
 // what the ray does.
 fn sky_cloud(ray: vec3<f32>) -> vec4<f32> {
     if sky_domes.older.w < 0.5 {
-        return textureSampleLevel(sky_clouds, sky_cloud_sampler, cloud_dome_uv(ray), 0.0);
+        return dome_at(sky_clouds, cloud_dome_uv(ray));
     }
-    let newer = textureSampleLevel(sky_clouds, sky_cloud_sampler,
-        cloud_dome_uv(cloud_dome_direction(sky_domes, sky_domes.newer.xyz, ray)), 0.0);
-    let older = textureSampleLevel(sky_clouds_old, sky_cloud_sampler,
-        cloud_dome_uv(cloud_dome_direction(sky_domes, sky_domes.older.xyz, ray)), 0.0);
+    let newer = dome_at(sky_clouds,
+        cloud_dome_uv(cloud_dome_direction(sky_domes, sky_domes.newer.xyz, ray)));
+    let older = dome_at(sky_clouds_old,
+        cloud_dome_uv(cloud_dome_direction(sky_domes, sky_domes.older.xyz, ray)));
     return mix(older, newer, sky_domes.newer.w);
 }
 

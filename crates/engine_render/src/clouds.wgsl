@@ -361,10 +361,12 @@ fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32) -> Marched {
     }
     // A step every few hundred meters, longer on the longest rays, and
     // near the eye a few tens of meters, growing with the distance as the
-    // clouds' detail on screen shrinks; each ray starts its
-    // steps at its own offset, which hides their banding.
+    // clouds' detail on screen shrinks; each ray starts its steps at its
+    // own offset, which hides their banding: interleaved gradient noise
+    // (Jimenez 2014) over the texels, whose offsets every 3x3 texels
+    // spread evenly, so the sky's filtered lookups average them out.
     let even = (far - near) / clamp((far - near) / STEP_LENGTH, FEWEST_STEPS, MOST_STEPS);
-    let jitter = hash3(vec3<u32>(texel, 17u)).x;
+    let jitter = fract(52.9829189 * fract(dot(vec2<f32>(texel), vec2<f32>(0.06711056, 0.00583715))));
     let cosine = dot(direction, clouds.sun.xyz);
     let phase = mix(henyey_greenstein(cosine, 0.8), henyey_greenstein(cosine, -0.3), 0.3);
     let extinction = EXTINCTION * clouds.layer.w;
