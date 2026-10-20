@@ -971,7 +971,7 @@ struct CaveOpened;
 const CAVE_RADIUS: [f32; 2] = [6.0, 4.5];
 
 /// How far the cave's interior reaches past its walls (meters): the
-/// distance it darkens over toward its faces.
+/// distance it fades in over toward its faces.
 const CAVE_MARGIN: f32 = 1.5;
 
 /// Terrain-local point of the hillside around `center`, from `inner + 150`
@@ -1275,8 +1275,9 @@ fn make_tracks(
 ///   descending as steeply as it must to stay under two meters of rock
 ///   or more, winding and ending in a chamber;
 /// - a warm light in the chamber;
-/// - an interior over it letting in a twentieth of the sky and a sixth of
-///   the sun;
+/// - an interior over it, the region its lamp keeps to; it lets in all of
+///   the sky and the sun, as the cave's own walls, hiding the sky (sky
+///   occlusion), darken it;
 /// - cliff blocks framing its mouth.
 fn open_cave(world: &mut World) {
     if world.contains_resource::<CaveOpened>() {
@@ -1373,10 +1374,7 @@ fn open_cave(world: &mut World) {
         },
         ReflectionProbe::new((high - low) * 0.5)
             .with_blend(CAVE_MARGIN)
-            .with_interior(Interior {
-                sky: 0.05,
-                sun: 0.16,
-            }),
+            .with_interior(Interior { sky: 1.0, sun: 1.0 }),
     ));
     // Blocks over and beside the mouth, facing down the slope.
     let facing = Quat::from_rotation_y((-uphill.x).atan2(-uphill.y));
@@ -1406,9 +1404,8 @@ fn open_cave(world: &mut World) {
 
 /// The box of the cave `mesh`'s interior, around its walls from its first
 /// bend in (`points[1]`, `inward` from `points[0]`) and CAVE_MARGIN wider on
-/// every side, the distance it darkens over, so its shares of the sky and
-/// sun reach the walls whole; the mouth's walls and the blocks framing it
-/// stand in the open.
+/// every side, the distance it fades in over, so it holds the walls whole;
+/// the mouth's walls and the blocks framing it stand in the open.
 fn cave_interior(mesh: &Mesh, points: &[Vec3], inward: Vec3) -> (Vec3, Vec3) {
     let bend = (points[1] - points[0]).dot(inward);
     let (low, high) = mesh
