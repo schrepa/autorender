@@ -76,7 +76,7 @@ pub use placement::{
     Placing,
 };
 pub use pyramid::{Pyramid, PyramidError, TileKey};
-pub use rivers::{BANK_OFFSET, NAPPE_FACE, RIVER_STEP, Rivers};
+pub use rivers::{RIVER_STEP, Rivers};
 pub use select::{
     LodRanges, Patch, Selection, WantedTile, WantedView, select_patches, wanted_tiles,
 };
@@ -90,7 +90,7 @@ pub use surface::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,
     Mask, NoiseMask, Remap, SampleInputs,
 };
-pub use tile::{Generator, Tile, TileSample};
+pub use tile::{Generator, RIVER_EDGE_FAR, RIVER_EDGE_STEP, RIVER_EDGE_ZERO, Tile, TileSample};
 pub use tile_water::{
     TileWater, WATER_FLOW_RANGE, WATER_WIDTH_RANGE, WaterPoint, pack as pack_water,
     unpack as unpack_water,

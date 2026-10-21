@@ -1437,11 +1437,10 @@ impl Layers {
     }
 
     /// Applies layer `index` other than noise to `row`, heights at
-    /// terrain-local x positions `xs` and z position `z`; layers that reach
-    /// no point between `min` and `max` are skipped. Hydrology layers' rivers
-    /// read the row through `span`'s row, where a tile has one,
-    /// as they read sample by sample.
-    #[expect(clippy::too_many_arguments, reason = "the generator's row inputs")]
+    /// terrain-local x positions `xs` and z position `z`, samples `spacing`
+    /// meters apart; layers that reach no point between `min` and `max` are
+    /// skipped. Hydrology layers' rivers cut each sample as a tile's raster
+    /// cuts it ([`Self::cut_rivers`]).
     pub(crate) fn apply_local(
         &self,
         index: usize,
@@ -1450,7 +1449,6 @@ impl Layers {
         z: f32,
         (min, max): (Vec2, Vec2),
         spacing: f32,
-        span: Option<(&crate::rivers::RiverSpan, usize)>,
     ) {
         match &self.layers[index] {
             Layer::Noise(_) => {}
@@ -1482,37 +1480,14 @@ impl Layers {
                 let Some(baked) = &stage.baked else {
                     return;
                 };
-                // Rivers cut their channels, the one place they are
-                // cut, and ease their banks to the ground at every level.
-                let (low, high) = baked.rivers.bounds();
-                if baked.rivers.is_empty()
-                    || low.x > max.x
-                    || low.y > max.y
-                    || high.x < min.x
-                    || high.y < min.y
-                {
+                // Rivers cut their channels and banks, the one place they
+                // are cut, a sample at a time.
+                if baked.rivers.is_empty() {
                     return;
                 }
-                let mut capped = row.to_vec();
-                match span {
-                    Some((span, at)) => {
-                        baked
-                            .rivers
-                            .cap_row(span, at, (xs, z), &mut capped, spacing);
-                    }
-                    None => {
-                        for (height, &x) in capped.iter_mut().zip(xs) {
-                            *height = baked.rivers.cap(x, z, *height, spacing);
-                        }
-                    }
-                }
-                for ((height, &capped), &x) in row.iter_mut().zip(&capped).zip(xs) {
-                    let shown = self.shown(x, z);
-                    *height = if shown >= 1.0 {
-                        capped
-                    } else {
-                        *height + (capped - *height) * shown
-                    };
+                for (height, &x) in row.iter_mut().zip(xs) {
+                    let cut = baked.rivers.cut(x, z, *height, spacing);
+                    *height = self.faded(*height, cut, x, z);
                 }
             }
             Layer::Stamp(stamp) => {
@@ -1541,6 +1516,34 @@ impl Layers {
                     *height = map.blend.apply(*height, value, weight * self.shown(x, z));
                 }
             }
+        }
+    }
+
+    /// Cuts the rivers of a hydrology layer, rasterized over a tile's
+    /// samples as `raster`, into its stored row `at`: `row`, heights at
+    /// terrain-local x positions `xs` and z position `z`.
+    pub(crate) fn cut_rivers(
+        &self,
+        raster: &crate::rivers::RiverRaster,
+        at: usize,
+        row: &mut [f32],
+        xs: &[f32],
+        z: f32,
+    ) {
+        for (column, (height, &x)) in row.iter_mut().zip(xs).enumerate() {
+            let cut = raster.cut(at, column, *height);
+            *height = self.faded(*height, cut, x, z);
+        }
+    }
+
+    /// `height` changed to `changed` as far as the layers other than noise
+    /// show at `(x, z)`.
+    fn faded(&self, height: f32, changed: f32, x: f32, z: f32) -> f32 {
+        let shown = self.shown(x, z);
+        if shown >= 1.0 {
+            changed
+        } else {
+            height + (changed - height) * shown
         }
     }
 

@@ -666,10 +666,7 @@ impl Hydrology {
     /// What the bake found at terrain-local `(x, z)`, as terrain samples
     /// `spacing` meters apart see it.
     pub fn at(&self, x: f32, z: f32, spacing: f32) -> HydrologySample {
-        let river = self
-            .rivers
-            .nearest(x, z)
-            .map_or(RIVER_FAR, |river| river.distance - river.half);
+        let river = self.rivers.edge(x, z, spacing);
         self.masks_at(x, z, spacing, river)
     }
 
@@ -704,7 +701,8 @@ impl Hydrology {
 
     /// Whether a lake or a river reaches into the terrain-local rectangle
     /// from `low` to `high`: a sample of a lake's water within a sample of
-    /// it, or a river's line within its channel's width and a sample.
+    /// it, or a river's channel, out as far again as it is wide, within a
+    /// sample.
     pub(crate) fn water_reaches(&self, low: Vec2, high: Vec2) -> bool {
         let water = &self.water;
         let pad = Vec2::splat(water.spacing);
@@ -719,13 +717,7 @@ impl Hydrology {
                     water.lake[sample] != 0 && water.depth[sample] > 0.0
                 })
             });
-        lake || self.rivers.courses().any(|course| {
-            course.points().iter().enumerate().any(|(index, &point)| {
-                let reach = Vec2::splat(2.0 * course.half(index) + water.spacing);
-                let point = Vec2::from(point);
-                point.cmpge(low - reach).all() && point.cmple(high + reach).all()
-            })
-        })
+        lake || self.rivers.reaches(low - pad, high + pad)
     }
 }
 

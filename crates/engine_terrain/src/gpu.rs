@@ -1,14 +1,15 @@
 //! What a GPU pass reads to give a terrain's tiles their control values:
 //! the surface's rules as one program for an interpreter
 //! shader, and what their masks read of the bakes and roads, flattened into
-//! words. The pass evaluates what [`BiomeRules::control`] evaluates at each
-//! sample, in the same order, so its control values are the CPU's but where
-//! GPU arithmetic rounds a value across a rule's threshold.
-//! [`sample_control`] gives the CPU's at one sample, for gameplay.
+//! words; the meters to rivers' edges it reads are each tile's own
+//! ([`Tile::river_edges`]). The pass evaluates what [`BiomeRules::control`]
+//! evaluates at each sample, in the same order, so its control values are
+//! the CPU's but where GPU arithmetic rounds a value across a rule's
+//! threshold. [`sample_control`] gives the CPU's at one sample, for
+//! gameplay.
 
 use crate::hydrology::{FLOW_RANGE, Hydrology, LAKE_RANGE, RIVER_FAR, WETNESS_RANGE};
 use crate::path::PathProfile;
-use crate::rivers::Rivers;
 use crate::surface::{BiomeRules, Control, SampleInputs};
 use crate::{HydrologySample, Layers, PathSample, TILE_STRIDE, Tile};
 
@@ -60,18 +61,14 @@ pub mod header {
     /// count, then each level's width, height and first sample, then the
     /// samples (`f32`).
     pub const HYDROLOGY: usize = 5;
-    /// The rivers' grid: its corner, columns, rows, cell size and banks'
-    /// reach; where its cells' starts, their lists of segments and the
-    /// segments (two ends and two half widths each) begin.
-    pub const RIVERS: usize = 6;
     /// The roads: their count, then where each begins; each its half
     /// width, reach, cell size, corner, columns, rows, and where its starts,
     /// segments, line points, distances along and spans begin, and how many
     /// spans.
-    pub const PATHS: usize = 7;
+    pub const PATHS: usize = 6;
     /// Surroundings' fade: its low and high corners and
     /// blend.
-    pub const FADE: usize = 8;
+    pub const FADE: usize = 7;
     pub const LEN: usize = 16;
 }
 
@@ -109,10 +106,6 @@ impl SurfaceData {
         if let Some(hydrology) = layers.hydrology() {
             words[header::HYDROLOGY] = words.len() as u32;
             write_hydrology(hydrology, &mut words);
-            if !hydrology.rivers.is_empty() {
-                words[header::RIVERS] = words.len() as u32;
-                write_rivers(&hydrology.rivers, &mut words);
-            }
         }
         let paths: Vec<&PathProfile> = layers.path_profiles().collect();
         if !paths.is_empty() {
@@ -165,7 +158,7 @@ fn first_sample(offset: [f32; 2], key: crate::TileKey, spacing: f32) -> [i64; 2]
 /// samples -1 to 257) as generating it over `layers` with `rules` gives it:
 /// what gameplay reads where tiles hold none, the GPU
 /// giving them to rendering. The same inputs and evaluation as a tile's
-/// rows, so the same bits.
+/// rows, the meters to rivers' edges the tile's own, so the same bits.
 pub fn sample_control(
     tile: &Tile,
     (layers, rules): (&Layers, &BiomeRules),
@@ -187,37 +180,48 @@ pub fn sample_control(
     );
     let x = (first[0] + column as i64 - 1) as f32 * spacing;
     let z = (first[1] + row as i64 - 1) as f32 * spacing;
-    control_at(
+    let river = tile.river_edge(column as i32 - 1, row as i32 - 1);
+    control_with(
         (layers, rules),
         [x, z],
         [height, west, east, north, south],
-        spacing,
+        (spacing, river),
         &mut Vec::new(),
     )
 }
 
 /// The control value `rules` give ground over `layers` at `(x, z)` in the
-/// layers' frame, whose height there is `height` and `spacing` meters to its
-/// west, east, north and south `west`, `east`, `north` and `south`: the
-/// inputs a tile's sample takes, evaluated as [`sample_control`] evaluates
-/// them. `weights` is scratch space, reused across samples.
+/// layers' frame, whose heights there and `spacing` meters to its west,
+/// east, north and south are `heights`, in that order: the inputs a tile's
+/// sample takes, the meters to rivers' edges read from the rivers there,
+/// evaluated as [`sample_control`] evaluates them. `weights` is scratch
+/// space, reused across samples.
 pub(crate) fn control_at(
     (layers, rules): (&Layers, &BiomeRules),
     [x, z]: [f32; 2],
-    [height, west, east, north, south]: [f32; 5],
+    heights: [f32; 5],
     spacing: f32,
+    weights: &mut Vec<(u8, f32)>,
+) -> Control {
+    let river = match layers.hydrology() {
+        Some(water) if rules.reads().water => water.rivers.edge(x, z, spacing),
+        _ => RIVER_FAR,
+    };
+    control_with((layers, rules), [x, z], heights, (spacing, river), weights)
+}
+
+/// [`control_at`] at samples `spacing` meters apart, with the meters to the
+/// nearest river's edge there, `river`, already read.
+fn control_with(
+    (layers, rules): (&Layers, &BiomeRules),
+    [x, z]: [f32; 2],
+    [height, west, east, north, south]: [f32; 5],
+    (spacing, river): (f32, f32),
     weights: &mut Vec<(u8, f32)>,
 ) -> Control {
     let gx = (east - west) / (2.0 * spacing);
     let gz = (south - north) / (2.0 * spacing);
     let reads = rules.reads();
-    let river = match layers.hydrology() {
-        Some(water) if reads.water => water
-            .rivers
-            .nearest(x, z)
-            .map_or(RIVER_FAR, |river| river.distance - river.half),
-        _ => RIVER_FAR,
-    };
     let shown = layers.shown(x, z);
     let water = match layers.hydrology() {
         Some(water) if shown > 0.0 && reads.water => water.masks_at(x, z, spacing, river),
@@ -285,49 +289,6 @@ fn write_hydrology(hydrology: &Hydrology, words: &mut Vec<u32>) {
         for coarse in &image.levels {
             level(words, coarse.width, coarse.height);
             push_f32(words, coarse.samples.iter().copied());
-        }
-    }
-}
-
-/// The rivers' grid, as [`header::RIVERS`] lays it out: each listed
-/// segment by its index among every river's segments.
-fn write_rivers(rivers: &Rivers, words: &mut Vec<u32>) {
-    let at = words.len();
-    push_f32(words, [rivers.min.x, rivers.min.y]);
-    words.push(rivers.columns as u32);
-    words.push(rivers.rows as u32);
-    push_f32(words, [crate::rivers::CELL, crate::rivers::BANK_REACH]);
-    words.extend([0; 3]);
-    let mut bases = Vec::with_capacity(rivers.rivers.len());
-    let mut count = 0_u32;
-    for river in &rivers.rivers {
-        bases.push(count);
-        count += river.points.len().saturating_sub(1) as u32;
-    }
-    words[at + 6] = words.len() as u32;
-    words.extend(rivers.starts.iter().copied());
-    words[at + 7] = words.len() as u32;
-    words.extend(
-        rivers
-            .segments
-            .iter()
-            .map(|&[river, segment]| bases[river as usize] + segment),
-    );
-    words[at + 8] = words.len() as u32;
-    for river in &rivers.rivers {
-        for segment in 0..river.points.len().saturating_sub(1) {
-            let (a, b) = (river.points[segment], river.points[segment + 1]);
-            push_f32(
-                words,
-                [
-                    a[0],
-                    a[1],
-                    b[0],
-                    b[1],
-                    river.half[segment],
-                    river.half[segment + 1],
-                ],
-            );
         }
     }
 }

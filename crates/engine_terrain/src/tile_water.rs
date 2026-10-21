@@ -6,22 +6,23 @@
 //! consumer splits cells into ([`crate::Tile::water_at`]), so drawing,
 //! physics, queries, placement and navigation read one water. Tile
 //! generation writes it from its hydrology bake's lakes and rivers
-//! ([`water_rows`]), each river through the spans that cut its channel; a
+//! ([`water_rows`]), each river's from the raster that cut its channel; a
 //! resident tile's water is written again the same way where its rivers
 //! run otherwise since, as what stands in them holds them back
 //! ([`Tile::rewatered`]), and as its water settles ([`Tile::steadied`],
-//! [`Tile::flowing`]), its whitewater then the foam the settled water
-//! carries, a share of [`crate::shallow_water::FOAM_MOST`]. However it
-//! was written, every dry sample beside water holds a surface its water
-//! meets the ground by ([`skirt`]), so shores fall where the ground rises
-//! through the water, between samples, never at a sample.
+//! [`Tile::flowing`]), its whitewater the foam the settled water carries,
+//! a share of [`crate::shallow_water::FOAM_MOST`]: rivers' own water
+//! carries none. However it was written, every dry sample beside water
+//! holds a surface its water meets the ground by ([`skirt`]), so shores
+//! fall where the ground rises through the water, between samples, never
+//! at a sample.
 
 use std::ops::Range;
 
 use glam::Vec2;
 
 use crate::hydrology::WaterGrid;
-use crate::rivers::{RiverSpan, RiverWater, Rivers};
+use crate::rivers::{RiverRaster, RiverWater, Rivers};
 use crate::{Layers, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, TILE_SAMPLES, TILE_STRIDE, Tile};
 
 /// Meters a second either way the packed flow spans.
@@ -29,9 +30,6 @@ pub const WATER_FLOW_RANGE: f32 = 8.0;
 /// Meters of half width the packed width of a river's water spans: wider
 /// water packs as this wide, as lakes do.
 pub const WATER_WIDTH_RANGE: f32 = 63.0;
-/// Meters below a river's bed ground may lie and hold its water: the bed's
-/// own samples, rounded.
-const BED_SLACK: f32 = 0.05;
 
 /// The water at a point of a tile: the surface it stands at (terrain-local
 /// meters), its depth over the tile's ground there, its flow along x and z
@@ -134,11 +132,11 @@ impl TileWater {
 /// whitewater, kind and width, averaged: those neighbors' surface, averaged, where
 /// their ground stands at or above it, so the shore falls on the triangles
 /// between them where the ground rises through the water. Samples whose
-/// ground lies below it had their water held back (a levee's outer side, a
-/// road's ditch): they stand dry, as far under their surface as their wet
-/// neighbors stand under theirs, so the shore falls halfway to them. Dry
-/// samples beside no water lose any surface, so none lingers where water was
-/// held back before.
+/// ground lies below it lie past where the water ends (beside a channel
+/// whose ground lies lower than its banks' top, a road's ditch): they stand
+/// dry, as far under their surface as their wet neighbors stand under
+/// theirs, so the shore falls halfway to them. Dry samples beside no water
+/// lose any surface, so none lingers where water was held back before.
 fn skirt(surface: &mut [f32], info: &mut [u32], heights: &[f32]) {
     let stride = TILE_STRIDE as usize;
     let wet = |at: usize| surface[at] > heights[at];
@@ -248,67 +246,47 @@ pub fn unpack(info: u32) -> (Vec2, f32, bool, f32) {
 /// Writes the water of a tile's stored rows `rows` (0 to 258, samples -1 to
 /// 257), at the stored columns `columns` gives each, into `surface` and
 /// `info`, row by row from the first of `rows`: its samples at x positions
-/// `xs` and its rows at z positions `zs`, `spacing` meters apart, over its
-/// ground `heights` (every stored row). Each sample
-/// takes the river of `rivers` it lies deepest within, out past the
-/// river's edge so its shore falls where the ground rises through its
-/// surface ([`crate::Rivers::water_row`], through the tile's spans `span`),
-/// but none past the edge where the ground lies below the water's surface
-/// (a levee's outer side, a road's ditch): the water ends at the edge; nor
-/// anywhere it would stand over ground lower than the channel's bed (down a
-/// drop below a pool, beside a channel on a slope): a river's water stands
-/// deepest over its bed, at its middle. A
-/// lake of `lakes` holding a sample in its water or shore takes it where it
-/// stands higher.
+/// `xs` and its rows at z positions `zs`. Each sample takes the water of
+/// the river whose channel holds it as the tile's raster says (`river`, by
+/// stored row and column), flat across the river and without whitewater;
+/// a lake of `lakes` holding a sample in its water or shore takes it where
+/// it stands higher. Shores fall where the ground rises through the water,
+/// between the channel's samples and the dry ones beside them
+/// ([`skirt`]).
 /// Surroundings keep water only where they show their bakes whole
 /// (`shown`): where the bakes fade, so does the channel they cut.
 pub(crate) fn water_rows(
-    (lakes, rivers): (&WaterGrid, &Rivers),
-    span: Option<&RiverSpan>,
+    lakes: &WaterGrid,
+    river: &dyn Fn(usize, usize) -> Option<RiverWater>,
     (rows, columns): (Range<usize>, &dyn Fn(usize) -> Range<usize>),
-    (xs, zs, heights): (&[f32], &[f32], &[f32]),
-    spacing: f32,
+    (xs, zs): (&[f32], &[f32]),
     shown: &dyn Fn(f32, f32) -> f32,
     (surface, info): (&mut [f32], &mut [u32]),
 ) {
     let stride = TILE_STRIDE as usize;
-    let mut best = vec![RiverWater::NONE; stride];
     let first = rows.start;
     for row in rows {
-        let (z, columns) = (zs[row], columns(row));
-        if columns.is_empty() {
-            continue;
-        }
-        best.fill(RiverWater::NONE);
-        if let Some(span) = span {
-            rivers.water_row(span, row, (xs, z, columns.clone()), spacing, &mut best);
-        }
-        for column in columns {
-            let (river, x) = (&best[column], xs[column]);
+        let z = zs[row];
+        for column in columns(row) {
+            let x = xs[column];
             if shown(x, z) < 1.0 {
                 continue;
             }
-            let lake = lakes.lake_reach(x, z);
-            let flowing = river.surface.is_finite();
+            let water = river(row, column);
             let at = (row - first) * stride + column;
-            match lake {
-                // A river within its own water keeps it where it runs
-                // above the lake beside it.
-                Some(level) if !(flowing && river.inside < 0.0 && river.surface > level) => {
+            match lakes.lake_reach(x, z) {
+                // A river keeps its own water where it runs above the lake
+                // beside it.
+                Some(level) if !water.is_some_and(|water| water.surface > level) => {
                     surface[at] = level;
                     info[at] = pack(Vec2::ZERO, 0.0, false, true, 0.0);
                 }
-                _ if flowing => {
-                    let ground = heights[row * stride + column];
-                    if ground < river.bed - BED_SLACK
-                        || (river.inside > 0.0 && ground < river.surface)
-                    {
-                        continue;
+                _ => {
+                    if let Some(water) = water {
+                        surface[at] = water.surface;
+                        info[at] = pack(water.flow, 0.0, water.sheeted, false, water.half);
                     }
-                    surface[at] = river.surface;
-                    info[at] = pack(river.flow, river.white, river.sheeted, false, river.width);
                 }
-                _ => {}
             }
         }
     }
@@ -317,7 +295,9 @@ pub(crate) fn water_rows(
 impl Tile {
     /// This tile of `pyramid`, generated from `layers`, with the water its
     /// hydrology bake's lakes and `rivers` hold over it: the bake's own
-    /// rivers as what stands in them holds them back now. Only its samples
+    /// rivers as what stands in them holds them back now, rasterized over
+    /// its samples as a generated tile's are, over the ground the bake's
+    /// rivers cut when it was made, which stays. Only its samples
     /// within `regions` (terrain-local bounds, where `rivers` run otherwise
     /// than the rivers its water was made from, out as far as their water
     /// reaches at its level) are made again; `None` where the regions miss
@@ -377,14 +357,14 @@ impl Tile {
             surface[at.clone()].fill(f32::NAN);
             info[at].fill(0);
         }
-        let span = rivers.span(&xs, &zs, spacing);
+        // The rivers over the rows the regions reach.
+        let raster = RiverRaster::whole(rivers, &xs, &zs[first..=last], spacing);
         let at = first * stride..(last + 1) * stride;
         water_rows(
-            (&hydrology.water, rivers),
-            Some(&span),
+            &hydrology.water,
+            &|row, column| raster.as_ref()?.water(rivers, row - first, column),
             (first..last + 1, &|row| columns[row].clone()),
-            (&xs, &zs, self.heights()),
-            spacing,
+            (&xs, &zs),
             &|x, z| layers.shown(x, z),
             (&mut surface[at.clone()], &mut info[at]),
         );
