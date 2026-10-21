@@ -424,12 +424,16 @@ impl Jobs {
 
     /// Runs job `kind` on `input` here, whole, over what is shared now:
     /// what a host without workers does with the jobs no record answers,
-    /// and an engine no host serves with every job.
+    /// and an engine no host serves with every job. Each kind runs as
+    /// workers run it: a table's by `engine_tables`, a terrain's by its
+    /// worker.
     pub fn run_here(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         self.stats.in_place += 1;
-        if let Some(output) = engine_tables::run(kind, input) {
+        if engine_tables::TableWorker::runs(kind) {
             let _profile = engine_profile::span("cpu", "job_in_place");
-            return output;
+            if let Some(output) = engine_tables::run(kind, input) {
+                return output;
+            }
         }
         let shared = &self.shared;
         let (worker, held) = self
