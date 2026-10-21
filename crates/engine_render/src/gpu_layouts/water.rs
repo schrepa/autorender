@@ -25,9 +25,10 @@ gpu_structs! {
     }
 
     /// WGSL `SimFrame` of `water_sim.wgsl`: the stage, the slots the
-    /// buffers hold and the most cells along x and z a slot holds; the
-    /// cells the square around the camera moved by; and the most cells
-    /// rivers bring water to a slot holds.
+    /// buffers hold, the blocks a slot's pool holds and the blocks a
+    /// slot's table maps; the cells the square around the camera moved by;
+    /// and the most cells rivers bring water to a slot holds and the faces
+    /// along its west and south edges a slot holds.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimFrame as ["SimFrame" in WATER_SIM_SHADER] {
         pub stage: [u32; 4],
@@ -38,11 +39,13 @@ gpu_structs! {
     /// WGSL `SimSlot` of `water_sim.wgsl`: a slot's rectangle, its cells
     /// along x and z, flags and cells rivers bring water to; the meters
     /// across a cell, the seconds of a step alike for every cell, Manning's
-    /// roughness and the steps its sums hold at a look.
+    /// roughness and the steps its sums hold at a look; and its blocks
+    /// along x and z and those its pool stores.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimSlot as ["SimSlot" in WATER_SIM_SHADER] {
         pub shape: [u32; 4],
         pub step: [f32; 4],
+        pub blocks: [u32; 4],
     }
 
     /// WGSL `SimSlots` of `water_sim.wgsl`: every slot's rectangle.

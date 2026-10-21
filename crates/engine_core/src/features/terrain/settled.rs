@@ -520,7 +520,7 @@ fn refresh(
             _ => engine_terrain::watered_tiles(&baked, &pyramid).into(),
         };
         let cell = water.simulation_cell;
-        let regions = engine_terrain::settle_regions(&pyramid, cell)
+        let regions = engine_terrain::settle_regions(&baked, &pyramid, cell)
             .into_iter()
             .map(|tiles| {
                 let [x, z, columns, rows] = tiles;

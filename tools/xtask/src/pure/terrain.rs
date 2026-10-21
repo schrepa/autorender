@@ -381,10 +381,11 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             "watered tiles": watered.len(),
             "tile": name(key),
             "parts": parts.len(),
-            "cells": start.level.cells,
-            "sources": start.level.sources.len(),
+            "cells": start.stored.cells,
+            "stored blocks": start.stored.stored(),
+            "sources": start.sources.len(),
             "datum": start.datum,
-            "cook regions": engine_terrain::settle_regions(&pyramid, WATER_CELL).len(),
+            "cook regions": engine_terrain::settle_regions(&baked, &pyramid, WATER_CELL).len(),
         }),
     );
 

@@ -7,39 +7,51 @@
 // velocities desingularized where the water thins out
 // (`engine_terrain::shallow_water` holds the constants these mirror). Each
 // cell holds its water's surface, its flow along x and z (square meters a
-// second) and the level a lake holds it at, if one does: lakes stand still,
-// taking the water that runs into them and giving none. The ground stands at
-// the cells' corners. A stage finds the flux through every face, each cell
-// reconstructing its water at its own faces and at its neighbors' beside
-// them (computing them twice costs less than carrying them through memory),
-// and updates every cell; rivers bring their water to their cells after each
-// step. The water carries foam: it churns it up
-// where it runs faster than its waves and where it slams into slower water,
-// the current carries it off, and it fades as its bubbles break.
+// second) and its foam. The ground stands at the cells' corners, with the
+// level a lake holds each cell at, if one does: lakes stand still, taking
+// the water that runs into them and giving none. A stage finds the flux
+// through every face, each cell reconstructing its water at its own faces
+// and at its neighbors' beside them (computing them twice costs less than
+// carrying them through memory), and updates every cell; rivers bring their
+// water to their cells after each step. The water carries foam: it churns it
+// up where it runs faster than its waves and where it slams into slower
+// water, the current carries it off, and it fades as its bubbles break.
 //
 // Every dispatch runs rectangles side by side, the third dimension counting
 // them, each a slot of the buffers with its own cells along x and z, cell
-// size, steps and edges (`SimSlot`):
-// - the square around the camera (`water_sim.rs`) steps every cell by the
-//   frame's seconds, and over its edges water flows to and from the cells
-//   just past them, which stand as the water settled there (the ring):
-//   water left alone stays as it settled;
+// size, steps and edges (`SimSlot`). A slot stores its rectangle's cells by
+// blocks of a workgroup's (`engine_terrain::StoredBlocks`), only the blocks
+// its water can reach, in a pool its table finds each block in, and a
+// dispatch runs a workgroup for each block of the pool. The cells of blocks
+// it does not store are dry and high: the faces toward them carry nothing,
+// and water reaching them stands against them.
+// - the square around the camera (`water_sim.rs`) stores every block and
+//   steps every cell by the frame's seconds, and over its edges water flows
+//   to and from the cells just past them, which stand as the water settled
+//   there (the ring): water left alone stays as it settled;
 // - regions settling tiles' water (`water_settle.rs`) step each cell by as
 //   long as its own and its neighbors' fastest waves allow, which reaches
 //   the steady state in far fewer steps; their water leaves freely over
 //   their edges and none comes in; each cell's water is summed over the
 //   steps since its region's last look, whose means a look keeps and sums,
-//   workgroup by workgroup, into how far they moved since the look before;
-//   and only the blocks of cells (a workgroup's) water can reach this step
-//   step: a block steps where it or a block beside it held water no lake
-//   holds at the step before's end, as water crosses less than a block a
-//   step, and every other block stands still, dry or a lake's, the faces
-//   between them and those stepping carrying nothing.
+//   block by block, into how far they moved since the look before; and only
+//   the blocks water can reach this step step: a block steps where it or a
+//   block beside it held water no lake holds at the step before's end, as
+//   water crosses less than a block a step, and every other block stands
+//   still, dry or a lake's, the faces between them and those stepping
+//   carrying nothing.
 
 const WATER_SIM_GROUP: u32 = 8u;
 const WATER_SIM_SOURCE_GROUP: u32 = 64u;
 // The most rectangles a dispatch runs.
 const SIM_SLOTS: u32 = 64u;
+// What a slot's table holds for a block its pool does not store; a block's
+// cells and corners; and the entries of a block's ground: the ground at its
+// cells' corners, then the level a lake holds each of its cells at.
+const SIM_NO_BLOCK: u32 = 0xffffffffu;
+const SIM_BLOCK_CELLS: u32 = WATER_SIM_GROUP * WATER_SIM_GROUP;
+const SIM_BLOCK_CORNERS: u32 = (WATER_SIM_GROUP + 1u) * (WATER_SIM_GROUP + 1u);
+const SIM_BLOCK_GROUND: u32 = SIM_BLOCK_CORNERS + SIM_BLOCK_CELLS;
 const SIM_GRAVITY: f32 = 9.81;
 // The generalized minmod's theta; the depth below which velocities are
 // desingularized and the depth under which a cell is dry (meters); and the
@@ -69,10 +81,11 @@ const SIM_SUMMING: u32 = 8u;
 const SIM_LOOKING: u32 = 16u;
 const SIM_SPARSE: u32 = 32u;
 
-// The stage (0: the first, 1: the second), the slots the buffers hold and
-// the most cells along x and z a slot holds; as the square around the
-// camera follows it, the cells it moved by along x and z; and the most cells
-// rivers bring water to a slot holds.
+// The stage (0: the first, 1: the second), the slots the buffers hold, the
+// blocks a slot's pool holds and the blocks a slot's table maps; as the
+// square around the camera follows it, the cells it moved by along x and
+// z; and the most cells rivers bring water to a slot holds, and the faces
+// along its west and south edges a slot holds (its cells along x and z).
 struct SimFrame {
     stage: vec4<u32>,
     shift: vec4<i32>,
@@ -80,12 +93,14 @@ struct SimFrame {
 }
 
 // A slot's rectangle: its cells along x and z, its flags and the cells
-// its rivers bring water to; and the meters across a cell, the seconds of
-// a step stepping every cell alike, Manning's roughness and the steps its
-// sums hold at a look.
+// its rivers bring water to; the meters across a cell, the seconds of a
+// step stepping every cell alike, Manning's roughness and the steps its
+// sums hold at a look; and its blocks along x and z and those its pool
+// stores.
 struct SimSlot {
     shape: vec4<u32>,
     step: vec4<f32>,
+    blocks: vec4<u32>,
 }
 
 struct SimSlots {
@@ -93,46 +108,54 @@ struct SimSlots {
 }
 
 @group(0) @binding(0) var<uniform> frame: SimFrame;
-// The ground at each slot's cells' corners (meters), cells + 1 a row, rows
-// along z.
+// Each slot's pool's blocks' ground, SIM_BLOCK_GROUND entries a block: the
+// ground at its cells' corners (meters, WATER_SIM_GROUP + 1 a row, rows
+// along z), then the level a lake holds each of its cells at (SIM_UNHELD
+// where none does), row by row.
 @group(0) @binding(1) var<storage, read> sim_ground: array<f32>;
-// Each slot's step's start and then its first stage, each a row of cells at
-// a time: the water's surface, its flow along x and z, and the level a lake
-// holds it at (SIM_UNHELD where none does).
+// Each slot's step's start and then its first stage, each its pool's
+// blocks' cells, a block's row by row: the water's surface, its flow along
+// x and z, and its foam (0 none, 1 white all over; in the first stage, once
+// the step churned it, its next).
 @group(0) @binding(2) var<storage, read_write> sim_cells: array<vec4<f32>>;
 // Each cell's water's depth at its faces as reconstructed, the mean of its
 // west and east faces' and of its south and north faces', which the pull of
 // gravity down its ground reads.
 @group(0) @binding(3) var<storage, read_write> sim_depths: array<vec2<f32>>;
-// The fluxes through each slot's faces between columns (cells + 1 a row),
-// then through those between rows (cells a row): its mass and its momentum
-// across and along the face, and the fastest wave through it.
+// The fluxes through each slot's faces: each of its cells' east face's,
+// then each of its cells' north face's, then those through the faces on its
+// rectangle's west edge (a row each) and on its south edge (a column each):
+// its mass and its momentum across and along the face, and the fastest wave
+// through it.
 @group(0) @binding(4) var<storage, read_write> sim_fluxes: array<vec4<f32>>;
 // What rivers bring and what stands past the edges: each slot's cells
-// rivers bring water to (the cell, its index's bits; the cubic meters a
-// second they bring; and the way the water runs as it comes, x and z, a
-// share of SIM_SOURCE_SPEED); after every slot's, each slot's ring, the
-// cells just past its edges as their water settled, two entries each: its
-// surface (far below the ground where dry), its flow along x and z and the level a
-// lake holds it at (SIM_UNHELD where none does); then its foam. South then
-// north of each column, then west then east of each row.
+// rivers bring water to (the cell, its index among the slot's cells as
+// bits; the cubic meters a second they bring; and the way the water runs as
+// it comes, x and z, a share of SIM_SOURCE_SPEED); after every slot's, each
+// slot's ring, the cells just past its edges as their water settled, two
+// entries each: its surface (far below the ground where dry), its flow
+// along x and z and the level a lake holds it at (SIM_UNHELD where none
+// does); then its foam. South then north of each column, then west then
+// east of each row.
 @group(0) @binding(5) var<storage, read> sim_inputs: array<vec4<f32>>;
-// The foam the water carries (0 none, 1 white all over), each slot's step's
-// start and then its next, each a row of cells at a time.
-@group(0) @binding(6) var<storage, read_write> sim_foam: array<f32>;
+// Each slot's table: the block of its pool storing each block of its
+// rectangle, row by row (SIM_NO_BLOCK where none does); then each block of
+// its pool's place in the rectangle (its column, and its row above 16
+// bits).
+@group(0) @binding(6) var<storage, read> sim_blocks: array<u32>;
 // Each slot's cells' fastest wave through their faces this step and their
-// seconds; then each of its blocks' (a workgroup's cells, rows of the
-// largest rectangle's blocks): whether it held water no lake holds at the
-// step before's end, and whether it steps this step and the steps it
-// stood still since its rectangle's last look or its waking, whichever
-// came later.
+// seconds; then each of its pool's blocks': whether it held water no lake
+// holds at the step before's end, and whether it steps this step and the
+// steps it stood still since its rectangle's last look or its waking,
+// whichever came later.
 @group(0) @binding(7) var<storage, read_write> sim_steps: array<vec2<f32>>;
 @group(0) @binding(8) var<uniform> sim_slots: SimSlots;
 // Each slot's cells' water summed over its steps since its last look
 // (surface, flow along x and z, foam), then their means at that look; then
-// each of its workgroups' sums at a look: the water it held, how far its
-// cells' velocities moved since the look before, its cells flowing, and
-// its cells stepping.
+// each of its pool's blocks' sums at a look, two entries each: the water it
+// held, how far its cells' velocities moved since the look before, its
+// cells flowing and its cells stepping; and the water its cells beside
+// blocks the pool does not store held, and those cells.
 @group(0) @binding(9) var<storage, read_write> sim_averages: array<vec4<f32>>;
 
 // A slot's rectangle as a dispatch runs it.
@@ -146,44 +169,41 @@ struct Square {
     live: f32,
     roughness: f32,
     summed: f32,
+    blocks: vec2<u32>,
+    stored: u32,
 }
 
 fn sim_square(slot: u32) -> Square {
     let held = sim_slots.slot[slot];
     return Square(slot, held.shape.x, held.shape.y, held.shape.z, held.shape.w, held.step.x,
-        held.step.y, held.step.z, held.step.w);
+        held.step.y, held.step.z, held.step.w, held.blocks.xy, held.blocks.z);
 }
 
 fn sim_has(q: Square, flag: u32) -> bool {
     return (q.flags & flag) != 0u;
 }
 
-// The slots the buffers hold, and the most cells along x and z a slot
-// holds, from which each slot's entries start.
+// The slots the buffers hold; the blocks a slot's pool holds, and their
+// cells; the blocks a slot's table maps; and the faces along a slot's west
+// and south edges it holds: from which each slot's entries start.
 fn sim_slot_count() -> u32 {
     return frame.stage.y;
 }
 
-fn sim_capacity() -> vec2<u32> {
-    return frame.stage.zw;
+fn sim_pool() -> u32 {
+    return frame.stage.z;
 }
 
 fn sim_held() -> u32 {
-    return sim_capacity().x * sim_capacity().y;
+    return sim_pool() * SIM_BLOCK_CELLS;
 }
 
-// Blocks along x and z of the largest rectangle, a workgroup's cells each.
-fn sim_groups() -> vec2<u32> {
-    return (sim_capacity() + vec2<u32>(WATER_SIM_GROUP - 1u)) / WATER_SIM_GROUP;
+fn sim_mapped() -> u32 {
+    return frame.stage.w;
 }
 
-fn sim_blocks_held() -> u32 {
-    return sim_groups().x * sim_groups().y;
-}
-
-// Whether invocation `id` stands on a cell of a rectangle that steps.
-fn sim_runs(q: Square, id: vec3<u32>) -> bool {
-    return id.z < sim_slot_count() && sim_has(q, SIM_STEPPING) && id.x < q.nx && id.y < q.nz;
+fn sim_edges() -> u32 {
+    return frame.inputs.y;
 }
 
 fn sim_cells_base(q: Square) -> u32 {
@@ -191,7 +211,7 @@ fn sim_cells_base(q: Square) -> u32 {
 }
 
 fn sim_ground_base(q: Square) -> u32 {
-    return q.slot * (sim_capacity().x + 1u) * (sim_capacity().y + 1u);
+    return q.slot * sim_pool() * SIM_BLOCK_GROUND;
 }
 
 fn sim_depths_base(q: Square) -> u32 {
@@ -199,8 +219,7 @@ fn sim_depths_base(q: Square) -> u32 {
 }
 
 fn sim_fluxes_base(q: Square) -> u32 {
-    let c = sim_capacity();
-    return q.slot * ((c.x + 1u) * c.y + c.x * (c.y + 1u));
+    return q.slot * (2u * sim_held() + sim_edges());
 }
 
 fn sim_sources_base(q: Square) -> u32 {
@@ -208,60 +227,151 @@ fn sim_sources_base(q: Square) -> u32 {
 }
 
 fn sim_ring_base(q: Square) -> u32 {
-    let c = sim_capacity();
-    return sim_slot_count() * frame.inputs.x + q.slot * 4u * (c.x + c.y);
+    return sim_slot_count() * frame.inputs.x + q.slot * 4u * sim_edges();
+}
+
+fn sim_table_base(q: Square) -> u32 {
+    return q.slot * (sim_mapped() + sim_pool());
 }
 
 fn sim_steps_base(q: Square) -> u32 {
-    return q.slot * (sim_held() + 2u * sim_blocks_held());
+    return q.slot * (sim_held() + 2u * sim_pool());
 }
 
 fn sim_averages_base(q: Square) -> u32 {
-    return q.slot * (2u * sim_held() + sim_blocks_held());
+    return q.slot * (2u * sim_held() + 2u * sim_pool());
 }
 
-// Where block `block`'s entries stand in the steps: whether it held water,
-// then whether it steps and the steps it stood still.
-fn sim_block_at(q: Square, block: vec2<u32>) -> u32 {
-    return sim_steps_base(q) + sim_held() + 2u * (block.y * sim_groups().x + block.x);
+// The block of slot `q`'s pool storing block `block` (its column and row)
+// of its rectangle: SIM_NO_BLOCK where none does or the rectangle has no
+// such block.
+fn sim_block(q: Square, block: vec2<i32>) -> u32 {
+    if any(block < vec2<i32>(0)) || any(block >= vec2<i32>(q.blocks)) {
+        return SIM_NO_BLOCK;
+    }
+    return sim_blocks[sim_table_base(q) + u32(block.y) * q.blocks.x + u32(block.x)];
 }
 
-// Whether cell (i, j)'s block steps this step: always, in a rectangle not
-// sparse.
-fn sim_active(q: Square, i: u32, j: u32) -> bool {
+// The place in slot `q`'s rectangle of block `block` of its pool: its
+// column and row.
+fn sim_place(q: Square, block: u32) -> vec2<u32> {
+    let place = sim_blocks[sim_table_base(q) + sim_mapped() + block];
+    return vec2<u32>(place & 0xffffu, place >> 16u);
+}
+
+// Where slot `q` holds cell (i, j) of its rectangle: its index among the
+// slot's cells, its block's first and then its place there; SIM_NO_BLOCK
+// where it lies outside the rectangle or the pool does not store its
+// block.
+fn sim_at(q: Square, i: i32, j: i32) -> u32 {
+    if i < 0 || j < 0 || i >= i32(q.nx) || j >= i32(q.nz) {
+        return SIM_NO_BLOCK;
+    }
+    let cell = vec2<u32>(u32(i), u32(j));
+    let block = sim_block(q, vec2<i32>(cell / WATER_SIM_GROUP));
+    if block == SIM_NO_BLOCK {
+        return SIM_NO_BLOCK;
+    }
+    let local = cell % WATER_SIM_GROUP;
+    return block * SIM_BLOCK_CELLS + local.y * WATER_SIM_GROUP + local.x;
+}
+
+// The cell an invocation stands on: where its slot holds it, its column and
+// row in the rectangle, and whether it is a cell of a rectangle that steps.
+struct SimCell {
+    at: u32,
+    i: u32,
+    j: u32,
+    runs: bool,
+}
+
+// The cell invocation `local` of workgroup `group`, of `count` along x and
+// z, stands on in slot `q`: a workgroup for each block of its pool, in
+// rows of `count.x` of them.
+fn sim_cell_of(q: Square, group: vec3<u32>, count: vec3<u32>, local: vec3<u32>) -> SimCell {
+    let block = group.y * count.x + group.x;
+    if group.z >= sim_slot_count() || block >= q.stored {
+        return SimCell(0u, 0u, 0u, false);
+    }
+    let place = sim_place(q, block) * WATER_SIM_GROUP + local.xy;
+    let at = block * SIM_BLOCK_CELLS + local.y * WATER_SIM_GROUP + local.x;
+    let runs = sim_has(q, SIM_STEPPING) && place.x < q.nx && place.y < q.nz;
+    return SimCell(at, place.x, place.y, runs);
+}
+
+// Where block `block` of the pool has its entries in the steps: whether it
+// held water, then whether it steps and the steps it stood still.
+fn sim_block_at(q: Square, block: u32) -> u32 {
+    return sim_steps_base(q) + sim_held() + 2u * block;
+}
+
+// Whether the block of the cell at `at` steps this step: always, in a
+// rectangle not sparse.
+fn sim_active(q: Square, at: u32) -> bool {
     if !sim_has(q, SIM_SPARSE) {
         return true;
     }
-    return sim_steps[sim_block_at(q, vec2<u32>(i, j) / WATER_SIM_GROUP) + 1u].x > 0.5;
+    return sim_steps[sim_block_at(q, at / SIM_BLOCK_CELLS) + 1u].x > 0.5;
 }
 
-fn sim_corner(q: Square, i: u32, j: u32) -> f32 {
-    return sim_ground[sim_ground_base(q) + j * (q.nx + 1u) + i];
+// The ground at corner (x, z) of block `block` of the pool, counted from
+// its first cell's first corner.
+fn sim_corner(q: Square, block: u32, x: u32, z: u32) -> f32 {
+    return sim_ground[sim_ground_base(q) + block * SIM_BLOCK_GROUND
+        + z * (WATER_SIM_GROUP + 1u) + x];
 }
 
-// The ground at the middle of the face between columns i - 1 and i of row
-// j, and of the face between rows j - 1 and j of column i.
-fn sim_ground_x(q: Square, i: u32, j: u32) -> f32 {
-    return 0.5 * (sim_corner(q, i, j) + sim_corner(q, i, j + 1u));
+// The ground at the middles of the faces across x of the cell at `at`, its
+// west face's and its east face's; and of those across z, its south face's
+// and its north face's.
+fn sim_ground_x(q: Square, at: u32) -> vec2<f32> {
+    let block = at / SIM_BLOCK_CELLS;
+    let x = at % WATER_SIM_GROUP;
+    let z = (at % SIM_BLOCK_CELLS) / WATER_SIM_GROUP;
+    return vec2<f32>(0.5 * (sim_corner(q, block, x, z) + sim_corner(q, block, x, z + 1u)),
+        0.5 * (sim_corner(q, block, x + 1u, z) + sim_corner(q, block, x + 1u, z + 1u)));
 }
 
-fn sim_ground_z(q: Square, i: u32, j: u32) -> f32 {
-    return 0.5 * (sim_corner(q, i, j) + sim_corner(q, i + 1u, j));
+fn sim_ground_z(q: Square, at: u32) -> vec2<f32> {
+    let block = at / SIM_BLOCK_CELLS;
+    let x = at % WATER_SIM_GROUP;
+    let z = (at % SIM_BLOCK_CELLS) / WATER_SIM_GROUP;
+    return vec2<f32>(0.5 * (sim_corner(q, block, x, z) + sim_corner(q, block, x + 1u, z)),
+        0.5 * (sim_corner(q, block, x, z + 1u) + sim_corner(q, block, x + 1u, z + 1u)));
 }
 
-// The ground at cell (i, j)'s middle.
-fn sim_bed(q: Square, i: u32, j: u32) -> f32 {
-    return 0.5 * (sim_ground_x(q, i, j) + sim_ground_x(q, i + 1u, j));
+// The ground at the middle of the cell at `at`.
+fn sim_bed(q: Square, at: u32) -> f32 {
+    let ground = sim_ground_x(q, at);
+    return 0.5 * (ground.x + ground.y);
 }
 
-// Cell (i, j) of the state `state` (0: the step's start, 1: its first
-// stage), the nearest inside the rectangle for one past its edge; a cell
-// standing still stands as the step started.
-fn sim_cell(q: Square, state: u32, i: i32, j: i32) -> vec4<f32> {
-    let last = vec2<i32>(i32(q.nx) - 1, i32(q.nz) - 1);
-    let at = vec2<u32>(clamp(vec2<i32>(i, j), vec2<i32>(0), last));
-    let standing = select(0u, state, sim_active(q, at.x, at.y));
-    return sim_cells[sim_cells_base(q) + standing * q.nx * q.nz + at.y * q.nx + at.x];
+// The level a lake holds the cell at `at` at (SIM_UNHELD where none does),
+// and whether one does.
+fn sim_lake(q: Square, at: u32) -> f32 {
+    return sim_ground[sim_ground_base(q) + (at / SIM_BLOCK_CELLS) * SIM_BLOCK_GROUND
+        + SIM_BLOCK_CORNERS + at % SIM_BLOCK_CELLS];
+}
+
+fn sim_held_at(q: Square, at: u32) -> bool {
+    return sim_lake(q, at) > 0.5 * SIM_UNHELD;
+}
+
+// The cell at `at` of the state `state` (0: the step's start, 1: its first
+// stage); a cell standing still stands as the step started.
+fn sim_cell(q: Square, state: u32, at: u32) -> vec4<f32> {
+    let standing = select(0u, state, sim_active(q, at));
+    return sim_cells[sim_cells_base(q) + standing * sim_held() + at];
+}
+
+// Cell (i, j) of the state `state`, or `instead` where the slot holds none
+// there: past the rectangle's edge, or in a block its pool does not store.
+fn sim_beside(q: Square, state: u32, i: i32, j: i32, instead: vec4<f32>) -> vec4<f32> {
+    let at = sim_at(q, i, j);
+    if at == SIM_NO_BLOCK {
+        return instead;
+    }
+    return sim_cell(q, state, at);
 }
 
 fn sim_minmod(a: f32, b: f32, c: f32) -> f32 {
@@ -307,13 +417,14 @@ struct SimSides {
     high: vec4<f32>,
 }
 
-// Cell (i, j)'s faces across x from the state `state`: its slopes limited
-// by its neighbors', its water kept above the ground at both faces.
-fn sim_across_x(q: Square, state: u32, i: u32, j: u32) -> SimSides {
-    let here = sim_cell(q, state, i32(i), i32(j));
-    let west = sim_cell(q, state, i32(i) - 1, i32(j));
-    let east = sim_cell(q, state, i32(i) + 1, i32(j));
-    let ground = vec2<f32>(sim_ground_x(q, i, j), sim_ground_x(q, i + 1u, j));
+// The faces across x of the cell at `at`, cell (i, j), from the state
+// `state`: its slopes limited by its neighbors' (itself standing for one
+// the slot does not hold), its water kept above the ground at both faces.
+fn sim_across_x(q: Square, state: u32, at: u32, i: u32, j: u32) -> SimSides {
+    let here = sim_cell(q, state, at);
+    let west = sim_beside(q, state, i32(i) - 1, i32(j), here);
+    let east = sim_beside(q, state, i32(i) + 1, i32(j), here);
+    let ground = sim_ground_x(q, at);
     let slope = vec3<f32>(sim_half_slope(west.x, here.x, east.x),
         sim_half_slope(west.y, here.y, east.y), sim_half_slope(west.z, here.z, east.z));
     var high_w = here.x + slope.x;
@@ -329,12 +440,13 @@ fn sim_across_x(q: Square, state: u32, i: u32, j: u32) -> SimSides {
         sim_face(high_w, ground.y, here.y + slope.y, here.z + slope.z));
 }
 
-// Cell (i, j)'s faces across z, the flow along z across them.
-fn sim_across_z(q: Square, state: u32, i: u32, j: u32) -> SimSides {
-    let here = sim_cell(q, state, i32(i), i32(j));
-    let south = sim_cell(q, state, i32(i), i32(j) - 1);
-    let north = sim_cell(q, state, i32(i), i32(j) + 1);
-    let ground = vec2<f32>(sim_ground_z(q, i, j), sim_ground_z(q, i, j + 1u));
+// The faces across z of the cell at `at`, cell (i, j), the flow along z
+// across them.
+fn sim_across_z(q: Square, state: u32, at: u32, i: u32, j: u32) -> SimSides {
+    let here = sim_cell(q, state, at);
+    let south = sim_beside(q, state, i32(i), i32(j) - 1, here);
+    let north = sim_beside(q, state, i32(i), i32(j) + 1, here);
+    let ground = sim_ground_z(q, at);
     let slope = vec3<f32>(sim_half_slope(south.x, here.x, north.x),
         sim_half_slope(south.y, here.y, north.y), sim_half_slope(south.z, here.z, north.z));
     var high_w = here.x + slope.x;
@@ -373,13 +485,8 @@ fn sim_flux(l: vec4<f32>, r: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(flux, wave);
 }
 
-// Whether cell `at` of the stage's state is held at a lake's level.
-fn sim_held_at(q: Square, at: u32) -> bool {
-    return sim_cells[sim_cells_base(q) + frame.stage.x * q.nx * q.nz + at].w > 0.5 * SIM_UNHELD;
-}
-
-// The flux `flux` through the face from cell `near` to cell `far`, none
-// where it would carry water out of a lake.
+// The flux `flux` through the face from the cell at `near` to the cell at
+// `far`, none where it would carry water out of a lake.
 fn sim_from_lakes(q: Square, flux: vec4<f32>, near: u32, far: u32) -> vec4<f32> {
     if (flux.x > 0.0 && sim_held_at(q, near)) || (flux.x < 0.0 && sim_held_at(q, far)) {
         return vec4<f32>(0.0, 0.0, 0.0, flux.w);
@@ -430,34 +537,43 @@ fn sim_open(face: vec4<f32>, inward: f32) -> vec4<f32> {
 // through its east and north faces (and its west and south ones on the
 // rectangle's edges): between two cells that step, as their faces say; on
 // the edges, open or between the inside and the ring cell past it; and
-// between a cell that steps and one standing still, nothing, as no water
-// reaches either this step. A cell that steps keeps its faces' depths.
+// between a cell that steps and one standing still or one the slot does not
+// hold, nothing, as no water reaches either this step. A cell that steps
+// keeps its faces' depths.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_exchange(@builtin(global_invocation_id) id: vec3<u32>) {
-    let q = sim_square(id.z);
-    if !sim_runs(q, id) {
+fn sim_exchange(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
+) {
+    let q = sim_square(group.z);
+    let cell = sim_cell_of(q, group, count, local);
+    if !cell.runs {
         return;
     }
     let nx = q.nx;
     let nz = q.nz;
-    let i = id.x;
-    let j = id.y;
-    let at = j * nx + i;
+    let i = cell.i;
+    let j = cell.j;
+    let at = cell.at;
     let state = frame.stage.x;
     let open = sim_has(q, SIM_OPEN);
     let fluxes = sim_fluxes_base(q);
-    let steps = sim_active(q, i, j);
-    let east_steps = i + 1u < nx && sim_active(q, i + 1u, j);
-    let north_steps = j + 1u < nz && sim_active(q, i, j + 1u);
+    let edges = fluxes + 2u * sim_held();
+    let steps = sim_active(q, at);
+    let east = sim_at(q, i32(i) + 1, i32(j));
+    let north = sim_at(q, i32(i), i32(j) + 1);
+    let east_steps = east != SIM_NO_BLOCK && sim_active(q, east);
+    let north_steps = north != SIM_NO_BLOCK && sim_active(q, north);
     var x = SimSides(vec4<f32>(0.0), vec4<f32>(0.0));
     var z = SimSides(vec4<f32>(0.0), vec4<f32>(0.0));
     if steps {
-        x = sim_across_x(q, state, i, j);
-        z = sim_across_z(q, state, i, j);
+        x = sim_across_x(q, state, at, i, j);
+        z = sim_across_z(q, state, at, i, j);
         sim_depths[sim_depths_base(q) + at] =
             vec2<f32>(0.5 * (x.low.y + x.high.y), 0.5 * (z.low.y + z.high.y));
     }
-    // The face between columns i and i + 1, or the east edge.
+    // Its east face: between columns i and i + 1, or the east edge.
     if steps || east_steps {
         var flux = vec4<f32>(0.0);
         if i + 1u == nx {
@@ -465,14 +581,14 @@ fn sim_exchange(@builtin(global_invocation_id) id: vec3<u32>) {
                 flux = sim_open(x.high, -1.0);
             } else {
                 let ghost = 2u * nx + 2u * j + 1u;
-                flux = sim_edge(x.high, sim_ghost_face(q, ghost, sim_ground_x(q, nx, j), false),
+                flux = sim_edge(x.high, sim_ghost_face(q, ghost, sim_ground_x(q, at).y, false),
                     sim_held_at(q, at), sim_ghost_held(q, ghost));
             }
         } else if steps && east_steps {
-            let far = sim_across_x(q, state, i + 1u, j).low;
-            flux = sim_from_lakes(q, sim_flux(x.high, far), at, at + 1u);
+            let far = sim_across_x(q, state, east, i + 1u, j).low;
+            flux = sim_from_lakes(q, sim_flux(x.high, far), at, east);
         }
-        sim_fluxes[fluxes + j * (nx + 1u) + i + 1u] = flux;
+        sim_fluxes[fluxes + at] = flux;
     }
     // The west edge.
     if i == 0u && steps {
@@ -481,12 +597,12 @@ fn sim_exchange(@builtin(global_invocation_id) id: vec3<u32>) {
             flux = sim_open(x.low, 1.0);
         } else {
             let ghost = 2u * nx + 2u * j;
-            flux = sim_edge(sim_ghost_face(q, ghost, sim_ground_x(q, 0u, j), false), x.low,
+            flux = sim_edge(sim_ghost_face(q, ghost, sim_ground_x(q, at).x, false), x.low,
                 sim_ghost_held(q, ghost), sim_held_at(q, at));
         }
-        sim_fluxes[fluxes + j * (nx + 1u)] = flux;
+        sim_fluxes[edges + j] = flux;
     }
-    // The face between rows j and j + 1, or the north edge.
+    // Its north face: between rows j and j + 1, or the north edge.
     if steps || north_steps {
         var flux = vec4<f32>(0.0);
         if j + 1u == nz {
@@ -494,14 +610,14 @@ fn sim_exchange(@builtin(global_invocation_id) id: vec3<u32>) {
                 flux = sim_open(z.high, -1.0);
             } else {
                 let ghost = 2u * i + 1u;
-                flux = sim_edge(z.high, sim_ghost_face(q, ghost, sim_ground_z(q, i, nz), true),
+                flux = sim_edge(z.high, sim_ghost_face(q, ghost, sim_ground_z(q, at).y, true),
                     sim_held_at(q, at), sim_ghost_held(q, ghost));
             }
         } else if steps && north_steps {
-            let far = sim_across_z(q, state, i, j + 1u).low;
-            flux = sim_from_lakes(q, sim_flux(z.high, far), at, at + nx);
+            let far = sim_across_z(q, state, north, i, j + 1u).low;
+            flux = sim_from_lakes(q, sim_flux(z.high, far), at, north);
         }
-        sim_fluxes[fluxes + (nx + 1u) * nz + (j + 1u) * nx + i] = flux;
+        sim_fluxes[fluxes + sim_held() + at] = flux;
     }
     // The south edge.
     if j == 0u && steps {
@@ -510,75 +626,101 @@ fn sim_exchange(@builtin(global_invocation_id) id: vec3<u32>) {
             flux = sim_open(z.low, 1.0);
         } else {
             let ghost = 2u * i;
-            flux = sim_edge(sim_ghost_face(q, ghost, sim_ground_z(q, i, 0u), true), z.low,
+            flux = sim_edge(sim_ghost_face(q, ghost, sim_ground_z(q, at).x, true), z.low,
                 sim_ghost_held(q, ghost), sim_held_at(q, at));
         }
-        sim_fluxes[fluxes + (nx + 1u) * nz + i] = flux;
+        sim_fluxes[edges + nz + i] = flux;
     }
 }
 
-// The fluxes into and out of cell (i, j): west, east, south, north.
+// The fluxes into and out of the cell at `at`, cell (i, j): through its
+// west, east, south and north faces; none through a face toward a cell the
+// slot does not hold.
 fn sim_west(q: Square, i: u32, j: u32) -> vec4<f32> {
-    return sim_fluxes[sim_fluxes_base(q) + j * (q.nx + 1u) + i];
+    let fluxes = sim_fluxes_base(q);
+    if i == 0u {
+        return sim_fluxes[fluxes + 2u * sim_held() + j];
+    }
+    let west = sim_at(q, i32(i) - 1, i32(j));
+    if west == SIM_NO_BLOCK {
+        return vec4<f32>(0.0);
+    }
+    return sim_fluxes[fluxes + west];
 }
 
-fn sim_east(q: Square, i: u32, j: u32) -> vec4<f32> {
-    return sim_fluxes[sim_fluxes_base(q) + j * (q.nx + 1u) + i + 1u];
+fn sim_east(q: Square, at: u32) -> vec4<f32> {
+    return sim_fluxes[sim_fluxes_base(q) + at];
 }
 
 fn sim_south(q: Square, i: u32, j: u32) -> vec4<f32> {
-    return sim_fluxes[sim_fluxes_base(q) + (q.nx + 1u) * q.nz + j * q.nx + i];
+    let fluxes = sim_fluxes_base(q);
+    if j == 0u {
+        return sim_fluxes[fluxes + 2u * sim_held() + q.nz + i];
+    }
+    let south = sim_at(q, i32(i), i32(j) - 1);
+    if south == SIM_NO_BLOCK {
+        return vec4<f32>(0.0);
+    }
+    return sim_fluxes[fluxes + sim_held() + south];
 }
 
-fn sim_north(q: Square, i: u32, j: u32) -> vec4<f32> {
-    return sim_fluxes[sim_fluxes_base(q) + (q.nx + 1u) * q.nz + (j + 1u) * q.nx + i];
+fn sim_north(q: Square, at: u32) -> vec4<f32> {
+    return sim_fluxes[sim_fluxes_base(q) + sim_held() + at];
+}
+
+// The step to each of a cell's four neighbors: west, east, south, north.
+fn sim_toward(k: i32) -> vec2<i32> {
+    return select(vec2<i32>(0, 2 * (k - 2) - 1), vec2<i32>(2 * k - 1, 0), k < 2);
 }
 
 // Settling regions' cells: the fastest wave through each cell's faces in
 // the step's first stage.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_waves(@builtin(global_invocation_id) id: vec3<u32>) {
-    let q = sim_square(id.z);
-    if !sim_runs(q, id) || !sim_has(q, SIM_LOCAL) || !sim_active(q, id.x, id.y) {
+fn sim_waves(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
+) {
+    let q = sim_square(group.z);
+    let cell = sim_cell_of(q, group, count, local);
+    if !cell.runs || !sim_has(q, SIM_LOCAL) || !sim_active(q, cell.at) {
         return;
     }
-    let i = id.x;
-    let j = id.y;
-    let fastest = max(max(sim_west(q, i, j).w, sim_east(q, i, j).w),
-        max(sim_south(q, i, j).w, sim_north(q, i, j).w));
-    sim_steps[sim_steps_base(q) + j * q.nx + i].x = fastest;
+    let at = cell.at;
+    let fastest = max(max(sim_west(q, cell.i, cell.j).w, sim_east(q, at).w),
+        max(sim_south(q, cell.i, cell.j).w, sim_north(q, at).w));
+    sim_steps[sim_steps_base(q) + at].x = fastest;
 }
 
 // Settling regions' cells: each one's seconds this step, as long as the
 // fastest wave through its faces and its neighbors' allows, so neighbors
 // step alike.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_seconds(@builtin(global_invocation_id) id: vec3<u32>) {
-    let q = sim_square(id.z);
-    if !sim_runs(q, id) || !sim_has(q, SIM_LOCAL) || !sim_active(q, id.x, id.y) {
+fn sim_seconds(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
+) {
+    let q = sim_square(group.z);
+    let cell = sim_cell_of(q, group, count, local);
+    if !cell.runs || !sim_has(q, SIM_LOCAL) || !sim_active(q, cell.at) {
         return;
     }
-    let n = q.nx;
     let base = sim_steps_base(q);
-    let at = id.y * n + id.x;
-    var fastest = sim_steps[base + at].x;
-    if id.x > 0u {
-        fastest = max(fastest, sim_steps[base + at - 1u].x);
+    var fastest = sim_steps[base + cell.at].x;
+    for (var k = 0; k < 4; k++) {
+        let toward = sim_toward(k);
+        let beside = sim_at(q, i32(cell.i) + toward.x, i32(cell.j) + toward.y);
+        if beside != SIM_NO_BLOCK {
+            fastest = max(fastest, sim_steps[base + beside].x);
+        }
     }
-    if id.x + 1u < n {
-        fastest = max(fastest, sim_steps[base + at + 1u].x);
-    }
-    if id.y > 0u {
-        fastest = max(fastest, sim_steps[base + at - n].x);
-    }
-    if id.y + 1u < q.nz {
-        fastest = max(fastest, sim_steps[base + at + n].x);
-    }
-    sim_steps[base + at].y = SIM_LOCAL_SHARE * SIM_COURANT * q.dx / max(fastest, SIM_SLOWEST);
+    sim_steps[base + cell.at].y =
+        SIM_LOCAL_SHARE * SIM_COURANT * q.dx / max(fastest, SIM_SLOWEST);
 }
 
-// Cell `at`'s seconds this step: its own where it steps locally, else the
-// rectangle's.
+// The seconds this step of the cell at `at`: its own where it steps
+// locally, else the rectangle's.
 fn sim_seconds_at(q: Square, at: u32) -> f32 {
     if sim_has(q, SIM_LOCAL) {
         return sim_steps[sim_steps_base(q) + at].y;
@@ -590,9 +732,9 @@ fn sim_seconds_at(q: Square, at: u32) -> f32 {
 // stage of `dt` seconds: never below the ground, slowed by friction, no
 // faster than SIM_FASTEST, reset where it stopped being finite, and held
 // at its lake's level `held` where one holds it.
-fn sim_settle(q: Square, water: vec3<f32>, ground: f32, held: f32, dt: f32) -> vec4<f32> {
+fn sim_settle(q: Square, water: vec3<f32>, ground: f32, held: f32, dt: f32) -> vec3<f32> {
     if held > 0.5 * SIM_UNHELD {
-        return vec4<f32>(held, 0.0, 0.0, held);
+        return vec3<f32>(held, 0.0, 0.0);
     }
     var next = water;
     if !(abs(next.x) < 1.0e20 && abs(next.y) < 1.0e20 && abs(next.z) < 1.0e20) {
@@ -601,7 +743,7 @@ fn sim_settle(q: Square, water: vec3<f32>, ground: f32, held: f32, dt: f32) -> v
     next.x = max(next.x, ground);
     let h = next.x - ground;
     if h <= SIM_DRY {
-        return vec4<f32>(next.x, 0.0, 0.0, held);
+        return vec3<f32>(next.x, 0.0, 0.0);
     }
     var flow = next.yz;
     let friction = SIM_GRAVITY * q.roughness * q.roughness * (length(flow) / h)
@@ -611,33 +753,38 @@ fn sim_settle(q: Square, water: vec3<f32>, ground: f32, held: f32, dt: f32) -> v
     if speed > SIM_FASTEST {
         flow *= SIM_FASTEST / speed;
     }
-    return vec4<f32>(next.x, flow, held);
+    return vec3<f32>(next.x, flow);
 }
 
-// Each cell's water after a stage; in the first, a sparse rectangle's
-// blocks start the step dry, their cells' water marking them again at its
-// end.
+// Each cell's water after a stage, its foam as the step started; in the
+// first, a sparse rectangle's blocks start the step dry, their cells'
+// water marking them again at its end.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_update(@builtin(global_invocation_id) id: vec3<u32>) {
-    let q = sim_square(id.z);
-    if !sim_runs(q, id) || !sim_active(q, id.x, id.y) {
+fn sim_update(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
+) {
+    let q = sim_square(group.z);
+    let cell = sim_cell_of(q, group, count, local);
+    if !cell.runs || !sim_active(q, cell.at) {
         return;
     }
-    let n = q.nx;
-    let i = id.x;
-    let j = id.y;
-    let at = j * n + i;
+    let at = cell.at;
+    let held = sim_held();
     let dx = q.dx;
     let dt = sim_seconds_at(q, at);
-    let west = sim_west(q, i, j).xyz;
-    let east = sim_east(q, i, j).xyz;
-    let south = sim_south(q, i, j).xyz;
-    let north = sim_north(q, i, j).xyz;
+    let west = sim_west(q, cell.i, cell.j).xyz;
+    let east = sim_east(q, at).xyz;
+    let south = sim_south(q, cell.i, cell.j).xyz;
+    let north = sim_north(q, at).xyz;
     let depths = sim_depths[sim_depths_base(q) + at];
     let depth_x = depths.x;
     let depth_z = depths.y;
-    let slope_x = (sim_ground_x(q, i + 1u, j) - sim_ground_x(q, i, j)) / dx;
-    let slope_z = (sim_ground_z(q, i, j + 1u) - sim_ground_z(q, i, j)) / dx;
+    let ground_x = sim_ground_x(q, at);
+    let ground_z = sim_ground_z(q, at);
+    let slope_x = (ground_x.y - ground_x.x) / dx;
+    let slope_z = (ground_z.y - ground_z.x) / dx;
     // The flux through faces between rows carries the flow along z across
     // them and the flow along x along them.
     let change = vec3<f32>(
@@ -648,14 +795,14 @@ fn sim_update(@builtin(global_invocation_id) id: vec3<u32>) {
     let start = sim_cells[base + at];
     var next = start.xyz + dt * change;
     if frame.stage.x == 1u {
-        next = 0.5 * (start.xyz + sim_cells[base + n * q.nz + at].xyz + dt * change);
+        next = 0.5 * (start.xyz + sim_cells[base + held + at].xyz + dt * change);
     }
-    let ground = sim_bed(q, i, j);
-    let written = select(base + n * q.nz + at, base + at, frame.stage.x == 1u);
-    sim_cells[written] = sim_settle(q, next, ground, start.w, dt);
-    let first = (i % WATER_SIM_GROUP) == 0u && (j % WATER_SIM_GROUP) == 0u;
+    let ground = 0.5 * (ground_x.x + ground_x.y);
+    let written = select(base + held + at, base + at, frame.stage.x == 1u);
+    sim_cells[written] = vec4<f32>(sim_settle(q, next, ground, sim_lake(q, at), dt), start.w);
+    let first = at % SIM_BLOCK_CELLS == 0u;
     if frame.stage.x == 0u && sim_has(q, SIM_SPARSE) && first {
-        sim_steps[sim_block_at(q, vec2<u32>(i, j) / WATER_SIM_GROUP)].x = 0.0;
+        sim_steps[sim_block_at(q, at / SIM_BLOCK_CELLS)].x = 0.0;
     }
 }
 
@@ -664,34 +811,38 @@ fn sim_update(@builtin(global_invocation_id) id: vec3<u32>) {
 // was, where that one held any, into the second state, which holds the
 // water as it settled where it held none.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_carry(@builtin(global_invocation_id) id: vec3<u32>) {
-    let q = sim_square(id.z);
-    if !sim_runs(q, id) {
+fn sim_carry(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
+) {
+    let q = sim_square(group.z);
+    let cell = sim_cell_of(q, group, count, local);
+    if !cell.runs {
         return;
     }
-    let size = vec2<i32>(i32(q.nx), i32(q.nz));
-    let source = vec2<i32>(id.xy) + frame.shift.xy;
-    if any(source < vec2<i32>(0)) || any(source >= size) {
+    let from_cell = sim_at(q, i32(cell.i) + frame.shift.x, i32(cell.j) + frame.shift.y);
+    if from_cell == SIM_NO_BLOCK {
         return;
     }
     let base = sim_cells_base(q);
-    let from_cell = u32(source.y) * q.nx + u32(source.x);
-    let at = q.nx * q.nz + id.y * q.nx + id.x;
-    sim_cells[base + at] = sim_cells[base + from_cell];
-    sim_foam[base + at] = sim_foam[base + from_cell];
+    sim_cells[base + sim_held() + cell.at] = sim_cells[base + from_cell];
 }
 
 // The water carried over is what the steps start from.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_restart(@builtin(global_invocation_id) id: vec3<u32>) {
-    let q = sim_square(id.z);
-    if !sim_runs(q, id) {
+fn sim_restart(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
+) {
+    let q = sim_square(group.z);
+    let cell = sim_cell_of(q, group, count, local);
+    if !cell.runs {
         return;
     }
     let base = sim_cells_base(q);
-    let at = id.y * q.nx + id.x;
-    sim_cells[base + at] = sim_cells[base + q.nx * q.nz + at];
-    sim_foam[base + at] = sim_foam[base + q.nx * q.nz + at];
+    sim_cells[base + cell.at] = sim_cells[base + sim_held() + cell.at];
 }
 
 // Foam: the Froude number past which rapids churn it up and how fast (a
@@ -706,18 +857,35 @@ const SIM_FOAM_LIFE: f32 = 6.0;
 const SIM_FOAM_MOST: f32 = 1.5;
 const SIM_FOAM_WET: f32 = 0.005;
 
-// The first state's cell (i, j): its depth and velocity; or `instead`'s
-// where it is dry or outside the rectangle.
-fn sim_moving(q: Square, i: i32, j: i32, instead: vec3<f32>) -> vec3<f32> {
-    if i < 0 || j < 0 || i >= i32(q.nx) || j >= i32(q.nz) {
-        return instead;
-    }
-    let cell = sim_cells[sim_cells_base(q) + u32(j) * q.nx + u32(i)];
-    let h = cell.x - sim_bed(q, u32(i), u32(j));
+// The first state's cell at `at`: its depth and velocity; or `instead`'s
+// where it is dry.
+fn sim_moving_at(q: Square, at: u32, instead: vec3<f32>) -> vec3<f32> {
+    let cell = sim_cells[sim_cells_base(q) + at];
+    let h = cell.x - sim_bed(q, at);
     if h <= SIM_FOAM_WET {
         return instead;
     }
     return vec3<f32>(h, sim_velocity(h, cell.y), sim_velocity(h, cell.z));
+}
+
+// The first state's cell (i, j): its depth and velocity; or `instead`'s
+// where it is dry or the slot holds none there.
+fn sim_moving(q: Square, i: i32, j: i32, instead: vec3<f32>) -> vec3<f32> {
+    let at = sim_at(q, i, j);
+    if at == SIM_NO_BLOCK {
+        return instead;
+    }
+    return sim_moving_at(q, at, instead);
+}
+
+// The first state's foam at cell (i, j): none where the slot holds none
+// there.
+fn sim_foam(q: Square, i: u32, j: u32) -> f32 {
+    let at = sim_at(q, i32(i), i32(j));
+    if at == SIM_NO_BLOCK {
+        return 0.0;
+    }
+    return sim_cells[sim_cells_base(q) + at].w;
 }
 
 // The first state's foam at cell `p` (fractional, along x and z),
@@ -744,38 +912,39 @@ fn sim_foam_at(q: Square, p: vec2<f32>) -> f32 {
     if p.y > last.y + 0.5 {
         return sim_inputs[ring + 2u * (2u * near.x + 1u) + 1u].x;
     }
-    let base = sim_cells_base(q);
     let c = clamp(p, vec2<f32>(0.0), last);
     let low = vec2<u32>(floor(c));
     let high = min(low + 1u, vec2<u32>(nx - 1u, q.nz - 1u));
     let f = c - floor(c);
-    let below = mix(sim_foam[base + low.y * nx + low.x], sim_foam[base + low.y * nx + high.x],
-        f.x);
-    let above = mix(sim_foam[base + high.y * nx + low.x], sim_foam[base + high.y * nx + high.x],
-        f.x);
+    let below = mix(sim_foam(q, low.x, low.y), sim_foam(q, high.x, low.y), f.x);
+    let above = mix(sim_foam(q, low.x, high.y), sim_foam(q, high.x, high.y), f.x);
     return mix(below, above, f.y);
 }
 
-// Each cell's foam after a step, into the second state: what the current
+// Each cell's foam after a step, into the second state's: what the current
 // carried there (traced back along it), faded, and what the water churned
 // up there.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_churn(@builtin(global_invocation_id) id: vec3<u32>) {
-    let q = sim_square(id.z);
-    if !sim_runs(q, id) || !sim_active(q, id.x, id.y) {
+fn sim_churn(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
+) {
+    let q = sim_square(group.z);
+    let cell = sim_cell_of(q, group, count, local);
+    if !cell.runs || !sim_active(q, cell.at) {
         return;
     }
-    let n = q.nx;
-    let i = i32(id.x);
-    let j = i32(id.y);
-    let at = sim_cells_base(q) + n * q.nz + id.y * n + id.x;
-    let here = sim_moving(q, i, j, vec3<f32>(0.0));
+    let next = sim_cells_base(q) + sim_held() + cell.at;
+    let i = i32(cell.i);
+    let j = i32(cell.j);
+    let here = sim_moving_at(q, cell.at, vec3<f32>(0.0));
     if here.x <= SIM_FOAM_WET {
-        sim_foam[at] = 0.0;
+        sim_cells[next].w = 0.0;
         return;
     }
     let dx = q.dx;
-    let dt = sim_seconds_at(q, id.y * n + id.x);
+    let dt = sim_seconds_at(q, cell.at);
     let carried = sim_foam_at(q, vec2<f32>(f32(i), f32(j)) - here.yz * dt / dx);
     let froude = length(here.yz) / sqrt(SIM_GRAVITY * here.x);
     let rapids = max(froude - SIM_FOAM_FROUDE, 0.0) * SIM_FOAM_RAPIDS;
@@ -786,30 +955,33 @@ fn sim_churn(@builtin(global_invocation_id) id: vec3<u32>) {
     let converging = max(-(east - west + north - south) / (2.0 * dx), 0.0);
     let churned = carried * exp(-dt / SIM_FOAM_LIFE)
         + dt * (rapids + SIM_FOAM_PILING * converging);
-    sim_foam[at] = min(churned, SIM_FOAM_MOST);
+    sim_cells[next].w = min(churned, SIM_FOAM_MOST);
 }
 
 // The foam after the step is the next one's start; a summing rectangle
 // adds each cell's water and foam to its sums; and a sparse one's cells
 // holding water no lake holds mark their blocks.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_churned(@builtin(global_invocation_id) id: vec3<u32>) {
-    let q = sim_square(id.z);
-    if !sim_runs(q, id) || !sim_active(q, id.x, id.y) {
+fn sim_churned(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
+) {
+    let q = sim_square(group.z);
+    let cell = sim_cell_of(q, group, count, local);
+    if !cell.runs || !sim_active(q, cell.at) {
         return;
     }
+    let at = cell.at;
     let base = sim_cells_base(q);
-    let at = id.y * q.nx + id.x;
-    let foam = sim_foam[base + q.nx * q.nz + at];
-    sim_foam[base + at] = foam;
-    let water = sim_cells[base + at];
+    var water = sim_cells[base + at];
+    water.w = sim_cells[base + sim_held() + at].w;
+    sim_cells[base + at] = water;
     if sim_has(q, SIM_SUMMING) {
-        let sums = sim_averages_base(q) + at;
-        sim_averages[sums] += vec4<f32>(water.xyz, foam);
+        sim_averages[sim_averages_base(q) + at] += water;
     }
-    let unheld = water.w <= 0.5 * SIM_UNHELD;
-    if sim_has(q, SIM_SPARSE) && unheld && water.x - sim_bed(q, id.x, id.y) > SIM_DRY {
-        sim_steps[sim_block_at(q, id.xy / WATER_SIM_GROUP)].x = 1.0;
+    if sim_has(q, SIM_SPARSE) && !sim_held_at(q, at) && water.x - sim_bed(q, at) > SIM_DRY {
+        sim_steps[sim_block_at(q, at / SIM_BLOCK_CELLS)].x = 1.0;
     }
 }
 
@@ -823,58 +995,59 @@ fn sim_source(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let source = sim_inputs[sim_sources_base(q) + id.x];
     let at = bitcast<u32>(source.x);
-    let cells = sim_cells_base(q);
-    var cell = sim_cells[cells + at];
-    if cell.w > 0.5 * SIM_UNHELD {
+    if sim_held_at(q, at) {
         return;
     }
+    let cells = sim_cells_base(q);
+    var cell = sim_cells[cells + at];
     let added = source.y * sim_seconds_at(q, at) / (q.dx * q.dx);
     cell.x += added;
     cell.y += added * source.z * SIM_SOURCE_SPEED;
     cell.z += added * source.w * SIM_SOURCE_SPEED;
     sim_cells[cells + at] = cell;
     if sim_has(q, SIM_SPARSE) {
-        let place = vec2<u32>(at % q.nx, at / q.nx);
-        sim_steps[sim_block_at(q, place / WATER_SIM_GROUP)].x = 1.0;
+        sim_steps[sim_block_at(q, at / SIM_BLOCK_CELLS)].x = 1.0;
     }
 }
 
-// A sparse rectangle's blocks, before each step: a block steps where it or
-// a block beside it held water no lake holds at the step before's end;
-// else it stands still, counting the steps it stands. A block waking adds
-// to its cells' sums their water over the steps it stood still, standing
-// as it stood.
+// A sparse rectangle's blocks, before each step, an invocation for each
+// block of its pool: a block steps where it or a block beside it held water
+// no lake holds at the step before's end; else it stands still, counting
+// the steps it stands. A block waking adds to its cells' sums their water
+// over the steps it stood still, standing as it stood.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_activity(@builtin(global_invocation_id) id: vec3<u32>) {
-    let q = sim_square(id.z);
-    let blocks = (vec2<u32>(q.nx, q.nz) + vec2<u32>(WATER_SIM_GROUP - 1u)) / WATER_SIM_GROUP;
+fn sim_activity(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_index) local: u32,
+) {
+    let q = sim_square(group.z);
+    let block = (group.y * count.x + group.x) * SIM_BLOCK_CELLS + local;
     let sparse = sim_has(q, SIM_STEPPING) && sim_has(q, SIM_SPARSE);
-    if id.z >= sim_slot_count() || !sparse || id.x >= blocks.x || id.y >= blocks.y {
+    if group.z >= sim_slot_count() || !sparse || block >= q.stored {
         return;
     }
+    let place = vec2<i32>(sim_place(q, block));
     var wet = false;
     for (var dz = -1; dz <= 1; dz++) {
         for (var dx = -1; dx <= 1; dx++) {
-            let beside = vec2<i32>(id.xy) + vec2<i32>(dx, dz);
-            if all(beside >= vec2<i32>(0)) && all(beside < vec2<i32>(blocks)) {
-                wet = wet || sim_steps[sim_block_at(q, vec2<u32>(beside))].x > 0.5;
+            let beside = sim_block(q, place + vec2<i32>(dx, dz));
+            if beside != SIM_NO_BLOCK {
+                wet = wet || sim_steps[sim_block_at(q, beside)].x > 0.5;
             }
         }
     }
-    let entry = sim_block_at(q, id.xy) + 1u;
+    let entry = sim_block_at(q, block) + 1u;
     let state = sim_steps[entry];
     if wet && state.x < 0.5 && state.y > 0.0 && sim_has(q, SIM_SUMMING) {
         let base = sim_cells_base(q);
         let sums = sim_averages_base(q);
-        let first = id.xy * WATER_SIM_GROUP;
-        for (var z = 0u; z < WATER_SIM_GROUP; z++) {
-            for (var x = 0u; x < WATER_SIM_GROUP; x++) {
-                let cell = first + vec2<u32>(x, z);
-                if cell.x < q.nx && cell.y < q.nz {
-                    let at = cell.y * q.nx + cell.x;
-                    let water = vec4<f32>(sim_cells[base + at].xyz, sim_foam[base + at]);
-                    sim_averages[sums + at] += state.y * water;
-                }
+        let first = vec2<u32>(place) * WATER_SIM_GROUP;
+        for (var k = 0u; k < SIM_BLOCK_CELLS; k++) {
+            let cell = first + vec2<u32>(k % WATER_SIM_GROUP, k / WATER_SIM_GROUP);
+            if cell.x < q.nx && cell.y < q.nz {
+                let at = block * SIM_BLOCK_CELLS + k;
+                sim_averages[sums + at] += state.y * sim_cells[base + at];
             }
         }
     }
@@ -885,81 +1058,103 @@ fn sim_activity(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// A look's sums of a workgroup's cells.
-var<workgroup> sim_look_sums: array<vec4<f32>, 64>;
+// A look's sums of a workgroup's cells, and of the water standing in those
+// beside blocks the slot's pool does not store.
+var<workgroup> sim_look_sums: array<vec4<f32>, SIM_BLOCK_CELLS>;
+var<workgroup> sim_look_edges: array<vec2<f32>, SIM_BLOCK_CELLS>;
 
-// A look at a summing rectangle: each cell's mean water over the steps
-// since the look before (its sums over `summed` steps, with its water over
-// the steps its block stood still since it last did, standing as it
-// stood) replaces the mean kept then, and its sums start anew; each
-// workgroup sums the water its cells' means hold (cubic meters a meter of
-// cell, above their ground), how far the velocities of those flowing moved
-// since the mean before, those flowing and those stepping (a sparse
-// rectangle's, those whose block steps).
+// Whether cell (i, j) stands beside a cell of the rectangle the slot does
+// not hold.
+fn sim_at_edge(q: Square, i: i32, j: i32) -> bool {
+    var edge = false;
+    for (var k = 0; k < 4; k++) {
+        let beside = vec2<i32>(i, j) + sim_toward(k);
+        let inside = all(beside >= vec2<i32>(0)) && beside.x < i32(q.nx) && beside.y < i32(q.nz);
+        edge = edge || (inside && sim_at(q, beside.x, beside.y) == SIM_NO_BLOCK);
+    }
+    return edge;
+}
+
+// A look at a summing rectangle, a workgroup for each block of its pool:
+// each cell's mean water over the steps since the look before (its sums
+// over `summed` steps, with its water over the steps its block stood still
+// since it last did, standing as it stood) replaces the mean kept then,
+// and its sums start anew; each block sums the water its cells' means hold
+// (cubic meters a meter of cell, above their ground), how far the
+// velocities of those flowing moved since the mean before, those flowing
+// and those stepping (a sparse rectangle's, those whose block steps); and
+// the water held by those of its cells beside a block the pool does not
+// store, and those cells.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
 fn sim_look(
-    @builtin(global_invocation_id) id: vec3<u32>,
-    @builtin(local_invocation_index) local: u32,
     @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(num_workgroups) count: vec3<u32>,
+    @builtin(local_invocation_id) local: vec3<u32>,
+    @builtin(local_invocation_index) index: u32,
 ) {
-    let q = sim_square(id.z);
-    var sums = vec4<f32>(0.0);
-    let looking = id.z < sim_slot_count() && sim_has(q, SIM_LOOKING) && sim_has(q, SIM_SUMMING);
+    let q = sim_square(group.z);
+    let cell = sim_cell_of(q, group, count, local);
+    let block = group.y * count.x + group.x;
+    let looking = group.z < sim_slot_count() && sim_has(q, SIM_LOOKING)
+        && sim_has(q, SIM_SUMMING) && block < q.stored;
     let sparse = sim_has(q, SIM_SPARSE);
-    let blocks = (vec2<u32>(q.nx, q.nz) + vec2<u32>(WATER_SIM_GROUP - 1u)) / WATER_SIM_GROUP;
-    let block = sim_block_at(q, group.xy) + 1u;
-    if looking && id.x < q.nx && id.y < q.nz {
-        let n = q.nx * q.nz;
-        let at = id.y * q.nx + id.x;
+    var sums = vec4<f32>(0.0);
+    var edges = vec2<f32>(0.0);
+    if looking && cell.runs {
+        let at = cell.at;
+        let held = sim_held();
         let averages = sim_averages_base(q);
-        let base = sim_cells_base(q);
-        let now = sim_cells[base + at];
+        let now = sim_cells[sim_cells_base(q) + at];
         var summed = sim_averages[averages + at];
         var stepping = 1.0;
         if sparse {
-            let state = sim_steps[block];
-            summed += state.y * vec4<f32>(now.xyz, sim_foam[base + at]);
+            let state = sim_steps[sim_block_at(q, block) + 1u];
+            summed += state.y * now;
             stepping = state.x;
         }
         let mean = summed / max(q.summed, 1.0);
-        let before = sim_averages[averages + n + at];
-        sim_averages[averages + n + at] = mean;
+        let before = sim_averages[averages + held + at];
+        sim_averages[averages + held + at] = mean;
         sim_averages[averages + at] = vec4<f32>(0.0);
-        let ground = sim_bed(q, id.x, id.y);
-        let held = now.w > 0.5 * SIM_UNHELD;
+        let ground = sim_bed(q, at);
         let h = mean.x - ground;
         let was = before.x - ground;
-        if !held && h > SIM_DRY {
+        if !sim_held_at(q, at) && h > SIM_DRY {
             let velocity = vec2<f32>(sim_velocity(h, mean.y), sim_velocity(h, mean.z));
             var earlier = vec2<f32>(0.0);
             if was > SIM_DRY {
                 earlier = vec2<f32>(sim_velocity(was, before.y), sim_velocity(was, before.z));
             }
             sums = vec4<f32>(h, length(velocity - earlier), 1.0, stepping);
+            if sim_at_edge(q, i32(cell.i), i32(cell.j)) {
+                edges = vec2<f32>(h, 1.0);
+            }
         } else {
             sums = vec4<f32>(0.0, 0.0, 0.0, stepping);
         }
     }
-    sim_look_sums[local] = sums;
+    sim_look_sums[index] = sums;
+    sim_look_edges[index] = edges;
     workgroupBarrier();
-    var stride = 32u;
+    var stride = SIM_BLOCK_CELLS / 2u;
     loop {
         if stride == 0u {
             break;
         }
-        if local < stride {
-            sim_look_sums[local] += sim_look_sums[local + stride];
+        if index < stride {
+            sim_look_sums[index] += sim_look_sums[index + stride];
+            sim_look_edges[index] += sim_look_edges[index + stride];
         }
         workgroupBarrier();
         stride = stride / 2u;
     }
-    if local == 0u && looking {
-        let groups = sim_groups();
-        let at = sim_averages_base(q) + 2u * sim_held() + group.y * groups.x + group.x;
+    if index == 0u && looking {
+        let at = sim_averages_base(q) + 2u * sim_held() + 2u * block;
         sim_averages[at] = sim_look_sums[0];
+        sim_averages[at + 1u] = vec4<f32>(sim_look_edges[0], 0.0, 0.0);
         // The steps it stood still start anew with the sums.
-        if sparse && group.x < blocks.x && group.y < blocks.y {
-            sim_steps[block].y = 0.0;
+        if sparse {
+            sim_steps[sim_block_at(q, block) + 1u].y = 0.0;
         }
     }
 }

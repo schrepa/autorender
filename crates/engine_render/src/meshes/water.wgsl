@@ -73,14 +73,15 @@ struct WaterUniform {
 // bubbles (a), FALL_MAP meters across and along the water as it leaves its
 // lip; read with the waves' sampler, repeating.
 @group(1) @binding(55) var water_fall_map: texture_2d<f32>;
-// The simulated water: each cell's surface (world meters), its flow along x
-// and z (square meters a second) and the level a lake holds it at, row by
-// row; and the ground at the cells' corners, a row of cells and one more at
-// a time.
+// The simulated water as its blocks hold it (`water_sim.wgsl`'s, every
+// block of the window's square in order, SIM_WATER_BLOCK cells along each
+// side): each cell's surface (world meters), its flow along x and z (square
+// meters a second) and the foam it carries, a block's row by row; and each
+// block's ground at its cells' corners (a row of its cells and one more at
+// a time), then the levels lakes hold its cells at.
 @group(1) @binding(56) var<storage, read> water_sim_cells: array<vec4<f32>>;
 @group(1) @binding(57) var<storage, read> water_sim_ground: array<f32>;
-// The foam the simulated water carries, row by row (`water_sim.wgsl`).
-@group(1) @binding(58) var<storage, read> water_sim_foam: array<f32>;
+const SIM_WATER_BLOCK: u32 = 8u;
 // The most foam water carries, as its flow churns it up
 // (`engine_terrain::shallow_water::FOAM_MOST`); the foam over which it
 // shows as lace, from the first to the second; how much of the lace its
@@ -1215,20 +1216,32 @@ const SIM_THIN_WATER: f32 = 0.05;
 const SIM_SHEER: vec2<f32> = vec2<f32>(0.45, 0.5);
 const SIM_SHEETS_ABOVE: vec2<f32> = vec2<f32>(3.0, 6.0);
 
+// Where the simulated water holds cell (i, j), the nearest inside its
+// square for one past its edge: its block's first cell (its blocks stand
+// in order, row by row) and its place in the block.
+fn sim_water_at(i: i32, j: i32) -> u32 {
+    let n = i32(water.sim.w);
+    let at = vec2<u32>(clamp(vec2<i32>(i, j), vec2<i32>(0), vec2<i32>(n - 1)));
+    let blocks = (u32(n) + SIM_WATER_BLOCK - 1u) / SIM_WATER_BLOCK;
+    let block = (at.y / SIM_WATER_BLOCK) * blocks + at.x / SIM_WATER_BLOCK;
+    let local = at % SIM_WATER_BLOCK;
+    return (block * SIM_WATER_BLOCK + local.y) * SIM_WATER_BLOCK + local.x;
+}
+
 // Cell (i, j) of the simulated water, the nearest inside its square for
 // one past its edge.
 fn sim_water_cell(i: i32, j: i32) -> vec4<f32> {
-    let n = i32(water.sim.w);
-    let at = clamp(vec2<i32>(i, j), vec2<i32>(0), vec2<i32>(n - 1));
-    return water_sim_cells[u32(at.y * n + at.x)];
+    return water_sim_cells[sim_water_at(i, j)];
 }
 
 // The ground at cell (i, j)'s middle: its corners' mean.
 fn sim_water_ground(i: i32, j: i32) -> f32 {
-    let n = i32(water.sim.w);
-    let at = clamp(vec2<i32>(i, j), vec2<i32>(0), vec2<i32>(n - 1));
-    let row = u32(n + 1);
-    let corner = u32(at.y) * row + u32(at.x);
+    let at = sim_water_at(i, j);
+    let cells = SIM_WATER_BLOCK * SIM_WATER_BLOCK;
+    let row = SIM_WATER_BLOCK + 1u;
+    let local = at % cells;
+    let corner = (at / cells) * (row * row + cells) + (local / SIM_WATER_BLOCK) * row
+        + local % SIM_WATER_BLOCK;
     return 0.25 * (water_sim_ground[corner] + water_sim_ground[corner + 1u]
         + water_sim_ground[corner + row] + water_sim_ground[corner + row + 1u]);
 }
@@ -1315,7 +1328,7 @@ fn sim_water_output(index: u32) -> WaterOutput {
     output.shore = vec2<f32>(west.y - east.y, south.y - north.y) / (2.0 * cell);
     // White water: the foam the water carries, streaking it where it runs
     // down steeply.
-    let foam = water_sim_foam[u32(j) * n + u32(i)];
+    let foam = sim_water_cell(i, j).w;
     output.foam = vec3<f32>(min(foam, 1.0) * WATER_FOAM_STREAKED, SIM_HALF_WIDTH, 0.0);
     output.churned = foam;
     return output;

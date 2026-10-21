@@ -4,18 +4,20 @@
 //! the water pass draws its water (`meshes/water.wgsl`'s simulated water) in
 //! place of the tiles'. As the window follows the camera, its water carries
 //! over and only what it newly covers starts as it settled. The window is
-//! one slot of the scheme's buffers ([`crate::water_kernels`]), stepping
-//! every cell by the frame's seconds, with a ring past its edges.
+//! one slot of the scheme's buffers ([`crate::water_kernels`]) storing every
+//! block of its cells in order, stepping every cell by the frame's seconds,
+//! with a ring past its edges.
 
 use std::sync::Arc;
 
 use engine_core::WaterWindow;
 use engine_core::math::{max, min};
+use engine_core::terrain_data::StoredBlocks;
 use engine_core::terrain_data::shallow_water::{ROUGHNESS, UNHELD, step_seconds};
 
-use crate::gpu_layouts::constants::{SIM_STEPPING, WATER_SIM_GROUP};
+use crate::gpu_layouts::constants::SIM_STEPPING;
 use crate::gpu_layouts::water::SimSlot;
-use crate::water_kernels::{Kernels, SlotBuffers, encode_steps};
+use crate::water_kernels::{Capacity, Kernels, SlotBuffers, encode_steps, grid};
 
 /// The most steps a frame runs, and the most seconds a frame simulates:
 /// longer frames simulate less time than passed.
@@ -35,10 +37,12 @@ pub(crate) struct WaterSim {
     generation: u64,
 }
 
-/// A window's buffers (one slot with its ring), the count of cells rivers
-/// bring water to, and the triangles water draws its cells' middles with.
+/// A window's blocks (every one of its square's, in order), its buffers
+/// (one slot with its ring), the count of cells rivers bring water to, and
+/// the triangles water draws its cells' middles with.
 struct SimWindow {
     source: Arc<WaterWindow>,
+    stored: StoredBlocks,
     buffers: SlotBuffers,
     sourced: u32,
     indices: wgpu::Buffer,
@@ -85,7 +89,7 @@ impl WaterSim {
         let same_size = self.window.as_ref().is_some_and(|current| {
             current.source.cells == window.cells
                 && current.source.cell == window.cell
-                && window.sources.len() <= current.buffers.sources as usize
+                && window.sources.len() <= current.buffers.capacity.sources as usize
         });
         if changed && same_size {
             self.carried = self.refill(queue, window);
@@ -109,6 +113,7 @@ impl WaterSim {
         let Some(current) = self.window.as_ref() else {
             return;
         };
+        let stored = &current.stored;
         current
             .buffers
             .write_frames(queue, self.carried.unwrap_or_default());
@@ -117,12 +122,14 @@ impl WaterSim {
             &[SimSlot {
                 shape: [window.cells, window.cells, SIM_STEPPING, current.sourced],
                 step: [window.cell, step, ROUGHNESS, 0.0],
+                blocks: [stored.blocks[0], stored.blocks[1], stored.stored() as u32, 0],
             }],
         );
     }
 
-    /// The buffers `window`'s water runs in, its cells and foam starting as
-    /// its water settled, with its sources and ring.
+    /// The buffers `window`'s water runs in, its every block stored, its
+    /// cells starting as its water settled, with its ground, sources and
+    /// ring.
     fn buffers(
         &self,
         device: &wgpu::Device,
@@ -130,20 +137,24 @@ impl WaterSim {
         window: &Arc<WaterWindow>,
     ) -> SimWindow {
         let n = window.cells as usize;
-        let sources = (window.sources.len() as u32).max(1);
+        let stored = StoredBlocks::whole([window.cells; 2]);
+        let sources = window.sources.len().max(1);
         let buffers = SlotBuffers::new(
             device,
             &self.kernels.layout,
-            ([window.cells, window.cells], 1),
-            (sources, true),
+            (Capacity::of(&stored, sources), 1),
+            true,
         );
-        let start = start(window);
+        buffers.write_table(queue, 0, &stored);
+        let start = start(window, &stored);
         let both = [start.as_slice(), start.as_slice()].concat();
-        queue.write_buffer(&buffers.ground, 0, bytemuck::cast_slice(&window.corners));
+        queue.write_buffer(
+            &buffers.ground,
+            0,
+            bytemuck::cast_slice(&ground(window, &stored)),
+        );
         queue.write_buffer(&buffers.cells, 0, bytemuck::cast_slice(&both));
-        let foams = [&window.foam[..], &window.foam[..]].concat();
-        queue.write_buffer(&buffers.foam, 0, bytemuck::cast_slice(&foams));
-        let sourced = write_inputs(queue, &buffers, window);
+        let sourced = write_inputs(queue, &buffers, window, &stored);
         let quads = n.saturating_sub(1);
         let triangles: Vec<u32> = (0..quads * quads)
             .flat_map(|quad| {
@@ -164,6 +175,7 @@ impl WaterSim {
         }
         SimWindow {
             source: window.clone(),
+            stored,
             buffers,
             sourced,
             indices,
@@ -171,8 +183,8 @@ impl WaterSim {
     }
 
     /// Takes `window`, of the current one's size, into the current buffers:
-    /// its ground, sources and ring, and its start in the second state and
-    /// foam; where it moved by whole cells, the cells it moved by, which the
+    /// its ground, sources and ring, and its start in the second state;
+    /// where it moved by whole cells, the cells it moved by, which the
     /// water carries over across, else its start in the first state too.
     fn refill(&mut self, queue: &wgpu::Queue, window: &Arc<WaterWindow>) -> Option<[i32; 2]> {
         let current = self.window.as_mut()?;
@@ -181,25 +193,22 @@ impl WaterSim {
         let whole = offset.round();
         let carried = ((offset - whole).abs().max_element() < 1.0e-3)
             .then_some([whole.x as i32, whole.y as i32]);
-        let n = window.cells as usize;
-        let start = start(window);
+        let start = start(window, &current.stored);
         let buffers = &current.buffers;
-        queue.write_buffer(&buffers.ground, 0, bytemuck::cast_slice(&window.corners));
         queue.write_buffer(
-            &buffers.cells,
-            (n * n * 16) as u64,
-            bytemuck::cast_slice(&start),
+            &buffers.ground,
+            0,
+            bytemuck::cast_slice(&ground(window, &current.stored)),
         );
         queue.write_buffer(
-            &buffers.foam,
-            (n * n * 4) as u64,
-            bytemuck::cast_slice(&window.foam),
+            &buffers.cells,
+            buffers.held() * 16,
+            bytemuck::cast_slice(&start),
         );
         if carried.is_none() {
             queue.write_buffer(&buffers.cells, 0, bytemuck::cast_slice(&start));
-            queue.write_buffer(&buffers.foam, 0, bytemuck::cast_slice(&window.foam));
         }
-        current.sourced = write_inputs(queue, buffers, window);
+        current.sourced = write_inputs(queue, buffers, window, &current.stored);
         current.source = window.clone();
         carried
     }
@@ -216,7 +225,8 @@ impl WaterSim {
         if self.steps == 0 && self.carried.is_none() {
             return;
         }
-        let cells = window.source.cells.div_ceil(WATER_SIM_GROUP);
+        let blocks = window.stored.stored() as u32;
+        let [groups_x, groups_z] = grid(blocks);
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/water-sim"),
             timestamp_writes: profiler.span("water_sim").map(|span| span.compute()),
@@ -225,28 +235,27 @@ impl WaterSim {
         if self.carried.is_some() {
             pass.set_bind_group(0, &window.buffers.groups[0], &[]);
             pass.set_pipeline(&pipelines.carry);
-            pass.dispatch_workgroups(cells, cells, 1);
+            pass.dispatch_workgroups(groups_x, groups_z, 1);
             pass.set_pipeline(&pipelines.restart);
-            pass.dispatch_workgroups(cells, cells, 1);
+            pass.dispatch_workgroups(groups_x, groups_z, 1);
         }
         encode_steps(
             &mut pass,
             pipelines,
             &window.buffers,
             (self.steps, window.sourced, false, false),
-            [window.source.cells; 2],
+            blocks,
         );
     }
 
     /// What water draws the simulated water from: the window, its cells,
-    /// its ground, its foam and the triangles drawing them; and a count
-    /// advancing whenever they change.
+    /// its ground and the triangles drawing them; and a count advancing
+    /// whenever they change.
     pub(crate) fn drawn(&self) -> (Option<SimDrawn<'_>>, u64) {
         let drawn = self.window.as_ref().map(|window| SimDrawn {
             window: window.source.as_ref(),
             cells: &window.buffers.cells,
             ground: &window.buffers.ground,
-            foam: &window.buffers.foam,
             indices: &window.indices,
         });
         (drawn, self.generation)
@@ -260,14 +269,32 @@ impl WaterSim {
     }
 }
 
-/// Writes what `window`'s rivers bring and its ring into `buffers`' inputs;
-/// the cells its rivers bring water to.
-fn write_inputs(queue: &wgpu::Queue, buffers: &SlotBuffers, window: &WaterWindow) -> u32 {
-    let sources = sourcing(window);
-    let held = buffers.held() as usize;
-    let sources = &sources[..sources.len().min(held)];
+/// Writes what `window`'s rivers bring (at the cells `stored`, its blocks,
+/// holds them at) and its ring into `buffers`' inputs; the cells its rivers
+/// bring water to.
+fn write_inputs(
+    queue: &wgpu::Queue,
+    buffers: &SlotBuffers,
+    window: &WaterWindow,
+    stored: &StoredBlocks,
+) -> u32 {
+    let n = window.cells;
+    let sources: Vec<[f32; 4]> = window
+        .sources
+        .iter()
+        .filter_map(|source| {
+            let at = stored.at(source.cell % n, source.cell / n)?;
+            Some([
+                f32::from_bits(at as u32),
+                source.rate,
+                source.way[0],
+                source.way[1],
+            ])
+        })
+        .take(buffers.capacity.sources as usize)
+        .collect();
     if !sources.is_empty() {
-        queue.write_buffer(&buffers.inputs, 0, bytemuck::cast_slice(sources));
+        queue.write_buffer(&buffers.inputs, 0, bytemuck::cast_slice(&sources));
     }
     queue.write_buffer(
         &buffers.inputs,
@@ -277,35 +304,27 @@ fn write_inputs(queue: &wgpu::Queue, buffers: &SlotBuffers, window: &WaterWindow
     sources.len() as u32
 }
 
-/// `window`'s water to start from, each cell's surface, flow along x and z
-/// and the level a lake holds it at (UNHELD where none does).
-fn start(window: &WaterWindow) -> Vec<[f32; 4]> {
-    window
-        .seed
-        .iter()
-        .zip(window.held.iter())
-        .map(|(&[surface, x, z], &held)| {
-            let held = if held.is_nan() { UNHELD } else { held };
-            [surface, x, z, held]
-        })
-        .collect()
+/// `window`'s water to start from, as `stored`, its blocks, holds its
+/// cells: each one's surface, flow along x and z and foam.
+fn start(window: &WaterWindow, stored: &StoredBlocks) -> Vec<[f32; 4]> {
+    let n = window.cells;
+    stored.gather(|i, j| {
+        let at = (j * n + i) as usize;
+        let [surface, x, z] = window.seed[at];
+        [surface, x, z, window.foam[at]]
+    })
 }
 
-/// The cells `window`'s rivers bring water to: each one's index (as bits),
-/// the cubic meters a second they bring and the way it runs as it comes.
-fn sourcing(window: &WaterWindow) -> Vec<[f32; 4]> {
-    window
-        .sources
-        .iter()
-        .map(|source| {
-            [
-                f32::from_bits(source.cell),
-                source.rate,
-                source.way[0],
-                source.way[1],
-            ]
-        })
-        .collect()
+/// `window`'s ground as `stored`, its blocks, holds it: the ground at its
+/// cells' corners, and the level a lake holds each cell at (UNHELD where
+/// none does).
+fn ground(window: &WaterWindow, stored: &StoredBlocks) -> Vec<f32> {
+    let n = window.cells;
+    let held = stored.gather(|i, j| {
+        let level = window.held[(j * n + i) as usize];
+        if level.is_nan() { UNHELD } else { level }
+    });
+    stored.ground(|i, j| window.corners[(j * (n + 1) + i) as usize], &held)
 }
 
 /// `window`'s ring as the shader reads it: each cell past its edges'
@@ -334,6 +353,5 @@ pub(crate) struct SimDrawn<'a> {
     pub(crate) window: &'a WaterWindow,
     pub(crate) cells: &'a wgpu::Buffer,
     pub(crate) ground: &'a wgpu::Buffer,
-    pub(crate) foam: &'a wgpu::Buffer,
     pub(crate) indices: &'a wgpu::Buffer,
 }

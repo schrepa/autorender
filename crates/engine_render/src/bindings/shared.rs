@@ -81,7 +81,7 @@ shared_groups! {
         view_clouds: 46..50 [view_clouds, view_cloud_front, view_cloud_depth, view_cloud_sampler],
         water: 50..59 [
             water_surface, water_info, water, water_waves, water_wave_sampler, water_fall_map,
-            water_sim_cells, water_sim_ground, water_sim_foam
+            water_sim_cells, water_sim_ground
         ],
     }
     SHADER @ 2 {

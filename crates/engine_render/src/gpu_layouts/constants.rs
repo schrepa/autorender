@@ -237,8 +237,9 @@ gpu_consts! {
     pub(crate) const WAVE_LEVEL_GROUP: u32 = 8 => ["@average_level" in WATER_WAVES_SHADER];
 
     // crate::water_sim
-    /// Workgroup side of the simulation's passes over cells and faces.
-    pub(crate) const WATER_SIM_GROUP: u32 = 8 => ["WATER_SIM_GROUP" in WATER_SIM_SHADER, "@sim_exchange" in WATER_SIM_SHADER, "@sim_waves" in WATER_SIM_SHADER, "@sim_seconds" in WATER_SIM_SHADER, "@sim_update" in WATER_SIM_SHADER, "@sim_carry" in WATER_SIM_SHADER, "@sim_restart" in WATER_SIM_SHADER, "@sim_churn" in WATER_SIM_SHADER, "@sim_churned" in WATER_SIM_SHADER, "@sim_activity" in WATER_SIM_SHADER, "@sim_look" in WATER_SIM_SHADER];
+    /// Workgroup side of the simulation's passes over cells and faces: a
+    /// block of cells, as its slots store them and water draws them.
+    pub(crate) const WATER_SIM_GROUP: u32 = engine_core::terrain_data::BLOCK_SIDE => ["WATER_SIM_GROUP" in WATER_SIM_SHADER, "SIM_WATER_BLOCK" in SHADER, "@sim_exchange" in WATER_SIM_SHADER, "@sim_waves" in WATER_SIM_SHADER, "@sim_seconds" in WATER_SIM_SHADER, "@sim_update" in WATER_SIM_SHADER, "@sim_carry" in WATER_SIM_SHADER, "@sim_restart" in WATER_SIM_SHADER, "@sim_churn" in WATER_SIM_SHADER, "@sim_churned" in WATER_SIM_SHADER, "@sim_activity" in WATER_SIM_SHADER, "@sim_look" in WATER_SIM_SHADER];
     /// The most rectangles a dispatch of the simulation runs, each a slot
     /// of its buffers.
     pub(crate) const SIM_SLOTS: usize = 64 => ["SIM_SLOTS" in WATER_SIM_SHADER];
@@ -413,6 +414,7 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::FASTEST => ["SIM_FASTEST" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SOURCE_SPEED => ["SIM_SOURCE_SPEED" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::UNHELD => ["SIM_UNHELD" in WATER_SIM_SHADER];
+    engine_core::terrain_data::NO_BLOCK => ["SIM_NO_BLOCK" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_FROUDE => ["SIM_FOAM_FROUDE" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_RAPIDS => ["SIM_FOAM_RAPIDS" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_PILING => ["SIM_FOAM_PILING" in WATER_SIM_SHADER];
