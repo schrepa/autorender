@@ -863,12 +863,13 @@ const HORIZON_RECORD_TEXELS: u32 = 2u;
 
 // The share of the sun terrains leave unblocked at `world`: where the sun's
 // ray toward it passes under a terrain's crest there, none; over it, all;
-// between, a soft edge growing with the crest's distance. How far above the
-// ground the ray clears the crests ahead lies between the directions either
-// side of the sun: the crest's distance times the sun's rise per meter, less
-// its height. A surface above the map's ground compares its height above it
-// with that, and terrain's own surfaces (`on_terrain`) lie on that ground
-// whatever detail they draw at.
+// between, a soft edge growing with the crest's distance. The horizon toward
+// the sun lies between those of the directions either side of it, as the
+// slopes up to their crests and the crests' distances do; the ray passes
+// under it by that distance times how much the slope rises above the sun's.
+// A surface above the map's ground compares its height above it with that,
+// and terrain's own surfaces (`on_terrain`) lie on that ground whatever
+// detail they draw at.
 fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
     if !TERRAIN_HORIZONS {
         return 1.0;
@@ -910,11 +911,12 @@ fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
         let odd = (first & 1u) == 1u;
         let heights = vec2<f32>(select(near.r, near.g, odd), select(far.g, far.r, odd));
         let distances = vec2<f32>(select(near.b, near.a, odd), select(far.a, far.b, odd));
-        // The meters above the ground the sun's ray toward the crest passes
-        // under it, either side of the sun, and between.
-        let under = heights - distances * rise;
-        let clearance = mix(under.x, under.y, between);
+        // The slopes up to the crests either side of the sun (no crest
+        // looks down past any sun), and the meters above the ground the
+        // sun's ray toward the crest between passes under it.
+        let slopes = max(heights / max(distances, vec2<f32>(1.0e-3)), vec2<f32>(-1.0));
         let distance = mix(distances.x, distances.y, between);
+        let clearance = distance * (mix(slopes.x, slopes.y, between) - rise);
         var elevation = 0.0;
         if !on_terrain {
             let ground = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,

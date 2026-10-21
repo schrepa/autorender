@@ -16,8 +16,9 @@
 //! horizon's angle above level, and the ground's height: a surface sees the
 //! sun where the sun's ray toward it clears that crest, by as many meters as
 //! the crest's distance times the sun's rise per meter, less the crest's
-//! height above it. Heights and distances interpolate between texels and
-//! directions as the meters the sun clears crests by would.
+//! height above it. Heights and distances interpolate between texels as
+//! the meters the sun clears crests by would; between directions, the
+//! slopes up to the crests do.
 //!
 //! Horizons come from sweeps, one per direction: lines along it a step apart
 //! cross the terrain, sampled a step apart, and walking each line from its
