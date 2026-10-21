@@ -239,6 +239,9 @@ const GROUND: usize = size_of::<GroundData>();
 const VIRTUAL_MESH: usize = size_of::<MeshRecord>();
 const VIRTUAL_CLUSTER: usize = engine_core::CLUSTER_WORDS * 4;
 const VIRTUAL_PAGE: usize = 4;
+/// Bytes of the terrains' horizon records.
+pub(crate) const HORIZON_RECORDS_BYTES: usize =
+    crate::gpu_layouts::constants::HORIZON_RECORDS * size_of::<[f32; 4]>();
 
 /// Declares bind group tables and [`TABLES`] from the same list:
 /// `const NAME: Table = Table { label, serves: [MODULE @ group, ..], bindings }`,
@@ -309,9 +312,10 @@ tables! {
             sampler(12, "environment_sampler", Filtering, F),
             read(13, "probe_words", F),
             // Terrain's long sun shadows: each terrain's horizon
-            // map, two texels of records per terrain, and the maps' sampler.
+            // map, every terrain's record (a uniform the lookups loop over),
+            // and the maps' sampler.
             texture(14, "terrain_horizons", Float, D2Array, F),
-            texture(15, "terrain_horizon_records", Unfilterable, D2, F),
+            uniform_of(15, "terrain_horizon_records", HORIZON_RECORDS_BYTES, F),
             sampler(16, "terrain_horizon_sampler", Filtering, F),
             // What placed objects cover around the camera: its
             // density, filtered, and the covers' tops and bottoms; the near map
@@ -345,7 +349,7 @@ tables! {
             sampler(12, "environment_sampler", Filtering, F),
             read(13, "probe_words", F),
             texture(14, "terrain_horizons", Float, D2Array, F),
-            texture(15, "terrain_horizon_records", Unfilterable, D2, F),
+            uniform_of(15, "terrain_horizon_records", HORIZON_RECORDS_BYTES, F),
             sampler(16, "terrain_horizon_sampler", Filtering, F),
             texture(17, "occupancy_coverage", Float, D2Array, F),
             texture(18, "occupancy_heights", Unfilterable, D2Array, F),
@@ -969,7 +973,7 @@ tables! {
             uniform_of(1, "lighting", size_of::<LightingUniform>(), C),
             uniform_of(2, "shadow", size_of::<ShadowUniform>(), C),
             texture(14, "terrain_horizons", Float, D2Array, C),
-            texture(15, "terrain_horizon_records", Unfilterable, D2, C),
+            uniform_of(15, "terrain_horizon_records", HORIZON_RECORDS_BYTES, C),
             sampler(16, "terrain_horizon_sampler", Filtering, C),
             read_of(19, "cloud_shadows", clouds::CLOUD_SHADOW_BYTES, C),
             uniform_of(60, "bounce_frame", size_of::<bounce::BounceFrame>(), C),

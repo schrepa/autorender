@@ -151,9 +151,13 @@ gpu_consts! {
     pub(crate) const TERRAIN_GRID_VERTICES: u32 = TERRAIN_GRID * TERRAIN_GRID => ["TERRAIN_GRID_VERTICES"];
 
     // crate::terrain_horizons
-    /// Texels of the records each terrain's horizon map takes: where it lies
-    /// and how its shadows soften, then where its bounce light lies.
-    pub(crate) const HORIZON_RECORD_TEXELS: u32 = 4 => ["HORIZON_RECORD_TEXELS"];
+    /// Vectors of the record each terrain's horizon map takes (where it lies
+    /// and how its shadows soften, then where its bounce light lies), and
+    /// those the records' uniform holds: as many as fit 4 KiB, 64 terrains,
+    /// more than the maps' array layers hold at the limits every device
+    /// grants.
+    pub(crate) const HORIZON_RECORD_VECTORS: u32 = 4 => ["HORIZON_RECORD_VECTORS"];
+    pub(crate) const HORIZON_RECORDS: usize = 256 => ["HORIZON_RECORDS"];
 
     // crate::terrain_bounce
     /// Layers of the horizon maps each terrain's bounce light takes: per

@@ -7,7 +7,9 @@
 //! and compares its own height above the ground with it, softening with the
 //! crest's distance (`scene.wgsl`): the sun moves and nothing builds. A
 //! terrain's layers upload as its lighting arrives and again when it
-//! changes; four texels per terrain place its map for those lookups.
+//! changes; a record of four vectors per terrain, in a uniform the lookups
+//! loop over, places its map. Terrains past what the device's array layers
+//! or the records hold cast no long shadows.
 //!
 //! With bounce light on, the maps hold after every terrain's horizon layers
 //! the bounce layers of each terrain it relights, by slot
@@ -21,21 +23,19 @@ use engine_core::terrain_data::lighting::HORIZON_LAYERS;
 use engine_core::{RenderTerrain, RenderTerrains, TerrainLighting, TerrainSettings};
 
 use crate::cached::{Bound, Versioned};
-use crate::gpu_layouts::constants::{BOUNCE_LAYERS, HORIZON_RECORD_TEXELS};
+use crate::gpu_layouts::constants::{BOUNCE_LAYERS, HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
 use crate::terrain_bounce::BounceWindow;
 
 /// A horizon map texel: two directions' crest heights and distances, or the
 /// ground's height, filtered; or bounce light's coefficients.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// The records' texels.
-const RECORD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 /// Texels of the horizon map within which terrain still draws into the
 /// near cascades, which shadow fine detail its texels miss.
 const CASCADE_TEXELS: f32 = 4.0;
 
 /// A terrain's record without a map: its place covers no ground and it
 /// holds no bounce light.
-const NO_RECORD: [[f32; 4]; HORIZON_RECORD_TEXELS as usize] =
+const NO_RECORD: [[f32; 4]; HORIZON_RECORD_VECTORS as usize] =
     [[0.0; 4], [0.0; 4], [-1.0, 0.0, 0.0, 0.0], [0.0; 4]];
 
 struct Maps {
@@ -56,8 +56,9 @@ pub(crate) struct Horizons {
     // A one-texel map bound while no terrain casts, and the maps' sampler.
     empty: wgpu::TextureView,
     sampler: wgpu::Sampler,
-    records: wgpu::Texture,
-    records_view: Versioned<wgpu::TextureView>,
+    // Every casting terrain's record, in a uniform holding the most there
+    // may be, and what it holds.
+    records: wgpu::Buffer,
     records_written: Vec<[f32; 4]>,
     // The lighting each terrain's layers hold.
     held: Vec<Option<Arc<TerrainLighting>>>,
@@ -82,7 +83,6 @@ impl Horizons {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()
         });
-        let (records, records_view) = records_texture(device, 1);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/terrain-horizon-sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -93,8 +93,11 @@ impl Horizons {
             maps: None,
             empty,
             sampler,
-            records,
-            records_view,
+            records: crate::buffers::uniform(
+                device,
+                "engine/terrain-horizon-records",
+                crate::bindings::HORIZON_RECORDS_BYTES as u64,
+            ),
             records_written: Vec::new(),
             held: Vec::new(),
             reaches: HashMap::default(),
@@ -111,7 +114,10 @@ impl Horizons {
         );
         [
             ("terrain_horizons", maps),
-            ("terrain_horizon_records", self.records_view.bound()),
+            (
+                "terrain_horizon_records",
+                Bound::fixed(self.records.as_entire_binding()),
+            ),
             (
                 "terrain_horizon_sampler",
                 Bound::fixed(crate::pipelines::sampler(&self.sampler)),
@@ -128,7 +134,10 @@ impl Horizons {
         Some((
             [
                 ("terrain_horizons", maps.horizon_view.bound()),
-                ("terrain_horizon_records", self.records_view.bound()),
+                (
+                    "terrain_horizon_records",
+                    Bound::fixed(self.records.as_entire_binding()),
+                ),
                 (
                     "terrain_horizon_sampler",
                     Bound::fixed(crate::pipelines::sampler(&self.sampler)),
@@ -150,10 +159,10 @@ impl Horizons {
         self.held.get(index).is_some_and(Option::is_some)
     }
 
-    /// Terrains the records texture holds, which the main passes' lookups
-    /// loop over.
+    /// Terrains the records hold, which the main passes' lookups loop
+    /// over.
     pub(crate) fn record_count(&self) -> u32 {
-        self.records.width() / HORIZON_RECORD_TEXELS
+        (self.records_written.len() / HORIZON_RECORD_VECTORS as usize) as u32
     }
 
     /// Terrains casting long shadows.
@@ -194,11 +203,14 @@ impl Horizons {
         self.uploaded = 0;
         self.reaches.clear();
         if !(shadows && settings.enabled && settings.sun_shadows) || terrains.terrains.is_empty() {
-            self.release(device);
+            self.release();
             return;
         }
         let size = settings.shadow_resolution;
-        let count = terrains.terrains.len();
+        // Terrains past the device's array layers and the records cast none.
+        let room = (device.limits().max_texture_array_layers as usize / HORIZON_LAYERS)
+            .min(HORIZON_RECORDS / HORIZON_RECORD_VECTORS as usize);
+        let count = terrains.terrains.len().min(room);
         if self
             .maps
             .as_ref()
@@ -210,8 +222,8 @@ impl Horizons {
         let Some(maps) = &self.maps else {
             return;
         };
-        let mut records = Vec::with_capacity(HORIZON_RECORD_TEXELS as usize * count);
-        for (index, terrain) in terrains.terrains.iter().enumerate() {
+        let mut records = Vec::with_capacity(HORIZON_RECORD_VECTORS as usize * count);
+        for (index, terrain) in terrains.terrains.iter().take(count).enumerate() {
             let lighting = terrain
                 .lighting
                 .as_ref()
@@ -256,35 +268,16 @@ impl Horizons {
             }
         }
         if records != self.records_written {
-            if records.len() != self.records_written.len() {
-                (self.records, self.records_view) = records_texture(device, records.len() as u32);
-            }
-            queue.write_texture(
-                self.records.as_image_copy(),
-                bytemuck::cast_slice(&records),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(records.len() as u32 * 16),
-                    rows_per_image: Some(1),
-                },
-                wgpu::Extent3d {
-                    width: records.len() as u32,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-            );
+            queue.write_buffer(&self.records, 0, bytemuck::cast_slice(&records));
             self.records_written = records;
         }
     }
 
-    /// Drops the maps, binding the stand-ins.
-    fn release(&mut self, device: &wgpu::Device) {
+    /// Drops the maps, binding the stand-in; the lookups read no record.
+    fn release(&mut self) {
         self.maps = None;
         self.held.clear();
-        if !self.records_written.is_empty() {
-            (self.records, self.records_view) = records_texture(device, 1);
-            self.records_written.clear();
-        }
+        self.records_written.clear();
     }
 }
 
@@ -317,7 +310,7 @@ fn record(
     lighting: &TerrainLighting,
     place: Place,
     settings: &TerrainSettings,
-) -> [[f32; 4]; HORIZON_RECORD_TEXELS as usize] {
+) -> [[f32; 4]; HORIZON_RECORD_VECTORS as usize] {
     let extent = terrain.pyramid.extent();
     let texel = max_extent(terrain) / lighting.horizon_size as f32;
     let (bounce, window) = match place.window {
@@ -419,22 +412,4 @@ fn maps(device: &wgpu::Device, size: u32, terrains: usize, slots: u32) -> Maps {
         terrains,
         slots,
     }
-}
-
-/// The records texture of `texels` texels (one stands in without terrain).
-fn records_texture(
-    device: &wgpu::Device,
-    texels: u32,
-) -> (wgpu::Texture, Versioned<wgpu::TextureView>) {
-    let texture = crate::targets::texture_2d(
-        device,
-        "engine/terrain-horizon-records",
-        (texels.max(1), 1),
-        1,
-        1,
-        RECORD_FORMAT,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-    );
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    (texture, Versioned::new(view))
 }

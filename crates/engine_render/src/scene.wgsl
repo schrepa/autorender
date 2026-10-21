@@ -164,15 +164,15 @@ struct Shadow {
 // surroundings hold none) follow every terrain's horizon layers
 // (`bounce_light`).
 @group(0) @binding(14) var terrain_horizons: texture_2d_array<f32>;
-// HORIZON_RECORD_TEXELS texels per terrain: its map's first corner (world x
-// and z) and one over its extent (x and z, 0 without a map); its first
+// HORIZON_RECORD_VECTORS vectors per terrain: its map's first corner (world
+// x and z) and one over its extent (x and z, 0 without a map); its first
 // layer, how fast its shadows soften per meter to their crests, the meters
 // receivers rise before comparing and the lowest ground's world height; its
 // bounce layers' first (-1 without bounce light), its probe columns along a
 // side and the first column (x and z) of the window of them relighting; the
-// window's columns along a side and one over the maps' side. One unused
-// texel without any.
-@group(0) @binding(15) var terrain_horizon_records: texture_2d<f32>;
+// window's columns along a side and one over the maps' side.
+const HORIZON_RECORDS: u32 = 256u;
+@group(0) @binding(15) var<uniform> terrain_horizon_records: array<vec4<f32>, HORIZON_RECORDS>;
 @group(0) @binding(16) var terrain_horizon_sampler: sampler;
 // What placed objects cover around the camera: the densest
 // cover over each texel, and the covers' highest top and lowest bottom
@@ -872,7 +872,7 @@ fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
 
 const HORIZON_DIRECTIONS: u32 = 16u;
 const HORIZON_LAYERS: u32 = 9u;
-const HORIZON_RECORD_TEXELS: u32 = 4u;
+const HORIZON_RECORD_VECTORS: u32 = 4u;
 
 // The share of the sun terrains leave unblocked at `world`: where the sun's
 // ray toward it passes under a terrain's crest there, none; over it, all;
@@ -900,13 +900,13 @@ fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
     let first = min(u32(turn), HORIZON_DIRECTIONS - 1u);
     let second = (first + 1u) % HORIZON_DIRECTIONS;
     let between = turn - f32(first);
-    // Their count: the records' texels over theirs (`level_state.w`).
-    let count = u32(shadow.level_state.w);
+    // Their count (`level_state.w`), within the records' uniform.
+    let count = min(u32(shadow.level_state.w), HORIZON_RECORDS / HORIZON_RECORD_VECTORS);
     var visible = 1.0;
     for (var index = 0u; index < count; index++) {
-        let at = HORIZON_RECORD_TEXELS * index;
-        let place = textureLoad(terrain_horizon_records, vec2<u32>(at, 0u), 0);
-        let shape = textureLoad(terrain_horizon_records, vec2<u32>(at + 1u, 0u), 0);
+        let at = HORIZON_RECORD_VECTORS * index;
+        let place = terrain_horizon_records[at];
+        let shape = terrain_horizon_records[at + 1u];
         let uv = (world.xz - place.xy) * place.zw;
         if any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
             continue;
@@ -1012,15 +1012,15 @@ fn bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> Bounce
     if !BOUNCE || !TERRAIN_HORIZONS {
         return found;
     }
-    let count = u32(shadow.level_state.w);
+    let count = min(u32(shadow.level_state.w), HORIZON_RECORDS / HORIZON_RECORD_VECTORS);
     for (var index = 0u; index < count; index++) {
-        let at = HORIZON_RECORD_TEXELS * index;
-        let columns = textureLoad(terrain_horizon_records, vec2<u32>(at + 2u, 0u), 0);
+        let at = HORIZON_RECORD_VECTORS * index;
+        let columns = terrain_horizon_records[at + 2u];
         if columns.x < 0.0 {
             continue;
         }
-        let place = textureLoad(terrain_horizon_records, vec2<u32>(at, 0u), 0);
-        let window = textureLoad(terrain_horizon_records, vec2<u32>(at + 3u, 0u), 0);
+        let place = terrain_horizon_records[at];
+        let window = terrain_horizon_records[at + 3u];
         let uv = (world.xz - place.xy) * place.zw;
         // Where the point lies among the window's columns, each at its
         // middle.
@@ -1033,7 +1033,7 @@ fn bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> Bounce
         let first = u32(columns.x);
         var held = bounce_layer(texel, first, normal);
         if !on_terrain {
-            let shape = textureLoad(terrain_horizon_records, vec2<u32>(at + 1u, 0u), 0);
+            let shape = terrain_horizon_records[at + 1u];
             let ground = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
                 u32(shape.x) + HORIZON_LAYERS - 1u, 0.0).r;
             let above = saturate((world.y - shape.w - ground - BOUNCE_LOW)

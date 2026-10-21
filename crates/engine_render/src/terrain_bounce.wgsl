@@ -112,8 +112,7 @@ fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let uv = (vec2<f32>(id.xy) + 0.5) / f32(side);
-    let shape = textureLoad(terrain_horizon_records,
-        vec2<u32>(HORIZON_RECORD_TEXELS * terrain.window.w + 1u, 0u), 0);
+    let shape = terrain_horizon_records[HORIZON_RECORD_VECTORS * terrain.window.w + 1u];
     let height = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
         u32(shape.x) + HORIZON_LAYERS - 1u, 0.0).r;
     let across = terrain.place.xy + uv * terrain.place.zw;
