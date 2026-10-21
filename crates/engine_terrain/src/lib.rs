@@ -70,7 +70,7 @@ pub use path::{
 };
 pub use placement::{
     AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Placed, PlacementChoice, PlacementLayer,
-    Placing, merge_placed,
+    Placing,
 };
 pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use rivers::{BANK_OFFSET, NAPPE_FACE, RIVER_STEP, Rivers};
@@ -82,7 +82,7 @@ pub use surface::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,
     Mask, NoiseMask, Remap, SampleInputs,
 };
-pub use tile::{Generator, Tile, TileBand, TileSample, merge_bands};
+pub use tile::{Generator, Tile, TileSample};
 pub use tile_water::{
     TileWater, WATER_FLOW_RANGE, WATER_WIDTH_RANGE, WaterPoint, pack as pack_water,
     unpack as unpack_water,

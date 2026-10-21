@@ -17,8 +17,8 @@ use engine_terrain::jobs::{
     self, BakeJob, StackView, TerrainRecipe, TerrainWorker, TileJob, WalkJob,
 };
 use engine_terrain::{
-    BiomeRules, FileHeader, Generator, Layer, Layers, NavOptions, Obstacle, Placing, Pyramid,
-    Stamp, StampOp, Tile, TileKey, codec, decode_tile, encode_file, walk,
+    BiomeRules, FileHeader, Generator, Layer, Layers, NavOptions, Obstacle, Pyramid, Stamp,
+    StampOp, Tile, TileKey, codec, decode_tile, encode_file, walk,
 };
 use glam::Vec2;
 use serde_json::json;
@@ -277,15 +277,16 @@ fn name(key: TileKey) -> String {
     format!("{}/{}/{}", key.level, key.x, key.z)
 }
 
-/// A pack of `records` (each keyed as hosts key it, by its kind and a
-/// hash of its bytes standing for its identity), its records compressed as
-/// the cook compresses them; each must read back from it as it went in.
+/// A pack of `records` (each keyed by its kind and a hash of its bytes
+/// standing for its identity, under a fixed source hash, so the pack
+/// changes only with what it holds and how packs are written), its records
+/// compressed as the cook compresses them; each must read back from it as
+/// it went in.
 fn pack(records: &[(&str, Vec<u8>)], observed: &mut Observations) -> Result<Vec<u8>, String> {
     let keyed: Vec<([u8; 32], &[u8], Vec<u8>)> = records
         .iter()
         .map(|(kind, bytes)| {
-            let key =
-                engine_sources::record_key(&engine_terrain::SOURCE, kind, &codec_identity(bytes));
+            let key = engine_sources::record_key(&[0; 32], kind, &codec_identity(bytes));
             let stored =
                 zstd::bulk::compress(bytes, PACK_LEVEL).map_err(|error| error.to_string())?;
             Ok((key, bytes.as_slice(), stored))
@@ -416,7 +417,6 @@ impl Recipe {
         };
         let mut generator = Generator::new(layers, &self.pyramid, key)
             .with_surface(self.rules.clone())
-            .with_placing(Placing::All)
             .with_materials(true);
         let mut unlimited = u64::MAX;
         let in_place = generator

@@ -20,12 +20,6 @@
 //! point, on the tiles of its level (the finest for small things, coarser
 //! for large ones, which then show as far as those tiles stay resident),
 //! drawn, shadowed and collided with as the layers' objects are.
-//!
-//! A tile's objects may be placed in two parts: those of
-//! its own level's layers and its authored objects, then those of layers
-//! standing far away at its level, which far tiles hold by the tens of
-//! thousands; [`merge_placed`] puts the parts in the order one pass places
-//! them, so the tile holds the same objects either way.
 
 use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, settings};
@@ -47,31 +41,6 @@ pub enum Placing {
     All,
     Near,
     Far,
-}
-
-/// A tile's objects placed in two parts, `near` (its own
-/// level's layers' objects, then its authored ones) and `far` (layers
-/// standing far away at its level), in the order one pass places them:
-/// layer by layer, authored objects last.
-pub fn merge_placed(near: &[Placed], far: &[Placed]) -> Vec<Placed> {
-    let layered = near
-        .iter()
-        .position(|object| object.layer == AUTHORED_LAYER)
-        .unwrap_or(near.len());
-    let (layered, authored) = near.split_at(layered);
-    let mut merged = Vec::with_capacity(near.len() + far.len());
-    let (mut a, mut b) = (layered.iter().peekable(), far.iter().peekable());
-    loop {
-        let next = match (a.peek(), b.peek()) {
-            (Some(near), Some(far)) if far.layer < near.layer => b.next(),
-            (Some(_), _) => a.next(),
-            (None, Some(_)) => b.next(),
-            (None, None) => break,
-        };
-        merged.extend(next.copied());
-    }
-    merged.extend_from_slice(authored);
-    merged
 }
 
 /// Validity guards: how many layers a surface places, how many assets a
@@ -594,39 +563,6 @@ struct Candidate {
     local: [f32; 2],
     sample: crate::TileSample,
     share_of_materials: f32,
-}
-
-/// The rows of candidate squares layer `layer_index` of `layers` places on
-/// tile `key` at `spacing` with `placing`'s objects, as
-/// [`place_row`] walks them: none where it places nothing there.
-pub(crate) fn layer_rows(
-    layers: &[CompiledPlacement],
-    layer_index: usize,
-    key: crate::TileKey,
-    spacing: f32,
-    placing: Placing,
-) -> u32 {
-    let Some(layer) = layers.get(layer_index) else {
-        return 0;
-    };
-    let size = TILE_QUADS as f32 * spacing;
-    let origin = [f32::from(key.x) * size, f32::from(key.z) * size];
-    let (share, near_level) = match layer.far {
-        _ if layer.level == key.level => (1.0, None),
-        Some((level, share)) if level == key.level => (share, Some(layer.level)),
-        _ => (0.0, None),
-    };
-    let skipped = match placing {
-        Placing::All => false,
-        Placing::Near => near_level.is_some(),
-        Placing::Far => near_level.is_none(),
-    };
-    if layer.fill * share <= 0.0 || skipped {
-        return 0;
-    }
-    let first = (origin[1] / layer.footprint).floor() as i64;
-    let last = ((origin[1] + size) / layer.footprint).floor() as i64;
-    (last - first + 1).max(0) as u32
 }
 
 #[expect(

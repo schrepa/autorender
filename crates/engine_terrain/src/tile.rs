@@ -409,113 +409,11 @@ enum Stage {
     Done,
     Place { layer: usize, row: usize },
     Failed,
-    // A band's rows are done.
-    Banded,
 }
 
-/// Rows of a tile a band of its generation made: the tile's
-/// key, the first stored row (0 to 258, samples -1 to 257), and those rows'
-/// heights, control values and water (its surfaces and packed info), with
-/// the hole bits of the cells starting in them; [`merge_bands`] joins a
-/// tile's bands.
-#[derive(Clone, Debug, PartialEq)]
-pub struct TileBand {
-    pub key: TileKey,
-    pub first: u32,
-    pub heights: Vec<f32>,
-    pub holes: Option<Vec<u64>>,
-    pub control: Option<Vec<u32>>,
-    pub water: Option<(Vec<f32>, Vec<u32>)>,
-}
-
-crate::codec::record!(TileBand {
-    key,
-    first,
-    heights,
-    holes,
-    control,
-    water,
-});
-
-/// Tile `key` at `spacing` joined from `bands`, each row from
-/// its band: the same tile generating it whole gives, without objects.
-/// `None` unless the bands cover every row once, alike in holes and
-/// control values, with valid heights and control values.
-pub fn merge_bands(key: TileKey, spacing: f32, bands: &[TileBand]) -> Option<Tile> {
-    let stride = TILE_STRIDE as usize;
-    let mut heights = vec![0.0; stride * stride];
-    let mut covered = vec![false; stride];
-    let holed = bands.first()?.holes.is_some();
-    let surfaced = bands.first()?.control.is_some();
-    let watered = bands.first()?.water.is_some();
-    let mut holes = holed.then(|| vec![0_u64; HOLE_WORDS]);
-    let mut control = surfaced.then(|| vec![0_u32; stride * stride]);
-    let mut water = watered.then(|| {
-        (
-            vec![f32::NAN; stride * stride],
-            vec![0_u32; stride * stride],
-        )
-    });
-    for band in bands {
-        let rows = band.heights.len() / stride;
-        let first = band.first as usize;
-        if band.key != key
-            || band.heights.len() != rows * stride
-            || first + rows > stride
-            || band.holes.is_some() != holed
-            || band.control.as_ref().map(Vec::len) != surfaced.then_some(rows * stride)
-            || band
-                .water
-                .as_ref()
-                .map(|(surface, info)| [surface.len(), info.len()])
-                != watered.then_some([rows * stride; 2])
-        {
-            return None;
-        }
-        for row in &mut covered[first..first + rows] {
-            if std::mem::replace(row, true) {
-                return None;
-            }
-        }
-        let at = first * stride..(first + rows) * stride;
-        heights[at.clone()].copy_from_slice(&band.heights);
-        if let (Some(out), Some(values)) = (&mut control, &band.control) {
-            out[at.clone()].copy_from_slice(values);
-        }
-        if let (Some((surface, info)), Some((surfaces, infos))) = (&mut water, &band.water) {
-            surface[at.clone()].copy_from_slice(surfaces);
-            info[at].copy_from_slice(infos);
-        }
-        if let (Some(out), Some(bits)) = (&mut holes, &band.holes) {
-            if bits.len() != HOLE_WORDS {
-                return None;
-            }
-            for (word, bits) in out.iter_mut().zip(bits) {
-                *word |= bits;
-            }
-        }
-    }
-    if !covered.iter().all(|&row| row) {
-        return None;
-    }
-    let tile = Tile::new(
-        key,
-        spacing,
-        heights.into_boxed_slice(),
-        holes.map(Vec::into_boxed_slice),
-    )?;
-    let tile = match control {
-        Some(control) => tile.with_control(control.into_boxed_slice())?,
-        None => tile,
-    };
-    Some(match water {
-        Some((surface, info)) => tile.with_water(surface.into(), info.into()),
-        None => tile,
-    })
-}
-
-/// Generates one tile from a layer stack in steps, so streaming can spread
-/// the work over frames. Every sample is a pure function of its position
+/// Generates one tile from a layer stack in steps, which workers run a
+/// slice at a time between their messages. Every sample is a pure function
+/// of its position
 /// and level: noise octaves at least 32 samples long are evaluated on a
 /// grid of every fourth sample and interpolated, shorter ones down to four
 /// samples at every sample, so neighboring tiles agree on shared samples.
@@ -546,11 +444,9 @@ pub struct Generator {
     control: Option<Box<[u32]>>,
     weights: Vec<(u8, f32)>,
     // The finished tile while its objects are placed, a row
-    // of candidate squares at a time, the objects placed so far and which
-    // of them it places.
+    // of candidate squares at a time, and the objects placed so far.
     tile: Option<Tile>,
     placed: Vec<crate::Placed>,
-    placing: Placing,
     // Each hydrology layer's rivers near the tile, read a row at a time,
     // once a stage needs them, and its stored rows' z; a
     // row's inputs to the surface's masks.
@@ -558,21 +454,9 @@ pub struct Generator {
     zs: Box<[f32]>,
     inputs: SurfaceInputs,
     places: crate::placement::PlaceScratch,
-    // Whether it hands out the tile's shape before its surface,
-    // and the shape until taken.
-    staged: bool,
-    shape: Option<Tile>,
-    // The stored rows a band generates alone, and its rows
-    // once done until taken.
-    rows: Option<(usize, usize)>,
-    banded: Option<TileBand>,
     // Whether it gives its tile control values; the GPU gives them where
     // not.
     materials: bool,
-    // Where a band of placing stops: the layer and row it
-    // leaves to the next band, none for the last, which also places what
-    // authors stand on the tile.
-    place_end: Option<(usize, usize)>,
 }
 
 /// A row's inputs to a surface's masks, reused row after row.
@@ -657,19 +541,13 @@ impl Generator {
             weights: Vec::new(),
             tile: None,
             placed: Vec::new(),
-            placing: Placing::All,
             spans: Vec::new(),
             zs: (-1..=TILE_SAMPLES as i64)
                 .map(|i| (first[1] + i) as f32 * spacing)
                 .collect(),
             inputs: SurfaceInputs::default(),
             places: crate::placement::PlaceScratch::default(),
-            staged: false,
-            shape: None,
-            rows: None,
-            banded: None,
             materials: true,
-            place_end: None,
         }
     }
 
@@ -682,71 +560,16 @@ impl Generator {
         self
     }
 
-    /// A generator of stored rows `rows` of tile `key` alone (0 to 259, samples
-    /// -1 to 257): their heights, holes and control values as generating the
-    /// whole tile gives them, for [`merge_bands`] to join with the tile's other
-    /// bands ([`Self::take_band`]). `None` for rows outside the tile.
-    pub fn band(
-        layers: Arc<Layers>,
-        pyramid: &Pyramid,
-        key: TileKey,
-        rows: Range<usize>,
-    ) -> Option<Self> {
-        if rows.start >= rows.end || rows.end > TILE_STRIDE as usize {
-            return None;
-        }
-        let mut generator = Self::new(layers, pyramid, key);
-        generator.rows = Some((rows.start, rows.end));
-        generator.stage = Stage::Coarse {
-            layer: 0,
-            row: generator.grid_rows().0,
-        };
-        Some(generator)
-    }
-
-    /// A band's rows once done, taken once.
-    pub fn take_band(&mut self) -> Option<TileBand> {
-        self.banded.take()
-    }
-
-    /// The sample rows it samples heights of: every row (-1 to 257), or a
-    /// band's with the rows on either side its control
-    /// values read.
-    fn height_rows(&self) -> (i32, i32) {
-        let end = TILE_SAMPLES as i32 + 1;
-        match self.rows {
-            None => (-1, end),
-            Some((first, last)) => (
-                std::cmp::max(first as i32 - 2, -1),
-                std::cmp::min(last as i32, end),
-            ),
-        }
-    }
+    /// The sample rows it samples heights of: every row, -1 to 257.
+    const HEIGHT_ROWS: (i32, i32) = (-1, TILE_SAMPLES as i32 + 1);
 
     /// The coarse grid rows its height rows read: each sample row reads
     /// four from the one after its grid point's.
-    fn grid_rows(&self) -> (usize, usize) {
-        let (first, end) = self.height_rows();
+    fn grid_rows() -> (usize, usize) {
+        let (first, end) = Self::HEIGHT_ROWS;
         let low = i64::from(first).div_euclid(GRID_STEP) - GRID_FIRST - 1;
         let high = i64::from(end - 1).div_euclid(GRID_STEP) - GRID_FIRST + 3;
         (low as usize, std::cmp::min(high as usize, GRID))
-    }
-
-    /// The rows of hole cells it marks, each cell starting at its sample
-    /// row (0 to 256).
-    fn hole_rows(&self) -> (u32, u32) {
-        match self.rows {
-            None => (0, HOLE_CELLS as u32),
-            Some((first, end)) => (
-                first.saturating_sub(1) as u32,
-                std::cmp::min(end.saturating_sub(1), HOLE_CELLS) as u32,
-            ),
-        }
-    }
-
-    /// The stored rows it gives control values.
-    fn control_rows(&self) -> (usize, usize) {
-        self.rows.unwrap_or((0, TILE_STRIDE as usize))
     }
 
     /// The generator giving its tile `surface`'s control values.
@@ -754,104 +577,6 @@ impl Generator {
     pub fn with_surface(mut self, surface: Arc<BiomeRules>) -> Self {
         self.surface = Some(surface);
         self
-    }
-
-    /// The generator placing only `placing`'s objects.
-    #[must_use]
-    pub fn with_placing(mut self, placing: Placing) -> Self {
-        self.placing = placing;
-        self
-    }
-
-    /// The generator handing out its tile's shape, its heights and holes,
-    /// once they are done: [`Self::take_shape`] it while the
-    /// surface and objects follow.
-    #[must_use]
-    pub fn with_staged(mut self, staged: bool) -> Self {
-        self.staged = staged;
-        self
-    }
-
-    /// The tile's shape once its heights and holes are done, before its
-    /// surface, where staged: a tile without control values
-    /// or objects, taken once.
-    pub fn take_shape(&mut self) -> Option<Tile> {
-        self.shape.take()
-    }
-
-    /// A generator placing on `tile` (generated from `layers`) the objects
-    /// of `surface`'s layers standing far away at its level,
-    /// under the same budget as generation: the tile it returns
-    /// holds those alone.
-    pub fn far(tile: Tile, layers: Arc<Layers>, surface: Arc<BiomeRules>) -> Self {
-        Self::placing(tile, layers, surface, Placing::Far)
-    }
-
-    /// A generator placing `placing`'s objects of `surface`'s layers on
-    /// `tile`, generated from `layers` without them,
-    /// under the same budget as generation: the tile it returns
-    /// holds those alone, as generating it whole places them.
-    pub fn placing(
-        tile: Tile,
-        layers: Arc<Layers>,
-        surface: Arc<BiomeRules>,
-        placing: Placing,
-    ) -> Self {
-        Self {
-            layers,
-            key: tile.key(),
-            spacing: tile.spacing(),
-            first: [0; 2],
-            bands: Vec::new(),
-            grids: Vec::new(),
-            stage: Stage::Place { layer: 0, row: 0 },
-            heights: Box::default(),
-            holes: None,
-            xs: Box::default(),
-            row: Box::default(),
-            values: Box::default(),
-            column: Box::default(),
-            state: Box::default(),
-            lanes: Box::default(),
-            min: Vec2::ZERO,
-            max: Vec2::ZERO,
-            surface: Some(surface),
-            control: None,
-            weights: Vec::new(),
-            tile: Some(tile.without_placed()),
-            placed: Vec::new(),
-            placing,
-            spans: Vec::new(),
-            zs: Box::default(),
-            inputs: SurfaceInputs::default(),
-            places: crate::placement::PlaceScratch::default(),
-            staged: false,
-            shape: None,
-            rows: None,
-            banded: None,
-            materials: true,
-            place_end: None,
-        }
-    }
-
-    /// A generator placing on `tile` as [`Self::placing`] does, from
-    /// layer and row `start` up to `end` alone, the rows
-    /// [`crate::BiomeRules::place_rows`] counts: bands of a tile's placing
-    /// on several workers, their objects joined in order giving the tile's.
-    /// The band without an end also places what authors stand on it.
-    pub fn placing_rows(
-        tile: Tile,
-        (layers, surface): (Arc<Layers>, Arc<BiomeRules>),
-        placing: Placing,
-        (start, end): ((usize, usize), Option<(usize, usize)>),
-    ) -> Self {
-        let mut generator = Self::placing(tile, layers, surface, placing);
-        generator.stage = Stage::Place {
-            layer: start.0,
-            row: start.1,
-        };
-        generator.place_end = end;
-        generator
     }
 
     /// Hydrology layer `index`'s rivers near the tile, made
@@ -891,30 +616,12 @@ impl Generator {
     }
 
     /// The stage after the samples and holes: the surface's control values
-    /// unless the GPU gives them, else done; the tile's shape
-    /// handed out first where staged and more follows, its
-    /// control values or its objects.
-    fn after_holes(&mut self) -> Stage {
-        let next = match &self.surface {
-            Some(_) if self.materials => Stage::Biomes {
-                row: self.control_rows().0,
-            },
+    /// unless the GPU gives them, else done.
+    fn after_holes(&self) -> Stage {
+        match &self.surface {
+            Some(_) if self.materials => Stage::Biomes { row: 0 },
             _ => Stage::Done,
-        };
-        let more = matches!(next, Stage::Biomes { .. })
-            || self
-                .surface
-                .as_ref()
-                .is_some_and(|surface| surface.places(self.key.level, self.placing));
-        if self.staged && self.rows.is_none() && more {
-            self.shape = Tile::new(
-                self.key,
-                self.spacing,
-                self.heights.clone(),
-                self.holes.clone(),
-            );
         }
-        next
     }
 
     /// Control values of stored row `row` (0 to 258, samples -1 to 257),
@@ -1027,14 +734,14 @@ impl Generator {
                 Stage::Coarse { layer, row } => {
                     if layer >= self.grids.len() {
                         self.stage = Stage::Samples {
-                            row: self.height_rows().0,
+                            row: Self::HEIGHT_ROWS.0,
                         };
                         continue;
                     }
                     let Some(tables) = self.layers.noise(layer) else {
                         self.stage = Stage::Coarse {
                             layer: layer + 1,
-                            row: self.grid_rows().0,
+                            row: Self::grid_rows().0,
                         };
                         continue;
                     };
@@ -1062,7 +769,7 @@ impl Generator {
                         }
                     }
                     *budget = budget.saturating_sub(GRID as u64 * COARSE_COST);
-                    let (first, end) = self.grid_rows();
+                    let (first, end) = Self::grid_rows();
                     self.stage = if row + 1 < end {
                         Stage::Coarse {
                             layer,
@@ -1083,11 +790,10 @@ impl Generator {
                         .map(|grid| if grid.is_some() { NOISE_SAMPLE_COST } else { 1 })
                         .sum::<u64>();
                     *budget = budget.saturating_sub(u64::from(TILE_STRIDE) * layers.max(1));
-                    let (first, end) = self.hole_rows();
-                    self.stage = if row + 1 < self.height_rows().1 {
+                    self.stage = if row + 1 < Self::HEIGHT_ROWS.1 {
                         Stage::Samples { row: row + 1 }
-                    } else if self.holes.is_some() && first < end {
-                        Stage::Holes { row: first }
+                    } else if self.holes.is_some() {
+                        Stage::Holes { row: 0 }
                     } else {
                         self.after_holes()
                     };
@@ -1103,7 +809,7 @@ impl Generator {
                         }
                     }
                     *budget = budget.saturating_sub(HOLE_CELLS as u64);
-                    self.stage = if row + 1 < self.hole_rows().1 {
+                    self.stage = if row + 1 < HOLE_CELLS as u32 {
                         Stage::Holes { row: row + 1 }
                     } else {
                         self.after_holes()
@@ -1113,32 +819,14 @@ impl Generator {
                     self.surface_row(row);
                     let cost = self.surface.as_ref().map_or(1, |surface| surface.cost());
                     *budget = budget.saturating_sub(u64::from(TILE_STRIDE) * cost);
-                    self.stage = if row + 1 < self.control_rows().1 {
+                    self.stage = if row + 1 < TILE_STRIDE as usize {
                         Stage::Biomes { row: row + 1 }
                     } else {
                         Stage::Done
                     };
                 }
-                // A band hands out its own rows.
-                Stage::Done if self.rows.is_some() => {
-                    let (first, end) = self.control_rows();
-                    let stride = TILE_STRIDE as usize;
-                    let at = first * stride..end * stride;
-                    let water = self.water_rows(first..end, budget);
-                    self.banded = Some(TileBand {
-                        key: self.key,
-                        first: first as u32,
-                        heights: self.heights[at.clone()].to_vec(),
-                        holes: self.holes.as_deref().map(<[u64]>::to_vec),
-                        control: self.control.as_deref().map(|control| control[at].to_vec()),
-                        water,
-                    });
-                    self.stage = Stage::Banded;
-                    return None;
-                }
-                Stage::Banded => return None,
                 Stage::Done => {
-                    let water = self.water_rows(0..TILE_STRIDE as usize, budget);
+                    let water = self.water_rows(budget);
                     let heights = std::mem::take(&mut self.heights);
                     self.stage = Stage::Failed;
                     let tile = Tile::new(self.key, self.spacing, heights, self.holes.take())?;
@@ -1154,7 +842,7 @@ impl Generator {
                     // Objects stand on the tiles of their layers' levels,
                     // placed in the stage after.
                     match &self.surface {
-                        Some(surface) if surface.places(self.key.level, self.placing) => {
+                        Some(surface) if surface.places(self.key.level, Placing::All) => {
                             self.tile = Some(tile);
                             self.stage = Stage::Place { layer: 0, row: 0 };
                         }
@@ -1171,25 +859,19 @@ impl Generator {
                         tile,
                         (layer, row),
                         &mut self.placed,
-                        (&self.layers, self.placing, &mut self.places),
+                        (&self.layers, Placing::All, &mut self.places),
                     );
                     *budget = budget.saturating_sub(cost);
-                    // A band stops where the next starts.
-                    let band_ends = next.is_some() && next == self.place_end;
                     match next {
-                        Some((layer, row)) if !band_ends => {
-                            self.stage = Stage::Place { layer, row }
-                        }
-                        _ => {
+                        Some((layer, row)) => self.stage = Stage::Place { layer, row },
+                        None => {
                             // Then what authors stand on it,
                             // with its own level's objects.
-                            if self.placing != Placing::Far && !band_ends {
-                                *budget = budget
-                                    .saturating_sub(surface.place_authored(tile, &mut self.placed));
-                            }
+                            *budget = budget
+                                .saturating_sub(surface.place_authored(tile, &mut self.placed));
                             let tile = self.tile.take()?;
                             let placed = std::mem::take(&mut self.placed);
-                            return Some(tile.with_placed(placed, self.placing));
+                            return Some(tile.with_placed(placed, Placing::All));
                         }
                     }
                 }
@@ -1197,11 +879,12 @@ impl Generator {
         }
     }
 
-    /// The water of stored rows `rows` (0 to 258) as the stack's hydrology
+    /// The water of every stored row (0 to 258) as the stack's hydrology
     /// bake holds its lakes and rivers over them
     /// ([`crate::tile_water::water_rows`]): their samples' surfaces and
     /// packed info, row by row; `None` without the bake.
-    fn water_rows(&mut self, rows: Range<usize>, budget: &mut u64) -> Option<(Vec<f32>, Vec<u32>)> {
+    fn water_rows(&mut self, budget: &mut u64) -> Option<(Vec<f32>, Vec<u32>)> {
+        let rows = 0..TILE_STRIDE as usize;
         let layers = Arc::clone(&self.layers);
         let (index, hydrology) = layers.hydrology_layer()?;
         let span = self.span(index);

@@ -326,7 +326,6 @@ impl TerrainWorker {
                 Running::Tile(Box::new(
                     Generator::new(recipe.stamped(&stamps)?, &recipe.pyramid, key)
                         .with_surface(recipe.rules.clone())
-                        .with_placing(Placing::All)
                         .with_materials(recipe.materials),
                 ))
             }
