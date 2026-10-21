@@ -92,7 +92,7 @@ pub(crate) fn textures(
             .iter()
             .map(|&(texture, usage)| (texture.to_owned(), usage))
             .collect(),
-        make: Arc::new(make),
+        make: MakeSources::Here(Arc::new(make)),
     };
     records.textures(assets, set).map_err(engine::Error::from)
 }
