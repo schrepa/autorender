@@ -258,6 +258,8 @@ impl Renderer {
                 patches: self.terrain.patches.frame.patches,
                 triangles: self.terrain.patches.frame.triangles,
                 shadow_patches: self.terrain.patches.frame.shadow_patches,
+                back_facing_patches: self.terrain.patches.frame.back_facing,
+                hidden_patches: self.terrain.patches.frame.hidden,
                 tiles: self.terrain.resident(),
                 loading_tiles: snapshot.terrain.stats.loading_tiles,
                 gpu_controls: self.terrain.atlas.controls,

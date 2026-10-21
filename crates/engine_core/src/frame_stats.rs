@@ -401,6 +401,11 @@ pub struct TerrainRenderStats {
     pub triangles: u32,
     /// Patches drawn into shadow maps.
     pub shadow_patches: u32,
+    /// Patches within the camera's frustum it skips: those whose every
+    /// triangle faces away from the eye, and those nearer ground hides from
+    /// it. Neither ever holds a patch that could show.
+    pub back_facing_patches: u32,
+    pub hidden_patches: u32,
     /// Tiles resident on the GPU.
     pub tiles: u32,
     /// Tiles still loading.

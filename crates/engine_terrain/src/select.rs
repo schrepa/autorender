@@ -80,6 +80,10 @@ impl LodRanges {
 
 /// A patch a view draws: the tile holding it, its column and row there, the
 /// distances over which its vertices morph and its terrain-local bounds.
+/// And what culling knows of it, morphed toward its parent level or not:
+/// the disk holding its triangles' slopes (its center's rise per meter
+/// along x and z, and its radius), and the lowest ground of each of its
+/// quarters, rows along z (terrain-local heights).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Patch {
     pub tile: TileKey,
@@ -90,6 +94,8 @@ pub struct Patch {
     pub max: Vec3,
     /// Whether any of its cells is a hole.
     pub holes: bool,
+    pub slopes: [f32; 3],
+    pub floors: [f32; 4],
 }
 
 /// The patches a view draws, and how many of them stand in for finer
@@ -179,13 +185,20 @@ pub fn select_patches<'a>(
             continue;
         };
         let [mut low, mut high] = owner.patch_bounds(px, pz);
-        // Morphing vertices move toward the parent level's heights.
+        let mut slopes = owner.patch_slopes(px, pz);
+        let mut floors = owner.patch_floors(px, pz);
+        // Morphing vertices move toward the parent level's heights, their
+        // triangles' slopes between the two levels'; the parent's quarter
+        // over this patch bounds its ground there.
         if level < top {
             let (parent, ppx, ppz) = patch_tile(level + 1, x / 2, z / 2);
             if let Some(parent) = tile(parent) {
                 let [parent_low, parent_high] = parent.patch_bounds(ppx, ppz);
                 low = min(low, parent_low);
                 high = max(high, parent_high);
+                slopes = enclosing(slopes, parent.patch_slopes(ppx, ppz));
+                let under = parent.patch_floors(ppx, ppz)[((z % 2) * 2 + x % 2) as usize];
+                floors = floors.map(|floor| min(floor, under));
             }
         }
         let min_corner = Vec3::new(corner.x, low, corner.y);
@@ -219,8 +232,30 @@ pub fn select_patches<'a>(
             min: min_corner,
             max: max_corner,
             holes: owner.patch_has_holes(px, pz),
+            slopes,
+            floors,
         });
     }
+}
+
+/// The disk holding both disks `a` and `b` (centers x and z, radius),
+/// rounded wider.
+fn enclosing(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+    let apart = (dx * dx + dz * dz).sqrt();
+    if apart + b[2] <= a[2] {
+        return a;
+    }
+    if apart + a[2] <= b[2] {
+        return b;
+    }
+    let radius = 0.5 * (apart + a[2] + b[2]);
+    let share = (radius - a[2]) / apart;
+    [
+        a[0] + dx * share,
+        a[1] + dz * share,
+        radius * (1.0 + 1.0e-5) + 1.0e-5,
+    ]
 }
 
 /// A tile a view wants resident, with its importance: the

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use glam::{Vec2, Vec3, Vec4};
 
-use engine_math::{max, min};
+use engine_math::{clamp, max, min};
 
 use crate::layers::{Layers, state_len};
 use crate::surface::{BiomeRules, Control, RowInputs, RowScratch};
@@ -24,7 +24,8 @@ const HOLE_WORDS: usize = (HOLE_CELLS * HOLE_CELLS).div_ceil(64);
 /// A tile's samples: heights in meters above the terrain's origin of
 /// samples -1 to 257 along x and z (its samples and a border of one), row
 /// by row along z, with their bounds, where a stamp cut them holes, and
-/// with a surface each sample's control value.
+/// with a surface each sample's control value; and what culling knows of
+/// each of its patches, made with it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tile {
     key: TileKey,
@@ -39,7 +40,31 @@ pub struct Tile {
     bounds: [f32; 2],
     patch_bounds: Box<[[f32; 2]]>,
     patch_holes: [u64; 4],
+    patch_culling: Box<[PatchCulling]>,
 }
+
+/// What culling knows of a patch, made with its tile: the disk holding the
+/// slopes (rise per meter along x and z) of all its triangles, which says
+/// where a view sees none of their fronts; and the lowest ground of each of
+/// its quarters (rows along z), which hides what lies below sight over it.
+/// Slopes are in 256ths, the disk's radius rounded up over its center's
+/// rounding; floors in 255ths of the patch's heights up from its lowest,
+/// rounded down: neither tells more than the ground holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PatchCulling {
+    slope: [i16; 2],
+    spread: u16,
+    floors: [u8; 4],
+}
+
+crate::codec::record!(PatchCulling {
+    slope,
+    spread,
+    floors,
+});
+
+/// Slopes' steps: 256 a unit of rise per meter.
+const SLOPE_STEPS: f32 = 256.0;
 
 /// The surface at a point: its height, the normal of its triangle and
 /// whether its cell is a hole.
@@ -53,9 +78,25 @@ pub struct TileSample {
 impl Tile {
     /// A tile of `key` at sample spacing `spacing` from its
     /// [`TILE_STRIDE`]-squared `heights` and optional hole bits (one per
-    /// cell starting at samples 0..=256, row by row). `None` when the sizes
-    /// do not match or a height is not finite.
+    /// cell starting at samples 0..=256, row by row), with what culling
+    /// knows of its patches. `None` when the sizes do not match or a height
+    /// is not finite.
     pub fn new(
+        key: TileKey,
+        spacing: f32,
+        heights: Box<[f32]>,
+        holes: Option<Box<[u64]>>,
+    ) -> Option<Self> {
+        let mut tile = Self::shaped(key, spacing, heights, holes)?;
+        tile.patch_culling = (0..PATCHES_PER_TILE * PATCHES_PER_TILE)
+            .map(|index| tile.cull(index % PATCHES_PER_TILE, index / PATCHES_PER_TILE))
+            .collect();
+        Some(tile)
+    }
+
+    /// [`Self::new`] but for what culling knows of its patches, which a
+    /// tile read back holds already.
+    fn shaped(
         key: TileKey,
         spacing: f32,
         heights: Box<[f32]>,
@@ -82,6 +123,7 @@ impl Tile {
             patch_bounds: vec![[0.0; 2]; (PATCHES_PER_TILE * PATCHES_PER_TILE) as usize]
                 .into_boxed_slice(),
             patch_holes: [0; 4],
+            patch_culling: Box::default(),
         };
         let mut low = f32::INFINITY;
         let mut high = f32::NEG_INFINITY;
@@ -111,6 +153,79 @@ impl Tile {
         }
         tile.bounds = [low, high];
         Some(tile)
+    }
+
+    /// What culling knows of patch `(x, z)`: the disk around its triangles'
+    /// slopes, each cell split from its (x, z+1) corner to its (x+1, z) one,
+    /// and its quarters' lowest ground.
+    fn cull(&self, x: u32, z: u32) -> PatchCulling {
+        let patch = PATCH_QUADS as i32;
+        let (first_x, first_z) = (x as i32 * patch, z as i32 * patch);
+        let inverse = 1.0 / self.spacing;
+        let mut low = [f32::INFINITY; 2];
+        let mut high = [f32::NEG_INFINITY; 2];
+        let mut slopes = Vec::with_capacity((2 * patch * patch) as usize);
+        for cz in first_z..first_z + patch {
+            for cx in first_x..first_x + patch {
+                let a = self.height(cx, cz);
+                let b = self.height(cx + 1, cz);
+                let c = self.height(cx, cz + 1);
+                let d = self.height(cx + 1, cz + 1);
+                for slope in [
+                    [(b - a) * inverse, (c - a) * inverse],
+                    [(d - c) * inverse, (d - b) * inverse],
+                ] {
+                    low = [min(low[0], slope[0]), min(low[1], slope[1])];
+                    high = [max(high[0], slope[0]), max(high[1], slope[1])];
+                    slopes.push(slope);
+                }
+            }
+        }
+        let center = [0.5 * (low[0] + high[0]), 0.5 * (low[1] + high[1])];
+        let step = |value: f32| clamp((value * SLOPE_STEPS).round(), -32767.0, 32767.0) as i16;
+        let slope = center.map(step);
+        let held = [
+            f32::from(slope[0]) / SLOPE_STEPS,
+            f32::from(slope[1]) / SLOPE_STEPS,
+        ];
+        let spread = slopes.iter().fold(0.0_f32, |far, &[sx, sz]| {
+            let (dx, dz) = (sx - held[0], sz - held[1]);
+            max(far, (dx * dx + dz * dz).sqrt())
+        });
+        let spread = (spread * SLOPE_STEPS + 1.0).ceil();
+        let spread = if spread >= f32::from(u16::MAX) {
+            u16::MAX
+        } else {
+            spread as u16
+        };
+        let [patch_low, patch_high] = self.patch_bounds[(z * PATCHES_PER_TILE + x) as usize];
+        let range = patch_high - patch_low;
+        let half = patch / 2;
+        let mut floors = [0_u8; 4];
+        for (quarter, floor) in floors.iter_mut().enumerate() {
+            let (qx, qz) = (
+                first_x + (quarter as i32 % 2) * half,
+                first_z + (quarter as i32 / 2) * half,
+            );
+            let mut lowest = f32::INFINITY;
+            for sz in qz..=qz + half {
+                for sx in qx..=qx + half {
+                    lowest = min(lowest, self.height(sx, sz));
+                }
+            }
+            // A step lower still, past what rounding could add back.
+            *floor = if range > 0.0 {
+                (clamp(((lowest - patch_low) / range * 255.0).floor(), 0.0, 255.0) as u8)
+                    .saturating_sub(1)
+            } else {
+                0
+            };
+        }
+        PatchCulling {
+            slope,
+            spread,
+            floors,
+        }
     }
 
     /// The tile with `control`: one packed [`Control`] per sample, the
@@ -239,6 +354,28 @@ impl Tile {
     /// Lowest and highest height of patch `(x, z)`'s samples.
     pub fn patch_bounds(&self, x: u32, z: u32) -> [f32; 2] {
         self.patch_bounds[(z * PATCHES_PER_TILE + x) as usize]
+    }
+
+    /// The disk holding patch `(x, z)`'s triangles' slopes (rise per meter
+    /// along x and z): its center and its radius, never smaller than they
+    /// need.
+    pub fn patch_slopes(&self, x: u32, z: u32) -> [f32; 3] {
+        let cull = self.patch_culling[(z * PATCHES_PER_TILE + x) as usize];
+        [
+            f32::from(cull.slope[0]) / SLOPE_STEPS,
+            f32::from(cull.slope[1]) / SLOPE_STEPS,
+            f32::from(cull.spread) / SLOPE_STEPS,
+        ]
+    }
+
+    /// The lowest ground of each quarter of patch `(x, z)`, rows along z,
+    /// never above it.
+    pub fn patch_floors(&self, x: u32, z: u32) -> [f32; 4] {
+        let index = (z * PATCHES_PER_TILE + x) as usize;
+        let [low, high] = self.patch_bounds[index];
+        self.patch_culling[index]
+            .floors
+            .map(|floor| min(low + (high - low) * (f32::from(floor) / 255.0), high))
     }
 
     /// Whether any cell of patch `(x, z)` is a hole.
@@ -1069,6 +1206,7 @@ impl crate::codec::Codec for Tile {
         out.put(&self.key).put(&self.spacing);
         crate::codec::put_grid(out, &self.heights, stride);
         out.put(&self.holes)
+            .put(&self.patch_culling)
             .put(&self.control)
             .put(&self.placed)
             .put(&self.placing);
@@ -1091,11 +1229,16 @@ impl crate::codec::Codec for Tile {
         let spacing = input.get()?;
         let heights = crate::codec::get_grid(input, stride)?;
         let holes = input.get()?;
+        let culling: Box<[PatchCulling]> = input.get()?;
         let control: Option<Box<[u32]>> = input.get()?;
         let placed: Option<Arc<[crate::Placed]>> = input.get()?;
         let placing = input.get()?;
         let watered: bool = input.get()?;
-        let mut tile = Self::new(key, spacing, heights, holes).ok_or(invalid)?;
+        let mut tile = Self::shaped(key, spacing, heights, holes).ok_or(invalid)?;
+        if culling.len() != tile.patch_bounds.len() {
+            return Err(invalid);
+        }
+        tile.patch_culling = culling;
         if let Some(control) = control {
             tile = tile.with_control(control).ok_or(invalid)?;
         }

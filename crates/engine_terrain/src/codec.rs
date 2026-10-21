@@ -338,7 +338,7 @@ macro_rules! number {
     )*};
 }
 
-number!(u8, u16, u32, u64, i64, f32);
+number!(u8, u16, i16, u32, u64, i64, f32);
 
 impl Codec for usize {
     fn write(&self, out: &mut Writer) {

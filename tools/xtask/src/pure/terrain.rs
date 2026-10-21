@@ -18,8 +18,8 @@ use engine_terrain::jobs::{
 };
 use engine_terrain::lighting::{self, Ground};
 use engine_terrain::{
-    BiomeRules, Generator, Layer, Layers, NavOptions, Obstacle, Pyramid, Stamp, StampOp,
-    TILE_QUADS, Tile, TileKey, codec, walk,
+    BiomeRules, Generator, Layer, Layers, NavOptions, Obstacle, PATCH_QUADS, PATCHES_PER_TILE,
+    Pyramid, Stamp, StampOp, TILE_QUADS, Tile, TileKey, codec, walk,
 };
 use glam::Vec2;
 use serde_json::json;
@@ -99,6 +99,17 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             records.push((TileJob::KIND.name(), bytes));
             tiles.insert(key, tile);
         }
+    }
+    // What culling knows of every patch holds of its ground: each
+    // quarter's floor lies under its samples, and every triangle's slopes
+    // inside its disk.
+    for (&key, tile) in &tiles {
+        observed.check(culling_holds(tile), || {
+            format!(
+                "tile {}: its culling data claims more than its ground holds",
+                name(key)
+            )
+        });
     }
     let objects: usize = tiles.values().map(|tile| tile.placed().len()).sum();
     observed.record("tiles", tiles.len());
@@ -303,6 +314,45 @@ fn lighting_job(pyramid: &Pyramid, tiles: &BTreeMap<TileKey, Tile>) -> LightingJ
         sky: SKY_TEXELS,
         horizons: HORIZON_TEXELS,
     }
+}
+
+/// Whether what culling knows of each of `tile`'s patches holds of its
+/// ground: every triangle's slopes within its disk, each quarter's samples
+/// on or above its floor.
+fn culling_holds(tile: &Tile) -> bool {
+    let quads = PATCH_QUADS as i32;
+    let half = quads / 2;
+    let inverse = 1.0 / tile.spacing();
+    (0..PATCHES_PER_TILE * PATCHES_PER_TILE).all(|index| {
+        let (px, pz) = (index % PATCHES_PER_TILE, index / PATCHES_PER_TILE);
+        let (first_x, first_z) = (px as i32 * quads, pz as i32 * quads);
+        let [center_x, center_z, radius] = tile.patch_slopes(px, pz);
+        let slopes = (first_z..first_z + quads).all(|z| {
+            (first_x..first_x + quads).all(|x| {
+                let (a, b) = (tile.height(x, z), tile.height(x + 1, z));
+                let (c, d) = (tile.height(x, z + 1), tile.height(x + 1, z + 1));
+                [
+                    [(b - a) * inverse, (c - a) * inverse],
+                    [(d - c) * inverse, (d - b) * inverse],
+                ]
+                .iter()
+                .all(|&[sx, sz]| {
+                    let (dx, dz) = (sx - center_x, sz - center_z);
+                    (dx * dx + dz * dz).sqrt() <= radius
+                })
+            })
+        });
+        let floors = tile
+            .patch_floors(px, pz)
+            .iter()
+            .enumerate()
+            .all(|(quarter, &floor)| {
+                let x0 = first_x + (quarter as i32 % 2) * half;
+                let z0 = first_z + (quarter as i32 / 2) * half;
+                (z0..=z0 + half).all(|z| (x0..=x0 + half).all(|x| tile.height(x, z) >= floor))
+            });
+        slopes && floors
+    })
 }
 
 /// `key` as goldens name it: level/x/z.

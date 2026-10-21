@@ -7,7 +7,9 @@
 //! the array grows by doubling up to the device's layers, beyond which
 //! tiles drop (counted) and their patches do not draw. Each view culls the
 //! camera's patches by their bounds: the camera's frustum, each shadow
-//! map's sides. Every view draws the same vertices, at the positions the
+//! map's sides; the camera also skips those whose every triangle faces away
+//! from it and those nearer ground hides (`culling`), from what each tile
+//! was made with. Every view draws the same vertices, at the positions the
 //! camera sees, so terrain shadows itself without acne. Where terrains cast
 //! long shadows through their horizon maps, only the near
 //! cascades draw terrain, near their receivers.
@@ -19,11 +21,12 @@
 //! detail hand over.
 //!
 //! The pass is its parts: the tile atlas (`atlas`), the tables shaders
-//! look up (`tables`), the frame's patches (`patches`) and the pipelines
-//! and terrain group (`pipelines`), beside tiles' water (`water_blocks`),
-//! the material maps, the sky and horizon maps its lighting uploads, the
-//! runtime virtual texture and deformation map. Debug builds
-//! check what holds between them after every preparation (`invariants`).
+//! look up (`tables`), the frame's patches (`patches`, `culling`) and the
+//! pipelines and terrain group (`pipelines`), beside tiles' water
+//! (`water_blocks`), the material maps, the sky and horizon maps its
+//! lighting uploads, the runtime virtual texture and deformation map. Debug
+//! builds check what holds between them after every preparation
+//! (`invariants`).
 
 use engine_core::collections::HashMap;
 use std::ops::Range;
@@ -52,6 +55,7 @@ use crate::terrain_maps::TerrainMaps;
 use crate::terrain_sky::SkyMaps;
 
 mod atlas;
+mod culling;
 #[cfg(debug_assertions)]
 mod invariants;
 mod patches;
@@ -183,6 +187,10 @@ pub(crate) struct TerrainFrame {
     pub patches: u32,
     pub triangles: u32,
     pub shadow_patches: u32,
+    /// Patches within the camera's frustum it skips: those whose every
+    /// triangle faces away, and those nearer ground hides.
+    pub back_facing: u32,
+    pub hidden: u32,
 }
 
 /// What `TerrainPass::prepare` needs of the frame's views.

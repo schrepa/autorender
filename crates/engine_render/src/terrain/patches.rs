@@ -1,11 +1,25 @@
 //! The frame's patches: each terrain's uniform and the instance records of
 //! the patches the camera, reflection probe faces and each shadow map draw,
-//! culled by their bounds, over the one shared grid with skirts; and the
-//! views they are drawn from.
+//! culled by their bounds (the camera's also where they face away or nearer
+//! ground hides them: `culling`), over the one shared grid with skirts; and
+//! the views they are drawn from.
 
 use super::atlas::TileAtlas;
+use super::culling::{self, Seen};
 use super::tables::TerrainTables;
 use super::*;
+
+/// How the camera's culling leaves a patch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cull {
+    /// Outside its frustum.
+    Outside,
+    Shown,
+    /// Every triangle faces away from the eye.
+    BackFacing,
+    /// Nearer ground hides it.
+    Hidden,
+}
 
 pub(crate) struct PatchDraws {
     indices: wgpu::Buffer,
@@ -16,6 +30,13 @@ pub(crate) struct PatchDraws {
     // camera's last written.
     pub(super) views: wgpu::Buffer,
     written_views: Option<ViewUniform>,
+    // How the camera's culling leaves each terrain's patches, in order
+    // over every terrain; the patches its frustum holds and where they lie
+    // in that order; and which nearer ground hides.
+    culls: Vec<Cull>,
+    seen: Vec<Seen>,
+    seen_at: Vec<usize>,
+    hidden: Vec<bool>,
     /// The eye this frame's terrain positions are relative to.
     eye: Vec3,
     pub(crate) frame: TerrainFrame,
@@ -49,6 +70,10 @@ impl PatchDraws {
             records: Vec::new(),
             views: crate::buffers::uniform(device, "engine/terrain-views", VIEWS * SLOT),
             written_views: None,
+            culls: Vec::new(),
+            seen: Vec::new(),
+            seen_at: Vec::new(),
+            hidden: Vec::new(),
             eye: Vec3::ZERO,
             frame: TerrainFrame::default(),
         }
@@ -95,6 +120,8 @@ impl PatchDraws {
         let eye = views.eye.as_dvec3();
         self.records.clear();
         let mut uniforms = vec![0_u8; uniform_bytes as usize];
+        let camera_planes = planes(views.culling, false);
+        let firsts = self.cull(terrains, eye, &camera_planes);
         for (index, terrain) in terrains.terrains.iter().enumerate() {
             let directory = [
                 parts
@@ -143,14 +170,13 @@ impl PatchDraws {
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
             let origin = terrain.origin;
             let relative_origin = (terrain.origin.as_dvec3() - eye).as_vec3();
-            let camera_planes = planes(views.culling, false);
             let start = self.records.len() as u32;
             let mut all = Vec::new();
-            for patch in &terrain.patches {
+            for (at, patch) in terrain.patches.iter().enumerate() {
                 let Some(record) = record(parts, terrain, patch, anchors, views.fades) else {
                     continue;
                 };
-                all.push((record, patch.min, patch.max));
+                all.push((record, patch.min, patch.max, self.culls[firsts[index] + at]));
             }
             // Patches with holes last, each group nearest first as selected.
             all.sort_by_key(|(record, ..)| record.holes != NO_HOLES);
@@ -165,8 +191,8 @@ impl PatchDraws {
                 f32::NEG_INFINITY,
                 f32::NEG_INFINITY,
             ]);
-            for &(record, min, max) in &all {
-                if visible(&camera_planes, relative_origin + min, relative_origin + max) {
+            for &(record, min, max, cull) in &all {
+                if cull == Cull::Shown {
                     self.records.push(record);
                     camera_holes += u32::from(record.holes != NO_HOLES);
                     // As drawn, skirts hanging below the box.
@@ -193,7 +219,7 @@ impl PatchDraws {
                 }
                 let sides = caster_planes(clip, reach);
                 let first = self.records.len() as u32;
-                for &(record, min, max) in &all {
+                for &(record, min, max, _) in &all {
                     if visible(&sides, origin + min, origin + max) {
                         self.records.push(record);
                     }
@@ -214,12 +240,59 @@ impl PatchDraws {
             });
         }
         self.frame.triangles = self.frame.patches * PATCH_TRIANGLES;
+        let culled = |cull: Cull| self.culls.iter().filter(|&&held| held == cull).count() as u32;
+        self.frame.back_facing = culled(Cull::BackFacing);
+        self.frame.hidden = culled(Cull::Hidden);
         let record_bytes = (self.records.len() * size_of::<PatchRecord>()) as u64;
         if record_bytes > self.instances.size() {
             self.instances =
                 instance_buffer(device, (self.records.len() as u64).next_power_of_two());
         }
         uniforms
+    }
+
+    /// Culls the camera's patches of `terrains` seen from `eye` within the
+    /// frustum `camera` (the planes of eye-relative positions): those
+    /// outside it, those facing away and those nearer ground hides, over
+    /// every terrain at once, as one's ground hides another's. Returns where
+    /// each terrain's patches start in the culls.
+    fn cull(&mut self, terrains: &RenderTerrains, eye: DVec3, camera: &[Vec4]) -> Vec<usize> {
+        self.culls.clear();
+        self.seen.clear();
+        self.seen_at.clear();
+        let mut firsts = Vec::with_capacity(terrains.terrains.len());
+        for terrain in &terrains.terrains {
+            firsts.push(self.culls.len());
+            let relative_origin = (terrain.origin.as_dvec3() - eye).as_vec3();
+            for patch in &terrain.patches {
+                let (min, max) = (relative_origin + patch.min, relative_origin + patch.max);
+                if !visible(camera, min, max) {
+                    self.culls.push(Cull::Outside);
+                    continue;
+                }
+                let seen = Seen {
+                    min,
+                    max,
+                    slopes: patch.slopes,
+                    floors: patch.floors.map(|floor| floor + relative_origin.y),
+                    holes: patch.holes,
+                };
+                self.seen_at.push(self.culls.len());
+                self.culls.push(if culling::back_facing(&seen) {
+                    Cull::BackFacing
+                } else {
+                    Cull::Shown
+                });
+                self.seen.push(seen);
+            }
+        }
+        culling::hidden(&self.seen, &mut self.hidden);
+        for (&at, &hidden) in self.seen_at.iter().zip(&self.hidden) {
+            if hidden && self.culls[at] == Cull::Shown {
+                self.culls[at] = Cull::Hidden;
+            }
+        }
+        firsts
     }
 
     /// Writes the records laid out and the camera's view, after the
