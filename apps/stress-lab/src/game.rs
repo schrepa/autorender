@@ -16,7 +16,7 @@ use crate::{
 /// The action simulating water around the camera, or stopping (KeyJ), and
 /// the meters across the window it simulates (`Water::simulated`).
 const SIMULATE_WATER: ActionId = ActionId::new(1).expect("an action's index");
-const SIMULATED_WATER: f32 = 512.0;
+const SIMULATED_WATER: f32 = 256.0;
 
 /// The Stress Lab beside its engine.
 pub struct StressLab {
@@ -250,7 +250,7 @@ impl Game for StressLab {
     fn before_frame(&mut self, engine: &mut Engine) {
         let world = engine.app.world_mut();
         world.resource_mut::<FrameMetrics>().begin_frame();
-        // Water simulated around the camera, or as baked, each press.
+        // Water simulated around the camera, or as it settled, each press.
         let held = world.resource::<ActionInput>().pressed(SIMULATE_WATER);
         if held
             && !self.simulate_held

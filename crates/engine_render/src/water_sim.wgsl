@@ -5,19 +5,22 @@
 // reconstructed linearly, its slopes limited by a generalized minmod and
 // kept from dipping below the ground at its faces) and in time (Heun's two
 // stages), with Manning's friction, velocities desingularized where the
-// water thins out. Each cell holds its water's surface (world meters), its
-// flow along x and z (square meters a second) and the level a lake holds
-// it at, if one does: lakes stand still, taking the water that runs into
-// them and giving none (the rivers leaving them flow in where they start).
-// The ground stands at the cells' corners. A stage reconstructs each cell's faces, finds the flux through
-// every face and updates every cell; rivers flow in after each step. Water
-// leaves freely over the square's edges, and none comes in over them.
+// water thins out (`engine_terrain::shallow_water` settles water by the
+// same scheme, whose constants these mirror). Each cell holds its water's
+// surface (world meters), its flow along x and z (square meters a second)
+// and the level a lake holds it at, if one does: lakes stand still, taking
+// the water that runs into them and giving none. The ground stands at the
+// cells' corners. A stage reconstructs each cell's faces, finds the flux
+// through every face and updates every cell; rivers bring their water to
+// their cells after each step. Over the square's edges water flows to and
+// from the cells just past them, which stand as the water settled there
+// (the ring): water left alone stays as it settled.
 // The water carries foam: it churns it up where it runs faster than its
 // waves and where it slams into slower water, the current carries it off,
 // and it fades as its bubbles break.
 
 const WATER_SIM_GROUP: u32 = 8u;
-const WATER_SIM_INFLOW_GROUP: u32 = 64u;
+const WATER_SIM_SOURCE_GROUP: u32 = 64u;
 const SIM_GRAVITY: f32 = 9.81;
 // The generalized minmod's theta; the depth below which velocities are
 // desingularized and the depth under which a cell is dry (meters); and the
@@ -26,15 +29,17 @@ const SIM_THETA: f32 = 1.3;
 const SIM_THIN: f32 = 0.01;
 const SIM_DRY: f32 = 1.0e-4;
 const SIM_FASTEST: f32 = 20.0;
-// The meters a second rivers flow in at, and what a cell no lake holds
-// holds as its lake's level.
-const SIM_INFLOW: f32 = 1.5;
+// The meters a second the water rivers bring runs as it comes, what a cell
+// no lake holds holds as its lake's level, and what a dry cell past the
+// edges stands at.
+const SIM_SOURCE_SPEED: f32 = 1.5;
 const SIM_UNHELD: f32 = -1.0e30;
+const SIM_GHOST_DRY: f32 = -1.0e30;
 
 // The cells along a side, the stage (0: the first, 1: the second) and the
-// cells rivers flow in at; the meters across a cell, the seconds a step and
-// Manning's roughness; and, as the square follows the camera, the cells it
-// moved by along x and z.
+// cells rivers bring water to; the meters across a cell, the seconds a step
+// and Manning's roughness; and, as the square follows the camera, the cells
+// it moved by along x and z.
 struct SimFrame {
     shape: vec4<u32>,
     step: vec4<f32>,
@@ -57,12 +62,18 @@ struct SimFrame {
 // through those between rows (cells a row): its mass and its momentum
 // across and along the face.
 @group(0) @binding(4) var<storage, read_write> sim_fluxes: array<vec4<f32>>;
-// The cells rivers flow in at: the cell (its index's bits), the cubic meters
-// a second it takes in, and the way the water runs (x and z).
-@group(0) @binding(5) var<storage, read> sim_inflows: array<vec4<f32>>;
+// The cells rivers bring water to: the cell (its index's bits), the cubic
+// meters a second they bring, and the way the water runs as it comes (x and
+// z, a share of SIM_SOURCE_SPEED).
+@group(0) @binding(5) var<storage, read> sim_sources: array<vec4<f32>>;
 // The foam the water carries (0 none, 1 white all over), the step's start
 // and then its next, each a row of cells at a time.
 @group(0) @binding(6) var<storage, read_write> sim_foam: array<f32>;
+// The cells just past the square's edges as their water settled, two
+// entries each: its surface (SIM_GHOST_DRY where dry), its flow along x and
+// z and the level a lake holds it at (SIM_UNHELD where none does); then its
+// foam. South then north of each column, then west then east of each row.
+@group(0) @binding(7) var<storage, read> sim_ring: array<vec4<f32>>;
 
 fn sim_cells_along() -> u32 {
     return frame.shape.x;
@@ -208,13 +219,31 @@ fn sim_from_lakes(flux: vec3<f32>, near: u32, far: u32) -> vec3<f32> {
     return flux;
 }
 
-// The flux through a face on the square's edge whose inside stands as
-// `face`, `inward` the way into the square across it (+1 or -1): water
-// leaves as it runs, the inside standing on both sides, and none comes in
-// (rivers flowing in do so where the inflows say).
-fn sim_edge(face: vec4<f32>, inward: f32) -> vec3<f32> {
-    let flux = sim_flux(face, face);
-    return select(flux, vec3<f32>(0.0), flux.x * inward > 0.0);
+// Ring entry `ghost` (`sim_ring`'s first of its two) as the face it shows
+// the square over the edge whose ground stands at `ground`, its flow
+// across and along that face as `across_z` says (true for faces between
+// rows): its water held at its own surface, first order.
+fn sim_ghost_face(ghost: u32, ground: f32, across_z: bool) -> vec4<f32> {
+    let cell = sim_ring[2u * ghost];
+    let across = select(cell.y, cell.z, across_z);
+    let along = select(cell.z, cell.y, across_z);
+    return sim_face(cell.x, ground, across, along);
+}
+
+// Whether ring entry `ghost` is held at a lake's level.
+fn sim_ghost_held(ghost: u32) -> bool {
+    return sim_ring[2u * ghost].w > 0.5 * SIM_UNHELD;
+}
+
+// The flux through a face on the square's edge from what stands as `l` to
+// what stands as `r`, one the inside's face and one a ring cell's, whether
+// each is held by a lake: none where it would carry water out of one.
+fn sim_edge(l: vec4<f32>, r: vec4<f32>, near_held: bool, far_held: bool) -> vec3<f32> {
+    let flux = sim_flux(l, r);
+    if (flux.x > 0.0 && near_held) || (flux.x < 0.0 && far_held) {
+        return vec3<f32>(0.0);
+    }
+    return flux;
 }
 
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
@@ -222,14 +251,19 @@ fn sim_exchange(@builtin(global_invocation_id) id: vec3<u32>) {
     let n = sim_cells_along();
     let i = id.x;
     let j = id.y;
-    // The face between columns i - 1 and i; at the edges, the inside
-    // stands on both sides.
+    // The face between columns i - 1 and i; at the edges, between the
+    // inside and the ring cell past it.
     if j < n && i <= n {
         var flux: vec3<f32>;
         if i == 0u {
-            flux = sim_edge(sim_faces[(j * n) * 4u + 1u], 1.0);
+            let ghost = 2u * n + 2u * j;
+            flux = sim_edge(sim_ghost_face(ghost, sim_ground_x(0u, j), false),
+                sim_faces[(j * n) * 4u + 1u], sim_ghost_held(ghost), sim_held(j * n));
         } else if i == n {
-            flux = sim_edge(sim_faces[(j * n + n - 1u) * 4u], -1.0);
+            let ghost = 2u * n + 2u * j + 1u;
+            flux = sim_edge(sim_faces[(j * n + n - 1u) * 4u],
+                sim_ghost_face(ghost, sim_ground_x(n, j), false), sim_held(j * n + n - 1u),
+                sim_ghost_held(ghost));
         } else {
             let l = sim_faces[(j * n + i - 1u) * 4u];
             let r = sim_faces[(j * n + i) * 4u + 1u];
@@ -241,9 +275,14 @@ fn sim_exchange(@builtin(global_invocation_id) id: vec3<u32>) {
     if i < n && j <= n {
         var flux: vec3<f32>;
         if j == 0u {
-            flux = sim_edge(sim_faces[i * 4u + 3u], 1.0);
+            let ghost = 2u * i;
+            flux = sim_edge(sim_ghost_face(ghost, sim_ground_z(i, 0u), true),
+                sim_faces[i * 4u + 3u], sim_ghost_held(ghost), sim_held(i));
         } else if j == n {
-            flux = sim_edge(sim_faces[((n - 1u) * n + i) * 4u + 2u], -1.0);
+            let ghost = 2u * i + 1u;
+            flux = sim_edge(sim_faces[((n - 1u) * n + i) * 4u + 2u],
+                sim_ghost_face(ghost, sim_ground_z(i, n), true), sim_held((n - 1u) * n + i),
+                sim_ghost_held(ghost));
         } else {
             let l = sim_faces[((j - 1u) * n + i) * 4u + 2u];
             let r = sim_faces[(j * n + i) * 4u + 3u];
@@ -317,9 +356,9 @@ fn sim_update(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // The square followed the camera by `frame.shift` cells: each cell takes
-// the water of the cell standing where it does in the square as it was,
-// where that one held any, into the second state, which holds the water
-// the bake stands where it held none.
+// the water and foam of the cell standing where it does in the square as it
+// was, where that one held any, into the second state, which holds the
+// water as it settled where it held none.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
 fn sim_carry(@builtin(global_invocation_id) id: vec3<u32>) {
     let n = sim_cells_along();
@@ -329,7 +368,6 @@ fn sim_carry(@builtin(global_invocation_id) id: vec3<u32>) {
     let source = vec2<i32>(id.xy) + frame.shift.xy;
     let at = n * n + id.y * n + id.x;
     if any(source < vec2<i32>(0)) || any(source >= vec2<i32>(i32(n))) {
-        sim_foam[at] = 0.0;
         return;
     }
     let from_cell = u32(source.y) * n + u32(source.x);
@@ -378,10 +416,24 @@ fn sim_moving(i: i32, j: i32, instead: vec3<f32>) -> vec3<f32> {
 }
 
 // The first state's foam at cell `p` (fractional, along x and z),
-// bilinearly.
+// bilinearly; past the square's edges, the nearest ring cell's.
 fn sim_foam_at(p: vec2<f32>) -> f32 {
     let n = sim_cells_along();
-    let q = clamp(p, vec2<f32>(0.0), vec2<f32>(f32(n - 1u)));
+    let last = f32(n - 1u);
+    let near = vec2<u32>(clamp(round(p), vec2<f32>(0.0), vec2<f32>(last)));
+    if p.x < -0.5 {
+        return sim_ring[2u * (2u * n + 2u * near.y) + 1u].x;
+    }
+    if p.x > last + 0.5 {
+        return sim_ring[2u * (2u * n + 2u * near.y + 1u) + 1u].x;
+    }
+    if p.y < -0.5 {
+        return sim_ring[2u * (2u * near.x) + 1u].x;
+    }
+    if p.y > last + 0.5 {
+        return sim_ring[2u * (2u * near.x + 1u) + 1u].x;
+    }
+    let q = clamp(p, vec2<f32>(0.0), vec2<f32>(last));
     let low = vec2<u32>(floor(q));
     let high = min(low + 1u, vec2<u32>(n - 1u));
     let f = q - floor(q);
@@ -433,20 +485,21 @@ fn sim_churned(@builtin(global_invocation_id) id: vec3<u32>) {
     sim_foam[at] = sim_foam[n * n + at];
 }
 
-@compute @workgroup_size(WATER_SIM_INFLOW_GROUP)
-fn sim_inflow(@builtin(global_invocation_id) id: vec3<u32>) {
+// Rivers bring their water to their cells (each cell once) after a step.
+@compute @workgroup_size(WATER_SIM_SOURCE_GROUP)
+fn sim_source(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= frame.shape.z {
         return;
     }
-    let inflow = sim_inflows[id.x];
-    let at = bitcast<u32>(inflow.x);
+    let source = sim_sources[id.x];
+    let at = bitcast<u32>(source.x);
     var cell = sim_cells[at];
     if cell.w > 0.5 * SIM_UNHELD {
         return;
     }
-    let added = inflow.y * frame.step.y / (frame.step.x * frame.step.x);
+    let added = source.y * frame.step.y / (frame.step.x * frame.step.x);
     cell.x += added;
-    cell.y += added * inflow.z * SIM_INFLOW;
-    cell.z += added * inflow.w * SIM_INFLOW;
+    cell.y += added * source.z * SIM_SOURCE_SPEED;
+    cell.z += added * source.w * SIM_SOURCE_SPEED;
     sim_cells[at] = cell;
 }

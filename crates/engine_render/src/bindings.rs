@@ -1037,7 +1037,8 @@ tables! {
 
     /// Water's simulation (`water_sim.wgsl`): the stage's frame, the ground,
     /// the cells' two states, their faces, the fluxes through them, the
-    /// cells rivers flow in at and the foam the water carries.
+    /// cells rivers bring water to, the foam the water carries and the cells
+    /// just past the square's edges as their water settled.
     const WATER_SIM: Table = Table {
         label: "engine/water-sim-layout",
         serves: [WATER_SIM_SHADER @ 0],
@@ -1047,8 +1048,9 @@ tables! {
             write(2, "sim_cells", C),
             write(3, "sim_faces", C),
             write(4, "sim_fluxes", C),
-            read(5, "sim_inflows", C),
+            read(5, "sim_sources", C),
             write(6, "sim_foam", C),
+            read(7, "sim_ring", C),
         ],
     };
 

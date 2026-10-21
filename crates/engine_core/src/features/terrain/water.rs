@@ -1,10 +1,12 @@
 //! Water: the lakes and rivers terrains' hydrology bakes
 //! find, drawn where they stand. Lakes lie still under the
-//! wind's ripples, rivers run along their channels; light passing through
-//! water fades over the distance it travels to the ground behind it toward
-//! its scattered color, foam gathers where it runs shallow along shores and
-//! where rivers run fast, and its surface reflects the sky
-//! and, through screen-space reflections, the scene.
+//! wind's ripples, rivers run along their channels as their water settles
+//! there by the shallow-water equations, near the camera and far from it;
+//! light passing through water fades over the distance it travels to the
+//! ground behind it toward its scattered color, foam gathers where it runs
+//! shallow along shores and where the settled water churns it up, and its
+//! surface reflects the sky and, through screen-space reflections, the
+//! scene.
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
@@ -36,11 +38,13 @@ settings! {
         /// The meters of water shallower than which shores foam.
         pub foam_width: f32 = 0.6 => range(0.05, 10.0),
         /// The meters across the square around the camera over which
-        /// rivers run as the shallow-water equations say, from the water
-        /// the bake stands there; 0 none, the bake's water standing
+        /// rivers run live as the shallow-water equations say, starting
+        /// from their water as it settled there and taking the settled
+        /// water's past its edges; 0 none, the settled water standing
         /// everywhere.
         pub simulated: f32 = 0.0 => range(0.0, 1024.0),
-        /// The meters across the simulation's cells.
+        /// The meters across the cells water settles and is simulated in:
+        /// the cook makes the settled water's records at this size.
         pub simulation_cell: f32 = 1.0 => range(0.25, 8.0),
     }
 }

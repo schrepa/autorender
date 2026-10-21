@@ -27,6 +27,11 @@ pub struct TerrainStats {
     /// water was made from other rivers still waiting their turn.
     pub rewatered_tiles: u32,
     pub stale_water_tiles: u32,
+    /// Records of level-0 tiles' settled water arrived, whose summaries
+    /// coarser tiles take their flow and foam from (resident level-0 tiles
+    /// take their water from those held whole), and those asked for.
+    pub settled_records: u32,
+    pub settling_records: u32,
     /// Wanted tiles beyond the tile budget or the device's capacity.
     pub dropped_tiles: u32,
     /// Patches the camera draws, and of those how many stand in for finer

@@ -138,7 +138,7 @@ pub struct RenderTerrain {
     /// their jets where water draws.
     pub falls: Arc<[Fall]>,
     /// The square around the camera its water is simulated over: renderers
-    /// run the simulation there and draw its water instead of the bake's.
+    /// run the simulation there and draw its water instead of the tiles'.
     pub water_window: Option<Arc<WaterWindow>>,
     /// Its lighting, once here: the sky its ground sees and its horizons,
     /// which renderers upload as it changes.

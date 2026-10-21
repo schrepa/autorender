@@ -11,18 +11,21 @@
 // light entering it back toward the eye; and what lies under it shows
 // through, bent by the waves where the frame copies the scene's color, and
 // dimmed channel by channel over the light's path down to it and back, the
-// ground darker for being wet. Whitewater gathers where the tiles' water
-// carries it and along shallow shores, and runs white down chutes too
-// steep for it to flow smoothly. The sea (`meshes/ocean.wgsl`) lights its
-// surface the same way. Where rivers leave their beds, their jets fall as
-// sheets of their own (`water_falls.rs`), drawn last.
+// ground darker for being wet. Foam lies where the water carries it, as
+// its flow churns it up settling or simulated
+// (`engine_terrain::shallow_water`), and along shallow shores, and streaks
+// water running down chutes too steep for it to flow smoothly. The sea
+// (`meshes/ocean.wgsl`) lights its surface the same way. Where rivers leave
+// their beds, their jets fall as sheets of their own (`water_falls.rs`),
+// drawn last.
 
 // Tiles' water, a block of samples for each patch holding any
 // (`terrain/water_blocks.rs`): their surfaces (terrain-local meters,
 // NO_WATER_SURFACE where none reaches), and their flow along x and z as
-// shares of WATER_FLOW_RANGE either way, their whitewater, and 1 where a
-// lake holds them, else the half width of the river's water as 126ths of
-// WATER_WIDTH_RANGE in 127ths (rgba, signed shares).
+// shares of WATER_FLOW_RANGE either way, the foam they carry as a share of
+// WATER_FOAM_MOST (negative where a fall's sheet runs over them), and 1
+// where a lake holds them, else the half width of the river's water as
+// 126ths of WATER_WIDTH_RANGE in 127ths (rgba, signed shares).
 @group(1) @binding(50) var water_surface: texture_2d_array<f32>;
 @group(1) @binding(51) var water_info: texture_2d_array<f32>;
 
@@ -78,6 +81,14 @@ struct WaterUniform {
 @group(1) @binding(57) var<storage, read> water_sim_ground: array<f32>;
 // The foam the simulated water carries, row by row (`water_sim.wgsl`).
 @group(1) @binding(58) var<storage, read> water_sim_foam: array<f32>;
+// The most foam water carries, as its flow churns it up
+// (`engine_terrain::shallow_water::FOAM_MOST`); the foam over which it
+// shows as lace, from the first to the second; how much of the lace its
+// most shows; and how white its most streaks water running down steeply.
+const WATER_FOAM_MOST: f32 = 1.5;
+const WATER_FOAM_SHOWN: vec2<f32> = vec2<f32>(0.15, 1.2);
+const WATER_FOAM_LACE: f32 = 0.7;
+const WATER_FOAM_STREAKED: f32 = 0.6;
 // What lies behind the water, copied from the opaque scene before it
 // draws: its depth and, in frames drawing the effects' targets, its color.
 @group(2) @binding(22) var water_depth: texture_depth_2d;
@@ -164,17 +175,17 @@ struct WaterOutput {
     @location(0) relative: vec3<f32>,
     // Meters of water over the ground, and its flow along x and z.
     @location(1) water: vec3<f32>,
-    // The whitewater its flow carries, the half width of its water (meters;
-    // lakes WATER_WIDTH_RANGE), and 1 where a fall's sheet runs over it.
+    // How white its foam streaks it where it runs down steeply, the half
+    // width of its water (meters; lakes WATER_WIDTH_RANGE), and 1 where a
+    // fall's sheet runs over it.
     @location(2) foam: vec3<f32>,
     // How fast its depth falls along x and z (meters a meter), the ground
     // rising out of it toward its shores.
     @location(3) shore: vec2<f32>,
     // How fast its surface falls along x and z (meters a meter).
     @location(4) slope: vec2<f32>,
-    // Simulated water's foam (0 none, 1 white all over); none for tiles'
-    // water.
-    @location(5) sim: f32,
+    // The foam its water carries (0 none, WATER_FOAM_MOST the most).
+    @location(5) churned: f32,
 }
 
 struct WaterTemporalOutput {
@@ -184,7 +195,7 @@ struct WaterTemporalOutput {
     @location(2) foam: vec3<f32>,
     @location(3) shore: vec2<f32>,
     @location(4) slope: vec2<f32>,
-    @location(5) sim: f32,
+    @location(5) churned: f32,
     @location(6) previous: vec3<f32>,
 }
 
@@ -335,10 +346,12 @@ fn water_output(input: WaterPatchInput) -> WaterOutput {
     output.water = vec3<f32>(water.y, info.xy * WATER_FLOW_RANGE);
     let width = select(saturate(info.w * 127.0 / 126.0) * WATER_WIDTH_RANGE, WATER_WIDTH_RANGE,
         info.w > 0.996);
-    output.foam = vec3<f32>(abs(info.z), width, select(0.0, 1.0, info.z < 0.0));
+    let foam = abs(info.z) * WATER_FOAM_MOST;
+    output.foam = vec3<f32>(min(foam, 1.0) * WATER_FOAM_STREAKED, width,
+        select(0.0, 1.0, info.z < 0.0));
     output.shore = fine_shoaling * (1.0 - ground.morph) + coarse_shoaling * ground.morph;
     output.slope = fine_slope * (1.0 - ground.morph) + coarse_slope * ground.morph;
-    output.sim = 0.0;
+    output.churned = foam;
     return output;
 }
 
@@ -358,7 +371,7 @@ fn vs_water_temporal(input: WaterPatchInput) -> WaterTemporalOutput {
     temporal.foam = output.foam;
     temporal.shore = output.shore;
     temporal.slope = output.slope;
-    temporal.sim = output.sim;
+    temporal.churned = output.churned;
     temporal.previous = (camera.previous_view_projection
         * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw;
     return temporal;
@@ -765,11 +778,9 @@ const WATER_FLOW_PHASE: f32 = 40.0;
 // foam hides: foam is thin.
 const WATER_LACE_CELL: f32 = 0.24;
 const WATER_SHORE_LACE: f32 = 0.42;
-// The width (in cells) of the lace where water lands from a fall, and the
-// whitewater above which it has (`engine_terrain::hydraulics::RAPIDS_WHITE`
-// and whiter).
+// The width (in cells) of the lace the foam water carries draws at its
+// most.
 const WATER_PLUNGE_LACE: f32 = 0.45;
-const WATER_PLUNGE: f32 = 0.72;
 // The slopes of a river's surface (meters a meter, from the first to the
 // second) over which, under a fall's sheet, it comes to run as a film.
 const WATER_FILM: vec2<f32> = vec2<f32>(0.5, 0.9);
@@ -893,7 +904,7 @@ fn water_foam_set(clock: f32, which: u32) -> WaterFoamSet {
 // `running`, on running water, at `p` (meters) where its clock reads
 // `clock` (lives): the width (cells) of its lines, and its lace for a pixel
 // spanning `blur` cells where `drawn`. Along the waterline its lines are
-// `lining` wide, and where water lands from a fall `plunge` of
+// `lining` wide, and where the water carries foam `plunge` of
 // WATER_PLUNGE_LACE. On running water each set forms as the current
 // (`current`, meters a second) carries it off and dissolves as the other
 // forms; on still water each is a wave lapping the shore, washing its lace
@@ -933,7 +944,7 @@ fn water_flowing_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, tiles: vec3<f
 
 // Whether water is simulated at `point` (x and z): within the middles of
 // the simulation's first and last cells, where its water stands instead of
-// the bake's.
+// the tiles'.
 fn water_simulated(point: vec2<f32>) -> bool {
     let cells = water.sim.w;
     if cells < 2.0 {
@@ -1030,10 +1041,10 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     // Foam: lace along the waterline, where shores and what stands in the
     // water meet it, out to WATER_FOAM_REACH meters (as the settings' foam
     // width scales it), its lines thick at the line and thinning to threads
-    // farther out; and dense lace where water lands from a fall, thinning as
-    // the current carries it off. Open water, however fast it runs, carries
-    // none. The water makes and moves it, in two sets half a life apart,
-    // each forming anew as the other dissolves: on running water the
+    // farther out; and dense lace where the water carries foam, thinning as
+    // the current carries it off. Open water carries none but what its flow
+    // churned up. The water makes and moves it, in two sets half a life
+    // apart, each forming anew as the other dissolves: on running water the
     // current carries each off as it forms, slower at the bank, drawing it
     // out along it; on still water each is a wave lapping the shore, washing
     // its lace in, as big as the gusts raise the waves there, and drawing it
@@ -1061,22 +1072,18 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     // Under a fall's sheet the sheet draws the water's foam.
     let lining = WATER_SHORE_LACE * shore * sqrt(shore) * water.foam.x / 0.6
         * (1.0 - input.foam.z);
-    // Simulated water shows the foam it carries as the lace falls' landings
-    // churn up.
-    let plunge = max(smoothstep(WATER_PLUNGE, 0.95, input.foam.x) * smoothstep(0.0, 0.05, depth),
-        select(0.0, smoothstep(SIM_FOAM_SHOWN.x, SIM_FOAM_SHOWN.y, input.sim) * SIM_FOAM_LACE,
-            simulated));
+    // Water shows the foam it carries as lace: where falls land, rapids
+    // break and currents pile up, as its flow churns it up.
+    let plunge = smoothstep(WATER_FOAM_SHOWN.x, WATER_FOAM_SHOWN.y, input.churned)
+        * WATER_FOAM_LACE;
     // Lace lies on the surface as seen from above: where the surface itself
     // falls steeply (water running down a chute), it would stretch down it,
     // so it gives way there.
     let flat = 1.0 - smoothstep(0.5, 1.0, steep);
-    // Water skimming down steep rock breaks white all across once it takes
-    // in air (the tiles' whitewater: the hydraulics' air fraction past its
-    // inception point), as falling water does (`fall_pattern`): streaked
-    // along the current and carried down with it, in two sets half a cycle
-    // apart.
-    let cascade = smoothstep(0.2, 0.6, min(input.foam.x, WATER_PLUNGE))
-        * smoothstep(0.25, 0.6, steep);
+    // Water skimming down steep rock breaks white all across where it
+    // carries foam, as falling water does (`fall_pattern`): streaked along
+    // the current and carried down with it, in two sets half a cycle apart.
+    let cascade = smoothstep(0.2, 0.6, input.foam.x) * smoothstep(0.25, 0.6, steep);
     // Fast water breaks white over rock just under its surface, in pillows
     // and holes over the stones it runs across: where what stands in it
     // rises solid to within a few tenths of a meter of its surface.
@@ -1158,7 +1165,7 @@ fn water_temporal_output(input: WaterTemporalOutput) -> WaterOutput {
     output.foam = input.foam;
     output.shore = input.shore;
     output.slope = input.slope;
-    output.sim = input.sim;
+    output.churned = input.churned;
     return output;
 }
 
@@ -1192,20 +1199,14 @@ fn fs_water_temporal(input: WaterTemporalOutput) -> TemporalTargets {
 // Simulated water (`water_sim.rs`): a vertex at each cell's middle, its
 // water's surface, depth and flow, the slopes of its surface and depth
 // read across its neighbors, and the foam the water carries, as tiles'
-// water holds them; shaded as tiles' water is. Its white water is its
-// foam's alone, churned up where the water churns and carried off with it.
+// water holds them; shaded as tiles' water is.
 //
 // Meters of water under which a cell is dry; the half width its shores'
-// foam reads it as (a river's); the depth over which its velocity is
-// desingularized; the foam over which it shows as lace, from the first to
-// the second; how much of the lace a fall's landing churns up its most
-// shows; and how white its most streaks water running down steeply.
+// foam reads it as (a river's); and the depth over which its velocity is
+// desingularized.
 const SIM_WET: f32 = 0.01;
 const SIM_HALF_WIDTH: f32 = 8.0;
 const SIM_THIN_WATER: f32 = 0.05;
-const SIM_FOAM_SHOWN: vec2<f32> = vec2<f32>(0.15, 1.2);
-const SIM_FOAM_LACE: f32 = 0.7;
-const SIM_FOAM_STREAKED: f32 = 0.6;
 // How upright (the up part of its triangles' normal) the simulated water's
 // surface stands where it gives way, from the first to the second: down a
 // cliff, between cells far apart in height, the falls' sheets show it; and
@@ -1315,8 +1316,8 @@ fn sim_water_output(index: u32) -> WaterOutput {
     // White water: the foam the water carries, streaking it where it runs
     // down steeply.
     let foam = water_sim_foam[u32(j) * n + u32(i)];
-    output.foam = vec3<f32>(min(foam, 1.0) * SIM_FOAM_STREAKED, SIM_HALF_WIDTH, 0.0);
-    output.sim = foam;
+    output.foam = vec3<f32>(min(foam, 1.0) * WATER_FOAM_STREAKED, SIM_HALF_WIDTH, 0.0);
+    output.churned = foam;
     return output;
 }
 
@@ -1335,7 +1336,7 @@ fn vs_sim_water_temporal(@builtin(vertex_index) index: u32) -> WaterTemporalOutp
     temporal.foam = output.foam;
     temporal.shore = output.shore;
     temporal.slope = output.slope;
-    temporal.sim = output.sim;
+    temporal.churned = output.churned;
     temporal.previous = (camera.previous_view_projection
         * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw;
     return temporal;

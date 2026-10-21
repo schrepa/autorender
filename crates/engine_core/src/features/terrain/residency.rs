@@ -26,7 +26,7 @@ pub(super) const JUMP: f32 = 100.0;
 /// solid stood in them (their water as what stands there now holds it
 /// back), and the square around the camera its water is simulated over,
 /// where water asks for one. A new bake's rivers flow anew, and its
-/// simulated water starts over from them.
+/// simulated water starts over from their water as it settles.
 #[derive(Default)]
 pub(super) struct HydrologyState {
     pub(super) stats: Option<HydrologyStats>,
@@ -93,8 +93,11 @@ pub(super) struct TerrainState {
     /// Records of tiles places games name, loading into memory: each one's
     /// job and the generation it was asked for under.
     pub(super) prefetched: TileMap<(JobId, Generation)>,
-    /// Its tiles cooking, while a session cooks.
+    /// Its tiles and their settled water cooking, while a session cooks,
+    /// and the settled water its resident tiles take.
     pub(super) cook: Option<CookTiles>,
+    pub(super) cook_water: Option<CookTiles>,
+    pub(super) settled: Settled,
     /// Its lighting, and its asking for it.
     pub(super) lighting: Lighting,
     /// The layers its tiles generate from and its surface's data for the
@@ -154,6 +157,8 @@ impl TerrainState {
             failures: JobFailures::default(),
             prefetched: TileMap::default(),
             cook: None,
+            cook_water: None,
+            settled: Settled::default(),
             lighting: Lighting::default(),
             surface: None,
             materials: true,
@@ -202,9 +207,13 @@ impl TerrainState {
         retired
             .jobs
             .extend(self.prefetched.iter().map(|(_, &(id, _))| id));
-        retired
-            .jobs
-            .extend(self.cook.iter().flat_map(CookTiles::asked));
+        retired.jobs.extend(
+            self.cook
+                .iter()
+                .chain(&self.cook_water)
+                .flat_map(CookTiles::asked),
+        );
+        retired.jobs.extend(self.settled.asked());
         retired
             .jobs
             .extend(self.lighting.job.iter().map(|&(id, _)| id));

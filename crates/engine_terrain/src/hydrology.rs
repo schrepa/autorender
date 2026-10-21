@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
 
+use glam::Vec2;
+
 use crate::layers::HeightImage;
 use crate::rivers::{Channels, MIN_DEPTH, RiverLine, Rivers, trace, wander};
 
@@ -624,6 +626,32 @@ impl Hydrology {
     /// and depth; `None` where dry.
     pub(crate) fn water_at(&self, x: f32, z: f32) -> Option<(f32, f32)> {
         self.water.at(x, z).or_else(|| self.rivers.water_at(x, z))
+    }
+
+    /// Whether a lake or a river reaches into the terrain-local rectangle
+    /// from `low` to `high`: a sample of a lake's water within a sample of
+    /// it, or a river's line within its channel's width and a sample.
+    pub(crate) fn water_reaches(&self, low: Vec2, high: Vec2) -> bool {
+        let water = &self.water;
+        let pad = Vec2::splat(water.spacing);
+        let (first, last) = ((low - pad) / water.spacing, (high + pad) / water.spacing);
+        let columns = max(first.x.floor(), 0.0) as usize
+            ..=min(last.x.ceil(), water.width as f32 - 1.0) as usize;
+        let lake = (max(first.y.floor(), 0.0) as usize
+            ..=min(last.y.ceil(), water.height as f32 - 1.0) as usize)
+            .any(|z| {
+                columns.clone().any(|x| {
+                    let sample = z * water.width + x;
+                    water.lake[sample] != 0 && water.depth[sample] > 0.0
+                })
+            });
+        lake || self.rivers.courses().any(|course| {
+            course.points().iter().enumerate().any(|(index, &point)| {
+                let reach = Vec2::splat(2.0 * course.half(index) + water.spacing);
+                let point = Vec2::from(point);
+                point.cmpge(low - reach).all() && point.cmple(high + reach).all()
+            })
+        })
     }
 }
 

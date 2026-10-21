@@ -296,7 +296,7 @@ fn fs_debug_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> Deb
     return debug_targets(DEBUG_KIND_COVER, 0u, 0u, cover_surface(input, front));
 }
 
-// Water where its shading covers at least half the pixel: the bake's,
+// Water where its shading covers at least half the pixel: the tiles',
 // which gives way where water is simulated, or the simulated water's
 // (`simulated`).
 fn debug_water(input: WaterOutput, simulated: bool) -> DebugTargets {

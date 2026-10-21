@@ -1,11 +1,12 @@
 //! Terrain jobs: terrain work engines hand workers, as bytes
 //! in and bytes out: a tile generated whole, a tile's portals of a walk
-//! graph, a stack baked. Workers hold once what many jobs read, shared by
-//! key: layer stacks with their bakes, and the recipes generating a
-//! terrain's tiles from one. Jobs run the same code wherever they run (a
-//! worker, a host without workers, the cook), so their results are the
-//! same bits, and every job's output is a record hosts keep and the cook
-//! ships: every field of a job is something its output depends on.
+//! graph, a stack baked, a terrain's lighting, a tile's water settled.
+//! Workers hold once what many jobs read, shared by key: layer stacks with
+//! their bakes, and the recipes generating a terrain's tiles from one. Jobs
+//! run the same code wherever they run (a worker, a host without workers,
+//! the cook), so their results are the same bits, and every job's output is
+//! a record hosts keep and the cook ships: every field of a job is
+//! something its output depends on.
 //!
 //! A tile's job, and its portals', carries the edits reaching its ground
 //! alone, its recipe's stack none: an edit leaves every other tile's jobs,
@@ -20,25 +21,32 @@ use glam::Vec2;
 use crate::codec::{self, Codec, CodecError, Reader, Writer, record};
 use crate::lighting::{Ground, TerrainLighting, light};
 use crate::{
-    BiomeRules, Biomes, Gait, Generator, Layers, Placing, Pyramid, Stamp, Tile, TileKey,
-    TilePortals,
+    BiomeRules, Biomes, Gait, Generator, Layers, Placing, Pyramid, Stamp, SteadySolve,
+    SteadyWater, Tile, TileKey, TilePortals,
 };
 
 /// The kinds of terrain jobs, which hosts carry by name: a tile of a
-/// shared recipe, a tile's portals over a shared stack, a stack's bakes and
-/// a terrain's lighting. Workers match every kind, so a kind added without
-/// its work fails to build.
+/// shared recipe, a tile's portals over a shared stack, a stack's bakes, a
+/// terrain's lighting and a tile's settled water. Workers match every kind,
+/// so a kind added without its work fails to build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
     Tile,
     Portals,
     Bake,
     Lighting,
+    Water,
 }
 
 impl JobKind {
     /// Every kind.
-    pub const ALL: [Self; 4] = [Self::Tile, Self::Portals, Self::Bake, Self::Lighting];
+    pub const ALL: [Self; 5] = [
+        Self::Tile,
+        Self::Portals,
+        Self::Bake,
+        Self::Lighting,
+        Self::Water,
+    ];
 
     /// Its name, as hosts carry it and key the records they keep by.
     pub const fn name(self) -> &'static str {
@@ -47,6 +55,7 @@ impl JobKind {
             Self::Portals => "terrain_portals",
             Self::Bake => "terrain_bake",
             Self::Lighting => "terrain_lighting",
+            Self::Water => "terrain_water",
         }
     }
 
@@ -289,6 +298,42 @@ pub fn lighting_output(bytes: &[u8]) -> Result<TerrainLighting, CodecError> {
     codec::decode(bytes)
 }
 
+/// A [`JobKind::Water`]: level-0 tile `key`'s water settled over the stack
+/// shared as `stack` (with its bakes) and `pyramid` under `stamps`, the
+/// terrain's edits reaching the ground it settles over, in order, in cells
+/// `cell` meters across ([`SteadySolve`]). Like every terrain job, it is its
+/// own identity and its own input.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WaterJob {
+    pub stack: String,
+    pub pyramid: Pyramid,
+    pub key: TileKey,
+    pub stamps: Vec<Stamp>,
+    pub cell: f32,
+}
+
+record!(WaterJob {
+    stack,
+    pyramid,
+    key,
+    stamps,
+    cell,
+});
+
+impl WaterJob {
+    pub const KIND: JobKind = JobKind::Water;
+
+    /// What its output is kept by, and its input: the job.
+    pub fn identity(&self) -> Vec<u8> {
+        codec::encode(self)
+    }
+}
+
+/// A [`JobKind::Water`]'s output: the tile's settled water.
+pub fn water_output(bytes: &[u8]) -> Result<SteadyWater, CodecError> {
+    codec::decode(bytes)
+}
+
 /// A shared recipe as a worker holds it: its layers seen as its terrain
 /// sees them, its pyramid and its compiled surface.
 struct Recipe {
@@ -317,6 +362,7 @@ enum Running {
     Portals(Box<(Arc<Layers>, Pyramid, TileKey, Gait)>),
     Bake(Box<(Layers, Pyramid)>),
     Lighting(Box<LightingJob>),
+    Water(Box<SteadySolve>),
 }
 
 /// What a worker holds of terrains, and runs their jobs over.
@@ -455,6 +501,33 @@ impl TerrainWorker {
                 }
                 Running::Lighting(Box::new(job))
             }
+            JobKind::Water => {
+                let WaterJob {
+                    stack,
+                    pyramid,
+                    key,
+                    stamps,
+                    cell,
+                } = reader.get().map_err(invalid)?;
+                reader.finish().map_err(invalid)?;
+                if key.level != 0 || !pyramid.contains(key) || !(cell.is_finite() && cell > 0.0) {
+                    return Err("settled water of a tile outside its pyramid's finest level".into());
+                }
+                let layers = self
+                    .stacks
+                    .get(&stack)
+                    .ok_or_else(|| format!("unknown stack {stack}"))?;
+                let layers = if stamps.is_empty() {
+                    layers.clone()
+                } else {
+                    Arc::new(
+                        layers
+                            .with_stamps(&stamps)
+                            .map_err(|error| error.to_string())?,
+                    )
+                };
+                Running::Water(Box::new(SteadySolve::new(layers, pyramid, key, cell)))
+            }
         };
         self.running.insert(id, running);
         Ok(())
@@ -497,6 +570,10 @@ impl TerrainWorker {
                     job.horizons,
                 )))
             }
+            Running::Water(solve) => match solve.advance(&mut budget)? {
+                Some(water) => Ok(codec::encode(&water)),
+                None => return Ok(None),
+            },
         };
         self.running.remove(&id);
         output.map(Some)

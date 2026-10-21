@@ -9,10 +9,12 @@
 //! ([`water_rows`]), each river through the spans that cut its channel; a
 //! resident tile's water is written again the same way where its rivers
 //! run otherwise since, as what stands in them holds them back
-//! ([`Tile::rewatered`]). However it was written, every dry sample beside
-//! water holds a surface its water meets the ground by ([`skirt`]), so
-//! shores fall where the ground rises through the water, between samples,
-//! never at a sample.
+//! ([`Tile::rewatered`]), and as its water settles ([`Tile::steadied`],
+//! [`Tile::flowing`]), its whitewater then the foam the settled water
+//! carries, a share of [`crate::shallow_water::FOAM_MOST`]. However it
+//! was written, every dry sample beside water holds a surface its water
+//! meets the ground by ([`skirt`]), so shores fall where the ground rises
+//! through the water, between samples, never at a sample.
 
 use std::ops::Range;
 

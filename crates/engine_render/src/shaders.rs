@@ -315,7 +315,7 @@ entry_points! {
     }
     water_sim = WATER_SIM_SHADER {
         compute: [
-            sim_reconstruct, sim_exchange, sim_update, sim_inflow, sim_carry, sim_restart, sim_churn,
+            sim_reconstruct, sim_exchange, sim_update, sim_source, sim_carry, sim_restart, sim_churn,
             sim_churned
         ],
     }

@@ -150,7 +150,7 @@ impl Terrains {
         (eye, ahead): (Vec3, Vec3),
         viewport: Viewport,
         (focus, places): (&[Vec3], &[(Vec3, f32)]),
-        jobs: Option<&mut Jobs>,
+        (jobs, water): (Option<&mut Jobs>, Option<&Water>),
     ) {
         self.frame += 1;
         self.sync_surroundings();
@@ -369,6 +369,18 @@ impl Terrains {
             stats.cached_bytes += state.store.cached_bytes();
             stats.prefetching_tiles += state.prefetched.len() as u32;
             stats.loading_tiles += state.dispatched.len() as u32;
+            // Resident tiles take their settled water.
+            if let Some(slots) = slots.as_mut() {
+                settled::follow(
+                    state,
+                    water,
+                    slots,
+                    (Vec2::new(local_eye.x, local_eye.z), frame),
+                );
+            }
+            let (settled_records, settling_records) = state.settled.counts();
+            stats.settled_records += settled_records;
+            stats.settling_records += settling_records;
             // Tiles' water follows the rivers as they run now.
             let [rewatered, stale] = rewater::rewater(state, &work, &mut budget);
             stats.rewatered_tiles += rewatered;
@@ -584,6 +596,7 @@ impl TerrainStreaming {
             .collect();
         // Jobs stream with the terrains, and cook with them in a session
         // that cooks.
+        let water = world.get_resource::<Water>().copied();
         let mut jobs = world.remove_resource::<Jobs>();
         let mut cooking = world.remove_resource::<Cooking>();
         if let Some(mut terrains) = world.get_resource_mut::<Terrains>() {
@@ -600,10 +613,10 @@ impl TerrainStreaming {
                         (eye, ahead),
                         viewport,
                         (&self.points, &self.places),
-                        jobs.as_mut(),
+                        (jobs.as_mut(), water.as_ref()),
                     );
                     if let (Some(jobs), Some(cooking)) = (jobs.as_mut(), cooking.as_mut()) {
-                        terrains.cook(&settings, jobs, cooking);
+                        terrains.cook(&settings, water.as_ref(), jobs, cooking);
                     }
                 }
                 None => terrains.stand_still(),

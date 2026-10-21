@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 const INTERNAL: &[&str] = &[
     "CHUNK_LENGTH",
     "DevStepError",
+    "GHOST_DRY",
     "GroundedAt",
     "LOD_RECORD",
     "LodInput",
@@ -26,7 +27,8 @@ const INTERNAL: &[&str] = &[
     "RenderTables",
     "StaticTable",
     "StaticTables",
-    "WaterInflow",
+    "WaterGhost",
+    "WaterSourceCell",
     "WaterWindow",
     "atmosphere_fields",
     "engine_features",

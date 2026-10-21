@@ -43,7 +43,9 @@ mod placement;
 mod pyramid;
 mod rivers;
 mod select;
+pub mod shallow_water;
 mod sights;
+mod steady_water;
 mod surface;
 mod tile;
 mod tile_water;
@@ -80,6 +82,10 @@ pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverSight};
 pub use surface::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,
     Mask, NoiseMask, Remap, SampleInputs,
+};
+pub use steady_water::{
+    SUMMARY_SIDE, SteadyCell, SteadySolve, SteadySource, SteadySquare, SteadyStats, SteadySummary,
+    SteadyWater, steady_water_bounds, watered_tiles,
 };
 pub use tile::{Generator, Tile, TileSample};
 pub use tile_water::{

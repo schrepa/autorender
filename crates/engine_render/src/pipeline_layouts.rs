@@ -166,7 +166,8 @@ pipeline_layouts! {
     DEFORMATION_PIPELINES = [DEFORMATION];
     /// Water's waves: their spectra evolved, transformed and averaged.
     WATER_WAVE_PIPELINES = [WATER_WAVES];
-    /// Water's simulation: faces, fluxes, cells and inflows.
+    /// Water's simulation: faces, fluxes, cells, the water rivers bring and
+    /// the cells past its edges.
     WATER_SIM_PIPELINES = [WATER_SIM];
     COVER_GROW_PIPELINES = [COVER_GROW];
     OCCUPANCY_PIPELINES = [OCCUPANCY];
