@@ -24,9 +24,9 @@ use crate::gpu_data::mip_levels;
 use crate::materials::{gpu_format, write_level};
 use crate::mipmaps::MipGenerator;
 
-/// The textures one material's layers hold, each by handle and id: its
-/// base color, normal and metallic-roughness maps.
-type LayerKey = [Option<(TextureHandle, u64)>; 3];
+/// The textures one material's layers hold, by handle: its base color,
+/// normal and metallic-roughness maps.
+type LayerKey = [Option<TextureHandle>; 3];
 
 /// Texels along a side of the virtual texture's sheets.
 pub(crate) const SHEET_TEXELS: u32 = 1024;
@@ -99,11 +99,7 @@ impl TerrainMaps {
         let arrays = defaults(device, queue);
         let sheet_array = sheets(device, 0);
         let stand_in = sheets(device, 0);
-        let views = [
-            view(&arrays[0]),
-            view(&arrays[1]),
-            view(&sheet_array),
-        ];
+        let views = [view(&arrays[0]), view(&arrays[1]), view(&sheet_array)];
         let bake_views = [view(&arrays[0]), view(&arrays[1]), view(&stand_in)];
         Self {
             layers: Vec::new(),
@@ -256,9 +252,7 @@ impl TerrainMaps {
             return;
         }
         self.listed = listed.iter().map(|(key, _)| *key).collect();
-        let shape = listed
-            .iter()
-            .find_map(|(_, maps)| shape_of(maps, device));
+        let shape = listed.iter().find_map(|(_, maps)| shape_of(maps, device));
         let kept: Vec<&RenderSurfaceMaps> = listed
             .iter()
             .filter(|(_, maps)| shape.is_some() && shape_of(maps, device) == shape)
@@ -284,11 +278,7 @@ impl TerrainMaps {
             pages.div_ceil(per_sheet).min(self.sheet_room(device))
         };
         self.sheet_array = sheets(device, sheets_now);
-        self.views = [
-            view(&arrays[0]),
-            view(&arrays[1]),
-            view(&self.sheet_array),
-        ];
+        self.views = [view(&arrays[0]), view(&arrays[1]), view(&self.sheet_array)];
         self.bake_views = [view(&arrays[0]), view(&arrays[1]), view(&self.stand_in)];
         self.arrays = arrays;
         self.materials = count;
@@ -441,7 +431,7 @@ fn means(maps: &RenderSurfaceMaps) -> Means {
 
 /// The textures `maps` names, as its layers hold them.
 fn key(maps: &RenderSurfaceMaps) -> LayerKey {
-    textures_of(maps).map(|texture| texture.map(|texture| (texture.handle, texture.texture.id())))
+    textures_of(maps).map(|texture| texture.map(|texture| texture.handle))
 }
 
 fn textures_of(maps: &RenderSurfaceMaps) -> [Option<&engine_core::RenderTexture>; 3] {

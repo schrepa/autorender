@@ -721,7 +721,7 @@ fn surface(
         })
         .collect::<engine::Result<Vec<_>>>()?;
     let atlas = trees::atlas_record(world)?;
-    let materials = world.resource_scope(|world, mut records: Mut<TextureRecords>| {
+    let materials = world.resource_scope(|world, mut records: Mut<Records>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
         let mut loaded = HashMap::default();
         LOOKS
@@ -1444,7 +1444,7 @@ const CLIFFS: usize = 4;
 /// records asked of `records`. Looks borrowing the same maps share their
 /// textures through `loaded`.
 fn maps(
-    (records, assets): (&mut TextureRecords, &mut AssetLibrary),
+    (records, assets): (&mut Records, &mut AssetLibrary),
     look: &Look,
     loaded: &mut HashMap<&'static str, Vec<TextureHandle>>,
 ) -> engine::Result<MaterialHandle> {
@@ -1458,9 +1458,10 @@ fn maps(
                 ("orm", TextureUsage::Data),
             ];
             let set = format!("highlands/{name}");
-            let textures = crate::kit::textures::request((records, &mut *assets), set, &maps, move || {
-                ground::sources(name)
-            })?;
+            let textures =
+                crate::kit::records::textures((records, &mut *assets), set, &maps, move || {
+                    ground::sources(name)
+                })?;
             loaded.insert(name, textures.clone());
             textures
         }
@@ -1477,7 +1478,9 @@ fn maps(
         .and_then(|material| material.with_normal_texture(TextureRef::new(textures[1]), 1.0))
         .and_then(|material| material.with_metallic_roughness_texture(TextureRef::new(textures[2])))
         .and_then(|material| material.with_occlusion_texture(TextureRef::new(textures[2]), 1.0))?;
-    assets.insert_material(material).map_err(engine::Error::from)
+    assets
+        .insert_material(material)
+        .map_err(engine::Error::from)
 }
 
 /// The scanned rock set `name`'s material from `files` (`ROCK_FILES`,

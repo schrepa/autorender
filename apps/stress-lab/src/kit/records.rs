@@ -1,12 +1,14 @@
-//! The worlds' generated content as records ([`engine::Records`]): a mesh
-//! or texture a world's code builds, kept by the hash of the Stress Lab's
-//! code ([`crate::SOURCE`]), its kind and the inputs it is built from.
-//! Hosts hand it back from the cook's packs or what they kept; where none
-//! holds it, its code builds it in place and the host keeps it. Its handle
-//! is reserved at once and names it once it is here: until then what draws
-//! with it finds it missing.
+//! The worlds' generated content as records ([`engine::Records`]): a mesh a
+//! world's code builds, kept by the hash of the Stress Lab's code
+//! ([`crate::SOURCE`]), its kind and the inputs it is built from, and sets
+//! of textures it generates, which load as the cook compresses them for the
+//! device. Hosts hand each record back from the cook's packs or what they
+//! kept; where none holds it, its code builds it in place and the host
+//! keeps it. Its handle is reserved at once and names it once it is here:
+//! until then what draws with it finds it missing.
 
-use engine::Records;
+use std::sync::Arc;
+
 use engine::host::RecordKey;
 use engine::prelude::*;
 use engine::scene::{MeshStreams, decode_mesh_buffer, encode_mesh_buffer_with};
@@ -74,42 +76,23 @@ fn mesh_bytes(mesh: &Mesh) -> Vec<u8> {
     )
 }
 
-/// An RGBA8 texture `make` builds as its width, height and pixels, as the
-/// record of `kind` on `identity`: its handle, which materials may name at
-/// once, reserved until the record is here.
-pub(crate) fn texture(
-    world: &mut World,
-    kind: &str,
-    identity: &[u8],
-    make: impl FnOnce() -> (u32, u32, Vec<u8>) + Send + Sync + 'static,
-) -> engine::Result<TextureHandle> {
-    let handle = world.resource_mut::<AssetLibrary>().reserve_texture()?;
-    world.resource_mut::<Records>().request(
-        key(kind, identity),
-        move || {
-            let (width, height, pixels) = make();
-            let mut bytes = Vec::with_capacity(8 + pixels.len());
-            bytes.extend_from_slice(&width.to_le_bytes());
-            bytes.extend_from_slice(&height.to_le_bytes());
-            bytes.extend_from_slice(&pixels);
-            Ok(bytes)
-        },
-        move |world, bytes| {
-            let size = |at: usize| {
-                bytes
-                    .get(at..at + 4)
-                    .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
-            };
-            let (Some(width), Some(height)) = (size(0), size(4)) else {
-                return Err("a texture record starts with its width and height".into());
-            };
-            let texture = Texture::from_rgba(width, height, bytes[8..].to_vec())
-                .map_err(|error| error.to_string())?;
-            world
-                .resource_mut::<AssetLibrary>()
-                .fill_texture(handle, texture)
-                .map_err(|error| error.to_string())
-        },
-    );
-    Ok(handle)
+/// The textures `textures` of the set `name`, which `make` generates (one
+/// source each, in order), asked of `records`: their handles in `assets`,
+/// which materials may name at once, reserved until their records are here.
+pub(crate) fn textures(
+    (records, assets): (&mut Records, &mut AssetLibrary),
+    name: String,
+    textures: &[(&str, TextureUsage)],
+    make: impl Fn() -> Result<Vec<TextureSource>, String> + Send + Sync + 'static,
+) -> engine::Result<Vec<TextureHandle>> {
+    let set = TextureSet {
+        source: crate::SOURCE,
+        name,
+        textures: textures
+            .iter()
+            .map(|&(texture, usage)| (texture.to_owned(), usage))
+            .collect(),
+        make: Arc::new(make),
+    };
+    records.textures(assets, set).map_err(engine::Error::from)
 }

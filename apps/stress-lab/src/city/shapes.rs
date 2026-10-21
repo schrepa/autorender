@@ -533,11 +533,19 @@ pub(crate) struct Library {
 }
 
 impl Library {
-    /// Inserts the meshes `variety` keeps (1, 8, 32 or all) and, when
-    /// `textured`, asks `records` for the textures, whose alpha masks
-    /// emission.
-    pub(crate) fn new(
-        (records, assets): (&mut TextureRecords, &mut AssetLibrary),
+    /// Inserts the meshes `variety` keeps (1, 8, 32 or all) into `world`'s
+    /// assets and, when `textured`, asks its records for the textures,
+    /// whose alpha masks emission.
+    pub(crate) fn new(world: &mut World, variety: u32, textured: bool) -> engine::Result<Self> {
+        world.resource_scope(|world, mut records: Mut<Records>| {
+            let mut assets = world.resource_mut::<AssetLibrary>();
+            Self::admit((&mut records, &mut assets), variety, textured)
+        })
+    }
+
+    /// [`Self::new`] over `records` and `assets`.
+    fn admit(
+        (records, assets): (&mut Records, &mut AssetLibrary),
         variety: u32,
         textured: bool,
     ) -> engine::Result<Self> {
@@ -555,12 +563,10 @@ impl Library {
                 .iter()
                 .map(|name| (name.as_str(), TextureUsage::Color))
                 .collect();
-            let handles = crate::kit::textures::request(
-                (records, assets),
-                "city".into(),
-                &named,
-                || Ok(Tex::ALL.map(Tex::source).to_vec()),
-            )?;
+            let handles =
+                crate::kit::records::textures((records, assets), "city".into(), &named, || {
+                    Ok(Tex::ALL.map(Tex::source).to_vec())
+                })?;
             textures.extend(Tex::ALL.into_iter().zip(handles));
         }
         Ok(Self {

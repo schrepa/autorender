@@ -57,10 +57,11 @@ pub struct FrameStats {
     /// lacked, once it arrived: 0 while the list holds every pipeline the
     /// session draws with.
     pub pipelines_unlisted: u32,
-    /// Whether terrains have yet to load the camera's view whole, textures
-    /// their records, or a static table the scene wants or its pipeline
-    /// list has yet to arrive, read when the stats are: hosts keep
-    /// preparing meanwhile.
+    /// Whether terrains have yet to load the camera's view whole, or a
+    /// record game code's content waits for (its generated meshes and
+    /// textures), a static table the scene wants or its pipeline list has
+    /// yet to arrive, read when the stats are: hosts keep preparing
+    /// meanwhile.
     pub loading: bool,
     /// The view's width in physical pixels, as the frame drew it: the
     /// host's, unless the device's largest texture holds less, which the

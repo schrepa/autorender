@@ -304,8 +304,8 @@ impl<G: Game> Offscreen<G> {
     }
 
     /// Draws the starting state at `timestamp` milliseconds until frames
-    /// stop creating pipelines, terrains have loaded the view and textures
-    /// their records, as a window does before play starts.
+    /// stop creating pipelines, terrains have loaded the view and game
+    /// code's records arrived, as a window does before play starts.
     pub fn prepare(&mut self, timestamp: f64) -> engine::Result<()> {
         let (width, height) = self.size;
         self.host.set_preparation(true);

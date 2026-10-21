@@ -3208,14 +3208,11 @@ pub(crate) struct Spawned {
 pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Result<Spawned> {
     let mut city = build(config);
     let mut library = Library::new(config.mesh_variety, config.textured);
-    let mut records = world
-        .remove_resource::<TextureRecords>()
-        .unwrap_or_default();
-    let mut assets = world.resource_mut::<AssetLibrary>();
     // Meshes, materials and the size stand-ins scale to; each clip once, in
     // the order the city's players first name them, so the library holds
     // them in the same slots every run.
-    let admitted = (|| {
+    let (drawn, pictures, clips) = world.resource_scope(|world, mut records: Mut<Records>| {
+        let mut assets = world.resource_mut::<AssetLibrary>();
         let mut drawn = Vec::with_capacity(city.nodes.len());
         for node in &city.nodes {
             let Some(look) = node.look else {
@@ -3247,9 +3244,7 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Resu
             .map(|clip| library.clip(&mut assets, clip).map(|handle| (clip, handle)))
             .collect::<Result<_, _>>()?;
         Ok::<_, engine::Error>((drawn, pictures, clips))
-    })();
-    world.insert_resource(records);
-    let (drawn, pictures, clips) = admitted?;
+    })?;
     let renderables = drawn.iter().filter(|mesh| mesh.is_some()).count() as u32;
     debug_assert_eq!(renderables, config.renderables, "renderables as configured");
     let dense = if config.dense_colliders {

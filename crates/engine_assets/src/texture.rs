@@ -1,14 +1,10 @@
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::AssetError;
 
 /// Maximum admitted width or height: the largest 2D texture every WebGPU
 /// device holds.
 pub const MAX_TEXTURE_DIMENSION: u32 = 8192;
-
-/// Ids handed to textures so far, across libraries.
-static NEXT_TEXTURE: AtomicU64 = AtomicU64::new(1);
 
 /// How a texture's texels are stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -114,7 +110,6 @@ pub fn srgb_decoded() -> &'static [f32; 256] {
 /// emits fully.
 #[derive(Debug)]
 pub struct Texture {
-    id: u64,
     width: u32,
     height: u32,
     format: TextureFormat,
@@ -195,7 +190,6 @@ impl Texture {
                 .iter()
                 .any(|pixel| pixel[3] != 255);
         Ok(Self {
-            id: NEXT_TEXTURE.fetch_add(1, Ordering::Relaxed),
             width,
             height,
             format,
@@ -218,12 +212,6 @@ impl Texture {
     #[must_use]
     pub fn with_emission_mask(self, masked: bool) -> Self {
         Self { masked, ..self }
-    }
-
-    /// Unique among the textures of a process: what renderers tell
-    /// textures apart by, a texture replaced in its library included.
-    pub fn id(&self) -> u64 {
-        self.id
     }
 
     pub fn width(&self) -> u32 {
@@ -260,8 +248,11 @@ impl Texture {
         if let Some(summary) = self.summary.get() {
             return Some(*summary);
         }
-        (self.format == TextureFormat::Rgba8)
-            .then(|| *self.summary.get_or_init(|| TextureSummary::of_rgba8(self.pixels())))
+        (self.format == TextureFormat::Rgba8).then(|| {
+            *self
+                .summary
+                .get_or_init(|| TextureSummary::of_rgba8(self.pixels()))
+        })
     }
 
     /// Whether any texel's alpha may be below 255, limiting emission there;

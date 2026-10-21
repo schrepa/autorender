@@ -27,12 +27,27 @@ pub(crate) fn conifer_record(
     })
 }
 
-/// The bark and needle atlas as a record ([`records::texture`]): its
-/// handle, which materials name at once.
+/// The bark and needle atlas as a texture record ([`records::textures`]),
+/// cooked as every generated texture is: its handle, which materials name
+/// at once.
 pub(crate) fn atlas_record(world: &mut World) -> engine::Result<TextureHandle> {
-    records::texture(world, "highlands_bark_atlas", &[], || {
-        (ATLAS, ATLAS, atlas())
-    })
+    let handles = world.resource_scope(|world, mut stored: Mut<Records>| {
+        let mut assets = world.resource_mut::<AssetLibrary>();
+        records::textures(
+            (&mut stored, &mut assets),
+            "highlands/bark_atlas".into(),
+            &[("atlas", TextureUsage::Color)],
+            || {
+                Ok(vec![TextureSource {
+                    width: ATLAS,
+                    height: ATLAS,
+                    pixels: atlas(),
+                    usage: TextureUsage::Color,
+                }])
+            },
+        )
+    })?;
+    Ok(handles[0])
 }
 
 /// The atlas's side in texels.

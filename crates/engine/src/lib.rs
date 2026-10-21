@@ -42,11 +42,11 @@ pub use engine_core::{bevy_ecs, glam};
 pub use engine_core::environment_sections;
 
 /// What games use, at the root and in the [`prelude`] alike: the engine and
-/// its schedules, time, input, transforms, objects and assets (textures
-/// loading as records among them), the look's
-/// settings, the engine's features and their plugins, the ground, the
-/// stores gameplay reads and the deterministic trigonometry (`math::sin`,
-/// not `f32::sin`).
+/// its schedules, time, input, transforms, objects and assets (and the
+/// records their own code makes, meshes and texture sets among them), the
+/// look's settings, the engine's features and their plugins, the ground,
+/// the stores gameplay reads and the deterministic trigonometry
+/// (`math::sin`, not `f32::sin`).
 mod games {
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaMode, AmbientOcclusion, AnimatedProperty,
@@ -65,34 +65,33 @@ mod games {
         NightSky, OcclusionCulling, Occupancy, Ocean, OceanPlugin, OceanSystems, Parent,
         ParticleBlend, ParticleEmitter, ParticleSettings, Physics, Plugin, PluginGroup,
         Presentation, PresentationState, PresentedTime, PresentedTransform, PresentedTransforms,
-        ReflectionProbe,
-        ReflectionProbeSettings, Reflections, Refraction, Sampler, Shadows, Skin, Sky,
-        SkyOcclusion, SplineMesh, Spot, StreamSet, Streamed, StreamedId, StreamedItem,
-        StreamingFocus, SubpixelCulling, SunShafts, Surface, TemporalAntialiasing, Terrain,
-        TerrainPlugin, TerrainSample, TerrainSettings, Terrains, Texture, TextureHandle,
-        TextureRecords, TextureRef, TextureSet, TextureSource, TextureUsage, TimeOfDay, TimeOfDayPlugin, Tint, TopLayer, Track, TrackDepth, Tracks,
-        Transform, TransformEditError, Transmission, UvTransform, ViewSync, ViewSyncSystems,
-        VirtualGeometry, Water, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource,
-        WaterSources, Wind, Windows, WorldCells, WorldChanges, WorldStreaming,
-        WorldStreamingPlugin, WorldSync, WorldSyncSystems, Wrap, edit_transform, math,
-        remove_streamed, reset_all_interpolation, reset_interpolation, set_parent, set_parents,
+        Records, ReflectionProbe, ReflectionProbeSettings, Reflections, Refraction, Sampler,
+        Shadows, Skin, Sky, SkyOcclusion, SplineMesh, Spot, StreamSet, Streamed, StreamedId,
+        StreamedItem, StreamingFocus, SubpixelCulling, SunShafts, Surface, TemporalAntialiasing,
+        Terrain, TerrainPlugin, TerrainSample, TerrainSettings, Terrains, Texture, TextureHandle,
+        TextureRef, TextureSet, TextureSource, TextureUsage, TimeOfDay, TimeOfDayPlugin, Tint,
+        TopLayer, Track, TrackDepth, Tracks, Transform, TransformEditError, Transmission,
+        UvTransform, ViewSync, ViewSyncSystems, VirtualGeometry, Water, WaterKind, WaterObstacle,
+        WaterObstacles, WaterSample, WaterSource, WaterSources, Wind, Windows, WorldCells,
+        WorldChanges, WorldStreaming, WorldStreamingPlugin, WorldSync, WorldSyncSystems, Wrap,
+        edit_transform, math, remove_streamed, reset_all_interpolation, reset_interpolation,
+        set_parent, set_parents,
     };
 }
 pub use games::*;
 
 // Lower-level names, at the root only: asset, animation and mesh details,
 // the bounds settings and components validate against, the fallback mesh
-// size `Mesh::from_virtual` takes by default, what hosts and tools read,
-// and the records game code makes itself, by key.
+// size `Mesh::from_virtual` takes by default, and what hosts and tools read.
 pub use engine_core::{
     AnimationSample, DEFAULT_FALLBACK_TRIANGLES, DetailShares, DrawnKind, EnvironmentSection,
     ErrorCode, Features, HierarchyReport, InvalidSetting, LodLevel, MAX_EMITTER_PARTICLES,
     MAX_HIERARCHY_DEPTH, MAX_KEPT_LEVELS, MAX_LIGHT_RANGE, MAX_OCEAN_WAVES, MAX_SHADOW_CASCADES,
     MAX_SPLINE_POINTS, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION,
     MAX_TRACK_DEPTH, MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MaterialShare, MeshLods, OceanPoint,
-    OceanSurface, OceanWave, OceanWaves, PixelProbe, PluginGroupBuilder, Records, SplineChunks,
-    SunLookup, TerrainProbe, TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit,
-    Viewport, VirtualMesh, has_feature,
+    OceanSurface, OceanWave, OceanWaves, PixelProbe, PluginGroupBuilder, SplineChunks, SunLookup,
+    TerrainProbe, TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit, Viewport,
+    VirtualMesh, has_feature,
 };
 
 /// Terrain authoring: layer stacks, masks, stamps, bakes, placement and

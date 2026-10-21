@@ -452,44 +452,6 @@ impl AssetLibrary {
         ))
     }
 
-    /// Replaces live texture `handle`'s texels with `texture`'s, keeping
-    /// the handle: materials naming it show them from their next
-    /// extraction. This advances [`Self::revision`], so retained lookups
-    /// resolve again, and [`Self::material_version`] of every material
-    /// naming it, so what renderers built from those materials builds
-    /// again.
-    pub fn replace_texture(
-        &mut self,
-        handle: TextureHandle,
-        texture: Texture,
-    ) -> Result<(), AssetError> {
-        let old = self
-            .texture(handle)
-            .ok_or(AssetError::InvalidTextureHandle)?
-            .byte_len();
-        let new = texture.byte_len();
-        if new > old {
-            self.reserve_bytes(new - old)?;
-        } else {
-            self.resident_bytes -= old - new;
-        }
-        self.texture_bytes = self.texture_bytes - old + new;
-        if let Some(slot) = self.textures.get_mut(self.id, handle.0) {
-            *slot = Arc::new(texture);
-        }
-        self.revision = self.revision.saturating_add(1);
-        self.material_revision = self.material_revision.saturating_add(1);
-        let revision = self.material_revision;
-        for slot in &mut self.materials.slots {
-            if let Some((material, version)) = &mut slot.value
-                && material.textures().any(|texture| texture == handle)
-            {
-                *version = revision;
-            }
-        }
-        Ok(())
-    }
-
     /// A handle for a texture to come, which materials may name and which
     /// counts against the texture capacity; it names no texture until
     /// [`Self::fill_texture`] gives it one.

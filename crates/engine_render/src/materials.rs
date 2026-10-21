@@ -27,9 +27,6 @@ pub(crate) struct GpuTexture {
     // Keep texture ownership explicit alongside its reusable view.
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
-    // The asset texture uploaded (its id), which a replacement in its
-    // library changes.
-    source: u64,
     // The asset's levels' bytes, and the generated levels' bytes.
     pub byte_len: u64,
     pub mip_bytes: u64,
@@ -208,19 +205,18 @@ impl MaterialStore {
                 let Some(map) = map else {
                     continue;
                 };
-                let texture = snapshot
-                    .textures
-                    .iter()
-                    .chain(&snapshot.decals.textures)
-                    .chain(placed_textures(snapshot))
-                    .find(|texture| texture.handle == map.texture)
-                    .expect("the plan and decal extraction validated every material's textures");
-                // A texture replaced in its library uploads again.
-                let current = self
-                    .textures
-                    .get(&(map.texture, srgb))
-                    .is_some_and(|gpu| gpu.source == texture.texture.id());
-                if !current {
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    self.textures.entry((map.texture, srgb))
+                {
+                    let texture = snapshot
+                        .textures
+                        .iter()
+                        .chain(&snapshot.decals.textures)
+                        .chain(placed_textures(snapshot))
+                        .find(|texture| texture.handle == map.texture)
+                        .expect(
+                            "the plan and decal extraction validated every material's textures",
+                        );
                     let gpu = create_texture(
                         device,
                         queue,
@@ -231,7 +227,7 @@ impl MaterialStore {
                         &mut levels,
                     );
                     bytes += gpu.byte_len;
-                    self.textures.insert((map.texture, srgb), gpu);
+                    entry.insert(gpu);
                 }
             }
             let gpu = self.create_material(device, material, source.version);
@@ -290,15 +286,6 @@ impl MaterialStore {
         self.materials
             .get(&material)
             .map(|material| &material.group)
-    }
-
-    /// The library version `material`'s group was built from, when
-    /// uploaded: it advances when the material or one of its textures is
-    /// replaced.
-    pub(crate) fn version(&self, material: MaterialHandle) -> Option<u64> {
-        self.materials
-            .get(&material)
-            .map(|material| material.version)
     }
 
     /// The bind group and pipeline variant of `material` (the default group
@@ -442,7 +429,10 @@ fn bind_group(
 
 /// The GPU format of `format` read as sRGB or linear, and the device
 /// feature sampling it (none for RGBA8).
-pub(crate) fn gpu_format(format: TextureFormat, srgb: bool) -> (wgpu::TextureFormat, wgpu::Features) {
+pub(crate) fn gpu_format(
+    format: TextureFormat,
+    srgb: bool,
+) -> (wgpu::TextureFormat, wgpu::Features) {
     use wgpu::TextureFormat as Gpu;
     match format {
         TextureFormat::Rgba8 => (
@@ -552,7 +542,6 @@ fn create_texture(
         return GpuTexture {
             _texture: texture,
             view,
-            source: source.id(),
             byte_len: 4,
             mip_bytes: 0,
         };
@@ -574,7 +563,8 @@ fn create_texture(
         (false, true) => "engine/color-texture",
         (false, false) => "engine/data-texture",
     };
-    let texture = crate::targets::texture_2d(device, label, (width, height), 1, levels, format, usage);
+    let texture =
+        crate::targets::texture_2d(device, label, (width, height), 1, levels, format, usage);
     for (level, bytes) in source.levels().iter().enumerate() {
         write_level(
             queue,
@@ -597,7 +587,6 @@ fn create_texture(
     GpuTexture {
         _texture: texture,
         view,
-        source: source.id(),
         byte_len: source.byte_len() as u64,
         mip_bytes: if generate && levels > 1 {
             mip_chain_bytes(width, height)

@@ -7,8 +7,8 @@
 //! top-down: rows run from the texture's top, u along world x and v along
 //! world z, and every map wraps seamlessly. Each generates at twice its
 //! size and averages down. They load as texture records
-//! (`engine::TextureRecords`): this code runs where no pack or store holds
-//! them, as the cook runs it.
+//! (`engine::Records`): this code runs where no pack or store holds them,
+//! as the cook runs it.
 //!
 //! Maps keep no structure broader than about a sixth of the texture: a
 //! repeating texture's broad light and dark regions and tilts survive

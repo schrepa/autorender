@@ -92,7 +92,7 @@ fn wire(
         terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
         terrains.set_clock(clock.reading());
     }
-    if let Some(mut records) = world.get_resource_mut::<engine_core::TextureRecords>() {
+    if let Some(mut records) = world.get_resource_mut::<engine_core::Records>() {
         records.set_sampling(Some(renderer.texture_sampling()));
     }
     if let Some(mut jobs) = world.get_resource_mut::<engine_core::Jobs>() {
@@ -883,8 +883,8 @@ impl AppHost {
                     .engine
                     .app
                     .world()
-                    .get_resource::<engine_core::TextureRecords>()
-                    .is_some_and(engine_core::TextureRecords::loading)
+                    .get_resource::<engine_core::Records>()
+                    .is_some_and(engine_core::Records::loading)
                 || self
                     .engine
                     .app

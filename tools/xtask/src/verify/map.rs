@@ -482,17 +482,14 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_assets/src/**/texture*",
             "crates/engine_assets/src/**/ktx2*",
         ],
-        checks: &[
-            Smoke("texture"),
-            Smoke("surfaces"),
-            Cells(&["metro-views"]),
-        ],
+        checks: &[Smoke("texture"), Smoke("surfaces"), Cells(&["metro-views"])],
     },
-    // The cook's textures and the textures loading as records.
+    // The cook's textures and the records game code makes, textures among
+    // them.
     Rule {
         paths: &[
             "crates/engine_textures/**",
-            "crates/engine_core/src/texture_records*",
+            "crates/engine_core/src/records*",
         ],
         checks: &[
             Pure("textures"),

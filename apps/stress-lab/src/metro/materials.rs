@@ -1,6 +1,6 @@
 //! Materials of the metro over the generated texture sets, and the library that
 //! admits meshes, textures, materials and clips into a workload's asset
-//! library. Each texture set loads as texture records (`kit::textures`),
+//! library. Each texture set loads as texture records (`kit::records`),
 //! generated and cooked only where no pack or store holds them.
 
 use engine::collections::HashMap;
@@ -305,7 +305,7 @@ impl Library {
     /// of `records` the first time any of them is.
     fn texture(
         &mut self,
-        (records, assets): (&mut TextureRecords, &mut AssetLibrary),
+        (records, assets): (&mut Records, &mut AssetLibrary),
         set: Set,
         slot: Slot,
     ) -> engine::Result<Option<TextureRef>> {
@@ -316,9 +316,10 @@ impl Library {
             let slots: Vec<Slot> = maps.iter().map(|&(slot, _, _)| slot).collect();
             let made = slots.clone();
             let name = format!("metro/{set:?}");
-            let handles = crate::kit::textures::request((records, assets), name, &named, move || {
-                sources(set, &made)
-            })?;
+            let handles =
+                crate::kit::records::textures((records, assets), name, &named, move || {
+                    sources(set, &made)
+                })?;
             self.textures
                 .insert(set, slots.into_iter().zip(handles).collect());
         }
@@ -344,7 +345,7 @@ impl Library {
     /// The asset material of `mat`; ads start on their own slot's picture.
     pub(crate) fn material(
         &mut self,
-        (records, assets): (&mut TextureRecords, &mut AssetLibrary),
+        (records, assets): (&mut Records, &mut AssetLibrary),
         mat: Mat,
     ) -> engine::Result<MaterialHandle> {
         if let Some(handle) = self.materials.get(&mat) {
@@ -359,7 +360,7 @@ impl Library {
     /// Board slot `slot` showing advertisement `ad` (a set of its own).
     pub(crate) fn advert(
         &mut self,
-        stores: (&mut TextureRecords, &mut AssetLibrary),
+        stores: (&mut Records, &mut AssetLibrary),
         slot: u8,
         ad: u8,
     ) -> engine::Result<Material> {
@@ -368,7 +369,7 @@ impl Library {
 
     fn describe(
         &mut self,
-        (records, assets): (&mut TextureRecords, &mut AssetLibrary),
+        (records, assets): (&mut Records, &mut AssetLibrary),
         mat: Mat,
         ad: Option<u8>,
     ) -> engine::Result<Material> {
@@ -427,7 +428,9 @@ impl Library {
         }
         if mat.facade() {
             // Grime spans each building through its second coordinates.
-            if let Some(grime) = self.texture((&mut *records, &mut *assets), Set::Grime, Slot::Mr)? {
+            if let Some(grime) =
+                self.texture((&mut *records, &mut *assets), Set::Grime, Slot::Mr)?
+            {
                 material = material.with_occlusion_texture(grime.with_tex_coord(1), 1.0)?;
             }
         } else if matches!(
