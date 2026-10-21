@@ -65,6 +65,7 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), String> {
         .join(QUICK)
         .join(format!("stress-lab-native{}", std::env::consts::EXE_SUFFIX));
     let program = program.to_string_lossy().into_owned();
+    let workers = cook_workers().to_string();
     let folder = root.join(COOKED);
     fs::create_dir_all(&folder)
         .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
@@ -74,10 +75,25 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), String> {
             check_pack(root, &program, preset)?;
         } else {
             let pack = format!("{COOKED}/{preset}.pack");
-            run(root, &program, &["--preset", preset, "--cook", &pack])?;
+            run(
+                root,
+                &program,
+                &["--preset", preset, "--cook", &pack, "--workers", &workers],
+            )?;
         }
     }
     write_index(&folder)
+}
+
+/// The job workers a cook runs: one per logical processor, up to the most
+/// a host runs. A cook is offline work with no frame rate to keep, holding
+/// the heavy-run lock, and its records are the same bits however many
+/// workers made them.
+fn cook_workers() -> u32 {
+    let processors = std::thread::available_parallelism().map_or(1, usize::from);
+    u32::try_from(processors)
+        .unwrap_or(u32::MAX)
+        .min(engine::host::policy::MAX_WORKERS)
 }
 
 /// Runs `preset` on its pack, every record made again and compared: it

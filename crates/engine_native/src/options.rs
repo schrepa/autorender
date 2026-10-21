@@ -666,7 +666,9 @@ impl HostOptions {
     /// Hz, its engine asking for every record its world's content needs
     /// ([`engine::GameHost::cook`]), until none is left and the host holds no job
     /// for [`COOK_SETTLE`] frames in a row; then every record the session
-    /// read or made is written into the pack, and what it holds printed.
+    /// read or made is written into the pack, and what it holds printed. It
+    /// fails where what is left and the jobs held stay as they are for
+    /// [`COOK_STALL`], however long the cook as a whole takes.
     fn run_cook<G: Game, E: Into<engine::Error>>(
         &self,
         path: &Path,
@@ -680,6 +682,8 @@ impl HostOptions {
         // The records the packs it reads held: what an unchanged cook reuses.
         let read = game.jobs_mut().packed();
         let (mut frame, mut settled, mut said) = (0_u32, 0, Instant::now());
+        // What is left and the jobs held, and when either last changed.
+        let (mut last, mut moved) = ((u64::MAX, u32::MAX), Instant::now());
         loop {
             game.frame(f64::from(frame) * 1000.0 / 60.0)?;
             frame += 1;
@@ -688,6 +692,9 @@ impl HostOptions {
                 .cooking()
                 .map_or(0, engine::host::Cooking::remaining);
             let held = game.host().jobs_held();
+            if (left, held) != last {
+                (last, moved) = ((left, held), Instant::now());
+            }
             settled = if left == 0 && held == 0 {
                 settled + 1
             } else {
@@ -696,13 +703,14 @@ impl HostOptions {
             if settled >= COOK_SETTLE {
                 break;
             }
-            if started.elapsed() > COOK_LIMIT {
+            if moved.elapsed() > COOK_STALL {
                 return Err(engine::Error::new(
                     engine::ErrorCode::RenderFailed,
                     "$",
                     format!(
-                        "the cook did not finish within {} s: {left} records left",
-                        COOK_LIMIT.as_secs()
+                        "the cook stalled: {left} records left and {held} jobs held, \
+                         unchanged for {} s",
+                        COOK_STALL.as_secs()
                     ),
                 ));
             }
@@ -843,8 +851,10 @@ impl HostOptions {
 /// pack: features reporting what they have left a frame late finish.
 const COOK_SETTLE: u32 = 8;
 
-/// The longest a cook may take.
-const COOK_LIMIT: Duration = Duration::from_secs(3600);
+/// The longest a cook may go with what is left and the jobs its host holds
+/// unchanged before it fails as stalled. A whole cook takes as long as its
+/// records take to make: hours for some scenes' settled water.
+const COOK_STALL: Duration = Duration::from_secs(600);
 
 /// The SHA-256 of the renderer's shader modules: each one's name and
 /// source, in order.
