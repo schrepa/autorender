@@ -89,6 +89,9 @@ const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Snorm;
 /// Each tile's control values: its samples' two strongest
 /// materials, their blend and biome, read texel by texel.
 const CONTROL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+/// Each tile's meters to rivers' edges, in the steps the tile holds them
+/// as, which the GPU's control values read.
+const RIVER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Uint;
 
 /// Seconds over which a tile that arrived grows out of its parent level,
 /// its patches drawn morphed into the parent's at first, and
@@ -289,8 +292,9 @@ impl TerrainPass {
         self.atlas.slots.len() as u32
     }
 
-    /// Bytes of the height, normal and control arrays, the horizon, sky and
-    /// macro color maps, bounce light's and the surface materials' maps.
+    /// Bytes of the height, normal, control and river arrays, the horizon,
+    /// sky and macro color maps, bounce light's and the surface materials'
+    /// maps.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.atlas.capacity_bytes()
             + self.horizons.capacity_bytes()

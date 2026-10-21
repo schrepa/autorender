@@ -1,7 +1,7 @@
-//! The tile atlas: every resident tile's heights, normals and control
-//! values in three texture arrays, a layer each; which tile each layer
-//! holds, when it arrived, and the layers free; the GPU's normal maps and
-//! control values of tiles uploaded each frame.
+//! The tile atlas: every resident tile's heights, normals, control values
+//! and meters to rivers' edges in four texture arrays, a layer each; which
+//! tile each layer holds, when it arrived, and the layers free; the GPU's
+//! normal maps and control values of tiles uploaded each frame.
 
 #![expect(
     clippy::expect_used,
@@ -12,7 +12,8 @@ use super::*;
 use crate::shaders::entry::{terrain_control, terrain_normals};
 use std::collections::BTreeMap;
 
-/// The arrays: heights, control values and normals, a layer per tile.
+/// The arrays: heights, control values, normals and meters to rivers'
+/// edges, a layer per tile.
 struct Arrays {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -20,6 +21,8 @@ struct Arrays {
     control_view: wgpu::TextureView,
     normals: wgpu::Texture,
     normals_view: wgpu::TextureView,
+    rivers: wgpu::Texture,
+    rivers_view: wgpu::TextureView,
     layers: u32,
 }
 
@@ -125,10 +128,10 @@ impl TileAtlas {
             .map(|arrays| (&arrays.view, &arrays.normals_view, &arrays.control_view))
     }
 
-    /// Bytes of the height, normal and control arrays.
+    /// Bytes of the height, normal, control and river arrays.
     pub(super) fn capacity_bytes(&self) -> u64 {
         self.arrays.as_ref().map_or(0, |arrays| {
-            u64::from(arrays.layers) * u64::from(LAYER_SIZE * LAYER_SIZE) * 12
+            u64::from(arrays.layers) * u64::from(LAYER_SIZE * LAYER_SIZE) * 14
         })
     }
 
@@ -227,6 +230,7 @@ impl TileAtlas {
                         && held.heights() == tile.heights()
                         && held.hole_bits() == tile.hole_bits()
                         && held.control() == tile.control()
+                        && held.river_edges() == tile.river_edges()
                 })
             })
             .copied()
@@ -335,11 +339,26 @@ impl TileAtlas {
                 self.normal_jobs.push((layer, tile.spacing()));
             }
             // Without control values on a terrain whose surface the GPU
-            // reads, the GPU gives them as its heights
-            // change, its materials then taking over from the coarser
-            // level's.
+            // reads, the GPU gives them as its heights or meters to
+            // rivers' edges change, from those meters it uploads, its
+            // materials then taking over from the coarser level's.
             let gpu = tile.control().is_none() && surfaces.contains_key(&key.0);
-            if gpu && heights {
+            let rivers = before
+                .as_ref()
+                .is_none_or(|held| held.river_edges() != tile.river_edges());
+            if gpu && (heights || rivers) {
+                let edges = tile.river_edges();
+                if let Some(edges) = edges {
+                    queue.write_texture(
+                        place(&arrays.rivers),
+                        bytemuck::cast_slice(edges),
+                        wgpu::TexelCopyBufferLayout {
+                            bytes_per_row: Some(LAYER_SIZE * 2),
+                            ..layout
+                        },
+                        extent,
+                    );
+                }
                 let surface = surfaces[&key.0];
                 let spacing = tile.spacing();
                 let first = surface.first_sample(key.1, spacing);
@@ -349,6 +368,7 @@ impl TileAtlas {
                     first: [first[0] as i32, first[1] as i32],
                     spacing,
                     level: surface.level(spacing),
+                    rivers: edges.is_some(),
                 });
                 self.surfaced.insert(key, self.now);
             }
@@ -533,6 +553,7 @@ impl TileAtlas {
             words[at + 2] = job.first[0] as u32;
             words[at + 3] = job.first[1] as u32;
             words[at + 4] = job.spacing.to_bits();
+            words[at + 5] = u32::from(job.rivers);
         }
         let jobs = crate::buffers::uniform(
             device,
@@ -576,6 +597,7 @@ impl TileAtlas {
                         ),
                         ("data", data.as_entire_binding()),
                         ("control", crate::pipelines::view(&target)),
+                        ("rivers", crate::pipelines::view(&arrays.rivers_view)),
                     ],
                 );
                 pass.set_bind_group(0, &group, &[]);
@@ -737,6 +759,11 @@ impl TileAtlas {
             CONTROL_FORMAT,
             wgpu::TextureUsages::STORAGE_BINDING,
         );
+        let rivers = array(
+            "engine/terrain-rivers",
+            RIVER_FORMAT,
+            wgpu::TextureUsages::empty(),
+        );
         if let Some(old) = &self.arrays
             && self.next_layer > 0
         {
@@ -763,6 +790,11 @@ impl TileAtlas {
                 control.as_image_copy(),
                 extent,
             );
+            encoder.copy_texture_to_texture(
+                old.rivers.as_image_copy(),
+                rivers.as_image_copy(),
+                extent,
+            );
             // Before this frame's tile writes, which the queue runs in order.
             queue.submit_now([encoder.finish()]);
         }
@@ -776,9 +808,11 @@ impl TileAtlas {
             view: array_view(&texture),
             normals_view: array_view(&normals),
             control_view: array_view(&control),
+            rivers_view: array_view(&rivers),
             texture,
             control,
             normals,
+            rivers,
             layers,
         });
         self.generation += 1;
@@ -826,12 +860,14 @@ fn ancestor_control(
 }
 
 /// A tile the GPU gives control values: its layer, its
-/// terrain, its first sample, spacing and the hydrology images' level its
-/// masks read.
+/// terrain, its first sample, spacing, the hydrology images' level its
+/// masks read, and whether its layer of the river array holds its meters
+/// to rivers' edges.
 struct ControlJob {
     layer: u32,
     terrain: u64,
     first: [i32; 2],
     spacing: f32,
     level: u32,
+    rivers: bool,
 }

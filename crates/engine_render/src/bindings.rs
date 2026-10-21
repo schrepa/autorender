@@ -953,7 +953,8 @@ tables! {
 
     /// A tile's control values from its terrain's surface (
     /// `terrain_control.wgsl`): the height array, the job's uniform, the
-    /// surface's data and the control layer it writes.
+    /// surface's data, the control layer it writes and the array of tiles'
+    /// meters to rivers' edges.
     const TERRAIN_CONTROL: Table = Table {
         label: "engine/terrain-control-layout",
         serves: [TERRAIN_CONTROL_SHADER @ 0],
@@ -962,6 +963,7 @@ tables! {
             uniform_of(1, "job", 32, C),
             bind(2, "data", Kind::Read { min_size: 4 }, C),
             bind(3, "control", Kind::Storage(R32Uint), C),
+            texture(4, "rivers", Uint, D2Array, C),
         ],
     };
 

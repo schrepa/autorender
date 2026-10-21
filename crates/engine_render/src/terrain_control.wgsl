@@ -2,21 +2,23 @@
 // values from its heights, once when it uploads, into the same layer of the
 // control array. Each sample's inputs are read as the CPU reads them for a
 // tile's rows (height, gradient and curvature from the heights around it;
-// the hydrology bake's flow, wetness and lakes; the nearest river's edge;
-// the nearest road), and the surface's rules run as a program for this
-// interpreter (`engine_terrain::gpu`), in the order the CPU evaluates them.
-// Values match the CPU's but where rounding moves one across a rule's
-// threshold; gameplay reads the CPU's.
+// the hydrology bake's flow, wetness and lakes; the meters to the nearest
+// river's edge the tile holds; the nearest road), and the surface's rules
+// run as a program for this interpreter (`engine_terrain::gpu`), in the
+// order the CPU evaluates them. Values match the CPU's but where rounding
+// moves one across a rule's threshold; gameplay reads the CPU's.
 
 struct Job {
     // The layer, the tile's first sample (x and z, from the terrain's
-    // first, with surroundings' offset), its sample spacing and the
-    // hydrology image level its masks read.
+    // first, with surroundings' offset), its sample spacing, the
+    // hydrology image level its masks read, and 1 where the layer of the
+    // river array holds the tile's meters to rivers' edges (0 where no
+    // river reaches it).
     layer: u32,
     level: u32,
     first: vec2<i32>,
     spacing: f32,
-    pad0: f32,
+    rivers: u32,
     pad1: f32,
     pad2: f32,
 }
@@ -25,21 +27,27 @@ struct Job {
 @group(0) @binding(1) var<uniform> job: Job;
 @group(0) @binding(2) var<storage, read> data: array<u32>;
 @group(0) @binding(3) var control: texture_storage_2d<r32uint, write>;
+@group(0) @binding(4) var rivers: texture_2d_array<u32>;
 
 const NONE: u32 = 0xffffffffu;
 const MAX_STACK: u32 = 16u;
 const MAX_MATERIALS: u32 = 64u;
 const RIVER_FAR: f32 = 1.0e9;
 const PATH_FAR: f32 = 1.0e9;
+// A tile's meters to rivers' edges as its steps
+// (`engine_terrain::RIVER_EDGE_STEP`): meters a step, the step at the
+// edge, and the step for no river within reach.
+const RIVER_EDGE_STEP: f32 = 0.0625;
+const RIVER_EDGE_ZERO: u32 = 32768u;
+const RIVER_EDGE_FAR: u32 = 65535u;
 
 // The header's words (`engine_terrain::gpu::header`).
 const H_PROGRAM: u32 = 0u;
 const H_BIOMES: u32 = 2u;
 const H_READS: u32 = 4u;
 const H_HYDROLOGY: u32 = 5u;
-const H_RIVERS: u32 = 6u;
-const H_PATHS: u32 = 7u;
-const H_FADE: u32 = 8u;
+const H_PATHS: u32 = 6u;
+const H_FADE: u32 = 7u;
 
 // Opcodes (`engine_terrain::gpu::op`).
 const OP_CONSTANT: u32 = 0u;
@@ -249,59 +257,18 @@ fn image_table(section: u32, image: u32) -> u32 {
     return table;
 }
 
-// Meters from the nearest river's edge within its banks' reach, as the CPU
-// finds it: the first nearest among the point's cell's segments.
-fn river_edge(point: vec2<f32>) -> f32 {
-    let section = data[H_RIVERS];
-    if section == NONE {
+// Meters from the nearest river's edge at texel (`column`, `row`) of the
+// tile's layer, as the tile holds them: RIVER_FAR beyond every river's
+// reach.
+fn river_edge(column: u32, row: u32) -> f32 {
+    if job.rivers == 0u {
         return RIVER_FAR;
     }
-    let corner = vec2<f32>(real(section), real(section + 1u));
-    let columns = data[section + 2u];
-    let rows = data[section + 3u];
-    let cell_size = real(section + 4u);
-    let reach = real(section + 5u);
-    let cell = floor((point - corner) / cell_size);
-    if !(cell.x >= 0.0 && cell.y >= 0.0) {
+    let held = textureLoad(rivers, vec2<u32>(column, row), job.layer, 0).r;
+    if held == RIVER_EDGE_FAR {
         return RIVER_FAR;
     }
-    let column = u32(cell.x);
-    let row = u32(cell.y);
-    if column >= columns || row >= rows {
-        return RIVER_FAR;
-    }
-    let at = row * columns + column;
-    let starts = data[section + 6u];
-    let list = data[section + 7u];
-    let table = data[section + 8u];
-    var best = RIVER_FAR;
-    var best_half = 0.0;
-    var found = false;
-    for (var entry = data[starts + at]; entry < data[starts + at + 1u]; entry++) {
-        let segment = table + 6u * data[list + entry];
-        let a = vec2<f32>(real(segment), real(segment + 1u));
-        let b = vec2<f32>(real(segment + 2u), real(segment + 3u));
-        let run = b - a;
-        let length = sqrt(run.x * run.x + run.y * run.y);
-        var t = 0.0;
-        if length > 0.0 {
-            let toward = point - a;
-            t = pmin(pmax((toward.x * run.x + toward.y * run.y) / (length * length), 0.0), 1.0);
-        }
-        let gap = point - (a + run * t);
-        let distance = sqrt(gap.x * gap.x + gap.y * gap.y);
-        let ha = real(segment + 4u);
-        let half = ha + (real(segment + 5u) - ha) * t;
-        if distance < half + reach && (!found || distance < best) {
-            best = distance;
-            best_half = half;
-            found = true;
-        }
-    }
-    if !found {
-        return RIVER_FAR;
-    }
-    return best - best_half;
+    return (f32(held) - f32(RIVER_EDGE_ZERO)) * RIVER_EDGE_STEP;
 }
 
 // The nearest road as the point sees it (distance from its line and half
@@ -438,7 +405,7 @@ fn sample_inputs(column: u32, row: u32) -> Inputs {
         inputs.flow = flow * show;
         inputs.wetness = wetness * show;
         inputs.lake = lake * show;
-        inputs.river = river_edge(point);
+        inputs.river = river_edge(column, row);
     }
     if (reads & 2u) != 0u && show > 0.0 {
         let road = path_at(point);

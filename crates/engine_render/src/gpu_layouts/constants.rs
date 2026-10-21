@@ -454,6 +454,9 @@ gpu_mirrors! {
     engine_core::terrain_data::bounce::DISTANCE_STEPS => ["BOUNCE_STEPS" in BOUNCE_SHADER];
     engine_core::terrain_data::TILE_STRIDE => ["TILE_STRIDE" in TERRAIN_CONTROL_SHADER, "TILE_STRIDE" in TERRAIN_NORMALS_SHADER];
     engine_core::terrain_data::RIVER_FAR => ["RIVER_FAR" in TERRAIN_CONTROL_SHADER];
+    engine_core::terrain_data::RIVER_EDGE_STEP => ["RIVER_EDGE_STEP" in TERRAIN_CONTROL_SHADER];
+    engine_core::terrain_data::RIVER_EDGE_ZERO => ["RIVER_EDGE_ZERO" in TERRAIN_CONTROL_SHADER];
+    engine_core::terrain_data::RIVER_EDGE_FAR => ["RIVER_EDGE_FAR" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::PATH_FAR => ["PATH_FAR" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::MAX_STACK => ["MAX_STACK" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::MAX_MATERIALS => ["MAX_MATERIALS" in TERRAIN_CONTROL_SHADER];
@@ -461,7 +464,6 @@ gpu_mirrors! {
     engine_core::terrain_data::gpu::header::BIOMES => ["H_BIOMES" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::header::READS => ["H_READS" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::header::HYDROLOGY => ["H_HYDROLOGY" in TERRAIN_CONTROL_SHADER];
-    engine_core::terrain_data::gpu::header::RIVERS => ["H_RIVERS" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::header::PATHS => ["H_PATHS" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::header::FADE => ["H_FADE" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::gpu::op::CONSTANT => ["OP_CONSTANT" in TERRAIN_CONTROL_SHADER];
