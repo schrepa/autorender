@@ -277,6 +277,6 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         render.water_window = state.hydrology.window.clone();
         render.lighting.clone_from(&state.lighting.made);
         render.bounce.clone_from(&state.bounce.made);
-        render.macro_map.clone_from(&state.macro_colors.made);
+        render.macro_map = state.macro_colors.map(assets);
     }
 }

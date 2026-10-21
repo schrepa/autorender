@@ -68,7 +68,8 @@ impl Terrains {
     /// one, each tile or tile's water not back yet one, each terrain
     /// streaming whose lighting is still asked for or not yet made one, each
     /// terrain (not surroundings) whose bounce transfer is one, and each
-    /// family's record of its macro colors not here yet one.
+    /// terrain whose macro colors are not shown yet one (the records count
+    /// each family's records of them).
     pub(crate) fn cook(
         &mut self,
         settings: &TerrainSettings,
@@ -91,7 +92,7 @@ impl Terrains {
                 left += u64::from(state.bounce.left());
             }
             if streams && settings.enabled && state.terrain.validate().is_ok() {
-                left += state.macro_colors.left();
+                left += u64::from(state.macro_colors.left());
             }
             let authored = state.terrain.layers.clone();
             if state.terrain.validate().is_err() {

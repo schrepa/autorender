@@ -82,7 +82,7 @@ pub use extract::*;
 pub use ground_cover::*;
 use identity::Generation;
 use lighting::{Lighting, ground_grid, light, lighting_level, lit, source_tiles};
-use macro_colors::{MacroColors, take_macro_colors};
+use macro_colors::{MacroColors, ask_colors, want_colors};
 pub use occupancy::*;
 use plan::*;
 pub use queries::*;

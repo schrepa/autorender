@@ -202,8 +202,8 @@ impl TerrainState {
         }
     }
 
-    /// Its jobs and recipe, for the next frame to drop once the state is
-    /// gone.
+    /// Its jobs, recipe and macro colors' textures, for the next frame to
+    /// drop once the state is gone.
     pub(super) fn retire(&self, retired: &mut Retired) {
         retired
             .jobs
@@ -222,7 +222,7 @@ impl TerrainState {
         retired
             .jobs
             .extend(self.lighting.job.iter().map(|&(id, _)| id));
-        retired.jobs.extend(self.macro_colors.jobs());
+        retired.textures.extend(self.macro_colors.handles());
         retired
             .jobs
             .extend(self.bounce.job.iter().map(|&(id, _)| id));
@@ -460,17 +460,18 @@ pub struct Terrains {
     pub(super) restored: u64,
     pub(super) upload_left: u64,
     pub(super) between: u64,
-    /// The family of compressed formats the device samples, `None` without
-    /// a renderer, and whether the session cooks: which records of macro
-    /// colors frames ask for.
-    pub(super) coloring: (Option<crate::TextureSampling>, bool),
+    /// The textures of macro colors replaced or gone with their terrains,
+    /// which leave the asset library once filled.
+    pub(super) colors_gone: Vec<engine_assets::TextureHandle>,
 }
 
-/// The workers' jobs and recipes of terrains gone.
+/// The workers' jobs and recipes of terrains gone, and their macro colors'
+/// textures.
 #[derive(Default)]
 pub(super) struct Retired {
     pub(super) jobs: Vec<JobId>,
     pub(super) recipes: Vec<String>,
+    pub(super) textures: Vec<engine_assets::TextureHandle>,
 }
 
 /// Whether `stamp` reaches tile `key`'s ground, or its samples' two beyond

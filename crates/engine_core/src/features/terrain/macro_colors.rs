@@ -1,88 +1,82 @@
 //! Each terrain's macro colors ([`engine_terrain::macro_colors`]): the
 //! tint its ground takes and how lush its plants grow, from what its bakes
-//! found, compressed for the family of formats the device samples. A record
-//! per family, kept by the content of the terrain's recipe and the code
-//! making it: the host hands it back from the cook's packs or its store.
-//! Where none holds it, a worker makes the colors (a job whose output is no
-//! record) and then the record, cooking them for the family
-//! ([`engine_textures::COOK_JOB`]), which the host keeps. While a session
-//! cooks every family's record is made; a verifying host has those it
-//! handed back made again, and compares. A recipe that changes asks anew;
-//! the colors before stay until the new ones arrive.
+//! found. They are a texture set of one texture like every texture record
+//! game code asks for ([`crate::Records`]): its source made by a worker job
+//! (the colors of the terrain's recipe at its finest pinned level), its
+//! records cooked for the family of compressed formats the device samples,
+//! every family while a session cooks, hosts handing them back from the
+//! cook's packs or their stores and, verifying, having them made again. A
+//! record is kept by the content of the terrain's recipe (its key), the
+//! level and the size, and the code making and cooking it. A recipe that
+//! changes asks anew; the colors before stay until the new ones arrive, then
+//! leave the asset library.
 
 use super::*;
-use crate::{MISSING_RECORD, TextureFamily, TextureSampling, TextureSource, TextureUsage};
-use engine_assets::Texture;
+use crate::{MakeSources, Records, TextureSet, TextureUsage};
+use bevy_ecs::prelude::Mut;
+use engine_assets::TextureHandle;
 use engine_terrain::jobs::MacroJob;
 
-/// The kind macro color records' keys name.
-const KIND: &str = "terrain_macro_colors";
-
-/// Where a family's record stands: not asked for, asked for, missing from
-/// every store (to be made), being made, or here.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum Record {
-    #[default]
-    Unasked,
-    Fetching(JobId),
-    Missing,
-    Cooking(JobId),
-    Here,
+/// The colors asked of the records: their job, and the handle their records
+/// fill with their identity (none where the asset library had no room).
+struct Asked {
+    job: MacroJob,
+    held: Option<(TextureHandle, u128)>,
 }
 
-/// A terrain's macro colors and its asking for them: the job its colors
-/// come from; each family's record (in [`TextureFamily::ALL`]'s order) and
-/// which of those a verifying host wants made again; the colors' own job
-/// while it runs, and its texels until every record they make is asked
-/// for; the map shown, in the family the device samples; and the frame a
-/// job last failed at.
+/// A terrain's macro colors: those streaming wants (none before its recipe
+/// is shared, or with terrain off), those last asked for, and those shown,
+/// the last filled, with their job.
 #[derive(Default)]
 pub(super) struct MacroColors {
-    job: Option<MacroJob>,
-    records: [Record; 2],
-    verify: [bool; 2],
-    colors_job: Option<JobId>,
-    texels: Option<Vec<u8>>,
-    pub(super) made: Option<MacroMap>,
-    failed: Option<u64>,
+    pub(super) wanted: Option<MacroJob>,
+    asked: Option<Asked>,
+    shown: Option<(MacroJob, TextureHandle, u128)>,
 }
 
 impl MacroColors {
-    /// Records a session cooking has left to make: each family's not here
-    /// yet, both while the colors are not asked for.
-    pub(super) fn left(&self) -> u64 {
-        if self.job.is_none() {
-            return TextureFamily::ALL.len() as u64;
-        }
-        self.records
-            .iter()
-            .filter(|record| **record != Record::Here)
-            .count() as u64
-    }
-
-    /// Whether a record of it, or its colors, is asked for and not here
-    /// yet.
+    /// Whether colors are asked for and not yet shown.
     pub(super) fn asking(&self) -> bool {
-        self.jobs().next().is_some()
+        self.asked.as_ref().is_some_and(|asked| {
+            asked.held.is_some()
+                && self
+                    .shown
+                    .as_ref()
+                    .is_none_or(|(shown, _, _)| *shown != asked.job)
+        })
     }
 
-    /// Its jobs in flight.
-    pub(super) fn jobs(&self) -> impl Iterator<Item = JobId> + '_ {
-        self.records
+    /// Whether colors are shown.
+    pub(super) fn shown(&self) -> bool {
+        self.shown.is_some()
+    }
+
+    /// Whether the colors wanted are not shown yet: a session cooking
+    /// waits for them.
+    pub(super) fn left(&self) -> bool {
+        self.wanted.as_ref().is_some_and(|wanted| {
+            self.shown
+                .as_ref()
+                .is_none_or(|(shown, _, _)| shown != wanted)
+        })
+    }
+
+    /// The textures its colors hold or will, which go with the terrain.
+    pub(super) fn handles(&self) -> impl Iterator<Item = TextureHandle> + '_ {
+        self.asked
             .iter()
-            .filter_map(|record| match *record {
-                Record::Fetching(id) | Record::Cooking(id) => Some(id),
-                Record::Unasked | Record::Missing | Record::Here => None,
-            })
-            .chain(self.colors_job)
+            .filter_map(|asked| asked.held.map(|(handle, _)| handle))
+            .chain(self.shown.iter().map(|&(_, handle, _)| handle))
     }
 
-    /// Stops its jobs in flight, through `jobs`.
-    fn cancel(&mut self, jobs: &mut Jobs) {
-        for id in self.jobs().collect::<Vec<_>>() {
-            jobs.cancel(id);
-        }
-        self.colors_job = None;
+    /// The colors shown as renderers take them, from `assets`.
+    pub(super) fn map(&self, assets: Option<&AssetLibrary>) -> Option<MacroMap> {
+        let (_, handle, identity) = self.shown.as_ref()?;
+        let texture = assets?.texture(*handle)?;
+        Some(MacroMap {
+            texture: Arc::clone(texture),
+            identity: *identity,
+        })
     }
 }
 
@@ -96,185 +90,116 @@ fn macro_texels(settings: &TerrainSettings) -> u32 {
         .min(engine_terrain::macro_colors::MAX_MACRO_TEXELS)
 }
 
-/// What `job`'s records are made from in every family: the job and the
-/// cook's code (the colors' is the terrain crate's, which keys them).
-fn identity(job: &MacroJob) -> Vec<u8> {
+/// Sets the macro colors `settings` want of `state`: those of its recipe at
+/// its finest pinned level, `macro_resolution` texels a side in whole
+/// blocks; none before its recipe is shared, or with terrain off, which
+/// leaves those shown as they are.
+pub(super) fn want_colors(state: &mut TerrainState, settings: &TerrainSettings) {
+    let recipe = state.recipe.as_ref().filter(|_| settings.enabled);
+    state.macro_colors.wanted = recipe.map(|recipe| MacroJob {
+        recipe: recipe.key.clone(),
+        level: lighting_level(&state.terrain.pyramid, settings.pinned_levels),
+        size: macro_texels(settings),
+    });
+}
+
+/// The texture set of `job`'s colors: named by the hash of the job, its
+/// source the job's texels.
+fn colors_set(job: &MacroJob) -> TextureSet {
+    let identity = job.identity();
+    TextureSet {
+        source: engine_terrain::SOURCE,
+        name: format!("terrain/macro/{:032x}", content_hash(&identity)),
+        textures: vec![("colors".to_owned(), TextureUsage::Data)],
+        make: MakeSources::Job {
+            kind: MacroJob::KIND.name(),
+            input: identity,
+            size: [job.size, job.size],
+        },
+    }
+}
+
+/// What made `job`'s colors, the same in every family: the job and the
+/// cook's code, which records renderers bake from them are kept by.
+fn colors_identity(job: &MacroJob) -> u128 {
     let mut identity = job.identity();
     identity.extend_from_slice(&engine_textures::SOURCE);
-    identity
+    content_hash(&identity)
 }
 
-/// The key of `job`'s record of `family`.
-fn key(job: &MacroJob, family: TextureFamily) -> RecordKey {
-    let mut identity = identity(job);
-    identity.extend_from_slice(family.name().as_bytes());
-    RecordKey::new(&engine_terrain::SOURCE, KIND, &identity)
-}
-
-/// `texture`, a record of the family `sampling` reads, as the device shows
-/// it: decompressed where it samples no compressed family.
-fn shown(texture: Texture, sampling: TextureSampling) -> Result<Texture, String> {
-    match sampling {
-        TextureSampling::Family(_) => Ok(texture),
-        TextureSampling::Decompressed => {
-            engine_textures::decompress(&texture).map_err(|error| error.to_string())
-        }
-    }
-}
-
-/// Takes `state`'s macro colors as their records arrive, once its recipe is
-/// shared and `settings` draw terrain: the record of the family the device
-/// samples (`sampling`, none without a renderer), every family's while
-/// `cooking`. Records no host holds, and those a verifying host handed
-/// back, are made: the colors by a job within `slots`, then each record by
-/// a job cooking them; a while after a job failed, again.
-pub(super) fn take_macro_colors(
-    state: &mut TerrainState,
-    settings: &TerrainSettings,
-    (sampling, cooking): (Option<TextureSampling>, bool),
-    slots: &mut JobBudget<'_>,
-    frame: u64,
-) {
-    let (true, Some(sampling), Some(recipe)) = (settings.enabled, sampling, state.recipe.as_ref())
-    else {
-        return;
-    };
-    let job = MacroJob {
-        recipe: recipe.key.clone(),
-        level: lighting::lighting_level(&state.terrain.pyramid, settings.pinned_levels),
-        size: macro_texels(settings),
-    };
-    let colors = &mut state.macro_colors;
-    if colors.job.as_ref() != Some(&job) {
-        colors.cancel(slots.jobs);
-        colors.records = [Record::Unasked; 2];
-        colors.verify = [false; 2];
-        colors.texels = None;
-        colors.failed = None;
-        colors.job = Some(job.clone());
-    }
-    let priority = job_priority(VIEW_JOBS, 0);
-    let showing = sampling.family();
-    for (slot, family) in TextureFamily::ALL.into_iter().enumerate() {
-        let record = colors.records[slot];
-        let output = match record {
-            Record::Unasked if cooking || family == showing => {
-                colors.records[slot] =
-                    Record::Fetching(slots.jobs.fetch(key(&job, family), priority));
+impl Terrains {
+    /// Asks `records` for the colors each terrain wants that it has not
+    /// asked for, their handles reserved in `assets`; shows those filled,
+    /// and removes from `assets` the colors replaced or gone with their
+    /// terrains once filled (those still to come fill first).
+    pub(super) fn ask_colors(&mut self, records: &mut Records, assets: &mut AssetLibrary) {
+        let frame = self.frame;
+        for state in &mut self.entries {
+            let colors = &mut state.macro_colors;
+            if let Some(Asked {
+                job,
+                held: Some((handle, identity)),
+            }) = &colors.asked
+                && assets.texture(*handle).is_some()
+                && colors
+                    .shown
+                    .as_ref()
+                    .is_none_or(|(_, shown, _)| shown != handle)
+            {
+                let shown = (job.clone(), *handle, *identity);
+                if let Some((_, replaced, _)) = colors.shown.replace(shown) {
+                    self.colors_gone.push(replaced);
+                }
+            }
+            let Some(job) = colors.wanted.clone() else {
+                continue;
+            };
+            if colors.asked.as_ref().is_some_and(|asked| asked.job == job) {
                 continue;
             }
-            Record::Fetching(id) | Record::Cooking(id) => match slots.jobs.take(id) {
-                Some(output) => output,
-                None => continue,
-            },
-            Record::Unasked | Record::Missing | Record::Here => continue,
-        };
-        let texture = output.and_then(|bytes| engine_textures::decode(&bytes));
-        match texture {
-            Ok(texture) => {
-                colors.records[slot] = Record::Here;
-                // Records handed back are made again for a verifying host.
-                colors.verify[slot] =
-                    matches!(record, Record::Fetching(_)) && slots.jobs.verifying();
-                if family == showing {
-                    match shown(texture, sampling) {
-                        Ok(texture) => {
-                            colors.made = Some(MacroMap {
-                                texture: Arc::new(texture),
-                                identity: content_hash(&identity(&job)),
-                            });
-                        }
-                        Err(error) => {
-                            state
-                                .failures
-                                .record(frame, format!("macro colors: {error}"));
-                        }
-                    }
-                }
+            // Colors asked for and not shown are no one's once filled.
+            if let Some(Asked {
+                held: Some((handle, _)),
+                ..
+            }) = colors.asked.take()
+                && colors
+                    .shown
+                    .as_ref()
+                    .is_none_or(|(_, shown, _)| *shown != handle)
+            {
+                self.colors_gone.push(handle);
             }
-            Err(error) if error == MISSING_RECORD => colors.records[slot] = Record::Missing,
-            Err(error) => {
-                state
-                    .failures
-                    .record(frame, format!("macro colors: {error}"));
-                colors.records[slot] = Record::Missing;
-                if matches!(record, Record::Cooking(_)) {
-                    colors.failed = Some(frame);
+            let held = match records.textures(assets, colors_set(&job)) {
+                Ok(handles) => handles
+                    .first()
+                    .map(|&handle| (handle, colors_identity(&job))),
+                Err(error) => {
+                    state
+                        .failures
+                        .record(frame, format!("macro colors: {error}"));
+                    None
                 }
-            }
+            };
+            colors.asked = Some(Asked { job, held });
         }
+        self.colors_gone
+            .retain(|&handle| assets.texture(handle).is_none() || !assets.remove_texture(handle));
     }
-    make(
-        colors,
-        &job,
-        (slots, priority),
-        (&mut state.failures, frame),
-    );
 }
 
-/// Makes `colors`' records missing and those a verifying host wants made
-/// again: the colors of `job` once, by a job admitted by `slots` at
-/// `priority` (none a while after one failed), then each record by a job
-/// cooking them, which the host keeps.
-fn make(
-    colors: &mut MacroColors,
-    job: &MacroJob,
-    (slots, priority): (&mut JobBudget<'_>, u32),
-    (failures, frame): (&mut JobFailures, u64),
-) {
-    let wanted = |colors: &MacroColors, slot: usize| {
-        colors.records[slot] == Record::Missing || colors.verify[slot]
-    };
-    if !(0..TextureFamily::ALL.len()).any(|slot| wanted(colors, slot)) {
-        colors.texels = None;
-        return;
-    }
-    if let Some(id) = colors.colors_job
-        && let Some(output) = slots.jobs.take(id)
+/// Asks the records for the terrains' macro colors (`Terrains::ask_colors`),
+/// where the world holds terrains, records and an asset library.
+pub(super) fn ask_colors(world: &mut World) {
+    if !(world.contains_resource::<Terrains>()
+        && world.contains_resource::<Records>()
+        && world.contains_resource::<AssetLibrary>())
     {
-        colors.colors_job = None;
-        match output {
-            Ok(texels) => colors.texels = Some(texels),
-            Err(error) => {
-                failures.record(frame, format!("macro colors: {error}"));
-                colors.failed = Some(frame);
-            }
-        }
-    }
-    if colors.failed.is_some_and(|at| frame < at + RETRY_AFTER) {
         return;
     }
-    let Some(texels) = colors.texels.as_ref() else {
-        if colors.colors_job.is_none() && slots.take(priority) {
-            colors.colors_job = Some(slots.jobs.submit(
-                MacroJob::KIND.name(),
-                job.identity(),
-                priority,
-            ));
-        }
-        return;
-    };
-    for (slot, family) in TextureFamily::ALL.into_iter().enumerate() {
-        if !wanted(colors, slot) || !slots.take(priority) {
-            continue;
-        }
-        let source = TextureSource {
-            width: job.size,
-            height: job.size,
-            pixels: texels.clone(),
-            usage: TextureUsage::Data,
-        };
-        let input = engine_textures::cook_input(&source, family);
-        colors.records[slot] = Record::Cooking(slots.jobs.submit_record(
-            engine_textures::COOK_JOB,
-            input,
-            priority,
-            key(job, family),
-        ));
-        colors.verify[slot] = false;
-    }
-    // Every record asked for: the colors are no longer needed.
-    if !(0..TextureFamily::ALL.len()).any(|slot| wanted(colors, slot)) {
-        colors.texels = None;
-    }
+    world.resource_scope(|world, mut terrains: Mut<Terrains>| {
+        world.resource_scope(|world, mut records: Mut<Records>| {
+            let mut assets = world.resource_mut::<AssetLibrary>();
+            terrains.ask_colors(&mut records, &mut assets);
+        });
+    });
 }
