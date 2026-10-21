@@ -39,6 +39,7 @@ shaders! {
         "meshes/terrain_vertex.wgsl",
         "terrain_variety.wgsl",
         "meshes/terrain.wgsl",
+        "meshes/terrain_vt.wgsl",
         "meshes/terrain_sky.wgsl",
         "fullscreen.wgsl",
         "meshes/cover.wgsl",
