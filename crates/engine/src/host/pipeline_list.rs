@@ -8,7 +8,8 @@
 //! ([`Renderer::create_listed_pipelines`]): preparation waits for it.
 //! Where no pack or store holds it, the session's own pipelines become it
 //! once frames stopped creating them a while; while the session cooks,
-//! once every other record is made too, so the cook ships it.
+//! once every other record has been made that while too, so the cook ships
+//! it with every pipeline its other records' content draws with.
 
 use engine_core::{
     Cooking, Engine, Environment, JobId, Jobs, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
@@ -21,8 +22,8 @@ const KIND: &str = "pipeline_list";
 /// The feature cooking sessions count the list under.
 const FEATURE: &str = "pipelines";
 
-/// Frames in a row creating no pipeline after which a session's pipelines
-/// become the list.
+/// Frames in a row creating no pipeline (and, cooking, leaving no other
+/// record to make) after which a session's pipelines become the list.
 const QUIET_FRAMES: u32 = 30;
 
 /// The list's state for the running scene.
@@ -39,8 +40,9 @@ enum State {
     /// Asked for: its key, and the fetch of its record.
     Asked { key: RecordKey, fetch: JobId },
     /// No pack or store held it, or the session cooks: the session's
-    /// pipelines become it once frames stop creating them, after `quiet`
-    /// such frames so far.
+    /// pipelines become it once frames stop creating them (and, cooking,
+    /// leave no other record to make), after `quiet` such frames in a row
+    /// so far.
     Making { key: RecordKey, quiet: u32 },
     /// Created up front or kept; or none, for a game naming no content.
     Done,
@@ -105,15 +107,14 @@ impl PipelineList {
     }
 
     /// After a frame that created `created` pipelines: once frames stopped
-    /// creating them (and, cooking, every other record is made), keeps the
-    /// session's pipelines as the list; while cooking, says whether the
-    /// list is left.
+    /// creating them (and, cooking, every other record was made) for
+    /// [`QUIET_FRAMES`] in a row, keeps the session's pipelines as the list;
+    /// while cooking, says whether the list is left.
     pub(crate) fn after_frame(&mut self, engine: &mut Engine, renderer: &Renderer, created: u32) {
         let State::Making { key, quiet } = &mut self.state else {
             return;
         };
         let key = *key;
-        *quiet = if created == 0 { *quiet + 1 } else { 0 };
         let world = engine.app.world_mut();
         let others = world.get_resource::<Cooking>().map(|cooking| {
             cooking
@@ -123,7 +124,12 @@ impl PipelineList {
                 .map(|(_, left)| left)
                 .sum::<u64>()
         });
-        let done = *quiet >= QUIET_FRAMES && others.is_none_or(|others| others == 0);
+        // A frame creating a pipeline, or cooking with records left to
+        // make, starts the count again: what those records hold draws with
+        // pipelines the list then holds.
+        let still = created == 0 && others.is_none_or(|others| others == 0);
+        *quiet = if still { *quiet + 1 } else { 0 };
+        let done = *quiet >= QUIET_FRAMES;
         if done && let Some(mut jobs) = world.get_resource_mut::<Jobs>() {
             jobs.keep(key, renderer.pipeline_list());
         }
