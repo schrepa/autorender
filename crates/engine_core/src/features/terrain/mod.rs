@@ -49,6 +49,7 @@ mod extract;
 mod flow;
 mod ground_cover;
 mod identity;
+mod lighting;
 mod occupancy;
 mod plan;
 mod queries;
@@ -74,6 +75,7 @@ use dispatch::*;
 pub use extract::*;
 pub use ground_cover::*;
 use identity::Generation;
+use lighting::{Lighting, light, lit};
 pub use occupancy::*;
 use plan::*;
 pub use queries::*;
@@ -100,7 +102,8 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
-use engine_terrain::jobs::{BakeJob, StackView, TerrainRecipe, TileJob, WalkJob};
+use engine_terrain::jobs::{BakeJob, LightingJob, StackView, TerrainRecipe, TileJob, WalkJob};
+pub use engine_terrain::lighting::TerrainLighting;
 use engine_terrain::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats, Fall,
     HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask, NavOptions, NavPath, NoiseMask,

@@ -773,14 +773,14 @@
           "minimum": 0,
           "type": "integer"
         },
-        "horizon_builds": {
-          "description": "Horizon maps this frame rebuilt.",
+        "horizons": {
+          "description": "Terrains casting long sun shadows through horizon maps.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "horizons": {
-          "description": "Terrains casting long sun shadows through horizon maps.",
+        "lighting_uploads": {
+          "description": "Maps of terrains' lighting this frame uploaded, as it arrived or\nchanged: sky and horizon maps, one each per terrain. The sun moving\nuploads none.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -822,13 +822,7 @@
           "type": "integer"
         },
         "sky_maps": {
-          "description": "Terrains whose sky visibility maps are built.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "sky_rows": {
-          "description": "Rows of sky visibility maps this frame built.",
+          "description": "Terrains whose sky visibility maps are here.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -886,9 +880,8 @@
         "dropped_tiles",
         "fallback_patches",
         "horizons",
-        "horizon_builds",
         "sky_maps",
-        "sky_rows",
+        "lighting_uploads",
         "dropped_materials",
         "vt_slots",
         "vt_pages",

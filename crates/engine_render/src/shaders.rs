@@ -39,6 +39,7 @@ shaders! {
         "meshes/terrain_vertex.wgsl",
         "terrain_variety.wgsl",
         "meshes/terrain.wgsl",
+        "meshes/terrain_sky.wgsl",
         "fullscreen.wgsl",
         "meshes/cover.wgsl",
         "meshes/water.wgsl",
@@ -56,14 +57,6 @@ shaders! {
     TERRAIN_CONTROL_SHADER = [
         "terrain_tile.wgsl",
         "terrain_control.wgsl",
-    ];
-    /// Terrain horizon map builds.
-    TERRAIN_HORIZON_SHADER = [
-        "terrain_horizon.wgsl",
-    ];
-    /// Terrain sky visibility map builds.
-    TERRAIN_SKY_SHADER = [
-        "terrain_sky.wgsl",
     ];
     /// Ground cover's growth.
     COVER_GROW_SHADER = [
@@ -306,12 +299,6 @@ entry_points! {
     }
     terrain_control = TERRAIN_CONTROL_SHADER {
         compute: [tile_control],
-    }
-    terrain_horizon = TERRAIN_HORIZON_SHADER {
-        compute: [build_horizon],
-    }
-    terrain_sky = TERRAIN_SKY_SHADER {
-        compute: [build_sky],
     }
     cover_grow = COVER_GROW_SHADER {
         compute: [grow_cover, finish_cover],

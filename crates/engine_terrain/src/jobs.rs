@@ -9,32 +9,36 @@
 //!
 //! A tile's job carries the edits reaching its ground alone, its recipe's
 //! stack none: an edit leaves every other tile's job, and its record, as
-//! it was.
+//! it was. A terrain's lighting reads a level's heights alone, under edits
+//! or not.
 
 use engine_math::collections::HashMap;
 use std::sync::Arc;
 
 use glam::Vec2;
 
-use crate::codec::{self, CodecError, Reader, Writer, record};
+use crate::codec::{self, Codec, CodecError, Reader, Writer, record};
+use crate::lighting::{Ground, TerrainLighting, light};
 use crate::{
     BiomeRules, Biomes, Generator, Layers, NavOptions, NavPath, Obstacle, Placing, Pyramid, Stamp,
     Tile, TileKey, WalkSearch,
 };
 
 /// The kinds of terrain jobs, which hosts carry by name: a tile of a
-/// shared recipe, a walk over one, and a stack's bakes. Workers match every
-/// kind, so a kind added without its work fails to build.
+/// shared recipe, a walk over one, a stack's bakes and a terrain's
+/// lighting. Workers match every kind, so a kind added without its work
+/// fails to build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
     Tile,
     Walk,
     Bake,
+    Lighting,
 }
 
 impl JobKind {
     /// Every kind.
-    pub const ALL: [Self; 3] = [Self::Tile, Self::Walk, Self::Bake];
+    pub const ALL: [Self; 4] = [Self::Tile, Self::Walk, Self::Bake, Self::Lighting];
 
     /// Its name, as hosts carry it and key the records they keep by.
     pub const fn name(self) -> &'static str {
@@ -42,6 +46,7 @@ impl JobKind {
             Self::Tile => "terrain_tile",
             Self::Walk => "terrain_walk",
             Self::Bake => "terrain_bake",
+            Self::Lighting => "terrain_lighting",
         }
     }
 
@@ -205,6 +210,85 @@ pub fn bake_output(bytes: &[u8]) -> Result<Layers, CodecError> {
     codec::decode(bytes)
 }
 
+/// A [`JobKind::Lighting`]: the lighting ([`crate::lighting`]) of a
+/// terrain's ground over `extent` meters along x and z, from `heights`,
+/// `samples` along x and z `spacing` meters apart, row by row along z (its
+/// finest level resident everywhere, at the steps tiles travel at), with a
+/// sky map `sky` and a horizon map `horizons` texels a side. Its input is
+/// the job; as it holds a whole level's heights, hosts keep its output by
+/// that input's content hash, which engines compute.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LightingJob {
+    pub samples: [u32; 2],
+    pub spacing: f32,
+    pub extent: Vec2,
+    pub heights: Box<[f32]>,
+    pub sky: u32,
+    pub horizons: u32,
+}
+
+impl Codec for LightingJob {
+    fn write(&self, out: &mut Writer) {
+        out.put(&self.samples)
+            .put(&self.spacing)
+            .put(&self.extent)
+            .put(&self.sky)
+            .put(&self.horizons);
+        codec::put_grid(out, &self.heights, self.samples[0] as usize);
+    }
+
+    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+        let samples: [u32; 2] = input.get()?;
+        let spacing = input.get()?;
+        let extent = input.get()?;
+        let sky = input.get()?;
+        let horizons = input.get()?;
+        let heights = codec::get_grid(input, samples[0] as usize)?;
+        Ok(Self {
+            samples,
+            spacing,
+            extent,
+            heights,
+            sky,
+            horizons,
+        })
+    }
+}
+
+impl LightingJob {
+    pub const KIND: JobKind = JobKind::Lighting;
+
+    /// Its input: the job.
+    pub fn input(&self) -> Vec<u8> {
+        codec::encode(self)
+    }
+
+    /// Whether its grid holds at least two samples a side, as many
+    /// heights, all numbers, and its maps a texel to the most a side.
+    fn valid(&self) -> bool {
+        let [columns, rows] = self.samples.map(|count| count as usize);
+        columns >= 2
+            && rows >= 2
+            && self.heights.len() == columns * rows
+            && self.heights.iter().all(|height| height.is_finite())
+            && self.spacing.is_finite()
+            && self.spacing > 0.0
+            && self.extent.is_finite()
+            && self.extent.x > 0.0
+            && self.extent.y > 0.0
+            && (1..=MAX_LIGHTING_TEXELS).contains(&self.sky)
+            && (1..=MAX_LIGHTING_TEXELS).contains(&self.horizons)
+    }
+}
+
+/// The most texels along a lighting map's side.
+pub const MAX_LIGHTING_TEXELS: u32 = 4096;
+
+/// A [`JobKind::Lighting`]'s output: the terrain's lighting.
+pub fn lighting_output(bytes: &[u8]) -> Result<TerrainLighting, CodecError> {
+    codec::decode(bytes)
+}
+
 /// A shared recipe as a worker holds it: its layers seen as its terrain
 /// sees them, its pyramid and its compiled surface.
 struct Recipe {
@@ -232,6 +316,7 @@ enum Running {
     Tile(Box<Generator>),
     Walk(Box<WalkSearch>),
     Bake(Box<(Layers, Pyramid)>),
+    Lighting(Box<LightingJob>),
 }
 
 /// What a worker holds of terrains, and runs their jobs over.
@@ -354,14 +439,22 @@ impl TerrainWorker {
                 reader.finish().map_err(invalid)?;
                 Running::Bake(Box::new((layers, pyramid)))
             }
+            JobKind::Lighting => {
+                let job: LightingJob = reader.get().map_err(invalid)?;
+                reader.finish().map_err(invalid)?;
+                if !job.valid() {
+                    return Err("lighting of an invalid grid".into());
+                }
+                Running::Lighting(Box::new(job))
+            }
         };
         self.running.insert(id, running);
         Ok(())
     }
 
     /// Works on job `id` for about `budget` work units (about one per
-    /// sample; bakes run whole): its output once done, `None` while work is
-    /// left. A job that failed or finished is gone.
+    /// sample; bakes and lighting run whole): its output once done, `None`
+    /// while work is left. A job that failed or finished is gone.
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
         let Some(running) = self.running.get_mut(&id) else {
             return Err("no such job".into());
@@ -380,6 +473,20 @@ impl TerrainWorker {
             Running::Bake(bake) => {
                 let (layers, pyramid) = &**bake;
                 Ok(codec::encode(&layers.bake_all(pyramid)))
+            }
+            Running::Lighting(job) => {
+                let ground = Ground {
+                    samples: job.samples,
+                    spacing: job.spacing,
+                    heights: &job.heights,
+                };
+                let extent = job.extent.to_array();
+                Ok(codec::encode(&light(
+                    &ground,
+                    extent,
+                    job.sky,
+                    job.horizons,
+                )))
             }
         };
         self.running.remove(&id);

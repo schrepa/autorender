@@ -36,6 +36,11 @@ pub struct TerrainStats {
     /// Terrains whose bakes are in progress: they
     /// load no tiles until done.
     pub baking: u32,
+    /// Terrains whose lighting is here (the sky their ground sees, their
+    /// horizons), and those whose lighting is asked for: until it arrives
+    /// their ground sees the whole sky and casts no long shadows.
+    pub lit: u32,
+    pub lighting: u32,
     /// Bridges terrains' roads span, tunnels they bore,
     /// and waterfalls their rivers drop over.
     pub bridges: u32,

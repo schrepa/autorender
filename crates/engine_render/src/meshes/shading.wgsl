@@ -49,6 +49,9 @@ struct SurfacePoint {
     // Light from surfaces around the point where they hide the sky, per
     // unit diffuse color: terrain's, zero elsewhere.
     bounce: vec3<f32>,
+    // How the normal the sky lights the point around turns from its own,
+    // toward the middle of the sky it sees: terrain's, zero elsewhere.
+    sky_turn: vec3<f32>,
     // The share of the sun the point's own mesh hides: impostors',
     // zero elsewhere.
     sun_shade: f32,
@@ -856,7 +859,10 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     // Inside interiors only their shares of the sky and sun
     // reach; what they reflect is their probe's own capture.
     let interior = environment.interior;
-    let sky_light = (point.diffuse_color * (sky_average(normal) * lighting.zenith.w
+    // The sky's light around the normal turned toward the sky the point
+    // sees.
+    let skyward = normalize(normal + point.sky_turn);
+    let sky_light = (point.diffuse_color * (sky_average(skyward) * lighting.zenith.w
         + lighting.horizon.rgb * rim) * interior.x + reflection) * point.occlusion * covered_sky
         + point.diffuse_color * point.bounce * covered_sky * interior.x;
     // The sun's light before shadows: where it, the point's sun shade or its

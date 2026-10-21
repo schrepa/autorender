@@ -60,9 +60,6 @@ const TERRAIN_PALETTE_ENTRIES: u32 = 170u;
 @group(1) @binding(27) var terrain_material_data: texture_2d_array<f32>;
 @group(1) @binding(28) var terrain_vt_sheets: texture_2d_array<f32>;
 @group(1) @binding(29) var terrain_material_sampler: sampler;
-// Each terrain's sky visibility map: over the whole terrain,
-// the share of the sky its ground sees about its normal (red).
-@group(1) @binding(30) var terrain_sky: texture_2d_array<f32>;
 // Runtime deformation's map (`deformation.wgsl`), in its
 // reference units: each block's deepest track or highest rim, widened by a
 // block; each texel's track depth and rim height; and each texel's slopes.
@@ -845,28 +842,6 @@ fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGro
     return ground;
 }
 
-// The terrain's sky map at terrain-local `local` once built: the share of
-// the sky the ground sees (red), and its large-scale variety,
-// hollows (green) and ridges (blue); before, all the sky
-// and level ground.
-fn terrain_sky_map(local: vec2<f32>) -> vec4<f32> {
-    if terrain.directory.w == 0u {
-        return vec4<f32>(1.0, 0.5, 0.5, 1.0);
-    }
-    let header = terrain.directory.x;
-    let extent = vec2<f32>(f32(terrain_directory[header + 1u]),
-        f32(terrain_directory[header + 2u])) * 256.0 * terrain.anchor.w;
-    return textureSampleLevel(terrain_sky, terrain_normal_sampler, local / extent,
-        terrain.directory.w - 1u, 0.0);
-}
-
-// The light the terrain around a hollow gives back per unit albedo for the
-// sky it hides: sunlit and skylit ground, as level ground would be.
-fn terrain_bounce() -> vec3<f32> {
-    return lighting.sun_color.rgb * (0.35 * saturate(lighting.sun.y))
-        + sky_average(vec3<f32>(0.0, 1.0, 0.0)) * (0.5 * lighting.zenith.w);
-}
-
 // One material's part in the ground's relief: the meters it
 // sinks the ground at most, already weighted and faded, and where its
 // maps' heights lie: their scale, layer and the derivatives they are read
@@ -1123,7 +1098,8 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
 
 // The surface a terrain fragment `relative` to the eye shows: its surface
 // materials, varied across the ground so their maps do not repeat evenly,
-// lit by the sky it sees and by the ground around where that hides the sky.
+// lit by the sky it sees, from where it sees it, and by the ground around
+// where that hides the sky.
 fn terrain_point(relative: vec3<f32>) -> SurfacePoint {
     let point = terrain_point_seen(relative, terrain_forward_look(relative));
     return widened(point, dpdx(point.normal), dpdy(point.normal));
@@ -1273,6 +1249,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     point.emissive = vec3<f32>(0.0);
     point.occlusion = occlusion * sky;
     point.bounce = (1.0 - sky) * albedo * terrain_bounce();
+    point.sky_turn = terrain_sky_turn(local);
     point.roughness = roughness;
     point.alpha = roughness * roughness;
     point.f0 = mix(vec3<f32>(0.04), albedo, ground.metalness);

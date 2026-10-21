@@ -153,6 +153,9 @@ pub struct RenderTerrain {
     /// The square around the camera its water is simulated over: renderers
     /// run the simulation there and draw its water instead of the bake's.
     pub water_window: Option<Arc<WaterWindow>>,
+    /// Its lighting, once here: the sky its ground sees and its horizons,
+    /// which renderers upload as it changes.
+    pub lighting: Option<Arc<TerrainLighting>>,
 }
 
 /// The frame's terrains.
@@ -203,6 +206,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 gpu_surface: None,
                 falls: Arc::from(Vec::new()),
                 water_window: None,
+                lighting: None,
             });
         }
         let render = &mut listing.terrains[index];
@@ -265,5 +269,6 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         render.ranges.clone_from(&state.ranges);
         render.falls = state.falls.clone();
         render.water_window = state.hydrology.window.clone();
+        render.lighting.clone_from(&state.lighting.made);
     }
 }

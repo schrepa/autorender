@@ -2,7 +2,8 @@
 //! terrain's bakes, then every tile a camera on it could want, as records
 //! asked for coarsest level first and dropped as they arrive, which the
 //! host keeps for its pack. A terrain's surroundings cook the tiles within
-//! reach of the ground they surround, as a view from it wants them.
+//! reach of the ground they surround, as a view from it wants them. Every
+//! streaming terrain's lighting cooks as streaming asks for it.
 
 use super::*;
 
@@ -28,7 +29,8 @@ impl CookTiles {
 impl Terrains {
     /// Cooks every generated terrain within `settings`, asking for records
     /// as `jobs` admits them; says in `cooking` how many are left: a bake
-    /// under way counts one, and each tile not back yet one.
+    /// under way counts one, each tile not back yet one, and each terrain
+    /// streaming whose lighting is still asked for or not yet made one.
     pub(crate) fn cook(
         &mut self,
         settings: &TerrainSettings,
@@ -42,6 +44,10 @@ impl Terrains {
         let mut released = Vec::new();
         let mut left = 0;
         for state in &mut self.entries {
+            let streams = state.around.is_none() || settings.surroundings;
+            if streams && lit(settings) && state.terrain.validate().is_ok() {
+                left += u64::from(state.lighting.left());
+            }
             let authored = state.terrain.layers.clone();
             if state.terrain.validate().is_err() {
                 continue;

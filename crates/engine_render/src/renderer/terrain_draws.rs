@@ -63,12 +63,6 @@ impl Renderer {
                 probes,
                 settings: snapshot.environment.terrain.sanitized(),
                 shadows: snapshot.environment.shadows.enabled,
-                sun: snapshot
-                    .environment
-                    .atmosphere
-                    .sanitized()
-                    .sun_direction
-                    .normalize(),
                 fades,
                 now: snapshot.elapsed_seconds,
                 cover: canopy,

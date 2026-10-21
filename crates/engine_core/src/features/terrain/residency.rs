@@ -96,6 +96,8 @@ pub(super) struct TerrainState {
     pub(super) prefetched: TileMap<(JobId, Generation)>,
     /// Its tiles cooking, while a session cooks.
     pub(super) cook: Option<CookTiles>,
+    /// Its lighting, and its asking for it.
+    pub(super) lighting: Lighting,
     /// The layers its tiles generate from and its surface's data for the
     /// GPU from them, `None` where the program needs more
     /// than the GPU's interpreter holds; and whether its tiles hold control
@@ -145,6 +147,7 @@ impl TerrainState {
             failures: JobFailures::default(),
             prefetched: TileMap::default(),
             cook: None,
+            lighting: Lighting::default(),
             surface: None,
             materials: true,
         }
@@ -195,6 +198,9 @@ impl TerrainState {
         retired
             .jobs
             .extend(self.cook.iter().flat_map(CookTiles::asked));
+        retired
+            .jobs
+            .extend(self.lighting.job.iter().map(|&(id, _)| id));
         retired
             .recipes
             .extend(self.recipe.as_ref().map(|recipe| recipe.key.clone()));

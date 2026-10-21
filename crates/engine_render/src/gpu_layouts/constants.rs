@@ -151,14 +151,8 @@ gpu_consts! {
     pub(crate) const TERRAIN_GRID_VERTICES: u32 = TERRAIN_GRID * TERRAIN_GRID => ["TERRAIN_GRID_VERTICES"];
 
     // crate::terrain_horizons
-    /// A source tile no resident level holds.
-    pub(crate) const MISSING: u32 = u32::MAX => ["MISSING"];
-    /// Lines of a grid a workgroup sweeps.
-    pub(crate) const HORIZON_GROUP: u32 = 64 => ["@build_horizon" in TERRAIN_HORIZON_SHADER];
-
-    // crate::terrain_sky
-    /// Workgroup side of a build.
-    pub(crate) const SKY_MAP_GROUP: u32 = 8 => ["@build_sky" in TERRAIN_SKY_SHADER];
+    /// Texels of the records each terrain's horizon map takes.
+    pub(crate) const HORIZON_RECORD_TEXELS: u32 = 2 => ["HORIZON_RECORD_TEXELS"];
 
     // crate::terrain_vt
     /// Texels along a page's side, the border around it, and a slot's side.
@@ -400,7 +394,8 @@ gpu_mirrors! {
     engine_core::GUST_QUICK_TRAVEL => ["GUST_QUICK_TRAVEL"];
     engine_core::GUST_QUICK_ACROSS => ["GUST_QUICK_ACROSS"];
     engine_core::RIM_REACH => ["RIM_REACH" in DEFORMATION_SHADER];
-    engine_core::terrain_data::TILE_QUADS => ["TILE_QUADS" in TERRAIN_HORIZON_SHADER, "TILE_QUADS" in TERRAIN_SKY_SHADER];
+    engine_core::terrain_data::lighting::DIRECTIONS => ["HORIZON_DIRECTIONS"];
+    engine_core::terrain_data::lighting::HORIZON_LAYERS => ["HORIZON_LAYERS"];
     engine_core::terrain_data::TILE_STRIDE => ["TILE_STRIDE" in TERRAIN_CONTROL_SHADER, "TILE_STRIDE" in TERRAIN_NORMALS_SHADER];
     engine_core::terrain_data::RIVER_FAR => ["RIVER_FAR" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::PATH_FAR => ["PATH_FAR" in TERRAIN_CONTROL_SHADER];

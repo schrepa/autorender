@@ -32,7 +32,7 @@
 //! `virtual_texture_bakes` a frame, coarsest first, into free slots or the
 //! least recently asked for. Until a pixel's two pages are baked it
 //! computes its ground as before, so pages arriving never change what
-//! shows, only what it costs. A terrain's sky map rebuilt drops its pages.
+//! shows, only what it costs. A terrain's sky map replaced drops its pages.
 //!
 //! Pages go stale and bake again with the budget absent pages leave, those
 //! still asked for only: pages over tiles that arrived, left or were edited
@@ -102,7 +102,7 @@ use crate::gpu_layouts::terrain_vt::BakeRecord;
 /// A textured terrain: its index this frame (its windows' and tables'
 /// place, and its feedback bits'), its windows' first pages, its table
 /// entries (slot plus one, 0 while absent) and which mips' tables changed
-/// since written, and the sky map build its pages follow.
+/// since written, and the sky map upload its pages follow.
 struct Textured {
     index: u32,
     firsts: [[i32; 2]; MIPS],
@@ -384,7 +384,7 @@ impl VirtualTexture {
     /// Lays out this frame's texture: the slots the material maps' sheets
     /// hold (new ones free; new materials empty them), each terrain's
     /// windows around `eye`, the pages tiles that changed (`changed`) or
-    /// rebuilt sky maps drop, the pages pixels asked for, and the bakes this
+    /// replaced sky maps drop, the pages pixels asked for, and the bakes this
     /// frame draws; writes the windows and tables into the directory buffer
     /// at word `base` and the bakes into their buffer. Returns each
     /// terrain's uniform words, by its index in `terrains`.
@@ -430,11 +430,11 @@ impl VirtualTexture {
             }
             return vec![([0; 4], [0.0; 4], [0; 4]); terrains.terrains.len()];
         }
-        // Textured terrains: those drawing whose sky maps hold still.
+        // Textured terrains: those drawing whose sky maps arrived.
         let mut uniforms = Vec::with_capacity(terrains.terrains.len());
         let mut kept = Vec::new();
         for (index, terrain) in terrains.terrains.iter().enumerate() {
-            let Some(sky_build) = sky.settled(index) else {
+            let Some(sky_upload) = sky.settled(index) else {
                 uniforms.push(([0; 4], [0.0; 4], [0; 4]));
                 continue;
             };
@@ -449,8 +449,8 @@ impl VirtualTexture {
                 .entry(terrain.id)
                 .or_insert_with(Textured::new);
             textured.index = vt_index;
-            if textured.sky != sky_build {
-                textured.sky = sky_build;
+            if textured.sky != sky_upload {
+                textured.sky = sky_upload;
                 let drop: Vec<u32> = self
                     .resident
                     .iter()

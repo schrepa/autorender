@@ -91,8 +91,6 @@ resources! {
     Probes: Kept,
     /// The view's marched clouds.
     CloudView: Frame,
-    /// Terrain's horizon maps, which its long sun shadows read.
-    Horizons: Kept,
     /// The clouds' dome, which the sky and its environment map show, and
     /// the grid of their shadows.
     CloudDome: Kept,
@@ -231,8 +229,6 @@ pub(crate) enum Pass {
     ShadowSelect,
     /// Virtual geometry's cluster selection.
     VirtualSelect,
-    /// Terrain's horizon maps where the sun or terrain changed.
-    TerrainHorizons,
     /// The shadow maps.
     ShadowMaps,
     /// Tracks pressed into the deformation map.
@@ -311,7 +307,6 @@ passes! {
     occupancy: Feature(FeaturePass::Occupancy),
     shadow_select: ShadowSelect,
     virtual_select: VirtualSelect,
-    terrain_horizons: TerrainHorizons,
     shadow_maps: ShadowMaps,
     lights: Feature(FeaturePass::Lights),
     cloud_dome: Feature(FeaturePass::CloudDome),
@@ -690,10 +685,8 @@ pub(crate) struct FrameShape {
     /// Opaque phases: two around the occlusion test.
     pub(crate) phases: u8,
     pub(crate) shadows: bool,
-    /// Work before the passes reading it: terrain's horizon maps build
-    /// (shadowed frames only), tracks press into the deformation map and the
-    /// virtual texture bakes pages.
-    pub(crate) horizons: bool,
+    /// Work before the passes reading it: tracks press into the
+    /// deformation map and the virtual texture bakes pages.
     pub(crate) deformation: bool,
     pub(crate) vt_bakes: bool,
     /// Terrain draws deferred in the first opaque phase: its visibility
@@ -756,7 +749,7 @@ const FAR: f32 = 0.0;
 
 /// Declares the work a frame of `shape` does before its opaque passes into
 /// `graph`: GPU presentation, shadow casters and maps, cluster selection,
-/// terrain's horizons, tracks and the virtual texture's bakes.
+/// tracks and the virtual texture's bakes.
 fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
     use Resource::*;
     let gpu = shape.gpu;
@@ -780,11 +773,6 @@ fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
             .read_if(shape.shadow_clusters, Casters)
             .read(Pyramid)
             .write(Clusters);
-    }
-    // Terrain's horizon maps, which shadowed frames build as the sun or
-    // terrain changes, before the passes shading with them.
-    if shape.shadows && shape.horizons {
-        graph.add(Pass::TerrainHorizons).write(Horizons);
     }
     if shape.shadows {
         graph
@@ -858,7 +846,6 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read_if(shape.lights, Lights)
             .read_if(shape.clusters, Clusters)
             .read(Probes)
-            .read(Horizons)
             .read(CloudDome)
             .read_if(forward, Tracks)
             .read_if(forward, Pages)
@@ -921,7 +908,6 @@ fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Res
         .read_if(shape.shadows, ShadowMaps)
         .read_if(shape.lights, Lights)
         .read(Probes)
-        .read(Horizons)
         .read(CloudDome)
         .read(Tracks)
         .read(Pages);
@@ -935,7 +921,6 @@ fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Res
         .read_if(shape.shadows, ShadowMaps)
         .read_if(shape.lights, Lights)
         .read(Probes)
-        .read(Horizons)
         .read(CloudDome)
         .read(Tracks)
         .read(Cover);

@@ -1356,7 +1356,7 @@
       "direction": null
     },
     {
-      "name": "terrain.horizon_builds",
+      "name": "terrain.horizons",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",
@@ -1367,7 +1367,7 @@
       "direction": null
     },
     {
-      "name": "terrain.horizons",
+      "name": "terrain.lighting_uploads",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",
@@ -1445,17 +1445,6 @@
     },
     {
       "name": "terrain.sky_maps",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
-      "name": "terrain.sky_rows",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",

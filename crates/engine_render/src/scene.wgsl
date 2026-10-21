@@ -153,14 +153,19 @@ struct Shadow {
 // Unfiltered reads of four shadow texels, for receiver planes.
 @group(0) @binding(7) var shadow_texels: sampler;
 // Terrain's long sun shadows: each terrain's horizon map, a
-// grid aligned with the sun: x how far above the ground the sun clears the
-// terrain toward it, y how far toward the sun the slope setting that lies, z
-// the ground's height.
+// grid over the terrain cooked with its lighting, HORIZON_LAYERS layers per
+// terrain. In each of HORIZON_DIRECTIONS directions around a texel
+// (direction k a k-th of the directions' turn from +x toward +z), how high
+// above its ground and how far away the crest of the highest ground ahead
+// lies (meters): layer l holds directions 2l and 2l + 1, their heights in
+// red and green and their distances in blue and alpha. The last layer holds
+// the ground's height above the terrain's lowest (red).
 @group(0) @binding(14) var terrain_horizons: texture_2d_array<f32>;
-// Two texels per terrain casting: its map's center (world x and z) and unit
-// direction toward the sun; the map's half extents along and across the
-// sun, how fast its shadows soften per meter of that distance, and the
-// meters receivers rise before comparing. One unused texel without any.
+// HORIZON_RECORD_TEXELS texels per terrain: its map's first corner (world x
+// and z) and one over its extent (x and z, 0 without a map); its first
+// layer, how fast its shadows soften per meter to their crests, the meters
+// receivers rise before comparing and the lowest ground's world height. One
+// unused texel without any.
 @group(0) @binding(15) var terrain_horizon_records: texture_2d<f32>;
 @group(0) @binding(16) var terrain_horizon_sampler: sampler;
 // What placed objects cover around the camera: the densest
@@ -852,32 +857,72 @@ fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
     return min(moving, still);
 }
 
-// The share of the sun terrains leave unblocked at `world`:
-// below a terrain's horizon there, none; above it, all; between, a soft edge
-// growing with the distance to the slope casting it. Heights count from the
-// map's ground, which terrain's own surfaces (`on_terrain`) lie on whatever
-// detail they draw at.
+const HORIZON_DIRECTIONS: u32 = 16u;
+const HORIZON_LAYERS: u32 = 9u;
+const HORIZON_RECORD_TEXELS: u32 = 2u;
+
+// The share of the sun terrains leave unblocked at `world`: where the sun's
+// ray toward it passes under a terrain's crest there, none; over it, all;
+// between, a soft edge growing with the crest's distance. How far above the
+// ground the ray clears the crests ahead lies between the directions either
+// side of the sun: the crest's distance times the sun's rise per meter, less
+// its height. A surface above the map's ground compares its height above it
+// with that, and terrain's own surfaces (`on_terrain`) lie on that ground
+// whatever detail they draw at.
 fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
     if !TERRAIN_HORIZONS {
         return 1.0;
     }
-    // Their count: the records' texels over two (`level_state.w`).
+    let sun = lighting.sun.xyz;
+    let level = length(sun.xz);
+    // The sun overhead clears every horizon.
+    if level < 1.0e-4 {
+        return 1.0;
+    }
+    // How far its ray rises per meter toward it, and between which two of
+    // the directions it stands.
+    let rise = sun.y / level;
+    let turn = fract(atan2(sun.z, sun.x) / (2.0 * PI) + 1.0) * f32(HORIZON_DIRECTIONS);
+    let first = min(u32(turn), HORIZON_DIRECTIONS - 1u);
+    let second = (first + 1u) % HORIZON_DIRECTIONS;
+    let between = turn - f32(first);
+    // Their count: the records' texels over theirs (`level_state.w`).
     let count = u32(shadow.level_state.w);
     var visible = 1.0;
     for (var index = 0u; index < count; index++) {
-        let place = textureLoad(terrain_horizon_records, vec2<u32>(2u * index, 0u), 0);
-        let shape = textureLoad(terrain_horizon_records, vec2<u32>(2u * index + 1u, 0u), 0);
-        let relative = world.xz - place.xy;
-        let along = vec2<f32>(dot(relative, place.zw),
-            dot(relative, vec2<f32>(-place.w, place.z)));
-        let uv = along / shape.xy * 0.5 + 0.5;
+        let at = HORIZON_RECORD_TEXELS * index;
+        let place = textureLoad(terrain_horizon_records, vec2<u32>(at, 0u), 0);
+        let shape = textureLoad(terrain_horizon_records, vec2<u32>(at + 1u, 0u), 0);
+        let uv = (world.xz - place.xy) * place.zw;
         if any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
             continue;
         }
-        let texel = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv, index, 0.0);
-        let elevation = select(world.y - texel.z, 0.0, on_terrain);
-        let edge = max(texel.y * shape.z, 0.5);
-        visible = min(visible, smoothstep(-edge, edge, elevation + shape.w - texel.x));
+        let base = u32(shape.x);
+        // An even first direction shares its layer with the second; an odd
+        // one's second starts the next layer.
+        let near = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
+            base + first / 2u, 0.0);
+        var far = near;
+        if (first & 1u) == 1u {
+            far = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
+                base + second / 2u, 0.0);
+        }
+        let odd = (first & 1u) == 1u;
+        let heights = vec2<f32>(select(near.r, near.g, odd), select(far.g, far.r, odd));
+        let distances = vec2<f32>(select(near.b, near.a, odd), select(far.a, far.b, odd));
+        // The meters above the ground the sun's ray toward the crest passes
+        // under it, either side of the sun, and between.
+        let under = heights - distances * rise;
+        let clearance = mix(under.x, under.y, between);
+        let distance = mix(distances.x, distances.y, between);
+        var elevation = 0.0;
+        if !on_terrain {
+            let ground = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
+                base + HORIZON_LAYERS - 1u, 0.0).r;
+            elevation = world.y - shape.w - ground;
+        }
+        let edge = max(distance * shape.y, 0.5);
+        visible = min(visible, smoothstep(-edge, edge, elevation + shape.z - clearance));
         // Below one horizon, no other lets the sun back.
         if visible <= 0.0 {
             break;

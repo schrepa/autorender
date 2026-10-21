@@ -22,10 +22,6 @@ impl Renderer {
             Pass::Presentation => self.encode_presentation(encoder),
             Pass::ShadowSelect => self.encode_shadow_selection(state, encoder),
             Pass::VirtualSelect => self.encode_cluster_selection(encoder),
-            Pass::TerrainHorizons => {
-                self.terrain
-                    .encode_horizons(&self.device, encoder, &self.profiler);
-            }
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
             Pass::Deformation => {
                 self.terrain
@@ -144,7 +140,6 @@ impl Renderer {
             | Resource::Exposure
             | Resource::Probes
             | Resource::CloudView
-            | Resource::Horizons
             | Resource::CloudDome
             | Resource::Tracks
             | Resource::Pages

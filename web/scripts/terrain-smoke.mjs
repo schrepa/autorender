@@ -324,16 +324,16 @@ try {
   await command("environment", { debug_view: { view: "materials" } });
   const materialView = await capture("view-materials");
   assert.ok((await differentPixels(page, [baseline, materialView])).changed > 10_000, "the materials view differs");
-  // The sky visibility map builds a band of rows a frame
-  // once the pinned level is resident; its view shows it unlit.
+  // The sky visibility map arrives with each terrain's lighting once
+  // the pinned level is resident; its view shows it unlit.
   let sky;
-  for (let frame = 0; frame < 200; frame++) {
+  for (let frame = 0; frame < 400; frame++) {
     sky = (await command("render")).result.rendering;
-    if (sky.terrain.sky_maps === 2 && sky.terrain.sky_rows === 0) break;
-    if (sky.terrain.sky_maps < 2) await new Promise(resolve => setTimeout(resolve, 25));
+    if (sky.terrain.sky_maps === 2) break;
+    await new Promise(resolve => setTimeout(resolve, 25));
   }
   // One for the terrain and one for its surroundings.
-  assert.equal(sky.terrain.sky_maps, 2, `the sky maps build: ${JSON.stringify(sky)}`);
+  assert.equal(sky.terrain.sky_maps, 2, `the sky maps arrive: ${JSON.stringify(sky)}`);
   await command("environment", { debug_view: { view: "sky" } });
   const skyView = await capture("view-sky");
   assert.ok((await differentPixels(page, [baseline, skyView])).changed > 10_000, "the sky view differs");

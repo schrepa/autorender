@@ -1416,7 +1416,6 @@ impl Renderer {
             canvas_clear: canvas_clear(),
             phases,
             shadows: features.shadow_frame.is_some(),
-            horizons: self.terrain.horizons.pending(),
             deformation: self.terrain.deformation.pending(),
             vt_bakes: self.terrain.vt.baking(),
             deferred: self.terrain_deferred(terrain, passes.opaque_kind),

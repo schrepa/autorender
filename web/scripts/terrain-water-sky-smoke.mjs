@@ -260,17 +260,16 @@ try {
   await settle();
 
   // Long shadows: a low sun behind the dome, with shadow maps
-  // reaching 60 m, shadows the plateau through the horizon map alone. A new
-  // sun rebuilds the map, an unchanged one keeps it.
+  // reaching 60 m, shadows the plateau through the horizon map alone. The
+  // map holds every direction's horizons: a new sun uploads nothing.
   const current = (await command("inspect", { component: "Environment" })).result.value;
   const atmosphere = { ...current.atmosphere, sun_direction: [1, 0.22, 1] };
   const shadows = { ...current.shadows, distance: 60, near_distance: 20 };
   // The control renders a frame with the new sun.
-  const rebuilt = (await command("environment", { atmosphere, shadows })).result.rendering;
+  const moved = (await command("environment", { atmosphere, shadows })).result.rendering;
   // The terrain's and its surroundings'.
-  assert.equal(rebuilt.terrain.horizons, 2);
-  assert.ok(rebuilt.terrain.horizon_builds >= 1, `a new sun rebuilds: ${JSON.stringify(rebuilt)}`);
-  assert.equal((await command("render")).result.rendering.terrain.horizon_builds, 0, "an unchanged sun keeps the map");
+  assert.equal(moved.terrain.horizons, 2);
+  assert.equal(moved.terrain.lighting_uploads, 0, `a new sun uploads nothing: ${JSON.stringify(moved)}`);
   const above = { ...overview, position: [-60, 320, 220], target: [0, 30, 0] };
   await command("camera", above);
   await settle();
@@ -281,7 +280,7 @@ try {
   const short = await capture("map-shadows-only");
   const lengthened = await differentPixels(page, [long, short]);
   assert.ok(lengthened.changed > 20_000, `the dome's long shadow covers ${lengthened.changed} pixels`);
-  checks.push({ check: "horizon shadows", builds: rebuilt.terrain.horizon_builds, pixels: lengthened.changed });
+  checks.push({ check: "horizon shadows", horizons: moved.terrain.horizons, pixels: lengthened.changed });
 
   // Aerial perspective: thick air from the eye hazes the
   // terrain; none leaves it as it was.

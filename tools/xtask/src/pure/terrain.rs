@@ -1,7 +1,7 @@
 //! The terrain corpus: the tracked terrain fixture's generated terrain
 //! (web/scripts/fixtures/terrain.scene.json and its dome heightmap). Its
 //! bakes; every tile of its pyramid and some of its surroundings'; tiles
-//! under edits; a walk; and a pack of what they made. Each
+//! under edits; its lighting; a walk; and a pack of what they made. Each
 //! job runs as workers run it, whole and a slice at a time, and must give
 //! the bits its code gives in place; every record must read back from the
 //! pack the cook would write as it went in.
@@ -14,11 +14,12 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::Terrain;
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use engine_terrain::jobs::{
-    self, BakeJob, StackView, TerrainRecipe, TerrainWorker, TileJob, WalkJob,
+    self, BakeJob, LightingJob, StackView, TerrainRecipe, TerrainWorker, TileJob, WalkJob,
 };
+use engine_terrain::lighting::{self, Ground};
 use engine_terrain::{
-    BiomeRules, Generator, Layer, Layers, NavOptions, Obstacle, Pyramid, Stamp, StampOp, Tile,
-    TileKey, codec, walk,
+    BiomeRules, Generator, Layer, Layers, NavOptions, Obstacle, Pyramid, Stamp, StampOp,
+    TILE_QUADS, Tile, TileKey, codec, walk,
 };
 use glam::Vec2;
 use serde_json::json;
@@ -31,6 +32,11 @@ const ENTITY: &str = "ground";
 /// Work units each slice of a job gets: few enough that each takes many
 /// slices, as workers slice them.
 const SLICE: u64 = 4096;
+/// The terrain settings' pinned levels, whose finest its lighting reads,
+/// and the texels along its sky and horizon maps' sides.
+const PINNED: u32 = 2;
+const SKY_TEXELS: u32 = 256;
+const HORIZON_TEXELS: u32 = 128;
 /// Every share and job the corpus ran through its worker, in order, each
 /// job's output by its hash: what `cargo xtask pure --wasm` replays in the
 /// browser worker's Wasm module.
@@ -98,6 +104,42 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.record("tiles", tiles.len());
     observed.record("tile objects", objects);
     observed.check(objects > 0, || "no tile holds objects".into());
+
+    // The terrain's lighting from its finest pinned level's tiles, as
+    // engines ask for it.
+    let job = lighting_job(&pyramid, &tiles);
+    let input = job.input();
+    let bytes = worker.run(LightingJob::KIND.name(), &input)?;
+    let ground = Ground {
+        samples: job.samples,
+        spacing: job.spacing,
+        heights: &job.heights,
+    };
+    let made = lighting::light(&ground, job.extent.to_array(), job.sky, job.horizons);
+    observed.check(codec::encode(&made) == bytes, || {
+        "the lighting job differs from the lighting made in place".into()
+    });
+    observed.check(
+        worker.sliced(LightingJob::KIND.name(), &input)? == bytes,
+        || "the lighting job run a slice at a time differs from the job run whole".into(),
+    );
+    observed.hash("lighting", &bytes);
+    let sky = made.sky_layers();
+    let area = (SKY_TEXELS * SKY_TEXELS) as usize;
+    let seen: u64 = sky[..area * 4]
+        .chunks(4)
+        .map(|texel| u64::from(texel[0]))
+        .sum();
+    observed.record(
+        "lighting maps",
+        json!({
+            "sky texels": area,
+            "horizon texels": HORIZON_TEXELS * HORIZON_TEXELS,
+            "mean sky seen": seen as f64 / area as f64 / 255.0,
+            "lowest": made.lowest,
+        }),
+    );
+    records.push((LightingJob::KIND.name(), bytes));
 
     // A tile under edits, which its job carries: two pits dug in the
     // meadow, the later over the earlier.
@@ -233,6 +275,34 @@ fn load(root: &Path) -> Result<Terrain, String> {
             (&document.materials, &document.meshes),
         )
         .map_err(|error| error.to_string())
+}
+
+/// The lighting job of `pyramid`'s terrain from `tiles`: its finest pinned
+/// level's samples over the whole terrain, as engines gather them.
+fn lighting_job(pyramid: &Pyramid, tiles: &BTreeMap<TileKey, Tile>) -> LightingJob {
+    let level = pyramid.levels().saturating_sub(PINNED);
+    let [tiles_x, tiles_z] = pyramid.tiles(level);
+    let quads = TILE_QUADS as usize;
+    let columns = tiles_x as usize * quads + 1;
+    let rows = tiles_z as usize * quads + 1;
+    let mut heights = vec![0.0_f32; columns * rows];
+    for key in pyramid.level_tiles(level) {
+        let tile = &tiles[&key];
+        let first = [usize::from(key.x) * quads, usize::from(key.z) * quads];
+        for z in 0..=quads {
+            for x in 0..=quads {
+                heights[(first[1] + z) * columns + first[0] + x] = tile.height(x as i32, z as i32);
+            }
+        }
+    }
+    LightingJob {
+        samples: [columns as u32, rows as u32],
+        spacing: pyramid.spacing(level),
+        extent: pyramid.extent(),
+        heights: heights.into_boxed_slice(),
+        sky: SKY_TEXELS,
+        horizons: HORIZON_TEXELS,
+    }
 }
 
 /// `key` as goldens name it: level/x/z.

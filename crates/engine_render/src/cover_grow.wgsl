@@ -36,8 +36,8 @@ struct Grow {
     // capacity.
     counts: vec4<u32>,
     // The density scale, how many of each finest cell's candidates this
-    // tier tries, the terrain's sky map's layer plus one
-    // (0 until built), and the tallest blade any material grows.
+    // tier tries, the terrain's sky map's first layer plus one
+    // (0 until it arrives), and the tallest blade any material grows.
     scale: vec4<f32>,
     // This tier: the meters from the eye it starts at, the
     // radius, where tiers end (0 without tiers), and how many level-0
@@ -338,7 +338,7 @@ fn pack_color(color: vec3<f32>, w: f32) -> u32 {
 
 // The ground's large-scale variety at terrain-local `local`:
 // its sky map's hollows and ridges, interpolated between texels;
-// level ground before the map is built.
+// level ground before the map arrives.
 fn variety_at(local: vec2<f32>) -> vec2<f32> {
     let layer = u32(grow.scale.z);
     if layer == 0u {

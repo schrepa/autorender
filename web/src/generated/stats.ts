@@ -554,10 +554,14 @@ export interface TerrainRenderStats {
   fallback_patches: number;
   /** Tiles the GPU gave control values this frame. */
   gpu_controls: number;
-  /** Horizon maps this frame rebuilt. */
-  horizon_builds: number;
   /** Terrains casting long sun shadows through horizon maps. */
   horizons: number;
+  /**
+   * Maps of terrains' lighting this frame uploaded, as it arrived or
+   * changed: sky and horizon maps, one each per terrain. The sun moving
+   * uploads none.
+   */
+  lighting_uploads: number;
   /** Tiles still loading. */
   loading_tiles: number;
   /** Patches the camera drew. */
@@ -579,10 +583,8 @@ export interface TerrainRenderStats {
   placed_objects: number;
   /** Patches drawn into shadow maps. */
   shadow_patches: number;
-  /** Terrains whose sky visibility maps are built. */
+  /** Terrains whose sky visibility maps are here. */
   sky_maps: number;
-  /** Rows of sky visibility maps this frame built. */
-  sky_rows: number;
   /** Tiles resident on the GPU. */
   tiles: number;
   /** Triangles the camera drew. */

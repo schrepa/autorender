@@ -21,8 +21,8 @@
 //! The pass is its parts: the tile atlas (`atlas`), the tables shaders
 //! look up (`tables`), the frame's patches (`patches`) and the pipelines
 //! and terrain group (`pipelines`), beside tiles' water (`water_blocks`),
-//! the material maps, sky maps, horizon maps, runtime virtual texture and
-//! deformation map. Debug builds
+//! the material maps, the sky and horizon maps its lighting uploads, the
+//! runtime virtual texture and deformation map. Debug builds
 //! check what holds between them after every preparation (`invariants`).
 
 use engine_core::collections::HashMap;
@@ -199,11 +199,10 @@ pub(crate) struct TerrainViews<'a> {
     /// Whether reflection probes capture faces this frame, which draw every
     /// patch.
     pub probes: bool,
-    /// Terrain settings, whether shadows run, and the direction toward the
-    /// sun, for horizon maps.
+    /// Terrain settings, and whether shadows run, which horizon maps
+    /// serve.
     pub settings: engine_core::TerrainSettings,
     pub shadows: bool,
-    pub sun: Vec3,
     /// Whether tiles that arrive grow out of their parents over a few frames:
     /// ordinary frames; exact ones draw every tile as it
     /// is. And the frame's presentation time in seconds, which their fades
@@ -301,17 +300,6 @@ impl TerrainPass {
         })
     }
 
-    /// Records this frame's horizon map builds.
-    pub(crate) fn encode_horizons(
-        &mut self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        profiler: &crate::profiling::GpuProfiler,
-    ) {
-        self.horizons
-            .encode(device, encoder, self.atlas.heights(), profiler);
-    }
-
     /// Uploads tiles the frame's terrains list and the GPU lacks, releases
     /// those they no longer list, and lays out this frame's patches for the
     /// camera, reflection probe faces and the shadow maps of `views`.
@@ -340,12 +328,9 @@ impl TerrainPass {
         let vt_pages = self.vt.wanted(&views.settings);
         self.maps.prepare(device, queue, mips, terrains, vt_pages);
         self.tables.write_palette(queue, terrains, &self.maps);
-        let slots = &self.atlas.slots;
         let horizon_settings = (&views.settings, views.shadows);
-        (self.horizons).prepare(device, queue, terrains, horizon_settings, views.sun, slots);
-        self.sky
-            .prepare(device, queue, terrains, &views.settings, slots);
-        self.sky.build(device, queue, self.atlas.heights());
+        (self.horizons).prepare(device, queue, terrains, horizon_settings);
+        self.sky.prepare(device, queue, terrains, &views.settings);
         // The runtime virtual texture.
         let tables = &self.tables;
         let textures = self.vt.prepare(
@@ -416,11 +401,10 @@ impl TerrainPass {
             .write_probe_view(queue, face, relative, eye, center)
     }
 
-    /// Creates the compute pipelines tiles' normal maps, control values
-    /// and sky maps build with unless they exist.
+    /// Creates the compute pipelines tiles' normal maps and control values
+    /// build with unless they exist.
     pub(crate) fn warm(&mut self, device: &wgpu::Device) {
         self.atlas.warm(device);
-        self.sky.warm(device);
     }
 
     /// What ground cover's growth reads: the height and
@@ -458,7 +442,7 @@ impl TerrainPass {
     /// Terrain `index`'s place in the directory and palette, its densest
     /// cover (blades per square meter) and that cover's mean blade height
     /// (meters), as the last preparation wrote them, and its sky map's
-    /// layer plus one (0 until built).
+    /// first layer plus one (0 until it arrives).
     pub(crate) fn cover_terrain(&self, index: usize) -> (u32, u32, [f32; 2], u32) {
         let tables = &self.tables;
         (

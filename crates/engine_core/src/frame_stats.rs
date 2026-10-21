@@ -413,12 +413,12 @@ pub struct TerrainRenderStats {
     pub fallback_patches: u32,
     /// Terrains casting long sun shadows through horizon maps.
     pub horizons: u32,
-    /// Horizon maps this frame rebuilt.
-    pub horizon_builds: u32,
-    /// Terrains whose sky visibility maps are built.
+    /// Terrains whose sky visibility maps are here.
     pub sky_maps: u32,
-    /// Rows of sky visibility maps this frame built.
-    pub sky_rows: u32,
+    /// Maps of terrains' lighting this frame uploaded, as it arrived or
+    /// changed: sky and horizon maps, one each per terrain. The sun moving
+    /// uploads none.
+    pub lighting_uploads: u32,
     /// Surface materials past the palette's capacity, or whose maps the
     /// shared arrays cannot hold (block compressed, or sized unlike the first
     /// material's), which show a plain color instead.

@@ -353,6 +353,11 @@ impl Terrains {
                 stats.baking += 1;
                 continue;
             }
+            if let Some(slots) = slots.as_mut() {
+                light(state, settings, slots, frame);
+            }
+            stats.lit += u32::from(state.lighting.made.is_some());
+            stats.lighting += u32::from(state.lighting.job.is_some());
             let missing = std::mem::take(&mut state.missing);
             state.missing = missing
                 .into_iter()
@@ -461,13 +466,14 @@ impl Terrains {
                 }
             }
         }
-        // The camera's view has loaded whole once nothing bakes, loads or
-        // stands in for a finer level.
+        // The camera's view has loaded whole once nothing bakes, loads,
+        // stands in for a finer level or waits for its lighting.
         if !self.loaded
             && stats.terrains > 0
             && stats.baking == 0
             && stats.loading_tiles == 0
             && stats.fallback_patches == 0
+            && stats.lighting == 0
         {
             self.loaded = true;
         }

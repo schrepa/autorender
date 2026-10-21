@@ -35,6 +35,7 @@ pub mod hydraulics;
 mod hydrology;
 pub mod jobs;
 mod layers;
+pub mod lighting;
 mod nav;
 mod noise;
 mod path;

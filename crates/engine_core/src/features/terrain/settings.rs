@@ -58,19 +58,22 @@ settings! {
         pub collision_radius: f32 = 192.0 => range(0.0, 4096.0),
         /// Long sun shadows through each terrain's horizon map,
         /// with shadows on; shadow maps then draw terrain near the camera only.
-        /// Off, terrain casts into the shadow maps alone.
+        /// Off, terrain casts into the shadow maps alone. The map holds the
+        /// horizons in sixteen directions, cooked with the terrain's lighting
+        /// from its finest pinned level, so the sun moves freely.
         pub sun_shadows: bool = true => any,
-        /// Texels along a horizon map's sides, 8 bytes each.
-        pub shadow_resolution: u32 = 1024 => range(64, 4096),
+        /// Texels along a horizon map's sides, 72 bytes each on the GPU.
+        pub shadow_resolution: u32 = 512 => range(64, 4096),
         /// Shadow edge height per meter to the slope casting it (the sun's disc
         /// gives 0.0093).
         pub shadow_softness: f32 = 0.01 => range(0.0, 0.2),
-        /// Ambient light on terrain scaled by how much sky its ground sees:
-        /// each terrain's sky visibility map, built once its
-        /// finest pinned level is resident, where valleys and hollows see less
-        /// sky and take their own light back instead.
+        /// Ambient light on terrain scaled by how much sky its ground sees,
+        /// and taken from the sky it sees: each terrain's sky visibility map,
+        /// cooked with its lighting from its finest pinned level, where
+        /// valleys and hollows see less sky and take their own light back
+        /// instead.
         pub sky_visibility: bool = true => any,
-        /// Texels along a sky visibility map's sides, 4 bytes each.
+        /// Texels along a sky visibility map's sides, 8 bytes each.
         pub sky_resolution: u32 = 1024 => range(64, 4096),
         /// Meters from the camera within which the ground's relief shows, its
         /// view rays marching through its materials' heights; 0 none.

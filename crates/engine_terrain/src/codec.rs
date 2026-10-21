@@ -168,6 +168,116 @@ pub(crate) fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32
         .collect())
 }
 
+/// Writes `planes`, square planes of bytes `side` texels a side one after
+/// another, each byte as its difference (wrapping) from what its written
+/// neighbours predict (left plus up less their corner, as [`put_grid`]
+/// predicts), which smooth maps leave mostly small for the cook's
+/// compression.
+pub(crate) fn put_planes(out: &mut Writer, planes: &[u8], side: usize) {
+    out.put(&(planes.len() as u64));
+    let area = side * side;
+    let mut residuals = Vec::with_capacity(planes.len());
+    for (at, &value) in planes.iter().enumerate() {
+        let within = if area == 0 { 0 } else { at % area };
+        let start = at - within;
+        residuals
+            .push(value.wrapping_sub(predict_byte(within, side, |within| planes[start + within])));
+    }
+    out.raw(&residuals);
+}
+
+/// Reads planes [`put_planes`] wrote, `side` texels a side.
+pub(crate) fn get_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u8]>, CodecError> {
+    let count = input.count()?;
+    let area = side * side;
+    if area == 0 || count % area != 0 {
+        return Err(CodecError("planes of another size"));
+    }
+    let (residuals, rest) = input.bytes.split_at(count);
+    input.bytes = rest;
+    let mut planes = vec![0_u8; count];
+    for at in 0..count {
+        let within = at % area;
+        let start = at - within;
+        let predicted = predict_byte(within, side, |within| planes[start + within]);
+        planes[at] = residuals[at].wrapping_add(predicted);
+    }
+    Ok(planes.into_boxed_slice())
+}
+
+/// Writes `planes`, square planes of 16-bit values `side` texels a side, as
+/// [`put_planes`] writes bytes: each as its difference from what its
+/// neighbours predict, little-endian.
+pub(crate) fn put_wide_planes(out: &mut Writer, planes: &[u16], side: usize) {
+    out.put(&(planes.len() as u64));
+    let area = side * side;
+    let mut residuals = Vec::with_capacity(planes.len() * 2);
+    for (at, &value) in planes.iter().enumerate() {
+        let within = if area == 0 { 0 } else { at % area };
+        let start = at - within;
+        let predicted = predict_wide(within, side, |within| planes[start + within]);
+        residuals.extend_from_slice(&value.wrapping_sub(predicted).to_le_bytes());
+    }
+    out.raw(&residuals);
+}
+
+/// Reads planes [`put_wide_planes`] wrote, `side` texels a side.
+pub(crate) fn get_wide_planes(
+    input: &mut Reader<'_>,
+    side: usize,
+) -> Result<Box<[u16]>, CodecError> {
+    let count = usize::try_from(u64::from_le_bytes(input.take()?))
+        .map_err(|_| CodecError("count out of range"))?;
+    let area = side * side;
+    let bytes = count
+        .checked_mul(2)
+        .filter(|&bytes| bytes <= input.bytes.len())
+        .ok_or(CodecError("count beyond the bytes left"))?;
+    if area == 0 || count % area != 0 {
+        return Err(CodecError("planes of another size"));
+    }
+    let (residuals, rest) = input.bytes.split_at(bytes);
+    input.bytes = rest;
+    let mut planes = vec![0_u16; count];
+    for at in 0..count {
+        let within = at % area;
+        let start = at - within;
+        let predicted = predict_wide(within, side, |within| planes[start + within]);
+        let residual = u16::from_le_bytes([residuals[2 * at], residuals[2 * at + 1]]);
+        planes[at] = residual.wrapping_add(predicted);
+    }
+    Ok(planes.into_boxed_slice())
+}
+
+/// What value `at`'s written neighbours (rows of `side`) predict it,
+/// wrapping, as [`predict_byte`] predicts bytes.
+fn predict_wide(at: usize, side: usize, value: impl Fn(usize) -> u16) -> u16 {
+    let (x, z) = (at % side, at / side);
+    match (x > 0, z > 0) {
+        (true, true) => value(at - 1)
+            .wrapping_add(value(at - side))
+            .wrapping_sub(value(at - side - 1)),
+        (true, false) => value(at - 1),
+        (false, true) => value(at - side),
+        (false, false) => 0,
+    }
+}
+
+/// What byte `at`'s written neighbours (rows of `side`) predict it, wrapping:
+/// left plus up less their corner where all three are written, else left,
+/// else up, else zero.
+fn predict_byte(at: usize, side: usize, byte: impl Fn(usize) -> u8) -> u8 {
+    let (x, z) = (at % side, at / side);
+    match (x > 0, z > 0) {
+        (true, true) => byte(at - 1)
+            .wrapping_add(byte(at - side))
+            .wrapping_sub(byte(at - side - 1)),
+        (true, false) => byte(at - 1),
+        (false, true) => byte(at - side),
+        (false, false) => 0,
+    }
+}
+
 /// The nearest whole step of the height grid to `value`; none for NaN.
 #[expect(
     clippy::cast_possible_truncation,

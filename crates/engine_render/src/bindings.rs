@@ -15,8 +15,7 @@ use crate::gpu_layouts::scene::{
 };
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::gpu_layouts::{
-    clouds, debug_view, deformation, ground_cover, occupancy, scatter, sky, terrain,
-    terrain_horizons, terrain_sky, water,
+    clouds, debug_view, deformation, ground_cover, occupancy, scatter, sky, terrain, water,
 };
 
 /// Shader stages, as bits.
@@ -958,34 +957,6 @@ tables! {
             uniform_of(1, "job", 32, C),
             bind(2, "data", Kind::Read { min_size: 4 }, C),
             bind(3, "control", Kind::Storage(R32Uint), C),
-        ],
-    };
-
-    /// A terrain horizon map's build (`terrain_horizon.wgsl`):
-    /// the height array, which layer holds each source tile, the build's
-    /// uniform and the layer it writes.
-    const TERRAIN_HORIZON: Table = Table {
-        label: "engine/terrain-horizon-layout",
-        serves: [TERRAIN_HORIZON_SHADER @ 0],
-        bindings: &[
-            texture(0, "heights", Unfilterable, D2Array, C),
-            read(1, "tile_layers", C),
-            uniform_of(2, "build", size_of::<terrain_horizons::BuildUniform>(), C),
-            bind(3, "horizon", Kind::Storage(Rgba16Float), C),
-        ],
-    };
-
-    /// A terrain sky visibility map's build (`terrain_sky.wgsl`):
-    /// the height array, which layer holds each source tile, the build's
-    /// uniform and the layer it writes.
-    const TERRAIN_SKY: Table = Table {
-        label: "engine/terrain-sky-layout",
-        serves: [TERRAIN_SKY_SHADER @ 0],
-        bindings: &[
-            texture(0, "heights", Unfilterable, D2Array, C),
-            read(1, "tile_layers", C),
-            uniform_of(2, "build", size_of::<terrain_sky::BuildUniform>(), C),
-            bind(3, "sky", Kind::Storage(Rgba8Unorm), C),
         ],
     };
 

@@ -192,8 +192,6 @@ layout_modules! {
     scatter,
     sky,
     terrain,
-    terrain_horizons,
-    terrain_sky,
     terrain_vt,
     virtual_geometry,
     water,

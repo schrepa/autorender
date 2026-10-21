@@ -1144,6 +1144,13 @@ export interface TerrainStats {
   dropped_tiles: number;
   fallback_patches: number;
   falls: number;
+  lighting: number;
+  /**
+   * Terrains whose lighting is here (the sky their ground sees, their
+   * horizons), and those whose lighting is asked for: until it arrives
+   * their ground sees the whole sky and casts no long shadows.
+   */
+  lit: number;
   /**
    * Whether the camera's view has yet to load whole since terrains
    * arrived or [`Terrains::begin_loading`]: frames work
