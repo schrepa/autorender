@@ -27,8 +27,9 @@ Native options:
   --size WxH           window or offscreen size in physical pixels
   --gpu discrete|integrated
                        the GPU asked for where there are two (default discrete)
-  --workers N|off      job worker threads (default half the logical
-                       processors, at most 8); off runs jobs in the engine
+  --workers N|off      job worker threads (default every logical processor
+                       but two, every one while cooking); off runs jobs in
+                       the engine
   --jobcache off|verify|MiB
                        keep job outputs beside the program (default 1024
                        MiB); verify runs every job anyway and compares
@@ -323,6 +324,9 @@ pub struct HostOptions {
     pub shader_hash: bool,
     /// The pack a cooking session writes (`--cook`).
     pub cook: Option<PathBuf>,
+    /// Whether `--workers` was given: else a cook runs a worker on every
+    /// logical processor.
+    pub workers_given: bool,
 }
 
 impl Default for HostOptions {
@@ -348,6 +352,7 @@ impl Default for HostOptions {
             measure: None,
             shader_hash: false,
             cook: None,
+            workers_given: false,
         }
     }
 }
@@ -406,6 +411,7 @@ impl HostOptions {
             }
             "--workers" => {
                 let workers = arguments.value(argument)?;
+                self.workers_given = true;
                 self.jobs.workers = match workers.as_str() {
                     "off" => 0,
                     count => count
@@ -676,7 +682,13 @@ impl HostOptions {
     ) -> engine::Result<()> {
         let size = self.size.unwrap_or((320, 180));
         let started = Instant::now();
-        let mut game = Offscreen::launch_with(size, self.gpu, self.jobs.pool(true), build)?;
+        let mut jobs = self.jobs.clone();
+        if !self.workers_given {
+            let cores = std::thread::available_parallelism().map_or(1, usize::from);
+            jobs.workers =
+                policy::cook_workers(u32::try_from(cores).unwrap_or(u32::MAX)) as usize;
+        }
+        let mut game = Offscreen::launch_with(size, self.gpu, jobs.pool(true), build)?;
         self.settings.apply(game.host_mut());
         game.host_mut().cook();
         // The records the packs it reads held: what an unchanged cook reuses.

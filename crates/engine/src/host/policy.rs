@@ -38,10 +38,9 @@ policy! {
     pub const PACE_INTERVAL_LIMIT_MS: f64 = 100.0;
     /// Milliseconds loading between frames leaves before the next is due.
     pub const BETWEEN_MARGIN_MS: f64 = 4.0;
-    /// Logical processors per job worker a host runs by default.
-    pub const CORES_PER_DEFAULT_WORKER: u32 = 2;
-    /// The most job workers a host runs by default.
-    pub const MAX_DEFAULT_WORKERS: u32 = 8;
+    /// Logical processors a host leaves its frames (the engine's thread
+    /// and the GPU's driver) when it runs job workers on the rest.
+    pub const FRAME_CORES: u32 = 2;
     /// The most job workers a host runs.
     pub const MAX_WORKERS: u32 = 32;
     /// MiB of job outputs a host keeps by default.
@@ -64,8 +63,15 @@ policy! {
 }
 
 /// The job workers a host runs by default on `cores` logical processors:
-/// one per [`CORES_PER_DEFAULT_WORKER`], at least one and at most
-/// [`MAX_DEFAULT_WORKERS`].
+/// one on each the frames leave ([`FRAME_CORES`]), at least one and at most
+/// [`MAX_WORKERS`].
 pub fn default_workers(cores: u32) -> u32 {
-    (cores / CORES_PER_DEFAULT_WORKER).clamp(1, MAX_DEFAULT_WORKERS)
+    cores.saturating_sub(FRAME_CORES).clamp(1, MAX_WORKERS)
+}
+
+/// The job workers a cook runs on `cores` logical processors: one on each,
+/// up to [`MAX_WORKERS`], as a cook keeps no frame rate and its records are
+/// the same bits however many workers made them.
+pub fn cook_workers(cores: u32) -> u32 {
+    cores.clamp(1, MAX_WORKERS)
 }

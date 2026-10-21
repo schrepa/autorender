@@ -14,7 +14,7 @@
 // pool's workers end and it calls the module no more.
 
 import workerWasmUrl from "../../pkg/engine_worker_bg.wasm?url";
-import { CORES_PER_DEFAULT_WORKER, MAX_DEFAULT_WORKERS, MAX_WORKERS, PANIC_PREFIX } from "../generated/host";
+import { FRAME_CORES, MAX_WORKERS, PANIC_PREFIX } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 import { engineWorkerModule } from "./bindings";
 import { JobStore, jobCacheSettings, type Unpacker } from "./job-cache";
@@ -432,11 +432,11 @@ export function jobPool(): JobPool | undefined {
 }
 
 /** The job workers `requested` (the page's ?workers) runs: none for `off`,
- * 0 to MAX_WORKERS as given, and by default one per CORES_PER_DEFAULT_WORKER
- * logical processors, at most MAX_DEFAULT_WORKERS. */
+ * 0 to MAX_WORKERS as given, and by default one on each logical processor
+ * the frames leave (all but FRAME_CORES), at least one. */
 function workerCount(requested: string | null): number {
   if (requested === null) {
-    return Math.max(1, Math.min(MAX_DEFAULT_WORKERS, Math.floor((navigator.hardwareConcurrency || 4) / CORES_PER_DEFAULT_WORKER)));
+    return Math.max(1, Math.min(MAX_WORKERS, (navigator.hardwareConcurrency || 4) - FRAME_CORES));
   }
   if (requested === "off") return 0;
   if (/^\d+$/.test(requested) && Number(requested) <= MAX_WORKERS) return Number(requested);
