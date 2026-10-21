@@ -5,7 +5,7 @@
  * shadows; it inspects as authored; its surroundings fill the view past its
  * edges; its erosion bake, roads, bridge, tunnel and routes read back;
  * height queries, a tile budget, collision against rendering, the settings
- * section, speed-aware detail, tile memory and banded placing hold;
+ * section, speed-aware detail and tile memory hold;
  * terrain's debug views, the sky visibility map and freezing work; edits,
  * walks and navigation agents cross it and authored objects stand on it;
  * and a place a game names prefetches its tiles. The fixture and what the
@@ -285,69 +285,30 @@ try {
   checks.push({ check: "motion detail", waited });
 
   // Tiles the view leaves stay in memory and return at once
-  // when it comes back; with nothing missing, workers generate the tiles
-  // within the idle reach into memory.
-  // Memory starts empty and nothing is made ahead of the view until the
-  // camera is back, so the tiles under the view after the move are made
-  // then, however far this machine's workers got before (the motion checks'
-  // camera passed the corner).
-  await command("environment", { terrain: { ...fast, cache_bytes: 1, idle_reach: 0 } });
+  // when it comes back. Memory starts empty, so the tiles under the view
+  // after the move load as records then, and hold the heights the layers
+  // give.
+  await command("environment", { terrain: { ...fast, cache_bytes: 1 } });
   await command("render");
-  await command("environment", { terrain: { ...fast, idle_reach: 0 } });
+  await command("environment", { terrain: fast });
   const home = await inspectTerrains();
   await command("camera", { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] });
   await settle();
-  // The few tiles under the view after the move generated in
-  // bands of rows across idle workers, and hold the heights the layers
-  // give, as whole tiles do.
-  const corner = await inspectTerrains();
-  assert.ok(corner.banded_tiles > home.banded_tiles, `tiles under the view generate in bands: ${JSON.stringify(corner)}`);
   const joined = (await command("terrain_sweep", { center: [-380, -380], half_extent: 100, samples: 24 })).result;
   assert.ok(joined.layers.compared > 100, `the sweep compared ${joined.layers.compared}`);
-  assert.ok(joined.layers.worst.max_difference < 5e-3, `banded tiles differ from the layers by ${joined.layers.worst.max_difference}`);
+  assert.ok(joined.layers.worst.max_difference < 5e-3, `tiles differ from the layers by ${joined.layers.worst.max_difference}`);
   await command("camera", overview);
   await settle();
   const back = await inspectTerrains();
   assert.ok(back.restored_tiles > home.restored_tiles, `tiles return from memory: ${JSON.stringify(back)}`);
-  // A budget of a byte empties memory, so what it holds next was made
-  // ahead of the view.
+  // A budget of a byte empties memory.
   await command("environment", { terrain: { ...fast, cache_bytes: 1 } });
   await command("render");
   const emptied = await inspectTerrains();
   assert.equal(emptied.cached_tiles, 0, `a byte keeps no tile: ${JSON.stringify(emptied)}`);
-  await command("environment", { terrain: { ...fast, idle_reach: 4 } });
-  let ahead = emptied;
-  let generating = 0;
-  for (let frame = 0; frame < 300 && ahead.cached_tiles === 0; frame++) {
-    await command("render");
-    await new Promise(resolve => setTimeout(resolve, 25));
-    ahead = await inspectTerrains();
-    generating = Math.max(generating, ahead.idle_tiles);
-  }
-  assert.ok(ahead.cached_tiles > 0, `workers generate tiles ahead of the view: ${JSON.stringify(ahead)}`);
   await command("environment", { terrain: fast });
   await settle();
-  checks.push({ check: "memory", restored: back.restored_tiles, banded: corner.banded_tiles, cached: ahead.cached_tiles, bytes: ahead.cached_bytes, generating });
-
-  // Tiles generated in bands place their objects in bands
-  // too, the same objects as whole tiles place: the view of tiles banded
-  // draws as many as of the same tiles generated whole.
-  const cornerView = { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] };
-  await command("camera", cornerView);
-  await settle();
-  const bandedObjects = (await command("render")).result.rendering.terrain.placed_objects;
-  await command("environment", { terrain: { ...fast, max_bands: 1, cache_bytes: 1 } });
-  await command("camera", overview);
-  await settle();
-  await command("camera", cornerView);
-  await settle();
-  const wholeObjects = (await command("render")).result.rendering.terrain.placed_objects;
-  assert.ok(bandedObjects > 0, "objects stand on the banded tiles");
-  assert.equal(wholeObjects, bandedObjects, "banded and whole tiles place the same objects");
-  await command("environment", { terrain: fast });
-  await command("camera", overview);
-  await settle();
-  checks.push({ check: "placing bands", objects: bandedObjects });
+  checks.push({ check: "memory", restored: back.restored_tiles });
 
   // Terrain's development views are debug views and change pixels; the
   // terrain control's freezing keeps the patches while the camera moves
@@ -500,25 +461,24 @@ try {
     checks.push({ check: "authored placements", top: top.point[1], ground: ground.height });
   }
 
-  // While the view wants nothing, workers generate the
-  // terrain a camera at a place a game names wants into memory, with no
-  // idle reach around the camera, and the camera sent there finds it.
+  // While the view wants nothing, the terrain a camera at a place a game
+  // names wants loads into memory, and the camera sent there finds it.
   const spawnPoint = [380, 90, 380];
   const named = structuredClone(fixture);
   named.entities.push({ id: "spawn-point", prefetch: {}, transform: { translation: spawnPoint } });
   await scene.reload(command, named);
-  await command("environment", { terrain: { ...fast, idle_reach: 0 } });
+  await command("environment", { terrain: fast });
   await command("camera", overview);
   await settle();
   const prefetch = (await command("inspect", { entity: "spawn-point", component: "TerrainPrefetch" })).result.entity.components.TerrainPrefetch;
   assert.equal(prefetch.reach, 2, `a place reaches as far as a camera loads: ${JSON.stringify(prefetch)}`);
   let stored = await inspectTerrains();
-  for (let frame = 0; frame < 600 && !(stored.cached_tiles > 0 && stored.idle_tiles === 0); frame++) {
+  for (let frame = 0; frame < 600 && !(stored.cached_tiles > 0 && stored.prefetching_tiles === 0); frame++) {
     await command("render");
     await new Promise(resolve => setTimeout(resolve, 25));
     stored = await inspectTerrains();
   }
-  assert.ok(stored.cached_tiles > 0 && stored.idle_tiles === 0, `workers generate the place's tiles into memory: ${JSON.stringify(stored)}`);
+  assert.ok(stored.cached_tiles > 0 && stored.prefetching_tiles === 0, `the place's tiles load into memory: ${JSON.stringify(stored)}`);
   await command("camera", { ...overview, position: spawnPoint, target: [300, 30, 300] });
   await settle();
   const sent = await inspectTerrains();

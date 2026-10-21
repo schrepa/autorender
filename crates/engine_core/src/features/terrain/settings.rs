@@ -43,10 +43,9 @@ settings! {
         /// on the GPU); the least important beyond it drop.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_tiles: Option<u32> = None => budget,
-        /// Work generated, decoded or baked between checks of the frame's work
-        /// time, in samples' worth (67,000 a decoded tile, about 500,000 a
-        /// generated one); a frame's whole work where hosts give terrain no
-        /// clock.
+        /// Work decoded between checks of the frame's work time, in samples'
+        /// worth (67,000 a file's tile, the rivers' water on a tile about as
+        /// much); a frame's whole work where hosts give terrain no clock.
         pub samples_per_frame: u32 = 24_576 => at_least(1),
         /// Milliseconds a frame works on terrain until the camera's view first
         /// loads whole: loading takes large slices of frames.
@@ -86,20 +85,14 @@ settings! {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub motion_detail: Option<MotionDetail> = None => any,
         /// Bytes of tiles kept in memory after the view leaves them,
-        /// about 600 KB each, to return at once when it comes back: the
-        /// least recently used beyond drop, and 0 keeps none.
+        /// about 600 KB each, to return at once when it comes back (and
+        /// those places games name load into): the least recently used
+        /// beyond drop, and 0 keeps none.
         pub cache_bytes: u64 = 256 << 20 => any,
         /// Bytes of tiles becoming resident in a frame, which the GPU takes in
         /// that frame, about 540 KB a tile: tiles beyond wait for the next,
         /// though each frame's first arrives whatever its size.
         pub upload_bytes: u32 = 8 << 20 => at_least(1),
-        /// Multiples of each level's range within which workers generate tiles
-        /// ahead of the view into memory while nothing is missing; within the
-        /// keeping reach (2.5) none.
-        pub idle_reach: f32 = 3.0 => range(0.0, 8.0),
-        /// The most bands of rows a tile under the view generates in at once
-        /// on workers the other such tiles leave free; 1 generates whole tiles.
-        pub max_bands: u32 = 4 => range(1, 16),
         /// Tiles' surface materials from the GPU: tiles generate
         /// without control values, which a compute pass gives each as it
         /// uploads, the rules' own but where GPU rounding crosses a threshold;

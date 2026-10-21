@@ -2,10 +2,14 @@
 //! each holding the engine's job worker, which runs its most urgent job a
 //! slice at a time (`engine_worker::Worker::slice`). The engine schedules
 //! its jobs (`engine::host::JobScheduler`): the pool carries its orders to
-//! the workers and to the job cache's folder, and hands back what workers
-//! report and the cache reads. A worker's panic ends the program, as every
-//! engine panic does (`engine_panic`'s hook).
+//! the workers and to the records (the cook's packs, then the store's
+//! folder), and hands back what workers report and the records read; a
+//! pool without workers has the host run its jobs in place. Cooking, it
+//! keeps every record the session read or made for the pack it writes. A
+//! worker's panic ends the program, as every engine panic does
+//! (`engine_panic`'s hook).
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
@@ -14,15 +18,18 @@ use engine::host::{JobId, JobOrder, JobShare, policy};
 use engine::{Game, GameHost};
 use engine_worker::Report;
 
+use crate::cook::PackWriter;
 use crate::job_cache::{DEFAULT_BUDGET, JobStore};
 
 /// How a native host runs the engine's jobs, as the page's `workers` and
-/// `jobcache` parameters choose.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// `jobcache` parameters choose, and where its records come from.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JobOptions {
-    /// Worker threads; with none, the engine runs its jobs itself.
+    /// Worker threads; with none, the host runs jobs in place.
     pub workers: usize,
     pub cache: CacheOptions,
+    /// The folder of the cook's packs it reads (`--packs`).
+    pub packs: Option<PathBuf>,
 }
 
 /// What the job cache keeps.
@@ -47,19 +54,27 @@ impl Default for JobOptions {
             cache: CacheOptions::Keep {
                 budget: DEFAULT_BUDGET,
             },
+            packs: None,
         }
     }
 }
 
 impl JobOptions {
-    /// The pool these options run; none without workers.
-    pub fn pool(self) -> Option<JobPool> {
+    /// The pool these options run, cooking where `cook` says: its records
+    /// then come from a store whatever the cache's options.
+    pub fn pool(&self, cook: bool) -> JobPool {
+        let packs = self.packs.as_deref();
         let store = match self.cache {
+            CacheOptions::Off if cook => JobStore::open(DEFAULT_BUDGET, false, packs),
             CacheOptions::Off => None,
-            CacheOptions::Keep { budget } => JobStore::open(budget, false),
-            CacheOptions::Verify => JobStore::open(DEFAULT_BUDGET, true),
+            CacheOptions::Keep { budget } => JobStore::open(budget, false, packs),
+            CacheOptions::Verify => JobStore::open(DEFAULT_BUDGET, true, packs),
         };
-        (self.workers > 0).then(|| JobPool::new(self.workers, store))
+        let mut pool = JobPool::new(self.workers, store);
+        if cook {
+            pool.cook = Some(PackWriter::default());
+        }
+        pool
     }
 }
 
@@ -86,12 +101,14 @@ struct Slot {
     thread: Option<JoinHandle<()>>,
 }
 
-/// Job workers beside a game, and the folder keeping their outputs.
+/// Job workers beside a game, its records, and while cooking what the
+/// pack takes.
 pub struct JobPool {
     slots: Vec<Slot>,
     reports: Receiver<Report>,
     store: Option<JobStore>,
     reported: Option<(u64, u64, u64, u64)>,
+    cook: Option<PackWriter>,
 }
 
 impl JobPool {
@@ -128,6 +145,7 @@ impl JobPool {
             reports,
             store,
             reported: None,
+            cook: None,
         }
     }
 
@@ -158,11 +176,10 @@ impl JobPool {
         while let Ok(report) = self.reports.try_recv() {
             match report {
                 Report::Done(id, output) => host.complete_job(JobId(id), output),
-                Report::Part(id, part) => host.part_job(JobId(id), part),
                 Report::Failed(id, error) => host.fail_job(JobId(id), error),
             }
         }
-        // Reads from the cache answer at once, and may order more.
+        // Reads of records answer at once, and may order more.
         let mut orders = host.take_jobs();
         while !orders.is_empty() {
             for order in orders {
@@ -185,7 +202,6 @@ impl JobPool {
         match order {
             JobOrder::Share(JobShare::Clear) => self.broadcast(|| Order::Clear),
             JobOrder::Share(JobShare::Set { key, bytes }) => {
-                let bytes: Arc<[u8]> = bytes.into();
                 self.broadcast(|| Order::Share(key.clone(), bytes.clone()));
             }
             JobOrder::Share(JobShare::Remove { key }) => {
@@ -202,15 +218,17 @@ impl JobPool {
             JobOrder::Cancel { worker, id } => {
                 let _ = self.slots[worker as usize].orders.send(Order::Cancel(id.0));
             }
-            JobOrder::Lookup { id, kind, identity } => {
-                let Some(store) = &mut self.store else {
-                    host.job_kept(id, String::new(), None);
-                    return;
-                };
-                let (key, kept) = store.lookup(kind, &identity);
+            JobOrder::Lookup { id, key } => {
+                let kept = self.store.as_mut().and_then(|store| store.lookup(&key));
+                if let (Some(cook), Some(record)) = (&mut self.cook, &kept) {
+                    cook.take(&key, record);
+                }
                 host.job_kept(id, key, kept);
             }
             JobOrder::Keep { key, output } => {
+                if let Some(cook) = &mut self.cook {
+                    cook.take(&key, &output);
+                }
                 if let Some(store) = &mut self.store {
                     store.keep(&key, &output);
                 }
@@ -221,6 +239,23 @@ impl JobPool {
                 }
             }
         }
+    }
+
+    /// The records the packs it reads hold.
+    pub fn packed(&self) -> usize {
+        self.store.as_ref().map_or(0, JobStore::packed)
+    }
+
+    /// Writes what the cooking session read or made as the pack `path`,
+    /// once the packs it reads are closed (it may replace one): the
+    /// records and bytes written.
+    pub fn write_pack(&mut self, path: &Path) -> Result<(usize, u64), String> {
+        let cook = self.cook.take().ok_or("the pool is not cooking")?;
+        if let Some(store) = &mut self.store {
+            store.close_packs();
+        }
+        let bytes = cook.write(path)?;
+        Ok((cook.len(), bytes))
     }
 
     fn broadcast(&mut self, order: impl Fn() -> Order) {
@@ -250,7 +285,6 @@ impl Drop for JobPool {
 /// most urgent job; reports to `report`.
 fn work(inbox: &Receiver<Order>, report: &Sender<Report>) {
     let mut worker = engine_worker::Worker::new();
-    worker.warm();
     loop {
         // Orders first: waiting for one while no job is held.
         let mut next = if worker.busy() {

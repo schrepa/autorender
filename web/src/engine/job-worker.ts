@@ -6,8 +6,7 @@
 // Messages take effect in the order they came, so shares come before the
 // jobs reading them. The module runs its most urgent job a slice at a
 // time; between slices the worker reads its messages, and a job the engine
-// cancelled stops there. A part of a job's output ready before the rest, as
-// a tile's shape, goes back after its slice. The engine's code panicking
+// cancelled stops there. The engine's code panicking
 // here (or its module trapping) stops the engine: the worker says so with
 // the panic's report and runs no more. A worker that breaks otherwise says
 // so, and the pool replaces it.
@@ -27,7 +26,7 @@ type Request =
   | { type: "image"; task: number; uri: string; bytes: Uint8Array };
 
 /** What a slice came to (`engine_worker::Report`), as the pool reads it. */
-type Report = { type: "done" | "part"; id: number; output: Uint8Array } | { type: "failed"; id: number; error: string };
+type Report = { type: "done"; id: number; output: Uint8Array } | { type: "failed"; id: number; error: string };
 
 const scope = self as unknown as {
   postMessage(message: unknown, transfer?: Transferable[]): void;
@@ -90,16 +89,13 @@ async function work() {
   }
 }
 
-/** Starts the module, from the page's compilation of it where given,
- * and runs a small fixed tile so its hot code reaches
- * its optimized tier before real jobs. */
+/** Starts the module, from the page's compilation of it where given. */
 async function start(bindings?: string, compiled?: WebAssembly.Module) {
   const module = (bindings
     ? await import(/* @vite-ignore */ bindings)
     : await import("../../pkg/engine_worker")) as typeof import("../../pkg/engine_worker");
   await module.default(compiled ? { module_or_path: compiled } : undefined);
   worker = new module.JobWorker();
-  worker.warm();
 }
 
 async function handle(request: Request) {

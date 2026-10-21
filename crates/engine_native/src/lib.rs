@@ -10,6 +10,7 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+mod cook;
 #[cfg(feature = "dev")]
 pub mod dev;
 pub mod files;

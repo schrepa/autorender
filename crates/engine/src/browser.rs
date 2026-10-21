@@ -291,8 +291,8 @@ impl<G: Game> PageHost<G> {
 
     /// [`GameHost::take_jobs`] as the page's pool reads them:
     /// `{clear: true}`, `{share, bytes}`, `{unshare}`, `{run, worker, kind,
-    /// input, priority}`, `{cancel, worker}`, `{lookup, kind, identity}`,
-    /// `{keep, output}` and `{mismatch}`.
+    /// input, priority}`, `{cancel, worker}`, `{lookup, key}`, `{keep,
+    /// output}` and `{mismatch}`.
     pub fn take_jobs(&mut self) -> js_sys::Array {
         let out = js_sys::Array::new();
         let set = |object: &js_sys::Object, field: &str, value: &JsValue| {
@@ -323,14 +323,9 @@ impl<G: Game> PageHost<G> {
                     set(&object, "cancel", &id(job));
                     set(&object, "worker", &JsValue::from(worker));
                 }
-                JobOrder::Lookup {
-                    id: job,
-                    kind,
-                    identity,
-                } => {
+                JobOrder::Lookup { id: job, key } => {
                     set(&object, "lookup", &id(job));
-                    set(&object, "kind", &JsValue::from_str(kind));
-                    set(&object, "identity", &bytes(&identity));
+                    set(&object, "key", &JsValue::from_str(&key));
                 }
                 JobOrder::Keep { key, output } => {
                     set(&object, "keep", &JsValue::from_str(&key));
@@ -358,12 +353,6 @@ impl<G: Game> PageHost<G> {
     pub fn fail_job(&mut self, id: f64, error: String) {
         if let Some(id) = job_id(id) {
             self.host.fail_job(id, error);
-        }
-    }
-
-    pub fn part_job(&mut self, id: f64, part: Vec<u8>) {
-        if let Some(id) = job_id(id) {
-            self.host.part_job(id, part);
         }
     }
 

@@ -98,6 +98,101 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Meters between the heights tiles travel at: a tile's heights and water
+/// surfaces are written as whole steps of this grid, which `f32` holds
+/// exactly within 65,536 m of the terrain's origin, so what reads back is
+/// each value at its nearest step, and writing that again gives the same
+/// bytes.
+pub const HEIGHT_STEP: f32 = 1.0 / STEPS_PER_METER;
+const STEPS_PER_METER: f32 = 256.0;
+
+/// Writes `values` at their nearest steps of the height grid, rows of
+/// `stride`: each value's steps from what its written neighbours predict
+/// (left plus up less their corner, or the one there is), zigzagged into
+/// variable-length bytes one more than the step, a zero byte for NaN.
+/// Smooth ground costs about a byte a sample.
+pub(crate) fn put_grid(out: &mut Writer, values: &[f32], stride: usize) {
+    out.put(&(values.len() as u64));
+    for at in 0..values.len() {
+        let Some(value) = steps(values[at]) else {
+            out.raw(&[0]);
+            continue;
+        };
+        let predicted = predict(at, stride, |at| steps(values[at]));
+        let residual = value - predicted;
+        let mut code = ((residual << 1) ^ (residual >> 63)).cast_unsigned() + 1;
+        loop {
+            let byte = (code & 0x7f) as u8;
+            code >>= 7;
+            if code == 0 {
+                out.raw(&[byte]);
+                break;
+            }
+            out.raw(&[byte | 0x80]);
+        }
+    }
+}
+
+/// Reads a grid [`put_grid`] wrote, rows of `stride`.
+pub(crate) fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32]>, CodecError> {
+    let count = input.count()?;
+    let mut steps: Vec<Option<i64>> = Vec::with_capacity(count);
+    for at in 0..count {
+        let mut code = 0_u64;
+        let mut shift = 0;
+        loop {
+            let [byte] = input.take::<1>()?;
+            if shift > 63 {
+                return Err(CodecError("grid step out of range"));
+            }
+            code |= u64::from(byte & 0x7f) << shift;
+            shift += 7;
+            if byte & 0x80 == 0 {
+                break;
+            }
+        }
+        let Some(code) = code.checked_sub(1) else {
+            steps.push(None);
+            continue;
+        };
+        let residual = (code >> 1).cast_signed() ^ -(code & 1).cast_signed();
+        let predicted = predict(at, stride, |at| steps[at]);
+        let value = predicted
+            .checked_add(residual)
+            .ok_or(CodecError("grid step out of range"))?;
+        steps.push(Some(value));
+    }
+    Ok(steps
+        .into_iter()
+        .map(|steps| steps.map_or(f32::NAN, |steps| steps as f32 / STEPS_PER_METER))
+        .collect())
+}
+
+/// The nearest whole step of the height grid to `value`; none for NaN.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a tile's heights are whole steps far within i64"
+)]
+fn steps(value: f32) -> Option<i64> {
+    (!value.is_nan()).then_some((value * STEPS_PER_METER).round() as i64)
+}
+
+/// What sample `at`'s written neighbours (rows of `stride`) predict it:
+/// left plus up less their corner where all three are numbers, else left,
+/// else up, else nothing.
+fn predict(at: usize, stride: usize, steps: impl Fn(usize) -> Option<i64>) -> i64 {
+    let (x, z) = (at % stride, at / stride);
+    let left = (x > 0).then(|| steps(at - 1)).flatten();
+    let up = (z > 0).then(|| steps(at - stride)).flatten();
+    let corner = (x > 0 && z > 0).then(|| steps(at - stride - 1)).flatten();
+    match (left, up, corner) {
+        (Some(left), Some(up), Some(corner)) => left + up - corner,
+        (Some(left), _, _) => left,
+        (None, Some(up), _) => up,
+        (None, None, _) => 0,
+    }
+}
+
 /// Reads one value from all of `bytes`.
 pub fn decode<T: Codec>(bytes: &[u8]) -> Result<T, CodecError> {
     let mut reader = Reader::new(bytes);

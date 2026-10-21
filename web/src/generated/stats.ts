@@ -338,13 +338,16 @@ export interface GroundCoverStats {
 
 /** Workers, their jobs and the host's output cache. */
 export interface JobStats {
-  /** Bytes the host's cache holds. */
+  /** Bytes the host's store holds. */
   cache_bytes: number;
-  /** Outputs the host's cache handed back instead of running their jobs. */
+  /**
+   * Records the host's packs and store handed back instead of running
+   * their jobs.
+   */
   cache_hits: number;
-  /** Verifying, cached outputs differing from a fresh run. */
+  /** Verifying, records differing from a fresh run. */
   cache_mismatches: number;
-  /** Jobs the host's cache lacked. */
+  /** Records they lacked. */
   cache_misses: number;
   /** Jobs cancelled while running. */
   cancelled: number;
@@ -354,12 +357,15 @@ export interface JobStats {
   failed: number;
   /**
    * Jobs the host's scheduler holds: on its workers, or looked up in its
-   * cache. None once every job handed out ended, an earlier engine's
-   * included.
+   * packs and store. None once every job handed out ended, an earlier
+   * engine's included.
    */
   held: number;
-  /** Parts handed back early. */
-  parts: number;
+  /**
+   * Jobs run in place: by a host without workers, or an engine no host
+   * serves.
+   */
+  in_place: number;
   /** Jobs handed out and not done. */
   running: number;
   /** Bytes of the keys shared. */
@@ -552,7 +558,7 @@ export interface TerrainRenderStats {
   horizon_builds: number;
   /** Terrains casting long sun shadows through horizon maps. */
   horizons: number;
-  /** Tiles still generating or loading. */
+  /** Tiles still loading. */
   loading_tiles: number;
   /** Patches the camera drew. */
   patches: number;
@@ -581,11 +587,6 @@ export interface TerrainRenderStats {
   tiles: number;
   /** Triangles the camera drew. */
   triangles: number;
-  /**
-   * Resident tiles lacking objects their levels place with nothing
-   * under way to place them: none unless streaming lost track of them.
-   */
-  unplaced_tiles: number;
   /** Virtual texture pages baked this frame (absent or stale). */
   vt_bakes: number;
   /** Virtual texture pages evicted for others this frame. */

@@ -9,7 +9,7 @@
 //! alone.
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use engine::host::{HostSettings, SETTINGS, policy};
@@ -18,7 +18,7 @@ use serde_json::json;
 
 use crate::{
     CacheOptions, Frames, JobOptions, Measure, Method, Offscreen, Pix, PixRecord, ProfileRecord,
-    Record, Window, WindowReport,
+    Record, Window, WindowReport, host_error,
 };
 
 /// The host's options before the engine switches, as `--help` lists them.
@@ -71,6 +71,11 @@ const USAGE_TOOLS: &str = "\
   --vendor-counters LIST
                        with --vendor pix: the comma-separated counters (PIX's
                        names) to replay in place of the summary's own
+  --packs DIR          the folder of the cook's packs records are read from
+                       before the store and before any job runs
+  --cook FILE          cook offscreen: every record the game's content needs,
+                       made or read, written into the pack FILE once none is
+                       left
   --measure FILE       a measured run offscreen, as the method in FILE says
                        (`cargo xtask measure` writes it): settled by its rule,
                        then timed one frame at a time and with frames in
@@ -316,6 +321,8 @@ pub struct HostOptions {
     /// A measured run's method.
     pub measure: Option<Method>,
     pub shader_hash: bool,
+    /// The pack a cooking session writes (`--cook`).
+    pub cook: Option<PathBuf>,
 }
 
 impl Default for HostOptions {
@@ -340,6 +347,7 @@ impl Default for HostOptions {
             dev_artifacts: None,
             measure: None,
             shader_hash: false,
+            cook: None,
         }
     }
 }
@@ -437,6 +445,8 @@ impl HostOptions {
                     .set(&switch[2..], &value)
                     .map_err(|error| format!("--{error}"))?;
             }
+            "--packs" => self.jobs.packs = Some(arguments.value(argument)?.into()),
+            "--cook" => self.cook = Some(arguments.value(argument)?.into()),
             "--frames" => self.frames = Some(arguments.count(argument)?),
             "--settle-ms" => {
                 let settle = arguments.value(argument)?;
@@ -506,6 +516,12 @@ impl HostOptions {
             || self.dev
             || self.vendor.is_some()
             || self.counters.is_some();
+        if self.cook.is_some() && (others || self.measure.is_some()) {
+            return Err(
+                "--cook runs alone: without --frames, --offscreen, --measure, --dev, --counters and --vendor"
+                    .into(),
+            );
+        }
         if self.measure.is_some() && others {
             return Err(
                 "--measure runs alone: without --frames, --offscreen, --dev, --counters and --vendor"
@@ -548,9 +564,19 @@ impl HostOptions {
             #[cfg(feature = "dev")]
             return self.session(build)?.run();
         }
+        if let Some(pack) = &self.cook {
+            return self.run_cook(pack, build);
+        }
         if let Some(method) = &self.measure {
             let size = self.size.unwrap_or((1280, 720));
-            return crate::measure::run(method, size, self.gpu, self.jobs, self.settings, build);
+            return crate::measure::run(
+                method,
+                size,
+                self.gpu,
+                self.jobs.clone(),
+                self.settings,
+                build,
+            );
         }
         match self.offscreen {
             Some(frames) => self.run_offscreen(frames, build),
@@ -559,7 +585,7 @@ impl HostOptions {
                     Window {
                         size: self.size,
                         gpu: self.gpu,
-                        jobs: self.jobs,
+                        jobs: self.jobs.clone(),
                         vsync: self.vsync,
                         settings: self.settings,
                         measure: self.frames.map(|frames| Measure {
@@ -598,7 +624,7 @@ impl HostOptions {
         let size = self.size.unwrap_or((1280, 720));
         // PIX's capturer must be in the program before its D3D12 device.
         let pix = self.loads_pix().then(Pix::load).flatten();
-        let mut game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
+        let mut game = Offscreen::launch(size, self.gpu, &self.jobs, build)?;
         self.settings.apply(game.host_mut());
         let artifacts = self
             .dev_artifacts
@@ -636,6 +662,82 @@ impl HostOptions {
         Ok(())
     }
 
+    /// Cooks the game `build` makes into the pack `path`: offscreen at 60
+    /// Hz, its engine asking for every record its world's content needs
+    /// ([`engine::GameHost::cook`]), until none is left and the host holds no job
+    /// for [`COOK_SETTLE`] frames in a row; then every record the session
+    /// read or made is written into the pack, and what it holds printed.
+    fn run_cook<G: Game, E: Into<engine::Error>>(
+        &self,
+        path: &Path,
+        build: impl FnOnce() -> Result<(Engine, G), E>,
+    ) -> engine::Result<()> {
+        let size = self.size.unwrap_or((320, 180));
+        let started = Instant::now();
+        let mut game = Offscreen::launch_with(size, self.gpu, self.jobs.pool(true), build)?;
+        self.settings.apply(game.host_mut());
+        game.host_mut().cook();
+        // The records the packs it reads held: what an unchanged cook reuses.
+        let read = game.jobs_mut().packed();
+        let (mut frame, mut settled, mut said) = (0_u32, 0, Instant::now());
+        loop {
+            game.frame(f64::from(frame) * 1000.0 / 60.0)?;
+            frame += 1;
+            let left = game
+                .host()
+                .cooking()
+                .map_or(0, engine::host::Cooking::remaining);
+            let held = game.host().jobs_held();
+            settled = if left == 0 && held == 0 {
+                settled + 1
+            } else {
+                0
+            };
+            if settled >= COOK_SETTLE {
+                break;
+            }
+            if started.elapsed() > COOK_LIMIT {
+                return Err(engine::Error::new(
+                    engine::ErrorCode::RenderFailed,
+                    "$",
+                    format!(
+                        "the cook did not finish within {} s: {left} records left",
+                        COOK_LIMIT.as_secs()
+                    ),
+                ));
+            }
+            if said.elapsed() > Duration::from_secs(5) {
+                said = Instant::now();
+                let features = game
+                    .host()
+                    .cooking()
+                    .map(|cooking| cooking.features().to_vec());
+                eprintln!("Cooking: {left} records left, {held} jobs held: {features:?}");
+            }
+        }
+        let (records, bytes) = game.jobs_mut().write_pack(path).map_err(|reason| {
+            host_error(
+                &format!("The pack {} was not written", path.display()),
+                reason,
+            )
+        })?;
+        let stats: serde_json::Value =
+            serde_json::from_str(&game.host().stats()).expect("frame statistics are JSON");
+        println!(
+            "{:#}",
+            json!({
+                "pack": path.display().to_string(),
+                "records": records,
+                "bytes": bytes,
+                "packed_before": read,
+                "frames": frame,
+                "seconds": started.elapsed().as_secs_f64(),
+                "jobs": stats["jobs"],
+            })
+        );
+        Ok(())
+    }
+
     /// Draws `frames` frames offscreen at 60 Hz after preparing, keeps what
     /// the options ask of them, then prints their CPU times and the last
     /// frame's statistics.
@@ -647,7 +749,7 @@ impl HostOptions {
         let size = self.size.unwrap_or((1280, 720));
         let pix = self.loads_pix().then(Pix::load).flatten();
         let started = Instant::now();
-        let mut game = Offscreen::launch(size, self.gpu, self.jobs, build)?;
+        let mut game = Offscreen::launch(size, self.gpu, &self.jobs, build)?;
         self.settings.apply(game.host_mut());
         game.prepare(0.0)?;
         let prepared_ms = started.elapsed().as_secs_f64() * 1000.0;
@@ -736,6 +838,13 @@ impl HostOptions {
         Ok(())
     }
 }
+
+/// Frames in a row a cook draws with nothing left before it writes its
+/// pack: features reporting what they have left a frame late finish.
+const COOK_SETTLE: u32 = 8;
+
+/// The longest a cook may take.
+const COOK_LIMIT: Duration = Duration::from_secs(3600);
 
 /// The SHA-256 of the renderer's shader modules: each one's name and
 /// source, in order.

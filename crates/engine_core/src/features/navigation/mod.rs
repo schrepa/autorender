@@ -247,19 +247,18 @@ pub(crate) fn walk_agents(
             .as_mut()
             .filter(|slots| slots.jobs.workers() > 0)
             .and_then(|slots| {
-                let (_, origin, input) = terrains.walk_job(from, to, &options)?;
+                let (_, origin, input, record) = terrains.walk_job(from, to, &options)?;
                 let priority = crate::job_priority(crate::GAMEPLAY_JOBS, 0);
                 if !slots.take(priority) {
                     return None;
                 }
-                // Hosts may keep walks: their input names
-                // the recipe by its content.
-                let identity = input.clone();
+                // Hosts keep walks: their input names the
+                // recipe by its content.
                 Some((
                     origin,
                     slots
                         .jobs
-                        .submit_cacheable(WalkJob::KIND.name(), input, priority, identity),
+                        .submit_record(WalkJob::KIND.name(), input, priority, record),
                 ))
             });
         if let Some((origin, id)) = handed {

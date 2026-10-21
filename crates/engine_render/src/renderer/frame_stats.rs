@@ -260,7 +260,6 @@ impl Renderer {
                 shadow_patches: self.terrain.patches.frame.shadow_patches,
                 tiles: self.terrain.resident(),
                 loading_tiles: snapshot.terrain.stats.loading_tiles,
-                unplaced_tiles: snapshot.terrain.stats.unplaced_tiles,
                 gpu_controls: self.terrain.atlas.controls,
                 dropped_tiles: snapshot.terrain.stats.dropped_tiles + self.terrain.atlas.dropped,
                 fallback_patches: snapshot.terrain.stats.fallback_patches,

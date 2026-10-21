@@ -3,8 +3,6 @@
 //! history, so what a frame does would too. A [`TileMap`] answers lookups
 //! by key and hands out its tiles in key order alone.
 
-use std::collections::hash_map::Entry;
-
 use super::*;
 
 /// A map keyed by tile: lookups by key, and its tiles in key order alone.
@@ -37,20 +35,12 @@ impl<V> TileMap<V> {
         self.0.remove(key)
     }
 
-    pub(super) fn entry(&mut self, key: TileKey) -> Entry<'_, TileKey, V> {
-        self.0.entry(key)
-    }
-
     pub(super) fn len(&self) -> usize {
         self.0.len()
     }
 
     pub(super) fn is_empty(&self) -> bool {
         self.0.is_empty()
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.0.clear();
     }
 
     /// Its tiles, in key order.
@@ -91,12 +81,5 @@ impl<V> TileMap<V> {
                 self.0.remove(&key);
             }
         }
-    }
-
-    /// Takes every tile out, in key order.
-    pub(super) fn drain(&mut self) -> Vec<(TileKey, V)> {
-        let mut drained: Vec<(TileKey, V)> = self.0.drain().collect();
-        drained.sort_unstable_by_key(|&(key, _)| key);
-        drained
     }
 }

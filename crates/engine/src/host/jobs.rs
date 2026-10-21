@@ -1,14 +1,15 @@
 //! The engine's jobs as every host runs them on its workers
 //! ([`JobScheduler`]): which worker takes each job, among those with the
 //! fewest in flight the one whose most urgent job is least urgent; what
-//! every worker holds; which keepable jobs the host's cache answers, and
-//! which outputs a fresh run verifies; and what a new engine's first
-//! message drops. Hosts carry its orders ([`JobOrder`]) to their workers
-//! and their job cache (`engine_worker::JobCache` and the bytes they keep),
-//! and hand back what workers report and the cache reads.
+//! every worker holds; which records the host's packs and store answer, and
+//! which a fresh run verifies; which jobs run in place, on a host without
+//! workers; and what a new engine's first message drops. Hosts carry its
+//! orders ([`JobOrder`]) to their workers and their records (the cook's
+//! packs, `engine_worker::JobCache` and the bytes they keep), and hand back
+//! what workers report and the records read.
 
 use engine_core::collections::HashMap;
-use engine_core::{JobId, JobRequest, JobShare};
+use engine_core::{JobId, JobRequest, JobShare, MISSING_RECORD, RecordKey};
 
 use crate::app_host::JobMessage;
 
@@ -22,18 +23,14 @@ pub enum JobOrder {
     Run { worker: u32, request: JobRequest },
     /// Worker `worker` stops job `id`.
     Cancel { worker: u32, id: JobId },
-    /// The cache looks up the work of `kind` on `identity` and hands back
-    /// its key and the output it keeps, if any, for job `id`
-    /// ([`crate::GameHost::job_kept`]).
-    Lookup {
-        id: JobId,
-        kind: &'static str,
-        identity: Vec<u8>,
-    },
-    /// The cache keeps `output` as `key`.
+    /// The host's packs, then its store, look up the record `key` (64
+    /// hexadecimal digits) and hand back what they hold, if anything, for
+    /// job `id` ([`crate::GameHost::job_kept`]).
+    Lookup { id: JobId, key: String },
+    /// The store keeps `output` as the record `key`.
     Keep { key: String, output: Vec<u8> },
-    /// A fresh run's output differed from the one the cache keeps as `key`,
-    /// which goes.
+    /// A fresh run's output differed from the record kept as `key`, which
+    /// goes.
     Mismatch { key: String },
 }
 
@@ -50,21 +47,31 @@ struct Load {
     lost: bool,
 }
 
+/// What a lookup is for: a job, run where no record answers it, or a
+/// record fetched alone.
+#[derive(Debug)]
+enum Looking {
+    Job(JobRequest),
+    Fetch,
+}
+
 /// The engine's jobs on a host's workers.
 #[derive(Debug, Default)]
 pub struct JobScheduler {
     workers: Vec<Load>,
-    // The host keeps keepable jobs' outputs, and verifies them.
+    // The host holds records (packs, a store), and verifies them.
     caching: bool,
     verify: bool,
     // Each job in flight: the worker running it.
     running: HashMap<u64, u32>,
-    // Keepable jobs in flight: the key their output is kept as.
+    // Jobs making a record, in flight: the key it is kept as.
     keys: HashMap<u64, String>,
-    // Outputs kept that a fresh run verifies, the engine having taken them.
+    // Records that a fresh run verifies, the engine having taken them.
     verifying: HashMap<u64, Vec<u8>>,
-    // Keepable jobs the cache looks up.
-    looking: HashMap<u64, JobRequest>,
+    // Lookups in flight.
+    looking: HashMap<u64, Looking>,
+    // Jobs no worker takes, which the host runs in place.
+    here: Vec<JobRequest>,
     // Orders made between the host's takes.
     orders: Vec<JobOrder>,
 }
@@ -80,15 +87,15 @@ impl JobScheduler {
         self.workers.iter().filter(|load| !load.lost).count() as u32
     }
 
-    /// Whether the host keeps keepable jobs' outputs, and verifies them.
+    /// Whether the host holds records, and verifies them.
     pub(crate) fn set_cache(&mut self, caching: bool, verify: bool) {
         self.caching = caching;
         self.verify = caching && verify;
     }
 
     /// What the host does for the engine's `messages` (its jobs since the
-    /// last take, in order), after the orders made since; jobs no worker
-    /// can take fail into `finished`.
+    /// last take, in order), after the orders made since; records fetched
+    /// that no host holds fail into `finished`.
     pub(crate) fn take(
         &mut self,
         messages: Vec<JobMessage>,
@@ -100,6 +107,7 @@ impl JobScheduler {
                     self.looking.remove(&id.0);
                     self.keys.remove(&id.0);
                     self.verifying.remove(&id.0);
+                    self.here.retain(|request| request.id != id);
                     if let Some(worker) = self.running.remove(&id.0) {
                         self.workers[worker as usize].jobs.remove(&id.0);
                         self.orders.push(JobOrder::Cancel { worker, id });
@@ -113,29 +121,47 @@ impl JobScheduler {
                     self.keys.clear();
                     self.verifying.clear();
                     self.looking.clear();
+                    self.here.clear();
                     self.orders.push(JobOrder::Share(JobShare::Clear));
                 }
                 JobMessage::Share(share) => self.orders.push(JobOrder::Share(share)),
-                JobMessage::Run(request) => match &request.identity {
-                    Some(identity) if self.caching => {
-                        self.orders.push(JobOrder::Lookup {
-                            id: request.id,
-                            kind: request.kind,
-                            identity: identity.clone(),
-                        });
-                        self.looking.insert(request.id.0, request);
+                JobMessage::Run(request) => match request.record {
+                    Some(record) if self.caching => {
+                        self.lookup(request.id, record, Looking::Job(request));
                     }
-                    _ => self.dispatch(request, finished),
+                    _ => self.dispatch(request),
                 },
+                JobMessage::Fetch(fetch) if self.caching => {
+                    self.lookup(fetch.id, fetch.record, Looking::Fetch);
+                }
+                JobMessage::Fetch(fetch) => {
+                    finished.push((fetch.id, Err(MISSING_RECORD.to_owned())));
+                }
+                JobMessage::Keep(record, output) => {
+                    if self.caching {
+                        self.orders.push(JobOrder::Keep {
+                            key: record.hex(),
+                            output,
+                        });
+                    }
+                }
             }
         }
         std::mem::take(&mut self.orders)
     }
 
-    /// The cache looked up job `id`'s work as `key`: the output it keeps,
-    /// if any, is the job's, and verifying, a worker runs the job anyway
-    /// and compares; without one, a worker runs the job and the cache
-    /// keeps its output.
+    fn lookup(&mut self, id: JobId, record: RecordKey, looking: Looking) {
+        self.orders.push(JobOrder::Lookup {
+            id,
+            key: record.hex(),
+        });
+        self.looking.insert(id.0, looking);
+    }
+
+    /// The host's packs and store looked up job `id`'s record, `key`: the
+    /// bytes they hold, if any, are the job's, and verifying, the job runs
+    /// anyway and compares; without them, the job runs and the store keeps
+    /// its output. A record fetched alone that none holds fails.
     pub(crate) fn kept(
         &mut self,
         id: JobId,
@@ -144,8 +170,15 @@ impl JobScheduler {
         finished: &mut Vec<Finished>,
     ) {
         // Cancelled or cleared meanwhile: no one's.
-        let Some(request) = self.looking.remove(&id.0) else {
+        let Some(looking) = self.looking.remove(&id.0) else {
             return;
+        };
+        let request = match looking {
+            Looking::Fetch => {
+                finished.push((id, output.ok_or_else(|| MISSING_RECORD.to_owned())));
+                return;
+            }
+            Looking::Job(request) => request,
         };
         match output {
             Some(output) if self.verify => {
@@ -159,18 +192,15 @@ impl JobScheduler {
             None => {}
         }
         self.keys.insert(id.0, key);
-        self.dispatch(request, finished);
+        self.dispatch(request);
     }
 
     /// Hands `request` to the worker with the fewest jobs and tasks in
     /// flight; among those, the one whose most urgent job is least urgent,
-    /// where it would wait least. Without one the job fails.
-    fn dispatch(&mut self, request: JobRequest, finished: &mut Vec<Finished>) {
+    /// where it would wait least. Without one, the host runs it in place.
+    fn dispatch(&mut self, request: JobRequest) {
         let Some(worker) = self.least() else {
-            self.keys.remove(&request.id.0);
-            if self.verifying.remove(&request.id.0).is_none() {
-                finished.push((request.id, Err("no workers".to_owned())));
-            }
+            self.here.push(request);
             return;
         };
         self.workers[worker as usize]
@@ -178,6 +208,12 @@ impl JobScheduler {
             .insert(request.id.0, request.priority);
         self.running.insert(request.id.0, worker);
         self.orders.push(JobOrder::Run { worker, request });
+    }
+
+    /// The jobs no worker takes, for the host to run in place
+    /// ([`Self::ran_here`]), in order.
+    pub(crate) fn take_here(&mut self) -> Vec<JobRequest> {
+        std::mem::take(&mut self.here)
     }
 
     /// The worker a new job or task waits least on.
@@ -197,50 +233,55 @@ impl JobScheduler {
     }
 
     /// Job `id` is done on its worker: `output` is the engine's, which the
-    /// cache keeps where the job is keepable; verifying, it is compared
-    /// with the output kept, which the engine took.
+    /// store keeps where the job makes a record; verifying, it is compared
+    /// with the record, which the engine took.
     pub(crate) fn done(&mut self, id: JobId, output: Vec<u8>, finished: &mut Vec<Finished>) {
         // Jobs cancelled since are no one's.
         let Some(worker) = self.running.remove(&id.0) else {
             return;
         };
         self.workers[worker as usize].jobs.remove(&id.0);
+        self.made(id, Ok(output), finished);
+    }
+
+    /// Job `id`, which the host ran in place, came to `output`: as
+    /// [`Self::done`] and [`Self::failed`] take a worker's.
+    pub(crate) fn ran_here(
+        &mut self,
+        id: JobId,
+        output: Result<Vec<u8>, String>,
+        finished: &mut Vec<Finished>,
+    ) {
+        self.made(id, output, finished);
+    }
+
+    fn made(&mut self, id: JobId, output: Result<Vec<u8>, String>, finished: &mut Vec<Finished>) {
         let key = self.keys.remove(&id.0);
         if let Some(kept) = self.verifying.remove(&id.0) {
-            if let Some(key) = key
-                && kept != output
+            if let (Some(key), Ok(output)) = (key, &output)
+                && kept != *output
             {
                 self.orders.push(JobOrder::Mismatch { key });
             }
             return;
         }
-        if let Some(key) = key {
+        if let (Some(key), Ok(output)) = (key, &output) {
             self.orders.push(JobOrder::Keep {
                 key,
                 output: output.clone(),
             });
         }
-        finished.push((id, Ok(output)));
+        finished.push((id, output));
     }
 
-    /// Whether a part of job `id`'s output, which its worker handed back
-    /// before the rest, is the engine's: not where the job was cancelled or
-    /// only verifies an output the engine took.
-    pub(crate) fn part(&self, id: JobId) -> bool {
-        self.running.contains_key(&id.0) && !self.verifying.contains_key(&id.0)
-    }
-
-    /// Job `id` failed on its worker, for `error`: the engine takes the work
-    /// back, unless the job only verified an output the engine took.
+    /// Job `id` failed on its worker, for `error`: the engine records the
+    /// failure, unless the job only verified a record the engine took.
     pub(crate) fn failed(&mut self, id: JobId, error: String, finished: &mut Vec<Finished>) {
         let Some(worker) = self.running.remove(&id.0) else {
             return;
         };
         self.workers[worker as usize].jobs.remove(&id.0);
-        self.keys.remove(&id.0);
-        if self.verifying.remove(&id.0).is_none() {
-            finished.push((id, Err(error)));
-        }
+        self.made(id, Err(error), finished);
     }
 
     /// Worker `worker` broke, for `error`: its jobs fail back to the engine
@@ -276,9 +317,9 @@ impl JobScheduler {
         Some(worker)
     }
 
-    /// Jobs it holds: on workers, or in the cache's lookups.
+    /// Jobs it holds: on workers, in lookups, or to run in place.
     pub(crate) fn held(&self) -> u32 {
-        (self.running.len() + self.looking.len()) as u32
+        (self.running.len() + self.looking.len() + self.here.len()) as u32
     }
 
     /// A host's task on `worker` ended.

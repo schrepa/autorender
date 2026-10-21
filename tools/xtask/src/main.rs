@@ -7,6 +7,7 @@ mod bench;
 mod budgets;
 mod checkouts;
 mod checks;
+mod cook;
 mod coverage;
 mod development;
 mod equivalence;
@@ -118,6 +119,9 @@ fn execute() -> Result<(), Failure> {
     if task == "measure" {
         return Ok(measure::measure(&root, &options)?);
     }
+    if task == "cook" {
+        return Ok(cook::cook(&root, &options)?);
+    }
     if task == "equivalence" {
         return equivalence::equivalence(&root, &options);
     }
@@ -207,6 +211,7 @@ fn commands() -> Vec<(String, &'static str)> {
         ("gpu --report DIR [--no-rga]".into(), "Report every shader entry point's cost offline, on any machine: naga's counts and SPIR-V, and with Radeon GPU Analyzer (downloaded once, Windows and Linux) its AMD machine code, registers and memory on RDNA 2, 3 and 4"),
         ("bench check".into(), "Check bench/ against the code: the metric catalog names what measurements report, the scene and settings files known options, the shader paths every shader, the budgets known scenes, device classes and metrics, each with its source"),
         ("bench budgets --report REPORT.json --device integrated|discrete [--arm base|candidate] [--today YYYY-MM-DD] [--write]".into(), "Judge a measure report against bench/budgets.json: for each workload named after a budgeted scene, the median over the arm's settled runs (the candidate's by default) of each budgeted metric (GPU pass groups' ms, memory pools' bytes, draw, instance and triangle counts) against the device class's soft and hard limits, waivers in force (until a date) excusing a hard one; prints every verdict as JSON; exit 3 when a hard limit is broken without a waiver. With --write, writes the device class's budgets of each scene the report measured instead: each metric's median, soft and hard limits above it by the headroom tools/xtask/src/budgets.rs declares (more for times than for bytes and counts), and where the runs were measured"),
+        ("cook [--check] [PRESET...]".into(), "Cook the Stress Lab's presets (highlands when none is named) into packs in web/public/cooked/, every record each one's content needs made or read from the packs there, and list them in its index.json for the page; with --check, run each preset offscreen on its pack with every record made again and compared (--jobcache verify): it must read records and find none differing, else exit 1; each preset holds the heavy-run lock"),
         ("bench assets".into(), "Build the files workloads read that git does not hold into target/bench-assets/<inputs hash>/ (reused while the generators are unchanged) and write them into web/public/stress for the page; prints the folder and its generated_hash"),
         ("measure --task TASK.json --profile PROFILE.json --out REPORT.json [--extend REPORT.json] [--formats FORMATS.json]".into(), "Run an engine-factory measure task on the native host from this checkout (the task's tools commit): build each commit it names, run each workload's two arms (each its commit's program from that commit's tree, with its own switches, scene, settings and generated files) in alternating rounds until its clean pairs, profile each arm and report the shaders where the task wants them, run the task's checks, and write the factory's measure report, checked against FORMATS (the factory's /api/formats) when given"),
         ("equivalence [--base REV] [--candidate REV] [--tier smoke|full] [--cells NAME,...] [--aa] [--repeat N] [--keep N] [--gpu discrete|integrated] [--browser | --both [--hosts]]".into(), "Whether a change leaves what the engine draws and does as it was: the base (the merge-base with origin/main, or --base) and the candidate (the working tree, or --candidate) each build the Stress Lab, then every cell of bench/equivalence.json's tier runs on both, settled and captured, natively (default), in headless Chrome against each side's development server (--browser) or both (--both; --hosts measures how the candidate's native and Chrome images differ); captures compare by hash then pixel, judged work counters by their rule, digests by part; an unstable capture (its reason in the matrix) passes when it matches one of the base's --repeat runs or lies no farther from them than they lie from each other; --aa runs the base against itself; each cell holds the heavy-run lock; exit 0 equal, 3 different, 1 could not check"),

@@ -28,11 +28,6 @@ const LONG_FILES: &[(&str, usize)] = &[
 /// The structs with more than [`MAX_STRUCT_FIELDS`] fields, by file and
 /// name: each one's most fields.
 const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
-    (
-        "crates/engine_core/src/features/terrain/residency.rs",
-        "TerrainState",
-        36,
-    ),
     ("crates/engine_core/src/frame_stats.rs", "RenderStats", 42),
     (
         "crates/engine_core/src/interpolation/gpu.rs",

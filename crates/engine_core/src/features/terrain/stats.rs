@@ -9,30 +9,24 @@ pub struct TerrainStats {
     pub terrains: u32,
     /// Tiles resident now.
     pub resident_tiles: u32,
-    /// Tiles being generated, fetched or decoded, and every tile the
-    /// camera's view and collision want that is not resident yet.
+    /// Tiles whose records are asked for, or being fetched or decoded,
+    /// and every tile the camera's view and collision want that is not
+    /// resident yet.
     pub loading_tiles: u32,
     pub missing_tiles: u32,
-    /// Of the resident tiles, those holding their shape alone so far:
-    /// heights and holes, drawn with coarser levels'
-    /// materials while the rest loads.
+    /// Of the resident tiles, files' holding their shape alone so far:
+    /// heights and holes, drawn with coarser levels' materials while their
+    /// control values are computed.
     pub shaped_tiles: u32,
     /// Tiles the view wants that wait while the camera moves fast.
     pub waiting_tiles: u32,
     /// Tiles kept in memory after the view left them and
     /// their bytes, tiles that returned from there since terrains started,
-    /// and tiles generating ahead of the view.
+    /// and tiles loading into memory for places games name.
     pub cached_tiles: u32,
     pub cached_bytes: u64,
     pub restored_tiles: u64,
-    pub idle_tiles: u32,
-    /// Tiles that generated in bands of rows on several workers since
-    /// terrains started.
-    pub banded_tiles: u64,
-    /// Resident tiles lacking objects their levels place with nothing
-    /// under way to place them: none unless streaming lost
-    /// track of them.
-    pub unplaced_tiles: u32,
+    pub prefetching_tiles: u32,
     /// Resident tiles whose water the update made again as their rivers
     /// run now, what stands in them holding them back, and those whose
     /// water was made from other rivers still waiting their turn.

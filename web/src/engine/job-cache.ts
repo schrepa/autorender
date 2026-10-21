@@ -1,14 +1,16 @@
-// The page's job output cache: outputs of jobs the engine
-// marks keepable (terrain tiles, their far objects, walks and bakes) and
-// KTX2 textures transcoded on workers, kept in the origin's private file
-// system. Which outputs it keeps, under which keys, and which go beyond
-// its byte budget is the job worker module's (its JobCacheIndex, as the
-// native host's); this file keeps the bytes and the index's JSON beside
-// them. ?jobcache=off keeps none, ?jobcache=verify runs every job anyway
-// and compares, and ?jobcache=N sets the budget in MiB: 1 GiB by default,
-// at most half of what storage the browser offers is free.
+// The page's records: the cook's packs, read by byte range from the
+// server (`cooked/index.json` lists them), then what the page kept in the
+// origin's private file system: records the engine's jobs made and the
+// engine handed over, and KTX2 textures transcoded on workers. Keys are
+// the engine's, so what is kept outlives builds that leave the code making
+// it alone. Which records the store keeps, under which keys, and which go
+// beyond its byte budget is the job worker module's (its JobCacheIndex,
+// as the native host's); this file keeps the bytes and the index's JSON
+// beside them. ?jobcache=off keeps none, ?jobcache=verify runs every job
+// anyway and compares, and ?jobcache=N sets the budget in MiB: 1 GiB by
+// default, at most half of what storage the browser offers is free.
 
-import type { JobCacheIndex } from "../../pkg/engine_worker";
+import type { JobCacheIndex, PackDirectory } from "../../pkg/engine_worker";
 import { JOB_CACHE_MIB, MAX_JOB_CACHE_MIB } from "../generated/host";
 
 const DIRECTORY = "engine-job-cache";
@@ -16,11 +18,19 @@ const INDEX = "index.json";
 /** Milliseconds the index waits for more changes before it is written. */
 const SAVE_DELAY = 2000;
 const MIB = 1024 * 1024;
+/** The folder the cook's packs are served from, and their list. */
+const PACKS = `${import.meta.env.BASE_URL}cooked/`;
+/** Bytes of a pack's header, which names its directory's range. */
+const PACK_HEADER = 32;
 
-/** The job worker module's bindings, which hold the cache's index. */
-type IndexBindings = { JobCacheIndex: typeof JobCacheIndex };
+/** The job worker module's bindings, which hold the store's index and
+ * read packs. */
+type IndexBindings = { JobCacheIndex: typeof JobCacheIndex; PackDirectory: typeof PackDirectory };
 
-/** The cache's settings from the page's URL: `undefined` when off. A
+/** A pack the page reads: its URL and directory. */
+interface Pack { url: string; directory: PackDirectory }
+
+/** The store's settings from the page's URL: `undefined` when off. A
  * value the native host's --jobcache refuses fails. */
 export function jobCacheSettings(): { budget: number; verify: boolean } | undefined {
   const requested = new URLSearchParams(location.search).get("jobcache");
@@ -35,19 +45,23 @@ export function jobCacheSettings(): { budget: number; verify: boolean } | undefi
 export class JobStore {
   private timer = 0;
   private readonly writing = new Map<string, Promise<void>>();
+  /** Records the packs handed back. */
+  private packHits = 0;
 
-  private constructor(private readonly directory: FileSystemDirectoryHandle, readonly index: JobCacheIndex) {}
+  private constructor(private readonly directory: FileSystemDirectoryHandle, readonly index: JobCacheIndex, private readonly packs: Pack[]) {}
 
-  /** Opens the cache of the job worker module `module` (its bytes), its
-   * index in `bindings`; `undefined` where the file system refuses. */
-  static async open(module: ArrayBuffer, bindings: IndexBindings, budget: number, verify: boolean): Promise<JobStore | undefined> {
+  /** Opens the store, its index in `bindings`, and the packs the server
+   * lists; `undefined` where the file system refuses. */
+  static async open(bindings: IndexBindings, budget: number, verify: boolean): Promise<JobStore | undefined> {
     try {
       const root = await navigator.storage.getDirectory();
       const directory = await root.getDirectoryHandle(DIRECTORY, { create: true });
       const saved = await directory.getFileHandle(INDEX).then(handle => handle.getFile()).then(file => file.text()).catch(() => undefined);
       const estimate = await navigator.storage.estimate?.().catch(() => undefined);
       const available = estimate?.quota !== undefined && estimate.usage !== undefined ? Math.max(0, estimate.quota - estimate.usage) : undefined;
-      const store = new JobStore(directory, new bindings.JobCacheIndex(new Uint8Array(module), budget, available, verify, saved));
+      // Records kept are worth keeping through storage pressure.
+      void navigator.storage.persist?.().catch(() => false);
+      const store = new JobStore(directory, new bindings.JobCacheIndex(budget, available, verify, saved), await openPacks(bindings));
       // Files the index does not list, as those written just before a page
       // closed, are no one's.
       const names = directory as unknown as { keys(): AsyncIterable<string> };
@@ -57,7 +71,7 @@ export class JobStore {
       store.changed();
       return store;
     } catch (error) {
-      console.warn(`The job cache is off: ${String(error)}`);
+      console.warn(`The record store is off: ${String(error)}`);
       return undefined;
     }
   }
@@ -66,13 +80,32 @@ export class JobStore {
     return this.index.verify();
   }
 
-  /** The key of the work of `kind` on `identity`, and the output kept as
-   * it, if any. */
-  async lookup(kind: string, identity: Uint8Array): Promise<[string, Uint8Array | undefined]> {
-    const key = this.index.key(kind, identity);
+  /** Records handed back (from the packs or the store), records lacked,
+   * the store's bytes and verified records that differed from a fresh
+   * run. */
+  counters(): [number, number, number, number] {
+    const [hits, misses, bytes, mismatches] = this.index.counters();
+    return [hits + this.packHits, misses, bytes, mismatches];
+  }
+
+  /** The record kept as `key`, if a pack or the store holds it. */
+  async lookup(key: string): Promise<Uint8Array | undefined> {
+    for (const pack of this.packs) {
+      const entry = pack.directory.find(key);
+      if (!entry) continue;
+      try {
+        const [offset, stored] = entry;
+        const bytes = await fetchRange(pack.url, offset, stored);
+        const record = pack.directory.unpack(key, bytes);
+        this.packHits++;
+        return record;
+      } catch (error) {
+        console.warn(`A record of ${pack.url} does not read: ${String(error)}`);
+      }
+    }
     if (!this.index.holds(key)) {
       this.index.miss();
-      return [key, undefined];
+      return undefined;
     }
     let bytes: Uint8Array | undefined;
     try {
@@ -81,7 +114,7 @@ export class JobStore {
     } catch { /* A file that is gone is a miss. */ }
     const hit = this.index.hit(key, bytes?.length);
     this.changed();
-    return [key, hit ? bytes : undefined];
+    return hit ? bytes : undefined;
   }
 
   /** Keeps `output` as `key`, where the index takes it. */
@@ -92,9 +125,9 @@ export class JobStore {
     this.changed();
   }
 
-  /** A verified output differed from the one kept as `key`, which goes. */
+  /** A verified record differed from the one kept as `key`, which goes. */
   mismatch(key: string) {
-    console.warn(`A kept job output differs from a fresh run: ${key}`);
+    console.warn(`A kept record differs from a fresh run: ${key}`);
     this.index.mismatch(key);
     this.changed();
   }
@@ -106,7 +139,7 @@ export class JobStore {
       await writable.close();
     } catch (error) {
       this.index.failed();
-      console.warn(`The job cache stopped keeping outputs: ${String(error)}`);
+      console.warn(`The record store stopped keeping records: ${String(error)}`);
     }
   }
 
@@ -129,7 +162,39 @@ export class JobStore {
       await writable.write(index);
       await writable.close();
     } catch (error) {
-      console.warn(`The job cache's index was not written: ${String(error)}`);
+      console.warn(`The record store's index was not written: ${String(error)}`);
     }
   }
+}
+
+/** The packs the server lists, their directories read by range; none
+ * where it lists none. A pack that does not read is said so and left
+ * out. */
+async function openPacks(bindings: IndexBindings): Promise<Pack[]> {
+  const listed = await fetch(`${PACKS}index.json`).then(response => response.ok ? response.json() as Promise<unknown> : []).catch(() => []);
+  const names = Array.isArray(listed) ? listed.filter((name): name is string => typeof name === "string") : [];
+  const packs: Pack[] = [];
+  for (const name of names) {
+    const url = `${PACKS}${name}`;
+    try {
+      const header = await fetchRange(url, 0, PACK_HEADER);
+      const [offset, stored] = bindings.PackDirectory.locate(header);
+      const directory = new bindings.PackDirectory(header, await fetchRange(url, offset, stored));
+      packs.push({ url, directory });
+    } catch (error) {
+      console.warn(`The pack ${url} is left out: ${String(error)}`);
+    }
+  }
+  return packs;
+}
+
+/** Bytes `offset` to `offset + length` of `url`, fetched by range: a
+ * server that answers with the whole file has it cut to the range. */
+async function fetchRange(url: string, offset: number, length: number): Promise<Uint8Array> {
+  const response = await fetch(url, { headers: { Range: `bytes=${offset}-${offset + length - 1}` } });
+  if (!response.ok) throw new Error(`${url}: ${response.status}`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const range = response.status === 206 ? bytes : bytes.subarray(offset, offset + length);
+  if (range.length !== length) throw new Error(`${url}: ${range.length} bytes, not ${length}`);
+  return range;
 }

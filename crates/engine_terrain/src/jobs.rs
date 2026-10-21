@@ -1,20 +1,15 @@
 //! Terrain jobs: terrain work engines hand workers, as bytes
-//! in and bytes out: a tile generated, a walk searched, a stack baked.
-//! Workers hold once what many jobs read, shared by key: layer stacks with
-//! their bakes, and the recipes generating a terrain's tiles from one. Jobs
-//! run the same code in workers as engines without them run in place, so
-//! their results are the same bits.
+//! in and bytes out: a tile generated whole, a walk searched, a stack
+//! baked. Workers hold once what many jobs read, shared by key: layer
+//! stacks with their bakes, and the recipes generating a terrain's tiles
+//! from one. Jobs run the same code wherever they run (a worker, a host
+//! without workers, the cook), so their results are the same bits, and a
+//! tile's and a bake's output is a record hosts keep and the cook ships:
+//! every field of a job is something its output depends on.
 //!
-//! Workers run jobs a slice at a time: [`TerrainWorker::start`]
-//! one, [`TerrainWorker::step`] it within a budget until it is done, and
-//! between slices take up a more urgent one or drop one its engine no longer
-//! wants. A tile's objects of layers standing far away at its level may be
-//! placed by a job of their own after it, as far tiles hold them by the tens
-//! of thousands. A staged tile job hands out the tile's shape as a part,
-//! [`TerrainWorker::take_part`], before the rest is done.
-//! A tile may also generate in bands of rows on several workers at once,
-//! joined by its engine, with its objects placed by a job
-//! after.
+//! A tile's job carries the edits reaching its ground alone, its recipe's
+//! stack none: an edit leaves every other tile's job, and its record, as
+//! it was.
 
 use engine_math::collections::HashMap;
 use std::sync::Arc;
@@ -23,43 +18,28 @@ use glam::Vec2;
 
 use crate::codec::{self, CodecError, Reader, Writer, record};
 use crate::{
-    BiomeRules, Biomes, Generator, Layers, NavOptions, NavPath, Obstacle, Placed, Placing, Pyramid,
-    Tile, TileBand, TileKey, WalkSearch,
+    BiomeRules, Biomes, Generator, Layers, NavOptions, NavPath, Obstacle, Placing, Pyramid, Stamp,
+    Tile, TileKey, WalkSearch,
 };
 
 /// The kinds of terrain jobs, which hosts carry by name: a tile of a
-/// shared recipe, the objects standing far away on one, a band of a tile's
-/// rows, the objects placed on a tile its bands made, a walk over one, and
-/// a stack's bakes. Workers match every kind, so a kind added without its
-/// work fails to build.
+/// shared recipe, a walk over one, and a stack's bakes. Workers match every
+/// kind, so a kind added without its work fails to build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
     Tile,
-    Far,
-    Band,
-    Place,
     Walk,
     Bake,
 }
 
 impl JobKind {
     /// Every kind.
-    pub const ALL: [Self; 6] = [
-        Self::Tile,
-        Self::Far,
-        Self::Band,
-        Self::Place,
-        Self::Walk,
-        Self::Bake,
-    ];
+    pub const ALL: [Self; 3] = [Self::Tile, Self::Walk, Self::Bake];
 
-    /// Its name, as hosts carry it and key the outputs they keep by.
+    /// Its name, as hosts carry it and key the records they keep by.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Tile => "terrain_tile",
-            Self::Far => "terrain_far",
-            Self::Band => "terrain_band",
-            Self::Place => "terrain_place",
             Self::Walk => "terrain_walk",
             Self::Bake => "terrain_bake",
         }
@@ -133,163 +113,44 @@ pub fn share_recipe(recipe: &TerrainRecipe) -> Vec<u8> {
     writer.into_bytes()
 }
 
-/// A [`JobKind::Tile`]: tile `key` of the recipe shared as `recipe`, with
-/// `placing`'s objects. Like every terrain job, it is its own identity:
-/// each field is something its output depends on, and hosts keep the
-/// output by the job encoded.
+/// A [`JobKind::Tile`]: tile `key` of the recipe shared as `recipe`, whole,
+/// with every object its level places, under `stamps`, the terrain's edits
+/// reaching its ground, in order. Like every terrain job, it is its own
+/// identity and its own input.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TileJob {
     pub recipe: String,
     pub key: TileKey,
-    pub placing: Placing,
+    pub stamps: Vec<Stamp>,
 }
 
 record!(TileJob {
     recipe,
     key,
-    placing,
+    stamps,
 });
 
 impl TileJob {
     pub const KIND: JobKind = JobKind::Tile;
 
-    /// What hosts keep its output by: the job.
+    /// What its output is kept by, and its input: the job.
     pub fn identity(&self) -> Vec<u8> {
         codec::encode(self)
     }
-
-    /// Its input: the job, its tile's shape handed out first where
-    /// `staged` (the same tile either way).
-    pub fn input(&self, staged: bool) -> Vec<u8> {
-        let mut writer = Writer::new();
-        writer.put(self).put(&staged);
-        writer.into_bytes()
-    }
 }
 
-/// A [`JobKind::Tile`]'s output, and its part: the tile, or its shape alone.
+/// A [`JobKind::Tile`]'s output: the tile.
 pub fn tile_output(bytes: &[u8]) -> Result<Tile, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`JobKind::Far`]: the objects of the recipe shared as `recipe` standing
-/// far away on its tile `key`, which that recipe generates.
-#[derive(Clone, Debug, PartialEq)]
-pub struct FarJob {
-    pub recipe: String,
-    pub key: TileKey,
-}
-
-record!(FarJob { recipe, key });
-
-impl FarJob {
-    pub const KIND: JobKind = JobKind::Far;
-
-    /// What hosts keep its output by: the job.
-    pub fn identity(&self) -> Vec<u8> {
-        codec::encode(self)
-    }
-
-    /// Its input: the recipe and `tile`, the job's tile, whole.
-    pub fn input(&self, tile: &Tile) -> Vec<u8> {
-        let mut writer = Writer::new();
-        writer.put(&self.recipe).put(tile);
-        writer.into_bytes()
-    }
-}
-
-/// A [`JobKind::Band`]: stored rows `first` up to `end` (0 to 259) of tile
-/// `key` of the recipe shared as `recipe`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct BandJob {
-    pub recipe: String,
-    pub key: TileKey,
-    pub first: u32,
-    pub end: u32,
-}
-
-record!(BandJob {
-    recipe,
-    key,
-    first,
-    end,
-});
-
-impl BandJob {
-    pub const KIND: JobKind = JobKind::Band;
-
-    /// What hosts keep its output by: the job.
-    pub fn identity(&self) -> Vec<u8> {
-        codec::encode(self)
-    }
-
-    /// Its input: the job.
-    pub fn input(&self) -> Vec<u8> {
-        self.identity()
-    }
-}
-
-/// A [`JobKind::Band`]'s output: the band's rows, which
-/// [`crate::merge_bands`] joins with the tile's other bands.
-pub fn band_output(bytes: &[u8]) -> Result<TileBand, CodecError> {
-    codec::decode(bytes)
-}
-
-/// A [`JobKind::Place`]: `placing`'s objects of the recipe shared as `recipe`
-/// on its tile `key`, from layer and row `from` up to `end` (none for
-/// the rest, with what authors stand on it). Its output is the objects, as
-/// a [`JobKind::Far`]'s ([`far_output`]).
-#[derive(Clone, Debug, PartialEq)]
-pub struct PlaceJob {
-    pub recipe: String,
-    pub key: TileKey,
-    pub placing: Placing,
-    pub from: (u32, u32),
-    pub end: Option<(u32, u32)>,
-}
-
-record!(PlaceJob {
-    recipe,
-    key,
-    placing,
-    from,
-    end,
-});
-
-impl PlaceJob {
-    pub const KIND: JobKind = JobKind::Place;
-
-    /// What hosts keep its output by: the job.
-    pub fn identity(&self) -> Vec<u8> {
-        codec::encode(self)
-    }
-
-    /// Its input: the job with `tile`, its tile without those objects,
-    /// in place of the tile's key.
-    pub fn input(&self, tile: &Tile) -> Vec<u8> {
-        let mut writer = Writer::new();
-        writer
-            .put(&self.recipe)
-            .put(tile)
-            .put(&self.placing)
-            .put(&self.from)
-            .put(&self.end);
-        writer.into_bytes()
-    }
-}
-
-/// A [`JobKind::Far`]'s output: the objects, which [`crate::merge_placed`] adds
-/// to the tile's own.
-pub fn far_output(bytes: &[u8]) -> Result<Vec<Placed>, CodecError> {
-    codec::decode(bytes)
-}
-
 /// A [`JobKind::Walk`]: the shortest walk over the recipe shared as `recipe`
-/// from terrain-local `from` to `to` among `obstacles`, as `options`
-/// walk.
+/// under `stamps`, the terrain's edits in order, from terrain-local `from`
+/// to `to` among `obstacles`, as `options` walk.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WalkJob {
     pub recipe: String,
+    pub stamps: Vec<Stamp>,
     pub from: Vec2,
     pub to: Vec2,
     pub obstacles: Vec<Obstacle>,
@@ -298,6 +159,7 @@ pub struct WalkJob {
 
 record!(WalkJob {
     recipe,
+    stamps,
     from,
     to,
     obstacles,
@@ -307,14 +169,9 @@ record!(WalkJob {
 impl WalkJob {
     pub const KIND: JobKind = JobKind::Walk;
 
-    /// What hosts keep its output by: the job.
+    /// What its output is kept by, and its input: the job.
     pub fn identity(&self) -> Vec<u8> {
         codec::encode(self)
-    }
-
-    /// Its input: the job.
-    pub fn input(&self) -> Vec<u8> {
-        self.identity()
     }
 }
 
@@ -357,11 +214,22 @@ struct Recipe {
     materials: bool,
 }
 
+impl Recipe {
+    /// Its layers under `stamps`, edits in order.
+    fn stamped(&self, stamps: &[Stamp]) -> Result<Arc<Layers>, String> {
+        if stamps.is_empty() {
+            return Ok(self.layers.clone());
+        }
+        self.layers
+            .with_stamps(stamps)
+            .map(Arc::new)
+            .map_err(|error| error.to_string())
+    }
+}
+
 /// A job a worker started, to step until done.
 enum Running {
-    Tile(Generator),
-    Far(Generator),
-    Band(Generator),
+    Tile(Box<Generator>),
     Walk(Box<WalkSearch>),
     Bake(Box<(Layers, Pyramid)>),
 }
@@ -448,86 +316,24 @@ impl TerrainWorker {
                 let TileJob {
                     recipe,
                     key,
-                    placing,
-                } = reader.get().map_err(invalid)?;
-                let staged: bool = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
-                let recipe = self.recipe(&recipe)?;
-                if !recipe.pyramid.contains(key) {
-                    return Err("tile outside its pyramid".into());
-                }
-                Running::Tile(
-                    Generator::new(recipe.layers.clone(), &recipe.pyramid, key)
-                        .with_surface(recipe.rules.clone())
-                        .with_placing(placing)
-                        .with_staged(staged)
-                        .with_materials(recipe.materials),
-                )
-            }
-            JobKind::Far => {
-                let recipe: String = reader.get().map_err(invalid)?;
-                let tile: Tile = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
-                let recipe = self.recipe(&recipe)?;
-                if !recipe.pyramid.contains(tile.key()) {
-                    return Err("tile outside its pyramid".into());
-                }
-                Running::Far(Generator::far(
-                    tile,
-                    recipe.layers.clone(),
-                    recipe.rules.clone(),
-                ))
-            }
-            JobKind::Place => {
-                let recipe: String = reader.get().map_err(invalid)?;
-                let tile: Tile = reader.get().map_err(invalid)?;
-                let placing: Placing = reader.get().map_err(invalid)?;
-                let layer: u32 = reader.get().map_err(invalid)?;
-                let row: u32 = reader.get().map_err(invalid)?;
-                let end: Option<(u32, u32)> = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
-                let recipe = self.recipe(&recipe)?;
-                if !recipe.pyramid.contains(tile.key()) {
-                    return Err("tile outside its pyramid".into());
-                }
-                Running::Far(Generator::placing_rows(
-                    tile,
-                    (recipe.layers.clone(), recipe.rules.clone()),
-                    placing,
-                    (
-                        (layer as usize, row as usize),
-                        end.map(|(layer, row)| (layer as usize, row as usize)),
-                    ),
-                ))
-            }
-            JobKind::Band => {
-                let BandJob {
-                    recipe,
-                    key,
-                    first,
-                    end,
+                    stamps,
                 } = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
                 let recipe = self.recipe(&recipe)?;
                 if !recipe.pyramid.contains(key) {
                     return Err("tile outside its pyramid".into());
                 }
-                let generator = Generator::band(
-                    recipe.layers.clone(),
-                    &recipe.pyramid,
-                    key,
-                    first as usize..end as usize,
-                )
-                .ok_or("rows outside the tile")?;
-                Running::Band(
-                    generator
+                Running::Tile(Box::new(
+                    Generator::new(recipe.stamped(&stamps)?, &recipe.pyramid, key)
                         .with_surface(recipe.rules.clone())
+                        .with_placing(Placing::All)
                         .with_materials(recipe.materials),
-                )
+                ))
             }
             JobKind::Walk => {
                 let WalkJob {
                     recipe,
+                    stamps,
                     from,
                     to,
                     obstacles,
@@ -537,7 +343,7 @@ impl TerrainWorker {
                 options.validate().map_err(|invalid| invalid.to_string())?;
                 let recipe = self.recipe(&recipe)?;
                 Running::Walk(Box::new(WalkSearch::new(
-                    recipe.layers.clone(),
+                    recipe.stamped(&stamps)?,
                     &recipe.pyramid,
                     (from, to),
                     obstacles,
@@ -568,19 +374,6 @@ impl TerrainWorker {
                 None if generator.failed() => Err("the tile's heights are invalid".into()),
                 None => return Ok(None),
             },
-            Running::Far(generator) => match generator.advance(&mut budget) {
-                Some(tile) => Ok(codec::encode(&tile.placed().to_vec())),
-                None if generator.failed() => Err("the tile is invalid".into()),
-                None => return Ok(None),
-            },
-            Running::Band(generator) => {
-                let _ = generator.advance(&mut budget);
-                match generator.take_band() {
-                    Some(band) => Ok(codec::encode(&band)),
-                    None if generator.failed() => Err("the band is invalid".into()),
-                    None => return Ok(None),
-                }
-            }
             Running::Walk(search) => match search.step(&mut budget) {
                 Some(walk) => Ok(codec::encode(&walk)),
                 None => return Ok(None),
@@ -594,70 +387,9 @@ impl TerrainWorker {
         output.map(Some)
     }
 
-    /// A part of job `id`'s output ready before the rest,
-    /// taken once: a staged tile's shape.
-    pub fn take_part(&mut self, id: u64) -> Option<Vec<u8>> {
-        match self.running.get_mut(&id)? {
-            Running::Tile(generator) => generator.take_shape().map(|shape| codec::encode(&shape)),
-            Running::Far(_) | Running::Band(_) | Running::Walk(_) | Running::Bake(_) => None,
-        }
-    }
-
     /// Stops job `id`, if it runs.
     pub fn cancel(&mut self, id: u64) {
         self.running.remove(&id);
-    }
-
-    /// Generates a small fixed tile, so a new worker's tile
-    /// code reaches its optimized tier before real tiles: what any tile
-    /// runs, over a noise layer and a surface of two materials, one on
-    /// slopes in noise.
-    pub fn warm(&mut self) {
-        let layers = Layers::new(vec![crate::Layer::Noise(crate::NoiseLayer {
-            seed: 7,
-            height: 400.0,
-            wavelength: 1200.0,
-            ridges: 0.5,
-            ..crate::NoiseLayer::default()
-        })]);
-        let surface = Biomes {
-            materials: vec!["ground".into(), "rock".into()],
-            biomes: vec![crate::Biome {
-                id: "warm".into(),
-                fitness: crate::Mask::one(),
-                layers: vec![
-                    crate::BiomeLayer {
-                        material: "ground".into(),
-                        mask: crate::Mask::one(),
-                        opacity: 1.0,
-                    },
-                    crate::BiomeLayer {
-                        material: "rock".into(),
-                        mask: crate::Mask::Multiply(vec![
-                            crate::Mask::Slope([20.0, 40.0]),
-                            crate::Mask::Noise(crate::NoiseMask {
-                                wavelength: 40.0,
-                                seed: 3,
-                                octaves: 3,
-                            }),
-                        ]),
-                        opacity: 1.0,
-                    },
-                ],
-            }],
-            assets: Vec::new(),
-            placements: Vec::new(),
-            placed: Vec::new(),
-        };
-        let (Ok(layers), Ok(rules), Ok(pyramid)) =
-            (layers, surface.compile(), Pyramid::new([1, 1], 4.0))
-        else {
-            return;
-        };
-        let mut generator = Generator::new(Arc::new(layers), &pyramid, TileKey::new(0, 0, 0))
-            .with_surface(Arc::new(rules));
-        let mut budget = u64::MAX;
-        let _ = generator.advance(&mut budget);
     }
 
     fn recipe(&self, key: &str) -> Result<&Recipe, String> {

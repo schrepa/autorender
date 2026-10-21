@@ -155,7 +155,7 @@ pub fn run<G: Game, E: Into<engine::Error>>(
     build: impl FnOnce() -> Result<(Engine, G), E>,
 ) -> engine::Result<()> {
     let launched = Instant::now();
-    let mut game = Offscreen::launch(size, gpu, jobs, build)?;
+    let mut game = Offscreen::launch(size, gpu, &jobs, build)?;
     settings.apply(game.host_mut());
     game.prepare(0.0)?;
     let prepare_ms = launched.elapsed().as_secs_f64() * 1000.0;

@@ -101,8 +101,7 @@ pub(super) fn fetch_file(
         }
         if state.in_flight.contains(&key)
             || state.jobs.contains_key(&key)
-            || (state.store.contains(&key)
-                && !matches!(state.store.phase(&key), Some(Phase::Shape | Phase::Placing)))
+            || (state.store.contains(&key) && state.store.phase(&key) != Some(Phase::Shape))
             || state
                 .failed
                 .get(&key)

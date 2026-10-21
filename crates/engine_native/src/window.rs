@@ -121,7 +121,7 @@ struct Running<G: Game> {
     // stretch a smaller surface over the window, Vulkan's takes its size.
     capped: bool,
     title: Title,
-    jobs: Option<JobPool>,
+    jobs: JobPool,
     // When play started, and each measured frame's start and CPU time.
     playing: Option<Instant>,
     measured: Vec<(Instant, f64)>,
@@ -165,10 +165,8 @@ impl<'a, G: Game> App<'a, G> {
                 "The resolution policy is not applied on {backend}: its surfaces take the window's size."
             );
         }
-        let mut jobs = self.options.jobs.pool();
-        if let Some(pool) = &mut jobs {
-            pool.attach(&mut host);
-        }
+        let mut jobs = self.options.jobs.pool(false);
+        jobs.attach(&mut host);
         Ok(Running {
             window,
             host,
@@ -295,9 +293,7 @@ impl<G: Game> Running<G> {
     }
 
     fn exchange_jobs(&mut self) {
-        if let Some(jobs) = &mut self.jobs {
-            jobs.exchange(&mut self.host);
-        }
+        self.jobs.exchange(&mut self.host);
     }
 
     /// Counts the frame that started at `start` toward `measure` once play

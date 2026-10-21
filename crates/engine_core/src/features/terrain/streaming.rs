@@ -58,7 +58,6 @@ impl Terrains {
             clock: Some(clock),
             end: clock() + milliseconds,
             upload: std::cell::Cell::new(self.upload_left),
-            bands: settings.max_bands as usize,
         };
         let mut budget = work.slice;
         let frame = self.frame;
@@ -77,7 +76,7 @@ impl Terrains {
                 self.restored += state.store.restore(&missing, &work);
                 missing.retain(|(key, _)| state.loads(key));
             }
-            if missing.is_empty() && state.far_wanted.is_empty() && state.far_jobs.is_empty() {
+            if missing.is_empty() && state.dispatched.is_empty() {
                 continue;
             }
             let target = std::mem::take(&mut state.target);
@@ -85,7 +84,7 @@ impl Terrains {
             let baking = load_tiles(
                 state,
                 &missing,
-                (&target, &keep),
+                (&target, &keep, &[]),
                 &work,
                 &mut budget,
                 frame,
@@ -101,11 +100,8 @@ impl Terrains {
             // Tiles waiting on their fetch load once delivered.
             let waiting = matches!(state.terrain.source, TerrainSource::File { data: None, .. })
                 && state.arrivals.is_empty();
-            remaining |= baking
-                || (!state.missing.is_empty() && !waiting)
-                || !state.dispatched.is_empty()
-                || !state.far_wanted.is_empty()
-                || !state.far_jobs.is_empty();
+            remaining |=
+                baking || (!state.missing.is_empty() && !waiting) || !state.dispatched.is_empty();
             if budget == 0 && !work.refill(&mut budget) {
                 break;
             }
@@ -134,11 +130,9 @@ impl Terrains {
         };
         if moved.length() > JUMP {
             // A jump loads the view again at the loading budget,
-            // as the first view loads, unless workers load it.
+            // as the first view loads.
             self.velocity = Vec3::ZERO;
-            if self.workers == 0 {
-                self.loaded = false;
-            }
+            self.loaded = false;
         } else if seconds > 0.0 {
             self.velocity = self.velocity.lerp(moved / seconds, 0.25);
         }
@@ -169,8 +163,6 @@ impl Terrains {
         // Jobs of terrains gone are dropped, and so are their recipes.
         let mut slots = jobs.map(JobBudget::of);
         let retired = std::mem::take(&mut self.retired);
-        self.workers = slots.as_ref().map_or(0, |slots| slots.jobs.workers());
-        let workers = self.workers;
         // Keys no recipe may hold any longer, unshared at the end unless
         // one does.
         let mut released = Vec::new();
@@ -231,7 +223,6 @@ impl Terrains {
             upload: std::cell::Cell::new(
                 u64::from(settings.upload_bytes).saturating_sub(std::mem::take(&mut self.between)),
             ),
-            bands: settings.max_bands as usize,
         };
         let mut budget = work.slice;
         // Speed-aware detail: the finest levels waiting at
@@ -261,13 +252,6 @@ impl Terrains {
         // Budgets cover every terrain: each takes what is left.
         let mut remaining = limit.map_or(usize::MAX, |limit| limit as usize);
         let frame = self.frame;
-        // Memory's room for tiles generated ahead of need.
-        let room = settings.cache_bytes.saturating_sub(
-            self.entries
-                .iter()
-                .map(|state| state.store.cached_bytes())
-                .sum::<u64>(),
-        );
         for state in &mut self.entries {
             if state.terrain.validate().is_err() {
                 continue;
@@ -289,15 +273,6 @@ impl Terrains {
                 .ranges
                 .extend((0..pyramid.levels()).map(|level| ranges.range(level)));
             let local_eye = eye - origin;
-            // Ahead of need, while nothing was missing, nor
-            // generating, at the last frame and memory has room.
-            let quiet = workers > 0
-                && state.missing.is_empty()
-                && state.dispatched.is_empty()
-                && state.banded.is_empty()
-                && state.placements.is_empty()
-                && state.far_wanted.is_empty()
-                && state.far_jobs.is_empty();
             let Plan {
                 collision,
                 ordered,
@@ -305,7 +280,6 @@ impl Terrains {
                 keep,
                 mut missing,
                 waiting: waiting_tiles,
-                around,
                 named,
             } = plan(PlanInput {
                 settings,
@@ -321,7 +295,6 @@ impl Terrains {
                 places,
                 collides: state.terrain.collision,
                 collision: std::mem::take(&mut state.collision),
-                quiet,
                 remaining,
                 waiting,
                 unsettled,
@@ -359,13 +332,11 @@ impl Terrains {
             for tile in &named {
                 state.store.wanted_in_memory(&tile.key, frame);
             }
-            state.ahead.clear();
-            if quiet {
-                let fits = room
-                    .checked_div(state.store.tile_bytes())
-                    .map_or(usize::MAX, |fits| fits as usize);
-                state.ahead = ahead_of_need((&around, &named), &keep, fits, &state.store);
-            }
+            let named: Vec<TileKey> = named
+                .iter()
+                .map(|tile| tile.key)
+                .filter(|key| !keep.contains(key))
+                .collect();
             // What the frame found missing loads between frames too.
             state.missing.clone_from(&missing);
             state.target.clone_from(&target);
@@ -373,16 +344,14 @@ impl Terrains {
             // GPU materials before the recipe that carries
             // them.
             state.update_materials(settings.gpu_materials);
-            // Workers generate from its recipe.
-            if let Some(slots) = slots.as_mut()
-                && slots.jobs.workers() > 0
-            {
+            // Tiles' jobs generate from its recipe.
+            if let Some(slots) = slots.as_mut() {
                 share_recipe(state, slots.jobs, &mut self.stacks, &mut released);
             }
             if load_tiles(
                 state,
                 &missing,
-                (&target, &keep),
+                (&target, &keep, &named),
                 &work,
                 &mut budget,
                 frame,
@@ -399,20 +368,14 @@ impl Terrains {
                 .collect();
             stats.resident_tiles += state.store.len() as u32;
             stats.missing_tiles += state.missing.len() as u32;
-            stats.shaped_tiles += state.store.count(&[Phase::Shape, Phase::Placing]) as u32;
+            stats.shaped_tiles += state.store.count(&[Phase::Shape]) as u32;
             stats.cached_tiles += state.store.kept_tiles() as u32;
             stats.cached_bytes += state.store.cached_bytes();
-            stats.idle_tiles += state.idle.len() as u32;
+            stats.prefetching_tiles += state.prefetched.len() as u32;
             stats.loading_tiles += (state.jobs.len()
                 + state.in_flight.len()
                 + state.arrivals.len()
-                + state.dispatched.len()
-                + state.far_wanted.len()
-                + state.far_jobs.len()
-                + state.banded.len()
-                + state.placements.len()) as u32;
-            stats.banded_tiles += state.banded_tiles;
-            stats.unplaced_tiles += state.unplaced_tiles();
+                + state.dispatched.len()) as u32;
             // Tiles' water follows the rivers as they run now.
             let [rewatered, stale] = rewater::rewater(state, &work, &mut budget);
             stats.rewatered_tiles += rewatered;
@@ -625,17 +588,49 @@ impl TerrainStreaming {
             .iter(world)
             .map(|(entity, terrain)| (entity, terrain.clone()))
             .collect();
-        // Workers' jobs stream with the terrains.
+        // Jobs stream with the terrains, and cook with them in a session
+        // that cooks.
         let mut jobs = world.remove_resource::<Jobs>();
-        let Some(mut terrains) = world.get_resource_mut::<Terrains>() else {
-            if let Some(jobs) = jobs {
-                world.insert_resource(jobs);
+        let mut cooking = world.remove_resource::<Cooking>();
+        if let Some(mut terrains) = world.get_resource_mut::<Terrains>() {
+            let terrains = terrains.as_mut();
+            terrains.follow(present);
+            match settings {
+                Some(settings) => {
+                    // Where the eye is headed, from its motion since the
+                    // last frame.
+                    let ahead = terrains.heading(eye, seconds);
+                    terrains.stream(
+                        &settings,
+                        &camera,
+                        (eye, ahead),
+                        viewport,
+                        (&self.points, &self.places),
+                        jobs.as_mut(),
+                    );
+                    if let (Some(jobs), Some(cooking)) = (jobs.as_mut(), cooking.as_mut()) {
+                        terrains.cook(&settings, jobs, cooking);
+                    }
+                }
+                None => terrains.stand_still(),
             }
-            return;
-        };
-        let terrains = terrains.as_mut();
-        let retired = &mut terrains.retired;
-        terrains.entries.retain(|state| {
+        }
+        if let Some(jobs) = jobs {
+            world.insert_resource(jobs);
+        }
+        if let Some(cooking) = cooking {
+            world.insert_resource(cooking);
+        }
+    }
+}
+
+impl Terrains {
+    /// Follows the terrains `present` now: those gone retire, those
+    /// changed start over, edits and what stands on them change in place,
+    /// and new ones join.
+    fn follow(&mut self, present: Vec<(Entity, Terrain)>) {
+        let retired = &mut self.retired;
+        self.entries.retain(|state| {
             let kept = present.iter().any(|(entity, _)| *entity == state.entity);
             if !kept {
                 state.retire(retired);
@@ -643,16 +638,16 @@ impl TerrainStreaming {
             kept
         });
         for (entity, terrain) in present {
-            match terrains
+            match self
                 .entries
                 .iter_mut()
                 .find(|state| state.entity == entity && state.around.is_none())
             {
                 Some(state) => {
                     if !terrain.same(&state.terrain) {
-                        state.retire(&mut terrains.retired);
+                        state.retire(&mut self.retired);
                         *state = TerrainState::new(entity, terrain);
-                        terrains.loaded = false;
+                        self.loaded = false;
                     } else {
                         if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
                             state.edit(terrain.edits.clone());
@@ -673,44 +668,28 @@ impl TerrainStreaming {
                     }
                 }
                 None => {
-                    terrains.entries.push(TerrainState::new(entity, terrain));
-                    terrains.loaded = false;
+                    self.entries.push(TerrainState::new(entity, terrain));
+                    self.loaded = false;
                 }
             }
         }
-        let Some(settings) = settings else {
-            for state in &mut terrains.entries {
-                state.selection.patches.clear();
-            }
-            terrains.stats = TerrainStats {
-                terrains: terrains
-                    .entries
-                    .iter()
-                    .filter(|state| state.around.is_none())
-                    .count() as u32,
-                failed_reads: terrains.degraded.failed_reads,
-                ..TerrainStats::default()
-            };
-            // Terrains that do not stream have nothing to load.
-            terrains.loaded = true;
-            if let Some(jobs) = jobs {
-                world.insert_resource(jobs);
-            }
-            return;
-        };
-        // Where the eye is headed, from its motion since the
-        // last frame.
-        let ahead = terrains.heading(eye, seconds);
-        terrains.stream(
-            &settings,
-            &camera,
-            (eye, ahead),
-            viewport,
-            (&self.points, &self.places),
-            jobs.as_mut(),
-        );
-        if let Some(jobs) = jobs {
-            world.insert_resource(jobs);
+    }
+
+    /// Without settings terrains neither stream nor draw: they have nothing
+    /// to load.
+    fn stand_still(&mut self) {
+        for state in &mut self.entries {
+            state.selection.patches.clear();
         }
+        self.stats = TerrainStats {
+            terrains: self
+                .entries
+                .iter()
+                .filter(|state| state.around.is_none())
+                .count() as u32,
+            failed_reads: self.degraded.failed_reads,
+            ..TerrainStats::default()
+        };
+        self.loaded = true;
     }
 }

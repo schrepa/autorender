@@ -301,25 +301,25 @@
       "description": "Workers, their jobs and the host's output cache.",
       "properties": {
         "cache_bytes": {
-          "description": "Bytes the host's cache holds.",
+          "description": "Bytes the host's store holds.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "cache_hits": {
-          "description": "Outputs the host's cache handed back instead of running their jobs.",
+          "description": "Records the host's packs and store handed back instead of running\ntheir jobs.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "cache_mismatches": {
-          "description": "Verifying, cached outputs differing from a fresh run.",
+          "description": "Verifying, records differing from a fresh run.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "cache_misses": {
-          "description": "Jobs the host's cache lacked.",
+          "description": "Records they lacked.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -343,13 +343,13 @@
           "type": "integer"
         },
         "held": {
-          "description": "Jobs the host's scheduler holds: on its workers, or looked up in its\ncache. None once every job handed out ended, an earlier engine's\nincluded.",
+          "description": "Jobs the host's scheduler holds: on its workers, or looked up in its\npacks and store. None once every job handed out ended, an earlier\nengine's included.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "parts": {
-          "description": "Parts handed back early.",
+        "in_place": {
+          "description": "Jobs run in place: by a host without workers, or an engine no host\nserves.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -392,14 +392,14 @@
         "completed",
         "failed",
         "cancelled",
-        "parts",
         "shares",
         "shared_bytes",
         "cache_hits",
         "cache_misses",
         "cache_bytes",
         "cache_mismatches",
-        "held"
+        "held",
+        "in_place"
       ],
       "type": "object"
     },
@@ -786,7 +786,7 @@
           "type": "integer"
         },
         "loading_tiles": {
-          "description": "Tiles still generating or loading.",
+          "description": "Tiles still loading.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -845,12 +845,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "unplaced_tiles": {
-          "description": "Resident tiles lacking objects their levels place with nothing\nunder way to place them: none unless streaming lost track of them.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "vt_bakes": {
           "description": "Virtual texture pages baked this frame (absent or stale).",
           "format": "uint32",
@@ -888,7 +882,6 @@
         "shadow_patches",
         "tiles",
         "loading_tiles",
-        "unplaced_tiles",
         "gpu_controls",
         "dropped_tiles",
         "fallback_patches",

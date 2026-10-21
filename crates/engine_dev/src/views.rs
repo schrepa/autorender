@@ -302,11 +302,12 @@ pub struct NavAgentsView {
     pub first: Vec<NavAgentRow>,
 }
 
-/// The host's job workers: workers (none keeps bakes, tiles and walks on the
-/// engine's thread), jobs in flight, submitted, completed, failed and
-/// cancelled, parts handed back early, keys shared and their bytes, and the
-/// page's output cache. Workers run their most urgent job a slice at a time.
-/// Pages take ?workers=N or off, and ?jobcache=off, verify or a budget in MiB.
+/// The host's job workers: workers (with none the host runs bakes, tiles
+/// and walks in place), jobs in flight, submitted, completed, failed and
+/// cancelled, keys shared and their bytes, and the host's records (the
+/// cook's packs and its store). Workers run their most urgent job a slice
+/// at a time. Pages take ?workers=N or off, and ?jobcache=off, verify or a
+/// budget in MiB.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct JobsView {
@@ -318,22 +319,22 @@ pub struct JobsView {
     /// The latest failed job's message, if any failed.
     pub last_failure: Option<String>,
     pub cancelled: u64,
-    /// Parts of outputs handed back before the rest, as
-    /// tiles' shapes.
-    pub parts: u64,
     pub shares: u32,
     pub shared_bytes: u64,
-    /// The host's output cache: outputs it handed back
-    /// instead of running their jobs, jobs it lacked, its bytes and,
-    /// verifying, outputs that differed from a fresh run.
+    /// The host's records: those its packs and store handed back instead of
+    /// running their jobs, those they lacked, the store's bytes and,
+    /// verifying, records that differed from a fresh run.
     pub cache_hits: u64,
     pub cache_misses: u64,
     pub cache_bytes: u64,
     pub cache_mismatches: u64,
-    /// Jobs the host's scheduler holds: on its workers, or looked up in its
-    /// cache; none once every job handed out ended, an earlier engine's
+    /// Jobs the host's scheduler holds: on its workers, in lookups or to run
+    /// in place; none once every job handed out ended, an earlier engine's
     /// included.
     pub held: u32,
+    /// Jobs run in place, by a host without workers or an engine no host
+    /// serves.
+    pub in_place: u64,
 }
 
 /// One agent of [`NavAgentsView`].
@@ -389,25 +390,19 @@ pub struct TerrainsView {
     pub terrains: u32,
     pub resident_tiles: u32,
     pub loading_tiles: u32,
-    /// Of the resident tiles, those holding their shape alone so far:
-    /// drawn with coarser levels' materials while the rest
-    /// loads.
+    /// Of the resident tiles, files' holding their shape alone so far:
+    /// drawn with coarser levels' materials while their control values
+    /// are computed.
     pub shaped_tiles: u32,
     /// Tiles the view wants that wait while the camera moves fast.
     pub waiting_tiles: u32,
     /// Tiles kept in memory after the view left them and
     /// their bytes, tiles returned from there since terrains started, and
-    /// tiles generating ahead of the view.
+    /// tiles loading into memory for places games name.
     pub cached_tiles: u32,
     pub cached_bytes: u64,
     pub restored_tiles: u64,
-    pub idle_tiles: u32,
-    /// Tiles that generated in bands of rows on several workers since
-    /// terrains started.
-    pub banded_tiles: u64,
-    /// Resident tiles lacking objects their levels place with nothing
-    /// under way to place them: none unless streaming lost track of them.
-    pub unplaced_tiles: u32,
+    pub prefetching_tiles: u32,
     pub dropped_tiles: u32,
     pub patches: u32,
     pub fallback_patches: u32,

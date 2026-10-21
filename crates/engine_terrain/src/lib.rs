@@ -22,6 +22,10 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+// `SOURCE`, which keys the records terrain jobs make: hosts keep them, and
+// the cook ships them, while this code stays the same.
+include!(concat!(env!("OUT_DIR"), "/source.rs"));
+
 mod bake;
 pub mod codec;
 mod erosion;

@@ -1,15 +1,15 @@
-//! The index of a host's job output cache, the same on every host: what it
-//! keeps (outputs of jobs the engine marks keepable, and what a host keeps
-//! of its own work, as a page's transcoded textures) under a hash of the
-//! job worker's build, the job's kind and its identity, so the same build
-//! hands them back without running their jobs, in this session or a later
-//! one; the least recently used beyond a byte budget go. Verifying runs
-//! every job anyway and compares. Hosts keep the bytes (the origin's
-//! private file system, a folder beside the program) and the index's JSON
-//! beside them; the index says which files to read, write and remove.
+//! The index of a host's record store, the same on every host: what it
+//! keeps (records the engine's jobs made and records the engine made
+//! itself, by the keys the engine gives them, and what a host keeps of its
+//! own work, as a page's transcoded textures) so later lookups hand them
+//! back without running their jobs, in this session or a later one, from
+//! any build of the code making them; the least recently used beyond a
+//! byte budget go. Verifying runs every job anyway and compares. Hosts keep
+//! the bytes (the origin's private file system, a folder beside the
+//! program) and the index's JSON beside them; the index says which files to
+//! read, write and remove.
 
 use engine_math::collections::HashMap;
-use sha2::{Digest, Sha256};
 
 /// A kept output: its size, and when it was last used, in milliseconds
 /// since the epoch.
@@ -19,11 +19,9 @@ struct Entry {
     used: f64,
 }
 
-/// What a host's job output cache keeps, and its counters.
+/// What a host's record store keeps, and its counters.
 #[derive(Debug)]
 pub struct JobCache {
-    // The job worker build's hash, which every key starts from.
-    version: String,
     budget: u64,
     verify: bool,
     entries: HashMap<String, Entry>,
@@ -40,24 +38,16 @@ pub struct JobCache {
 }
 
 impl JobCache {
-    /// The cache of the job worker build `build` (its bytes, which name the
-    /// cache's version), as the host saved its `index` (JSON), within
-    /// `budget` bytes and half of what storage the host has `available`
-    /// (bytes beside those the index holds), where it knows; `verify` runs
-    /// every job anyway and compares. The least recently used beyond the
-    /// budget go at once.
-    pub fn open(
-        build: &[u8],
-        budget: u64,
-        available: Option<u64>,
-        verify: bool,
-        index: Option<&str>,
-    ) -> Self {
+    /// The store as the host saved its `index` (JSON), within `budget`
+    /// bytes and half of what storage the host has `available` (bytes
+    /// beside those the index holds), where it knows; `verify` runs every
+    /// job anyway and compares. The least recently used beyond the budget
+    /// go at once.
+    pub fn open(budget: u64, available: Option<u64>, verify: bool, index: Option<&str>) -> Self {
         let entries = index.map(read_index).unwrap_or_default();
         let total: u64 = entries.values().map(|entry| entry.bytes).sum();
         let budget = available.map_or(budget, |free| budget.min(free.saturating_add(total) / 2));
         let mut cache = Self {
-            version: hex(&Sha256::digest(build)),
             budget,
             verify,
             entries,
@@ -83,17 +73,6 @@ impl JobCache {
     /// that differed from a fresh run.
     pub fn counters(&self) -> (u64, u64, u64, u64) {
         (self.hits, self.misses, self.total, self.mismatches)
-    }
-
-    /// The key of the work of `kind` on `identity` from this build.
-    pub fn key(&self, kind: &str, identity: &[u8]) -> String {
-        let mut hash = Sha256::new();
-        hash.update(self.version.as_bytes());
-        hash.update([0]);
-        hash.update(kind.as_bytes());
-        hash.update([0]);
-        hash.update(identity);
-        hex(&hash.finalize())
     }
 
     /// Whether the index lists the file `name`: the host's other files in
@@ -229,10 +208,6 @@ fn read_index(index: &str) -> HashMap<String, Entry> {
             valid.then_some((key, Entry { bytes, used }))
         })
         .collect()
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Milliseconds since the epoch, which kept outputs' last use is in.

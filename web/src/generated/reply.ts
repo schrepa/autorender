@@ -1129,11 +1129,6 @@ export interface TerrainStats {
    */
   baking: number;
   /**
-   * Tiles that generated in bands of rows on several workers since
-   * terrains started.
-   */
-  banded_tiles: number;
-  /**
    * Bridges terrains' roads span, tunnels they bore,
    * and waterfalls their rivers drop over.
    */
@@ -1142,7 +1137,7 @@ export interface TerrainStats {
   /**
    * Tiles kept in memory after the view left them and
    * their bytes, tiles that returned from there since terrains started,
-   * and tiles generating ahead of the view.
+   * and tiles loading into memory for places games name.
    */
   cached_tiles: number;
   /** Wanted tiles beyond the tile budget or the device's capacity. */
@@ -1154,7 +1149,6 @@ export interface TerrainStats {
   failed_reads: number;
   fallback_patches: number;
   falls: number;
-  idle_tiles: number;
   /**
    * Whether the camera's view has yet to load whole since terrains
    * arrived or [`Terrains::begin_loading`]: frames work
@@ -1162,8 +1156,9 @@ export interface TerrainStats {
    */
   loading: boolean;
   /**
-   * Tiles being generated, fetched or decoded, and every tile the
-   * camera's view and collision want that is not resident yet.
+   * Tiles whose records are asked for, or being fetched or decoded,
+   * and every tile the camera's view and collision want that is not
+   * resident yet.
    */
   loading_tiles: number;
   missing_tiles: number;
@@ -1172,6 +1167,7 @@ export interface TerrainStats {
    * levels not resident yet.
    */
   patches: number;
+  prefetching_tiles: number;
   /** Tiles resident now. */
   resident_tiles: number;
   restored_tiles: number;
@@ -1182,9 +1178,9 @@ export interface TerrainStats {
    */
   rewatered_tiles: number;
   /**
-   * Of the resident tiles, those holding their shape alone so far:
-   * heights and holes, drawn with coarser levels'
-   * materials while the rest loads.
+   * Of the resident tiles, files' holding their shape alone so far:
+   * heights and holes, drawn with coarser levels' materials while their
+   * control values are computed.
    */
   shaped_tiles: number;
   stale_water_tiles: number;
@@ -1193,12 +1189,6 @@ export interface TerrainStats {
   surroundings_tiles: number;
   terrains: number;
   tunnels: number;
-  /**
-   * Resident tiles lacking objects their levels place with nothing
-   * under way to place them: none unless streaming lost
-   * track of them.
-   */
-  unplaced_tiles: number;
   /** Tiles the view wants that wait while the camera moves fast. */
   waiting_tiles: number;
 }

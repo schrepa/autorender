@@ -25,6 +25,8 @@ bevy_app.workspace = true
 bevy_ecs.workspace = true
 glam.workspace = true
 serde.workspace = true
+# Record keys (`RecordKey`).
+engine_sources.workspace = true
 schemars = { workspace = true, optional = true }
 
 [lints]

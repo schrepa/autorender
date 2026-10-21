@@ -2,11 +2,12 @@
 //! Web Workers beside the engine, and natively a thread's. It holds what
 //! the engine shares with its workers (terrain stacks and recipes) and runs
 //! the jobs it hands out, terrain tiles, walks and bakes, with the code
-//! engines without workers run in place, so outputs are the same bits. Jobs
+//! hosts without workers run in place, so outputs are the same bits. Jobs
 //! run a slice at a time ([`Worker::slice`]): the most urgent held job
 //! steps until done or for about [`SLICE_MS`], so between slices hosts read
 //! their messages, a more urgent job goes first and one the engine
-//! cancelled stops; parts of an output ready early go back before the rest.
+//! cancelled stops. Hosts read the cook's packs with it too ([`PackIndex`]),
+//! and key their record stores with its index ([`JobCache`]).
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
@@ -16,9 +17,25 @@ use engine_terrain::jobs::TerrainWorker;
 
 mod cache;
 mod image;
+mod pack;
 
 pub use cache::JobCache;
 pub use image::{IMAGE_FORMATS, Image, ImageDecoder, ImageFormat, decode_image, image_format};
+pub use pack::{
+    PACK_HEADER, PackEntry, PackIndex, key_from_hex, pack_bytes, pack_directory, unpack,
+};
+
+// `SOURCE`, which keys the records this module's own code makes.
+include!(concat!(env!("OUT_DIR"), "/source.rs"));
+
+/// The key of a record of `kind` on `identity` this module's own code
+/// makes, as 64 hexadecimal digits.
+pub fn record_key(kind: &str, identity: &[u8]) -> String {
+    engine_sources::record_key(&SOURCE, kind, identity)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 /// Milliseconds a worker runs a job before it looks at its messages and
 /// more urgent jobs again.
@@ -31,8 +48,6 @@ pub const STEP_UNITS: u64 = 4096;
 pub enum Report {
     /// Job `id` is done: its output.
     Done(u64, Vec<u8>),
-    /// A part of job `id`'s output ready before the rest.
-    Part(u64, Vec<u8>),
     /// Job `id` failed, for the reason given.
     Failed(u64, String),
 }
@@ -100,7 +115,7 @@ impl Worker {
     /// One slice of the most urgent job held (the lowest priority, then
     /// the first handed): stepped until done or for about [`SLICE_MS`].
     /// What it came to; nothing where no job is held, or where the job
-    /// goes on with no part ready.
+    /// goes on.
     pub fn slice(&mut self) -> Option<Report> {
         let at =
             (0..self.held.len()).min_by_key(|&at| (self.held[at].priority, self.held[at].id))?;
@@ -126,10 +141,7 @@ impl Worker {
                 self.held.remove(at);
                 Some(Report::Done(id, output))
             }
-            Ok(None) => self
-                .terrain
-                .take_part(id)
-                .map(|part| Report::Part(id, part)),
+            Ok(None) => None,
             Err(error) => {
                 self.held.remove(at);
                 self.terrain.cancel(id);
@@ -152,18 +164,6 @@ impl Worker {
     /// done, `None` while work is left.
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
         self.terrain.step(id, budget)
-    }
-
-    /// A part of job `id`'s output ready before the rest,
-    /// taken once.
-    pub fn take_part(&mut self, id: u64) -> Option<Vec<u8>> {
-        self.terrain.take_part(id)
-    }
-
-    /// Runs a small fixed job, so the module's hot code
-    /// reaches its optimized tier before real jobs.
-    pub fn warm(&mut self) {
-        self.terrain.warm();
     }
 }
 
@@ -241,8 +241,8 @@ mod browser {
         }
 
         /// One slice ([`super::Worker::slice`]) as the page's pool reads
-        /// it: `{type: "done" | "part", id, output}` or `{type: "failed",
-        /// id, error}`, or nothing.
+        /// it: `{type: "done", id, output}` or `{type: "failed", id,
+        /// error}`, or nothing.
         pub fn slice(&mut self) -> JsValue {
             let Some(report) = self.worker.slice() else {
                 return JsValue::UNDEFINED;
@@ -256,10 +256,6 @@ mod browser {
                 Report::Done(id, output) => {
                     set("output", &js_sys::Uint8Array::from(output.as_slice()));
                     ("done", id)
-                }
-                Report::Part(id, part) => {
-                    set("output", &js_sys::Uint8Array::from(part.as_slice()));
-                    ("part", id)
                 }
                 Report::Failed(id, error) => {
                     set("error", &JsValue::from_str(error));
@@ -281,14 +277,6 @@ mod browser {
             self.worker
                 .step(id as u64, budget as u64)
                 .map_err(|error| JsValue::from_str(&error))
-        }
-
-        pub fn take_part(&mut self, id: f64) -> Option<Vec<u8>> {
-            self.worker.take_part(id as u64)
-        }
-
-        pub fn warm(&mut self) {
-            self.worker.warm();
         }
 
         pub fn cancel(&mut self, id: f64) {
@@ -318,6 +306,59 @@ mod browser {
         }
     }
 
+    /// A cook's pack as the page reads it ([`crate::PackIndex`]): its
+    /// directory, from the pack's header and the directory's bytes the
+    /// page fetched by range; records it finds, as `[offset, stored, raw]`
+    /// byte counts the page fetches, then unpacks.
+    #[wasm_bindgen]
+    pub struct PackDirectory {
+        index: crate::PackIndex,
+    }
+
+    #[wasm_bindgen]
+    impl PackDirectory {
+        #[wasm_bindgen(constructor)]
+        pub fn new(header: &[u8], directory: &[u8]) -> Result<PackDirectory, JsValue> {
+            crate::PackIndex::open(header, directory)
+                .map(|index| Self { index })
+                .map_err(|error| JsValue::from_str(&error))
+        }
+
+        /// The directory's `[offset, stored, raw]`, from a pack's first
+        /// [`crate::PACK_HEADER`] bytes.
+        pub fn locate(header: &[u8]) -> Result<Vec<f64>, JsValue> {
+            let (offset, stored, raw) =
+                crate::pack_directory(header).map_err(|error| JsValue::from_str(&error))?;
+            Ok(vec![offset as f64, stored as f64, raw as f64])
+        }
+
+        /// The pack's record `key` as `[offset, stored, raw]`, if it holds
+        /// it.
+        pub fn find(&self, key: &str) -> Option<Vec<f64>> {
+            self.index.find(key).map(|entry| {
+                vec![
+                    entry.offset as f64,
+                    f64::from(entry.stored),
+                    f64::from(entry.raw),
+                ]
+            })
+        }
+
+        /// The record `key` from its `stored` bytes.
+        pub fn unpack(&self, key: &str, stored: &[u8]) -> Result<Vec<u8>, JsValue> {
+            let entry = self
+                .index
+                .find(key)
+                .ok_or_else(|| JsValue::from_str("the pack holds no such record"))?;
+            crate::unpack(&entry, stored).map_err(|error| JsValue::from_str(&error))
+        }
+
+        /// Its records.
+        pub fn records(&self) -> u32 {
+            self.index.len() as u32
+        }
+    }
+
     /// [`JobCache`] for the page, which keeps the bytes. Sizes are
     /// JavaScript numbers.
     #[wasm_bindgen]
@@ -330,7 +371,6 @@ mod browser {
         /// [`JobCache::open`].
         #[wasm_bindgen(constructor)]
         pub fn new(
-            build: &[u8],
             budget: f64,
             available: Option<f64>,
             verify: bool,
@@ -338,7 +378,6 @@ mod browser {
         ) -> Self {
             Self {
                 cache: JobCache::open(
-                    build,
                     budget as u64,
                     available.map(|bytes| bytes as u64),
                     verify,
@@ -357,8 +396,10 @@ mod browser {
             vec![hits as f64, misses as f64, bytes as f64, mismatches as f64]
         }
 
+        /// The key of the page's own record of `kind` on `identity`, which
+        /// this module's code makes (its transcoded textures).
         pub fn key(&self, kind: &str, identity: &[u8]) -> String {
-            self.cache.key(kind, identity)
+            crate::record_key(kind, identity)
         }
 
         pub fn lists(&self, name: &str) -> bool {

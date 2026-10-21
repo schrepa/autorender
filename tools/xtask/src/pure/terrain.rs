@@ -1,10 +1,10 @@
 //! The terrain corpus: the tracked terrain fixture's generated terrain
 //! (web/scripts/fixtures/terrain.scene.json and its dome heightmap). Its
 //! bakes; every tile of its pyramid and some of its surroundings'; tiles
-//! generated in bands with their objects placed after; objects standing far
-//! away placed apart; a walk; and its `ETR1` file. Each runs as job workers
-//! run it, whole and a slice at a time, and in place as engines without
-//! workers run it, and every way must give the same bits.
+//! under edits; a walk; a pack of what they made; and its `ETR1` file. Each
+//! job runs as workers run it, whole and a slice at a time, and must give
+//! the bits its code gives in place; every record must read back from the
+//! pack the cook would write as it went in.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -14,13 +14,11 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::{Terrain, TerrainSource};
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use engine_terrain::jobs::{
-    self, BakeJob, BandJob, FarJob, PlaceJob, StackView, TerrainRecipe, TerrainWorker, TileJob,
-    WalkJob,
+    self, BakeJob, StackView, TerrainRecipe, TerrainWorker, TileJob, WalkJob,
 };
 use engine_terrain::{
     BiomeRules, FileHeader, Generator, Layer, Layers, NavOptions, Obstacle, Placing, Pyramid,
-    TILE_STRIDE, TerrainBake, Tile, TileKey, codec, decode_tile, encode_file, merge_bands,
-    merge_placed, walk,
+    Stamp, StampOp, Tile, TileKey, codec, decode_tile, encode_file, walk,
 };
 use glam::Vec2;
 use serde_json::json;
@@ -30,8 +28,8 @@ use super::{Observations, hash};
 /// The fixture scene and the entity holding its terrain.
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const ENTITY: &str = "ground";
-/// Work units each slice of a job or bake gets: few enough that each
-/// takes many slices, as frames and workers slice them.
+/// Work units each slice of a job gets: few enough that each takes many
+/// slices, as workers slice them.
 const SLICE: u64 = 4096;
 /// The height step of the terrain file, `terrain_bake`'s default.
 const STEP: f32 = 1.0 / 256.0;
@@ -52,15 +50,11 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let pyramid = terrain.pyramid;
     let mut worker = Worker::default();
 
-    // The bakes at once, as tools bake; in slices, as frames bake in
-    // place; and as a worker's job.
+    // The bakes in place, and as a worker's job.
     let baked = authored.bake_all(&pyramid);
     let bytes = codec::encode(&baked);
     observed.hash("bakes", &bytes);
-    observed.check(
-        codec::encode(&bake_in_slices(authored, &pyramid)) == bytes,
-        || "the bakes in slices differ from the bakes at once".into(),
-    );
+    let mut records = vec![(BakeJob::KIND.name(), bytes.clone())];
     observed.check(
         worker.run(
             BakeJob::KIND.name(),
@@ -98,8 +92,9 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let mut tiles = BTreeMap::new();
     for level in (0..pyramid.levels()).rev() {
         for key in pyramid.level_tiles(level) {
-            let tile = recipe.tile(&mut worker, key, Placing::All, observed)?;
-            observed.hash(format!("tile {}", name(key)), &codec::encode(&tile));
+            let (tile, bytes) = recipe.tile(&mut worker, key, &[], observed)?;
+            observed.hash(format!("tile {}", name(key)), &bytes);
+            records.push((TileJob::KIND.name(), bytes));
             tiles.insert(key, tile);
         }
     }
@@ -108,54 +103,29 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.record("tile objects", objects);
     observed.check(objects > 0, || "no tile holds objects".into());
 
-    // Tiles of levels whose layers stand objects far away: their own
-    // objects first, those standing far away by a job of their own after.
-    for (&key, tile) in &tiles {
-        if rules.places(key.level, Placing::Far) {
-            let near = recipe.tile(&mut worker, key, Placing::Near, observed)?;
-            let job = FarJob {
-                recipe: "recipe".into(),
-                key,
-            };
-            let far = jobs::far_output(&worker.run(FarJob::KIND.name(), &job.input(&near))?)
-                .map_err(|error| error.to_string())?;
-            observed.hash(format!("far {}", name(key)), &codec::encode(&far));
-            observed.record(format!("far objects {}", name(key)), far.len());
-            let joined = near
-                .clone()
-                .with_placed(merge_placed(near.placed(), &far), Placing::All);
-            observed.check(codec::encode(&joined) == codec::encode(tile), || {
-                format!(
-                    "tile {}: its own objects and those standing far away differ from all \
-                     its objects",
-                    name(key)
-                )
-            });
-        }
-    }
-
-    // Tiles in bands of rows across workers, joined, then their objects
-    // in bands of candidate rows, as urgent tiles generate: a tile of the
-    // meadow's crates and balls, one holding an author's ball, and one of
-    // the level whose objects all stand far away.
-    for (key, placing, bands) in [
-        (TileKey::new(0, 2, 2), Placing::All, 4),
-        (TileKey::new(1, 0, 1), Placing::All, 3),
-        (TileKey::new(2, 0, 0), Placing::Near, 2),
-    ] {
-        let whole = match placing {
-            Placing::All => tiles[&key].clone(),
-            _ => recipe.tile(&mut worker, key, placing, observed)?,
-        };
-        let banded = recipe.banded(&mut worker, key, placing, bands)?;
-        observed.check(codec::encode(&banded) == codec::encode(&whole), || {
-            format!(
-                "tile {} in {bands} bands, its objects placed after, differs from the tile \
-                 whole",
-                name(key)
-            )
-        });
-    }
+    // A tile under edits, which its job carries: two pits dug in the
+    // meadow, the later over the earlier.
+    let edits = [
+        Stamp {
+            center: [600.0, 600.0],
+            radius: 6.0,
+            falloff: 4.0,
+            op: StampOp::Lower(3.0),
+        },
+        Stamp {
+            center: [606.0, 600.0],
+            radius: 4.0,
+            falloff: 2.0,
+            op: StampOp::Hole,
+        },
+    ];
+    let edited = TileKey::new(0, 2, 2);
+    let (tile, bytes) = recipe.tile(&mut worker, edited, &edits, observed)?;
+    observed.hash(format!("edited tile {}", name(edited)), &bytes);
+    observed.check(tile.heights() != tiles[&edited].heights(), || {
+        format!("the edits leave tile {} as it was", name(edited))
+    });
+    records.push((TileJob::KIND.name(), bytes));
 
     // The ground around the terrain to the horizon: the same layers seen
     // from afar, without objects.
@@ -191,8 +161,9 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.record("surroundings tiles", around.tiles(0)[0]);
     for level in (around.levels().saturating_sub(2)..around.levels()).rev() {
         for key in around.level_tiles(level) {
-            let tile = around_recipe.tile(&mut worker, key, Placing::All, observed)?;
-            observed.hash(format!("surroundings {}", name(key)), &codec::encode(&tile));
+            let (_, bytes) = around_recipe.tile(&mut worker, key, &[], observed)?;
+            observed.hash(format!("surroundings {}", name(key)), &bytes);
+            records.push((TileJob::KIND.name(), bytes));
         }
     }
 
@@ -206,12 +177,13 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let options = NavOptions::default();
     let walked = WalkJob {
         recipe: "recipe".into(),
+        stamps: Vec::new(),
         from: route.0,
         to: route.1,
         obstacles: obstacles.to_vec(),
         options,
     };
-    let job = worker.run(WalkJob::KIND.name(), &walked.input())?;
+    let job = worker.run(WalkJob::KIND.name(), &walked.identity())?;
     let found = walk(&baked, &pyramid, route.0, route.1, &obstacles, &options);
     observed.check(job == codec::encode(&found), || {
         "the walk job differs from the walk in place".into()
@@ -225,6 +197,11 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         "walk",
         json!({"points": found.points.len(), "length": found.length, "level": found.level}),
     );
+
+    // The pack the cook writes of every record above, which reads each
+    // back as it went in.
+    let pack = pack(&records, observed)?;
+    observed.hash("pack", &pack);
 
     // The terrain file: every tile decodes to its heights quantized to the
     // step, with its holes.
@@ -300,21 +277,54 @@ fn name(key: TileKey) -> String {
     format!("{}/{}/{}", key.level, key.x, key.z)
 }
 
-/// `layers` with every bake done in slices, as frames bake in place.
-fn bake_in_slices(layers: &Layers, pyramid: &Pyramid) -> Layers {
-    let mut layers = layers.clone();
-    while let Some(next) = layers.unbaked() {
-        let index = next.0;
-        let mut bake = TerrainBake::new(&layers, next, pyramid);
-        let baked = loop {
-            let mut budget = SLICE;
-            if let Some(baked) = bake.advance(pyramid, &mut budget) {
-                break baked;
-            }
-        };
-        layers = layers.with_baked(index, baked);
+/// A pack of `records` (each keyed as hosts key it, by its kind and a
+/// hash of its bytes standing for its identity), its records compressed as
+/// the cook compresses them; each must read back from it as it went in.
+fn pack(records: &[(&str, Vec<u8>)], observed: &mut Observations) -> Result<Vec<u8>, String> {
+    let keyed: Vec<([u8; 32], &[u8], Vec<u8>)> = records
+        .iter()
+        .map(|(kind, bytes)| {
+            let key =
+                engine_sources::record_key(&engine_terrain::SOURCE, kind, &codec_identity(bytes));
+            let stored =
+                zstd::bulk::compress(bytes, PACK_LEVEL).map_err(|error| error.to_string())?;
+            Ok((key, bytes.as_slice(), stored))
+        })
+        .collect::<Result<_, String>>()?;
+    let pack = engine_worker::pack_bytes(&keyed, |directory| {
+        zstd::bulk::compress(directory, PACK_LEVEL).unwrap_or_default()
+    });
+    let header = pack
+        .get(..engine_worker::PACK_HEADER)
+        .ok_or("the pack has no header")?;
+    let (offset, stored, _) = engine_worker::pack_directory(header)?;
+    let range = |offset: u64, length: u64| {
+        let start = usize::try_from(offset).map_err(|error| error.to_string())?;
+        let end = start + usize::try_from(length).map_err(|error| error.to_string())?;
+        pack.get(start..end)
+            .ok_or_else(|| "a range past the pack's end".to_owned())
+    };
+    let index = engine_worker::PackIndex::open(header, range(offset, stored)?)?;
+    observed.record("pack records", index.len());
+    for (key, bytes, _) in &keyed {
+        let hex: String = key.iter().map(|byte| format!("{byte:02x}")).collect();
+        let entry = index.find(&hex).ok_or("a record missing from the pack")?;
+        let read = engine_worker::unpack(&entry, range(entry.offset, u64::from(entry.stored))?)?;
+        observed.check(read == *bytes, || {
+            format!("record {hex} reads back from the pack as other bytes")
+        });
     }
-    layers
+    Ok(pack)
+}
+
+/// zstd's level the corpus packs at, the cook's.
+const PACK_LEVEL: i32 = 19;
+
+/// What stands for a record's identity in the corpus's pack: its bytes'
+/// hash, as the records differ by what made them.
+fn codec_identity(bytes: &[u8]) -> Vec<u8> {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes).to_vec()
 }
 
 /// What the bakes found, as readable numbers.
@@ -371,28 +381,42 @@ struct Recipe {
 }
 
 impl Recipe {
-    /// Tile `key` with `placing`'s objects, generated by a worker's job,
-    /// which must equal the tile generated in place, the job run a slice at
-    /// a time, and the job staged (whose shape, handed out first, must be
-    /// the tile's ground).
+    /// Tile `key` under `stamps` (edits, in order), with every object its
+    /// level places, generated by a worker's job, which must equal the tile
+    /// generated in place and the job run a slice at a time: the tile and
+    /// its record's bytes.
     fn tile(
         &self,
         worker: &mut Worker,
         key: TileKey,
-        placing: Placing,
+        stamps: &[Stamp],
         observed: &mut Observations,
-    ) -> Result<Tile, String> {
+    ) -> Result<(Tile, Vec<u8>), String> {
         let job = TileJob {
             recipe: self.key.into(),
             key,
-            placing,
+            stamps: stamps.to_vec(),
         };
-        let input = job.input(false);
+        let input = job.identity();
         let whole = worker.run(TileJob::KIND.name(), &input)?;
-        let what = format!("{} tile {} placing {placing:?}", self.key, name(key));
-        let mut generator = Generator::new(self.layers.clone(), &self.pyramid, key)
+        let what = format!(
+            "{} tile {} under {} edits",
+            self.key,
+            name(key),
+            stamps.len()
+        );
+        let layers = if stamps.is_empty() {
+            self.layers.clone()
+        } else {
+            Arc::new(
+                self.layers
+                    .with_stamps(stamps)
+                    .map_err(|error| error.to_string())?,
+            )
+        };
+        let mut generator = Generator::new(layers, &self.pyramid, key)
             .with_surface(self.rules.clone())
-            .with_placing(placing)
+            .with_placing(Placing::All)
             .with_materials(true);
         let mut unlimited = u64::MAX;
         let in_place = generator
@@ -405,78 +429,8 @@ impl Recipe {
             worker.sliced(TileJob::KIND.name(), &input)? == whole,
             || format!("{what}: the job run a slice at a time differs from the job run whole"),
         );
-        let (shape, staged) = worker.staged(&job.input(true))?;
-        observed.check(staged == whole, || {
-            format!("{what}: the staged job differs from the job")
-        });
         let tile: Tile = codec::decode(&whole).map_err(|error| error.to_string())?;
-        let shape: Option<Tile> = shape
-            .map(|bytes| codec::decode(&bytes))
-            .transpose()
-            .map_err(|error| error.to_string())?;
-        observed.check(
-            shape.is_some_and(|shape| {
-                shape.heights() == tile.heights() && shape.hole_bits() == tile.hole_bits()
-            }),
-            || format!("{what}: the staged job hands out no shape, or another ground"),
-        );
-        Ok(tile)
-    }
-
-    /// Tile `key` generated in `bands` bands of rows and joined, then its
-    /// `placing` objects placed in as many bands of candidate rows, joined
-    /// in order, as engines dispatch urgent tiles to workers.
-    fn banded(
-        &self,
-        worker: &mut Worker,
-        key: TileKey,
-        placing: Placing,
-        bands: usize,
-    ) -> Result<Tile, String> {
-        let size = (TILE_STRIDE as usize).div_ceil(bands);
-        let mut parts = Vec::with_capacity(bands);
-        for band in 0..bands {
-            let job = BandJob {
-                recipe: self.key.into(),
-                key,
-                first: (band * size) as u32,
-                end: ((band + 1) * size).min(TILE_STRIDE as usize) as u32,
-            };
-            let output = worker.run(BandJob::KIND.name(), &job.input())?;
-            parts.push(jobs::band_output(&output).map_err(|error| error.to_string())?);
-        }
-        let spacing = self.pyramid.spacing(u32::from(key.level));
-        let tile = merge_bands(key, spacing, &parts).ok_or("the bands do not join")?;
-        if !self.rules.places(key.level, placing) {
-            return Ok(tile);
-        }
-        let starts: Vec<(u32, u32)> = self
-            .rules
-            .place_rows(key, spacing, placing)
-            .iter()
-            .enumerate()
-            .flat_map(|(layer, &rows)| (0..rows).map(move |row| (layer as u32, row)))
-            .collect();
-        let bands = bands.min(starts.len()).max(1);
-        let mut objects = Vec::new();
-        for band in 0..bands {
-            let start = if band == 0 {
-                (0, 0)
-            } else {
-                starts[band * starts.len() / bands]
-            };
-            let end = (band + 1 < bands).then(|| starts[(band + 1) * starts.len() / bands]);
-            let job = PlaceJob {
-                recipe: self.key.into(),
-                key,
-                placing,
-                from: start,
-                end,
-            };
-            let output = worker.run(PlaceJob::KIND.name(), &job.input(&tile))?;
-            objects.extend(jobs::far_output(&output).map_err(|error| error.to_string())?);
-        }
-        Ok(tile.with_placed(objects, placing))
+        Ok((tile, whole))
     }
 }
 
@@ -521,30 +475,6 @@ impl Worker {
                     "output": hash(&output),
                 }));
                 return Ok(output);
-            }
-        }
-    }
-
-    /// A staged tile job on `input`, run a slice at a time: the part it
-    /// hands out first, if any, and its output.
-    fn staged(&mut self, input: &[u8]) -> Result<(Option<Vec<u8>>, Vec<u8>), String> {
-        self.next += 1;
-        self.worker.start(self.next, TileJob::KIND.name(), input)?;
-        let mut part = None;
-        loop {
-            let output = self.worker.step(self.next, SLICE)?;
-            if part.is_none() {
-                part = self.worker.take_part(self.next);
-            }
-            if let Some(output) = output {
-                self.log.push(json!({
-                    "job": TileJob::KIND.name(),
-                    "input": STANDARD.encode(input),
-                    "slice": SLICE,
-                    "part": part.as_deref().map(hash),
-                    "output": hash(&output),
-                }));
-                return Ok((part, output));
             }
         }
     }

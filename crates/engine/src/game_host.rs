@@ -65,6 +65,33 @@ impl<G: Game> GameHost<G> {
         self.app.engine()
     }
 
+    /// The session cooks from now on: the engine asks for every record
+    /// its world's content needs ([`engine_core::Cooking`]), which the host
+    /// keeps for its pack.
+    pub fn cook(&mut self) {
+        self.app
+            .engine_mut()
+            .app
+            .world_mut()
+            .insert_resource(engine_core::Cooking::default());
+    }
+
+    /// What a cooking session has left, by feature; `None` unless it
+    /// cooks.
+    pub fn cooking(&self) -> Option<&engine_core::Cooking> {
+        self.app
+            .engine()
+            .app
+            .world()
+            .get_resource::<engine_core::Cooking>()
+    }
+
+    /// The jobs the host's scheduler holds: on workers, in lookups or to
+    /// run in place.
+    pub fn jobs_held(&self) -> u32 {
+        self.jobs.held()
+    }
+
     pub fn engine_mut(&mut self) -> &mut Engine {
         self.app.engine_mut()
     }
@@ -181,25 +208,35 @@ impl<G: Game> GameHost<G> {
         self.app.work_between_frames(milliseconds)
     }
 
-    /// Workers the host runs the engine's jobs on; without, the engine runs
-    /// them itself.
+    /// Workers the host runs the engine's jobs on; without, it runs them in
+    /// place, as it takes them ([`Self::take_jobs`]).
     pub fn set_job_workers(&mut self, workers: u32) {
         self.jobs.set_workers(workers);
         self.app.set_job_workers(self.jobs.working());
     }
 
-    /// Whether the host keeps keepable jobs' outputs, and runs every job
-    /// anyway to verify them.
+    /// Whether the host holds records (the cook's packs, a store keeping
+    /// what jobs make), and runs every job anyway to verify them.
     pub fn set_job_cache(&mut self, caching: bool, verify: bool) {
         self.jobs.set_cache(caching, verify);
     }
 
     /// What the host does for the engine's jobs since the last call, in
-    /// order ([`JobOrder`]).
+    /// order ([`JobOrder`]); jobs no worker takes, on a host without any,
+    /// run here first.
     pub fn take_jobs(&mut self) -> Vec<JobOrder> {
         let messages = self.app.take_jobs();
         let mut finished = Vec::new();
-        let orders = self.jobs.take(messages, &mut finished);
+        let mut orders = self.jobs.take(messages, &mut finished);
+        let here = self.jobs.take_here();
+        if !here.is_empty() {
+            for request in here {
+                let output = self.app.run_job_here(request.kind, &request.input);
+                self.jobs.ran_here(request.id, output, &mut finished);
+            }
+            // What they made, to keep.
+            orders.extend(self.jobs.take(Vec::new(), &mut finished));
+        }
         self.finish_jobs(finished);
         orders
     }
@@ -218,16 +255,8 @@ impl<G: Game> GameHost<G> {
         self.finish_jobs(finished);
     }
 
-    /// A part of job `id`'s output its worker handed back before the rest,
-    /// such as a tile's shape.
-    pub fn part_job(&mut self, id: JobId, part: Vec<u8>) {
-        if self.jobs.part(id) {
-            self.app.part_job(id, part);
-        }
-    }
-
-    /// The job cache's answer for job `id` ([`JobOrder::Lookup`]): the key
-    /// of its work, and the output it keeps, if any.
+    /// The host's records' answer for job `id` ([`JobOrder::Lookup`]): the
+    /// record's key, and its bytes where a pack or the store holds it.
     pub fn job_kept(&mut self, id: JobId, key: String, output: Option<Vec<u8>>) {
         let mut finished = Vec::new();
         self.jobs.kept(id, key, output, &mut finished);

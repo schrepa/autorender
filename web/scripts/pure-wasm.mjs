@@ -2,8 +2,8 @@
  * Replays the terrain corpus's jobs (`cargo xtask pure --wasm`) in the job
  * worker's Wasm module as browsers run it (web/pkg-dev/engine_worker_bg.wasm),
  * in Node, no browser: every share, then every job run as the corpus ran it
- * natively (whole, a slice at a time, or staged), each output (and staged
- * part) hashed and held to the native one. Usage:
+ * natively (whole, or a slice at a time), each output hashed and held to
+ * the native one. Usage:
  *   node web/scripts/pure-wasm.mjs JOBS.json
  * Prints one JSON object; a job whose output differs exits 3.
  */
@@ -34,17 +34,14 @@ for (const entry of entries) {
   id++;
   worker.start(id, entry.job, Buffer.from(entry.input, "base64"));
   const budget = entry.slice ?? Number.MAX_SAFE_INTEGER;
-  /** @type {Uint8Array | null} */
-  let part = null;
   let output;
   do {
     output = worker.step(id, budget);
-    if ("part" in entry && part === null) part = worker.take_part(id) ?? null;
   } while (output === undefined || output === null);
   jobs++;
-  const found = { output: hash(output), ...("part" in entry ? { part: part === null ? null : hash(part) } : {}) };
-  if (found.output !== entry.output || ("part" in entry && found.part !== entry.part)) {
-    mismatches.push({ job: entry.job, index: jobs - 1, native: { output: entry.output, part: entry.part }, wasm: found });
+  const found = hash(output);
+  if (found !== entry.output) {
+    mismatches.push({ job: entry.job, index: jobs - 1, native: entry.output, wasm: found });
   }
 }
 console.log(JSON.stringify({ shares, jobs, mismatches: mismatches.slice(0, 8), mismatched: mismatches.length }));

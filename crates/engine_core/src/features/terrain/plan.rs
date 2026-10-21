@@ -2,7 +2,7 @@
 //! from the view, the tile budget and the focus points, the tiles it loads
 //! in order (the urgent first) and those it keeps, collision's tiles, what
 //! is missing with its jobs' priorities and what waits, and the tiles
-//! workers may generate ahead of need, in the order the terrain's
+//! places games name want in memory, in the order the terrain's
 //! documentation gives.
 
 use super::*;
@@ -30,9 +30,6 @@ pub(super) struct PlanInput<'a> {
     /// (the last frame's, to reuse).
     pub(super) collides: bool,
     pub(super) collision: Vec<TileKey>,
-    /// Whether nothing was missing nor generating at the last frame, with
-    /// workers: tiles within the idle reach generate ahead of need.
-    pub(super) quiet: bool,
     /// Tiles the frame's budget leaves the terrain.
     pub(super) remaining: usize,
     /// The finest levels waiting at the eye's speed, and whether it has yet
@@ -56,20 +53,17 @@ pub(super) struct Plan {
     /// and how many tiles wait for the eye to slow down.
     pub(super) missing: Vec<(TileKey, u32)>,
     pub(super) waiting: u32,
-    /// The tiles within the idle reach, and those places games name want.
-    pub(super) around: Vec<WantedTile>,
+    /// The tiles places games name want.
     pub(super) named: Vec<WantedTile>,
 }
 
 /// The tiles each reach of the view wants.
 struct Wanted {
-    /// The camera's within the loading reach, where it is headed, within
-    /// the keeping reach and the idle reach, and what places games name
-    /// want.
+    /// The camera's within the loading reach, where it is headed and within
+    /// the keeping reach, and what places games name want.
     load: Vec<WantedTile>,
     headed: Vec<WantedTile>,
     held: Vec<WantedTile>,
-    around: Vec<WantedTile>,
     named: Vec<WantedTile>,
 }
 
@@ -191,7 +185,6 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
         keep,
         missing,
         waiting: waiting_tiles,
-        around: wanted.around,
         named: wanted.named,
     }
 }
@@ -225,9 +218,8 @@ fn collision_tiles(
 }
 
 /// What the view wants: the camera's tiles within their reach of the eye
-/// and where it is headed, what it keeps within a wider reach, ahead of
-/// need what lies within the idle reach while the terrain is quiet, and
-/// what places games name want; distances run to each tile's ground.
+/// and where it is headed, what it keeps within a wider reach, and what
+/// places games name want; distances run to each tile's ground.
 fn wanted(input: &PlanInput<'_>) -> Wanted {
     let (pyramid, origin, store) = (&input.pyramid, input.origin, input.store);
     let ground = |key: TileKey| ground_bounds(store, pyramid, key);
@@ -260,11 +252,6 @@ fn wanted(input: &PlanInput<'_>) -> Wanted {
             want(input.ahead - origin, LOAD_REACH)
         },
         held: want(local_eye, KEEP_REACH),
-        around: if input.quiet && input.settings.idle_reach > KEEP_REACH {
-            want(local_eye, input.settings.idle_reach)
-        } else {
-            Vec::new()
-        },
         // What places games name want, each frame.
         named: input
             .places
@@ -272,37 +259,6 @@ fn wanted(input: &PlanInput<'_>) -> Wanted {
             .flat_map(|&(place, reach)| want(place - origin, reach))
             .collect(),
     }
-}
-
-/// What workers generate ahead of need: the nearest tiles within the idle
-/// reach and that places games name want, neither kept (`keep`) nor
-/// resident nor kept in memory, as many as `fits`, so none memory holds
-/// goes to make room for another.
-pub(super) fn ahead_of_need(
-    (around, named): (&[WantedTile], &[WantedTile]),
-    keep: &HashSet<TileKey>,
-    fits: usize,
-    store: &TileStore,
-) -> Vec<TileKey> {
-    let mut nearest: Vec<&WantedTile> = around.iter().chain(named).collect();
-    nearest.sort_by(|a, b| {
-        a.score
-            .total_cmp(&b.score)
-            .then(b.key.level.cmp(&a.key.level))
-            .then(a.key.cmp(&b.key))
-    });
-    let mut listed = HashSet::default();
-    nearest
-        .into_iter()
-        .map(|tile| tile.key)
-        .filter(|key| {
-            listed.insert(*key)
-                && !keep.contains(key)
-                && !store.contains(key)
-                && !store.in_memory(key)
-        })
-        .take(fits)
-        .collect()
 }
 
 /// The lowest and highest ground tile `key` can hold,

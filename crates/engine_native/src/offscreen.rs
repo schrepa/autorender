@@ -24,7 +24,7 @@ pub struct Offscreen<G: Game> {
     host: Box<GameHost<G>>,
     // Physical pixels.
     size: (u32, u32),
-    jobs: Option<JobPool>,
+    jobs: JobPool,
 }
 
 /// How many frames [`Offscreen::record`] draws: a count, or as many as
@@ -96,7 +96,17 @@ impl<G: Game> Offscreen<G> {
     pub fn launch<E: Into<engine::Error>>(
         size: (u32, u32),
         gpu: GpuPreference,
-        jobs: JobOptions,
+        jobs: &JobOptions,
+        build: impl FnOnce() -> Result<(Engine, G), E>,
+    ) -> engine::Result<Self> {
+        Self::launch_with(size, gpu, jobs.pool(false), build)
+    }
+
+    /// [`Self::launch`], its jobs run by `jobs`.
+    pub fn launch_with<E: Into<engine::Error>>(
+        size: (u32, u32),
+        gpu: GpuPreference,
+        mut jobs: JobPool,
         build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> engine::Result<Self> {
         let target = RenderTarget::Offscreen { size, gpu };
@@ -105,10 +115,7 @@ impl<G: Game> Offscreen<G> {
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
             target, build,
         )))?);
-        let mut jobs = jobs.pool();
-        if let Some(pool) = &mut jobs {
-            pool.attach(&mut host);
-        }
+        jobs.attach(&mut host);
         Ok(Self { host, size, jobs })
     }
 
@@ -253,7 +260,7 @@ impl<G: Game> Offscreen<G> {
         let threads = if cpu_samples {
             engine_profiler::sampler::SampledThread::current("Main thread")
                 .into_iter()
-                .chain(self.jobs.iter().flat_map(JobPool::sampled_threads))
+                .chain(self.jobs.sampled_threads())
                 .collect()
         } else {
             Vec::new()
@@ -280,9 +287,12 @@ impl<G: Game> Offscreen<G> {
     /// Hands workers the jobs the engine made, and the engine what workers
     /// finished: frames do so, and hosts between them.
     pub fn exchange_jobs(&mut self) {
-        if let Some(jobs) = &mut self.jobs {
-            jobs.exchange(&mut self.host);
-        }
+        self.jobs.exchange(&mut self.host);
+    }
+
+    /// Its job pool.
+    pub fn jobs_mut(&mut self) -> &mut JobPool {
+        &mut self.jobs
     }
 
     pub fn host(&self) -> &GameHost<G> {

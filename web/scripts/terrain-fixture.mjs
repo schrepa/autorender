@@ -71,7 +71,6 @@ export async function openTerrain(name) {
       const ready = rendering.terrain.tiles > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_patches === 0;
       resident = ready ? resident + 1 : 0;
       if (resident > 1) {
-        assert.equal(rendering.terrain.unplaced_tiles, 0, `every resident tile holds the objects its level places: ${JSON.stringify(rendering.terrain)}`);
         return rendering;
       }
       if (!ready) await new Promise(resolve => setTimeout(resolve, 25));

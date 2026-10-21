@@ -454,7 +454,7 @@
       "direction": "lower"
     },
     {
-      "name": "jobs.parts",
+      "name": "jobs.in_place",
       "kind": "work",
       "rule": "shown",
       "statistic": "the last sampled frame's value",
@@ -1486,17 +1486,6 @@
       ],
       "unit": "count",
       "direction": null
-    },
-    {
-      "name": "terrain.unplaced_tiles",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "the last sampled frame's value",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
     },
     {
       "name": "terrain.vt_bakes",

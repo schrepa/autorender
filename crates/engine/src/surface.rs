@@ -41,16 +41,17 @@ macro_rules! __game_surface {
                 fn set_preparation(enabled: bool);
                 /// Workers the page runs jobs on.
                 fn set_job_workers(workers: u32);
-                /// Whether the page keeps keepable jobs' outputs, and runs every
-                /// job anyway to verify them.
+                /// Whether the page holds records (the cook's packs, a store
+                /// keeping what jobs make), and runs every job anyway to verify
+                /// them.
                 fn set_job_cache(caching: bool, verify: bool);
                 /// What the page does for the engine's jobs since the last call,
                 /// in order: what every worker holds, jobs to run and cancel on
-                /// each worker, and lookups, outputs to keep and mismatches for
-                /// the job cache.
+                /// each worker, and records to look up, keep and drop as
+                /// mismatched.
                 fn take_jobs() -> $crate::__private::js_sys::Array;
-                /// The job cache's answer for job `id`: the `key` of its work, and
-                /// the `output` it keeps, if any.
+                /// The page's records' answer for job `id`: the record's `key`,
+                /// and its `output` where a pack or the store holds it.
                 fn job_kept(id: f64, key: String, output: Option<Vec<u8>>);
                 /// Worker `worker` broke, for `error`: the engine takes back its
                 /// jobs, and the page `replaced` it or runs one fewer.
@@ -64,9 +65,7 @@ macro_rules! __game_surface {
                 fn complete_job(id: f64, output: Vec<u8>);
                 /// Job `id` failed on its worker.
                 fn fail_job(id: f64, error: String);
-                /// A part of job `id`'s output handed back before the rest.
-                fn part_job(id: f64, part: Vec<u8>);
-                /// The page's job output cache counters.
+                /// The page's records' counters.
                 fn report_job_cache(hits: f64, misses: f64, bytes: f64, mismatches: f64);
                 /// Drops suspension time and held input before the next frame.
                 fn suspend();

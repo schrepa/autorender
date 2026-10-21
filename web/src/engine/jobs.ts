@@ -1,16 +1,17 @@
 // Worker jobs: a pool of Web Workers beside the page, each running the
 // engine's job worker module. The engine schedules its jobs (which worker
-// runs each, what every worker holds, which outputs the job cache answers
-// and which a fresh run verifies); the pool carries its orders to the
-// workers and the cache (job-cache.ts), and hands back what workers report
-// and the cache reads. Workers run their most urgent job a slice at a
-// time, in the module. Images (with the engine's decoder) and KTX2
-// textures decode on them at load boundaries too. Workers hold their own memory: shares travel as Blobs,
-// which every worker reads without the page copying them again.
-// ?workers=N runs N workers and ?workers=off none, so the engine does the
-// work itself; a worker that breaks is replaced once, and the engine takes
-// back its jobs. A worker's panic, as the game module's, stops the engine
-// for good: the pool's workers end and it calls the module no more.
+// runs each, what every worker holds, which records the packs and store
+// answer and which a fresh run verifies); the pool carries its orders to
+// the workers and the records (job-cache.ts), and hands back what workers
+// report and the records read. Workers run their most urgent job a slice
+// at a time, in the module. Images (with the engine's decoder) and KTX2
+// textures decode on them at load boundaries too. Workers hold their own
+// memory: shares travel as Blobs, which every worker reads without the
+// page copying them again. ?workers=N runs N workers and ?workers=off
+// none, so the engine runs jobs in place, as the pool takes them; a worker
+// that breaks is replaced once, and the engine takes back its jobs. A
+// worker's panic, as the game module's, stops the engine for good: the
+// pool's workers end and it calls the module no more.
 
 import workerWasmUrl from "../../pkg/engine_worker_bg.wasm?url";
 import { CORES_PER_DEFAULT_WORKER, MAX_DEFAULT_WORKERS, MAX_WORKERS, PANIC_PREFIX } from "../generated/host";
@@ -22,7 +23,7 @@ import { fatal, type PanicReport } from "./panic";
 
 /** The game methods a pool serves. */
 export type JobRuntime = Pick<Runtime, "set_job_workers" | "set_job_cache" | "take_jobs" | "complete_job" | "fail_job"
-  | "part_job" | "job_kept" | "lose_job_worker" | "job_task" | "job_task_done" | "report_job_cache">;
+  | "job_kept" | "lose_job_worker" | "job_task" | "job_task_done" | "report_job_cache">;
 
 /** What the engine orders, in order (`engine::host::JobOrder`). */
 export type JobOrder =
@@ -31,14 +32,13 @@ export type JobOrder =
   | { unshare: string }
   | { run: number; worker: number; kind: string; input: Uint8Array; priority: number }
   | { cancel: number; worker: number }
-  | { lookup: number; kind: string; identity: Uint8Array }
+  | { lookup: number; key: string }
   | { keep: string; output: Uint8Array }
   | { mismatch: string };
 
 /** What workers send back. */
 type WorkerMessage =
   | { type: "done"; id: number; output: Uint8Array }
-  | { type: "part"; id: number; output: Uint8Array }
   | { type: "failed"; id: number; error: string }
   | { type: "task"; task: number; result: unknown }
   | { type: "task_failed"; task: number; error: string }
@@ -80,7 +80,7 @@ export class JobPool {
   private readonly module: Promise<WebAssembly.Module | undefined> = workerWasm()
     .then(bytes => bytes && WebAssembly.compile(bytes))
     .catch(() => undefined);
-  /** The output cache, once open; `undefined` when off. */
+  /** The records, once open; `undefined` when off. */
   private readonly store: Promise<JobStore | undefined> = this.module.then(openStore);
 
   constructor(private readonly count: number) {
@@ -182,7 +182,7 @@ export class JobPool {
     } else if ("cancel" in order) {
       this.post(this.slots[order.worker], { type: "cancel", id: order.cancel });
     } else if ("lookup" in order) {
-      void this.lookup(order.lookup, order.kind, order.identity);
+      void this.lookup(order.lookup, order.key);
     } else if ("keep" in order) {
       void this.store.then(store => store?.keep(order.keep, order.output));
     } else {
@@ -190,23 +190,23 @@ export class JobPool {
     }
   }
 
-  /** Hands the runtime what the cache keeps of job `id`'s work, if
-   * anything, and carries out what that orders. */
-  private async lookup(id: number, kind: string, identity: Uint8Array) {
+  /** Hands the runtime the record `key` for job `id`, where a pack or the
+   * store holds it, and carries out what that orders. */
+  private async lookup(id: number, key: string) {
     const runtime = this.runtime;
     const store = await this.store;
-    const [key, kept] = store ? await store.lookup(kind, identity) : ["", undefined];
+    const kept = store ? await store.lookup(key) : undefined;
     if (this.runtime !== runtime) return;
     this.call(runtime => runtime.job_kept(id, key, kept));
     this.exchange();
   }
 
-  /** Tells the runtime the cache's counters when they change. */
+  /** Tells the runtime the records' counters when they change. */
   private async report() {
     const runtime = this.runtime;
     const store = await this.store;
     if (!store || this.runtime !== runtime) return;
-    const [hits, misses, bytes, mismatches] = store.index.counters();
+    const [hits, misses, bytes, mismatches] = store.counters();
     const text = `${hits} ${misses} ${bytes} ${mismatches}`;
     if (text === this.reported) return;
     this.reported = text;
@@ -217,7 +217,8 @@ export class JobPool {
    * or kept from an earlier transcoding by the same build. */
   async transcodeKtx2(uri: string, bytes: Uint8Array, format: TranscodedImage["format"], basis: string): Promise<TranscodedImage> {
     const store = await this.store;
-    const [key, kept] = store ? await store.lookup(`ktx2 ${format} ${basis}`, bytes) : [undefined, undefined];
+    const key = store?.index.key(`ktx2 ${format} ${basis}`, bytes);
+    const kept = store && key ? await store.lookup(key) : undefined;
     const image = kept && readTranscoded(kept);
     if (image && !store?.verify) return image;
     const fresh = await this.task({ type: "ktx2", uri, bytes, format, basis }, [bytes.buffer as ArrayBuffer]) as TranscodedImage;
@@ -287,9 +288,6 @@ export class JobPool {
       case "done":
         this.call(runtime => runtime.complete_job(message.id, message.output));
         break;
-      case "part":
-        this.call(runtime => runtime.part_job(message.id, message.output));
-        break;
       case "failed":
         this.call(runtime => runtime.fail_job(message.id, message.error));
         break;
@@ -340,9 +338,9 @@ export class JobPool {
 
 let wasm: Promise<ArrayBuffer | undefined> | undefined;
 
-/** The job worker module's bytes, fetched once by a page with workers:
- * compiled once for every worker and hashed for the job
- * cache's version; `undefined` where the fetch failed. */
+/** The job worker module's bytes, fetched once by a page's pool: compiled
+ * once for every worker and the records' index; `undefined` where the
+ * fetch failed. */
 function workerWasm(): Promise<ArrayBuffer | undefined> {
   wasm ??= fetchWorkerWasm();
   return wasm;
@@ -361,16 +359,15 @@ async function fetchWorkerWasm(): Promise<ArrayBuffer | undefined> {
   }
 }
 
-/** Opens the page's job output cache, its index in the job worker module
- * (`module`, compiled), unless the page turned it off. */
+/** Opens the page's records, their index in the job worker module
+ * (`module`, compiled), unless the page turned them off. */
 async function openStore(module: WebAssembly.Module | undefined): Promise<JobStore | undefined> {
   const settings = jobCacheSettings();
-  const bytes = await workerWasm();
-  if (!settings || !module || !bytes) return undefined;
+  if (!settings || !module) return undefined;
   const pinned = engineWorkerModule();
   const bindings = (pinned ? await import(/* @vite-ignore */ pinned) : await import("../../pkg/engine_worker")) as typeof import("../../pkg/engine_worker");
   await bindings.default({ module_or_path: module });
-  return JobStore.open(bytes, bindings, settings.budget, settings.verify);
+  return JobStore.open(bindings, settings.budget, settings.verify);
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
@@ -412,14 +409,15 @@ function readTranscoded(bytes: Uint8Array): TranscodedImage | undefined {
 
 let pool: JobPool | null | undefined;
 
-/** The page's worker pool, started on first use; none with ?workers=off or
- * without Web Workers. A ?workers or ?jobcache the native host would refuse
- * fails the page. */
+/** The page's worker pool, started on first use: without workers where
+ * ?workers=off or the browser has no Web Workers, the engine then running
+ * jobs in place as the pool takes them. A ?workers or ?jobcache the native
+ * host would refuse fails the page. */
 export function jobPool(): JobPool | undefined {
   if (pool === undefined) {
     const count = workerCount(new URLSearchParams(location.search).get("workers"));
     jobCacheSettings();
-    pool = count > 0 && typeof Worker !== "undefined" ? new JobPool(count) : null;
+    pool = new JobPool(typeof Worker !== "undefined" ? count : 0);
   }
   return pool ?? undefined;
 }

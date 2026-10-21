@@ -31,7 +31,8 @@ The page's parameters:
   --lod on|off         off: draw every instance as its mesh
   --impostors on|off   off: draw no impostors
   --view NAME          camera view
-  --assets DIR         the folder holding stress/ (default web/public)
+  --assets DIR         the folder holding stress/ and the cook's packs in
+                       cooked/ (default web/public)
   --rocks on|off       off: the highlands' rocks wear the terrain rock's maps,
                        not the scanned ones stress/rocks may hold (default on)
   --scene FILE         a bench scene: the options in FILE (its preset,
@@ -137,6 +138,11 @@ impl Options {
                 "--scene" => arguments.include(&argument)?,
                 _ => return Err(argument.unknown()),
             }
+        }
+        // The cook's packs live beside the files the page fetches, which
+        // serves them too.
+        if options.host.jobs.packs.is_none() {
+            options.host.jobs.packs = Some(options.assets.join("cooked"));
         }
         options.host.check()?;
         Ok(options)

@@ -5585,7 +5585,7 @@
       "type": "object",
       "properties": {
         "cache_bytes": {
-          "description": "Bytes of tiles kept in memory after the view leaves them,\nabout 600 KB each, to return at once when it comes back: the\nleast recently used beyond drop, and 0 keeps none.",
+          "description": "Bytes of tiles kept in memory after the view leaves them,\nabout 600 KB each, to return at once when it comes back (and\nthose places games name load into): the least recently used\nbeyond drop, and 0 keeps none.",
           "type": "integer",
           "format": "uint64",
           "default": 268435456,
@@ -5609,14 +5609,6 @@
           "type": "boolean",
           "default": true
         },
-        "idle_reach": {
-          "description": "Multiples of each level's range within which workers generate tiles\nahead of the view into memory while nothing is missing; within the\nkeeping reach (2.5) none.",
-          "type": "number",
-          "format": "float",
-          "default": 3.0,
-          "maximum": 8.0,
-          "minimum": 0.0
-        },
         "loading_work_ms": {
           "description": "Milliseconds a frame works on terrain until the camera's view first\nloads whole: loading takes large slices of frames.",
           "type": "number",
@@ -5624,14 +5616,6 @@
           "default": 50.0,
           "maximum": 1000.0,
           "minimum": 0.1
-        },
-        "max_bands": {
-          "description": "The most bands of rows a tile under the view generates in at once\non workers the other such tiles leave free; 1 generates whole tiles.",
-          "type": "integer",
-          "format": "uint32",
-          "default": 4,
-          "maximum": 16,
-          "minimum": 1
         },
         "max_tiles": {
           "description": "An optional budget of resident tiles (about 270 KB each, twice that\non the GPU); the least important beyond it drop.",
@@ -5686,7 +5670,7 @@
           "minimum": 2
         },
         "samples_per_frame": {
-          "description": "Work generated, decoded or baked between checks of the frame's work\ntime, in samples' worth (67,000 a decoded tile, about 500,000 a\ngenerated one); a frame's whole work where hosts give terrain no\nclock.",
+          "description": "Work decoded between checks of the frame's work time, in samples'\nworth (67,000 a file's tile, the rivers' water on a tile about as\nmuch); a frame's whole work where hosts give terrain no clock.",
           "type": "integer",
           "format": "uint32",
           "default": 24576,

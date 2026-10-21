@@ -4,27 +4,29 @@
 //! output once a worker hands it back; what many jobs read (a terrain's
 //! layers) is shared with every worker once, by key, before the jobs that
 //! read it. Hosts hand requests to workers in the order owners make them
-//! and say how many workers run them; without any (native builds, tools,
-//! hosts that start none, `0` after a failure) owners do the work in place,
-//! as before. Results never depend on where a job ran.
+//! and say how many workers run them; a host without workers runs them in
+//! place, and so does an engine no host serves. Results never depend on
+//! where a job ran.
 //!
-//! Jobs carry a priority: workers run a job a slice at a
-//! time and, between slices, the most urgent they hold; a job its owner
-//! cancels stops at its next slice, so its worker takes up wanted work at
-//! once. A job may hand back a part of its output before the rest,
-//! as a tile its shape, for its owner to use while it runs.
+//! Jobs carry a priority: workers run the most urgent they hold first, and
+//! a job its owner cancels is dropped, so its worker takes up wanted work.
 //!
-//! Hosts may keep outputs: a job submitted with an identity,
-//! what its output depends on, takes its output from a host's cache when
-//! the same build ran the same identity before, in this session or an
-//! earlier one. Owners name what they share by its content
-//! ([`content_hash`]), so inputs reading shares are the same bytes in every
-//! session.
+//! Records: a job submitted with a [`RecordKey`], a hash of the code
+//! making its output and of everything that output depends on, takes its
+//! output from the records hosts hold where one has it (the cook's packs,
+//! then what the host kept before, in this session or an earlier one), and
+//! the host keeps what a worker makes. Owners name what they share by its
+//! content ([`content_hash`]), so keys reading shares are the same in every
+//! session. A record no job makes is fetched alone ([`Jobs::fetch`]), and
+//! an owner that made one itself hands it to the host to keep
+//! ([`Jobs::keep`]).
 
 use crate::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bevy_ecs::prelude::*;
+use engine_terrain::jobs::TerrainWorker;
 use serde::Serialize;
 
 /// Ids handed out so far, across engines: a page that replaces its engine
@@ -35,17 +37,50 @@ static SUBMITTED: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct JobId(pub u64);
 
+/// What hosts keep a record by, in their stores and the cook's packs: a
+/// hash of the code making it (its crate's `SOURCE`), its kind and its
+/// identity, everything its bytes depend on. The same key names the same
+/// bytes in every build of that code, on every host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RecordKey(pub [u8; 32]);
+
+impl RecordKey {
+    /// The key of the record of `kind` on `identity` that code hashing to
+    /// `source` makes.
+    pub fn new(source: &[u8; 32], kind: &str, identity: &[u8]) -> Self {
+        Self(engine_sources::record_key(source, kind, identity))
+    }
+
+    /// Its 64 lowercase hexadecimal digits, which stores name its file by.
+    pub fn hex(&self) -> String {
+        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+}
+
+/// Why a record fetched alone came back without bytes: no store or pack
+/// holds it.
+pub const MISSING_RECORD: &str = "no store holds the record";
+
 /// A job to hand a worker: its id, its kind (which work workers run on
 /// it), its input, its priority, lower first ([`job_priority`]), and, where
-/// hosts may keep its output, its identity: the same kind
-/// and identity give the same output from the same build.
+/// its output is a record, the record's key: the same key gives the same
+/// output.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JobRequest {
     pub id: JobId,
     pub kind: &'static str,
     pub input: Vec<u8>,
     pub priority: u32,
-    pub identity: Option<Vec<u8>>,
+    pub record: Option<RecordKey>,
+}
+
+/// A record fetched alone, no job making it: its request's id, the
+/// record's key and the request's priority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecordFetch {
+    pub id: JobId,
+    pub record: RecordKey,
+    pub priority: u32,
 }
 
 /// Classes of jobs, most urgent first: what a view or its
@@ -135,7 +170,7 @@ pub fn content_hash(bytes: &[u8]) -> u128 {
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobShare {
     Clear,
-    Set { key: String, bytes: Vec<u8> },
+    Set { key: String, bytes: Arc<[u8]> },
     Remove { key: String },
 }
 
@@ -155,48 +190,54 @@ pub struct JobStats {
     pub failed: u64,
     /// Jobs cancelled while running.
     pub cancelled: u64,
-    /// Parts handed back early.
-    pub parts: u64,
     /// Keys shared.
     pub shares: u32,
     /// Bytes of the keys shared.
     pub shared_bytes: u64,
-    /// Outputs the host's cache handed back instead of running their jobs.
+    /// Records the host's packs and store handed back instead of running
+    /// their jobs.
     pub cache_hits: u64,
-    /// Jobs the host's cache lacked.
+    /// Records they lacked.
     pub cache_misses: u64,
-    /// Bytes the host's cache holds.
+    /// Bytes the host's store holds.
     pub cache_bytes: u64,
-    /// Verifying, cached outputs differing from a fresh run.
+    /// Verifying, records differing from a fresh run.
     pub cache_mismatches: u64,
     /// Jobs the host's scheduler holds: on its workers, or looked up in its
-    /// cache. None once every job handed out ended, an earlier engine's
-    /// included.
+    /// packs and store. None once every job handed out ended, an earlier
+    /// engine's included.
     pub held: u32,
+    /// Jobs run in place: by a host without workers, or an engine no host
+    /// serves.
+    pub in_place: u64,
 }
 
-/// Jobs handed to the host's workers. Inserted by default,
-/// with no workers until a host says how many it runs.
+/// Jobs handed to the host's workers. Inserted by default; until a host
+/// serves it, jobs run in place as they are submitted.
 #[derive(Resource)]
 pub struct Jobs {
     workers: u32,
+    // A host takes the requests, the fetches and the records kept.
+    hosted: bool,
     requests: Vec<JobRequest>,
+    fetches: Vec<RecordFetch>,
+    keeps: Vec<(RecordKey, Vec<u8>)>,
     shares: Vec<JobShare>,
     // Jobs handed out and not done, and those handed out that their owners
     // cancelled, for hosts to stop.
     running: HashSet<JobId>,
     cancels: Vec<JobId>,
     done: HashMap<JobId, Result<Vec<u8>, String>>,
-    // Parts of running jobs' outputs handed back early,
-    // the latest of each.
-    parts: HashMap<JobId, Vec<u8>>,
     // The host's cache counters: hits, misses, bytes and
     // mismatches.
     cache: [u64; 4],
     // Jobs the host's scheduler holds.
     held: u32,
-    // What is shared now, by key: its size.
-    shared: HashMap<String, u64>,
+    // What is shared now, in the order shared: the bytes jobs run in place
+    // read.
+    shared: Vec<(String, Arc<[u8]>)>,
+    // Where jobs run in place, once one does, and the keys it holds.
+    here: Option<(TerrainWorker, Vec<String>)>,
     stats: JobStats,
     // The latest failed job's message.
     last_failure: Option<String>,
@@ -206,15 +247,18 @@ impl Default for Jobs {
     fn default() -> Self {
         Self {
             workers: 0,
+            hosted: false,
             requests: Vec::new(),
+            fetches: Vec::new(),
+            keeps: Vec::new(),
             shares: vec![JobShare::Clear],
             running: HashSet::default(),
             cancels: Vec::new(),
             done: HashMap::default(),
-            parts: HashMap::default(),
             cache: [0; 4],
             held: 0,
-            shared: HashMap::default(),
+            shared: Vec::new(),
+            here: None,
             stats: JobStats::default(),
             last_failure: None,
         }
@@ -222,7 +266,7 @@ impl Default for Jobs {
 }
 
 impl Jobs {
-    /// Workers jobs run on; with none, owners do the work themselves.
+    /// Workers jobs run on; with none, they run in place.
     pub fn workers(&self) -> u32 {
         self.workers
     }
@@ -232,37 +276,30 @@ impl Jobs {
         self.running.len()
     }
 
-    /// Hosts: how many workers run jobs. Going to none fails every job
-    /// handed out, so owners take the work back.
+    /// Hosts: how many workers run jobs, the host serving them from now
+    /// on; one without workers runs them in place ([`Self::run_here`]).
     pub fn set_workers(&mut self, workers: u32) {
         self.workers = workers;
-        if workers == 0 {
-            self.requests.clear();
-            self.cancels.clear();
-            for id in std::mem::take(&mut self.running) {
-                self.finish(id, Err("no workers".into()));
-            }
-        }
+        self.hosted = true;
     }
 
     /// Submits a job of `kind` on `input` at `priority` ([`job_priority`]);
-    /// [`Self::take`] its output once done. Without workers it fails at
-    /// once.
+    /// [`Self::take`] its output once done.
     pub fn submit(&mut self, kind: &'static str, input: Vec<u8>, priority: u32) -> JobId {
         self.submit_with(kind, input, priority, None)
     }
 
-    /// [`Self::submit`] for a job whose output hosts may keep and hand back
-    /// for the same `identity` without running it: what its
-    /// output depends on, as the same build computes it.
-    pub fn submit_cacheable(
+    /// [`Self::submit`] for a job whose output is the record `record`:
+    /// hosts hand back the record where they hold it, without running the
+    /// job, and keep what the job makes.
+    pub fn submit_record(
         &mut self,
         kind: &'static str,
         input: Vec<u8>,
         priority: u32,
-        identity: Vec<u8>,
+        record: RecordKey,
     ) -> JobId {
-        self.submit_with(kind, input, priority, Some(identity))
+        self.submit_with(kind, input, priority, Some(record))
     }
 
     fn submit_with(
@@ -270,12 +307,13 @@ impl Jobs {
         kind: &'static str,
         input: Vec<u8>,
         priority: u32,
-        identity: Option<Vec<u8>>,
+        record: Option<RecordKey>,
     ) -> JobId {
-        let id = JobId(SUBMITTED.fetch_add(1, Ordering::Relaxed) + 1);
+        let id = next_id();
         self.stats.submitted += 1;
-        if self.workers == 0 {
-            self.finish(id, Err("no workers".into()));
+        if !self.hosted {
+            let output = self.run_here(kind, &input);
+            self.finish(id, output);
             return id;
         }
         self.running.insert(id);
@@ -284,9 +322,36 @@ impl Jobs {
             kind,
             input,
             priority,
-            identity,
+            record,
         });
         id
+    }
+
+    /// Fetches the record `record`, which no job makes, at `priority`:
+    /// [`Self::take`] its bytes once a host's packs or store hand them back,
+    /// or [`MISSING_RECORD`] where none holds it.
+    pub fn fetch(&mut self, record: RecordKey, priority: u32) -> JobId {
+        let id = next_id();
+        self.stats.submitted += 1;
+        if !self.hosted {
+            self.finish(id, Err(MISSING_RECORD.to_owned()));
+            return id;
+        }
+        self.running.insert(id);
+        self.fetches.push(RecordFetch {
+            id,
+            record,
+            priority,
+        });
+        id
+    }
+
+    /// Hands hosts `bytes`, the record `record` its owner made itself, to
+    /// keep: a later fetch of it, in this session or another, takes them.
+    pub fn keep(&mut self, record: RecordKey, bytes: Vec<u8>) {
+        if self.hosted {
+            self.keeps.push((record, bytes));
+        }
     }
 
     /// Job `id`'s output once done, taken: `Err` when it failed.
@@ -294,46 +359,68 @@ impl Jobs {
         self.done.remove(&id)
     }
 
-    /// A part of running job `id`'s output handed back before the rest,
-    /// taken; parts not taken before the job is done are
-    /// dropped.
-    pub fn take_part(&mut self, id: JobId) -> Option<Vec<u8>> {
-        self.parts.remove(&id)
-    }
-
-    /// Drops job `id`: a worker running it stops at its next slice,
-    /// and its output, if any, is thrown away.
+    /// Drops job `id`: a worker running it stops, and its output, if any,
+    /// is thrown away.
     pub fn cancel(&mut self, id: JobId) {
-        self.parts.remove(&id);
         if self.done.remove(&id).is_some() || !self.running.remove(&id) {
             return;
         }
         self.stats.cancelled += 1;
-        match self.requests.iter().position(|request| request.id == id) {
-            Some(index) => {
-                self.requests.remove(index);
-            }
-            None => self.cancels.push(id),
+        if let Some(index) = self.requests.iter().position(|request| request.id == id) {
+            self.requests.remove(index);
+        } else if let Some(index) = self.fetches.iter().position(|fetch| fetch.id == id) {
+            self.fetches.remove(index);
+        } else {
+            self.cancels.push(id);
         }
     }
 
     /// Shares `bytes` with every worker as `key`, replacing what it held:
     /// jobs submitted after read them.
     pub fn share(&mut self, key: String, bytes: Vec<u8>) {
-        self.shared.insert(key.clone(), bytes.len() as u64);
+        let bytes: Arc<[u8]> = bytes.into();
+        self.shared.retain(|(shared, _)| *shared != key);
+        self.shared.push((key.clone(), bytes.clone()));
         self.shares.push(JobShare::Set { key, bytes });
     }
 
     /// Whether `key` is shared now.
     pub fn is_shared(&self, key: &str) -> bool {
-        self.shared.contains_key(key)
+        self.shared.iter().any(|(shared, _)| shared == key)
     }
 
     /// Drops what is shared as `key` from every worker.
     pub fn unshare(&mut self, key: String) {
-        if self.shared.remove(&key).is_some() {
+        let before = self.shared.len();
+        self.shared.retain(|(shared, _)| *shared != key);
+        if self.shared.len() < before {
             self.shares.push(JobShare::Remove { key });
         }
+    }
+
+    /// Runs job `kind` on `input` here, whole, over what is shared now:
+    /// what a host without workers does with the jobs no record answers,
+    /// and an engine no host serves with every job.
+    pub fn run_here(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
+        self.stats.in_place += 1;
+        let shared = &self.shared;
+        let (worker, held) = self
+            .here
+            .get_or_insert_with(|| (TerrainWorker::new(), Vec::new()));
+        // It holds what is shared now, in the order shared.
+        let current = |key: &String| shared.iter().any(|(shared, _)| shared == key);
+        for key in held.iter().filter(|key| !current(key)) {
+            worker.unshare(key);
+        }
+        held.retain(current);
+        for (key, bytes) in shared {
+            if !held.contains(key) {
+                worker.share(key, bytes)?;
+                held.push(key.clone());
+            }
+        }
+        let _profile = engine_profile::span("cpu", "job_in_place");
+        worker.run(kind, input)
     }
 
     /// Hosts: moves the shares to hand every worker into `out`, in order;
@@ -348,50 +435,51 @@ impl Jobs {
         out.append(&mut self.requests);
     }
 
+    /// Hosts: moves the records fetched alone into `out`, in order.
+    pub fn take_fetches(&mut self, out: &mut Vec<RecordFetch>) {
+        out.append(&mut self.fetches);
+    }
+
+    /// Hosts: moves the records owners made themselves, to keep, into
+    /// `out`.
+    pub fn take_keeps(&mut self, out: &mut Vec<(RecordKey, Vec<u8>)>) {
+        out.append(&mut self.keeps);
+    }
+
     /// Hosts: moves the jobs handed out that their owners cancelled into
     /// `out`: their workers should stop them.
     pub fn take_cancels(&mut self, out: &mut Vec<JobId>) {
         out.append(&mut self.cancels);
     }
 
-    /// Hosts: job `id`'s output from its worker, or why it failed; ignored
-    /// for jobs cancelled since.
+    /// Hosts: job `id`'s output, or why it failed; ignored for jobs
+    /// cancelled since.
     pub fn complete(&mut self, id: JobId, output: Result<Vec<u8>, String>) {
         if self.running.remove(&id) {
             self.finish(id, output);
         }
     }
 
-    /// Hosts: a part of running job `id`'s output its worker handed back
-    /// before the rest, replacing an earlier one not taken;
-    /// ignored for jobs cancelled or done since.
-    pub fn part(&mut self, id: JobId, part: Vec<u8>) {
-        if self.running.contains(&id) {
-            self.stats.parts += 1;
-            self.parts.insert(id, part);
-        }
-    }
-
-    /// Hosts: their output cache's counters: outputs handed
-    /// back from it, jobs it lacked, its bytes and, verifying, outputs that
-    /// differed from a fresh run.
+    /// Hosts: their packs' and store's counters: records handed back from
+    /// them, records they lacked, the store's bytes and, verifying, records
+    /// that differed from a fresh run.
     pub fn report_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {
         self.cache = [hits, misses, bytes, mismatches];
     }
 
-    /// Hosts: the jobs their scheduler holds, on workers or in cache
-    /// lookups.
+    /// Hosts: the jobs their scheduler holds, on workers or in lookups.
     pub fn report_held(&mut self, held: u32) {
         self.held = held;
     }
 
     fn finish(&mut self, id: JobId, output: Result<Vec<u8>, String>) {
-        self.parts.remove(&id);
         match &output {
             Ok(_) => self.stats.completed += 1,
             Err(message) => {
                 self.stats.failed += 1;
-                self.last_failure = Some(message.clone());
+                if message != MISSING_RECORD {
+                    self.last_failure = Some(message.clone());
+                }
             }
         }
         self.done.insert(id, output);
@@ -407,7 +495,11 @@ impl Jobs {
             workers: self.workers,
             running: self.running.len() as u32,
             shares: self.shared.len() as u32,
-            shared_bytes: self.shared.values().sum(),
+            shared_bytes: self
+                .shared
+                .iter()
+                .map(|(_, bytes)| bytes.len() as u64)
+                .sum(),
             cache_hits: self.cache[0],
             cache_misses: self.cache[1],
             cache_bytes: self.cache[2],
@@ -416,6 +508,41 @@ impl Jobs {
             ..self.stats
         }
     }
+}
+
+/// A session cooking: hosts insert it to make every record a scene's
+/// content needs, not only what its views want, and write them into a
+/// pack once nothing is left. While it is present each feature asks for
+/// all its records and says how many it has left
+/// ([`Cooking::left`]).
+#[derive(Resource, Clone, Debug, Default)]
+pub struct Cooking {
+    left: Vec<(&'static str, u64)>,
+}
+
+impl Cooking {
+    /// Feature `feature` has `left` records still to make.
+    pub fn left(&mut self, feature: &'static str, left: u64) {
+        match self.left.iter_mut().find(|(name, _)| *name == feature) {
+            Some((_, count)) => *count = left,
+            None => self.left.push((feature, left)),
+        }
+    }
+
+    /// Records left, over every feature that said.
+    pub fn remaining(&self) -> u64 {
+        self.left.iter().map(|(_, left)| left).sum()
+    }
+
+    /// What each feature said it has left, in the order they first said.
+    pub fn features(&self) -> &[(&'static str, u64)] {
+        &self.left
+    }
+}
+
+/// A new job's id.
+fn next_id() -> JobId {
+    JobId(SUBMITTED.fetch_add(1, Ordering::Relaxed) + 1)
 }
 
 /// A job of `kind`'s output decoded by `decode`, or why there is none: the
@@ -449,8 +576,9 @@ impl JobFailures {
 /// The jobs a frame may hand workers, the one rule every owner admits jobs
 /// by: two in flight per worker, so each has its next ready, and a third
 /// for urgent jobs, which workers take up first; less every job still
-/// running, whoever submitted it. An owner handing out jobs as views want
-/// them takes a budget when it starts and a slot for each job.
+/// running, whoever submitted it. Jobs running in place count as one
+/// worker's. An owner handing out jobs as views want them takes a budget
+/// when it starts and a slot for each job.
 pub(crate) struct JobBudget<'a> {
     pub(crate) jobs: &'a mut Jobs,
     slots: usize,
@@ -460,7 +588,7 @@ pub(crate) struct JobBudget<'a> {
 impl JobBudget<'_> {
     /// What `jobs`' workers leave free now.
     pub(crate) fn of(jobs: &mut Jobs) -> JobBudget<'_> {
-        let workers = jobs.workers() as usize;
+        let workers = jobs.workers().max(1) as usize;
         let running = jobs.running();
         JobBudget {
             slots: (workers * 2).saturating_sub(running),
@@ -488,10 +616,5 @@ impl JobBudget<'_> {
     pub(crate) fn release(&mut self) {
         self.slots += 1;
         self.urgent += 1;
-    }
-
-    /// Slots left for urgent jobs.
-    pub(crate) fn urgent(&self) -> usize {
-        self.urgent
     }
 }

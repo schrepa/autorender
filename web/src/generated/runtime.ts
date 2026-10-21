@@ -34,11 +34,11 @@ export interface Runtime {
   set_preparation(enabled: boolean): void;
   /** Workers the page runs jobs on. */
   set_job_workers(workers: number): void;
-  /** Whether the page keeps keepable jobs' outputs, and runs every job anyway to verify them. */
+  /** Whether the page holds records (the cook's packs, a store keeping what jobs make), and runs every job anyway to verify them. */
   set_job_cache(caching: boolean, verify: boolean): void;
-  /** What the page does for the engine's jobs since the last call, in order: what every worker holds, jobs to run and cancel on each worker, and lookups, outputs to keep and mismatches for the job cache. */
+  /** What the page does for the engine's jobs since the last call, in order: what every worker holds, jobs to run and cancel on each worker, and records to look up, keep and drop as mismatched. */
   take_jobs(): JobOrder[];
-  /** The job cache's answer for job `id`: the `key` of its work, and the `output` it keeps, if any. */
+  /** The page's records' answer for job `id`: the record's `key`, and its `output` where a pack or the store holds it. */
   job_kept(id: number, key: string, output?: Uint8Array): void;
   /** Worker `worker` broke, for `error`: the engine takes back its jobs, and the page `replaced` it or runs one fewer. */
   lose_job_worker(worker: number, error: string, replaced: boolean): void;
@@ -50,9 +50,7 @@ export interface Runtime {
   complete_job(id: number, output: Uint8Array): void;
   /** Job `id` failed on its worker. */
   fail_job(id: number, error: string): void;
-  /** A part of job `id`'s output handed back before the rest. */
-  part_job(id: number, part: Uint8Array): void;
-  /** The page's job output cache counters. */
+  /** The page's records' counters. */
   report_job_cache(hits: number, misses: number, bytes: number, mismatches: number): void;
   /** Drops suspension time and held input before the next frame. */
   suspend(): void;

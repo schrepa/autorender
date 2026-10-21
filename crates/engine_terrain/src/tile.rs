@@ -1389,29 +1389,36 @@ impl Layers {
 /// objects and which of them, and its water's surfaces and packed info;
 /// reading rebuilds its bounds and wet patches as [`Tile::new`] and
 /// `Tile::with_water` do.
+/// Tiles travel with their heights and water surfaces at their nearest
+/// steps of the height grid ([`crate::codec::HEIGHT_STEP`]): a tile read
+/// back is the record every host shows.
 impl crate::codec::Codec for Tile {
     fn write(&self, out: &mut crate::codec::Writer) {
-        out.put(&self.key)
-            .put(&self.spacing)
-            .put(&self.heights)
-            .put(&self.holes)
+        let stride = TILE_STRIDE as usize;
+        out.put(&self.key).put(&self.spacing);
+        crate::codec::put_grid(out, &self.heights, stride);
+        out.put(&self.holes)
             .put(&self.control)
             .put(&self.placed)
             .put(&self.placing);
         match &self.water {
-            Some(water) => out
-                .put(&true)
-                .put(&water.surfaces().to_vec())
-                .put(&water.info().to_vec()),
-            None => out.put(&false),
+            Some(water) => {
+                out.put(&true);
+                crate::codec::put_grid(out, water.surfaces(), stride);
+                out.put(&water.info().to_vec());
+            }
+            None => {
+                out.put(&false);
+            }
         };
     }
 
     fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
         let invalid = crate::codec::CodecError("invalid tile");
+        let stride = TILE_STRIDE as usize;
         let key = input.get()?;
         let spacing = input.get()?;
-        let heights = input.get()?;
+        let heights = crate::codec::get_grid(input, stride)?;
         let holes = input.get()?;
         let control: Option<Box<[u32]>> = input.get()?;
         let placed: Option<Arc<[crate::Placed]>> = input.get()?;
@@ -1422,7 +1429,7 @@ impl crate::codec::Codec for Tile {
             tile = tile.with_control(control).ok_or(invalid)?;
         }
         if watered {
-            let surface: Box<[f32]> = input.get()?;
+            let surface = crate::codec::get_grid(input, stride)?;
             let info: Box<[u32]> = input.get()?;
             tile = tile.with_water(surface, info);
         }

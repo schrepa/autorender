@@ -185,32 +185,32 @@ impl Terrains {
         Some((state.entity, origin, search))
     }
 
-    /// The input of a walk job over the generated terrain
-    /// under world `from` and `to` (x and z) as `options` walk, once workers
-    /// hold its recipe for the generation its tiles are made from now: the
-    /// terrain, its origin, which the walk's terrain-local points are from,
-    /// and the input. `None` otherwise, as for [`Self::walk_search`].
+    /// A walk job over the generated terrain under world `from` and `to`
+    /// (x and z) as `options` walk, under its edits, once jobs hold its
+    /// recipe: the terrain, its origin, which the walk's terrain-local
+    /// points are from, the job's input and its record's key. `None`
+    /// otherwise, as for [`Self::walk_search`].
     pub fn walk_job(
         &self,
         from: Vec2,
         to: Vec2,
         options: &NavOptions,
-    ) -> Option<(Entity, Vec3, Vec<u8>)> {
+    ) -> Option<(Entity, Vec3, Vec<u8>, crate::RecordKey)> {
         let state = self.walked(from, to)?;
         let (entity, origin) = (state.entity, state.terrain.origin);
         let recipe = state.recipe.as_ref()?;
-        if recipe.generation != state.store.generation() {
-            return None;
-        }
         let corner = Vec2::new(origin.x, origin.z);
         let job = WalkJob {
             recipe: recipe.key.clone(),
+            stamps: state.terrain.edits.iter().map(|edit| edit.stamp).collect(),
             from: from - corner,
             to: to - corner,
             obstacles: Self::obstacles(state),
             options: *options,
         };
-        Some((entity, origin, job.input()))
+        let input = job.identity();
+        let record = crate::RecordKey::new(&engine_terrain::SOURCE, WalkJob::KIND.name(), &input);
+        Some((entity, origin, input, record))
     }
 
     /// The terrain both world `from` and `to` (x and z) lie on, which walks
@@ -300,7 +300,7 @@ impl Terrains {
             .iter()
             .find(|state| state.entity == entity && state.around.is_none())
             .map_or_else(TerrainBakes::default, |state| TerrainBakes {
-                baking: state.bake.is_some(),
+                baking: state.bake_job.is_some(),
                 hydrology: state.hydrology.stats,
                 erosion: state.erosion,
             })

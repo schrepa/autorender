@@ -1,24 +1,10 @@
-//! Loading a terrain's tiles: after its bakes, one planner turns the tiles
-//! a frame finds missing into tasks, most urgent first, and one of two
-//! executors carries them out: the frame itself within its work time
-//! ([`InPlace`]), or the host's workers within the job budget
-//! ([`OnWorkers`]). Tiles of terrain files decode as they arrive instead
-//! (`files`).
-//!
-//! The planner hands either executor the same tasks: the missing tiles,
-//! and the objects standing far away that resident tiles still lack, each
-//! where its view ranks it. Each executor keeps its own policy: which tasks
-//! wait (under way, or failed a moment ago), how a tile generates (staged,
-//! in bands of rows, its objects standing far away after it) and what it
-//! does ahead of need. A terrain whose workers start or stop switches
-//! executors, the one taking over dropping what the other left under way.
-
-mod in_place;
-mod workers;
-
-use in_place::InPlace;
-use workers::OnWorkers;
-pub(super) use workers::{SharedRecipe, share_recipe};
+//! Loading a terrain's tiles: after its bakes, the tiles a frame finds
+//! missing load as records, most urgent first, each a whole tile with every
+//! object its level places. The host hands a record back from the cook's
+//! packs or what it kept before, or runs the tile's job (on a worker, or in
+//! place on a host without workers) and keeps what it makes: where a tile
+//! came from is the host's alone, and loading only ever loads records.
+//! Tiles of terrain files decode as they arrive instead (`files`).
 
 use super::*;
 
@@ -30,8 +16,6 @@ pub(super) struct Work {
     pub(super) end: f64,
     /// Bytes tiles may still bring the GPU this frame.
     pub(super) upload: std::cell::Cell<u64>,
-    /// The most bands a tile under the view splits into.
-    pub(super) bands: usize,
 }
 
 impl Work {
@@ -67,48 +51,36 @@ impl Work {
     }
 }
 
-/// Loads `missing` tiles of `state`, most important first, within `work`'s
-/// time from slices of `budget`: generated after the terrain's bakes,
-/// decoded, or requested and decoded once delivered; `target` is every tile
-/// it loads and `keep` every tile it keeps. Frames load what they find
-/// missing, and hosts what is left between frames. Where
-/// `slots` has workers, they bake and generate instead, each
-/// tile at its job priority. Returns whether a bake is still
-/// in progress, which nothing loads behind.
+/// Loads `missing` tiles of `state`, most important first: a generated
+/// terrain's as records once its bakes are done, within `slots`, the
+/// frame's job budget; a file's decoded, or requested and decoded once
+/// delivered, within `work`'s time from slices of `budget`. `target` is
+/// every tile it loads and `keep` every tile it keeps; `named` are the
+/// tiles places games name want, which load into memory once nothing else
+/// waits. Frames load what they find missing, and hosts what is left
+/// between frames. Returns whether a bake is still in progress, which
+/// nothing loads behind.
 #[expect(clippy::too_many_arguments, reason = "the frame's disjoint borrows")]
 pub(super) fn load_tiles(
     state: &mut TerrainState,
     missing: &[(TileKey, u32)],
-    (target, keep): (&HashSet<TileKey>, &HashSet<TileKey>),
+    (target, keep, named): (&HashSet<TileKey>, &HashSet<TileKey>, &[TileKey]),
     work: &Work,
     budget: &mut u64,
     frame: u64,
     requests: &mut Vec<TileRequest>,
-    mut slots: Option<&mut JobBudget<'_>>,
+    slots: Option<&mut JobBudget<'_>>,
 ) -> bool {
     match state.terrain.source.clone() {
         TerrainSource::Generated(authored) => {
-            let layers = state.baked.clone().unwrap_or(authored);
-            if bake(state, &layers, work, budget, frame, slots.as_deref_mut()) {
+            // An engine without jobs loads no generated tiles.
+            let Some(slots) = slots else {
+                return false;
+            };
+            if bake(state, &authored, slots, frame) {
                 return true;
             }
-            // Edits stand over every bake.
-            let layers = state.generation(layers);
-            // Workers generate tiles where they run, unless
-            // they failed it again and again.
-            if let Some(slots) = slots.as_deref_mut()
-                && slots.jobs.workers() > 0
-                && state.failures.count < WORKER_FAILURES
-                && let Some(mut workers) = OnWorkers::new(state, (target, keep), work, slots, frame)
-            {
-                generate(state, missing, &mut workers);
-                return false;
-            }
-            generate(
-                state,
-                missing,
-                &mut InPlace::new(layers, work, budget, slots),
-            );
+            load_records(state, missing, (target, keep, named), work, slots, frame);
         }
         TerrainSource::File {
             header,
@@ -131,85 +103,229 @@ pub(super) fn load_tiles(
     false
 }
 
-/// What a frame wants done about one tile: its key and job priority, and
-/// whether only the objects standing far away on it are wanted, the tile
-/// resident without them.
-#[derive(Clone, Copy, Debug)]
-pub(super) struct TileTask {
-    pub(super) key: TileKey,
-    pub(super) priority: u32,
-    pub(super) far: bool,
-}
-
-/// Where a terrain's generated tiles are made, and how: each step of a
-/// frame's generating, which [`generate`] runs in order.
-pub(super) trait Executor {
-    /// Drops what the other executor left under way: tiles generate here
-    /// from now on.
-    fn take_over(&mut self, state: &mut TerrainState);
-
-    /// Takes in what finished since the frame before, and stops what is no
-    /// longer wanted.
-    fn collect(&mut self, state: &mut TerrainState, missing: &[(TileKey, u32)]);
-
-    /// Whether `task` waits this frame: under way here already, failed a
-    /// moment ago, or nothing this executor does.
-    fn waits(&self, state: &TerrainState, task: &TileTask) -> bool;
-
-    /// Before the frame's tasks start: what deciding each one needs to know
-    /// of them all.
-    fn begin(&mut self, state: &TerrainState, tasks: &[TileTask]);
-
-    /// Starts or continues `task`; false once the frame can start no more.
-    fn start(&mut self, state: &mut TerrainState, task: TileTask) -> bool;
-
-    /// With the frame's tasks started, work ahead of need, where nothing
-    /// else is wanted.
-    fn ahead(&mut self, state: &mut TerrainState, missing: &[(TileKey, u32)]);
-}
-
-/// Generates `state`'s `missing` tiles with `executor`: it takes over,
-/// takes in what finished, starts the planner's tasks most urgent first
-/// until the frame can start no more, then works ahead of need.
-pub(super) fn generate(
+/// Loads `state`'s `missing` tiles as records of its shared recipe: what
+/// is no longer kept, no longer loads (back from memory), or was asked for
+/// under edits or materials since, stops; records handed back become
+/// resident, most urgent first, the first at once and the rest within
+/// `work`'s time and uploads; then the missing tiles still loading, not
+/// under way nor failed a moment ago, are asked for while `slots` admits
+/// them, and the tiles places games name (`named`) load into memory once
+/// nothing is missing.
+fn load_records(
     state: &mut TerrainState,
     missing: &[(TileKey, u32)],
-    executor: &mut impl Executor,
+    (target, keep, named): (&HashSet<TileKey>, &HashSet<TileKey>, &[TileKey]),
+    work: &Work,
+    slots: &mut JobBudget<'_>,
+    frame: u64,
 ) {
-    executor.take_over(state);
-    executor.collect(state, missing);
-    let tasks = tasks(state, missing, executor);
-    executor.begin(state, &tasks);
-    for task in tasks {
-        if !executor.start(state, task) {
+    let Some(recipe) = state.recipe.as_ref().map(|recipe| recipe.key.clone()) else {
+        return;
+    };
+    let generation = state.store.generation();
+    let store = &state.store;
+    state.dispatched.retain(|key, &mut (id, made, _)| {
+        let wanted = made == generation && keep.contains(key) && store.loads(key);
+        if !wanted {
+            slots.jobs.cancel(id);
+        }
+        wanted
+    });
+    let mut handed: Vec<(TileKey, (JobId, Generation, u32))> = state
+        .dispatched
+        .iter()
+        .map(|(key, &job)| (key, job))
+        .collect();
+    handed.sort_by_key(|&(_, (_, _, priority))| priority);
+    let mut inserted = false;
+    for (key, (id, made, _)) in handed {
+        if inserted && (work.expired() || !work.uploads()) {
             break;
         }
+        let Some(output) = slots.jobs.take(id) else {
+            continue;
+        };
+        state.dispatched.remove(&key);
+        match job_output(
+            TileJob::KIND.name(),
+            output,
+            engine_terrain::jobs::tile_output,
+        ) {
+            Ok(tile) if made == generation && target.contains(&key) && tile.key() == key => {
+                work.upload(2 * TILE_ARRAY_BYTES);
+                state.failed.remove(&key);
+                state.store.arrive(Arc::new(tile), Phase::Whole, None);
+                inserted = true;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                state.failed.insert(key, frame);
+                state.failures.record(frame, error);
+            }
+        }
     }
-    executor.ahead(state, missing);
+    for &(key, priority) in missing {
+        // Tiles that arrived this frame no longer load.
+        if state.dispatched.contains_key(&key)
+            || !state.store.loads(&key)
+            || state
+                .failed
+                .get(&key)
+                .is_some_and(|&at| frame < at + RETRY_AFTER)
+        {
+            continue;
+        }
+        if !slots.take(priority) {
+            return;
+        }
+        let (job, record) = state.tile_record(&recipe, key);
+        let id = slots
+            .jobs
+            .submit_record(TileJob::KIND.name(), job.identity(), priority, record);
+        state.dispatched.insert(key, (id, generation, priority));
+    }
+    prefetch(state, (missing, named), (&recipe, generation), slots, frame);
 }
 
-/// The planner: `state`'s `missing` tiles, and the objects standing far
-/// away its resident tiles want, ranked after the urgent tiles where their
-/// tiles ranked; most urgent first, each unless `executor` says it waits.
-fn tasks(
-    state: &TerrainState,
-    missing: &[(TileKey, u32)],
-    executor: &impl Executor,
-) -> Vec<TileTask> {
-    let mut tasks: Vec<TileTask> = missing
+/// Loads the tiles places games name (`named`, nearest first) into memory
+/// while nothing is `missing`: their records, neither resident nor in
+/// memory, at idle priority; those no longer named, or asked for under
+/// edits since, stop.
+fn prefetch(
+    state: &mut TerrainState,
+    (missing, named): (&[(TileKey, u32)], &[TileKey]),
+    (recipe, generation): (&str, Generation),
+    slots: &mut JobBudget<'_>,
+    frame: u64,
+) {
+    let idle: Vec<(TileKey, JobId, Generation)> = state
+        .prefetched
         .iter()
-        .map(|&(key, priority)| TileTask {
-            key,
-            priority,
-            far: false,
-        })
-        .chain(state.far_wanted.iter().map(|(key, &priority)| TileTask {
-            key,
-            priority: job_priority(VIEW_JOBS, priority & 0xff_ffff),
-            far: true,
-        }))
-        .filter(|task| !executor.waits(state, task))
+        .map(|(key, &(id, made))| (key, id, made))
         .collect();
-    tasks.sort_by_key(|task| (task.priority, task.far, task.key));
-    tasks
+    for (key, id, made) in idle {
+        if let Some(output) = slots.jobs.take(id) {
+            state.prefetched.remove(&key);
+            if let Ok(tile) = job_output(
+                TileJob::KIND.name(),
+                output,
+                engine_terrain::jobs::tile_output,
+            ) && made == generation
+                && tile.key() == key
+                && !state.store.contains(&key)
+            {
+                state.store.keep_in_memory(Arc::new(tile), None, frame);
+            }
+        } else if made != generation || !named.contains(&key) {
+            slots.jobs.cancel(id);
+            slots.release();
+            state.prefetched.remove(&key);
+        }
+    }
+    if !missing.is_empty() || !state.dispatched.is_empty() {
+        return;
+    }
+    for (place, &key) in named.iter().enumerate() {
+        if state.prefetched.contains_key(&key)
+            || state.store.contains(&key)
+            || state.store.in_memory(&key)
+        {
+            continue;
+        }
+        let priority = job_priority(IDLE_JOBS, place as u32);
+        if !slots.take(priority) {
+            return;
+        }
+        let (job, record) = state.tile_record(recipe, key);
+        let id = slots
+            .jobs
+            .submit_record(TileJob::KIND.name(), job.identity(), priority, record);
+        state.prefetched.insert(key, (id, generation));
+    }
+}
+
+/// A terrain's recipe as jobs hold it: its key, the stack it shares (the
+/// layers its tiles generate from, which surroundings see from afar) and
+/// whether its tiles hold control values.
+pub(crate) struct SharedRecipe {
+    pub(crate) key: String,
+    pub(crate) stack: Arc<Layers>,
+    materials: bool,
+}
+
+/// Shares the recipe `state`'s tiles generate from once its bakes are
+/// done, and again whenever the layers its tiles generate from change:
+/// their stack, shared once for every terrain seeing it, and how its
+/// terrain sees it. Edits stay out of both, each tile's job carrying those
+/// reaching it. Shares are named by their content, so records of jobs
+/// reading them have the same keys in every session; `stacks` holds the
+/// stacks shared with their keys, and the key of the recipe replaced goes
+/// to `released`.
+pub(crate) fn share_recipe(
+    state: &mut TerrainState,
+    jobs: &mut Jobs,
+    stacks: &mut Vec<(Arc<Layers>, String)>,
+    released: &mut Vec<String>,
+) {
+    let TerrainSource::Generated(authored) = &state.terrain.source else {
+        return;
+    };
+    let layers = state.baked.clone().unwrap_or_else(|| authored.clone());
+    if layers.unbaked().is_some() {
+        return;
+    }
+    // Surroundings see their terrain's stack from afar.
+    let (stack, view) = match &state.around {
+        Some(around) => (
+            around.base.clone(),
+            Some(StackView {
+                offset: -around.cutout.0,
+                low: Vec2::ZERO,
+                high: around.cutout.1 - around.cutout.0,
+                blend: around.surroundings.blend,
+            }),
+        ),
+        None => (layers, None),
+    };
+    if state.recipe.as_ref().is_some_and(|recipe| {
+        Arc::ptr_eq(&recipe.stack, &stack) && recipe.materials == state.materials
+    }) {
+        return;
+    }
+    let shared = stacks
+        .iter()
+        .find(|(shared, _)| Arc::ptr_eq(shared, &stack))
+        .map(|(_, key)| key.clone());
+    let stack_key = match shared {
+        Some(key) => key,
+        None => {
+            let bytes = engine_terrain::jobs::share_stack(&stack);
+            let key = format!("stack-{:032x}", content_hash(&bytes));
+            if !jobs.is_shared(&key) {
+                jobs.share(key.clone(), bytes);
+            }
+            stacks.push((stack.clone(), key.clone()));
+            key
+        }
+    };
+    let recipe = TerrainRecipe {
+        stack: stack_key,
+        view,
+        pyramid: state.terrain.pyramid,
+        surface: state.terrain.surface.rules.authored().clone(),
+        materials: state.materials,
+    };
+    let bytes = engine_terrain::jobs::share_recipe(&recipe);
+    let key = format!("recipe-{:032x}", content_hash(&bytes));
+    if !jobs.is_shared(&key) {
+        jobs.share(key.clone(), bytes);
+    }
+    let shared = SharedRecipe {
+        key,
+        stack,
+        materials: state.materials,
+    };
+    if let Some(old) = state.recipe.replace(shared) {
+        released.push(old.key);
+    }
 }

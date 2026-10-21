@@ -13,6 +13,8 @@
 *.log
 # Generated dense Stress Lab geometry.
 /web/public/stress/
+# The cook's packs (`cargo xtask cook`), which hosts read records from.
+/web/public/cooked/
 # Local scratch experiments and benches.
 zz-*
 # Local scenes, some under licenses that forbid redistribution; the smokes

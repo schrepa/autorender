@@ -14,6 +14,10 @@ base64.workspace = true
 engine_assets.workspace = true
 engine_core.workspace = true
 engine_terrain.workspace = true
+# The terrain corpus packs its records as the cook does.
+engine_worker.workspace = true
+engine_sources.workspace = true
+zstd.workspace = true
 engine_vgbuild.workspace = true
 engine_native.workspace = true
 glam.workspace = true

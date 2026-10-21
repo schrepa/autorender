@@ -1,4 +1,4 @@
-//! Baking a terrain's layers, in place or on a worker.
+//! Baking a terrain's layers: one record, every bake of its stack.
 
 use super::*;
 
@@ -31,99 +31,52 @@ pub(super) fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
         state.standing += 1;
     }
     state.baked = Some(baked);
-    state.bake = None;
 }
 
-/// Bakes run before any tile loads, each reading the layers below it, in
-/// stack order: `layers`' first bake not done advances on a worker where
-/// `slots` has workers, unless one failed there, or here within `work`'s
-/// time from slices of `budget`. Whether a bake was not done, which no tile
+/// Bakes run before any tile loads: `state`'s layers (`authored`, until
+/// baked) take every bake as one record, which the host's packs and store
+/// hand back or a job makes, asked for once `slots` admits it and again a
+/// while after it failed. Whether a bake is not done yet, which no tile
 /// loads behind.
 pub(super) fn bake(
     state: &mut TerrainState,
-    layers: &Arc<Layers>,
-    work: &Work,
-    budget: &mut u64,
-    frame: u64,
-    mut slots: Option<&mut JobBudget<'_>>,
-) -> bool {
-    let Some(unbaked) = layers.unbaked() else {
-        return false;
-    };
-    let pyramid = state.terrain.pyramid;
-    if let Some(slots) = slots.as_deref_mut()
-        && slots.jobs.workers() > 0
-        && !state.bake_inline
-    {
-        bake_on_worker(state, slots, layers, &pyramid, frame);
-        return true;
-    }
-    // A bake handed to workers that stopped runs here.
-    if let Some(id) = state.bake_job.take()
-        && let Some(slots) = slots
-    {
-        slots.jobs.cancel(id);
-    }
-    let bake = state
-        .bake
-        .get_or_insert_with(|| TerrainBake::new(layers, unbaked.clone(), &pyramid));
-    let _profile = engine_profile::span("cpu", "terrain_bake");
-    let baked = loop {
-        if let Some(baked) = bake.advance(&pyramid, budget) {
-            break Some(baked);
-        }
-        if !work.refill(budget) {
-            break None;
-        }
-    };
-    if let Some(baked) = baked {
-        match &baked {
-            Baked::Hydrology(found) => state.hydrology = HydrologyState::baked(found.stats),
-            Baked::Erosion(found) => state.erosion = Some(found.stats),
-            Baked::Path(_) => {}
-        }
-        let index = unbaked.0;
-        finish_bake(state, Arc::new(layers.with_baked(index, baked)));
-    }
-    true
-}
-
-/// Bakes `layers` over `pyramid` on a worker: hands it every
-/// bake at once, once `slots` has a slot free, then makes what it baked the
-/// layers tiles generate from. A bake that failed there is counted as the
-/// owner's failed job at `frame` and runs in place instead.
-pub(super) fn bake_on_worker(
-    state: &mut TerrainState,
+    authored: &Arc<Layers>,
     slots: &mut JobBudget<'_>,
-    layers: &Layers,
-    pyramid: &Pyramid,
     frame: u64,
-) {
+) -> bool {
+    let layers = state.baked.clone().unwrap_or_else(|| authored.clone());
+    if layers.unbaked().is_none() {
+        return false;
+    }
     let Some(id) = state.bake_job else {
+        if state.bake_failed.is_some_and(|at| frame < at + RETRY_AFTER) {
+            return true;
+        }
         let priority = job_priority(URGENT_JOBS, 0);
         // Admitted as every owner's jobs are; tiles wait
         // for the bake meanwhile.
         if !slots.take(priority) {
-            return;
+            return true;
         }
         let input = BakeJob {
-            layers: layers.clone(),
-            pyramid: *pyramid,
+            layers: (*layers).clone(),
+            pyramid: state.terrain.pyramid,
         }
         .input();
-        // Hosts may keep the baked layers, by the input's
-        // hash.
-        let identity = content_hash(&input).to_le_bytes().to_vec();
-        state.bake_job = Some(slots.jobs.submit_cacheable(
+        // As its layers can hold whole heightmaps, its identity is
+        // its input's hash.
+        let identity = content_hash(&input).to_le_bytes();
+        let record = RecordKey::new(&engine_terrain::SOURCE, BakeJob::KIND.name(), &identity);
+        state.bake_job = Some(slots.jobs.submit_record(
             BakeJob::KIND.name(),
             input,
             priority,
-            identity,
+            record,
         ));
-        return;
+        return true;
     };
     let Some(output) = slots.jobs.take(id) else {
-        return;
+        return true;
     };
     state.bake_job = None;
     let baked = match job_output(
@@ -134,8 +87,8 @@ pub(super) fn bake_on_worker(
         Ok(baked) => baked,
         Err(error) => {
             state.failures.record(frame, error);
-            state.bake_inline = true;
-            return;
+            state.bake_failed = Some(frame);
+            return true;
         }
     };
     for layer in baked.layers() {
@@ -155,4 +108,5 @@ pub(super) fn bake_on_worker(
         }
     }
     finish_bake(state, Arc::new(baked));
+    false
 }

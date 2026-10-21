@@ -402,11 +402,8 @@ pub struct TerrainRenderStats {
     pub shadow_patches: u32,
     /// Tiles resident on the GPU.
     pub tiles: u32,
-    /// Tiles still generating or loading.
+    /// Tiles still loading.
     pub loading_tiles: u32,
-    /// Resident tiles lacking objects their levels place with nothing
-    /// under way to place them: none unless streaming lost track of them.
-    pub unplaced_tiles: u32,
     /// Tiles the GPU gave control values this frame.
     pub gpu_controls: u32,
     /// Tiles the tile budget or the device's texture array layers dropped.

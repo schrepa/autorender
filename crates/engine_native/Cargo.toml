@@ -24,6 +24,8 @@ sha2.workspace = true
 serde_json.workspace = true
 winit.workspace = true
 pollster.workspace = true
+# The cook's packs, compressed at zstd's best ratio (`--cook`).
+zstd.workspace = true
 
 # A new game's native entry, as `cargo xtask new app` writes it; lint
 # compiles it with the app template.

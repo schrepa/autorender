@@ -89,7 +89,6 @@ impl DevTools {
                     failed: stats.failed,
                     last_failure: jobs.last_failure().map(str::to_owned),
                     cancelled: stats.cancelled,
-                    parts: stats.parts,
                     shares: stats.shares,
                     shared_bytes: stats.shared_bytes,
                     cache_hits: stats.cache_hits,
@@ -97,6 +96,7 @@ impl DevTools {
                     cache_bytes: stats.cache_bytes,
                     cache_mismatches: stats.cache_mismatches,
                     held: stats.held,
+                    in_place: stats.in_place,
                 })
             },
         )

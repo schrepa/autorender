@@ -18,5 +18,9 @@ glam.workspace = true
 serde.workspace = true
 schemars = { workspace = true, optional = true }
 
+# `SOURCE`, the hash of the code generating terrain records.
+[build-dependencies]
+engine_sources.workspace = true
+
 [lints]
 workspace = true

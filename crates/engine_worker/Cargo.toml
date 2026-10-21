@@ -18,6 +18,10 @@ engine_terrain.workspace = true
 engine_math.workspace = true
 sha2.workspace = true
 serde_json.workspace = true
+# Packs' records (`PackIndex`, `unpack`).
+ruzstd.workspace = true
+# The keys of the page's own records (`record_key`).
+engine_sources.workspace = true
 # Images as every host decodes them (`decode_image`).
 png.workspace = true
 zune-jpeg.workspace = true
@@ -26,6 +30,10 @@ zune-jpeg.workspace = true
 wasm-bindgen.workspace = true
 js-sys.workspace = true
 engine_panic.workspace = true
+
+# `SOURCE`, the hash of this module's code.
+[build-dependencies]
+engine_sources.workspace = true
 
 [lints]
 workspace = true

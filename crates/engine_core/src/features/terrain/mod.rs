@@ -43,6 +43,7 @@
 mod bakes;
 mod bridges;
 mod components;
+mod cook;
 mod dispatch;
 mod extract;
 mod files;
@@ -69,6 +70,7 @@ mod wind;
 use bakes::*;
 pub use bridges::*;
 pub use components::*;
+use cook::CookTiles;
 use dispatch::*;
 pub use extract::*;
 pub use files::*;
@@ -100,22 +102,19 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
-use engine_terrain::jobs::{
-    BakeJob, BandJob, FarJob, PlaceJob, StackView, TerrainRecipe, TileJob, WalkJob,
-};
+use engine_terrain::jobs::{BakeJob, StackView, TerrainRecipe, TileJob, WalkJob};
 use engine_terrain::{
-    Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats,
-    Fall, FileHeader, Generator, HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask,
+    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats, Fall,
+    FileHeader, Generator, HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask,
     NavOptions, NavPath, NoiseMask, Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Patch, PathStage,
-    Placing, Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS, TILE_STRIDE,
-    TerrainBake, Tile, TileBand, TileKey, TileSample, WantedTile, WantedView, WaterPoint,
-    decode_tile, merge_placed,
+    Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS, TILE_STRIDE, Tile, TileKey,
+    TileSample, WantedTile, WantedView, WaterPoint, decode_tile,
 };
 
 use crate::{
-    Camera, GlobalTransforms, IDLE_JOBS, JobBudget, JobFailures, JobId, Jobs, RenderMaterial,
-    RenderMesh, RenderSnapshot, RenderTexture, URGENT_JOBS, VIEW_JOBS, content_hash, job_class,
-    job_output, job_priority,
+    Camera, Cooking, GlobalTransforms, IDLE_JOBS, JobBudget, JobFailures, JobId, Jobs, RecordKey,
+    RenderMaterial, RenderMesh, RenderSnapshot, RenderTexture, URGENT_JOBS, VIEW_JOBS,
+    content_hash, job_output, job_priority,
 };
 use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
 

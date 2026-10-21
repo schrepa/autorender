@@ -14,15 +14,10 @@ use super::*;
 /// How much of a resident tile is here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Phase {
-    /// Its heights and holes alone: drawn with coarser levels' materials
-    /// and collided with until the whole tile arrives, which it loads for.
+    /// A file tile's heights and holes alone: drawn with coarser levels'
+    /// materials and collided with until its control values are done,
+    /// which it loads for.
     Shape,
-    /// Whole but for its objects, which jobs place in bands of rows; it
-    /// loads until they join (and generates whole where they stop).
-    Placing,
-    /// Whole but for the objects standing far away its level places, which
-    /// a job places after.
-    Far,
     /// Everything it holds.
     Whole,
 }
@@ -31,15 +26,13 @@ pub(super) enum Phase {
 /// tiles generate; else the rivers as what stood in them held them back.
 pub(super) type Watered = Option<Arc<engine_terrain::Rivers>>;
 
-/// A resident tile: the tile, its phase, the generation it was made from,
-/// the rivers its water was made from and the arrival that made it
-/// resident, which work on it (a far job) belongs to.
+/// A resident tile: the tile, its phase, the generation it was made from
+/// and the rivers its water was made from.
 struct Resident {
     tile: Arc<Tile>,
     phase: Phase,
     made: Generation,
     watered: Watered,
-    arrival: u64,
 }
 
 /// A tile kept in memory after it left the view: the rivers its water was
@@ -73,8 +66,6 @@ pub(super) struct TileStore {
     tiles: TileMap<Resident>,
     /// The generation tiles arriving now are made from.
     generation: Generation,
-    /// Arrivals so far.
-    arrivals: u64,
     revision: u64,
     /// The largest height difference measured between each level and the
     /// next coarser one ([`Tile::morph_error`]), what its patches morph by;
@@ -84,9 +75,6 @@ pub(super) struct TileStore {
     /// layers they generated from stay, and their bytes.
     cache: TileMap<CachedTile>,
     cached_bytes: u64,
-    /// The most memory one tile kept took: the room each tile generated
-    /// ahead of need is given.
-    tile_bytes: u64,
 }
 
 impl TileStore {
@@ -96,12 +84,10 @@ impl TileStore {
             pyramid,
             tiles: TileMap::default(),
             generation,
-            arrivals: 0,
             revision: 1,
             errors: vec![0.0; pyramid.levels() as usize],
             cache: TileMap::default(),
             cached_bytes: 0,
-            tile_bytes: 0,
         }
     }
 
@@ -124,35 +110,17 @@ impl TileStore {
         self.tiles.get(key).map(|resident| resident.phase)
     }
 
-    /// The arrival that made tile `key` resident.
-    pub(super) fn arrival(&self, key: &TileKey) -> Option<u64> {
-        self.tiles.get(key).map(|resident| resident.arrival)
-    }
-
     /// The generation tiles are made from now.
     pub(super) fn generation(&self) -> Generation {
         self.generation
     }
 
-    /// Whether resident tile `key` was made from another generation than
-    /// tiles are made from now.
-    pub(super) fn stale(&self, key: &TileKey) -> bool {
-        self.tiles
-            .get(key)
-            .is_some_and(|resident| resident.made != self.generation)
-    }
-
     /// Whether `key` still loads: not resident, resident of another
-    /// generation, or resident without its materials or objects in bands.
+    /// generation, or resident as its shape alone.
     pub(super) fn loads(&self, key: &TileKey) -> bool {
         self.tiles.get(key).is_none_or(|resident| {
-            resident.made != self.generation
-                || matches!(resident.phase, Phase::Shape | Phase::Placing)
+            resident.made != self.generation || resident.phase == Phase::Shape
         })
-    }
-
-    pub(super) fn is_empty(&self) -> bool {
-        self.tiles.is_empty()
     }
 
     pub(super) fn len(&self) -> usize {
@@ -163,12 +131,6 @@ impl TileStore {
     pub(super) fn count(&self, phases: &[Phase]) -> usize {
         self.tiles
             .count(|resident| phases.contains(&resident.phase))
-    }
-
-    /// The resident tiles' keys, in order, which invariants check.
-    #[cfg(debug_assertions)]
-    pub(super) fn keys(&self) -> Vec<TileKey> {
-        self.tiles.keys()
     }
 
     /// The resident tiles' keys `wanted` holds for, in order.
@@ -202,25 +164,9 @@ impl TileStore {
         self.put(tile, phase, made, watered);
     }
 
-    /// Gives resident tile `key`, waiting on its objects standing far away,
-    /// `tile`: itself with them, its water as the resident tile's. It stays
-    /// of the generation it was made from: objects placed on ground edited
-    /// since regenerate with it.
-    pub(super) fn complete(&mut self, tile: Arc<Tile>) {
-        let key = tile.key();
-        let Some((made, watered)) = self
-            .tiles
-            .get(&key)
-            .map(|resident| (resident.made, resident.watered.clone()))
-        else {
-            return;
-        };
-        self.put(tile, Phase::Whole, made, watered);
-    }
-
     /// Gives resident tile `key` its water made from the rivers `watered`:
     /// `tile`, itself with that water, or where its water stays the same,
-    /// none. It keeps its phase, generation and arrival: its ground and
+    /// none. It keeps its phase and generation: its ground and
     /// objects are the same.
     pub(super) fn rewater(&mut self, key: &TileKey, tile: Option<Arc<Tile>>, watered: Watered) {
         let Some(resident) = self.tiles.get_mut(key) else {
@@ -253,7 +199,6 @@ impl TileStore {
                 }
             }
         }
-        self.arrivals += 1;
         self.tiles.insert(
             key,
             Resident {
@@ -261,7 +206,6 @@ impl TileStore {
                 phase,
                 made,
                 watered,
-                arrival: self.arrivals,
             },
         );
         self.revision += 1;
@@ -308,7 +252,6 @@ impl TileStore {
         let bytes = memory_bytes(&tile);
         self.forget(key);
         self.cached_bytes += bytes;
-        self.tile_bytes = self.tile_bytes.max(bytes);
         self.cache.insert(
             key,
             CachedTile {
@@ -350,10 +293,6 @@ impl TileStore {
 
     pub(super) fn cached_bytes(&self) -> u64 {
         self.cached_bytes
-    }
-
-    pub(super) fn tile_bytes(&self) -> u64 {
-        self.tile_bytes
     }
 
     /// Makes the tiles of `missing` kept in memory resident again,

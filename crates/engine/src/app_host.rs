@@ -4,7 +4,7 @@
 //! workers.
 use engine_core::{
     Engine, ErrorCode, FrameReport, FrameStats, InputState, JobId, JobRequest, JobShare,
-    PresentationMode,
+    PresentationMode, RecordFetch, RecordKey,
 };
 use engine_render::{RenderError, RenderTarget, Renderer};
 
@@ -119,6 +119,10 @@ pub enum JobMessage {
     Share(JobShare),
     /// A job for one worker.
     Run(JobRequest),
+    /// A record no job makes, which the host's records may hold.
+    Fetch(RecordFetch),
+    /// A record its owner made itself, for the host to keep.
+    Keep(RecordKey, Vec<u8>),
 }
 
 /// What terrain times its work by on a host.
@@ -452,10 +456,9 @@ impl AppHost {
         self.engine.work_terrain(milliseconds)
     }
 
-    /// Workers the host runs jobs on: with any, terrains bake
-    /// and generate tiles and agents search walks there; with none, the
-    /// default, that work stays in the engine, which takes back every job
-    /// handed out.
+    /// Workers the host runs jobs on: terrains' bakes and tiles and agents'
+    /// walks run there, or in place on a host without any; the host serves
+    /// the engine's jobs from now on.
     pub fn set_job_workers(&mut self, workers: u32) {
         if let Some(mut jobs) = self
             .engine
@@ -471,7 +474,8 @@ impl AppHost {
     /// handed out that their owners cancelled, which their workers stop;
     /// shares (clearing every share an earlier engine made, holding bytes
     /// as a key, dropping one), to every worker; then jobs, each to one,
-    /// lower priorities first.
+    /// in the order submitted; then records fetched alone and records the
+    /// engine made, to keep.
     pub fn take_jobs(&mut self) -> Vec<JobMessage> {
         let Some(mut jobs) = self
             .engine
@@ -484,13 +488,44 @@ impl AppHost {
         let mut cancels = Vec::new();
         let mut shares = Vec::new();
         let mut requests = Vec::new();
+        let mut fetches = Vec::new();
+        let mut keeps = Vec::new();
         jobs.take_cancels(&mut cancels);
         jobs.take_shares(&mut shares);
         jobs.take_requests(&mut requests);
+        jobs.take_fetches(&mut fetches);
+        jobs.take_keeps(&mut keeps);
         let cancels = cancels.into_iter().map(JobMessage::Cancel);
         let shares = shares.into_iter().map(JobMessage::Share);
         let requests = requests.into_iter().map(JobMessage::Run);
-        cancels.chain(shares).chain(requests).collect()
+        let fetches = fetches.into_iter().map(JobMessage::Fetch);
+        let keeps = keeps
+            .into_iter()
+            .map(|(record, bytes)| JobMessage::Keep(record, bytes));
+        cancels
+            .chain(shares)
+            .chain(requests)
+            .chain(fetches)
+            .chain(keeps)
+            .collect()
+    }
+
+    /// Runs job `kind` on `input` in place, for a host without workers
+    /// ([`engine_core::Jobs::run_here`]).
+    pub fn run_job_here(
+        &mut self,
+        kind: &str,
+        input: &[u8],
+    ) -> std::result::Result<Vec<u8>, String> {
+        match self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Jobs>()
+        {
+            Some(mut jobs) => jobs.run_here(kind, input),
+            None => Err("the engine runs no jobs".to_owned()),
+        }
     }
 
     /// Job `id`'s output from its worker.
@@ -527,19 +562,6 @@ impl AppHost {
             .get_resource_mut::<engine_core::Jobs>()
         {
             jobs.report_held(held);
-        }
-    }
-
-    /// A part of job `id`'s output its worker handed back before the rest,
-    /// such as a tile's shape.
-    pub fn part_job(&mut self, id: JobId, part: Vec<u8>) {
-        if let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
-        {
-            jobs.part(id, part);
         }
     }
 
