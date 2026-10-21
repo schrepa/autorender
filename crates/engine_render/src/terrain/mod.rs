@@ -534,7 +534,8 @@ impl TerrainPass {
             sky: &self.sky,
             palette: &self.tables.palette,
         };
-        self.bounce.encode(device, encoder, profiler, (terrain, scene));
+        self.bounce
+            .encode(device, encoder, profiler, (terrain, scene));
     }
 
     /// Records the runtime virtual texture's feedback over

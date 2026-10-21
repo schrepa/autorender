@@ -10,7 +10,8 @@
 //! changes; four texels per terrain place its map for those lookups.
 //!
 //! With bounce light on, the maps hold after every terrain's horizon layers
-//! each terrain's bounce layers (`crate::terrain_bounce`), which its probes
+//! the bounce layers of each terrain it relights, by slot
+//! (`crate::terrain_bounce`: surroundings hold none), which its probes
 //! around the camera write every frame; the records place them too.
 
 use std::sync::Arc;
@@ -40,12 +41,14 @@ const NO_RECORD: [[f32; 4]; HORIZON_RECORD_TEXELS as usize] =
 struct Maps {
     texture: wgpu::Texture,
     // Every layer, as the main passes read them; the horizon layers alone,
-    // as bounce light reads them; and the bounce layers, as it writes them.
+    // as bounce light reads them; and the bounce layers, as it writes them:
+    // disjoint layers, so one dispatch reads the first and writes the other.
     view: Versioned<wgpu::TextureView>,
     horizon_view: Versioned<wgpu::TextureView>,
     bounce_view: Option<Versioned<wgpu::TextureView>>,
     size: u32,
     terrains: usize,
+    slots: u32,
 }
 
 pub(crate) struct Horizons {
@@ -177,15 +180,16 @@ impl Horizons {
     /// Uploads the maps of every terrain whose lighting arrived or changed
     /// since and writes their records, with shadows on and terrain
     /// `settings` casting at their resolution, each placing the window of
-    /// `windows` (by terrain index) its bounce light relights there. Without
-    /// casters the maps are released.
+    /// `windows` (by terrain index) its bounce light relights there, the
+    /// maps holding the bounce layers of `slots` terrains. Without casters
+    /// the maps are released.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         terrains: &RenderTerrains,
         (settings, shadows): (&TerrainSettings, bool),
-        windows: &[Option<BounceWindow>],
+        (windows, slots): (&[Option<BounceWindow>], u32),
     ) {
         self.uploaded = 0;
         self.reaches.clear();
@@ -195,11 +199,12 @@ impl Horizons {
         }
         let size = settings.shadow_resolution;
         let count = terrains.terrains.len();
-        let bounce = settings.bounce;
-        if self.maps.as_ref().is_none_or(|maps| {
-            maps.size != size || maps.terrains != count || maps.bounce_view.is_some() != bounce
-        }) {
-            self.maps = Some(maps(device, size, count, bounce));
+        if self
+            .maps
+            .as_ref()
+            .is_none_or(|maps| maps.size != size || maps.terrains != count || maps.slots != slots)
+        {
+            self.maps = Some(maps(device, size, count, slots));
             self.held = vec![None; count];
         }
         let Some(maps) = &self.maps else {
@@ -291,7 +296,7 @@ fn max_extent(terrain: &RenderTerrain) -> f32 {
 
 /// Where a terrain's record places its layers: its index among `count`
 /// terrains whose maps are `size` texels a side, and the window its bounce
-/// light relights, if it does.
+/// light relights in its slot's layers, if it does.
 struct Place {
     index: usize,
     count: usize,
@@ -318,7 +323,7 @@ fn record(
     let (bounce, window) = match place.window {
         Some(window) => (
             [
-                (HORIZON_LAYERS * place.count + BOUNCE_LAYERS * place.index) as f32,
+                (HORIZON_LAYERS * place.count + BOUNCE_LAYERS * window.slot as usize) as f32,
                 window.probes as f32,
                 window.first[0] as f32,
                 window.first[1] as f32,
@@ -379,15 +384,12 @@ fn write_layers(
     );
 }
 
-/// Horizon maps of `terrains` terrains, `size` texels a side, with their
-/// bounce layers after every terrain's horizon layers when `bounce`.
-fn maps(device: &wgpu::Device, size: u32, terrains: usize, bounce: bool) -> Maps {
+/// Horizon maps of `terrains` terrains, `size` texels a side, with the
+/// bounce layers of `slots` of them after every terrain's horizon layers.
+fn maps(device: &wgpu::Device, size: u32, terrains: usize, slots: u32) -> Maps {
     let horizon_layers = (HORIZON_LAYERS * terrains) as u32;
-    let bounce_layers = if bounce {
-        (BOUNCE_LAYERS * terrains) as u32
-    } else {
-        0
-    };
+    let bounce_layers = BOUNCE_LAYERS as u32 * slots;
+    let bounce = bounce_layers > 0;
     let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
     if bounce {
         usage |= wgpu::TextureUsages::STORAGE_BINDING;
@@ -410,12 +412,12 @@ fn maps(device: &wgpu::Device, size: u32, terrains: usize, bounce: bool) -> Maps
     Maps {
         view: Versioned::new(texture.create_view(&layers(0, horizon_layers + bounce_layers))),
         horizon_view: Versioned::new(texture.create_view(&layers(0, horizon_layers))),
-        bounce_view: bounce.then(|| {
-            Versioned::new(texture.create_view(&layers(horizon_layers, bounce_layers)))
-        }),
+        bounce_view: bounce
+            .then(|| Versioned::new(texture.create_view(&layers(horizon_layers, bounce_layers)))),
         texture,
         size,
         terrains,
+        slots,
     }
 }
 

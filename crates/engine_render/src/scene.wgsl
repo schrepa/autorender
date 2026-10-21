@@ -160,8 +160,9 @@ struct Shadow {
 // lies (meters): layer l holds directions 2l and 2l + 1, their heights in
 // red and green and their distances in blue and alpha. The last layer holds
 // the ground's height above the terrain's lowest (red). With bounce light,
-// every terrain's BOUNCE_LAYERS bounce layers follow every terrain's
-// horizon layers (`bounce_light`).
+// the BOUNCE_LAYERS bounce layers of each terrain it relights (by slot:
+// surroundings hold none) follow every terrain's horizon layers
+// (`bounce_light`).
 @group(0) @binding(14) var terrain_horizons: texture_2d_array<f32>;
 // HORIZON_RECORD_TEXELS texels per terrain: its map's first corner (world x
 // and z) and one over its extent (x and z, 0 without a map); its first
