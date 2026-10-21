@@ -42,9 +42,7 @@ impl Terrains {
         let mut released = Vec::new();
         let mut left = 0;
         for state in &mut self.entries {
-            let TerrainSource::Generated(authored) = state.terrain.source.clone() else {
-                continue;
-            };
+            let authored = state.terrain.layers.clone();
             if state.terrain.validate().is_err() {
                 continue;
             }

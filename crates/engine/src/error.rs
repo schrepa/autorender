@@ -30,7 +30,7 @@
 
 use std::fmt;
 
-use engine_core::terrain_data::{FormatError, codec::CodecError};
+use engine_core::terrain_data::codec::CodecError;
 use engine_core::{
     AssetError, BiomeError, ErrorCode, HierarchyError, InterpolationError, InvalidSetting,
     LayerError, PyramidError, SimplifyError, TransformEditError,
@@ -209,20 +209,6 @@ impl From<engine_render::RenderError> for Error {
 impl From<CodecError> for Error {
     fn from(error: CodecError) -> Self {
         Self::new(ErrorCode::InvalidTerrain, "$", error.to_string())
-    }
-}
-
-impl From<FormatError> for Error {
-    fn from(error: FormatError) -> Self {
-        let code = match error {
-            FormatError::Magic
-            | FormatError::Version(_)
-            | FormatError::Pyramid(_)
-            | FormatError::Step
-            | FormatError::Truncated
-            | FormatError::Corrupt(_) => ErrorCode::InvalidTerrain,
-        };
-        Self::new(code, "$", error.to_string())
     }
 }
 

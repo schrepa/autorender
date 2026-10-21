@@ -2,24 +2,26 @@
 //! drawn in continuous level of detail and sampled by queries and collision.
 //!
 //! An entity's [`Terrain`] describes one: where it lies, its tile pyramid,
-//! where its tiles come from (generated from a layer stack, or read from an
-//! `ETR1` file by byte ranges) and its surface: the rules
+//! the layer stack its tiles generate from (they load as records, the
+//! cook's or made by the same jobs) and its surface: the rules
 //! choosing each sample's materials and how those look. The [`Terrains`] resource
 //! keeps every terrain's resident tiles. Each extraction streams toward the
 //! camera: the coarsest levels stay resident everywhere, so the whole
 //! terrain always draws; finer levels load nearest and ahead of the camera
 //! first, and level-0 tiles load around the camera and [`StreamingFocus`](crate::StreamingFocus)
-//! entities for collision. Generating, decoding and baking share a frame's
-//! work time, larger until the camera's view first loads
-//! whole than after; past a tile budget or the device's capacity the least
-//! important tiles drop and count as dropped. Frames list each terrain's
-//! resident tiles and the patches the camera draws in
+//! entities for collision. Past a tile budget or the device's capacity the
+//! least important tiles drop and count as dropped. Frames list each
+//! terrain's resident tiles and the patches the camera draws in
 //! [`RenderSnapshot::terrain`].
 //!
-//! Where the host runs workers, terrains bake and generate
-//! tiles on them instead: frames share each terrain's layers with them,
-//! hand them the most important missing tiles and make the tiles they
-//! finish resident, which takes frames little time.
+//! Its bakes and tiles are records ([`crate::Jobs`]): the host hands each
+//! back from the cook's packs or what it kept, or runs its job on a worker
+//! (in place on a host without workers) and keeps the output. Frames share
+//! each terrain's layers with the jobs, ask for the most important missing
+//! tiles and make the records that arrive resident within their time and
+//! uploads, larger until the camera's view first loads whole than after.
+//! While a session cooks ([`crate::Cooking`]), every tile a camera could
+//! want is asked for, for the host's pack.
 //!
 //! Tiles load in the order the view needs them: the pinned
 //! levels; the tiles the view draws and shows, with those under focus
@@ -28,9 +30,7 @@
 //! run to each tile's ground, so a high eye wants fine tiles only as near
 //! as their ground is. Jobs carry that order as their priority, the first
 //! tiers taking a third job per worker, which workers run first; jobs for
-//! tiles no longer kept stop at once. Far tiles' objects standing far away
-//! at their level are placed by jobs of their own after their tiles, so
-//! the tiles under the view stop waiting for far forests.
+//! tiles no longer kept stop at once.
 //!
 //! Queries ([`Terrains::sample`], [`Terrains::height_at`] and the rest)
 //! answer from the finest resident tile at a point, on the triangles
@@ -46,7 +46,6 @@ mod components;
 mod cook;
 mod dispatch;
 mod extract;
-mod files;
 mod flow;
 mod ground_cover;
 mod identity;
@@ -73,7 +72,6 @@ pub use components::*;
 use cook::CookTiles;
 use dispatch::*;
 pub use extract::*;
-pub use files::*;
 pub use ground_cover::*;
 use identity::Generation;
 pub use occupancy::*;
@@ -105,10 +103,10 @@ use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::jobs::{BakeJob, StackView, TerrainRecipe, TileJob, WalkJob};
 use engine_terrain::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats, Fall,
-    FileHeader, Generator, HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask,
-    NavOptions, NavPath, NoiseMask, Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Patch, PathStage,
-    Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS, TILE_STRIDE, Tile, TileKey,
-    TileSample, WantedTile, WantedView, WaterPoint, decode_tile,
+    HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask, NavOptions, NavPath, NoiseMask,
+    Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Patch, PathStage, Pyramid, Remap, Route, RouteOptions,
+    Selection, Stamp, TILE_QUADS, TILE_STRIDE, Tile, TileKey, TileSample, WantedTile, WantedView,
+    WaterPoint,
 };
 
 use crate::{

@@ -96,7 +96,7 @@ pub use engine_core::{
 /// they make.
 pub mod terrain {
     /// Heightfield terrain data: tile pyramids, layer stacks, tiles,
-    /// patches and the `ETR1` format.
+    /// patches and the jobs that make tiles and bakes.
     pub use engine_core::terrain_data as data;
     pub use engine_core::{
         AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes,
@@ -107,8 +107,8 @@ pub mod terrain {
         PathProfile, PathStage, Placed, PlacedCollider, PlacedShape, PlacementAsset,
         PlacementChoice, PlacementLayer, PlacementLod, Pyramid, PyramidError, Remap, Route,
         RouteOptions, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Surroundings,
-        SurroundingsStatus, TerrainBakes, TerrainEdit, TerrainPrefetch, TerrainSource,
-        TerrainSurface, Tile, TileKey,
+        SurroundingsStatus, TerrainBakes, TerrainEdit, TerrainPrefetch, TerrainSurface, Tile,
+        TileKey,
     };
 }
 
@@ -153,8 +153,6 @@ mod app_host;
 #[cfg(feature = "dev")]
 mod dev_host;
 mod game_host;
-#[cfg(not(target_arch = "wasm32"))]
-mod range_reads;
 /// The renderer's shader modules by name, with their sources, as it
 /// composes them: what tools compile and hash.
 pub use engine_render::shaders::MODULES as SHADER_MODULES;

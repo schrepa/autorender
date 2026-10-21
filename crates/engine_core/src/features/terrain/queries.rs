@@ -96,19 +96,16 @@ impl Terrains {
     }
 
     /// The layers `entity`'s tiles generate from: its own, with their
-    /// hydrology baked once it is and its edits over them;
-    /// `None` for terrains read from files.
+    /// hydrology baked once it is and its edits over them.
     pub fn layers(&self, entity: Entity) -> Option<Arc<Layers>> {
         let state = self
             .entries
             .iter()
             .find(|state| state.entity == entity && state.around.is_none())?;
-        let base = match &state.terrain.source {
-            TerrainSource::Generated(layers) => {
-                state.baked.clone().unwrap_or_else(|| layers.clone())
-            }
-            TerrainSource::File { .. } => return None,
-        };
+        let base = state
+            .baked
+            .clone()
+            .unwrap_or_else(|| state.terrain.layers.clone());
         if state.terrain.edits.is_empty() {
             return Some(base);
         }
@@ -276,10 +273,7 @@ impl Terrains {
             .entries
             .iter()
             .find(|state| state.entity == entity && state.around.is_none())?;
-        let TerrainSource::Generated(authored) = &state.terrain.source else {
-            return None;
-        };
-        let layers = state.baked.as_ref().unwrap_or(authored);
+        let layers = state.baked.as_ref().unwrap_or(&state.terrain.layers);
         if layers.unbaked().is_some() {
             return None;
         }

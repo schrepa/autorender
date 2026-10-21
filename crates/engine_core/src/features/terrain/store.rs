@@ -1,7 +1,7 @@
 //! A terrain's resident tiles, and the tiles kept in memory after they
-//! left: the one owner of what each resident tile is. Each holds how much
-//! of it is here (its [`Phase`]), the [`Generation`] it was made from and
-//! the rivers its water was made from ([`Watered`]);
+//! left: the one owner of what each resident tile is. Each holds the
+//! [`Generation`] it was made from and the rivers its water was made from
+//! ([`Watered`]);
 //! a tile of another generation than its terrain makes now lies under an
 //! edit since (or was made before its terrain's materials changed) and
 //! regenerates, drawn until then. The
@@ -11,26 +11,14 @@
 
 use super::*;
 
-/// How much of a resident tile is here.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Phase {
-    /// A file tile's heights and holes alone: drawn with coarser levels'
-    /// materials and collided with until its control values are done,
-    /// which it loads for.
-    Shape,
-    /// Everything it holds.
-    Whole,
-}
-
 /// The rivers a tile's water was made from: `None` for its bake's own, as
 /// tiles generate; else the rivers as what stood in them held them back.
 pub(super) type Watered = Option<Arc<engine_terrain::Rivers>>;
 
-/// A resident tile: the tile, its phase, the generation it was made from
-/// and the rivers its water was made from.
+/// A resident tile: the tile, the generation it was made from and the
+/// rivers its water was made from.
 struct Resident {
     tile: Arc<Tile>,
-    phase: Phase,
     made: Generation,
     watered: Watered,
 }
@@ -105,32 +93,21 @@ impl TileStore {
         self.tiles.contains_key(key)
     }
 
-    /// The phase of the resident tile `key`.
-    pub(super) fn phase(&self, key: &TileKey) -> Option<Phase> {
-        self.tiles.get(key).map(|resident| resident.phase)
-    }
-
     /// The generation tiles are made from now.
     pub(super) fn generation(&self) -> Generation {
         self.generation
     }
 
-    /// Whether `key` still loads: not resident, resident of another
-    /// generation, or resident as its shape alone.
+    /// Whether `key` still loads: not resident, or resident of another
+    /// generation.
     pub(super) fn loads(&self, key: &TileKey) -> bool {
-        self.tiles.get(key).is_none_or(|resident| {
-            resident.made != self.generation || resident.phase == Phase::Shape
-        })
+        self.tiles
+            .get(key)
+            .is_none_or(|resident| resident.made != self.generation)
     }
 
     pub(super) fn len(&self) -> usize {
         self.tiles.len()
-    }
-
-    /// Resident tiles in `phases`.
-    pub(super) fn count(&self, phases: &[Phase]) -> usize {
-        self.tiles
-            .count(|resident| phases.contains(&resident.phase))
     }
 
     /// The resident tiles' keys `wanted` holds for, in order.
@@ -154,19 +131,18 @@ impl TileStore {
         &self.errors
     }
 
-    /// Makes `tile` resident in `phase`, made from the generation tiles are
-    /// made from now, its water made from the rivers `watered`, in place of
-    /// whatever its key held, measuring how far it lies from its resident
-    /// parent and its resident children from it. The only way a tile
-    /// becomes resident.
-    pub(super) fn arrive(&mut self, tile: Arc<Tile>, phase: Phase, watered: Watered) {
+    /// Makes `tile` resident, made from the generation tiles are made from
+    /// now, its water made from the rivers `watered`, in place of whatever
+    /// its key held, measuring how far it lies from its resident parent and
+    /// its resident children from it. The only way a tile becomes resident.
+    pub(super) fn arrive(&mut self, tile: Arc<Tile>, watered: Watered) {
         let made = self.generation;
-        self.put(tile, phase, made, watered);
+        self.put(tile, made, watered);
     }
 
     /// Gives resident tile `key` its water made from the rivers `watered`:
     /// `tile`, itself with that water, or where its water stays the same,
-    /// none. It keeps its phase and generation: its ground and
+    /// none. It keeps its generation: its ground and
     /// objects are the same.
     pub(super) fn rewater(&mut self, key: &TileKey, tile: Option<Arc<Tile>>, watered: Watered) {
         let Some(resident) = self.tiles.get_mut(key) else {
@@ -179,7 +155,7 @@ impl TileStore {
         }
     }
 
-    fn put(&mut self, tile: Arc<Tile>, phase: Phase, made: Generation, watered: Watered) {
+    fn put(&mut self, tile: Arc<Tile>, made: Generation, watered: Watered) {
         let key = tile.key();
         let level = usize::from(key.level);
         if let Some(parent) = self
@@ -203,7 +179,6 @@ impl TileStore {
             key,
             Resident {
                 tile,
-                phase,
                 made,
                 watered,
             },
@@ -216,7 +191,7 @@ impl TileStore {
         let resident = self.tiles.remove(key)?;
         self.revision += 1;
         Some(Left {
-            current: resident.phase == Phase::Whole && resident.made == self.generation,
+            current: resident.made == self.generation,
             tile: resident.tile,
             watered: resident.watered,
         })
@@ -313,7 +288,7 @@ impl TileStore {
             if let Some(cached) = self.cache.remove(&key) {
                 self.cached_bytes -= cached.bytes;
                 work.upload(2 * TILE_ARRAY_BYTES);
-                self.arrive(cached.tile, Phase::Whole, cached.watered);
+                self.arrive(cached.tile, cached.watered);
                 restored += 1;
             }
         }
@@ -321,9 +296,8 @@ impl TileStore {
     }
 
     /// Checks the residency invariants that need the store alone: R1, each
-    /// resident and kept tile is the tile its key names; R2, a tile in
-    /// [`Phase::Shape`] holds neither materials nor objects; R5, the bytes
-    /// kept in memory are their tiles'. Panics naming the first broken.
+    /// resident and kept tile is the tile its key names; R5, the bytes kept
+    /// in memory are their tiles'. Panics naming the first broken.
     #[cfg(debug_assertions)]
     pub(super) fn check(&self) {
         let levels = self.pyramid.levels();
@@ -332,11 +306,6 @@ impl TileStore {
                 resident.tile.key() == key && u32::from(key.level) < levels,
                 "R1: resident tile {key:?} holds tile {:?} ({levels} levels)",
                 resident.tile.key()
-            );
-            assert!(
-                resident.phase != Phase::Shape
-                    || (resident.tile.control().is_none() && resident.tile.placing().is_none()),
-                "R2: tile {key:?}, its shape alone, holds materials or objects"
             );
         }
         let mut bytes = 0;

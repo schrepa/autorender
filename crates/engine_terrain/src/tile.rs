@@ -593,18 +593,6 @@ impl Generator {
         span.clone()
     }
 
-    /// A generator giving `tile` (of `pyramid`, its heights read from a
-    /// file) `surface`'s control values, under the same budget as
-    /// generation.
-    pub fn resurface(tile: &Tile, pyramid: &Pyramid, surface: Arc<BiomeRules>) -> Self {
-        let layers = Arc::new(Layers::new(Vec::new()).expect("an empty stack is valid"));
-        let mut generator = Self::new(layers, pyramid, tile.key()).with_surface(surface);
-        generator.heights = tile.heights().into();
-        generator.holes = tile.hole_bits().map(Box::from);
-        generator.stage = Stage::Biomes { row: 0 };
-        generator
-    }
-
     pub fn key(&self) -> TileKey {
         self.key
     }

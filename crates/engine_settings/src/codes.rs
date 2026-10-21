@@ -142,8 +142,6 @@ error_codes! {
     NoScene => "no_scene",
     /// No terrain answers to that name.
     UnknownTerrain => "unknown_terrain",
-    /// Only terrains generated from layers take edits.
-    NotGenerated => "not_generated",
     /// No entity answers to that selector.
     UnknownEntity => "unknown_entity",
     /// The authored entity was removed since.

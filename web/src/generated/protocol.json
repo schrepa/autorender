@@ -131,7 +131,6 @@
     "missing_runtime_identity": "The page reports no runtime identity.",
     "nested_prefab": "A prefab places another prefab.",
     "no_scene": "No authored scene is loaded.",
-    "not_generated": "Only terrains generated from layers take edits.",
     "origin_rejected": "The request came from an origin the bridge refuses.",
     "out_of_range": "A number lies outside its bounds.",
     "pause_required": "The command needs the host paused.",

@@ -82,15 +82,15 @@ pub use engine_assets::{
 };
 pub use engine_settings::ErrorCode;
 /// Heightfield terrain data: tile pyramids, layer stacks,
-/// tiles, patches and the `ETR1` format.
+/// tiles, patches and the jobs that make tiles and bakes.
 pub use engine_terrain as terrain_data;
 pub use engine_terrain::{
     AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Blend,
-    Control, Erosion, ErosionLayer, ErosionStage, ErosionStats, FarPlacement, FileHeader,
-    HeightImage, HeightmapLayer, Hydrology, HydrologyLayer, HydrologySample, HydrologyStage,
-    HydrologyStats, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch, PathLayer,
-    PathProfile, PathStage, PathStats, Placed, PlacementChoice, PlacementLayer, Pyramid,
-    PyramidError, Remap, Route, RouteOptions, Stamp, StampOp, Tile, TileKey,
+    Control, Erosion, ErosionLayer, ErosionStage, ErosionStats, FarPlacement, HeightImage,
+    HeightmapLayer, Hydrology, HydrologyLayer, HydrologySample, HydrologyStage, HydrologyStats,
+    Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch, PathLayer, PathProfile,
+    PathStage, PathStats, Placed, PlacementChoice, PlacementLayer, Pyramid, PyramidError, Remap,
+    Route, RouteOptions, Stamp, StampOp, Tile, TileKey,
 };
 pub use environment::*;
 pub use features::*;

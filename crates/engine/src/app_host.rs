@@ -1,7 +1,6 @@
 //! The frame loop every host runs, a page or a native window: one engine
 //! and the renderer drawing it, advanced a frame at a time with the host's
-//! input, terrain tiles read by byte range and jobs handed to the host's
-//! workers.
+//! input and jobs handed to the host's workers.
 use engine_core::{
     Engine, ErrorCode, FrameReport, FrameStats, InputState, JobId, JobRequest, JobShare,
     PresentationMode, RecordFetch, RecordKey,
@@ -34,77 +33,6 @@ pub fn now_ms() -> f64 {
             .elapsed()
             .as_secs_f64()
             * 1000.0
-    }
-}
-
-/// Terrain tiles in flight: read by byte range from their files (the
-/// page's fetches; natively an I/O thread's reads, handed back in the order
-/// asked) and handed back to the engine's terrains a later frame.
-#[derive(Default)]
-struct TerrainFetches {
-    #[cfg(target_arch = "wasm32")]
-    inbox: std::rc::Rc<std::cell::RefCell<Vec<TerrainArrival>>>,
-    #[cfg(not(target_arch = "wasm32"))]
-    reads: Option<crate::range_reads::RangeReads<TileAsked>>,
-    requests: Vec<engine_core::TileRequest>,
-}
-
-/// A tile asked: its terrain and key.
-#[cfg(not(target_arch = "wasm32"))]
-type TileAsked = (engine_core::bevy_ecs::entity::Entity, engine_core::TileKey);
-
-/// A read tile: its terrain, key and bytes, or why the read failed.
-#[cfg(target_arch = "wasm32")]
-type TerrainArrival = (
-    engine_core::bevy_ecs::entity::Entity,
-    engine_core::TileKey,
-    Result<Vec<u8>, String>,
-);
-
-impl TerrainFetches {
-    /// Hands arrived tiles to `engine`'s terrains and starts reading the
-    /// tiles they request; with `wait` (terrain's frame clock), every tile
-    /// asked before arrives first, natively, so what arrives when is the
-    /// same every run.
-    fn exchange(&mut self, engine: &mut Engine, wait: bool) {
-        let Some(mut terrains) = engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::Terrains>()
-        else {
-            return;
-        };
-        #[cfg(target_arch = "wasm32")]
-        {
-            // Pages' fetches arrive as they finish.
-            let _ = wait;
-            for (terrain, key, bytes) in self.inbox.borrow_mut().drain(..) {
-                terrains.deliver(terrain, key, bytes);
-            }
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(reads) = &mut self.reads {
-            reads.take(wait, |(terrain, key), bytes| {
-                terrains.deliver(terrain, key, bytes);
-            });
-        }
-        terrains.take_requests(&mut self.requests);
-        for request in self.requests.drain(..) {
-            let range = request.offset..request.offset + u64::from(request.length);
-            #[cfg(target_arch = "wasm32")]
-            {
-                let inbox = std::rc::Rc::clone(&self.inbox);
-                engine_render::read_range(&request.url, range, move |bytes| {
-                    inbox
-                        .borrow_mut()
-                        .push((request.terrain, request.key, bytes));
-                });
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            self.reads
-                .get_or_insert_with(crate::range_reads::RangeReads::new)
-                .ask(&request.url, range, (request.terrain, request.key));
-        }
     }
 }
 
@@ -180,8 +108,6 @@ pub(crate) struct AppHost {
     tick_pipelining: bool,
     // The last GPU frame was not submitted, so the renderer missed its gather.
     gpu_inputs_stale: bool,
-    // Terrain tiles read by byte range.
-    terrain_fetches: TerrainFetches,
     terrain_clock: TerrainClock,
     // The host's culling and antialiasing choices over each engine's own
     // settings: unset, an engine keeps its own.
@@ -251,7 +177,6 @@ impl AppHost {
             gpu_presentation: true,
             tick_pipelining: true,
             gpu_inputs_stale: false,
-            terrain_fetches: TerrainFetches::default(),
             terrain_clock: TerrainClock::Wall,
             overrides: Overrides::default(),
             #[cfg(feature = "profiling")]
@@ -279,8 +204,6 @@ impl AppHost {
             .get_resource::<engine_core::Jobs>()
             .map_or(0, engine_core::Jobs::workers);
         wire(&mut engine, &self.renderer, workers, self.terrain_clock);
-        // Tiles in flight belong to the replaced engine's terrains.
-        self.terrain_fetches = TerrainFetches::default();
         self.gpu_inputs_stale = false;
         let replaced = std::mem::replace(&mut self.engine, engine);
         self.apply_overrides();
@@ -438,8 +361,6 @@ impl AppHost {
         if world.get_resource::<engine_core::Viewport>() != Some(&viewport) {
             world.insert_resource(viewport);
         }
-        self.terrain_fetches
-            .exchange(&mut self.engine, self.terrain_clock == TerrainClock::Frames);
         self.engine.stream_terrain();
     }
 
@@ -451,8 +372,6 @@ impl AppHost {
         if !milliseconds.is_finite() || milliseconds <= 0.0 {
             return false;
         }
-        self.terrain_fetches
-            .exchange(&mut self.engine, self.terrain_clock == TerrainClock::Frames);
         self.engine.work_terrain(milliseconds)
     }
 
@@ -738,9 +657,6 @@ impl AppHost {
                     height: height.max(1),
                 });
         }
-        // Tiles that arrived stream in with this frame's extraction.
-        self.terrain_fetches
-            .exchange(&mut self.engine, self.terrain_clock == TerrainClock::Frames);
         let (frame_number, tick) = {
             let world = self.engine.app.world();
             (

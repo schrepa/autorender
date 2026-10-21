@@ -4,12 +4,12 @@
 //! packs or what it kept before, or runs the tile's job (on a worker, or in
 //! place on a host without workers) and keeps what it makes: where a tile
 //! came from is the host's alone, and loading only ever loads records.
-//! Tiles of terrain files decode as they arrive instead (`files`).
 
 use super::*;
 
-/// A frame's terrain work: slices of samples' worth handed
-/// out while its time lasts, or a single slice without a clock.
+/// A frame's terrain work: slices of samples' worth handed out while its
+/// time lasts, or a single slice without a clock, and the bytes tiles may
+/// bring the GPU.
 pub(super) struct Work {
     pub(super) slice: u64,
     pub(super) clock: Option<fn() -> f64>,
@@ -51,55 +51,26 @@ impl Work {
     }
 }
 
-/// Loads `missing` tiles of `state`, most important first: a generated
-/// terrain's as records once its bakes are done, within `slots`, the
-/// frame's job budget; a file's decoded, or requested and decoded once
-/// delivered, within `work`'s time from slices of `budget`. `target` is
-/// every tile it loads and `keep` every tile it keeps; `named` are the
-/// tiles places games name want, which load into memory once nothing else
-/// waits. Frames load what they find missing, and hosts what is left
-/// between frames. Returns whether a bake is still in progress, which
-/// nothing loads behind.
-#[expect(clippy::too_many_arguments, reason = "the frame's disjoint borrows")]
+/// Loads `missing` tiles of `state`, most important first, as records,
+/// once its bakes are done, within `slots`, the frame's job budget and
+/// `work`'s time and uploads: `target` is every tile it loads and `keep`
+/// every tile it keeps; `named` are the tiles places games name want,
+/// which load into memory once nothing else waits. Frames load what they
+/// find missing, and hosts what is left between frames. Returns whether a
+/// bake is still in progress, which nothing loads behind.
 pub(super) fn load_tiles(
     state: &mut TerrainState,
     missing: &[(TileKey, u32)],
     (target, keep, named): (&HashSet<TileKey>, &HashSet<TileKey>, &[TileKey]),
     work: &Work,
-    budget: &mut u64,
     frame: u64,
-    requests: &mut Vec<TileRequest>,
-    slots: Option<&mut JobBudget<'_>>,
+    slots: &mut JobBudget<'_>,
 ) -> bool {
-    match state.terrain.source.clone() {
-        TerrainSource::Generated(authored) => {
-            // An engine without jobs loads no generated tiles.
-            let Some(slots) = slots else {
-                return false;
-            };
-            if bake(state, &authored, slots, frame) {
-                return true;
-            }
-            load_records(state, missing, (target, keep, named), work, slots, frame);
-        }
-        TerrainSource::File {
-            header,
-            url: _,
-            data: Some(data),
-        } => decode_file(state, (&header, &data), missing, (work, budget), frame),
-        TerrainSource::File {
-            header,
-            url,
-            data: None,
-        } => fetch_file(
-            state,
-            (&header, &url),
-            (missing, target),
-            (work, budget),
-            frame,
-            requests,
-        ),
+    let authored = state.terrain.layers.clone();
+    if bake(state, &authored, slots, frame) {
+        return true;
     }
+    load_records(state, missing, (target, keep, named), work, slots, frame);
     false
 }
 
@@ -154,7 +125,7 @@ fn load_records(
             Ok(tile) if made == generation && target.contains(&key) && tile.key() == key => {
                 work.upload(2 * TILE_ARRAY_BYTES);
                 state.failed.remove(&key);
-                state.store.arrive(Arc::new(tile), Phase::Whole, None);
+                state.store.arrive(Arc::new(tile), None);
                 inserted = true;
             }
             Ok(_) => {}
@@ -267,10 +238,10 @@ pub(crate) fn share_recipe(
     stacks: &mut Vec<(Arc<Layers>, String)>,
     released: &mut Vec<String>,
 ) {
-    let TerrainSource::Generated(authored) = &state.terrain.source else {
-        return;
-    };
-    let layers = state.baked.clone().unwrap_or_else(|| authored.clone());
+    let layers = state
+        .baked
+        .clone()
+        .unwrap_or_else(|| state.terrain.layers.clone());
     if layers.unbaked().is_some() {
         return;
     }

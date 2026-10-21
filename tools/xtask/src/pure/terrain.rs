@@ -1,7 +1,7 @@
 //! The terrain corpus: the tracked terrain fixture's generated terrain
 //! (web/scripts/fixtures/terrain.scene.json and its dome heightmap). Its
 //! bakes; every tile of its pyramid and some of its surroundings'; tiles
-//! under edits; a walk; a pack of what they made; and its `ETR1` file. Each
+//! under edits; a walk; and a pack of what they made. Each
 //! job runs as workers run it, whole and a slice at a time, and must give
 //! the bits its code gives in place; every record must read back from the
 //! pack the cook would write as it went in.
@@ -11,14 +11,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use engine_core::{Terrain, TerrainSource};
+use engine_core::Terrain;
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use engine_terrain::jobs::{
     self, BakeJob, StackView, TerrainRecipe, TerrainWorker, TileJob, WalkJob,
 };
 use engine_terrain::{
-    BiomeRules, FileHeader, Generator, Layer, Layers, NavOptions, Obstacle, Pyramid, Stamp,
-    StampOp, Tile, TileKey, codec, decode_tile, encode_file, walk,
+    BiomeRules, Generator, Layer, Layers, NavOptions, Obstacle, Pyramid, Stamp, StampOp, Tile,
+    TileKey, codec, walk,
 };
 use glam::Vec2;
 use serde_json::json;
@@ -31,8 +31,6 @@ const ENTITY: &str = "ground";
 /// Work units each slice of a job gets: few enough that each takes many
 /// slices, as workers slice them.
 const SLICE: u64 = 4096;
-/// The height step of the terrain file, `terrain_bake`'s default.
-const STEP: f32 = 1.0 / 256.0;
 /// Every share and job the corpus ran through its worker, in order, each
 /// job's output by its hash: what `cargo xtask pure --wasm` replays in the
 /// browser worker's Wasm module.
@@ -44,9 +42,7 @@ pub const JOBS: &str = "target/pure/terrain-jobs.json";
 )]
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let terrain = load(root)?;
-    let TerrainSource::Generated(authored) = &terrain.source else {
-        return Err(format!("{FIXTURE}'s {ENTITY} reads a terrain file"));
-    };
+    let authored = &terrain.layers;
     let pyramid = terrain.pyramid;
     let mut worker = Worker::default();
 
@@ -203,39 +199,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let pack = pack(&records, observed)?;
     observed.hash("pack", &pack);
 
-    // The terrain file: every tile decodes to its heights quantized to the
-    // step, with its holes.
-    let file = encode_file(&pyramid, STEP, |key| tiles[&key].clone().without_placed())
-        .map_err(|error| error.to_string())?;
-    observed.hash("etr1", &file);
-    let header = FileHeader::parse(&file).map_err(|error| error.to_string())?;
-    for (&key, tile) in &tiles {
-        let entry = header.tile(key).ok_or("a tile missing from the file")?;
-        let start = usize::try_from(entry.offset).map_err(|error| error.to_string())?;
-        let payload = file
-            .get(start..start + entry.length as usize)
-            .ok_or("a tile past the file's end")?;
-        let decoded = decode_tile(&header, key, payload).map_err(|error| error.to_string())?;
-        let quantized = tile.heights().iter().map(|&height| {
-            let steps = (f64::from(height) / f64::from(STEP)).round() as i32;
-            (f64::from(steps) * f64::from(STEP)) as f32
-        });
-        observed.check(
-            decoded
-                .heights()
-                .iter()
-                .zip(quantized)
-                .all(|(read, wrote)| read.to_bits() == wrote.to_bits())
-                && decoded.hole_bits() == tile.hole_bits()
-                && decoded.spacing().to_bits() == tile.spacing().to_bits(),
-            || {
-                format!(
-                    "tile {} decodes from the file to other heights than its quantized ones",
-                    name(key)
-                )
-            },
-        );
-    }
     worker.write(root)
 }
 

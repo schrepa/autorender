@@ -1,99 +1,33 @@
 /**
- * The terrain tools' files: an ETR1 bake streams, and an import loads.
+ * The terrain tools' files: an import loads.
  *
- * engine_assetc's `terrain_bake` bakes the fixture's layers into an ETR1
- * file, which streams by byte range with the heights generating gives, on
- * the page and on the native host (its reads on an I/O thread);
- * `terrain_import` brings the dome in as a RAW heightmap of its own, and
- * the scene it writes loads with the dome's summit, its source and its
- * attribution. Both tools are built with the quick profile by the cargo on
- * PATH while the page opens; they write into web/public/scenes/, and what
- * they wrote is removed afterwards. The fixture: terrain-fixture.mjs.
+ * engine_assetc's `terrain_import` brings the dome in as a RAW heightmap of
+ * its own, and the scene it writes loads with the dome's summit, its
+ * source and its attribution, its tiles generated from that heightmap as
+ * every terrain's are. The tool is built with the quick profile by the
+ * cargo on PATH while the page opens; it writes into web/public/scenes/,
+ * and what it wrote is removed afterwards. The fixture:
+ * terrain-fixture.mjs.
  */
 // @ts-check
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFile, rm, writeFile } from "node:fs/promises";
-import { launchNativeSession } from "./agent-native.mjs";
+import { readFile, rm } from "node:fs/promises";
 import { cargoBinaries } from "./harness.mjs";
-import { fast, fixture, folder, openTerrain, overview, scenes, terrain } from "./terrain-fixture.mjs";
+import { fast, fixture, folder, openTerrain, overview, scenes } from "./terrain-fixture.mjs";
 
-const tools = cargoBinaries(["-p", "engine_assetc", "--profile", "quick", "--bin", "terrain_bake", "--bin", "terrain_import"]);
-// The native Stress Lab with its development tools.
-const natives = cargoBinaries(["-p", "stress-lab", "--bin", "stress-lab-native", "--profile", "quick", "--features", "dev"]);
-// The fixture as a file, which the bake reads.
-const source = `${scenes}terrain-smoke.scene.json`;
+const tools = cargoBinaries(["-p", "engine_assetc", "--profile", "quick", "--bin", "terrain_import"]);
 const opened = await openTerrain("terrain-files");
 const { errors, command, scene, settle, heights } = opened;
-// What the tools wrote goes with the fixture's files.
+// What the tool wrote goes with the fixture's files.
 async function close() {
   await opened.close();
-  await rm(source, { force: true });
   await rm(`${scenes}terrain-smoke-import`, { recursive: true, force: true });
   await rm(`${scenes}terrain-smoke-import.scene.json`, { force: true });
 }
 const checks = [];
 
 try {
-  // An ETR1 file of the same layers streams by byte range and matches; the
-  // bake reads the heightmap beside the scene, as the page does.
-  await writeFile(source, JSON.stringify(fixture));
-  execFileSync((await tools).terrain_bake, [source, "ground", `${folder}ground.etr`], { stdio: "inherit" });
-  const generated = await heights([[10, -7], [-200, 150], [300, -310]]);
-  const filed = structuredClone(fixture);
-  filed.entities[1].terrain = { origin: terrain.origin, file: "terrain-smoke/ground.etr" };
-  await scene.reload(command, filed);
-  await command("environment", { terrain: fast });
-  await command("camera", overview);
-  let streamed;
-  for (let attempt = 0; attempt < 60; attempt++) {
-    streamed = (await command("render")).result.rendering;
-    if (streamed.terrain.tiles > 0 && streamed.terrain.loading_tiles === 0 && streamed.terrain.fallback_patches === 0) break;
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  assert.equal(streamed.terrain.loading_tiles, 0, "file tiles arrive");
-  const read = await heights([[10, -7], [-200, 150], [300, -310]]);
-  for (const [index, sample] of read.entries()) {
-    assert.ok(sample && generated[index], `point ${index} resident from both`);
-    if (sample.level === generated[index].level) {
-      assert.ok(Math.abs(sample.height - generated[index].height) < 2e-3, `file height ${sample.height} vs ${generated[index].height}`);
-    }
-  }
-  checks.push({ check: "ETR1 file streaming", tiles: streamed.terrain.tiles });
-
-  // Natively the same file streams, read on the host's I/O thread: the
-  // same points stand at the same heights.
-  const filedPath = `${scenes}terrain-smoke-filed.scene.json`;
-  await writeFile(filedPath, JSON.stringify(filed));
-  const native = await launchNativeSession({ program: (await natives)["stress-lab-native"], args: ["--source", filedPath, "--size=320x200"] });
-  try {
-    const run = async command => {
-      const reply = await native.execute(command);
-      assert.ok(reply.ok, `${command.op} natively: ${JSON.stringify(reply.error)}`);
-      return reply.result;
-    };
-    await run({ op: "environment", terrain: fast });
-    await run({ op: "camera", ...overview });
-    let natively;
-    for (let attempt = 0; attempt < 300 && !natively; attempt++) {
-      const { rendering } = await run({ op: "frames", count: 4, interval_ms: 1000 / 60 });
-      if (rendering.terrain.tiles > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_patches === 0) {
-        natively = { tiles: rendering.terrain.tiles, samples: (await run({ op: "terrain_height", points: [[10, -7], [-200, 150], [300, -310]] })).samples };
-      }
-    }
-    assert.ok(natively, "file tiles arrive natively");
-    for (const [index, sample] of natively.samples.entries()) {
-      assert.ok(sample, `point ${index} resident natively`);
-      if (sample.level === read[index].level) {
-        assert.ok(Math.abs(sample.height - read[index].height) < 2e-3, `native file height ${sample.height} vs ${read[index].height}`);
-      }
-    }
-    checks.push({ check: "ETR1 file streaming natively", tiles: natively.tiles });
-  } finally {
-    await native.close();
-    await rm(filedPath, { force: true });
-  }
-
   // The import tool reads the dome as a RAW heightmap of its
   // own, centered on its middle without detail noise, and the scene it
   // writes loads with the dome's summit, its source and its attribution.

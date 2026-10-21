@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use engine_core::{
-    Engine, Feature, Terrain, TerrainEdit, TerrainSource, Terrains,
+    Engine, Feature, Terrain, TerrainEdit, Terrains,
     bevy_ecs::prelude::Entity,
     glam::Vec2,
     terrain_data::{Stamp, StampOp},
@@ -67,13 +67,6 @@ pub(super) fn edit_terrain(
             .ok_or_else(|| DevError::new(ErrorCode::UnknownTerrain, "$.terrain", "no terrain"))?,
     };
     let terrain = world.get::<Terrain>(entity).cloned().expect("found above");
-    if !matches!(terrain.source, TerrainSource::Generated(_)) {
-        return Err(DevError::new(
-            ErrorCode::NotGenerated,
-            "$.terrain",
-            "only terrains generated from layers take edits",
-        ));
-    }
     let origin = terrain.origin;
     let mut edits = terrain.edits.to_vec();
     // Where an edit reaches, world.
@@ -139,9 +132,9 @@ pub(super) fn edit_terrain(
             let terrains = feature::<Terrains>(world, Feature::Terrain)?;
             let before = terrains.layers(entity).ok_or_else(|| {
                 DevError::new(
-                    ErrorCode::NotGenerated,
+                    ErrorCode::UnknownTerrain,
                     "$.terrain",
-                    "the terrain holds no layers",
+                    "the terrain does not stream yet",
                 )
             })?;
             let after = before.with_stamps(&[stamp]).map_err(|error| {

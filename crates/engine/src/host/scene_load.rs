@@ -7,7 +7,7 @@
 //! keep their transports: fetches relative to the scene's URL, or reads
 //! beside its file.
 
-use engine_core::{ErrorCode, FileHeader, TextureFormat, VirtualMesh};
+use engine_core::{ErrorCode, TextureFormat, VirtualMesh};
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 pub use engine_worker::{
     IMAGE_FORMATS, Image, ImageDecoder, ImageFormat, decode_image, image_format,
@@ -17,8 +17,6 @@ use crate::{Error, Result};
 
 /// Bytes of a virtual mesh's header, which says how long its prefix is.
 const VIRTUAL_HEADER: usize = 128;
-/// Bytes of a terrain file's header, which says how long its prefix is.
-const TERRAIN_HEADER: usize = 64;
 
 /// Which host loads a scene's files, as [`IMAGE_FORMATS`] tells their
 /// decoders apart.
@@ -82,7 +80,6 @@ impl SceneLoad {
                 uri: uri.clone(),
                 prefix: match kind {
                     SceneFileKind::VirtualMesh => Some(VIRTUAL_HEADER),
-                    SceneFileKind::Terrain => Some(TERRAIN_HEADER),
                     SceneFileKind::Image | SceneFileKind::Buffer => None,
                 },
             })
@@ -140,30 +137,15 @@ impl SceneLoad {
                 self.entries[at].2 = Stage::Decoding;
                 Ok(Some(ImageRead { decoder, bytes }))
             }
-            SceneFileKind::VirtualMesh | SceneFileKind::Terrain => {
-                let virtual_mesh = kind == SceneFileKind::VirtualMesh;
-                let header = if virtual_mesh {
-                    VIRTUAL_HEADER
-                } else {
-                    TERRAIN_HEADER
-                };
-                let length = bytes.get(..header).and_then(|head| {
-                    if virtual_mesh {
-                        VirtualMesh::prefix_bytes(head)
-                    } else {
-                        FileHeader::prefix_bytes(head).ok()
-                    }
-                });
+            SceneFileKind::VirtualMesh => {
+                let length = bytes
+                    .get(..VIRTUAL_HEADER)
+                    .and_then(VirtualMesh::prefix_bytes);
                 let Some(length) = length else {
-                    let what = if virtual_mesh {
-                        "virtual mesh"
-                    } else {
-                        "terrain"
-                    };
                     return Err(Error::new(
                         ErrorCode::InvalidMesh,
                         "$",
-                        format!("{url} is not a {what} file of this engine version"),
+                        format!("{url} is not a virtual mesh file of this engine version"),
                     ));
                 };
                 // A host that read past the prefix (a server ignoring
@@ -185,11 +167,7 @@ impl SceneLoad {
                 }
                 let mut prefix = bytes;
                 prefix.truncate(length);
-                if virtual_mesh {
-                    self.files.add_virtual_mesh(uri, prefix, Some(url));
-                } else {
-                    self.files.add_terrain(uri, prefix, Some(url));
-                }
+                self.files.add_virtual_mesh(uri, prefix, Some(url));
                 self.entries[at].2 = Stage::Held;
                 Ok(None)
             }

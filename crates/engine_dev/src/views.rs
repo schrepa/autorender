@@ -390,10 +390,6 @@ pub struct TerrainsView {
     pub terrains: u32,
     pub resident_tiles: u32,
     pub loading_tiles: u32,
-    /// Of the resident tiles, files' holding their shape alone so far:
-    /// drawn with coarser levels' materials while their control values
-    /// are computed.
-    pub shaped_tiles: u32,
     /// Tiles the view wants that wait while the camera moves fast.
     pub waiting_tiles: u32,
     /// Tiles kept in memory after the view left them and
@@ -416,10 +412,6 @@ pub struct TerrainsView {
     /// Of the resident tiles and patches, those of terrains' surroundings.
     pub surroundings_tiles: u32,
     pub surroundings_patches: u32,
-    /// Tile reads that failed since terrains started (read again later),
-    /// and why the latest did.
-    pub failed_reads: u64,
-    pub latest_read_failure: Option<String>,
     /// The first terrain whose hydrology bake is done: how its rivers flow
     /// and its first falls (world space).
     pub water: Option<TerrainWaterView>,

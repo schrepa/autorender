@@ -304,8 +304,8 @@
       "hash": "df33a258173df6c7"
     },
     "terrain frames": 400,
-    "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, shaped_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141416, restored_tiles: 12, prefetching_tiles: 0, rewatered_tiles: 0, stale_water_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, failed_reads: 0, loading: false } | terrain tiles 854854a0fbb2ae0d patches 22ace422c564909f | surroundings tiles a2eadb7ccd455bc5 patches 3a24f9ec9a3ffb0b",
-    "terrain trace": "067064974b966517"
+    "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141416, restored_tiles: 12, prefetching_tiles: 0, rewatered_tiles: 0, stale_water_tiles: 0, dropped_tiles: 0, patches: 1645, fallback_patches: 0, baking: 0, bridges: 4, tunnels: 1, falls: 0, surroundings_tiles: 31, surroundings_patches: 840, loading: false } | terrain tiles 854854a0fbb2ae0d patches 22ace422c564909f | surroundings tiles a2eadb7ccd455bc5 patches 3a24f9ec9a3ffb0b",
+    "terrain trace": "dc94018ea94b18b2"
   },
   "gltf": {
     "gltf prefab": {
@@ -562,7 +562,7 @@
     },
     "refusal unknown_terrain at $": {
       "code": "unknown_terrain",
-      "message": "no generated terrain",
+      "message": "no terrain",
       "path": "$"
     },
     "refusal unknown_variant at $.op": {
@@ -749,7 +749,7 @@
     },
     "refusal invalid_terrain at $.entities[0].terrain.layers": {
       "code": "invalid_terrain",
-      "message": "a terrain needs layers or a file",
+      "message": "a terrain needs layers",
       "path": "$.entities[0].terrain.layers"
     },
     "refusal invalid_texture at $.textures[0].rgba8": {
@@ -911,7 +911,6 @@
     },
     "bakes": "8a4cfefdfed5ef88",
     "edited tile 0/2/2": "caef32170cc877e4",
-    "etr1": "7eeef521b6e1d4ae",
     "pack": "1cc2f49eb291739b",
     "pack records": 28,
     "surroundings 2/0/0": "5200cdc4daacaa64",

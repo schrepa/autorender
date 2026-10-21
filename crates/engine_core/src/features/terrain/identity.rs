@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use engine_terrain::Stamp;
 
-use super::{Terrain, TerrainEdit, TerrainSource, TerrainSurface};
+use super::{Terrain, TerrainEdit, TerrainSurface};
 use crate::content_hash;
 
 /// What a terrain's tiles are made from, by content: a hash of its edits'
@@ -38,7 +38,7 @@ impl Terrain {
         let Self {
             origin,
             pyramid,
-            source,
+            layers,
             surface,
             collision,
             // Applied over the tiles kept, tile by tile.
@@ -53,24 +53,7 @@ impl Terrain {
             assets: _,
             bridge: _,
         } = surface;
-        let source = match (source, &other.source) {
-            (TerrainSource::Generated(a), TerrainSource::Generated(b)) => Arc::ptr_eq(a, b),
-            (
-                TerrainSource::File {
-                    header: a,
-                    url: u,
-                    data: _,
-                },
-                TerrainSource::File {
-                    header: b,
-                    url: v,
-                    data: _,
-                },
-            ) => Arc::ptr_eq(a, b) && u == v,
-            (TerrainSource::Generated(_), TerrainSource::File { .. })
-            | (TerrainSource::File { .. }, TerrainSource::Generated(_)) => false,
-        };
-        source
+        Arc::ptr_eq(layers, &other.layers)
             && *origin == other.origin
             && *pyramid == other.pyramid
             && (Arc::ptr_eq(rules, &other.surface.rules) || *rules == other.surface.rules)

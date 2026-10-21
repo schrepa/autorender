@@ -58,13 +58,6 @@ impl SceneFileSet {
     pub fn add_virtual_mesh(&mut self, uri: &str, bytes: Vec<u8>, url: Option<String>) {
         self.files.add_virtual_mesh(uri, bytes, url.as_deref());
     }
-
-    /// Adds terrain file `uri`: its prefix
-    /// (`engine::host::FileHeader::prefix_bytes` long) and the URL its tiles
-    /// stream from.
-    pub fn add_terrain(&mut self, uri: &str, bytes: Vec<u8>, url: Option<String>) {
-        self.files.add_terrain(uri, bytes, url.as_deref());
-    }
 }
 
 impl SceneFileSet {

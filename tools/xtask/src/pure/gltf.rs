@@ -85,9 +85,6 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 Some(SceneFileKind::VirtualMesh) => {
                     files.add_virtual_mesh(&file.uri, file.bytes.clone(), None);
                 }
-                Some(SceneFileKind::Terrain) => {
-                    files.add_terrain(&file.uri, file.bytes.clone(), None);
-                }
                 Some(SceneFileKind::Buffer) => files.add_buffer(&file.uri, file.bytes.clone()),
                 None => observed.check(false, || {
                     format!("gltf {name}: the document names no file {}", file.uri)

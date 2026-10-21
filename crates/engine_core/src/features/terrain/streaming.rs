@@ -51,7 +51,9 @@ impl Terrains {
         let Some(clock) = self.clock else {
             return false;
         };
-        let mut slots = jobs.map(JobBudget::of);
+        let Some(mut slots) = jobs.map(JobBudget::of) else {
+            return false;
+        };
         // Smaller slices than frames take, so work ends close to its time.
         let work = Work {
             slice: u64::from(settings.samples_per_frame / 4).max(1),
@@ -59,9 +61,7 @@ impl Terrains {
             end: clock() + milliseconds,
             upload: std::cell::Cell::new(self.upload_left),
         };
-        let mut budget = work.slice;
         let frame = self.frame;
-        let requests = &mut self.requests;
         let mut remaining = false;
         for state in &mut self.entries {
             if state.terrain.validate().is_err() || !settings.enabled {
@@ -86,10 +86,8 @@ impl Terrains {
                 &missing,
                 (&target, &keep, &[]),
                 &work,
-                &mut budget,
                 frame,
-                requests,
-                slots.as_mut(),
+                &mut slots,
             );
             state.missing = missing
                 .into_iter()
@@ -97,12 +95,8 @@ impl Terrains {
                 .collect();
             state.target = target;
             state.keep = keep;
-            // Tiles waiting on their fetch load once delivered.
-            let waiting = matches!(state.terrain.source, TerrainSource::File { data: None, .. })
-                && state.arrivals.is_empty();
-            remaining |=
-                baking || (!state.missing.is_empty() && !waiting) || !state.dispatched.is_empty();
-            if budget == 0 && !work.refill(&mut budget) {
+            remaining |= baking || !state.missing.is_empty() || !state.dispatched.is_empty();
+            if work.expired() {
                 break;
             }
         }
@@ -195,7 +189,6 @@ impl Terrains {
                 .iter()
                 .map(|state| state.falls.len() as u32)
                 .sum(),
-            failed_reads: self.degraded.failed_reads,
             ..TerrainStats::default()
         };
         let forward = camera.target - camera.eye();
@@ -320,7 +313,6 @@ impl Terrains {
                     state.leave(&key, frame);
                 }
             }
-            state.jobs.retain(|key, _| target.contains(key));
             stats.waiting_tiles += waiting_tiles;
             // Tiles kept in memory return at once.
             if state.store.kept_tiles() > 0 {
@@ -348,16 +340,16 @@ impl Terrains {
             if let Some(slots) = slots.as_mut() {
                 share_recipe(state, slots.jobs, &mut self.stacks, &mut released);
             }
-            if load_tiles(
-                state,
-                &missing,
-                (&target, &keep, &named),
-                &work,
-                &mut budget,
-                frame,
-                &mut self.requests,
-                slots.as_mut(),
-            ) {
+            if let Some(slots) = slots.as_mut()
+                && load_tiles(
+                    state,
+                    &missing,
+                    (&target, &keep, &named),
+                    &work,
+                    frame,
+                    slots,
+                )
+            {
                 stats.baking += 1;
                 continue;
             }
@@ -368,14 +360,10 @@ impl Terrains {
                 .collect();
             stats.resident_tiles += state.store.len() as u32;
             stats.missing_tiles += state.missing.len() as u32;
-            stats.shaped_tiles += state.store.count(&[Phase::Shape]) as u32;
             stats.cached_tiles += state.store.kept_tiles() as u32;
             stats.cached_bytes += state.store.cached_bytes();
             stats.prefetching_tiles += state.prefetched.len() as u32;
-            stats.loading_tiles += (state.jobs.len()
-                + state.in_flight.len()
-                + state.arrivals.len()
-                + state.dispatched.len()) as u32;
+            stats.loading_tiles += state.dispatched.len() as u32;
             // Tiles' water follows the rivers as they run now.
             let [rewatered, stale] = rewater::rewater(state, &work, &mut budget);
             stats.rewatered_tiles += rewatered;
@@ -687,7 +675,6 @@ impl Terrains {
                 .iter()
                 .filter(|state| state.around.is_none())
                 .count() as u32,
-            failed_reads: self.degraded.failed_reads,
             ..TerrainStats::default()
         };
         self.loaded = true;

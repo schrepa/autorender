@@ -1,5 +1,5 @@
-//! What hosts wire: job workers, terrain tile fetches, the clock terrain
-//! times its work by and the terrain's debug views; and what the page and
+//! What hosts wire: job workers, the clock terrain times its work by and
+//! the terrain's debug views; and what the page and
 //! the native host share instead of each keeping its own: the engine
 //! switches they take, the input they gather, the size views draw at, their
 //! policies' values, the spread of measured values, the GPU they name, the
@@ -18,9 +18,9 @@ mod settings;
 pub use crate::app_host::{TerrainClock, now_ms};
 pub use adapter::{AdapterStatus, vendor};
 pub use engine_core::{
-    Cooking, Distribution, FileHeader, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs,
-    MISSING_RECORD, RecordFetch, RecordKey, TerrainDebug, TileRequest, URGENT_JOBS, VIEW_JOBS,
-    content_hash, job_class, job_priority, median,
+    Cooking, Distribution, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs,
+    MISSING_RECORD, RecordFetch, RecordKey, TerrainDebug, URGENT_JOBS, VIEW_JOBS, content_hash,
+    job_class, job_priority, median,
 };
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub use environment::{HostEnvironment, KNOWN_DIFFERENCES};

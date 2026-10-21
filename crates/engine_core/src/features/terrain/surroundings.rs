@@ -121,10 +121,10 @@ impl Terrains {
             else {
                 continue;
             };
-            let TerrainSource::Generated(authored) = &state.terrain.source else {
-                continue;
-            };
-            let base = state.baked.clone().unwrap_or_else(|| authored.clone());
+            let base = state
+                .baked
+                .clone()
+                .unwrap_or_else(|| state.terrain.layers.clone());
             if base.unbaked().is_some() {
                 continue;
             }
@@ -169,7 +169,7 @@ impl Terrains {
             let terrain = Terrain {
                 origin,
                 pyramid,
-                source: TerrainSource::Generated(Arc::new(layers)),
+                layers: Arc::new(layers),
                 surface: TerrainSurface {
                     rules: Arc::new(surface.rules.without_placements()),
                     materials: surface.materials,

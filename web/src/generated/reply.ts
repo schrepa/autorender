@@ -1142,11 +1142,6 @@ export interface TerrainStats {
   cached_tiles: number;
   /** Wanted tiles beyond the tile budget or the device's capacity. */
   dropped_tiles: number;
-  /**
-   * Tile reads that failed since terrains started (read again later);
-   * [`Terrains::latest_read_failure`] says why the latest did.
-   */
-  failed_reads: number;
   fallback_patches: number;
   falls: number;
   /**
@@ -1156,9 +1151,8 @@ export interface TerrainStats {
    */
   loading: boolean;
   /**
-   * Tiles whose records are asked for, or being fetched or decoded,
-   * and every tile the camera's view and collision want that is not
-   * resident yet.
+   * Tiles whose records are asked for, and every tile the camera's view
+   * and collision want that is not resident yet.
    */
   loading_tiles: number;
   missing_tiles: number;
@@ -1177,12 +1171,6 @@ export interface TerrainStats {
    * water was made from other rivers still waiting their turn.
    */
   rewatered_tiles: number;
-  /**
-   * Of the resident tiles, files' holding their shape alone so far:
-   * heights and holes, drawn with coarser levels' materials while their
-   * control values are computed.
-   */
-  shaped_tiles: number;
   stale_water_tiles: number;
   surroundings_patches: number;
   /** Of the resident tiles and patches, those of terrains' surroundings. */

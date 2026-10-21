@@ -9,15 +9,10 @@ pub struct TerrainStats {
     pub terrains: u32,
     /// Tiles resident now.
     pub resident_tiles: u32,
-    /// Tiles whose records are asked for, or being fetched or decoded,
-    /// and every tile the camera's view and collision want that is not
-    /// resident yet.
+    /// Tiles whose records are asked for, and every tile the camera's view
+    /// and collision want that is not resident yet.
     pub loading_tiles: u32,
     pub missing_tiles: u32,
-    /// Of the resident tiles, files' holding their shape alone so far:
-    /// heights and holes, drawn with coarser levels' materials while their
-    /// control values are computed.
-    pub shaped_tiles: u32,
     /// Tiles the view wants that wait while the camera moves fast.
     pub waiting_tiles: u32,
     /// Tiles kept in memory after the view left them and
@@ -49,9 +44,6 @@ pub struct TerrainStats {
     /// Of the resident tiles and patches, those of terrains' surroundings.
     pub surroundings_tiles: u32,
     pub surroundings_patches: u32,
-    /// Tile reads that failed since terrains started (read again later);
-    /// [`Terrains::latest_read_failure`] says why the latest did.
-    pub failed_reads: u64,
     /// Whether the camera's view has yet to load whole since terrains
     /// arrived or [`Terrains::begin_loading`]: frames work
     /// on terrain for the settings' `loading_work_ms`, then `work_ms`.

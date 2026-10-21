@@ -7,7 +7,6 @@ use engine::collections::HashMap;
 use std::path::Path;
 
 use engine::prelude::*;
-use engine::terrain::TerrainSource;
 #[cfg(not(target_arch = "wasm32"))]
 use engine::{Error, ErrorCode};
 #[cfg(not(target_arch = "wasm32"))]
@@ -218,15 +217,13 @@ fn ground(world: &World, x: f32, z: f32) -> f32 {
         .expect("terrain is registered");
     terrains
         .iter(world)
-        .find_map(|terrain| match &terrain.source {
-            TerrainSource::Generated(layers) => Some(
-                terrain.origin.y
-                    + layers.height_at(
-                        &terrain.pyramid,
-                        Vec2::new(x - terrain.origin.x, z - terrain.origin.z),
-                    ),
-            ),
-            TerrainSource::File { .. } => None,
+        .next()
+        .map(|terrain| {
+            terrain.origin.y
+                + terrain.layers.height_at(
+                    &terrain.pyramid,
+                    Vec2::new(x - terrain.origin.x, z - terrain.origin.z),
+                )
         })
         .unwrap_or_else(|| world.resource::<Plateau>().0)
 }

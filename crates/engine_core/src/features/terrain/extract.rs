@@ -208,10 +208,8 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         let render = &mut listing.terrains[index];
         render.id = state.render_id();
         render.surroundings = state.around.is_some();
-        (render.may_hole, render.hydrology) = match &state.terrain.source {
-            TerrainSource::Generated(layers) => (layers.may_hole(), layers.has_hydrology()),
-            TerrainSource::File { .. } => (false, false),
-        };
+        let layers = &state.terrain.layers;
+        (render.may_hole, render.hydrology) = (layers.may_hole(), layers.has_hydrology());
         render.origin = state.terrain.origin;
         render.pyramid = state.terrain.pyramid;
         render.surface.clone_from(&state.terrain.surface.materials);

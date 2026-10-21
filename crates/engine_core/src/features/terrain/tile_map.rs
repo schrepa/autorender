@@ -67,11 +67,6 @@ impl<V> TileMap<V> {
         self.keys().into_iter().map(|key| (key, &self.0[&key]))
     }
 
-    /// How many of its values `counts` holds for, which no order changes.
-    pub(super) fn count(&self, counts: impl Fn(&V) -> bool) -> usize {
-        self.0.values().filter(|value| counts(value)).count()
-    }
-
     /// Keeps the tiles `keep` holds for, asking in key order.
     pub(super) fn retain(&mut self, mut keep: impl FnMut(&TileKey, &mut V) -> bool) {
         for key in self.keys() {

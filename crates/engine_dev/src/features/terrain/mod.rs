@@ -71,7 +71,6 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
                     terrains: stats.terrains,
                     resident_tiles: stats.resident_tiles,
                     loading_tiles: stats.loading_tiles,
-                    shaped_tiles: stats.shaped_tiles,
                     waiting_tiles: stats.waiting_tiles,
                     cached_tiles: stats.cached_tiles,
                     cached_bytes: stats.cached_bytes,
@@ -86,8 +85,6 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
                     falls: stats.falls,
                     surroundings_tiles: stats.surroundings_tiles,
                     surroundings_patches: stats.surroundings_patches,
-                    failed_reads: stats.failed_reads,
-                    latest_read_failure: terrains.latest_read_failure().map(str::to_owned),
                     water: terrains
                         .waters()
                         .next()
@@ -167,10 +164,8 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
             level_errors = errors.to_vec();
             level_ranges = ranges.to_vec();
         }
-        let holds = |wanted: fn(&engine_core::Layer) -> bool| {
-            matches!(&terrain.source, engine_core::TerrainSource::Generated(layers)
-                    if layers.layers().iter().any(wanted))
-        };
+        let holds =
+            |wanted: fn(&engine_core::Layer) -> bool| terrain.layers.layers().iter().any(wanted);
         let bakes = terrains.bakes(entity);
         if holds(|layer| matches!(layer, engine_core::Layer::Hydrology(_))) {
             hydrology = Some(hydrology_view(terrains, entity));
@@ -210,7 +205,6 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
     Some(json!(crate::views::TerrainView {
         terrain: engine_scene::SceneTerrain::from_runtime(
             terrain,
-            None,
             |handle| {
                 scene.and_then(|scene| {
                     scene

@@ -33,7 +33,6 @@ export type ErrorCode =
   | "game_rule"
   | "no_scene"
   | "unknown_terrain"
-  | "not_generated"
   | "unknown_entity"
   | "entity_removed"
   | "wrong_world"

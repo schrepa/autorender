@@ -100,10 +100,6 @@ const UNREACHED: &[(&str, &str)] = &[
     ("iteration_error", WATCH),
     ("iteration_stopped", WATCH),
     ("missing_runtime_identity", BRIDGE),
-    (
-        "not_generated",
-        "only a terrain read from a file refuses edits so, and the pure corpora load none",
-    ),
     ("origin_rejected", BRIDGE),
     ("pix_unavailable", NATIVE_PROFILE),
     ("profile_too_large", NATIVE_PROFILE),

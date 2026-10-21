@@ -1,6 +1,6 @@
 //! Heightfield terrain data: tile pyramids, the layer stack
 //! that generates heights, tiles with their samples, height queries, the
-//! patches a view draws and the `ETR1` tile file format.
+//! patches a view draws and the jobs that make tiles and bakes.
 //!
 //! A terrain is a square grid of level-0 tiles, each [`TILE_QUADS`] quads of
 //! its sample spacing across; every coarser level halves the tiles along
@@ -11,8 +11,8 @@
 //!
 //! Heights come from a [`Layers`] stack (procedural noise with erosion,
 //! imported heightmaps and stamps, later layers winning) evaluated tile by
-//! tile, or from `ETR1` files. Each tile is a pure function of its key, so
-//! tiles stream in any order and neighbors agree on shared samples.
+//! tile. Each tile is a pure function of its key, so tiles stream in any
+//! order and neighbors agree on shared samples.
 //!
 //! Cells split into two triangles along the diagonal from their (x, z+1)
 //! corner to their (x+1, z) corner, as `parry3d` heightfields split them;
@@ -30,7 +30,6 @@ mod bake;
 pub mod codec;
 mod erosion;
 mod flow;
-mod format;
 pub mod gpu;
 pub mod hydraulics;
 mod hydrology;
@@ -51,10 +50,6 @@ mod tile_water;
 pub use bake::{Bake, BakeKind, Baked, ErosionBake, HydrologyBake, PathBake, Stage, TerrainBake};
 pub use erosion::{Erosion, ErosionLayer, ErosionStats};
 pub use flow::{Block, Pool, RiverFlow, WEIR};
-pub use format::{
-    FileHeader, FileTile, FormatError, TERRAIN_FILE_MAGIC, TERRAIN_FILE_VERSION, decode_tile,
-    encode_file,
-};
 pub use hydrology::{
     FALL_HEIGHT, FILL, FLOW_RANGE, Fall, Hydrology, HydrologyLayer, HydrologySample,
     HydrologyStats, LAKE_RANGE, RIVER_FAR, ROUGHNESS, WETNESS_RANGE,

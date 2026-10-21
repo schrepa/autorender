@@ -129,22 +129,15 @@ impl SceneDocument {
                 add(uri, SceneFileKind::Buffer);
             }
         }
-        // Terrains: heightmaps as buffers, and terrain files.
+        // Terrains: heightmaps as buffers.
         let entities = self
             .entities
             .iter()
             .chain(self.prefabs.iter().flat_map(|prefab| &prefab.entities));
         for entity in entities {
             if let Some(terrain) = &entity.terrain {
-                for (uri, file) in terrain.files() {
-                    add(
-                        uri,
-                        if file {
-                            SceneFileKind::Terrain
-                        } else {
-                            SceneFileKind::Buffer
-                        },
-                    );
+                for uri in terrain.files() {
+                    add(uri, SceneFileKind::Buffer);
                 }
             }
         }

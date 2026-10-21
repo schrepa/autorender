@@ -4,21 +4,6 @@
 
 use super::*;
 
-/// Where a terrain's tiles come from.
-#[derive(Clone, Debug, PartialEq)]
-pub enum TerrainSource {
-    /// Generated in the engine from a layer stack, a tile at a time.
-    Generated(Arc<Layers>),
-    /// Read from an `ETR1` file: its header and directory, and the URL
-    /// hosts fetch its tiles' byte ranges from, or the whole file, which
-    /// tiles then decode from without fetching.
-    File {
-        header: Arc<FileHeader>,
-        url: Arc<str>,
-        data: Option<Arc<[u8]>>,
-    },
-}
-
 /// How a terrain's ground looks: the rules choosing each
 /// sample's materials (its biomes), and how each material looks, in the
 /// rules' order.
@@ -383,12 +368,13 @@ impl Default for TerrainSurface {
 
 /// A heightfield terrain whose first corner (least x and z)
 /// lies at `origin`, heights measured up from it. Its pyramid sets its
-/// level-0 tiles and spacing; its source gives its tiles.
+/// level-0 tiles and spacing; its layers generate its tiles, which load
+/// as records (the cook's, or made by the same jobs).
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Terrain {
     pub origin: Vec3,
     pub pyramid: Pyramid,
-    pub source: TerrainSource,
+    pub layers: Arc<Layers>,
     pub surface: TerrainSurface,
     /// Whether it collides where collision is installed.
     pub collision: bool,
@@ -415,7 +401,7 @@ impl Terrain {
         Self {
             origin,
             pyramid,
-            source: TerrainSource::Generated(Arc::new(layers)),
+            layers: Arc::new(layers),
             surface: TerrainSurface::default(),
             collision: true,
             edits: Arc::from(Vec::new()),
@@ -460,9 +446,9 @@ pub struct TerrainDebug {
 
 settings! {
     /// Names a place the camera may be sent to, such as a spawn point:
-    /// while the view wants nothing, workers generate the terrain tiles a camera
-    /// there wants into memory, as they do ahead of the camera, and those tiles
-    /// stay there while it is named, so the camera sent there finds them at once.
+    /// while the view wants nothing, the terrain tiles a camera there wants
+    /// load into memory, and stay there while it is named, so the camera
+    /// sent there finds them at once.
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]

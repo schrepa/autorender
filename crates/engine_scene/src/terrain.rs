@@ -1,7 +1,7 @@
 //! Scene terrain: an entity field describing a
-//! heightfield terrain, generated from a layer stack or read from an `ETR1`
-//! file beside the scene, and its surface: the materials its
-//! ground is made of and the biomes deciding where each lies.
+//! heightfield terrain generated from a layer stack, and its surface: the
+//! materials its ground is made of and the biomes deciding where each
+//! lies.
 
 use engine_settings::ErrorCode;
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use engine_core::{
     HydrologyLayer, HydrologyStage, Layer, Layers, MaterialHandle, MeshHandle, NoiseLayer,
     PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
     PlacementLod, Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain,
-    TerrainSource, TerrainSurface,
+    TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use engine_settings::{Rule, Setting};
@@ -27,36 +27,32 @@ use crate::{SceneDocument, SceneError, SceneFiles, SceneMaterial, SceneMesh, fil
 /// Its first corner (least x and z) lies at `origin` in world space,
 /// whatever the entity's transform; heights rise from the origin's y. Its
 /// heights come from `layers`, applied in order to every sample (later
-/// layers win), or from an `ETR1` `file` beside the scene, whose tiles
-/// stream by byte range. Level-0 tiles span 256 samples `spacing` meters
-/// apart; coarser levels halve the tiles up to one.
+/// layers win): an imported terrain is a heightmap layer
+/// (`terrain_import` writes one). Its tiles load as records, the cook's
+/// or made by the same jobs. Level-0 tiles span 256 samples `spacing`
+/// meters apart; coarser levels halve the tiles up to one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrain {
     pub origin: [f32; 3],
-    /// Level-0 tiles along x and z. Required with layers; a file's own when
-    /// omitted.
+    /// Level-0 tiles along x and z. Required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
         schemars(inner(range(min = 1, max = engine_core::Pyramid::MAX_TILES)))
     )]
     pub tiles: Option<[u32; 2]>,
-    /// Meters between level-0 samples. Required with layers; a file's own
-    /// when omitted.
+    /// Meters between level-0 samples. Required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
         schemars(range(min = engine_core::Pyramid::MIN_SPACING, max = engine_core::Pyramid::MAX_SPACING))
     )]
     pub spacing: Option<f32>,
-    /// The layers generating its heights, in order.
+    /// The layers generating its heights, in order; at least one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<SceneTerrainLayer>,
-    /// An `ETR1` terrain file beside the scene, instead of layers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub file: Option<String>,
     /// Its materials and biomes. Omitted, the engine's default: grass,
     /// bare dirt, rock on steep ground and snow above 650 meters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -64,8 +60,7 @@ pub struct SceneTerrain {
     /// Whether it collides where collision is installed. Omitted, true.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub collision: bool,
-    /// Ground generated around it to the horizon; terrains
-    /// read from files have none.
+    /// Ground generated around it to the horizon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surroundings: Option<SceneSurroundings>,
 }
@@ -416,20 +411,16 @@ const MAX_HEIGHTMAP: u32 = 16_384;
 const MAX_CREDIT: usize = 1024;
 
 impl SceneTerrain {
-    /// The files it references: its heightmaps (buffers) and its terrain
-    /// file.
-    pub(crate) fn files(&self) -> impl Iterator<Item = (&String, bool)> {
-        self.layers
-            .iter()
-            .filter_map(|layer| match layer {
-                SceneTerrainLayer::Heightmap(map) => Some((&map.uri, false)),
-                SceneTerrainLayer::Noise(_)
-                | SceneTerrainLayer::Stamp(_)
-                | SceneTerrainLayer::Hydrology(_)
-                | SceneTerrainLayer::Erosion(_)
-                | SceneTerrainLayer::Path(_) => None,
-            })
-            .chain(self.file.iter().map(|uri| (uri, true)))
+    /// The files it references: its heightmaps, as buffers.
+    pub(crate) fn files(&self) -> impl Iterator<Item = &String> {
+        self.layers.iter().filter_map(|layer| match layer {
+            SceneTerrainLayer::Heightmap(map) => Some(&map.uri),
+            SceneTerrainLayer::Noise(_)
+            | SceneTerrainLayer::Stamp(_)
+            | SceneTerrainLayer::Hydrology(_)
+            | SceneTerrainLayer::Erosion(_)
+            | SceneTerrainLayer::Path(_) => None,
+        })
     }
 
     /// The surface at authored path `path`, its materials naming the
@@ -635,83 +626,19 @@ impl SceneTerrain {
                 error.rule.into_owned(),
             ));
         }
-        if surroundings.is_some() && self.file.is_some() {
-            return Err(invalid(
-                "surroundings",
-                "terrains read from files have none".into(),
-            ));
+        if self.layers.is_empty() {
+            return Err(invalid("layers", "a terrain needs layers".into()));
         }
-        let source = match (&self.file, self.layers.is_empty()) {
-            (Some(_), false) => {
-                return Err(invalid(
-                    "file",
-                    "a terrain has layers or a file, not both".into(),
-                ));
-            }
-            (None, true) => {
-                return Err(invalid("layers", "a terrain needs layers or a file".into()));
-            }
-            (Some(uri), true) => {
-                valid_uri(uri, &format!("{path}.file"))?;
-                let Some(files) = files else {
-                    // Structure only: the file's own dimensions are unknown.
-                    let pyramid =
-                        Pyramid::new(self.tiles.unwrap_or([1, 1]), self.spacing.unwrap_or(1.0))
-                            .map_err(|error| invalid("tiles", error.to_string()))?;
-                    return Ok(Terrain {
-                        origin,
-                        pyramid,
-                        source: TerrainSource::Generated(Arc::new(
-                            Layers::new(Vec::new()).expect("no layers are valid"),
-                        )),
-                        surface,
-                        collision: self.collision,
-                        edits: std::sync::Arc::from(Vec::new()),
-                        surroundings: None,
-                    });
-                };
-                let (header, url, data) = files.terrain(uri, &format!("{path}.file"))?;
-                let pyramid = *header.pyramid();
-                if self
-                    .tiles
-                    .is_some_and(|tiles| tiles != pyramid.base_tiles())
-                    || self
-                        .spacing
-                        .is_some_and(|spacing| spacing != pyramid.spacing(0))
-                {
-                    return Err(invalid(
-                        "tiles",
-                        "tiles and spacing, when given, must match the file's".into(),
-                    ));
-                }
-                return Ok(Terrain {
-                    origin,
-                    pyramid,
-                    source: TerrainSource::File {
-                        header: Arc::new(header),
-                        url: url.unwrap_or_default().into(),
-                        data: data.map(Arc::from),
-                    },
-                    surface,
-                    collision: self.collision,
-                    edits: std::sync::Arc::from(Vec::new()),
-                    surroundings: None,
-                });
-            }
-            (None, false) => self.layers(path, files)?,
-        };
+        let source = self.layers(path, files)?;
         let (Some(tiles), Some(spacing)) = (self.tiles, self.spacing) else {
-            return Err(invalid(
-                "tiles",
-                "terrains generated from layers need tiles and spacing".into(),
-            ));
+            return Err(invalid("tiles", "terrains need tiles and spacing".into()));
         };
         let pyramid =
             Pyramid::new(tiles, spacing).map_err(|error| invalid("tiles", error.to_string()))?;
         Ok(Terrain {
             origin,
             pyramid,
-            source: TerrainSource::Generated(Arc::new(source)),
+            layers: Arc::new(source),
             surface,
             collision: self.collision,
             edits: std::sync::Arc::from(Vec::new()),
@@ -756,13 +683,11 @@ impl SceneTerrain {
         })
     }
 
-    /// The scene form of `terrain`: its file by `file`'s name when read from
-    /// one, heightmaps by the names their layers keep, and its surface
-    /// (omitted when the default) by `materials`' names for the materials
-    /// it uses.
+    /// The scene form of `terrain`: heightmaps by the names their layers
+    /// keep, and its surface (omitted when the default) by `materials`'
+    /// names for the materials it uses.
     pub fn from_runtime(
         terrain: &Terrain,
-        file: Option<&str>,
         materials: impl Fn(MaterialHandle) -> Option<String>,
         meshes: impl Fn(MeshHandle) -> Option<String>,
     ) -> Self {
@@ -812,46 +737,36 @@ impl SceneTerrain {
                 placed: authored.placed.clone(),
             }
         });
-        let layers = match &terrain.source {
-            TerrainSource::Generated(layers) => layers
-                .layers()
-                .iter()
-                .map(|layer| match layer {
-                    Layer::Noise(noise) => SceneTerrainLayer::Noise(*noise),
-                    Layer::Stamp(stamp) => SceneTerrainLayer::Stamp(*stamp),
-                    Layer::Hydrology(stage) => SceneTerrainLayer::Hydrology(stage.layer),
-                    Layer::Erosion(stage) => SceneTerrainLayer::Erosion(stage.layer),
-                    Layer::Path(stage) => SceneTerrainLayer::Path(stage.layer.as_ref().clone()),
-                    Layer::Heightmap(map) => SceneTerrainLayer::Heightmap(SceneHeightmap {
-                        uri: map.uri.clone().unwrap_or_default(),
-                        width: map.image.width(),
-                        height: map.image.height(),
-                        min: map.min.to_array(),
-                        size: map.size.to_array(),
-                        low: map.low,
-                        high: map.high,
-                        falloff: map.falloff,
-                        blend: map.blend,
-                        source: map.source.clone(),
-                        attribution: map.attribution.clone(),
-                    }),
-                })
-                .collect(),
-            TerrainSource::File { .. } => Vec::new(),
-        };
-        let generated = matches!(terrain.source, TerrainSource::Generated(_));
+        let layers = terrain
+            .layers
+            .layers()
+            .iter()
+            .map(|layer| match layer {
+                Layer::Noise(noise) => SceneTerrainLayer::Noise(*noise),
+                Layer::Stamp(stamp) => SceneTerrainLayer::Stamp(*stamp),
+                Layer::Hydrology(stage) => SceneTerrainLayer::Hydrology(stage.layer),
+                Layer::Erosion(stage) => SceneTerrainLayer::Erosion(stage.layer),
+                Layer::Path(stage) => SceneTerrainLayer::Path(stage.layer.as_ref().clone()),
+                Layer::Heightmap(map) => SceneTerrainLayer::Heightmap(SceneHeightmap {
+                    uri: map.uri.clone().unwrap_or_default(),
+                    width: map.image.width(),
+                    height: map.image.height(),
+                    min: map.min.to_array(),
+                    size: map.size.to_array(),
+                    low: map.low,
+                    high: map.high,
+                    falloff: map.falloff,
+                    blend: map.blend,
+                    source: map.source.clone(),
+                    attribution: map.attribution.clone(),
+                }),
+            })
+            .collect();
         Self {
             origin: terrain.origin.to_array(),
-            tiles: generated.then(|| terrain.pyramid.base_tiles()),
-            spacing: generated.then(|| terrain.pyramid.spacing(0)),
+            tiles: Some(terrain.pyramid.base_tiles()),
+            spacing: Some(terrain.pyramid.spacing(0)),
             layers,
-            file: match &terrain.source {
-                TerrainSource::File { url, .. } => Some(
-                    file.map(str::to_owned)
-                        .unwrap_or_else(|| url.rsplit('/').next().unwrap_or_default().to_owned()),
-                ),
-                TerrainSource::Generated(_) => None,
-            },
             surface,
             collision: terrain.collision,
             surroundings: terrain.surroundings.map(|surroundings| SceneSurroundings {

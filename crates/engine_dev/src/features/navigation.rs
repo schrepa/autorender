@@ -2,9 +2,7 @@
 //! walks, sending agents and the query of walks.
 
 use engine_core::bevy_ecs::prelude::Entity;
-use engine_core::{
-    Engine, Feature, Terrain, TerrainSource, Terrains, Transform, glam::Vec2, has_feature,
-};
+use engine_core::{Engine, Feature, Terrain, Terrains, Transform, glam::Vec2, has_feature};
 use engine_scene::{SceneEntity, SceneInstance};
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
@@ -272,9 +270,9 @@ fn walk(
     let entity = world
         .query::<(Entity, &Terrain)>()
         .iter(world)
-        .find(|(_, terrain)| matches!(terrain.source, TerrainSource::Generated(_)))
         .map(|(entity, _)| entity)
-        .ok_or_else(|| DevError::new(ErrorCode::UnknownTerrain, "$", "no generated terrain"))?;
+        .next()
+        .ok_or_else(|| DevError::new(ErrorCode::UnknownTerrain, "$", "no terrain"))?;
     let walk = world
         .get_resource::<Terrains>()
         .filter(|_| has_feature(world, Feature::Terrain))

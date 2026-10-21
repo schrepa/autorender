@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// Frames a failed fetch waits before it is requested again.
+/// Frames a failed record waits before it is asked for again.
 pub(super) const RETRY_AFTER: u64 = 120;
 
 /// Ranges, as multiples of each level's, within which tiles load and stay:
@@ -51,11 +51,6 @@ pub(super) struct TerrainState {
     pub(super) terrain: Terrain,
     /// Its resident tiles, and those kept in memory.
     pub(super) store: TileStore,
-    /// File tiles whose control values are being computed.
-    pub(super) jobs: TileMap<Generator>,
-    /// File tiles requested and not yet delivered.
-    pub(super) in_flight: HashSet<TileKey>,
-    pub(super) arrivals: Vec<(TileKey, Option<Vec<u8>>)>,
     pub(super) failed: TileMap<u64>,
     pub(super) selection: Selection,
     /// Level-0 tiles collision wants.
@@ -128,9 +123,6 @@ impl TerrainState {
             entity,
             store: TileStore::new(terrain.pyramid, Generation::of(&terrain.edits, true)),
             terrain,
-            jobs: TileMap::default(),
-            in_flight: HashSet::default(),
-            arrivals: Vec::new(),
             failed: TileMap::default(),
             selection: Selection::default(),
             collision: Vec::new(),
@@ -163,11 +155,10 @@ impl TerrainState {
     /// whose surface the GPU's interpreter holds leave them to the GPU.
     /// Tiles resident when that changes regenerate, drawn until they do.
     pub(super) fn update_materials(&mut self, gpu: bool) {
-        let TerrainSource::Generated(authored) = &self.terrain.source else {
-            self.materials = true;
-            return;
-        };
-        let layers = self.baked.clone().unwrap_or_else(|| authored.clone());
+        let layers = self
+            .baked
+            .clone()
+            .unwrap_or_else(|| self.terrain.layers.clone());
         let materials = if gpu && layers.unbaked().is_none() {
             let layers = self.generation(layers);
             let current = self
@@ -246,7 +237,6 @@ impl TerrainState {
         }
         let pyramid = self.terrain.pyramid;
         let under = |key: &TileKey| changed.iter().any(|stamp| reaches(stamp, &pyramid, *key));
-        self.jobs.retain(|key, _| !under(key));
         // Tiles kept in memory under the edits are no longer the ground.
         let generation = Generation::of(&self.terrain.edits, self.materials);
         self.store.invalidate(generation, under);
@@ -299,80 +289,14 @@ impl TerrainState {
         }
     }
 
-    /// Gives decoded `tile` its surface's control values, within
-    /// `budget`; it becomes resident once they are done.
-    pub(super) fn resurface(&mut self, tile: Tile, budget: &mut u64) {
-        let key = tile.key();
-        let mut job = Generator::resurface(
-            &tile,
-            &self.terrain.pyramid,
-            self.terrain.surface.rules.clone(),
-        );
-        match job.advance(budget) {
-            Some(tile) => self.store.arrive(Arc::new(tile), Phase::Whole, None),
-            None => {
-                self.jobs.insert(key, job);
-                // Its shape draws meanwhile.
-                self.shape(tile);
-            }
-        }
-    }
-
-    /// Advances `key`'s surface job within `budget`, if it has one,
-    /// making its tile resident once done; whether it had one.
-    pub(super) fn surface_job(&mut self, key: TileKey, budget: &mut u64) -> bool {
-        let Some(job) = self.jobs.get_mut(&key) else {
-            return false;
-        };
-        if let Some(tile) = job.advance(budget) {
-            self.jobs.remove(&key);
-            self.store.arrive(Arc::new(tile), Phase::Whole, None);
-        }
-        true
-    }
-
-    /// Whether `key` still loads: not resident, resident under edits since,
-    /// or resident with its shape alone or its objects still placing.
+    /// Whether `key` still loads: not resident, or resident under edits
+    /// since.
     pub(super) fn loads(&self, key: &TileKey) -> bool {
         self.store.loads(key)
     }
 
-    /// Makes `shape`, a tile's heights and holes alone, resident until the
-    /// whole tile arrives, unless its key is resident or no
-    /// coarser resident tile holds materials to draw it with; whether it
-    /// did.
-    pub(super) fn shape(&mut self, shape: Tile) -> bool {
-        let key = shape.key();
-        if self.store.contains(&key) {
-            return false;
-        }
-        let pyramid = self.terrain.pyramid;
-        let mut ancestor = pyramid.parent(key);
-        // The GPU gives shapes their materials.
-        if !self.materials {
-            self.store.arrive(Arc::new(shape), Phase::Shape, None);
-            return true;
-        }
-        loop {
-            let Some(at) = ancestor else {
-                return false;
-            };
-            if self
-                .store
-                .get(&at)
-                .is_some_and(|tile| tile.control().is_some())
-            {
-                break;
-            }
-            ancestor = pyramid.parent(at);
-        }
-        self.store.arrive(Arc::new(shape), Phase::Shape, None);
-        true
-    }
-
     /// Takes tile `key` out of residency at frame `frame`, keeping it in
-    /// memory where it is whole: of the generation tiles are made from now,
-    /// not its shape alone.
+    /// memory where it is of the generation tiles are made from now.
     pub(super) fn leave(&mut self, key: &TileKey, frame: u64) {
         if let Some(left) = self.store.leave(key)
             && left.current
@@ -482,7 +406,6 @@ pub struct Terrains {
     pub(super) device_tiles: Option<u32>,
     pub(super) frame: u64,
     pub(super) stats: TerrainStats,
-    pub(super) requests: Vec<TileRequest>,
     /// Milliseconds now, from the host; without one, a
     /// frame works a slice.
     pub(super) clock: Option<fn() -> f64>,
@@ -506,16 +429,6 @@ pub struct Terrains {
     pub(super) restored: u64,
     pub(super) upload_left: u64,
     pub(super) between: u64,
-    pub(super) degraded: Degraded,
-}
-
-/// What terrains went without, each counted since they started with the
-/// latest one's reason: tile reads that failed (read again later), and
-/// falls whose white water the asset library refused (drawn without it).
-#[derive(Default)]
-pub(super) struct Degraded {
-    pub(super) failed_reads: u64,
-    pub(super) latest_read: Option<String>,
 }
 
 /// The workers' jobs and recipes of terrains gone.
