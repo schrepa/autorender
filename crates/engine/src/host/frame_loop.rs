@@ -145,6 +145,12 @@ impl FrameLoop {
         };
         let since = *preparing.since.get_or_insert_with(now_ms);
         let late = now_ms() - since > PREPARE_LIMIT_MS as f64;
+        // The scene's pipeline list is created before the first frame
+        // draws, so frames find what they draw with compiling already.
+        if host.prepare_pipelines() && !late {
+            host.work(width, height);
+            return Ok(FramePhase::Preparing);
+        }
         if host.frame_stats().pipelines_compiling && !late {
             host.work(width, height);
             return Ok(FramePhase::Compiling);

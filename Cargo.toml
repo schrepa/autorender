@@ -70,6 +70,8 @@ foldhash = { version = "=0.2.0", default-features = false }
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 cc = "=1.5.1"
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "webgpu"] }
+# wgpu's own types with `serde`, which the renderer's pipeline keys take.
+wgpu-types = { version = "=30.0.1", default-features = false, features = ["serde"] }
 wasm-bindgen = "=0.2.127"
 js-sys = "=0.3.104"
 wasm-bindgen-futures = "=0.4.77"

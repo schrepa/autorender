@@ -119,6 +119,7 @@ impl<G: Game> GameHost<G> {
     /// Runs one frame at `timestamp` milliseconds on a `width` × `height`
     /// view with the input gathered since the last one.
     pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> crate::Result<()> {
+        self.prepare_pipelines();
         let input = self.input.take();
         let engine = self.app.engine_mut();
         self.game.before_frame(engine);
@@ -143,6 +144,14 @@ impl<G: Game> GameHost<G> {
         let phase = frames.frame(self, timestamp, (width, height));
         self.frames = frames;
         phase
+    }
+
+    /// Asks for the scene's pipeline list unless asked, and creates its
+    /// pipelines once it arrived: whether it is still on its way, which
+    /// preparation waits for.
+    pub fn prepare_pipelines(&mut self) -> bool {
+        let game = &self.game;
+        self.app.prepare_pipelines(|engine| game.content(engine))
     }
 
     /// Loads terrain on a `width` × `height` view while preparation waits
@@ -320,6 +329,7 @@ impl<G: Game> GameHost<G> {
             .reload_scene(self.app.engine_mut(), source, files)
             .map_err(crate::Error::from)?;
         self.app.apply_overrides();
+        self.app.forget_pipeline_list();
         self.suspend();
         Ok(())
     }
@@ -540,6 +550,7 @@ impl<G: Game> GameHost<G> {
         match result {
             Ok(()) => {
                 self.app.apply_overrides();
+                self.app.forget_pipeline_list();
                 self.suspend();
                 self.development.result(
                     &mut self.app,

@@ -123,6 +123,33 @@ impl Renderer {
         self.pipeline_counts.compiling()
     }
 
+    /// The scene's pipeline list: a record of every pipeline the renderer
+    /// created, which later sessions create up front
+    /// ([`Self::create_listed_pipelines`]).
+    pub fn pipeline_list(&self) -> Vec<u8> {
+        self.pipeline_counts.list()
+    }
+
+    /// Creates every pipeline the pipeline list `record` names that the
+    /// device can create and has yet to, up front; from then on the
+    /// renderer counts those it creates that the list lacks
+    /// ([`Self::pipelines_listed`]). Returns how many it created.
+    ///
+    /// # Errors
+    ///
+    /// When `record` is not a pipeline list.
+    pub fn create_listed_pipelines(&mut self, record: &[u8]) -> Result<u32, RenderError> {
+        self.pipeline_counts
+            .create_listed(record)
+            .map_err(|error| render_error("The pipeline list does not read", error))
+    }
+
+    /// What the scene's pipeline list did: the pipelines it created up
+    /// front, and those the renderer created that it lacked.
+    pub fn pipelines_listed(&self) -> (u32, u32) {
+        self.pipeline_counts.listed()
+    }
+
     /// The meshes and textures resident on the GPU.
     pub(super) fn residency(&self) -> Residency {
         let (textures, texture_bytes, _) = self.materials.texture_totals();

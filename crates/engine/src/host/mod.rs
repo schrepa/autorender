@@ -10,6 +10,7 @@ mod environment;
 mod frame_loop;
 mod input;
 mod jobs;
+mod pipeline_list;
 pub mod policy;
 mod resolution;
 mod scene_load;
@@ -28,6 +29,7 @@ pub use frame_loop::{FrameLoop, FramePhase};
 pub use input::{FrameInput, InputGatherer, KEYS};
 pub use jobs::JobOrder;
 pub(crate) use jobs::{Finished, JobScheduler};
+pub(crate) use pipeline_list::PipelineList;
 pub use resolution::view_size;
 pub use scene_load::{
     FileRead, IMAGE_FORMATS, Image, ImageDecoder, ImageFormat, ImageRead, LoadingHost, SceneLoad,

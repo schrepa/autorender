@@ -27,6 +27,16 @@ pub trait Game: 'static {
         None
     }
 
+    /// What the scene `engine` runs draws depends on beyond the engine's
+    /// code: bytes that change whenever it may, such as the hash of the
+    /// game's code (`engine_sources`) and its workload or scene. The
+    /// scene's pipeline list is kept by them, and created up front in later
+    /// sessions; with `None`, the default, the game keeps none, and frames
+    /// create each pipeline as they first draw with it.
+    fn content(&self, _engine: &Engine) -> Option<Vec<u8>> {
+        None
+    }
+
     /// Replaces the authored scene with `source` and the `files` it
     /// references; a scene that fails keeps the current one. Development
     /// reloads call it once the source's scene ID and revision matched.

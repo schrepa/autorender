@@ -34,8 +34,9 @@ profiling = ["engine/profiling", "engine_native/profiling"]
 # Schemas of the configuration and snapshot, for `cargo xtask schema`.
 schema = ["dep:schemars", "engine/schema"]
 
-# `SOURCE`, the hash of the code making the Stress Lab's records, the
-# meshes and textures its worlds generate.
+# `SOURCE`, the hash of the Stress Lab's code, which keys the records it
+# makes (the meshes and textures its worlds generate) and which its scenes'
+# content names (`engine::Game::content`).
 [build-dependencies]
 engine_sources.workspace = true
 

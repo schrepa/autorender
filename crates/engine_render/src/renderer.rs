@@ -320,4 +320,11 @@ impl Renderer {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.display.resize(width, height);
     }
+
+    /// Whether the session cooks its scene's pipeline list: frames then
+    /// create the pipelines of every pass kind their content may draw
+    /// with, lit or not, beyond those they draw.
+    pub fn set_cooking(&mut self, cooking: bool) {
+        self.mesh_pipelines.cooking = cooking;
+    }
 }

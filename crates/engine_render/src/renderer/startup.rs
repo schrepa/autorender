@@ -136,6 +136,8 @@ impl Renderer {
                 device_limits.max_texture_array_layers,
             ),
         )?;
+        // The device keeps its pipelines by key from here on.
+        let pipeline_counts = PipelineCounts::new(&device, display.format());
         let scope = crate::gpu_calls::validation_scope(&device);
         display.configure(&device);
         let depth = DepthTarget::new(&device, display.size());
@@ -223,7 +225,7 @@ impl Renderer {
             mesh_shader: shader,
             camera,
             mesh_pipelines,
-            pipeline_counts: PipelineCounts::default(),
+            pipeline_counts,
             gpu_presentation,
             culling: Culling { pyramid: None },
             shadows,

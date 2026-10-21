@@ -348,6 +348,18 @@ pub(crate) async fn yield_now() {
     }
 }
 
+/// What `future` comes to at once, polled once: native GPU interfaces
+/// answer their error scopes so; `None` where it waits.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn ready<F: std::future::Future>(future: F) -> Option<F::Output> {
+    let mut future = std::pin::pin!(future);
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    match future.as_mut().poll(&mut context) {
+        std::task::Poll::Ready(output) => Some(output),
+        std::task::Poll::Pending => None,
+    }
+}
+
 /// Runs the GPU interface's finished work, its map callbacks among it:
 /// the browser does so between tasks, native renderers once a frame.
 pub(crate) fn poll(device: &wgpu::Device) {

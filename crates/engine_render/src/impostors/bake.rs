@@ -338,45 +338,34 @@ fn bake_pipeline(
             .map(|format| Some(wgpu::ColorTargetState::from(format)))
             .to_vec()
     };
-    crate::pipelines::render(
+    crate::pipelines::sampled(
         device,
-        &wgpu::RenderPipelineDescriptor {
-            label: Some("engine/impostor-bake"),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some(vertex.name),
-                compilation_options: Default::default(),
-                buffers: &buffers,
-            },
+        &crate::pipelines::Geometry {
+            label: "engine/impostor-bake",
+            layout,
+            module: shader,
+            vertex,
+            vertex_constants: &[],
+            buffers: &buffers,
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
                 ..Default::default()
             },
             // Nearer the frame's viewer is greater, as with reversed depth.
-            depth_stencil: Some(wgpu::DepthStencilState {
+            depth: Some(wgpu::DepthStencilState {
                 format: BAKE_DEPTH,
                 depth_write_enabled: Some(true),
                 depth_compare: Some(wgpu::CompareFunction::Greater),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
-            multisample: wgpu::MultisampleState {
-                count: if shade { 1 } else { SAMPLES },
-                ..Default::default()
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some(fragment.name),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &constants,
-                    ..Default::default()
-                },
+            fragment: Some(crate::pipelines::Fragment {
+                entry: fragment,
+                constants: &constants,
                 targets: &targets,
             }),
-            multiview_mask: None,
-            cache: None,
         },
+        if shade { 1 } else { SAMPLES },
     )
 }

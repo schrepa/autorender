@@ -4,7 +4,8 @@
 //! list `index.json` gives; and `--check`, the cook's parity: each preset
 //! runs on its pack with every record made again and compared
 //! (`--jobcache verify`), and must read records from it with none
-//! differing.
+//! differing, and create every pipeline it draws with up front from its
+//! pipeline list, none after.
 
 use std::fs;
 use std::path::Path;
@@ -16,7 +17,9 @@ use crate::pipeline::QUICK;
 use crate::process::run;
 
 /// The presets cooked when none is named: every one, as each scene's
-/// meshes have levels of detail and impostors the cook makes.
+/// content makes records (its meshes' levels of detail, impostors and
+/// pipeline list, Highlands its terrain, those with clouds and water their
+/// tables, Highlands, Metro and City their generated textures).
 const PRESETS: &[&str] = &[
     "visual",
     "city",
@@ -105,18 +108,36 @@ fn check_pack(root: &Path, program: &str, preset: &str) -> Result<(), String> {
         .find('{')
         .and_then(|start| serde_json::from_str(&text[start..]).ok())
         .ok_or_else(|| format!("{preset} printed no report"))?;
-    let jobs = &report["stats"]["jobs"];
+    let stats = &report["stats"];
+    let jobs = &stats["jobs"];
     let (hits, mismatches) = (
         jobs["cache_hits"].as_u64().unwrap_or(0),
         jobs["cache_mismatches"].as_u64().unwrap_or(u64::MAX),
     );
-    println!("{preset}: {hits} records read, {mismatches} differing from a fresh run");
+    let (listed, unlisted) = (
+        stats["pipelines_listed"].as_u64().unwrap_or(0),
+        stats["pipelines_unlisted"].as_u64().unwrap_or(u64::MAX),
+    );
+    println!(
+        "{preset}: {hits} records read, {mismatches} differing from a fresh run; \
+         {listed} pipelines created up front, {unlisted} after"
+    );
     if hits == 0 {
         return Err(format!("{preset} read no record from its pack"));
     }
     if mismatches > 0 {
         return Err(format!(
             "{preset}: {mismatches} records differ from a fresh run of their jobs"
+        ));
+    }
+    if listed == 0 {
+        return Err(format!(
+            "{preset} created no pipeline from its pack's pipeline list"
+        ));
+    }
+    if unlisted > 0 {
+        return Err(format!(
+            "{preset} created {unlisted} pipelines its pipeline list lacks"
         ));
     }
     Ok(())

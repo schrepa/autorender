@@ -17,8 +17,9 @@ use crate::pipelines::vertex_attributes;
 /// pass); every pass kind's material variants, whose BASIC entries are the
 /// base pipelines; the sky by its targets, built when a pass first draws it;
 /// the empty group pipelines skipping a group bind (the visibility pass,
-/// impostor bakes); and the scene features every pipeline shading the scene
-/// is specialized for.
+/// impostor bakes); the scene features every pipeline shading the scene
+/// is specialized for; and whether the session cooks its pipeline list,
+/// so frames create their variants lit and unlit alike.
 pub(super) struct MeshPipelines {
     pub(super) layouts: [Option<wgpu::PipelineLayout>; 2],
     pub(super) variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
@@ -26,6 +27,7 @@ pub(super) struct MeshPipelines {
     pub(super) empty_layout: crate::pipelines::GroupLayout,
     pub(super) empty_group: wgpu::BindGroup,
     pub(super) shading: SceneShading,
+    pub(super) cooking: bool,
 }
 
 /// The targets a sky draws into: an opaque pass's, or a reflection probe
@@ -60,6 +62,7 @@ impl MeshPipelines {
             empty_layout,
             empty_group,
             shading: SceneShading::ALL,
+            cooking: false,
         }
     }
 
@@ -73,6 +76,14 @@ impl MeshPipelines {
     /// Forgets the sky into `targets`.
     pub(super) fn forget_sky(&mut self, targets: SkyTargets) {
         self.sky[targets.index()] = None;
+    }
+}
+
+/// `kind` lit where it is not, and not where it is.
+pub(super) fn relit(kind: PassKind) -> PassKind {
+    PassKind {
+        lit: !kind.lit,
+        ..kind
     }
 }
 
@@ -200,6 +211,27 @@ impl Renderer {
     /// Creates the pipelines of the plan's material variants for this frame's
     /// opaque and transparent passes, and the opaque pass's sky.
     pub(super) fn ensure_variants(&mut self, opaque: PassKind, transparent: PassKind) {
+        // Debug views shade no lights.
+        if self.relights() && opaque.targets() != Some(Targets::Debug) {
+            self.create_variants(relit(opaque), relit(transparent));
+        }
+        self.create_variants(opaque, transparent);
+        // The opaque pass ends with the sky of its targets.
+        if let Some(targets) = opaque.targets() {
+            self.ensure_sky(SkyTargets::Frame(targets));
+        }
+    }
+
+    /// Whether frames also create the pipelines of frames lit otherwise:
+    /// while the session cooks its pipeline list, with local lights in the
+    /// scene, which light a frame where some reach its view.
+    pub(super) fn relights(&self) -> bool {
+        self.mesh_pipelines.cooking && self.features.lights.get().is_some()
+    }
+
+    /// Creates the pipelines of the plan's material variants for `opaque`
+    /// and `transparent` passes unless created.
+    fn create_variants(&mut self, opaque: PassKind, transparent: PassKind) {
         let key = (self.structure_key(), opaque, transparent);
         if self.structure_keys.variants != Some(key) {
             let mut missing = Vec::new();
@@ -229,10 +261,6 @@ impl Renderer {
                     .insert((kind, variant), pipeline);
             }
             self.structure_keys.variants = Some(key);
-        }
-        // The opaque pass ends with the sky of its targets.
-        if let Some(targets) = opaque.targets() {
-            self.ensure_sky(SkyTargets::Frame(targets));
         }
     }
 

@@ -489,21 +489,20 @@ fn pipeline(
     } else {
         wgpu::BlendOperation::Max
     };
-    crate::pipelines::render(
+    crate::pipelines::geometry(
         device,
-        &wgpu::RenderPipelineDescriptor {
-            label: Some("engine/occupancy"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some(occupancy::vs_splat.name),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some(occupancy::fs_splat.name),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
+        &crate::pipelines::Geometry {
+            label: "engine/occupancy",
+            layout: &pipeline_layout,
+            module: &module,
+            vertex: occupancy::vs_splat,
+            vertex_constants: &[],
+            buffers: &[],
+            primitive: wgpu::PrimitiveState::default(),
+            depth: None,
+            fragment: Some(crate::pipelines::Fragment {
+                entry: occupancy::fs_splat,
+                constants: &[],
                 targets: &[
                     Some(wgpu::ColorTargetState {
                         format: COVERAGE_FORMAT,
@@ -517,11 +516,6 @@ fn pipeline(
                     }),
                 ],
             }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
         },
     )
 }

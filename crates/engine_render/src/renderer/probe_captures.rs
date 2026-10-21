@@ -179,9 +179,18 @@ impl Renderer {
 
     /// The reflection probe captures' pipelines: the sky's,
     /// and `kind`'s uber variants for this frame's still
-    /// opaque meshes.
+    /// opaque meshes (and those lit otherwise, as frames relight them).
     pub(super) fn ensure_probe_pipelines(&mut self, kind: PassKind) {
         self.ensure_sky(SkyTargets::Probe);
+        if self.relights() {
+            self.create_probe_variants(super::meshes::relit(kind));
+        }
+        self.create_probe_variants(kind);
+    }
+
+    /// `kind`'s uber variants for this frame's still opaque meshes, unless
+    /// created.
+    fn create_probe_variants(&mut self, kind: PassKind) {
         let key = (self.structure_key(), kind);
         if self.structure_keys.probes == Some(key) {
             return;

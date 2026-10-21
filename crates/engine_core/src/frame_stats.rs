@@ -50,9 +50,17 @@ pub struct FrameStats {
     /// Whether the GPU may still be compiling pipelines earlier frames
     /// created, read when the stats are.
     pub pipelines_compiling: bool,
+    /// Pipelines the scene's pipeline list created up front, while the
+    /// session prepared.
+    pub pipelines_listed: u32,
+    /// Pipelines the session created that the scene's pipeline list
+    /// lacked, once it arrived: 0 while the list holds every pipeline the
+    /// session draws with.
+    pub pipelines_unlisted: u32,
     /// Whether terrains have yet to load the camera's view whole, textures
-    /// their records, or a static table the scene wants has yet to arrive,
-    /// read when the stats are: hosts keep preparing meanwhile.
+    /// their records, or a static table the scene wants or its pipeline
+    /// list has yet to arrive, read when the stats are: hosts keep
+    /// preparing meanwhile.
     pub loading: bool,
     /// The view's width in physical pixels, as the frame drew it: the
     /// host's, unless the device's largest texture holds less, which the

@@ -125,8 +125,12 @@ impl Renderer {
             .get_mapped_range()
             .map_err(|error| render_error("Could not read the offscreen frame", error))?;
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+        // The texture holds BGRA texels: read back as RGBA.
         for rows in view.chunks_exact(row as usize) {
-            pixels.extend_from_slice(&rows[..(width * 4) as usize]);
+            for texel in rows[..(width * 4) as usize].as_chunks::<4>().0 {
+                let [blue, green, red, alpha] = *texel;
+                pixels.extend_from_slice(&[red, green, blue, alpha]);
+            }
         }
         drop(view);
         buffer.unmap();

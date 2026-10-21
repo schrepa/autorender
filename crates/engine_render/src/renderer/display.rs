@@ -42,10 +42,12 @@ impl Display {
                 .ok_or_else(|| {
                     RenderError("This adapter cannot present to the supplied canvas.".into())
                 })?,
-            // Read back as it is stored: RGBA.
+            // As windows and pages draw on most devices: BGRA, which no
+            // target of the renderer's own takes, so pipeline lists cooked
+            // offscreen tell the canvas's targets apart.
             None => wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                format: wgpu::TextureFormat::Rgba8Unorm,
+                format: wgpu::TextureFormat::Bgra8Unorm,
                 width,
                 height,
                 present_mode: wgpu::PresentMode::Fifo,

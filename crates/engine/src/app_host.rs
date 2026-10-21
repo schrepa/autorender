@@ -126,6 +126,8 @@ pub(crate) struct AppHost {
     // The records the renderer asked for, each one's fetch from the
     // engine's jobs.
     record_fetches: Vec<(JobId, RecordKey)>,
+    // The scene's pipeline list: asked for, created up front or kept.
+    pipeline_list: crate::host::PipelineList,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
 }
@@ -194,6 +196,7 @@ impl AppHost {
             terrain_clock: TerrainClock::Wall,
             overrides: Overrides::default(),
             record_fetches: Vec::new(),
+            pipeline_list: crate::host::PipelineList::default(),
             #[cfg(feature = "profiling")]
             profile_frame: 0,
         }
@@ -219,6 +222,8 @@ impl AppHost {
             .get_resource::<engine_core::Jobs>()
             .map_or((0, false), |jobs| (jobs.workers(), jobs.verifying()));
         wire(&mut engine, &self.renderer, jobs, self.terrain_clock);
+        // Its scene's pipeline list is its own.
+        self.pipeline_list = crate::host::PipelineList::default();
         self.gpu_inputs_stale = false;
         // The replaced engine's jobs answer no more fetches: what they
         // fetched bakes.
@@ -229,6 +234,30 @@ impl AppHost {
         self.apply_overrides();
         self.suspend();
         replaced
+    }
+
+    /// Asks for the scene's pipeline list unless asked, its game naming its
+    /// content as `content` does ([`crate::Game::content`]), and creates
+    /// its pipelines once it arrived: whether it is still on its way, which
+    /// preparation waits for.
+    pub(crate) fn prepare_pipelines(
+        &mut self,
+        content: impl FnOnce(&Engine) -> Option<Vec<u8>>,
+    ) -> bool {
+        if self.pipeline_list.unasked() {
+            let content = content(&self.engine);
+            self.pipeline_list
+                .ask(&mut self.engine, content, self.gpu_presentation);
+        }
+        self.pipeline_list
+            .take(&mut self.engine, &mut self.renderer);
+        self.pipeline_list.waiting()
+    }
+
+    /// Asks for the scene's pipeline list anew before the next frame: the
+    /// scene changed.
+    pub(crate) fn forget_pipeline_list(&mut self) {
+        self.pipeline_list = crate::host::PipelineList::default();
     }
 
     /// Sets the host's culling and antialiasing choices over the world's
@@ -697,6 +726,13 @@ impl AppHost {
                 world.resource::<engine_core::FixedTime>().tick,
             )
         };
+        // A session cooking its pipeline list draws with every pass kind.
+        self.renderer.set_cooking(
+            self.engine
+                .app
+                .world()
+                .contains_resource::<engine_core::Cooking>(),
+        );
         let before_extraction = now_ms();
         let culling_enabled = self.engine.frustum_culling();
         let aspect = width.max(1) as f32 / height.max(1) as f32;
@@ -767,6 +803,8 @@ impl AppHost {
             fixed_steps: report.fixed_steps,
             dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
             pipelines_compiling: false,
+            pipelines_listed: 0,
+            pipelines_unlisted: 0,
             loading: false,
             view_width,
             view_height,
@@ -779,6 +817,11 @@ impl AppHost {
             render: rendered,
         };
         self.exchange_records();
+        self.pipeline_list.after_frame(
+            &mut self.engine,
+            &self.renderer,
+            self.stats.render.pipelines_created,
+        );
         Ok(())
     }
 
@@ -825,8 +868,11 @@ impl AppHost {
     }
 
     pub fn stats(&self) -> FrameStats {
+        let (pipelines_listed, pipelines_unlisted) = self.renderer.pipelines_listed();
         FrameStats {
             pipelines_compiling: self.renderer.pipelines_compiling(),
+            pipelines_listed,
+            pipelines_unlisted,
             loading: self
                 .engine
                 .app
@@ -844,7 +890,8 @@ impl AppHost {
                     .app
                     .world()
                     .get_resource::<engine_core::StaticTables>()
-                    .is_some_and(engine_core::StaticTables::loading),
+                    .is_some_and(engine_core::StaticTables::loading)
+                || self.pipeline_list.waiting(),
             navigation: self
                 .engine
                 .app

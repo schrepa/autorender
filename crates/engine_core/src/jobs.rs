@@ -186,7 +186,8 @@ pub struct JobStats {
     pub submitted: u64,
     /// Jobs completed.
     pub completed: u64,
-    /// Jobs failed.
+    /// Jobs failed. A record fetched alone that no pack or store holds
+    /// ([`MISSING_RECORD`]) is no failure: its owner makes it.
     pub failed: u64,
     /// Jobs cancelled while running.
     pub cancelled: u64,
@@ -502,11 +503,10 @@ impl Jobs {
     fn finish(&mut self, id: JobId, output: Result<Vec<u8>, String>) {
         match &output {
             Ok(_) => self.stats.completed += 1,
+            Err(message) if message == MISSING_RECORD => {}
             Err(message) => {
                 self.stats.failed += 1;
-                if message != MISSING_RECORD {
-                    self.last_failure = Some(message.clone());
-                }
+                self.last_failure = Some(message.clone());
             }
         }
         self.done.insert(id, output);

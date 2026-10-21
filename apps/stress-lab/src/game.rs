@@ -278,6 +278,30 @@ impl Game for StressLab {
         self.authored.as_ref().and_then(AuthoredScene::instance)
     }
 
+    /// The Stress Lab's code, the workload's configuration or the authored
+    /// scene's ID and revision, and the page's look, effects and world
+    /// settings.
+    fn content(&self, engine: &Engine) -> Option<Vec<u8>> {
+        let mut content = crate::SOURCE.to_vec();
+        if let Some(config) = engine.app.world().get_resource::<StressConfig>() {
+            content.extend(serde_json::to_vec(config).expect("configurations serialize"));
+        }
+        if let Some(scene) = self.scene() {
+            content.extend(scene.id().as_bytes());
+            content.extend(scene.revision().to_le_bytes());
+        }
+        for choice in [&self.look, &self.effects] {
+            content.extend(choice.as_bytes());
+            content.push(0);
+        }
+        content.extend([
+            u8::from(self.level_of_detail),
+            u8::from(self.impostors),
+            u8::from(self.visibility_buffer),
+        ]);
+        Some(content)
+    }
+
     fn reload_scene(
         &mut self,
         engine: &mut Engine,

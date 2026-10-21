@@ -49,12 +49,6 @@ use crate::scene_shading::SceneShading;
 use crate::targets::Targets;
 pub(crate) use content::Contents;
 
-// `SOURCE`: the renderer's code, which keys impostors' records with what
-// they depict.
-mod source {
-    include!(concat!(env!("OUT_DIR"), "/source.rs"));
-}
-
 /// The kind of impostors' records.
 const IMPOSTOR_RECORD: &str = "impostor";
 
@@ -595,7 +589,7 @@ impl ImpostorAtlas {
     /// material whose contents are `content`.
     fn record_key(&self, content: (u128, u128)) -> RecordKey {
         RecordKey::new(
-            &source::SOURCE,
+            &crate::SOURCE,
             IMPOSTOR_RECORD,
             &records::identity(self.shape, self.format, content),
         )
