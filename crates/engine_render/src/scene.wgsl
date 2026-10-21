@@ -977,8 +977,9 @@ const BOUNCE_HIGH: f32 = 24.0;
 
 // Bounce light at a point: the light the ground around sends it, per unit
 // of its diffuse color; the share of the sky the ground leaves it; and how
-// much of both the probes there give (0 where none relights, what stands in
-// taking the rest).
+// much of both the probes there give: 0 in the far field, past their reach
+// (and everywhere with bounce light off), where terrain takes its estimate
+// (`terrain_bounce`) and what stands on it the open sky.
 struct BounceLight {
     light: vec3<f32>,
     sky: f32,

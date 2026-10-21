@@ -94,8 +94,10 @@ settings! {
         /// probe in the record, 7 to 27 MB a terrain of 512 columns.
         pub bounce_spacing: f32 = 16.0 => range(1.0, 1024.0),
         /// Meters around the camera within which probes relight every frame,
-        /// as many columns as the horizon maps' texels at most; past them
-        /// terrain takes its estimate and what stands on it the open sky.
+        /// as many columns as the horizon maps' texels at most. Past them lies
+        /// the far field, where terrain takes an estimate of the light around
+        /// it (as all ground does with bounce light off, and surroundings)
+        /// and what stands on it the open sky.
         pub bounce_reach: f32 = 2048.0 => range(64.0, 32768.0),
         /// Meters from the camera within which the ground's relief shows, its
         /// view rays marching through its materials' heights; 0 none.

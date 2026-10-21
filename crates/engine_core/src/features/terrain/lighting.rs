@@ -28,6 +28,11 @@ impl Lighting {
     pub(super) fn left(&self) -> bool {
         self.job.is_some() || self.made.is_none()
     }
+
+    /// Whether its job last failed: it asks again a while after.
+    pub(super) fn failed(&self) -> bool {
+        self.failed.is_some()
+    }
 }
 
 /// The level a terrain's lighting reads: the finest of the coarsest

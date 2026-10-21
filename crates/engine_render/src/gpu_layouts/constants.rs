@@ -161,7 +161,7 @@ gpu_consts! {
     /// share (alpha), then their gradients along x, y and z.
     pub(crate) const BOUNCE_LAYERS: usize = 4 * engine_core::terrain_data::bounce::LAYERS => ["BOUNCE_LAYERS"];
     /// Columns at a window's edge across which bounce light hands over to
-    /// what stands in past it.
+    /// the far field's estimate past it.
     pub(crate) const BOUNCE_FADE: f32 = 8.0 => ["BOUNCE_FADE"];
     /// Words of a probe in the probes' buffer.
     pub(crate) const BOUNCE_RECORD_WORDS: usize = engine_core::terrain_data::bounce::PROBE_BYTES / 4 => ["BOUNCE_RECORD_WORDS" in BOUNCE_SHADER];

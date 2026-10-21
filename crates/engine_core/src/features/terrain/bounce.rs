@@ -32,6 +32,20 @@ impl Bounce {
     }
 }
 
+/// Whether `state`'s view waits for its bounce transfer, as it waits for
+/// its lighting: `settings` ask for bounce light, it is no surroundings,
+/// and its transfer is asked for, or not yet here without its job, or its
+/// lighting's, having failed. Preparation ends only once none waits, so
+/// views start on the transfer, never on the far field's estimate standing
+/// in for it.
+pub(super) fn waits(state: &TerrainState, settings: &TerrainSettings) -> bool {
+    let held = &state.bounce;
+    bounces(settings)
+        && state.around.is_none()
+        && !state.lighting.failed()
+        && (held.job.is_some() || (held.made.is_none() && held.failed.is_none()))
+}
+
 /// The most probe columns along a terrain's side: larger terrains spread
 /// theirs wider, keeping their records within tens of megabytes.
 const MOST_PROBES: u32 = 512;
@@ -152,8 +166,8 @@ pub(super) fn bounce(
     if bounce.job.is_some_and(|(_, asked)| asked == hash) {
         return;
     }
-    // Ahead of need: views draw without it, the estimate standing in.
-    let priority = job_priority(IDLE_JOBS, 0);
+    // Views wait for it as for the lighting (`waits`).
+    let priority = job_priority(VIEW_JOBS, 0);
     if !slots.take(priority) {
         // Asked for again next frame.
         bounce.tiles.clear();

@@ -245,6 +245,8 @@ impl Terrains {
         // Budgets cover every terrain: each takes what is left.
         let mut remaining = limit.map_or(usize::MAX, |limit| limit as usize);
         let frame = self.frame;
+        // Terrains whose views wait for their bounce transfer.
+        let mut unbounced = 0_u32;
         for state in &mut self.entries {
             if state.terrain.validate().is_err() {
                 continue;
@@ -356,6 +358,7 @@ impl Terrains {
             if let Some(slots) = slots.as_mut() {
                 light(state, settings, slots, frame);
                 bounce(state, settings, slots, frame);
+                unbounced += u32::from(waits(state, settings));
             }
             stats.lit += u32::from(state.lighting.made.is_some());
             stats.lighting += u32::from(state.lighting.job.is_some());
@@ -482,13 +485,15 @@ impl Terrains {
             }
         }
         // The camera's view has loaded whole once nothing bakes, loads,
-        // stands in for a finer level or waits for its lighting.
+        // stands in for a finer level or waits for its lighting or bounce
+        // transfer.
         if !self.loaded
             && stats.terrains > 0
             && stats.baking == 0
             && stats.loading_tiles == 0
             && stats.fallback_patches == 0
             && stats.lighting == 0
+            && unbounced == 0
         {
             self.loaded = true;
         }

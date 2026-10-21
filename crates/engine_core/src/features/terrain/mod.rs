@@ -71,7 +71,7 @@ mod waterfalls;
 mod wind;
 
 use bakes::*;
-use bounce::{Bounce, bounce, bounces};
+use bounce::{Bounce, bounce, bounces, waits};
 pub use bridges::*;
 pub use components::*;
 use cook::CookTiles;
