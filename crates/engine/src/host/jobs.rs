@@ -4,7 +4,8 @@
 //! every worker holds; which records the host's packs and store answer, and
 //! which a fresh run verifies; which jobs run in place, on a host without
 //! workers; which records fetched alone a verifying host compares with
-//! what their owners make again; and what a new engine's first message
+//! what their owners make again, each by its kind's parity
+//! ([`engine_core::RecordParity`]); and what a new engine's first message
 //! drops. Hosts carry its
 //! orders ([`JobOrder`]) to their workers and their records (the cook's
 //! packs, `engine_worker::JobCache` and the bytes they keep), and hand back
@@ -143,10 +144,10 @@ impl JobScheduler {
                 JobMessage::Fetch(fetch) => {
                     finished.push((fetch.id, Err(MISSING_RECORD.to_owned())));
                 }
-                JobMessage::Keep(record, output) => {
+                JobMessage::Keep(record, output, parity) => {
                     let key = record.hex();
                     if let Some(handed) = self.fetched.remove(&key) {
-                        if handed != output {
+                        if !parity.holds(&handed, &output) {
                             self.orders.push(JobOrder::Mismatch { key });
                         }
                     } else if self.caching {

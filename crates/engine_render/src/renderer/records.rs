@@ -3,7 +3,11 @@
 //! pages (`terrain_vt`). The renderer names the records it wants by key and
 //! hands over those it made; its host fetches them from its packs and store
 //! and keeps what it is handed (`engine_core::Jobs`), as it does every
-//! record the engine makes, and answers each fetch with a later frame.
+//! record the engine makes, and answers each fetch with a later frame. Made
+//! on the GPU, they are cooked once: a verifying host compares those made
+//! again with those it handed back by each kind's parity
+//! (`engine_core::RecordParity`), far pages' within their peak
+//! signal-to-noise ratio.
 
 use super::*;
 
@@ -44,12 +48,17 @@ impl Renderer {
         }
     }
 
-    /// Records the renderer made since the last call, for hosts to keep:
-    /// the layers of impostors it baked, and terrains' far pages.
-    pub fn take_made_records(&mut self) -> Vec<(RecordKey, Vec<u8>)> {
-        let mut made = Vec::new();
-        self.impostors.atlas.take_made(&mut made);
-        self.impostors.placed.take_made(&mut made);
+    /// Records the renderer made since the last call, for hosts to keep,
+    /// each with how a verifying host compares it: the layers of impostors
+    /// it baked (never made again for one) and terrains' far pages.
+    pub fn take_made_records(&mut self) -> Vec<(RecordKey, Vec<u8>, engine_core::RecordParity)> {
+        let mut impostors = Vec::new();
+        self.impostors.atlas.take_made(&mut impostors);
+        self.impostors.placed.take_made(&mut impostors);
+        let mut made: Vec<_> = impostors
+            .into_iter()
+            .map(|(record, bytes)| (record, bytes, engine_core::RecordParity::Exact))
+            .collect();
         self.terrain.vt.take_made(&mut made);
         made
     }

@@ -17,9 +17,9 @@
 //! made on the GPU, so the same record made on another differs within its
 //! rounding: records are cooked once, never compared bit for bit across
 //! GPUs, and near and far pages blend over a mip as the ground's own levels
-//! do. A verifying host has those it handed back baked again and compared
-//! within a parity ([`FAR_PARITY`]): pages within it keep the record as it
-//! was, others are handed over as baked, which the host finds differing.
+//! do. A verifying host has those it handed back baked again and kept,
+//! which it compares within the records' parity ([`FAR_PARITY`], `alike`)
+//! as its one verify path compares every record.
 //!
 //! A record holds its pages' count, each page's mip and page along x and z,
 //! then their texels: each page's three layers (base color, canopy, normal
@@ -79,17 +79,15 @@ enum State {
 }
 
 /// A terrain's far pages: their record's key, the level their bakes read,
-/// the pages in the record's order, where they stand, whether their bakes
-/// are kept once read back (a missing record's, and those a verifying host
-/// handed back), and the record a verifying host handed back, which they
-/// are compared with.
+/// the pages in the record's order, where they stand, and whether their
+/// bakes are kept once read back (a missing record's, and those a verifying
+/// host handed back).
 struct FarSet {
     key: RecordKey,
     level: u32,
     pages: Vec<PageKey>,
     state: State,
     keep: bool,
-    handed: Option<Vec<u8>>,
 }
 
 /// A set's slots read back: the record's key and pages, the slots in their
@@ -354,22 +352,43 @@ fn within_parity(was: &[u8], baked: &[u8]) -> bool {
     was.len() == baked.len() && squared * FAR_PARITY <= 255 * 255 * was.len() as u64
 }
 
+/// Whether far page records `handed` and `made` hold the same pages, their
+/// texels within [`FAR_PARITY`]: a verifying host's comparison of pages
+/// baked again with the record it handed back
+/// (`engine_core::RecordParity::Within`).
+fn alike(handed: &[u8], made: &[u8]) -> bool {
+    match (read(handed), read(made)) {
+        (Ok((pages, was)), Ok((again, baked))) => pages == again && within_parity(&was, &baked),
+        _ => false,
+    }
+}
+
 /// The texels of a far page record of `pages`, as [`encode`] took them; why
 /// it holds none where its pages are others.
 fn decode(bytes: &[u8], pages: &[PageKey]) -> Result<Vec<u8>, String> {
+    let (held, texels) = read(bytes)?;
+    let same = held.len() == pages.len()
+        && held.iter().zip(pages).all(|(&(mip, x, z), page)| {
+            mip == page.mip && i32::from(x) == page.page[0] && i32::from(z) == page.page[1]
+        });
+    if !same {
+        return Err("a far page record of other pages".into());
+    }
+    Ok(texels)
+}
+
+/// A far page record's pages (each one's mip and page along x and z) and
+/// its texels, as [`encode`] took them.
+fn read(bytes: &[u8]) -> Result<(Vec<(u8, u16, u16)>, Vec<u8>), String> {
     let invalid = |error: codec::CodecError| error.to_string();
     let mut input = Reader::new(bytes);
     let count: u32 = input.get().map_err(invalid)?;
-    if count as usize != pages.len() {
-        return Err("a far page record of other pages".into());
-    }
-    for page in pages {
+    let mut pages = Vec::with_capacity((count as usize).min(bytes.len()));
+    for _ in 0..count {
         let mip: u8 = input.get().map_err(invalid)?;
         let x: u16 = input.get().map_err(invalid)?;
         let z: u16 = input.get().map_err(invalid)?;
-        if mip != page.mip || i32::from(x) != page.page[0] || i32::from(z) != page.page[1] {
-            return Err("a far page record of other pages".into());
-        }
+        pages.push((mip, x, z));
     }
     let planes = codec::get_planes(&mut input, SLOT_TEXELS as usize).map_err(invalid)?;
     input.finish().map_err(invalid)?;
@@ -385,7 +404,7 @@ fn decode(bytes: &[u8], pages: &[PageKey]) -> Result<Vec<u8>, String> {
             }
         }
     }
-    Ok(texels)
+    Ok((pages, texels))
 }
 
 impl VirtualTexture {
@@ -412,8 +431,16 @@ impl VirtualTexture {
 
     /// Moves the far pages' records made, for the host to keep, into
     /// `out`.
-    pub(crate) fn take_made(&mut self, out: &mut Vec<(RecordKey, Vec<u8>)>) {
-        out.append(&mut self.far.keeps);
+    pub(crate) fn take_made(
+        &mut self,
+        out: &mut Vec<(RecordKey, Vec<u8>, engine_core::RecordParity)>,
+    ) {
+        out.extend(
+            self.far
+                .keeps
+                .drain(..)
+                .map(|(key, bytes)| (key, bytes, engine_core::RecordParity::Within(alike))),
+        );
     }
 
     /// Far page sets a cooking session has left to make.
@@ -483,7 +510,6 @@ impl VirtualTexture {
                     pages: far_pages(terrain.id, extent, first),
                     state: State::Asking,
                     keep: false,
-                    handed: None,
                 },
             );
         }
@@ -498,15 +524,10 @@ impl VirtualTexture {
             else {
                 continue;
             };
-            let decoded = answer.and_then(|bytes| {
-                decode(&bytes, &set.pages)
-                    .ok()
-                    .map(|texels| (bytes, texels))
-            });
+            let decoded = answer.and_then(|bytes| decode(&bytes, &set.pages).ok());
             match decoded {
-                Some((bytes, texels)) => {
+                Some(texels) => {
                     set.keep = verifying;
-                    set.handed = verifying.then_some(bytes);
                     set.state = State::Uploading(texels, 0);
                 }
                 None => {
@@ -534,7 +555,7 @@ impl VirtualTexture {
             set.state = match std::mem::replace(&mut set.state, State::Here) {
                 State::Uploading(texels, next) => self.upload(queue, maps, &set, (texels, next)),
                 State::Baking(next) => self.bake_far(device, &set, next, &mut room),
-                State::Reading => self.read_far(&mut set),
+                State::Reading => self.read_far(&set),
                 state @ (State::Asking | State::Here) => state,
             };
             self.entries_far(&set);
@@ -663,9 +684,9 @@ impl VirtualTexture {
     }
 
     /// `set`'s read-back once mapped: its pages' texels, unpadded, kept as
-    /// its record, or the record handed back where they keep its parity; a
-    /// read-back that failed bakes them again.
-    fn read_far(&mut self, set: &mut FarSet) -> State {
+    /// its record (a verifying host compares it with the one it handed
+    /// back); a read-back that failed bakes them again.
+    fn read_far(&mut self, set: &FarSet) -> State {
         let Some(reading) = self
             .far
             .reading
@@ -693,16 +714,7 @@ impl VirtualTexture {
         if texels.len() != pages.len() * LAYERS * LAYER_BYTES {
             return State::Baking(0);
         }
-        // Verifying: within the parity, the record handed back stands.
-        let kept = match set.handed.take() {
-            Some(handed)
-                if decode(&handed, &pages).is_ok_and(|was| within_parity(&was, &texels)) =>
-            {
-                handed
-            }
-            Some(_) | None => encode(&pages, &texels),
-        };
-        self.far.keeps.push((set.key, kept));
+        self.far.keeps.push((set.key, encode(&pages, &texels)));
         State::Here
     }
 

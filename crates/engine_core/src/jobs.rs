@@ -61,6 +61,27 @@ impl RecordKey {
 /// holds it.
 pub const MISSING_RECORD: &str = "no store holds the record";
 
+/// How a verifying host compares a record its owner made again with the one
+/// it handed back: bit for bit, as every record code makes the same on
+/// every host; or, for a record a GPU makes (cooked once, never compared bit
+/// for bit across GPUs), by its kind's own comparison of the two, which
+/// holds where they keep the kind's parity.
+#[derive(Clone, Copy, Debug)]
+pub enum RecordParity {
+    Exact,
+    Within(fn(&[u8], &[u8]) -> bool),
+}
+
+impl RecordParity {
+    /// Whether `made` keeps this parity with `handed`.
+    pub fn holds(self, handed: &[u8], made: &[u8]) -> bool {
+        match self {
+            Self::Exact => handed == made,
+            Self::Within(alike) => alike(handed, made),
+        }
+    }
+}
+
 /// A job to hand a worker: its id, its kind (which work workers run on
 /// it), its input, its priority, lower first ([`job_priority`]), and, where
 /// its output is a record, the record's key: the same key gives the same
@@ -224,7 +245,7 @@ pub struct Jobs {
     verifying: bool,
     requests: Vec<JobRequest>,
     fetches: Vec<RecordFetch>,
-    keeps: Vec<(RecordKey, Vec<u8>)>,
+    keeps: Vec<(RecordKey, Vec<u8>, RecordParity)>,
     shares: Vec<JobShare>,
     // Jobs handed out and not done, and those handed out that their owners
     // cancelled, for hosts to stop.
@@ -371,10 +392,15 @@ impl Jobs {
     /// Hands hosts `bytes`, the record `record` its owner made itself, to
     /// keep: a later fetch of it, in this session or another, takes them. A
     /// verifying host compares a record it handed back with the bytes its
-    /// owner made again.
+    /// owner made again, bit for bit.
     pub fn keep(&mut self, record: RecordKey, bytes: Vec<u8>) {
+        self.keep_with(record, bytes, RecordParity::Exact);
+    }
+
+    /// [`Self::keep`] for a record a verifying host compares by `parity`.
+    pub fn keep_with(&mut self, record: RecordKey, bytes: Vec<u8>, parity: RecordParity) {
         if self.hosted {
-            self.keeps.push((record, bytes));
+            self.keeps.push((record, bytes, parity));
         }
     }
 
@@ -477,7 +503,7 @@ impl Jobs {
 
     /// Hosts: moves the records owners made themselves, to keep, into
     /// `out`.
-    pub fn take_keeps(&mut self, out: &mut Vec<(RecordKey, Vec<u8>)>) {
+    pub fn take_keeps(&mut self, out: &mut Vec<(RecordKey, Vec<u8>, RecordParity)>) {
         out.append(&mut self.keeps);
     }
 

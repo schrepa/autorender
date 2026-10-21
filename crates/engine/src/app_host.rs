@@ -49,8 +49,9 @@ pub enum JobMessage {
     Run(JobRequest),
     /// A record no job makes, which the host's records may hold.
     Fetch(RecordFetch),
-    /// A record its owner made itself, for the host to keep.
-    Keep(RecordKey, Vec<u8>),
+    /// A record its owner made itself, for the host to keep, and how a
+    /// verifying host compares it with the one it handed back.
+    Keep(RecordKey, Vec<u8>, engine_core::RecordParity),
 }
 
 /// What terrain times its work by on a host.
@@ -482,7 +483,7 @@ impl AppHost {
         let fetches = fetches.into_iter().map(JobMessage::Fetch);
         let keeps = keeps
             .into_iter()
-            .map(|(record, bytes)| JobMessage::Keep(record, bytes));
+            .map(|(record, bytes, parity)| JobMessage::Keep(record, bytes, parity));
         cancels
             .chain(shares)
             .chain(requests)
@@ -857,8 +858,8 @@ impl AppHost {
                 for record in wants {
                     asked.push((jobs.fetch(record, priority), record));
                 }
-                for (record, bytes) in made {
-                    jobs.keep(record, bytes);
+                for (record, bytes, parity) in made {
+                    jobs.keep_with(record, bytes, parity);
                 }
                 self.record_fetches = asked;
                 answers
