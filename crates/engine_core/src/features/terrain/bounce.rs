@@ -113,6 +113,7 @@ pub(super) fn bounce(
         }
     }
     if state
+        .whole
         .bounce
         .failed
         .is_some_and(|at| frame < at + RETRY_AFTER)

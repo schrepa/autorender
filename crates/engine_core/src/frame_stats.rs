@@ -410,10 +410,11 @@ pub struct TerrainRenderStats {
     pub triangles: u32,
     /// Patches drawn into shadow maps.
     pub shadow_patches: u32,
-    /// Patches within the camera's frustum it skips: those whose every
-    /// triangle faces away from the eye, and those nearer ground hides from
-    /// it. Neither ever holds a patch that could show.
+    /// Patches within the camera's frustum it skips as every triangle faces
+    /// away from the eye: none of them could show.
     pub back_facing_patches: u32,
+    /// Patches within the camera's frustum it skips as nearer ground hides
+    /// them from the eye: none of them could show.
     pub hidden_patches: u32,
     /// Tiles resident on the GPU.
     pub tiles: u32,
@@ -433,10 +434,10 @@ pub struct TerrainRenderStats {
     /// changed: sky and horizon maps, one each per terrain. The sun moving
     /// uploads none.
     pub lighting_uploads: u32,
-    /// Terrains whose bounce light relit this frame, and the probe columns
-    /// it relit around the camera: every frame, however the sun and sky
-    /// stand.
+    /// Terrains whose bounce light relit this frame: every frame, however
+    /// the sun and sky stand.
     pub bounced: u32,
+    /// The probe columns bounce light relit around the camera this frame.
     pub bounce_probes: u32,
     /// Terrains whose macro color maps are here: the tint and growth their
     /// bakes give their ground.

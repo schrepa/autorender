@@ -226,7 +226,7 @@ const fn sampler(binding: u32, name: &'static str, sampling: Sampling, stages: S
     bind(binding, name, Kind::Sampler(sampling), stages)
 }
 
-use Format::{R32Float, R32Uint, Rgba8Snorm, Rgba8Unorm, Rgba16Float};
+use Format::{R32Float, R32Uint, Rgba8Snorm, Rgba16Float};
 use Sample::{Depth, Float, Uint, Unfilterable};
 use Sampling::{Comparison, Filtering, NonFiltering};
 use View::{Cube, CubeArray, D2, D2Array, D3};

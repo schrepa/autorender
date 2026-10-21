@@ -397,15 +397,11 @@ enum Step {
     Failed(RecordKey, String),
 }
 
-/// Steps `request` once with `jobs` (`place` its order among the requests,
-/// `verifying` whether the host verifies what it hands back): asks the
-/// host, makes what none held (code here at once; a texture's sources,
-/// then its cooking on a worker), and hands on what arrived.
-fn step(
-    records: &mut Records,
-    mut request: Request,
-    (jobs, place, verifying): (&mut Jobs, u32, bool),
-) -> Step {
+/// Steps `request` once with `jobs` (`place` its order among the
+/// requests): asks the host, makes what none held (code here at once; a
+/// texture's sources, then its cooking on a worker), and hands on what
+/// arrived.
+fn step(records: &mut Records, mut request: Request, (jobs, place): (&mut Jobs, u32)) -> Step {
     let make_priority = job_priority(VIEW_JOBS, place);
     loop {
         match request.stage {
@@ -511,7 +507,7 @@ pub(crate) fn exchange(world: &mut World) {
         let verifying = jobs.verifying();
         let mut records = world.resource_mut::<Records>();
         for (place, request) in requests.into_iter().enumerate() {
-            match step(&mut records, request, (&mut *jobs, place as u32, verifying)) {
+            match step(&mut records, request, (&mut *jobs, place as u32)) {
                 Step::Waiting(request) => waiting.push(request),
                 Step::Arrived {
                     mut request,
