@@ -1,10 +1,10 @@
 //! The shallow-water scheme's passes (`water_sim.wgsl`) and the buffers
-//! they run over: slots of squares side by side, each a square's ground,
-//! cells, faces, fluxes, sources, foam, waves and seconds, and sums. The
-//! square simulated around the camera (`water_sim.rs`) is one slot with a
-//! ring past its edges; tiles settling for their records
-//! (`water_settle.rs`) fill as many as fit. One scheme runs both: what
-//! sets them apart is each slot's flags ([`SimSlot`]).
+//! they run over: slots of rectangles side by side, each a rectangle's
+//! ground, cells, faces, fluxes, sources, foam, waves, seconds and blocks,
+//! and sums. The square simulated around the camera (`water_sim.rs`) is one
+//! slot with a ring past its edges; regions settling for their tiles'
+//! records (`water_settle.rs`) fill as many as fit. One scheme runs both:
+//! what sets them apart is each slot's flags ([`SimSlot`]).
 
 use crate::bindings::WATER_SIM;
 use crate::gpu_layouts::constants::{SIM_SLOTS, WATER_SIM_GROUP, WATER_SIM_SOURCE_GROUP};
@@ -30,6 +30,7 @@ pub(crate) struct Pipelines {
     pub(crate) restart: wgpu::ComputePipeline,
     churn: wgpu::ComputePipeline,
     churned: wgpu::ComputePipeline,
+    activity: wgpu::ComputePipeline,
     look: wgpu::ComputePipeline,
 }
 
@@ -54,9 +55,8 @@ impl Kernels {
                 &crate::pipeline_layouts::WATER_SIM_PIPELINES,
                 &[layout],
             );
-            let entry = |entry| {
-                crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry)
-            };
+            let entry =
+                |entry| crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry);
             Pipelines {
                 reconstruct: entry(water_sim::sim_reconstruct),
                 exchange: entry(water_sim::sim_exchange),
@@ -68,6 +68,7 @@ impl Kernels {
                 restart: entry(water_sim::sim_restart),
                 churn: entry(water_sim::sim_churn),
                 churned: entry(water_sim::sim_churned),
+                activity: entry(water_sim::sim_activity),
                 look: entry(water_sim::sim_look),
             }
         })
@@ -79,34 +80,52 @@ impl Kernels {
     }
 }
 
-/// Bytes a slot holding squares of `capacity` cells along a side takes in
-/// each buffer, and the ring of one with a ring.
-pub(crate) fn slot_bytes(capacity: u32) -> u64 {
-    let cells = u64::from(capacity) * u64::from(capacity);
-    let corners = (u64::from(capacity) + 1) * (u64::from(capacity) + 1);
-    let fluxes = 2 * (u64::from(capacity) + 1) * u64::from(capacity);
-    let groups = u64::from(capacity.div_ceil(WATER_SIM_GROUP));
+/// Workgroups, each a block of cells, along x and z of a rectangle of
+/// `cells` along each.
+pub(crate) fn groups_of(cells: [u32; 2]) -> [u32; 2] {
+    cells.map(|count| count.div_ceil(WATER_SIM_GROUP))
+}
+
+/// The entries a slot holding rectangles of up to `capacity` cells along x
+/// and z takes in each buffer: its cells, its corners, its faces between
+/// columns and between rows, its blocks, and its ring where it has one.
+fn slot_entries(capacity: [u32; 2]) -> [u64; 5] {
+    let [x, z] = capacity.map(u64::from);
+    let [blocks_x, blocks_z] = groups_of(capacity).map(u64::from);
+    [
+        x * z,
+        (x + 1) * (z + 1),
+        (x + 1) * z + x * (z + 1),
+        blocks_x * blocks_z,
+        4 * (x + z),
+    ]
+}
+
+/// Bytes a slot holding rectangles of up to `capacity` cells along x and z
+/// takes in every buffer.
+pub(crate) fn slot_bytes(capacity: [u32; 2]) -> u64 {
+    let [cells, corners, fluxes, blocks, _] = slot_entries(capacity);
     corners * 4
         + 2 * cells * 16
         + 4 * cells * 16
         + fluxes * 16
         + cells * 16
         + 2 * cells * 4
-        + cells * 8
-        + (2 * cells + groups * groups) * 16
+        + (cells + 2 * blocks) * 8
+        + (2 * cells + blocks) * 16
 }
 
 /// The largest of a slot's entries in one buffer, its faces', in bytes.
-pub(crate) fn slot_faces_bytes(capacity: u32) -> u64 {
-    4 * u64::from(capacity) * u64::from(capacity) * 16
+pub(crate) fn slot_faces_bytes(capacity: [u32; 2]) -> u64 {
+    4 * slot_entries(capacity)[0] * 16
 }
 
-/// The scheme's buffers: `slots` slots of squares up to `capacity` cells
-/// along a side, with a ring past each one's edges where it has one; the
-/// uniforms of the slots' squares and of each stage's frame; and the groups
-/// binding them for each stage.
+/// The scheme's buffers: `slots` slots of rectangles up to `capacity`
+/// cells along x and z, with a ring past each one's edges where it has
+/// one; the uniforms of the slots' rectangles and of each stage's frame;
+/// and the groups binding them for each stage.
 pub(crate) struct SlotBuffers {
-    pub(crate) capacity: u32,
+    pub(crate) capacity: [u32; 2],
     pub(crate) slots: u32,
     pub(crate) ground: wgpu::Buffer,
     pub(crate) cells: wgpu::Buffer,
@@ -125,35 +144,30 @@ impl SlotBuffers {
     pub(crate) fn new(
         device: &wgpu::Device,
         layout: &crate::pipelines::GroupLayout,
-        (capacity, slots): (u32, u32),
+        (capacity, slots): ([u32; 2], u32),
         ring: bool,
     ) -> Self {
-        let held = u64::from(capacity) * u64::from(capacity);
+        let [held, corners, faces_between, blocks, ring_entries] = slot_entries(capacity);
         let all = u64::from(slots);
-        let groups = u64::from(capacity.div_ceil(WATER_SIM_GROUP));
         let storage = |label: &str, bytes: u64, extra: wgpu::BufferUsages| {
             crate::buffers::storage(device, label, bytes, extra)
         };
         let none = wgpu::BufferUsages::empty();
-        let ground = storage(
-            "engine/water-sim-ground",
-            all * (u64::from(capacity) + 1) * (u64::from(capacity) + 1) * 4,
-            none,
-        );
+        let ground = storage("engine/water-sim-ground", all * corners * 4, none);
         let cells = storage("engine/water-sim-cells", all * 2 * held * 16, none);
         let faces = storage("engine/water-sim-faces", all * 4 * held * 16, none);
-        let fluxes = storage(
-            "engine/water-sim-fluxes",
-            all * 2 * (u64::from(capacity) + 1) * u64::from(capacity) * 16,
-            none,
-        );
-        let rings = if ring { all * 8 * u64::from(capacity) } else { 0 };
+        let fluxes = storage("engine/water-sim-fluxes", all * faces_between * 16, none);
+        let rings = if ring { all * ring_entries } else { 0 };
         let inputs = storage("engine/water-sim-inputs", (all * held + rings) * 16, none);
         let foam = storage("engine/water-sim-foam", all * 2 * held * 4, none);
-        let steps = storage("engine/water-sim-steps", all * held * 8, none);
+        let steps = storage(
+            "engine/water-sim-steps",
+            all * (held + 2 * blocks) * 8,
+            none,
+        );
         let averages = storage(
             "engine/water-sim-averages",
-            all * (2 * held + groups * groups) * 16,
+            all * (2 * held + blocks) * 16,
             wgpu::BufferUsages::COPY_SRC,
         );
         let squares = crate::buffers::uniform(
@@ -162,8 +176,16 @@ impl SlotBuffers {
             size_of::<SimSlots>() as u64,
         );
         let frames = [
-            crate::buffers::uniform(device, "engine/water-sim-first", size_of::<SimFrame>() as u64),
-            crate::buffers::uniform(device, "engine/water-sim-second", size_of::<SimFrame>() as u64),
+            crate::buffers::uniform(
+                device,
+                "engine/water-sim-first",
+                size_of::<SimFrame>() as u64,
+            ),
+            crate::buffers::uniform(
+                device,
+                "engine/water-sim-second",
+                size_of::<SimFrame>() as u64,
+            ),
         ];
         let groups = [0, 1].map(|stage| {
             crate::pipelines::group(
@@ -202,12 +224,12 @@ impl SlotBuffers {
         }
     }
 
-    /// Writes each stage's frame: the stage, the slots' capacity and count,
+    /// Writes each stage's frame: the stage, the slots' count and capacity,
     /// and the cells the square around the camera moved by.
     pub(crate) fn write_frames(&self, queue: &wgpu::Queue, shift: [i32; 2]) {
         for (stage, buffer) in self.frames.iter().enumerate() {
             let frame = SimFrame {
-                stage: [stage as u32, self.capacity, self.slots, 0],
+                stage: [stage as u32, self.slots, self.capacity[0], self.capacity[1]],
                 shift: [shift[0], shift[1], 0, 0],
             };
             queue.write_buffer(buffer, 0, bytemuck::bytes_of(&frame));
@@ -230,13 +252,13 @@ impl SlotBuffers {
 
     /// Where slot `slot`'s entries start in each buffer, as the shader
     /// finds them: its cells' (and foam's) states, its corners, its sources,
-    /// its ring, and its sums.
+    /// its ring, its waves, seconds and blocks, and its sums.
     pub(crate) fn cells_at(&self, slot: u32) -> u64 {
         u64::from(slot) * 2 * self.held()
     }
 
     pub(crate) fn ground_at(&self, slot: u32) -> u64 {
-        u64::from(slot) * (u64::from(self.capacity) + 1) * (u64::from(self.capacity) + 1)
+        u64::from(slot) * slot_entries(self.capacity)[1]
     }
 
     pub(crate) fn sources_at(&self, slot: u32) -> u64 {
@@ -244,21 +266,31 @@ impl SlotBuffers {
     }
 
     pub(crate) fn ring_at(&self, slot: u32) -> u64 {
-        u64::from(self.slots) * self.held() + u64::from(slot) * 8 * u64::from(self.capacity)
+        let ring = slot_entries(self.capacity)[4];
+        u64::from(self.slots) * self.held() + u64::from(slot) * ring
+    }
+
+    pub(crate) fn steps_at(&self, slot: u32) -> u64 {
+        u64::from(slot) * (self.held() + 2 * self.blocks())
     }
 
     pub(crate) fn averages_at(&self, slot: u32) -> u64 {
-        let groups = u64::from(self.capacity.div_ceil(WATER_SIM_GROUP));
-        u64::from(slot) * (2 * self.held() + groups * groups)
+        u64::from(slot) * (2 * self.held() + self.blocks())
     }
 
-    /// Workgroups along a side of the largest square.
-    pub(crate) fn groups_along(&self) -> u32 {
-        self.capacity.div_ceil(WATER_SIM_GROUP)
+    /// Workgroups, each a block of cells, along x and z of the largest
+    /// rectangle.
+    pub(crate) fn groups(&self) -> [u32; 2] {
+        groups_of(self.capacity)
     }
 
-    fn held(&self) -> u64 {
-        u64::from(self.capacity) * u64::from(self.capacity)
+    /// Cells a slot holds at most, and blocks.
+    pub(crate) fn held(&self) -> u64 {
+        slot_entries(self.capacity)[0]
+    }
+
+    pub(crate) fn blocks(&self) -> u64 {
+        slot_entries(self.capacity)[3]
     }
 
     /// Bytes of its buffers.
@@ -280,54 +312,65 @@ impl SlotBuffers {
 }
 
 /// Encodes `steps` steps of every slot of `buffers` into `pass`, with
-/// `pipelines`, whose rivers bring water to up to `sourced` cells a slot:
-/// each step's two stages (each slot stepping locally finding its cells'
-/// seconds from the first's waves), what rivers bring, and the foam.
+/// `pipelines`, over the `extent` cells along x and z the largest
+/// rectangle stepping holds, whose rivers bring water to up to `sourced`
+/// cells a slot: each step's blocks that step (where `sparse` slots run),
+/// its two stages (each slot stepping locally finding its cells' seconds
+/// from the first's waves), what rivers bring, and the foam.
 pub(crate) fn encode_steps(
     pass: &mut wgpu::ComputePass<'_>,
     pipelines: &Pipelines,
     buffers: &SlotBuffers,
-    (steps, sourced, local): (u32, u32, bool),
+    (steps, sourced, local, sparse): (u32, u32, bool, bool),
+    extent: [u32; 2],
 ) {
-    let cells = buffers.capacity.div_ceil(WATER_SIM_GROUP);
-    let between = (buffers.capacity + 1).div_ceil(WATER_SIM_GROUP);
+    let [cells_x, cells_z] = groups_of(extent);
+    let [between_x, between_z] = groups_of(extent.map(|count| count + 1));
+    let [blocks_x, blocks_z] = groups_of(groups_of(extent));
     let slots = buffers.slots;
     for _ in 0..steps {
+        if sparse {
+            pass.set_bind_group(0, &buffers.groups[0], &[]);
+            pass.set_pipeline(&pipelines.activity);
+            pass.dispatch_workgroups(blocks_x, blocks_z, slots);
+        }
         for (stage, group) in buffers.groups.iter().enumerate() {
             pass.set_bind_group(0, group, &[]);
             pass.set_pipeline(&pipelines.reconstruct);
-            pass.dispatch_workgroups(cells, cells, slots);
+            pass.dispatch_workgroups(cells_x, cells_z, slots);
             pass.set_pipeline(&pipelines.exchange);
-            pass.dispatch_workgroups(between, between, slots);
+            pass.dispatch_workgroups(between_x, between_z, slots);
             if stage == 0 && local {
                 pass.set_pipeline(&pipelines.waves);
-                pass.dispatch_workgroups(cells, cells, slots);
+                pass.dispatch_workgroups(cells_x, cells_z, slots);
                 pass.set_pipeline(&pipelines.seconds);
-                pass.dispatch_workgroups(cells, cells, slots);
+                pass.dispatch_workgroups(cells_x, cells_z, slots);
             }
             pass.set_pipeline(&pipelines.update);
-            pass.dispatch_workgroups(cells, cells, slots);
+            pass.dispatch_workgroups(cells_x, cells_z, slots);
         }
         if sourced > 0 {
             pass.set_pipeline(&pipelines.source);
             pass.dispatch_workgroups(sourced.div_ceil(WATER_SIM_SOURCE_GROUP), 1, slots);
         }
         pass.set_pipeline(&pipelines.churn);
-        pass.dispatch_workgroups(cells, cells, slots);
+        pass.dispatch_workgroups(cells_x, cells_z, slots);
         pass.set_pipeline(&pipelines.churned);
-        pass.dispatch_workgroups(cells, cells, slots);
+        pass.dispatch_workgroups(cells_x, cells_z, slots);
     }
 }
 
-/// Encodes a look at the slots of `buffers` whose squares look this
-/// dispatch into `pass`, with `pipelines`.
+/// Encodes a look at the slots of `buffers` whose rectangles look this
+/// dispatch into `pass`, with `pipelines`, over the `extent` cells along x
+/// and z the largest of them holds.
 pub(crate) fn encode_look(
     pass: &mut wgpu::ComputePass<'_>,
     pipelines: &Pipelines,
     buffers: &SlotBuffers,
+    extent: [u32; 2],
 ) {
-    let groups = buffers.groups_along();
+    let [groups_x, groups_z] = groups_of(extent);
     pass.set_bind_group(0, &buffers.groups[0], &[]);
     pass.set_pipeline(&pipelines.look);
-    pass.dispatch_workgroups(groups, groups, buffers.slots);
+    pass.dispatch_workgroups(groups_x, groups_z, buffers.slots);
 }

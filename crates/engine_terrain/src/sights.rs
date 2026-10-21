@@ -91,6 +91,12 @@ impl RiverCourse<'_> {
     pub fn falls_at(&self, point: usize) -> bool {
         self.river.falls_at(point) || !self.river.surface[point].is_finite()
     }
+
+    /// Whether its water starts where it starts, at a head or a lake's
+    /// outlet, rather than at a confluence, whose rivers bring it.
+    pub fn head(&self) -> bool {
+        self.river.head
+    }
 }
 
 impl Rivers {

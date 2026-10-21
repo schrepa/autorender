@@ -113,7 +113,7 @@ impl WaterSim {
         current.buffers.write_squares(
             queue,
             &[SimSlot {
-                shape: [window.cells, SIM_STEPPING, current.sourced, 0],
+                shape: [window.cells, window.cells, SIM_STEPPING, current.sourced],
                 step: [window.cell, step, ROUGHNESS, 0.0],
             }],
         );
@@ -128,7 +128,12 @@ impl WaterSim {
         window: &Arc<WaterWindow>,
     ) -> SimWindow {
         let n = window.cells as usize;
-        let buffers = SlotBuffers::new(device, &self.kernels.layout, (window.cells, 1), true);
+        let buffers = SlotBuffers::new(
+            device,
+            &self.kernels.layout,
+            ([window.cells, window.cells], 1),
+            true,
+        );
         let start = start(window);
         let both = [start.as_slice(), start.as_slice()].concat();
         queue.write_buffer(&buffers.ground, 0, bytemuck::cast_slice(&window.corners));
@@ -177,8 +182,16 @@ impl WaterSim {
         let start = start(window);
         let buffers = &current.buffers;
         queue.write_buffer(&buffers.ground, 0, bytemuck::cast_slice(&window.corners));
-        queue.write_buffer(&buffers.cells, (n * n * 16) as u64, bytemuck::cast_slice(&start));
-        queue.write_buffer(&buffers.foam, (n * n * 4) as u64, bytemuck::cast_slice(&window.foam));
+        queue.write_buffer(
+            &buffers.cells,
+            (n * n * 16) as u64,
+            bytemuck::cast_slice(&start),
+        );
+        queue.write_buffer(
+            &buffers.foam,
+            (n * n * 4) as u64,
+            bytemuck::cast_slice(&window.foam),
+        );
         if carried.is_none() {
             queue.write_buffer(&buffers.cells, 0, bytemuck::cast_slice(&start));
             queue.write_buffer(&buffers.foam, 0, bytemuck::cast_slice(&window.foam));
@@ -217,7 +230,8 @@ impl WaterSim {
             &mut pass,
             pipelines,
             &window.buffers,
-            (self.steps, window.sourced, false),
+            (self.steps, window.sourced, false, false),
+            [window.source.cells; 2],
         );
     }
 
@@ -237,9 +251,9 @@ impl WaterSim {
 
     /// Bytes of the window's buffers.
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.window.as_ref().map_or(0, |window| {
-            window.buffers.bytes() + window.indices.size()
-        })
+        self.window
+            .as_ref()
+            .map_or(0, |window| window.buffers.bytes() + window.indices.size())
     }
 }
 
@@ -247,7 +261,7 @@ impl WaterSim {
 /// the cells its rivers bring water to.
 fn write_inputs(queue: &wgpu::Queue, buffers: &SlotBuffers, window: &WaterWindow) -> u32 {
     let sources = sourcing(window);
-    let held = (buffers.capacity as usize) * (buffers.capacity as usize);
+    let held = buffers.held() as usize;
     let sources = &sources[..sources.len().min(held)];
     if !sources.is_empty() {
         queue.write_buffer(&buffers.inputs, 0, bytemuck::cast_slice(sources));

@@ -1,21 +1,28 @@
-//! Water as it settles: each level-0 tile's rivers run to their steady
-//! state by the shallow-water equations ([`crate::shallow_water`]), which
-//! the renderer runs on the GPU, around the camera and to settle tiles,
-//! over a square of ground reaching [`MARGIN`] meters past the tile, from
-//! the water the hydrology bake stands there. Lakes hold their level;
-//! rivers bring their water where they start (at heads and lakes'
+//! Water as it settles: rivers run to their steady state by the
+//! shallow-water equations ([`crate::shallow_water`]), which the renderer
+//! runs on the GPU, around the camera and to settle tiles' water for their
+//! records, over regions of ground, from the water the hydrology bake
+//! stands there. While a session cooks, a terrain's water settles whole, as
+//! one region, where its cells number [`REGION_CELLS`] or fewer, else over
+//! the fewest regions that do ([`settle_regions`]), each reaching
+//! [`MARGIN`] meters past its tiles; a tile whose record no host holds, or
+//! one under new edits, settles over a region of its own, reaching
+//! [`MARGIN`] meters past it ([`SettleRegion::alone`]). Lakes hold their
+//! level; rivers bring their water where they start (at heads and lakes'
 //! outlets), along their course as the ground they drain grows, and where
-//! they cross into the square, so what each carries is what its bake says
-//! it does; water leaves over the square's edges and none comes in over
-//! them. A [`WaterStart`] job generates the square's ground and prepares
-//! what settling starts from ([`SettleStart`]): the square at its cells'
-//! size and at coarser ones, down to [`COARSEST`] meters across, each
-//! level settling from the one before it ([`SettleStart::prolong`]), so
-//! the water spreads and fills at the coarse levels' cost and the finest
-//! settles the detail; a tile whose earlier record its host holds settles
-//! at its cells' size from that water. Settled, the finest level's water,
-//! averaged over its last steps, becomes what the tile keeps of it
-//! ([`SettleStart::finish`]), a [`SteadyWater`], a record hosts keep and
+//! they cross into the region, so what each carries is what its bake says
+//! it does; water leaves over the region's edges and none comes in over
+//! them. Each level-0 tile a region reaches gives its part
+//! ([`WaterPart`]), which a job generating its ground makes: the ground and
+//! the bake's water on the terrain's lattice of cells within it. The parts
+//! make what settling starts from ([`SettleStart::assemble`]): the region's
+//! cells, its water starting as the bake stands and runs it, already in
+//! its channels, or as the records its host holds of its tiles under other
+//! edits do. (Coarser cells than the bake's channels flood: their ground
+//! holds the channels' bends and narrows as pits and dams.) Settled, its
+//! water, averaged over its last steps, becomes what each tile the region
+//! keeps keeps of it ([`SettleStart::finish`]), a [`SteadyWater`], a record
+//! hosts keep and
 //! the cook ships: level-0 tiles' water stands, runs and foams as it says
 //! ([`Tile::steadied`]), coarser tiles' runs and foams as its summary does
 //! ([`Tile::flowing`]), and the window simulated around the camera starts
@@ -31,37 +38,33 @@ use engine_math::{max, min};
 use crate::codec::{self, Reader, Writer, record};
 use crate::shallow_water::{self, DRY, velocity};
 use crate::tile_water::{WATER_WIDTH_RANGE, pack, unpack};
-use crate::{Generator, Layers, Pyramid, TILE_STRIDE, Tile, TileKey};
+use crate::{Generator, Layers, Pyramid, Stamp, TILE_STRIDE, Tile, TileKey};
 
-/// Meters past its tile the square a tile's water settles over reaches on
-/// each side, so what the square's edges do to the water stays outside the
-/// tile.
+/// Meters past its tiles a region's square reaches on each side, within
+/// the terrain, so what its edges do to the water stays outside them.
 pub const MARGIN: f32 = 64.0;
-/// Cells inside the square's edge within which rivers count as crossing
+/// The most cells a region's square holds: the GPU binds each cell's
+/// faces, 64 bytes, in one buffer, a gibibyte at most.
+pub const REGION_CELLS: u64 = 1 << 24;
+/// Cells inside the region's edge within which rivers count as crossing
 /// into it (closer, their water leaves again at once).
 const ENTRY: f32 = 2.0;
 /// The least water a source brings (cubic meters a second): what a river
 /// gains along its course gathers until it brings this much.
 const SOURCE_LEAST: f32 = 0.01;
-/// Meters across the coarsest cells a square settles at first, and the
-/// fewest cells along a side a level holds: coarser levels halve the cells'
-/// size until either would be passed.
-pub const COARSEST: f32 = 8.0;
-const FEWEST: u32 = 16;
 
 /// What settling a tile's water came to: the cubic meters a second its
-/// square's rivers bring; the cubic meters its square holds, averaged over
-/// its last steps; its cells holding flowing water; the steps its levels
-/// ran, all told, and its levels; and whether its water settled before its
-/// steps ran out (water running unsteadily, down rough steep rock, settles
-/// once its averages stop changing).
+/// rivers bring within it; the cubic meters it holds, averaged over its
+/// region's last steps; its cells holding flowing water; the steps its
+/// region ran; and whether its region's water settled before its steps ran
+/// out (water running unsteadily, down rough steep rock, settles once its
+/// averages stop changing).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SteadyStats {
     pub sources: f32,
     pub volume: f32,
     pub flowing: u32,
     pub steps: u32,
-    pub levels: u32,
     pub settled: bool,
 }
 
@@ -70,12 +73,11 @@ record!(SteadyStats {
     volume,
     flowing,
     steps,
-    levels,
     settled,
 });
 
-/// Where a tile's rivers bring water to one of its cells (its index within
-/// the tile, row by row): the cubic meters a second, and the way the water
+/// Where rivers bring water to a cell (its index within the tile or the
+/// region, row by row): the cubic meters a second, and the way the water
 /// runs as it comes, as a share of [`shallow_water::SOURCE_SPEED`] along x
 /// and z.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -211,6 +213,40 @@ impl codec::Codec for SteadyWater {
     }
 }
 
+/// What level-0 tile `key`'s settled water's record is kept by, with the
+/// code settling it: the stack its ground generates from (with its bakes,
+/// shared as `stack`), `pyramid`, the tile, `stamps` (the terrain's edits
+/// reaching the square it settles over alone, [`SettleRegion::alone`], in
+/// order), the meters across its cells, and the rectangle of level-0 tiles
+/// whose region its water settled over (first column and row, columns and
+/// rows): a cook's region, or the tile alone. Edits farther upstream leave
+/// its key as it was.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SettledKey {
+    pub stack: String,
+    pub pyramid: Pyramid,
+    pub key: TileKey,
+    pub stamps: Vec<Stamp>,
+    pub cell: f32,
+    pub tiles: [u32; 4],
+}
+
+record!(SettledKey {
+    stack,
+    pyramid,
+    key,
+    stamps,
+    cell,
+    tiles,
+});
+
+impl SettledKey {
+    /// What the record is kept by, with the settling code's.
+    pub fn identity(&self) -> Vec<u8> {
+        codec::encode(self)
+    }
+}
+
 /// The cells of the terrain's lattice of cells `cell` meters across whose
 /// middles lie in `[low, high)` along an axis (terrain-local meters): the
 /// first and how many.
@@ -220,182 +256,325 @@ fn lattice(low: f32, high: f32, cell: f32) -> (i64, u32) {
     (first, (end - first).max(0) as u32)
 }
 
-/// The square tile `key`'s water settles over, of the lattice of cells
-/// `cell` meters across: its first cell along x and z and its cells along a
-/// side, the tile's cells and [`MARGIN`] around them, within the terrain.
-fn square(pyramid: &Pyramid, key: TileKey, cell: f32) -> ([i64; 2], usize) {
-    let origin = pyramid.tile_origin(key);
+/// `count` tiles along an axis split into `parts` ranges as even as can
+/// be: each one's first tile and tiles.
+fn split(count: u32, parts: u32) -> impl Iterator<Item = (u32, u32)> {
+    let at = move |part: u32| (u64::from(count) * u64::from(part) / u64::from(parts)) as u32;
+    (0..parts).map(move |part| (at(part), at(part + 1) - at(part)))
+}
+
+/// The cells along axis `axis` (0 along x, 1 along z) of `pyramid`'s
+/// lattice of cells `cell` meters across of the square over level-0 tiles
+/// `tiles` (the first and how many), reaching [`MARGIN`] meters past them
+/// within the terrain: its first cell and its cells.
+fn reach(pyramid: &Pyramid, axis: usize, (first, tiles): (u32, u32), cell: f32) -> (i64, u32) {
     let size = pyramid.tile_size(0);
-    let extent = pyramid.extent();
-    let (x, count) = lattice(origin.x, origin.x + size, cell);
-    let (z, _) = lattice(origin.y, origin.y + size, cell);
-    let (_, along_x) = lattice(0.0, extent.x, cell);
-    let (_, along_z) = lattice(0.0, extent.y, cell);
-    let margin = (MARGIN / cell).ceil() as i64;
-    let side = (i64::from(count) + 2 * margin)
-        .min(i64::from(along_x))
-        .min(i64::from(along_z));
-    let place = |first: i64, along: u32| (first - margin).clamp(0, i64::from(along) - side);
-    ([place(x, along_x), place(z, along_z)], side as usize)
+    let extent = pyramid.extent()[axis];
+    let low = max(first as f32 * size - MARGIN, 0.0);
+    let high = min((first + tiles) as f32 * size + MARGIN, extent);
+    lattice(low, high, cell)
 }
 
-/// The terrain-local rectangle the square tile `key`'s water settles over
-/// in cells `cell` meters across covers, its corners included: what edits
-/// reaching its ground reach.
-pub fn steady_water_bounds(pyramid: &Pyramid, key: TileKey, cell: f32) -> (Vec2, Vec2) {
-    let (first, side) = square(pyramid, key, cell);
-    let low = Vec2::new(first[0] as f32, first[1] as f32) * cell;
-    (low, low + Vec2::splat(side as f32 * cell))
-}
-
-/// The level-0 tiles of `pyramid` the square from cell `first` `side`
-/// cells `cell` meters across reaches, its corners included.
-fn tiles_reached(pyramid: &Pyramid, first: [i64; 2], side: usize, cell: f32) -> Vec<TileKey> {
-    let low = Vec2::new(first[0] as f32, first[1] as f32) * cell;
-    let high = low + Vec2::splat(side as f32 * cell);
-    let size = pyramid.tile_size(0);
-    let [columns, rows] = pyramid.tiles(0);
-    let range = |low: f32, high: f32, count: u32| {
-        let first = max((low / size).floor(), 0.0) as u32;
-        let last = min((high / size).floor(), count as f32 - 1.0) as u32;
-        first..=last
-    };
-    let mut keys = Vec::new();
-    for z in range(low.y, high.y, rows) {
-        for x in range(low.x, high.x, columns) {
-            keys.push(TileKey::new(0, x as u16, z as u16));
-        }
-    }
-    keys
-}
-
-/// Level-0 tiles generated from a stack, by key.
-struct Ground {
-    pyramid: Pyramid,
-    tiles: Vec<(TileKey, Tile)>,
-}
-
-impl Ground {
-    /// The tile holding terrain-local `point`.
-    fn tile(&self, point: Vec2) -> Option<(&Tile, Vec2)> {
-        let key = self.pyramid.tile_at(0, point)?;
-        let (_, tile) = self.tiles.iter().find(|(held, _)| *held == key)?;
-        Some((tile, point - self.pyramid.tile_origin(key)))
-    }
-
-    fn height(&self, point: Vec2) -> f32 {
-        self.tile(point)
-            .and_then(|(tile, local)| tile.sample(local))
-            .map_or(0.0, |sample| sample.height)
-    }
-}
-
-/// The water a square starts settling from: its ground at its cells'
-/// corners, each cell's water as the bake stands and runs it (its surface,
-/// or its ground where dry, and its flow along x and z) and the level a
-/// lake holds it at (NaN where none does), and where its rivers bring
-/// water.
-struct Start {
-    corners: Vec<f32>,
-    water: Vec<[f32; 3]>,
-    held: Vec<f32>,
-    sources: Vec<SteadySource>,
-}
-
-/// The water of the square from cell `first`, `side` cells `cell` meters
-/// across, over `ground`, as `layers`' bake stands it there.
-fn start(layers: &Layers, ground: &Ground, (first, side): ([i64; 2], usize), cell: f32) -> Start {
-    let n = side;
-    let origin = Vec2::new(first[0] as f32, first[1] as f32) * cell;
-    let mut corners = Vec::with_capacity((n + 1) * (n + 1));
-    for j in 0..=n {
-        for i in 0..=n {
-            corners.push(ground.height(origin + Vec2::new(i as f32, j as f32) * cell));
-        }
-    }
-    let bed = |at: usize| {
-        let (i, j) = (at % n, at / n);
-        0.25 * (corners[j * (n + 1) + i]
-            + corners[j * (n + 1) + i + 1]
-            + corners[(j + 1) * (n + 1) + i]
-            + corners[(j + 1) * (n + 1) + i + 1])
-    };
-    let mut water = Vec::with_capacity(n * n);
-    let mut held = Vec::with_capacity(n * n);
-    for at in 0..n * n {
-        let (i, j) = (at % n, at / n);
-        let floor = bed(at);
-        let middle = origin + (Vec2::new(i as f32, j as f32) + 0.5) * cell;
-        let found = ground
-            .tile(middle)
-            .and_then(|(tile, local)| {
-                let sample = tile.sample(local)?;
-                (!sample.hole).then(|| tile.water_at(local)).flatten()
+/// The rectangles of `pyramid`'s level-0 tiles (first column and row,
+/// columns and rows) whose water settles together in cells `cell` meters
+/// across while a session cooks, row by row: the terrain whole where its
+/// cells number [`REGION_CELLS`] or fewer, else the fewest rectangles
+/// splitting it evenly whose squares do (reaching [`MARGIN`] past them),
+/// the most alike along x and z of those.
+pub fn settle_regions(pyramid: &Pyramid, cell: f32) -> Vec<[u32; 4]> {
+    let tiles = pyramid.tiles(0);
+    // The most cells along an axis a region holds, the axis split into one
+    // part, two and so on.
+    let widest = |axis: usize| -> Vec<u64> {
+        (1..=tiles[axis])
+            .map(|parts| {
+                split(tiles[axis], parts)
+                    .map(|range| u64::from(reach(pyramid, axis, range, cell).1))
+                    .max()
+                    .unwrap_or(0)
             })
-            .filter(|point| point.surface > floor);
-        let (cell_water, lake) = match found {
-            Some(point) if point.lake => ([point.surface, 0.0, 0.0], point.surface),
-            Some(point) => {
-                let depth = point.surface - floor;
-                (
-                    [point.surface, depth * point.flow.x, depth * point.flow.y],
-                    f32::NAN,
-                )
+            .collect()
+    };
+    let (columns, rows) = (widest(0), widest(1));
+    let mut best = (tiles[0], tiles[1]);
+    let mut fewest = (u64::MAX, u32::MAX);
+    for (x, width) in (1_u32..).zip(&columns) {
+        for (z, depth) in (1_u32..).zip(&rows) {
+            let rank = (u64::from(x) * u64::from(z), x.abs_diff(z));
+            if width * depth <= REGION_CELLS && rank < fewest {
+                (fewest, best) = (rank, (x, z));
             }
-            None => ([floor, 0.0, 0.0], f32::NAN),
-        };
-        water.push(cell_water);
-        held.push(lake);
+        }
     }
-    let wet: Vec<bool> = (0..n * n)
-        .map(|at| held[at].is_nan() && water[at][0] > bed(at))
-        .collect();
-    let sources = sources(layers, (origin, n, cell), (&held, &wet));
-    Start {
-        corners,
-        water,
-        held,
-        sources,
+    let (along_x, along_z) = best;
+    let mut regions = Vec::new();
+    for (z, rows) in split(tiles[1], along_z) {
+        for (x, columns) in split(tiles[0], along_x) {
+            regions.push([x, z, columns, rows]);
+        }
+    }
+    regions
+}
+
+/// A region whose water settles together: the meters across its cells; the
+/// first cell along x and z of its square on the terrain's lattice of cells
+/// that size, and its cells along each; and the level-0 tiles within it
+/// whose water it keeps, each a record, in key order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SettleRegion {
+    pub cell: f32,
+    pub first: [i64; 2],
+    pub cells: [u32; 2],
+    pub kept: Vec<TileKey>,
+}
+
+impl SettleRegion {
+    /// The region over `pyramid`'s level-0 tiles `tiles` (first column and
+    /// row, columns and rows) in cells `cell` meters across, its square
+    /// reaching [`MARGIN`] meters past them within the terrain, keeping the
+    /// water of `kept`, tiles among them.
+    pub fn over(pyramid: &Pyramid, tiles: [u32; 4], mut kept: Vec<TileKey>, cell: f32) -> Self {
+        let [x, z, columns, rows] = tiles;
+        let (first_x, along_x) = reach(pyramid, 0, (x, columns), cell);
+        let (first_z, along_z) = reach(pyramid, 1, (z, rows), cell);
+        kept.sort_unstable();
+        kept.dedup();
+        Self {
+            cell,
+            first: [first_x, first_z],
+            cells: [along_x, along_z],
+            kept,
+        }
+    }
+
+    /// The region level-0 tile `key` of `pyramid` settles over alone in
+    /// cells `cell` meters across, keeping its water.
+    pub fn alone(pyramid: &Pyramid, key: TileKey, cell: f32) -> Self {
+        let tiles = [u32::from(key.x), u32::from(key.z), 1, 1];
+        Self::over(pyramid, tiles, vec![key], cell)
+    }
+
+    /// The terrain-local rectangle its square covers, its corners included.
+    pub fn bounds(&self) -> (Vec2, Vec2) {
+        let low = Vec2::new(self.first[0] as f32, self.first[1] as f32) * self.cell;
+        let cells = Vec2::new(self.cells[0] as f32, self.cells[1] as f32);
+        (low, low + cells * self.cell)
+    }
+
+    /// The level-0 tiles of `pyramid` holding its square's corners, whose
+    /// parts it settles from ([`WaterPart`]), in key order.
+    pub fn reached(&self, pyramid: &Pyramid) -> Vec<TileKey> {
+        let (low, high) = self.bounds();
+        let size = pyramid.tile_size(0);
+        let [columns, rows] = pyramid.tiles(0);
+        let range = |low: f32, high: f32, count: u32| {
+            let tile = |at: f32| (max((at / size).floor(), 0.0) as u32).min(count - 1);
+            tile(low)..=tile(high)
+        };
+        let mut keys = Vec::new();
+        for z in range(low.y, high.y, rows) {
+            for x in range(low.x, high.x, columns) {
+                keys.push(TileKey::new(0, x as u16, z as u16));
+            }
+        }
+        keys.sort_unstable();
+        keys
     }
 }
 
-/// Where the baked rivers bring water to the square from `origin`
-/// (terrain-local) over `n` cells `cell` meters across: at each point of a
-/// river's course within it, what the river carries there less what it
-/// carried at the point before within it (all it carries where it starts
-/// at a head or a lake's outlet, or crosses into the square; nothing more
-/// where it starts at a confluence, whose rivers bring it), gathered along
-/// the course until [`SOURCE_LEAST`] or more; spread over the cells within
-/// half its width no lake holds (`held`) that its baked water covers
-/// (`wet`), and where it covers none there, further down the course: its
-/// water comes where its bake stands water. Each cell's water is summed,
-/// cells in order.
+/// A level-0 tile's part of the water settling over the regions reaching
+/// it ([`SettleStart::assemble`]), on the terrain's lattice of cells `cell`
+/// meters across: the ground at the lattice's corners within the tile (the
+/// terrain's far edges' with its last tiles), its first corner along x and
+/// z and its corners along each, row by row; and at each cell whose middle
+/// lies within it (its first along x and z and its cells along each, row
+/// by row) the bake's water there: its surface (NaN where it holds none),
+/// its velocity along x and z (meters a second), and 1 where a lake holds
+/// it, else 0.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WaterPart {
+    pub key: TileKey,
+    pub cell: f32,
+    pub corner: [i64; 2],
+    pub corners: [u32; 2],
+    pub ground: Vec<f32>,
+    pub first: [i64; 2],
+    pub cells: [u32; 2],
+    pub water: Vec<[f32; 4]>,
+}
+
+record!(WaterPart {
+    key,
+    cell,
+    corner,
+    corners,
+    ground,
+    first,
+    cells,
+    water,
+});
+
+impl WaterPart {
+    /// `tile`'s part, a level-0 tile of `pyramid`, on the lattice of cells
+    /// `cell` meters across.
+    fn of(pyramid: &Pyramid, tile: &Tile, cell: f32) -> Self {
+        let key = tile.key();
+        let origin = pyramid.tile_origin(key);
+        let size = pyramid.tile_size(0);
+        let extent = pyramid.extent();
+        let tiles = pyramid.tiles(0);
+        // The corners within the tile along an axis: from its first edge to
+        // its last, the terrain's last corners with its last tile.
+        let along = |axis: usize, at: u16| {
+            let first = (origin[axis] / cell).ceil() as i64;
+            let end = if u32::from(at) + 1 == tiles[axis] {
+                i64::from(lattice(0.0, extent[axis], cell).1) + 1
+            } else {
+                ((origin[axis] + size) / cell).ceil() as i64
+            };
+            (first, (end - first).max(0) as u32)
+        };
+        let (corner_x, corners_x) = along(0, key.x);
+        let (corner_z, corners_z) = along(1, key.z);
+        let mut ground = Vec::with_capacity(corners_x as usize * corners_z as usize);
+        for j in 0..i64::from(corners_z) {
+            for i in 0..i64::from(corners_x) {
+                let point = Vec2::new((corner_x + i) as f32, (corner_z + j) as f32) * cell;
+                let local = (point - origin).clamp(Vec2::ZERO, Vec2::splat(size));
+                ground.push(tile.sample(local).map_or(0.0, |sample| sample.height));
+            }
+        }
+        let (first_x, columns) = lattice(origin.x, origin.x + size, cell);
+        let (first_z, rows) = lattice(origin.y, origin.y + size, cell);
+        let mut water = Vec::with_capacity(columns as usize * rows as usize);
+        for j in 0..i64::from(rows) {
+            for i in 0..i64::from(columns) {
+                let middle = (Vec2::new((first_x + i) as f32, (first_z + j) as f32) + 0.5) * cell;
+                let local = middle - origin;
+                let found = tile
+                    .sample(local)
+                    .and_then(|sample| (!sample.hole).then(|| tile.water_at(local)).flatten());
+                water.push(found.map_or([f32::NAN, 0.0, 0.0, 0.0], |point| {
+                    let lake = if point.lake { 1.0 } else { 0.0 };
+                    [point.surface, point.flow.x, point.flow.y, lake]
+                }));
+            }
+        }
+        Self {
+            key,
+            cell,
+            corner: [corner_x, corner_z],
+            corners: [corners_x, corners_z],
+            ground,
+            first: [first_x, first_z],
+            cells: [columns, rows],
+            water,
+        }
+    }
+
+    /// Whether its arrays hold its corners and cells, on a lattice of cells
+    /// of some size.
+    pub(crate) fn valid(&self) -> bool {
+        let count = |along: [u32; 2]| along[0] as usize * along[1] as usize;
+        self.key.level == 0
+            && self.cell.is_finite()
+            && self.cell > 0.0
+            && self.ground.len() == count(self.corners)
+            && self.water.len() == count(self.cells)
+    }
+}
+
+/// Making level-0 tile `key`'s part of the water settling over the regions
+/// reaching it ([`WaterPart`]): generating its ground, in steps a job's
+/// budget sizes, then reading the ground and its bake's water off it.
+pub(crate) struct PartMaking {
+    pyramid: Pyramid,
+    cell: f32,
+    generator: Generator,
+}
+
+impl PartMaking {
+    /// Tile `key`'s part over `layers` (with their bakes) and `pyramid`, of
+    /// the lattice of cells `cell` meters across.
+    pub(crate) fn new(layers: Arc<Layers>, pyramid: Pyramid, key: TileKey, cell: f32) -> Self {
+        Self {
+            pyramid,
+            cell,
+            generator: Generator::new(layers, &pyramid, key),
+        }
+    }
+
+    /// Works for about `budget` units (a sample generated each): the part
+    /// once done; an error where its ground does not generate.
+    pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<WaterPart>, String> {
+        let Some(tile) = self.generator.advance(budget) else {
+            if self.generator.failed() {
+                return Err("the ground's heights are invalid".into());
+            }
+            return Ok(None);
+        };
+        Ok(Some(WaterPart::of(&self.pyramid, &tile, self.cell)))
+    }
+}
+
+/// Copies the rows of `from`, a grid of `size` along x and z whose first
+/// entry stands at `at` on a lattice, that lie within `into`, a grid of
+/// `columns` along x and `rows` along z whose first stands at `first`, into
+/// it.
+fn copy<T: Copy>(
+    into: &mut [T],
+    (first, columns, rows): ([i64; 2], usize, usize),
+    from: &[T],
+    (at, size): ([i64; 2], [u32; 2]),
+) {
+    let width = i64::from(size[0]);
+    let low = [at[0].max(first[0]), at[1].max(first[1])];
+    let high = [
+        (at[0] + width).min(first[0] + columns as i64),
+        (at[1] + i64::from(size[1])).min(first[1] + rows as i64),
+    ];
+    if low[0] >= high[0] {
+        return;
+    }
+    let count = (high[0] - low[0]) as usize;
+    for z in low[1]..high[1] {
+        let source = ((z - at[1]) * width + low[0] - at[0]) as usize;
+        let target = ((z - first[1]) * columns as i64 + low[0] - first[0]) as usize;
+        into[target..target + count].copy_from_slice(&from[source..source + count]);
+    }
+}
+
+/// Where the baked rivers bring water to the rectangle from `origin`
+/// (terrain-local) of `cells` along x and z `cell` meters across: at each
+/// point of a river's course within it, what the river carries there less
+/// what it carried at the point before within it (all it carries where it
+/// starts at a head or a lake's outlet, or crosses into the rectangle;
+/// nothing more where it starts at a confluence, whose rivers bring it),
+/// gathered along the course until [`SOURCE_LEAST`] or more; spread over
+/// the cells within half its width no lake holds (`held`) that its baked
+/// water covers (`wet`), and where it covers none there, further down the
+/// course: its water comes where its bake stands water. Each cell's water
+/// is summed, cells in order.
 fn sources(
     layers: &Layers,
-    (origin, n, cell): (Vec2, usize, f32),
+    (origin, cells, cell): (Vec2, [u32; 2], f32),
     (held, wet): (&[f32], &[bool]),
 ) -> Vec<SteadySource> {
     let Some(hydrology) = layers.hydrology() else {
         return Vec::new();
     };
-    let size = n as f32 * cell;
+    let size = Vec2::new(cells[0] as f32, cells[1] as f32) * cell;
     let margin = ENTRY * cell;
     let inside = |point: [f32; 2]| {
         let point = Vec2::from(point);
         point.x > origin.x + margin
             && point.y > origin.y + margin
-            && point.x < origin.x + size - margin
-            && point.y < origin.y + size - margin
+            && point.x < origin.x + size.x - margin
+            && point.y < origin.y + size.y - margin
     };
     let courses: Vec<_> = hydrology.rivers().courses().collect();
-    let key = |point: [f32; 2]| [point[0].to_bits(), point[1].to_bits()];
-    let mut ends: Vec<[u32; 2]> = courses
-        .iter()
-        .filter_map(|course| course.points().last().copied())
-        .map(key)
-        .collect();
-    ends.sort_unstable();
-    let last = n as i32 - 1;
+    let stride = cells[0] as i32;
+    let last = IVec2::new(cells[0] as i32 - 1, cells[1] as i32 - 1);
     // Each cell's water and the way it brings it, weighted by its water.
     let mut brought: Vec<(u32, f32, [f32; 2])> = Vec::new();
     for course in &courses {
@@ -407,10 +586,10 @@ fn sources(
                 continue;
             }
             let before = if k == 0 {
-                if ends.binary_search(&key(points[0])).is_ok() {
-                    course.discharge(0)
-                } else {
+                if course.head() {
                     0.0
+                } else {
+                    course.discharge(0)
                 }
             } else if inside(points[k - 1]) {
                 course.discharge(k - 1)
@@ -430,12 +609,12 @@ fn sources(
             let high = ((at - origin) / cell + reach / cell)
                 .ceil()
                 .as_ivec2()
-                .min(IVec2::splat(last));
+                .min(last);
             let mut covered = Vec::new();
             for j in low.y..=high.y {
                 for i in low.x..=high.x {
                     let middle = origin + (Vec2::new(i as f32, j as f32) + 0.5) * cell;
-                    let index = (j * n as i32 + i) as usize;
+                    let index = (j * stride + i) as usize;
                     if middle.distance(at) <= reach && held[index].is_nan() && wet[index] {
                         covered.push(index as u32);
                     }
@@ -496,386 +675,127 @@ fn merged(brought: Vec<(u32, f32, [f32; 2])>) -> Vec<SteadySource> {
     sources
 }
 
-/// A level of a square settling ([`SettleStart`]): the meters across its
-/// cells and its cells along a side; the ground at its cells' corners
-/// (`side + 1` a row, rows along z); each cell's water to start from (its
-/// surface, or its ground where dry, and its flow along x and z in square
-/// meters a second) and the level a lake holds it at (NaN where none
-/// does), row by row; and where its rivers bring water. Its heights stand
-/// above its square's datum.
+/// The cells of a region settling ([`SettleStart`]): the meters across
+/// them and how many along x and z; the ground at their corners (`cells +
+/// 1` a row, rows along z); each cell's water to start from (its surface,
+/// or its ground where dry, and its flow along x and z in square meters a
+/// second) and the level a lake holds it at (NaN where none does), row by
+/// row; and where its rivers bring water. Its heights stand above its
+/// region's datum.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SettleLevel {
     pub cell: f32,
-    pub side: u32,
+    pub cells: [u32; 2],
     pub corners: Vec<f32>,
     pub water: Vec<[f32; 3]>,
     pub held: Vec<f32>,
     pub sources: Vec<SteadySource>,
 }
 
-record!(SettleLevel {
-    cell,
-    side,
-    corners,
-    water,
-    held,
-    sources,
-});
-
 impl SettleLevel {
     /// Cell `at`'s ground: the mean of its corners'.
     pub fn bed(&self, at: usize) -> f32 {
-        let n = self.side as usize;
+        let n = self.cells[0] as usize;
         let (i, j) = (at % n, at / n);
         let corner = |x: usize, z: usize| self.corners[z * (n + 1) + x];
         0.25 * (corner(i, j) + corner(i + 1, j) + corner(i, j + 1) + corner(i + 1, j + 1))
     }
-
-    /// Whether its arrays hold its cells: its corners, its water and its
-    /// lakes' levels, and sources at cells within it.
-    fn valid(&self) -> bool {
-        let n = self.side as usize;
-        self.side > 0
-            && self.cell.is_finite()
-            && self.cell > 0.0
-            && self.corners.len() == (n + 1) * (n + 1)
-            && self.water.len() == n * n
-            && self.held.len() == n * n
-            && self.sources.iter().all(|source| (source.cell as usize) < n * n)
-    }
-
-    /// This level at cells twice the size: its ground at every other
-    /// corner; each cell held by a lake where most of the cells it covers
-    /// are (at their levels' mean), else holding their mean depth over its
-    /// own ground and their mean flow; its rivers' water brought to the
-    /// cells covering those they brought it to.
-    fn coarser(&self) -> Self {
-        let n = self.side as usize;
-        let side = n.div_ceil(2);
-        let mut corners = Vec::with_capacity((side + 1) * (side + 1));
-        for j in 0..=side {
-            for i in 0..=side {
-                corners.push(self.corners[(2 * j).min(n) * (n + 1) + (2 * i).min(n)]);
-            }
-        }
-        let mut level = Self {
-            cell: 2.0 * self.cell,
-            side: side as u32,
-            corners,
-            water: Vec::with_capacity(side * side),
-            held: Vec::with_capacity(side * side),
-            sources: Vec::new(),
-        };
-        for at in 0..side * side {
-            let (i, j) = (at % side, at / side);
-            let (mut cells, mut lakes) = (0_u32, 0_u32);
-            let (mut lake_level, mut depth) = (0.0_f32, 0.0_f32);
-            let mut flow = [0.0_f32; 2];
-            for (x, z) in [
-                (2 * i, 2 * j),
-                (2 * i + 1, 2 * j),
-                (2 * i, 2 * j + 1),
-                (2 * i + 1, 2 * j + 1),
-            ] {
-                if x >= n || z >= n {
-                    continue;
-                }
-                let fine = z * n + x;
-                cells += 1;
-                if !self.held[fine].is_nan() {
-                    lakes += 1;
-                    lake_level += self.held[fine];
-                    continue;
-                }
-                let [surface, along_x, along_z] = self.water[fine];
-                depth += max(surface - self.bed(fine), 0.0);
-                flow = [flow[0] + along_x, flow[1] + along_z];
-            }
-            if lakes > 0 && 2 * lakes >= cells {
-                let held = lake_level / lakes as f32;
-                level.water.push([held, 0.0, 0.0]);
-                level.held.push(held);
-                continue;
-            }
-            let share = 1.0 / cells.max(1) as f32;
-            let bed = level.bed(at);
-            let mean = depth * share;
-            let surface = if mean > DRY { bed + mean } else { bed };
-            level
-                .water
-                .push([surface, flow[0] * share, flow[1] * share]);
-            level.held.push(f32::NAN);
-        }
-        let mut brought: Vec<(u32, f32, [f32; 2])> = self
-            .sources
-            .iter()
-            .map(|source| {
-                let (i, j) = (source.cell as usize % n, source.cell as usize / n);
-                let cell = ((j / 2) * side + i / 2) as u32;
-                let way = [source.way[0] * source.rate, source.way[1] * source.rate];
-                (cell, source.rate, way)
-            })
-            .collect();
-        brought.sort_by_key(|&(cell, _, _)| cell);
-        level.sources = merged(brought);
-        level
-    }
 }
 
-/// What settling level-0 tile `key`'s water starts from, made by a
-/// [`WaterStart`] job: the meters across the cells it settles at; the first
-/// cell along x and z of the square it settles over, on the terrain's
-/// lattice of cells that size; the height its heights stand above (the
-/// square's lowest ground, whole meters down, which keeps them small for
-/// the GPU's single precision); the tile's own cells within the square (its
-/// first along x and z, and its cells along each); and the levels it
-/// settles at, coarsest first, each starting from the one before it
-/// ([`Self::prolong`]), the last at its cells' size: one alone where it
-/// settles from the tile's earlier water.
+/// What settling a region's water starts from ([`Self::assemble`]): the
+/// meters across the cells it settles at; the first cell along x and z of
+/// its square, on the terrain's lattice of cells that size; the height its
+/// heights stand above (its lowest ground, whole meters down, which keeps
+/// them small for the GPU's single precision); the tiles whose water it
+/// keeps, each with its cells within the square (its first along x and z,
+/// and its cells along each), in key order; and its cells.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SettleStart {
-    pub key: TileKey,
     pub cell: f32,
     pub first: [i64; 2],
     pub datum: f32,
-    pub kept: [u32; 4],
-    pub levels: Vec<SettleLevel>,
+    pub kept: Vec<(TileKey, [u32; 4])>,
+    pub level: SettleLevel,
 }
-
-record!(SettleStart {
-    key,
-    cell,
-    first,
-    datum,
-    kept,
-    levels,
-});
 
 impl SettleStart {
-    /// Whether it holds levels whose arrays hold their cells, each half the
-    /// cells along a side of the next (rounding up), the last at its cells'
-    /// size and holding the tile's cells.
-    pub fn valid(&self) -> bool {
-        let Some(finest) = self.levels.last() else {
-            return false;
+    /// What settling `region`'s water starts from over `layers` (with their
+    /// bakes) and `pyramid`, from `parts`, those of the tiles its square
+    /// reaches ([`SettleRegion::reached`]), in any order: its ground and
+    /// each cell's water as the bake stands and runs it, or as `warm` holds
+    /// it where its host holds earlier records of its water (the settled
+    /// water of the terrain's lattice cell `(i, j)`, counted from its first
+    /// corner, where one holds it), heights above its lowest ground, and the
+    /// cells of the tiles it keeps. An error where a part it reaches is
+    /// missing or on another lattice.
+    pub fn assemble(
+        layers: &Layers,
+        pyramid: &Pyramid,
+        region: &SettleRegion,
+        parts: &[&WaterPart],
+        warm: Option<&dyn Fn(i64, i64) -> Option<SteadyCell>>,
+    ) -> Result<Self, String> {
+        let cell = region.cell;
+        let first = region.first;
+        let [nx, nz] = region.cells.map(|count| count as usize);
+        if nx == 0 || nz == 0 {
+            return Err("settling water over no cells".into());
+        }
+        // The ground at its corners and the bake's water at its cells, from
+        // the parts holding them; a cell no part holds keeps a negative
+        // lake.
+        let mut corners = vec![f32::NAN; (nx + 1) * (nz + 1)];
+        let mut found = vec![[f32::NAN, 0.0, 0.0, -1.0]; nx * nz];
+        for part in parts {
+            if part.cell != cell {
+                return Err("a part of settling water on another lattice".into());
+            }
+            copy(
+                &mut corners,
+                (first, nx + 1, nz + 1),
+                &part.ground,
+                (part.corner, part.corners),
+            );
+            copy(
+                &mut found,
+                (first, nx, nz),
+                &part.water,
+                (part.first, part.cells),
+            );
+        }
+        if corners.iter().any(|height| height.is_nan()) || found.iter().any(|entry| entry[3] < 0.0)
+        {
+            return Err("settling water misses a part of the ground it reaches".into());
+        }
+        let bed = |at: usize| {
+            let (i, j) = (at % nx, at / nx);
+            let corner = |x: usize, z: usize| corners[z * (nx + 1) + x];
+            0.25 * (corner(i, j) + corner(i + 1, j) + corner(i, j + 1) + corner(i + 1, j + 1))
         };
-        let [x, z, columns, rows] = self.kept;
-        self.levels.iter().all(SettleLevel::valid)
-            && self
-                .levels
-                .windows(2)
-                .all(|pair| pair[0].side == pair[1].side.div_ceil(2))
-            && finest.cell == self.cell
-            && self.datum.is_finite()
-            && x + columns <= finest.side
-            && z + rows <= finest.side
-    }
-
-    /// The level at its cells' size.
-    pub fn finest(&self) -> &SettleLevel {
-        &self.levels[self.levels.len() - 1]
-    }
-
-    /// Level `level + 1`'s water to start from once level `level` settled
-    /// to `state` (each cell's surface, flow along x and z and foam, row by
-    /// row): each cell takes the surface of the coarser cell covering it
-    /// over its own ground and that cell's velocity, dry where the coarser
-    /// cell is or its ground stands above that surface, and its lake's
-    /// level where one holds it; and the coarser cell's foam.
-    pub fn prolong(&self, level: usize, state: &[[f32; 4]]) -> Vec<[f32; 4]> {
-        let coarse = &self.levels[level];
-        let fine = &self.levels[level + 1];
-        let (n, m) = (fine.side as usize, coarse.side as usize);
-        (0..n * n)
-            .map(|at| {
-                let (i, j) = (at % n, at / n);
-                let parent = (j / 2).min(m - 1) * m + (i / 2).min(m - 1);
-                let [surface, along_x, along_z, foam] =
-                    state.get(parent).copied().unwrap_or_default();
-                if !fine.held[at].is_nan() {
-                    return [fine.held[at], 0.0, 0.0, foam];
-                }
-                let bed = fine.bed(at);
-                let depth = surface - coarse.bed(parent);
-                let own = max(surface, bed) - bed;
-                if depth <= DRY || own <= DRY {
-                    return [bed, 0.0, 0.0, 0.0];
-                }
-                [
-                    bed + own,
-                    velocity(depth, along_x) * own,
-                    velocity(depth, along_z) * own,
-                    foam,
-                ]
-            })
-            .collect()
-    }
-
-    /// What the tile keeps of its square's water settled at its cells' size
-    /// to `state` (each cell's surface, flow along x and z and foam, row by
-    /// row, averaged over its last steps), after `steps` steps all told and
-    /// `settled` or not: its own cells, standing at its lakes' levels where
-    /// they hold them and its water's where it flows, dry elsewhere; the
-    /// water its rivers bring to them; and its summary.
-    pub fn finish(&self, state: &[[f32; 4]], steps: u32, settled: bool) -> SteadyWater {
-        let finest = self.finest();
-        let n = finest.side as usize;
-        let [x0, z0, columns, rows] = self.kept.map(|value| value as usize);
-        let count = columns * rows;
-        let mut surface = vec![f32::NAN; count];
-        let mut velocities = [vec![f32::NAN; count], vec![f32::NAN; count]];
-        let mut foam = vec![f32::NAN; count];
-        let mut flowing = 0;
-        let mut volume = 0.0_f64;
-        for (at, cell) in state.iter().enumerate().take(n * n) {
-            if finest.held[at].is_nan() {
-                volume += f64::from(max(cell[0] - finest.bed(at), 0.0));
+        let mut water = Vec::with_capacity(nx * nz);
+        let mut held = Vec::with_capacity(nx * nz);
+        for (at, &[surface, x, z, lake]) in found.iter().enumerate() {
+            let floor = bed(at);
+            if surface.is_nan() || surface <= floor {
+                water.push([floor, 0.0, 0.0]);
+                held.push(f32::NAN);
+            } else if lake > 0.5 {
+                water.push([surface, 0.0, 0.0]);
+                held.push(surface);
+            } else {
+                let depth = surface - floor;
+                water.push([surface, depth * x, depth * z]);
+                held.push(f32::NAN);
             }
         }
-        for row in 0..rows {
-            for column in 0..columns {
-                let out = row * columns + column;
-                let at = (z0 + row) * n + x0 + column;
-                let Some(&[level, along_x, along_z, cell_foam]) = state.get(at) else {
-                    continue;
-                };
-                if !finest.held[at].is_nan() {
-                    surface[out] = finest.held[at] + self.datum;
-                    foam[out] = cell_foam;
-                    continue;
-                }
-                let depth = level - finest.bed(at);
-                if depth > DRY {
-                    surface[out] = level + self.datum;
-                    velocities[0][out] = velocity(depth, along_x);
-                    velocities[1][out] = velocity(depth, along_z);
-                    foam[out] = cell_foam;
-                    flowing += 1;
-                }
-            }
-        }
-        let sources = finest
-            .sources
-            .iter()
-            .filter_map(|source| {
-                let (i, j) = (source.cell as usize % n, source.cell as usize / n);
-                let inside = i >= x0 && j >= z0 && i < x0 + columns && j < z0 + rows;
-                inside.then(|| SteadySource {
-                    cell: ((j - z0) * columns + i - x0) as u32,
-                    rate: source.rate,
-                    way: source.way,
-                })
-            })
+        drop(found);
+        let wet: Vec<bool> = (0..nx * nz)
+            .map(|at| held[at].is_nan() && water[at][0] > bed(at))
             .collect();
-        let cells = [columns as u32, rows as u32];
-        let summary = SteadySummary::of(cells, (&velocities, &foam));
-        let [along_x, along_z] = velocities;
-        let area = f64::from(finest.cell * finest.cell);
-        SteadyWater {
-            key: self.key,
-            cell: self.cell,
-            first: [self.first[0] + x0 as i64, self.first[1] + z0 as i64],
-            cells,
-            surface: surface.into(),
-            velocity: [along_x.into(), along_z.into()],
-            foam: foam.into(),
-            sources,
-            summary,
-            stats: SteadyStats {
-                sources: finest.sources.iter().map(|source| source.rate).sum(),
-                volume: (volume * area) as f32,
-                flowing,
-                steps,
-                levels: self.levels.len() as u32,
-                settled,
-            },
-        }
-    }
-}
-
-/// Preparing what settling tile `key`'s water starts from
-/// ([`SettleStart`]): generating the level-0 tiles its square reaches, in
-/// steps a job's budget sizes, then its levels; from `warm`, the tile's
-/// earlier settled water at its cells' size, where its host holds it, the
-/// finest alone.
-pub struct WaterStart {
-    layers: Arc<Layers>,
-    pyramid: Pyramid,
-    key: TileKey,
-    cell: f32,
-    // The square it settles over: its first cell and side.
-    first: [i64; 2],
-    side: usize,
-    warm: Option<SteadyWater>,
-    pending: Vec<TileKey>,
-    generating: Option<Generator>,
-    tiles: Vec<(TileKey, Tile)>,
-}
-
-impl WaterStart {
-    /// Tile `key`'s water over `layers` (with their bakes) and `pyramid`,
-    /// in cells `cell` meters across, from `warm` where held.
-    pub fn new(
-        layers: Arc<Layers>,
-        pyramid: Pyramid,
-        key: TileKey,
-        cell: f32,
-        warm: Option<SteadyWater>,
-    ) -> Self {
-        let (first, side) = square(&pyramid, key, cell);
-        let pending = tiles_reached(&pyramid, first, side, cell);
-        Self {
-            layers,
-            pyramid,
-            key,
-            cell,
-            first,
-            side,
-            warm,
-            pending,
-            generating: None,
-            tiles: Vec::new(),
-        }
-    }
-
-    /// Works for about `budget` units (a sample generated each): what
-    /// settling starts from once done; an error where its ground does not
-    /// generate.
-    pub fn advance(&mut self, budget: &mut u64) -> Result<Option<SettleStart>, String> {
-        loop {
-            if *budget == 0 {
-                return Ok(None);
-            }
-            if let Some(generator) = &mut self.generating {
-                let Some(tile) = generator.advance(budget) else {
-                    if generator.failed() {
-                        return Err("the ground's heights are invalid".into());
-                    }
-                    return Ok(None);
-                };
-                self.tiles.push((tile.key(), tile));
-                self.generating = None;
-                continue;
-            }
-            let Some(key) = self.pending.pop() else {
-                break;
-            };
-            self.generating = Some(Generator::new(self.layers.clone(), &self.pyramid, key));
-        }
-        let ground = Ground {
-            pyramid: self.pyramid,
-            tiles: std::mem::take(&mut self.tiles),
-        };
-        let start = start(&self.layers, &ground, (self.first, self.side), self.cell);
-        Ok(Some(self.levels(start)))
-    }
-
-    /// What settling starts from over `start`, the square's ground and
-    /// water: its heights above the square's datum, the tile's cells within
-    /// it, and its levels.
-    fn levels(&self, start: Start) -> SettleStart {
-        let lowest = start
-            .corners
+        let origin = Vec2::new(first[0] as f32, first[1] as f32) * cell;
+        let sources = sources(layers, (origin, region.cells, cell), (&held, &wet));
+        drop(wet);
+        let lowest = corners
             .iter()
             .copied()
             .fold(f32::INFINITY, |low, height| min(low, height));
@@ -884,75 +804,150 @@ impl WaterStart {
         } else {
             0.0
         };
-        let lift = |height: f32| height - datum;
-        let mut finest = SettleLevel {
-            cell: self.cell,
-            side: self.side as u32,
-            corners: start.corners.iter().map(|&height| lift(height)).collect(),
-            water: start
-                .water
-                .iter()
-                .map(|&[surface, x, z]| [lift(surface), x, z])
-                .collect(),
-            held: start
-                .held
-                .iter()
-                .map(|&level| if level.is_nan() { level } else { lift(level) })
-                .collect(),
-            sources: start.sources,
+        for height in &mut corners {
+            *height -= datum;
+        }
+        for entry in &mut water {
+            entry[0] -= datum;
+        }
+        for level in &mut held {
+            *level -= datum;
+        }
+        let mut level = SettleLevel {
+            cell,
+            cells: region.cells,
+            corners,
+            water,
+            held,
+            sources,
         };
-        let origin = self.pyramid.tile_origin(self.key);
-        let size = self.pyramid.tile_size(0);
-        let (x, columns) = lattice(origin.x, origin.x + size, self.cell);
-        let (z, rows) = lattice(origin.y, origin.y + size, self.cell);
-        let kept = [
-            (x - self.first[0]) as u32,
-            (z - self.first[1]) as u32,
-            columns,
-            rows,
-        ];
-        let levels = match &self.warm {
-            Some(warm) if warm.cell == self.cell && warm.key == self.key => {
-                warmed(&mut finest, warm, self.first, datum);
-                vec![finest]
+        let size = pyramid.tile_size(0);
+        let mut kept = Vec::with_capacity(region.kept.len());
+        for &key in &region.kept {
+            let origin = pyramid.tile_origin(key);
+            let (x, columns) = lattice(origin.x, origin.x + size, cell);
+            let (z, rows) = lattice(origin.y, origin.y + size, cell);
+            let (x, z) = (x - first[0], z - first[1]);
+            let outside = x < 0
+                || z < 0
+                || x + i64::from(columns) > nx as i64
+                || z + i64::from(rows) > nz as i64;
+            if outside {
+                return Err("a tile settling water keeps lies outside its region".into());
             }
-            _ => {
-                let mut levels = vec![finest];
-                loop {
-                    let finer = &levels[levels.len() - 1];
-                    if 2.0 * finer.cell > COARSEST || finer.side.div_ceil(2) < FEWEST {
-                        break;
-                    }
-                    let coarser = finer.coarser();
-                    levels.push(coarser);
-                }
-                levels.reverse();
-                levels
-            }
-        };
-        SettleStart {
-            key: self.key,
-            cell: self.cell,
-            first: self.first,
+            kept.push((key, [x as u32, z as u32, columns, rows]));
+        }
+        if let Some(warm) = warm {
+            warmed(&mut level, warm, first, datum);
+        }
+        Ok(Self {
+            cell,
+            first,
             datum,
             kept,
-            levels,
+            level,
+        })
+    }
+
+    /// What each tile it keeps keeps of its water settled to `state` (each
+    /// cell's surface, flow along x and z and foam, row by row, averaged
+    /// over its last steps), after `steps` steps and `settled` or not, in
+    /// the order it keeps them: the tile's own cells, standing at its lakes'
+    /// levels where they hold them and its water's where it flows, dry
+    /// elsewhere; the water its rivers bring to them; and its summary.
+    pub fn finish(&self, state: &[[f32; 4]], steps: u32, settled: bool) -> Vec<SteadyWater> {
+        let finest = &self.level;
+        let n = finest.cells[0] as usize;
+        let area = f64::from(finest.cell * finest.cell);
+        let mut made = Vec::with_capacity(self.kept.len());
+        for &(key, kept) in &self.kept {
+            let [x0, z0, columns, rows] = kept.map(|value| value as usize);
+            let count = columns * rows;
+            let mut surface = vec![f32::NAN; count];
+            let mut velocities = [vec![f32::NAN; count], vec![f32::NAN; count]];
+            let mut foam = vec![f32::NAN; count];
+            let mut flowing = 0;
+            let mut volume = 0.0_f64;
+            for row in 0..rows {
+                for column in 0..columns {
+                    let out = row * columns + column;
+                    let at = (z0 + row) * n + x0 + column;
+                    let Some(&[level, along_x, along_z, cell_foam]) = state.get(at) else {
+                        continue;
+                    };
+                    if !finest.held[at].is_nan() {
+                        surface[out] = finest.held[at] + self.datum;
+                        foam[out] = cell_foam;
+                        continue;
+                    }
+                    let depth = level - finest.bed(at);
+                    if depth > DRY {
+                        surface[out] = level + self.datum;
+                        velocities[0][out] = velocity(depth, along_x);
+                        velocities[1][out] = velocity(depth, along_z);
+                        foam[out] = cell_foam;
+                        flowing += 1;
+                        volume += f64::from(depth);
+                    }
+                }
+            }
+            let sources: Vec<SteadySource> = finest
+                .sources
+                .iter()
+                .filter_map(|source| {
+                    let (i, j) = (source.cell as usize % n, source.cell as usize / n);
+                    let inside = i >= x0 && j >= z0 && i < x0 + columns && j < z0 + rows;
+                    inside.then(|| SteadySource {
+                        cell: ((j - z0) * columns + i - x0) as u32,
+                        rate: source.rate,
+                        way: source.way,
+                    })
+                })
+                .collect();
+            let cells = [columns as u32, rows as u32];
+            let summary = SteadySummary::of(cells, (&velocities, &foam));
+            let [along_x, along_z] = velocities;
+            made.push(SteadyWater {
+                key,
+                cell: self.cell,
+                first: [self.first[0] + x0 as i64, self.first[1] + z0 as i64],
+                cells,
+                surface: surface.into(),
+                velocity: [along_x.into(), along_z.into()],
+                foam: foam.into(),
+                stats: SteadyStats {
+                    sources: sources.iter().map(|source| source.rate).sum(),
+                    volume: (volume * area) as f32,
+                    flowing,
+                    steps,
+                    settled,
+                },
+                sources,
+                summary,
+            });
         }
+        made
     }
 }
 
-/// `level`'s water (the finest, over the square from cell `first`, its
-/// heights above `datum`) where `warm`, the tile's earlier settled water,
-/// holds the cells and no lake holds them now: its depth over the ground as
-/// it stands now and its velocity, dry where it was dry or a lake held it.
-fn warmed(level: &mut SettleLevel, warm: &SteadyWater, first: [i64; 2], datum: f32) {
-    let n = level.side as usize;
-    for at in 0..n * n {
+/// `level`'s water (over the region from cell `first`, its heights above
+/// `datum`) where `warm` (the settled water of the terrain's
+/// lattice cells) holds the cells and no lake holds them now: its depth
+/// over the ground as it stands now and its velocity, dry where it was dry
+/// or a lake held it.
+fn warmed(
+    level: &mut SettleLevel,
+    warm: &dyn Fn(i64, i64) -> Option<SteadyCell>,
+    first: [i64; 2],
+    datum: f32,
+) {
+    let n = level.cells[0] as usize;
+    for at in 0..level.water.len() {
         if !level.held[at].is_nan() {
             continue;
         }
         let (i, j) = ((at % n) as i64 + first[0], (at / n) as i64 + first[1]);
-        let Some(cell) = warm.at(i, j) else {
+        let Some(cell) = warm(i, j) else {
             continue;
         };
         let bed = level.bed(at);

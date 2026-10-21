@@ -82,8 +82,9 @@ pub use select::{
 };
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverSight};
 pub use steady_water::{
-    COARSEST, SUMMARY_SIDE, SettleLevel, SettleStart, SteadyCell, SteadySource, SteadySquare,
-    SteadyStats, SteadySummary, SteadyWater, WaterStart, steady_water_bounds, watered_tiles,
+    MARGIN, REGION_CELLS, SUMMARY_SIDE, SettleLevel, SettleRegion, SettleStart, SettledKey,
+    SteadyCell, SteadySource, SteadySquare, SteadyStats, SteadySummary, SteadyWater, WaterPart,
+    settle_regions, watered_tiles,
 };
 pub use surface::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,

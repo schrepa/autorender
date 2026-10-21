@@ -2,8 +2,8 @@
 //! terrain's bakes, then every tile a camera on it could want, as records
 //! asked for coarsest level first and dropped as they arrive, which the
 //! host keeps for its pack, and where water asks for water, every level-0
-//! tile's settled water its bake's water reaches, which its settled water
-//! makes once every tile was asked for ([`super::settled`]). A terrain's surroundings
+//! tile's settled water its bake's water reaches, over the cook's regions
+//! ([`super::settled`]). A terrain's surroundings
 //! cook the tiles within reach of the ground they surround, as a view from
 //! it wants them. Every streaming terrain's lighting and macro colors cook
 //! as streaming asks for them, the colors in every family of compressed
@@ -133,14 +133,10 @@ impl Terrains {
             }
             left += cook.left();
             state.cook = Some(cook);
-            // Settled water, once every tile was asked for: every watered
-            // tile's.
-            let tiles_asked = state
-                .cook
-                .as_ref()
-                .is_some_and(|cook| cook.next == cook.keys.len());
+            // Settled water: every watered tile's, over the cook's regions,
+            // each settling once its tiles were fetched, while tiles cook.
             let watering = water.is_some_and(|water| water.enabled) && state.around.is_none();
-            if tiles_asked && watering {
+            if watering {
                 state.settled.cooking = true;
                 water_left += state.settled.left();
             }

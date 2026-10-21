@@ -2,9 +2,10 @@
 //! (web/scripts/fixtures/terrain.scene.json and its dome heightmap). Its
 //! bakes; every tile of its pyramid and some of its surroundings'; tiles
 //! under edits; its lighting, bounce transfer and macro colors; every
-//! finest tile's portals of a walk graph, and a walk over them; what a
-//! tile's water settles from (which the GPU settles, cooked once, so its
-//! record is no corpus's); and a pack of what they made. Each job runs as
+//! finest tile's portals of a walk graph, and a walk over them; the parts
+//! of the water a tile settles over alone and what it settles from (which
+//! the GPU settles, cooked once, so its record is no corpus's); and a pack
+//! of what they made. Each job runs as
 //! workers run it, whole and a slice at a time, and must give the bits its
 //! code gives in place (a tile's portals, the bits its tile's record
 //! gives); every record must read back from the pack the cook would write
@@ -26,8 +27,8 @@ use engine_terrain::lighting::{self, Ground};
 use engine_terrain::macro_colors;
 use engine_terrain::{
     BiomeRules, Gait, Generator, Layer, Layers, NavOptions, NavPath, Obstacle, PATCH_QUADS,
-    PATCHES_PER_TILE, Pyramid, Stamp, StampOp, TILE_QUADS, Tile, TileKey, TilePortals, WalkData,
-    WalkGround, WalkSearch, codec,
+    PATCHES_PER_TILE, Pyramid, SettleRegion, SettleStart, Stamp, StampOp, TILE_QUADS, Tile,
+    TileKey, TilePortals, WalkData, WalkGround, WalkSearch, WaterPart, codec,
 };
 use glam::Vec2;
 use serde_json::json;
@@ -341,36 +342,49 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         json!({"points": found.points.len(), "length": found.length, "level": found.level}),
     );
 
-    // What the water of the first finest tile the bake's water reaches
-    // settles from: whole, and a slice at a time.
+    // The parts of the water the first finest tile the bake's water
+    // reaches settles over alone, each whole and a slice at a time, and
+    // what it settles from.
     let watered = engine_terrain::watered_tiles(&baked, &pyramid);
     let key = *watered
         .first()
         .ok_or("the fixture's bake waters no finest tile")?;
-    let input = WaterJob {
-        stack: "stack".into(),
-        pyramid,
-        key,
-        stamps: Vec::new(),
-        cell: WATER_CELL,
-        warm: None,
+    let region = SettleRegion::alone(&pyramid, key, WATER_CELL);
+    let mut parts = Vec::new();
+    for tile in region.reached(&pyramid) {
+        let input = WaterJob {
+            stack: "stack".into(),
+            pyramid,
+            key: tile,
+            stamps: Vec::new(),
+            cell: WATER_CELL,
+        }
+        .input();
+        let bytes = worker.run(WaterJob::KIND.name(), &input)?;
+        observed.check(
+            worker.sliced(WaterJob::KIND.name(), &input)? == bytes,
+            || {
+                format!(
+                    "the water's part of {} run a slice at a time differs",
+                    name(tile)
+                )
+            },
+        );
+        observed.hash(format!("water part {}", name(tile)), &bytes);
+        parts.push(jobs::water_output(&bytes).map_err(|error| error.to_string())?);
     }
-    .input();
-    let bytes = worker.run(WaterJob::KIND.name(), &input)?;
-    observed.check(
-        worker.sliced(WaterJob::KIND.name(), &input)? == bytes,
-        || "the water's start run a slice at a time differs from the job run whole".into(),
-    );
-    let start = jobs::water_output(&bytes).map_err(|error| error.to_string())?;
-    observed.hash(format!("water start {}", name(key)), &bytes);
+    let parts: Vec<&WaterPart> = parts.iter().collect();
+    let start = SettleStart::assemble(&baked, &pyramid, &region, &parts, None)?;
     observed.record(
         "water start",
         json!({
             "watered tiles": watered.len(),
             "tile": name(key),
-            "levels": start.levels.iter().map(|level| level.side).collect::<Vec<_>>(),
-            "sources": start.finest().sources.len(),
+            "parts": parts.len(),
+            "cells": start.level.cells,
+            "sources": start.level.sources.len(),
             "datum": start.datum,
+            "cook regions": engine_terrain::settle_regions(&pyramid, WATER_CELL).len(),
         }),
     );
 

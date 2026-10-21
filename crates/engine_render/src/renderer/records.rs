@@ -65,14 +65,16 @@ impl Renderer {
 
     /// Records the renderer still has to come (asked of hosts, baking or
     /// reading back), by what makes them: impostors' layers and terrains'
-    /// far pages.
-    pub fn records_left(&self) -> [(&'static str, u64); 2] {
+    /// far pages; and the looks the water settling for records has left at
+    /// most, which a region settling long counts down.
+    pub fn records_left(&self) -> [(&'static str, u64); 3] {
         [
             (
                 "impostors",
                 self.impostors.atlas.left() + self.impostors.placed.left(),
             ),
             ("far pages", self.terrain.vt.records_left()),
+            ("water looks", self.water_settle.looks_left()),
         ]
     }
 
@@ -82,12 +84,16 @@ impl Renderer {
         self.terrain.vt.records_loading()
     }
 
-    /// Settles the water of each of `starts` on the GPU for its record
-    /// (`settled_water`), those already settling left as they are: terrains
-    /// hand them over ([`engine_core::Terrains::take_water_settles`]).
+    /// Settles the water of each of `starts` on the GPU for its records
+    /// (`settled_water`, one for each tile it keeps, in its order), those
+    /// already settling left as they are: terrains hand them over
+    /// ([`engine_core::Terrains::take_water_settles`]).
     pub fn settle_water(
         &mut self,
-        starts: Vec<(RecordKey, std::sync::Arc<engine_core::terrain_data::SettleStart>)>,
+        starts: Vec<(
+            Vec<RecordKey>,
+            std::sync::Arc<engine_core::terrain_data::SettleStart>,
+        )>,
     ) {
         self.water_settle.settle(starts);
     }
@@ -97,11 +103,6 @@ impl Renderer {
     /// ([`engine_core::SETTLED_PARITY`]) and hand the terrains that asked.
     pub fn take_settled_water(&mut self) -> Vec<(RecordKey, Result<Vec<u8>, String>)> {
         self.water_settle.take_made()
-    }
-
-    /// Tiles whose water waits to settle or settles.
-    pub fn water_settling_left(&self) -> u64 {
-        self.water_settle.left()
     }
 
     /// Whether the session cooks, which has water settle with more of the
