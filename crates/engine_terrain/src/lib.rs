@@ -80,13 +80,13 @@ pub use select::{
     LodRanges, Patch, Selection, WantedTile, WantedView, select_patches, wanted_tiles,
 };
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverSight};
-pub use surface::{
-    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,
-    Mask, NoiseMask, Remap, SampleInputs,
-};
 pub use steady_water::{
     SUMMARY_SIDE, SteadyCell, SteadySolve, SteadySource, SteadySquare, SteadyStats, SteadySummary,
     SteadyWater, steady_water_bounds, watered_tiles,
+};
+pub use surface::{
+    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,
+    Mask, NoiseMask, Remap, SampleInputs,
 };
 pub use tile::{Generator, Tile, TileSample};
 pub use tile_water::{

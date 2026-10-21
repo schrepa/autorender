@@ -129,8 +129,8 @@ pub mod render {
         RenderLights, RenderMaterial, RenderMesh, RenderParticles, RenderPlacementAsset,
         RenderReflectionProbe, RenderReflectionProbes, RenderSnapshot, RenderSurfaceMaps,
         RenderTerrain, RenderTerrains, RenderTexture, STREAMING_GRIDS, StreamingGrid,
-        TerrainLighting, TransformIndex, TransformPropagation, VIRTUAL_MESH_MAGIC, carve_profile,
-        presentation_bounds, propagate_transforms, rim_profile, valid_global_matrix,
+        TerrainBounce, TerrainLighting, TransformIndex, TransformPropagation, VIRTUAL_MESH_MAGIC,
+        carve_profile, presentation_bounds, propagate_transforms, rim_profile, valid_global_matrix,
     };
 }
 

@@ -2,7 +2,7 @@
 //! Web Workers beside the engine, and natively a thread's. It holds what
 //! the engine shares with its workers (terrain stacks and recipes) and runs
 //! the jobs it hands out, each kind once: terrain tiles, tiles' walk graph
-//! portals, bakes, lighting and tiles' settled water
+//! portals, bakes, lighting, bounce transfers and tiles' settled water
 //! (`engine_terrain::jobs`), and the renderer's static tables
 //! (`engine_tables`), with the code hosts without workers run in place, so
 //! outputs are the same bits. Jobs
