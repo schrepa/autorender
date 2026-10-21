@@ -11,7 +11,7 @@ use super::scatter_pool::{ScatterPool, TileObjects};
 use super::*;
 use crate::debug_view::{DebugViewPass, DrawKind, DrawRecord, bind_record};
 use crate::gpu_data::{ColorData, pack_color, pack_surface};
-use crate::impostors::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord};
+use crate::impostors::{BakeGpu, BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord, Supplied};
 use crate::occupancy::{Cover, OccupancyFrame};
 use crate::scatter::{
     GroupLayout, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, RANK_MAX, RANK_SHIFT, Record,
@@ -307,12 +307,13 @@ impl Renderer {
             .prepare(|occupancy| occupancy.prepare_draws(device, slots))
     }
 
-    /// The impostors of placed draw groups on GPU-presented
-    /// frames with impostors: each group's, baked into `encoder` after its
-    /// material's levels where missing into the placed objects' atlas,
-    /// zeroed where its material blends, its mesh is too
-    /// small or the budget the plan batches' leave is spent. The groups'
-    /// layouts take their errors and records.
+    /// The impostors of placed draw groups on GPU-presented frames with
+    /// impostors: each group's, supplied into the placed objects' atlas
+    /// where missing (baked into `encoder` after its material's levels
+    /// where no host holds its record), zeroed where its material blends,
+    /// its mesh is too small, it is still coming or the budget the plan
+    /// batches' leave is spent. The groups' layouts take their errors and
+    /// records.
     pub(super) fn prepare_scatter_impostors(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -327,10 +328,7 @@ impl Renderer {
                 meshes.contains_key(mesh)
                     && material.is_none_or(|handle| materials.group(handle).is_some())
             },
-            |handle| {
-                let version = materials.version(handle)?;
-                Self::placed_material(snapshot, handle).map(|material| (material, version))
-            },
+            |handle| Self::placed_material(snapshot, handle),
         );
         // Plan batches' impostors come first within a budget.
         let budget = settings
@@ -341,62 +339,60 @@ impl Renderer {
         for group in &self.scatter_draws.groups {
             let mut record = ImpostorRecord::default();
             let mesh = self.meshes.get(&group.meshes[0]);
-            let source = snapshot
+            let asset = snapshot
                 .terrain
                 .terrains
                 .iter()
                 .flat_map(|terrain| terrain.assets.iter().flatten())
-                .find(|asset| asset.mesh.handle == group.meshes[0])
-                .map(|asset| &asset.mesh.mesh);
+                .find(|asset| asset.mesh.handle == group.meshes[0]);
             let eligible = enabled
                 && !group.source.is_transparent()
                 && mesh.is_some_and(|mesh| !mesh.skinned)
-                && source
-                    .is_some_and(|source| source.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES);
-            if let (true, Some(mesh), Some(source)) = (eligible, mesh, source) {
+                && asset.is_some_and(|asset| {
+                    asset.mesh.mesh.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES
+                });
+            if let (true, Some(mesh), Some(asset)) = (eligible, mesh, asset) {
                 let key = (group.meshes[0], Some(group.material));
-                let baked_as = (
-                    group.source,
-                    self.materials.version(group.material).unwrap_or(0),
-                );
-                if let Some(baked) = self.impostors.placed.record(key, Some(&baked_as)) {
-                    record = baked;
-                } else {
-                    let (bind_group, variant) = self.materials.binding(Some(group.material));
-                    let encoder = encoder.get_or_insert_with(|| {
-                        self.device
-                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: Some("engine/texture-mips"),
-                            })
-                    });
-                    let bounds = source.bounds();
-                    let bake = BakeSource {
-                        draw: mesh.draw(&self.mesh_arena),
-                        extended: mesh.extended,
-                        group: bind_group,
-                        variant: variant.with_extended(mesh.extended).with_skinned(false),
-                        bounds: (bounds.min(), bounds.max()),
-                        material: Some(baked_as),
-                    };
-                    if self.impostors.placed.bake(
-                        &self.device,
-                        encoder,
-                        self.materials.mips(),
-                        &self.mesh_shader,
-                        &mut self.impostors.pipelines,
-                        key,
-                        &bake,
-                        budget,
-                    ) {
-                        record = self
+                record = match self.impostors.placed.record(key, Some(&group.source)) {
+                    Some(resident) => resident,
+                    None => {
+                        let contents = &mut self.impostors.contents;
+                        let content = (
+                            contents.mesh(group.meshes[0], &asset.mesh.mesh),
+                            contents.material(Some(&group.source), |handle| {
+                                asset
+                                    .textures
+                                    .iter()
+                                    .find(|texture| texture.handle == handle)
+                                    .map(|texture| &*texture.texture)
+                            }),
+                        );
+                        let (bind_group, variant) = self.materials.binding(Some(group.material));
+                        let bounds = asset.mesh.mesh.bounds();
+                        let bake = BakeSource {
+                            draw: mesh.draw(&self.mesh_arena),
+                            extended: mesh.extended,
+                            group: bind_group,
+                            variant: variant.with_extended(mesh.extended).with_skinned(false),
+                            bounds: (bounds.min(), bounds.max()),
+                            material: Some(group.source),
+                        };
+                        let gpu = BakeGpu {
+                            device: &self.device,
+                            queue: &self.queue,
+                            encoder: &mut *encoder,
+                            mips: self.materials.mips(),
+                            shader: &self.mesh_shader,
+                            pipelines: &mut self.impostors.pipelines,
+                        };
+                        let supplied = self
                             .impostors
                             .placed
-                            .record(key, Some(&baked_as))
-                            .unwrap_or_default();
-                    } else {
-                        self.impostors.dropped += 1;
+                            .supply(gpu, key, &bake, content, budget);
+                        self.impostors.dropped += u32::from(matches!(supplied, Supplied::Refused));
+                        supplied.record()
                     }
-                }
+                };
             }
             records.push(record);
         }

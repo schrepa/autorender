@@ -4,7 +4,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, TextureHandle};
+use engine_core::{
+    MaterialHandle, MeshHandle, RecordKey, RenderFrame, RenderSnapshot, TextureHandle,
+};
 use wgpu::util::DeviceExt;
 
 use crate::platform::{RenderError, RenderTarget, render_error};
@@ -22,8 +24,8 @@ use crate::gpu_data::{
 use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;
 use crate::impostors::{
-    AtlasShape, BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas, ImpostorPipelines,
-    ImpostorRecord,
+    AtlasShape, BakeGpu, BakeSource, Contents, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas,
+    ImpostorPipelines, ImpostorRecord, Supplied,
 };
 use crate::lights::{LightFrame, LightPass};
 use crate::materials::MaterialStore;
@@ -181,9 +183,8 @@ type WithLevels = (Vec<u32>, Vec<(u32, u32, f32)>, Vec<(u32, u32)>);
 
 /// `mesh` with its cooked levels `lods`, as [`WithLevels`] lays them out.
 fn with_levels(mesh: &engine_core::Mesh, lods: Option<&engine_core::MeshLods>) -> WithLevels {
-    let mut indices = Vec::with_capacity(
-        mesh.indices().len() + lods.map_or(0, |lods| lods.indices.len()),
-    );
+    let mut indices =
+        Vec::with_capacity(mesh.indices().len() + lods.map_or(0, |lods| lods.indices.len()));
     indices.extend_from_slice(mesh.indices());
     let Some(lods) = lods else {
         return (indices, Vec::new(), Vec::new());

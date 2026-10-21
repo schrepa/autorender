@@ -379,7 +379,8 @@ pub struct DetailStats {
     pub lod2_instances: Option<u32>,
     /// Instances drawn as impostors, read back like `lod0_instances`.
     pub impostor_instances: Option<u32>,
-    /// Impostors baked and resident.
+    /// Impostors resident: loaded from their records, or baked where no
+    /// pack or store held them.
     pub impostors: u32,
     /// Opaque draw groups that qualified for impostors but draw their meshes
     /// because a budget or the GPU's texture array layers left them none.
@@ -447,8 +448,9 @@ pub struct TerrainRenderStats {
     /// Of those, objects standing far away, which hide where the tiles
     /// holding them instead are resident.
     pub placed_far_objects: u32,
-    /// Placed objects' impostors baked, which the camera draws far away and
-    /// shadow maps cast as cards; counted in `level_of_detail.impostors` too.
+    /// Placed objects' impostors resident, which the camera draws far away
+    /// and shadow maps cast as cards; counted in `level_of_detail.impostors`
+    /// too.
     pub placed_impostors: u32,
     /// Placed objects the device's storage bindings left out: those past
     /// what the objects' buffers hold, and entries past what the views'

@@ -233,6 +233,7 @@ impl Renderer {
                 atlas: impostor_atlases.0,
                 placed: impostor_atlases.1,
                 pipelines: impostor_pipelines,
+                contents: Contents::default(),
                 records: Vec::new(),
                 dropped: 0,
             },

@@ -995,6 +995,7 @@ dependencies = [
  "bytemuck",
  "engine_core",
  "engine_profile",
+ "engine_sources",
  "engine_textures",
  "glam 0.30.9",
  "js-sys",

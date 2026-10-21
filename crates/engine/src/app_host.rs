@@ -123,6 +123,9 @@ pub(crate) struct AppHost {
     // The host's culling and antialiasing choices over each engine's own
     // settings: unset, an engine keeps its own.
     overrides: Overrides,
+    // The records the renderer asked for, each one's fetch from the
+    // engine's jobs.
+    record_fetches: Vec<(JobId, RecordKey)>,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
 }
@@ -190,6 +193,7 @@ impl AppHost {
             gpu_inputs_stale: false,
             terrain_clock: TerrainClock::Wall,
             overrides: Overrides::default(),
+            record_fetches: Vec::new(),
             #[cfg(feature = "profiling")]
             profile_frame: 0,
         }
@@ -216,6 +220,11 @@ impl AppHost {
             .map_or((0, false), |jobs| (jobs.workers(), jobs.verifying()));
         wire(&mut engine, &self.renderer, jobs, self.terrain_clock);
         self.gpu_inputs_stale = false;
+        // The replaced engine's jobs answer no more fetches: what they
+        // fetched bakes.
+        for (_, record) in std::mem::take(&mut self.record_fetches) {
+            self.renderer.give_record(record, None);
+        }
         let replaced = std::mem::replace(&mut self.engine, engine);
         self.apply_overrides();
         self.suspend();
@@ -769,7 +778,50 @@ impl AppHost {
             disabled_features: self.renderer.disabled_features(),
             render: rendered,
         };
+        self.exchange_records();
         Ok(())
+    }
+
+    /// Hands records between the renderer and the engine's jobs: the
+    /// answers to what the renderer asked for, its new asks (fetched from
+    /// the host's packs and store), the records it made (to keep), and,
+    /// while the session cooks, how many it has left.
+    fn exchange_records(&mut self) {
+        let world = self.engine.app.world_mut();
+        self.renderer
+            .set_cooking(world.contains_resource::<engine_core::Cooking>());
+        let wants = self.renderer.take_record_wants();
+        let made = self.renderer.take_made_records();
+        let answers = match world.get_resource_mut::<engine_core::Jobs>() {
+            Some(mut jobs) => {
+                let mut answers = Vec::new();
+                let mut asked = Vec::with_capacity(self.record_fetches.len() + wants.len());
+                for (id, record) in std::mem::take(&mut self.record_fetches) {
+                    match jobs.take(id) {
+                        Some(output) => answers.push((record, output.ok())),
+                        None => asked.push((id, record)),
+                    }
+                }
+                let priority = engine_core::job_priority(engine_core::VIEW_JOBS, 0);
+                for record in wants {
+                    asked.push((jobs.fetch(record, priority), record));
+                }
+                for (record, bytes) in made {
+                    jobs.keep(record, bytes);
+                }
+                self.record_fetches = asked;
+                answers
+            }
+            // Without jobs no host holds records: what the renderer asks
+            // for bakes.
+            None => wants.into_iter().map(|record| (record, None)).collect(),
+        };
+        for (record, bytes) in answers {
+            self.renderer.give_record(record, bytes);
+        }
+        if let Some(mut cooking) = world.get_resource_mut::<engine_core::Cooking>() {
+            cooking.left("impostors", self.renderer.records_left());
+        }
     }
 
     pub fn stats(&self) -> FrameStats {

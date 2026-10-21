@@ -30,7 +30,7 @@ impl RendererFacts for Facts<'_> {
         mesh: engine_core::MeshHandle,
         material: engine_core::MaterialHandle,
     ) -> Option<bool> {
-        self.0.impostor_baked(mesh, material)
+        self.0.impostor_resident(mesh, material)
     }
 
     fn drawn_level(&self, slot: u32) -> Option<u32> {

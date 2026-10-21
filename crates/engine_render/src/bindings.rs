@@ -8,7 +8,7 @@
 // Native builds read only the tables; Wasm builds build layouts from them.
 
 pub(crate) use crate::gpu_layouts::constants::PYRAMID_EXTENT_BYTES;
-use crate::gpu_layouts::impostors::{ImpostorBakeUniform, ImpostorRecord};
+use crate::gpu_layouts::impostors::{Bc7Level, ImpostorBakeUniform, ImpostorRecord};
 use crate::gpu_layouts::scene::{
     CameraUniform, ColorData, GroundData, LightingUniform, MaterialUniform, PoseData, PostUniform,
     ResolveUniform, ShadowCullUniform, ShadowUniform, SkyUniform,
@@ -498,6 +498,19 @@ tables! {
         bindings: &[
             uniform_of(15, "impostor_bake", size_of::<ImpostorBakeUniform>(), VF),
             texture(16, "impostor_shade", Depth, D2, F),
+        ],
+    };
+
+    /// BC7's encoding of a level of an impostor bake
+    /// (`impostor_bc7.wgsl`): the level's texels as stored, the blocks it
+    /// writes and where.
+    const IMPOSTOR_BC7: Table = Table {
+        label: "engine/impostor-bc7-layout",
+        serves: [IMPOSTOR_BC7_SHADER @ 0],
+        bindings: &[
+            texture(0, "bc7_source", Unfilterable, D2, C),
+            write(1, "bc7_blocks", C),
+            uniform_of(2, "bc7_level", size_of::<Bc7Level>(), C),
         ],
     };
 

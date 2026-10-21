@@ -28,14 +28,14 @@ try {
   // The pinned tiles stand a share of them everywhere.
   assert.ok(settled.terrain.placed_far_objects > 0 && settled.terrain.placed_far_objects < settled.terrain.placed_objects,
     `far crates: ${settled.terrain.placed_far_objects} of ${settled.terrain.placed_objects}`);
-  // GPU-presented frames bake the balls' impostor, which far
-  // balls draw and cast as cards.
+  // GPU-presented frames supply the balls' impostor, from its record or
+  // baked, which far balls draw and cast as cards.
   let presented;
   for (let frame = 0; frame < 60; frame++) {
     presented = (await command("present", { alpha: 0, gpu: true })).result.rendering;
     if (presented.terrain.placed_impostors > 0) break;
   }
-  assert.equal(presented.terrain.placed_impostors, 1, `the balls' impostor bakes: ${JSON.stringify(presented)}`);
+  assert.equal(presented.terrain.placed_impostors, 1, `the balls' impostor comes: ${JSON.stringify(presented)}`);
   assert.equal(presented.level_of_detail.dropped_impostors, 0);
   checks.push({ check: "streams and draws", tiles: settled.terrain.tiles, patches: settled.terrain.patches, triangles: settled.terrain.triangles, placed_impostors: presented.terrain.placed_impostors, placed_far: settled.terrain.placed_far_objects });
 

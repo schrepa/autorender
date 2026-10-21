@@ -133,6 +133,10 @@ shaders! {
     MIPMAP_SHADER = [
         "mipmaps.wgsl",
     ];
+    /// Impostor layers encoded in BC7 where they are baked.
+    IMPOSTOR_BC7_SHADER = [
+        "impostor_bc7.wgsl",
+    ];
     /// Local light binning into view clusters.
     LIGHT_SHADER = [
         "lights.wgsl",
@@ -360,6 +364,9 @@ entry_points! {
     mipmaps = MIPMAP_SHADER {
         vertex: [vs_mip],
         fragment: [fs_mip],
+    }
+    impostor_bc7 = IMPOSTOR_BC7_SHADER {
+        compute: [encode_bc7],
     }
     lights = LIGHT_SHADER {
         compute: [count_lights, bin_lights, scan_clusters],

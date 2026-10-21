@@ -127,9 +127,9 @@ gpu_consts! {
     pub(crate) const LIGHT_EXTERIOR: u32 = 2 => ["LIGHT_EXTERIOR" in SHADER];
 
     // crate::impostors
-    /// Frames per side of the octahedral grid, as `meshes/impostors.wgsl`
-    /// declares it.
-    pub(crate) const IMPOSTOR_FRAMES: u32 = 8 => ["IMPOSTOR_FRAMES"];
+    /// The bit from which impostor records hold their frames along each
+    /// side of their grid, in five bits.
+    pub(crate) const IMPOSTOR_FRAMES_SHIFT: u32 = 19 => ["IMPOSTOR_FRAMES_SHIFT"];
     /// The flag of records whose frames cover only the upper hemisphere, above
     /// their texels across a frame.
     pub(crate) const IMPOSTOR_HEMISPHERE: u32 = 1 << 16 => ["IMPOSTOR_HEMISPHERE"];

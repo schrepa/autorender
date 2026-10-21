@@ -17,7 +17,7 @@ const command = commander(page);
 
 // Counts of instances per level are read back a few frames late, later
 // while the GPU falls behind, and the first GPU frames compile pipelines
-// and bake impostors: present frames of the same view until counts read
+// and supply impostors: present frames of the same view until counts read
 // back from frames presented here (fewer frames late than were presented)
 // hold for several frames running.
 async function present(gpu) {
@@ -76,7 +76,8 @@ try {
   assert.equal(unknownPreset.error.code, "game_rule");
 
   // From the overview, GPU-presented frames draw distant props at coarser
-  // levels and the smallest as impostors, baked the first frame their draw
+  // levels and the smallest as impostors, whose layers come from their
+  // records (or bake where no pack or store holds them) once their draw
   // groups draw. How many pixels each way of drawing changes against the
   // exact CPU reference is measured, not judged: small objects shift by up
   // to a pixel where impostors take over, so differences run long, and
@@ -113,7 +114,7 @@ try {
   const exactPixels = await differentPixels(page, [cpu.png, exact.png], { tolerance: 8 });
   differs("disabled difference", exactPixels, "with levels of detail off");
 
-  // A budget keeps that many impostors baked and reports the draw groups it
+  // A budget keeps that many impostors resident and reports the draw groups it
   // leaves drawing their meshes.
   await command("environment", { level_of_detail: { max_impostors: 2 } });
   const budget = await present(true);

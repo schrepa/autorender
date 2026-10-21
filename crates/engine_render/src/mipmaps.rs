@@ -74,8 +74,8 @@ impl MipGenerator {
         self.record_views(device, encoder, texture, None)
     }
 
-    /// [`Self::record`] for layer `layer` of an array texture: impostors',
-    /// after a bake renders its first level.
+    /// [`Self::record`] for layer `layer` of an array texture: terrain
+    /// materials', after their first level is written.
     pub(crate) fn record_layer(
         &self,
         device: &wgpu::Device,

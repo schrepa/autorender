@@ -97,9 +97,10 @@ impl Renderer {
     }
 
     /// Whether an impostor card of mesh `mesh` drawn with `material` is
-    /// baked. None where it never draws as one: before upload, and for
-    /// skinned meshes and those of too few triangles.
-    pub fn impostor_baked(&self, mesh: MeshHandle, material: MaterialHandle) -> Option<bool> {
+    /// resident: loaded from its record or baked. None where it never
+    /// draws as one: before upload, and for skinned meshes and those of too
+    /// few triangles.
+    pub fn impostor_resident(&self, mesh: MeshHandle, material: MaterialHandle) -> Option<bool> {
         let gpu = self.meshes.get(&mesh)?;
         if gpu.skinned || (gpu.index_count as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {
             return None;

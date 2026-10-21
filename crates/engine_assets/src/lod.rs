@@ -132,7 +132,11 @@ impl MeshLods {
         if !(self.casters.is_empty() || self.casters.len() == self.levels.len() + 1) {
             return invalid("caster ranges cover the mesh and every level, or none");
         }
-        if !self.casters.iter().all(|&(first, count)| within(first, count)) {
+        if !self
+            .casters
+            .iter()
+            .all(|&(first, count)| within(first, count))
+        {
             return invalid("a caster range lies within the mesh's and the levels' indices");
         }
         if self.indices.iter().any(|&index| index as usize >= vertices) {
@@ -175,7 +179,12 @@ pub fn lod_input(mesh: &Mesh) -> Option<Vec<u8>> {
     bytes.extend_from_slice(&(vertices.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&(indices.len() as u32).to_le_bytes());
     for vertex in vertices {
-        for value in vertex.position.iter().chain(&vertex.normal).chain(&vertex.uv) {
+        for value in vertex
+            .position
+            .iter()
+            .chain(&vertex.normal)
+            .chain(&vertex.uv)
+        {
             bytes.extend_from_slice(&value.to_le_bytes());
         }
     }

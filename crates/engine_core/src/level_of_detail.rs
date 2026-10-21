@@ -1,15 +1,15 @@
-//! Level of detail settings: meshes carry simplified levels
-//! the renderer builds when they are first uploaded, and GPU-presented frames
-//! draw each instance at the coarsest level whose simplification error stays
-//! within `pixel_error` of the viewport height. Impostors are
-//! the coarsest level: cards showing a draw group's mesh baked from many
-//! directions, for instances too small to show more.
+//! Level of detail settings: meshes carry simplified levels the cook makes
+//! offline (`engine_lodbuild`), and GPU-presented frames draw each instance
+//! at the coarsest level whose simplification error stays within
+//! `pixel_error` of the viewport height. Impostors are the coarsest level:
+//! cards showing a draw group's mesh seen from many directions, for
+//! instances too small to show more.
 //!
 //! The [`LevelOfDetail`] settings are inserted by default; without them, or
 //! when disabled, every instance draws its mesh itself. Opaque draw groups
 //! whose meshes have enough triangles draw impostors where those stay within
 //! `pixel_error`; without `max_impostors`, only the GPU's texture array
-//! layers bound how many stay baked, and draw groups beyond a budget draw
+//! layers bound how many stay resident, and draw groups beyond a budget draw
 //! their meshes.
 
 use bevy_ecs::prelude::Resource;
@@ -36,7 +36,7 @@ settings! {
         pub pixel_error: f32 = 1.0 => range(0.25, 64.0),
         /// Whether draw groups draw impostors where they fit.
         pub impostors: bool = true => any,
-        /// The most impostors kept baked; omitted for no budget.
+        /// The most impostors kept resident; omitted for no budget.
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_impostors: Option<u32> = None => budget,
         /// Seconds placed objects take to fade between how the camera shows

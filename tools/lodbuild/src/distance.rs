@@ -129,7 +129,10 @@ impl Hierarchy {
                     &self.triangles[node.first as usize..(node.first + node.count) as usize]
                 {
                     let [a, b, c] = *triangle;
-                    best = min(best, closest_on_triangle(point, a, b, c).distance_squared(point));
+                    best = min(
+                        best,
+                        closest_on_triangle(point, a, b, c).distance_squared(point),
+                    );
                 }
                 continue;
             }
@@ -187,7 +190,8 @@ fn build(nodes: &mut Vec<Node>, triangles: &mut [[Vec3; 3]], at: usize, range: (
     slice.sort_by(|a, b| {
         let key = |triangle: &[Vec3; 3]| triangle[0][axis] + triangle[1][axis] + triangle[2][axis];
         key(a).total_cmp(&key(b)).then_with(|| {
-            let bits = |triangle: &[Vec3; 3]| triangle.map(|corner| corner.to_array().map(f32::to_bits));
+            let bits =
+                |triangle: &[Vec3; 3]| triangle.map(|corner| corner.to_array().map(f32::to_bits));
             bits(a).cmp(&bits(b))
         })
     });

@@ -1,12 +1,19 @@
 // Impostors' frames, which the meshes' and the
-// shadow maps' shaders share: the grid of frames, each one's direction over
-// the sphere or the upper hemisphere, and the records of baked impostors.
-const IMPOSTOR_FRAMES: u32 = 8u;
+// shadow maps' shaders share: each record's grid of frames, each one's
+// direction over the sphere or the upper hemisphere, and the records of
+// baked impostors.
 // The flag of records whose frames cover only the upper hemisphere, above
 // their texels across a frame.
 const IMPOSTOR_HEMISPHERE: u32 = 0x10000u;
 // The flag of records whose material is masked (alpha tested), above that.
 const IMPOSTOR_MASKED: u32 = 0x20000u;
+// Records' frames along each side of their grid, five bits from this one.
+const IMPOSTOR_FRAMES_SHIFT: u32 = 19u;
+
+// The frames along each side of the grid of a record with `flags`.
+fn impostor_frames(flags: u32) -> u32 {
+    return (flags >> IMPOSTOR_FRAMES_SHIFT) & 31u;
+}
 
 // The flags of a card fading in or out as the camera's view of its object
 // switches: its record's index in the low 15
@@ -89,12 +96,12 @@ fn impostor_grid(d: vec3<f32>, hemisphere: bool) -> vec2<f32> {
     return impostor_octahedral(d);
 }
 
-// Frame `frame`'s direction toward its viewer: the frames sit on the grid
-// points of the octahedral map, or the hemisphere's, edges and corners
-// included.
-fn impostor_frame_direction(frame: u32, hemisphere: bool) -> vec3<f32> {
-    let cell = vec2<f32>(f32(frame % IMPOSTOR_FRAMES), f32(frame / IMPOSTOR_FRAMES));
-    let p = cell / f32(IMPOSTOR_FRAMES - 1u) * 2.0 - 1.0;
+// Frame `frame`'s direction toward its viewer, of a grid `frames` a side:
+// the frames sit on the grid points of the octahedral map, or the
+// hemisphere's, edges and corners included.
+fn impostor_frame_direction(frame: u32, frames: u32, hemisphere: bool) -> vec3<f32> {
+    let cell = vec2<f32>(f32(frame % frames), f32(frame / frames));
+    let p = cell / f32(frames - 1u) * 2.0 - 1.0;
     if hemisphere {
         return impostor_hemi_direction(p);
     }

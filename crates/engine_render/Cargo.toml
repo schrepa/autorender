@@ -24,6 +24,9 @@ serde_json = { workspace = true, optional = true }
 [dependencies.wgpu]
 workspace = true
 
+[build-dependencies]
+engine_sources.workspace = true
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys.workspace = true
 wasm-bindgen.workspace = true

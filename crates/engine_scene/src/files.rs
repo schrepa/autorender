@@ -326,9 +326,9 @@ impl MeshBuffer {
             path,
         )?;
         match self.lods {
-            Some(lods) => mesh.with_lods(lods).map_err(|error| {
-                SceneError::new(ErrorCode::InvalidMesh, path, error.to_string())
-            }),
+            Some(lods) => mesh
+                .with_lods(lods)
+                .map_err(|error| SceneError::new(ErrorCode::InvalidMesh, path, error.to_string())),
             None => Ok(mesh),
         }
     }

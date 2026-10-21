@@ -12,9 +12,9 @@
 
 use std::path::Path;
 
+use engine_core::math::{cos, sin};
 use engine_core::{MeshLods, MeshVertex};
 use engine_lodbuild::simplify::{SimplifyInput, SimplifyOptions, VertexFlags, simplify};
-use engine_core::math::{cos, sin};
 use engine_vgbuild::meshoptimizer;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -197,7 +197,12 @@ fn levels(mesh: &Mesh, observed: &mut Observations) -> Result<(), String> {
     let bytes = lods.to_bytes();
     observed.check(
         MeshLods::from_bytes(&bytes).is_ok_and(|read| read == lods),
-        || format!("{}: its levels do not read back from their record", mesh.name),
+        || {
+            format!(
+                "{}: its levels do not read back from their record",
+                mesh.name
+            )
+        },
     );
     observed.check(
         lods.check(mesh.indices.len(), vertices.len()).is_ok(),

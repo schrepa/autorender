@@ -1,22 +1,24 @@
-//! Impostors: baking the frame's missing ones and preparing
-//! their records and draw pipeline.
+//! Impostors: supplying the frame's missing ones, from their records or
+//! baked, and preparing their records and draw pipeline; and the records
+//! hosts exchange with the renderer.
 
 use super::*;
 
-/// Impostors: the plan batches' baked layers and placed
-/// objects', the pipelines both share, this frame's record
-/// per plan batch (zeroed without an impostor), and the draw groups a
-/// budget or the GPU left without one.
+/// Impostors: the plan batches' layers and placed objects', the pipelines
+/// both share, the contents their records are keyed by, this frame's
+/// record per plan batch (zeroed without an impostor), and the draw groups
+/// a budget or the GPU left without one.
 pub(super) struct ImpostorDraws {
     pub(super) atlas: ImpostorAtlas,
     pub(super) placed: ImpostorAtlas,
     pub(super) pipelines: ImpostorPipelines,
+    pub(super) contents: Contents,
     pub(super) records: Vec<ImpostorRecord>,
     pub(super) dropped: u32,
 }
 
 impl ImpostorDraws {
-    /// Impostors baked in both atlases.
+    /// Impostors resident in both atlases.
     pub(super) fn live(&self) -> u32 {
         self.atlas.live() + self.placed.live()
     }
@@ -28,11 +30,56 @@ impl ImpostorDraws {
 }
 
 impl Renderer {
-    /// Impostors of this frame: drops those of retired or
-    /// replaced meshes and materials, bakes the missing ones of opaque draw
-    /// groups whose meshes have enough triangles into `encoder` (after the
-    /// materials' levels) on GPU-presented frames with them, and fills the
-    /// record of every plan batch, zeroed without one.
+    /// Records the renderer asks hosts for since the last call: the layers
+    /// of impostors it would otherwise bake. Hosts answer each
+    /// ([`Self::give_record`]).
+    pub fn take_record_wants(&mut self) -> Vec<RecordKey> {
+        let mut wants = Vec::new();
+        self.impostors.atlas.take_wants(&mut wants);
+        self.impostors.placed.take_wants(&mut wants);
+        wants
+    }
+
+    /// Hosts' answer for record `record`, which the renderer asked for
+    /// ([`Self::take_record_wants`]): its bytes, or `None` where no pack or
+    /// store holds it, which bakes what it holds.
+    pub fn give_record(&mut self, record: RecordKey, bytes: Option<Vec<u8>>) {
+        let impostors = &mut self.impostors;
+        if impostors.atlas.asks(record) {
+            impostors.atlas.answer(record, bytes);
+        } else if impostors.placed.asks(record) {
+            impostors.placed.answer(record, bytes);
+        }
+    }
+
+    /// Records the renderer made since the last call, for hosts to keep:
+    /// the layers of impostors it baked.
+    pub fn take_made_records(&mut self) -> Vec<(RecordKey, Vec<u8>)> {
+        let mut made = Vec::new();
+        self.impostors.atlas.take_made(&mut made);
+        self.impostors.placed.take_made(&mut made);
+        made
+    }
+
+    /// Records the renderer still has to come: asked of hosts, or reading
+    /// back.
+    pub fn records_left(&self) -> u64 {
+        self.impostors.atlas.left() + self.impostors.placed.left()
+    }
+
+    /// While a session cooks: every impostor is supplied, whatever the
+    /// budget, its record fetched or made.
+    pub fn set_cooking(&mut self, cooking: bool) {
+        self.impostors.atlas.set_cooking(cooking);
+        self.impostors.placed.set_cooking(cooking);
+    }
+
+    /// Impostors of this frame: drops those of retired or replaced meshes
+    /// and materials, supplies the missing ones of opaque draw groups
+    /// whose meshes have enough triangles on GPU-presented frames with
+    /// them (baking into `encoder` after the materials' levels those no
+    /// host holds), and fills the record of every plan batch, zeroed
+    /// without one.
     pub(super) fn prepare_impostors(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -71,18 +118,17 @@ impl Renderer {
                 meshes.contains_key(mesh)
                     && material.is_none_or(|handle| materials.group(handle).is_some())
             },
-            |handle| {
-                let version = materials.version(handle)?;
-                plan.material(snapshot, handle)
-                    .map(|material| (*material, version))
-            },
+            |handle| plan.material(snapshot, handle).copied(),
+        );
+        self.impostors.contents.retain(
+            |mesh| meshes.contains_key(&mesh),
+            |texture| materials.is_texture_resident(texture),
         );
         let settings = snapshot.environment.level_of_detail;
         if !(gpu_mode && settings.enabled && settings.impostors) {
             return;
         }
         self.impostors.atlas.enforce_budget(settings.max_impostors);
-        let device = &self.device;
         for batch in &self.plan.batches {
             let mesh = &self.meshes[&batch.mesh];
             let source = &snapshot.meshes[batch.source_index].mesh;
@@ -95,49 +141,53 @@ impl Renderer {
                 && source.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES;
             let mut record = ImpostorRecord::default();
             if eligible {
-                let material = batch.material.and_then(|handle| {
-                    let version = self.materials.version(handle)?;
-                    self.plan
-                        .material(snapshot, handle)
-                        .map(|material| (*material, version))
-                });
+                let material = batch
+                    .material
+                    .and_then(|handle| self.plan.material(snapshot, handle))
+                    .copied();
                 let key = (batch.mesh, batch.material);
-                if let Some(baked) = self.impostors.atlas.record(key, material.as_ref()) {
-                    record = baked;
-                } else {
-                    let encoder = encoder.get_or_insert_with(|| {
-                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("engine/texture-mips"),
-                        })
-                    });
-                    let bounds = source.bounds();
-                    let source = BakeSource {
-                        draw: mesh.draw(&self.mesh_arena),
-                        extended: mesh.extended,
-                        group,
-                        variant,
-                        bounds: (bounds.min(), bounds.max()),
-                        material,
-                    };
-                    if self.impostors.atlas.bake(
-                        device,
-                        encoder,
-                        self.materials.mips(),
-                        &self.mesh_shader,
-                        &mut self.impostors.pipelines,
-                        key,
-                        &source,
-                        settings.max_impostors,
-                    ) {
-                        record = self
-                            .impostors
-                            .atlas
-                            .record(key, material.as_ref())
-                            .unwrap_or_default();
-                    } else {
-                        self.impostors.dropped += 1;
+                record = match self.impostors.atlas.record(key, material.as_ref()) {
+                    Some(resident) => resident,
+                    None => {
+                        let contents = &mut self.impostors.contents;
+                        let content = (
+                            contents.mesh(batch.mesh, source),
+                            contents.material(material.as_ref(), |handle| {
+                                snapshot
+                                    .textures
+                                    .iter()
+                                    .find(|texture| texture.handle == handle)
+                                    .map(|texture| &*texture.texture)
+                            }),
+                        );
+                        let bounds = source.bounds();
+                        let bake = BakeSource {
+                            draw: mesh.draw(&self.mesh_arena),
+                            extended: mesh.extended,
+                            group,
+                            variant,
+                            bounds: (bounds.min(), bounds.max()),
+                            material,
+                        };
+                        let gpu = BakeGpu {
+                            device: &self.device,
+                            queue: &self.queue,
+                            encoder: &mut *encoder,
+                            mips: self.materials.mips(),
+                            shader: &self.mesh_shader,
+                            pipelines: &mut self.impostors.pipelines,
+                        };
+                        let supplied = self.impostors.atlas.supply(
+                            gpu,
+                            key,
+                            &bake,
+                            content,
+                            settings.max_impostors,
+                        );
+                        self.impostors.dropped += u32::from(matches!(supplied, Supplied::Refused));
+                        supplied.record()
                     }
-                }
+                };
             }
             self.impostors.records.push(record);
         }

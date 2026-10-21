@@ -714,8 +714,8 @@ pub struct MeshRenderView {
     /// Its coarser levels of detail, finest first; GPU-culled frames choose
     /// among them and the mesh itself by distance.
     pub levels: Vec<LodLevelView>,
-    /// Whether an impostor card of it with this material is baked; None where
-    /// it never draws as one.
+    /// Whether an impostor card of it with this material is resident;
+    /// None where it never draws as one.
     pub impostor: Option<bool>,
 }
 

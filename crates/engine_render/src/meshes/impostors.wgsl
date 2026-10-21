@@ -1,5 +1,5 @@
-// Octahedral impostors: a draw group's mesh baked from
-// IMPOSTOR_FRAMES x IMPOSTOR_FRAMES directions over the whole sphere, or
+// Octahedral impostors: a draw group's mesh baked from a grid of
+// directions (its record's frames a side) over the whole sphere, or
 // over the upper hemisphere for placed objects, into one
 // layer of four texture arrays, drawn for instances too small for its
 // texels to show as a card facing the viewer that blends the three frames
@@ -48,8 +48,9 @@ fn bake_hemisphere() -> bool {
 // it, as the mesh's own shadows would darken its insides.
 fn impostor_self_visibility(position: vec3<f32>, normal: vec3<f32>) -> f32 {
     let size = textureDimensions(impostor_shade).x;
+    let frames = impostor_frames(impostor_bake.flags.x);
     // A texel of the depths, in sphere radii.
-    let texel = 2.0 * f32(IMPOSTOR_FRAMES) / f32(size);
+    let texel = 2.0 * f32(frames) / f32(size);
     // Moved a texel and a half along its normal, a surface clears its own
     // depth.
     let p = (position - impostor_bake.sphere.xyz) / impostor_bake.sphere.w
@@ -57,16 +58,22 @@ fn impostor_self_visibility(position: vec3<f32>, normal: vec3<f32>) -> f32 {
     let hemisphere = bake_hemisphere();
     var seen = 0.0;
     var total = 0.0;
-    for (var frame = 0u; frame < IMPOSTOR_FRAMES * IMPOSTOR_FRAMES; frame++) {
-        let d = impostor_frame_direction(frame, hemisphere);
+    // Eight directions a side at most: finer grids look up every other
+    // frame, or fewer.
+    let stride = max(frames / 8u, 1u);
+    for (var frame = 0u; frame < frames * frames; frame++) {
+        if (frame % frames) % stride != 0u || (frame / frames) % stride != 0u {
+            continue;
+        }
+        let d = impostor_frame_direction(frame, frames, hemisphere);
         let facing = dot(normal, d);
         if d.y < 0.0 || facing <= 0.0 {
             continue;
         }
         let basis = impostor_basis(d);
         let image = vec2<f32>(dot(p, basis.right), -dot(p, basis.up));
-        let cell = vec2<f32>(f32(frame % IMPOSTOR_FRAMES), f32(frame / IMPOSTOR_FRAMES));
-        let atlas = (cell + 0.5 + image * 0.5) / f32(IMPOSTOR_FRAMES);
+        let cell = vec2<f32>(f32(frame % frames), f32(frame / frames));
+        let atlas = (cell + 0.5 + image * 0.5) / f32(frames);
         let at = min(vec2<u32>(max(atlas, vec2<f32>(0.0)) * f32(size)), vec2<u32>(size - 1u));
         // Nearer the frame's viewer is greater; empty texels hold zero.
         let nearest = textureLoad(impostor_shade, at, 0);
@@ -101,14 +108,15 @@ struct BakeExtendedOutput {
 
 fn bake_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, uv: vec2<f32>, frame: u32)
         -> BakeOutput {
-    let d = impostor_frame_direction(frame, bake_hemisphere());
+    let frames = impostor_frames(impostor_bake.flags.x);
+    let d = impostor_frame_direction(frame, frames, bake_hemisphere());
     let basis = impostor_basis(d);
     let local = (position - impostor_bake.sphere.xyz) / impostor_bake.sphere.w;
     let image = vec2<f32>(dot(local, basis.right), -dot(local, basis.up));
     let depth = clamp(dot(local, d), -1.0, 1.0);
     // The frame's cell, from the top left.
-    let cell = vec2<f32>(f32(frame % IMPOSTOR_FRAMES), f32(frame / IMPOSTOR_FRAMES));
-    let atlas = (cell + 0.5 + image * 0.5) / f32(IMPOSTOR_FRAMES);
+    let cell = vec2<f32>(f32(frame % frames), f32(frame / frames));
+    let atlas = (cell + 0.5 + image * 0.5) / f32(frames);
     var output: BakeOutput;
     // Nearer the frame's viewer is greater, as reversed depth keeps it.
     output.clip_position = vec4<f32>(atlas.x * 2.0 - 1.0, 1.0 - atlas.y * 2.0,
@@ -261,7 +269,7 @@ struct ImpostorOutput {
     // card's own depth in those units.
     @location(6) @interpolate(flat) depth_axis: vec4<f32>,
     // Linear color and opacity as four 16-bit fractions, the packed surface,
-    // and the three frames (six bits each).
+    // and the three frames (eight bits each).
     @location(7) @interpolate(flat) material: vec4<u32>,
     @location(8) @interpolate(flat) batch: u32,
 }
@@ -331,8 +339,9 @@ fn impostor_card(input: ImpostorInput) -> ImpostorCard {
         * orientation);
     // The three frames around it: the grid triangle holding it.
     let hemisphere = (record.flags & IMPOSTOR_HEMISPHERE) != 0u;
-    let grid = (impostor_grid(dir, hemisphere) * 0.5 + 0.5) * f32(IMPOSTOR_FRAMES - 1u);
-    let cell = min(floor(grid), vec2<f32>(f32(IMPOSTOR_FRAMES - 2u)));
+    let frames = impostor_frames(record.flags);
+    let grid = (impostor_grid(dir, hemisphere) * 0.5 + 0.5) * f32(frames - 1u);
+    let cell = min(floor(grid), vec2<f32>(f32(frames - 2u)));
     let f = grid - cell;
     let base = vec2<u32>(cell);
     var corners = array<vec2<u32>, 3>(base, base + vec2<u32>(1u, 0u), base + vec2<u32>(0u, 1u));
@@ -355,16 +364,16 @@ fn impostor_card(input: ImpostorInput) -> ImpostorCard {
     // frame's plane through the center.
     let offset = local - center;
     var uvs: array<vec2<f32>, 3>;
-    var frames = 0u;
+    var packed_frames = 0u;
     for (var k = 0u; k < 3u; k++) {
-        let frame = corners[k].y * IMPOSTOR_FRAMES + corners[k].x;
-        let d = impostor_frame_direction(frame, hemisphere);
+        let frame = corners[k].y * frames + corners[k].x;
+        let d = impostor_frame_direction(frame, frames, hemisphere);
         let frame_basis = impostor_basis(d);
         let projected = offset - dir * (dot(offset, d) / max(dot(dir, d), 1.0e-3));
         let image = vec2<f32>(dot(projected, frame_basis.right), -dot(projected, frame_basis.up))
             / radius;
-        uvs[k] = (vec2<f32>(corners[k]) + 0.5 + image * 0.5) / f32(IMPOSTOR_FRAMES);
-        frames |= frame << (6u * k);
+        uvs[k] = (vec2<f32>(corners[k]) + 0.5 + image * 0.5) / f32(frames);
+        packed_frames |= frame << (8u * k);
     }
     let color = colors[slot];
     // Cards sway in the wind as their meshes do.
@@ -383,10 +392,10 @@ fn impostor_card(input: ImpostorInput) -> ImpostorCard {
     output.normal_z = xy * orientation;
     let axis = model[0].xyz * dir.x + model[1].xyz * dir.y + model[2].xyz * dir.z;
     output.depth_axis = vec4<f32>(axis * radius, support / radius);
-    // The frames fill the word's low 18 bits: the origin key's top byte
+    // The frames fill the word's low 24 bits: the origin key's top byte
     // fits above them.
     output.material = vec4<u32>(color.color, color.surface,
-        frames | (origin_key(model[3].xyz) & 0xff000000u));
+        packed_frames | (origin_key(model[3].xyz) & 0xff000000u));
     output.batch = input.batch;
     return ImpostorCard(local, output);
 }
@@ -439,26 +448,26 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     let weights = vec3<f32>(input.normal_x.w, input.normal_y.w,
         1.0 - input.normal_x.w - input.normal_y.w);
     let packed = input.material.w;
-    let frames = vec3<u32>(packed & 63u, (packed >> 6u) & 63u, (packed >> 12u) & 63u);
+    let shown = vec3<u32>(packed & 255u, (packed >> 8u) & 255u, (packed >> 16u) & 255u);
+    let frames = impostor_frames(record.flags);
     let masked = (record.flags & IMPOSTOR_MASKED) != 0u;
     // The level whose texels match the pixels, and half a texel of the
     // coarser level sampled, which keeps each frame's samples in its cell.
     // The atlas is its frames' texels across and has their levels down to
     // two texels a frame (`AtlasShape`), which the record holds.
     let texels = record.flags & (IMPOSTOR_HEMISPHERE - 1u);
-    let size = f32(IMPOSTOR_FRAMES * texels);
+    let size = f32(frames * texels);
     let footprint = max(length(dpdx(input.frames_ab.xy)), length(dpdy(input.frames_ab.xy)))
         * size;
     let level = clamp(log2(max(footprint, 1.0e-6)), 0.0,
         f32(countTrailingZeros(texels) - 1u));
     let inset = 0.5 * exp2(ceil(level)) / size;
-    let span = 1.0 / f32(IMPOSTOR_FRAMES);
+    let span = 1.0 / f32(frames);
     let unclamped = array<vec2<f32>, 3>(input.frames_ab.xy, input.frames_ab.zw, input.frame_c);
     var uvs: array<vec2<f32>, 3>;
     var albedo = vec4<f32>(0.0);
     for (var k = 0u; k < 3u; k++) {
-        let cell = vec2<f32>(f32(frames[k] % IMPOSTOR_FRAMES), f32(frames[k] / IMPOSTOR_FRAMES))
-            * span;
+        let cell = vec2<f32>(f32(shown[k] % frames), f32(shown[k] / frames)) * span;
         uvs[k] = clamp(unclamped[k], cell + inset, cell + span - inset);
         albedo += weights[k] * textureSampleLevel(impostor_albedo, impostor_sampler, uvs[k],
             record.layer, level);

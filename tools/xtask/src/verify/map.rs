@@ -254,6 +254,7 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &[
             "crates/engine_core/src/**/level_of_detail*",
             "crates/engine_render/src/**/impostor*",
+            "crates/engine_render/src/**/impostors/**",
             "crates/engine_render/src/**/meshes/**",
             "crates/engine_render/src/**/mesh_arena*",
             "crates/engine_assets/src/**/lod*",

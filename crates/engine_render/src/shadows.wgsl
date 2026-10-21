@@ -631,8 +631,8 @@ struct CardOutput {
     @builtin(position) clip: vec4<f32>,
     // Layer coordinates of the card point in its frame.
     @location(0) uv: vec2<f32>,
-    // The layer, and the frame's column and row.
-    @location(1) @interpolate(flat) frame: vec3<u32>,
+    // The layer, the frame's column and row, and the frames a side.
+    @location(1) @interpolate(flat) frame: vec4<u32>,
 }
 
 // Two triangles of a card, corners in its right and up.
@@ -658,9 +658,10 @@ fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
         dot(cross(x, y), toward)) * orientation);
     // The frame nearest it, whose image the card shows.
     let hemisphere = (record.flags & IMPOSTOR_HEMISPHERE) != 0u;
-    let grid = (impostor_grid(sun, hemisphere) * 0.5 + 0.5) * f32(IMPOSTOR_FRAMES - 1u);
-    let cell = vec2<u32>(min(round(grid), vec2<f32>(f32(IMPOSTOR_FRAMES - 1u))));
-    let basis = impostor_basis(impostor_frame_direction(cell.y * IMPOSTOR_FRAMES + cell.x,
+    let frames = impostor_frames(record.flags);
+    let grid = (impostor_grid(sun, hemisphere) * 0.5 + 0.5) * f32(frames - 1u);
+    let cell = vec2<u32>(min(round(grid), vec2<f32>(f32(frames - 1u))));
+    let basis = impostor_basis(impostor_frame_direction(cell.y * frames + cell.x, frames,
         hemisphere));
     let corner = CARD[vertex];
     let local = vec4<f32>(record.sphere.xyz
@@ -668,9 +669,8 @@ fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
     var output: CardOutput;
     output.clip = project(vec3<f32>(dot(pose.r0, local), dot(pose.r1, local),
         dot(pose.r2, local)));
-    output.uv = (vec2<f32>(cell) + 0.5 + vec2<f32>(corner.x, -corner.y) * 0.5)
-        / f32(IMPOSTOR_FRAMES);
-    output.frame = vec3<u32>(record.layer, cell);
+    output.uv = (vec2<f32>(cell) + 0.5 + vec2<f32>(corner.x, -corner.y) * 0.5) / f32(frames);
+    output.frame = vec4<u32>(record.layer, cell, frames);
     return output;
 }
 
@@ -683,7 +683,7 @@ fn fs_impostor_card(input: CardOutput) {
     let dy = dpdy(input.uv) * size;
     let level = clamp(0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1.0e-12)), 0.0,
         f32(textureNumLevels(impostor_albedo) - 1u));
-    let span = 1.0 / f32(IMPOSTOR_FRAMES);
+    let span = 1.0 / f32(input.frame.w);
     let cell = vec2<f32>(input.frame.yz) * span;
     let inset = 0.5 * exp2(ceil(level)) / size;
     let uv = clamp(input.uv, cell + inset, cell + span - inset);

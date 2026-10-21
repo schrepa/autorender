@@ -133,8 +133,8 @@ pub trait RendererFacts {
     fn texture_resident(&self, texture: TextureHandle) -> bool;
     /// `mesh` as uploaded; None before it uploads.
     fn mesh(&self, mesh: MeshHandle) -> Option<RenderedMesh>;
-    /// Whether an impostor card of `mesh` drawn with `material` is baked;
-    /// None where it never draws as one.
+    /// Whether an impostor card of `mesh` drawn with `material` is
+    /// resident; None where it never draws as one.
     fn impostor(&self, mesh: MeshHandle, material: MaterialHandle) -> Option<bool>;
     /// The level of detail render slot `slot` drew at, read back a few
     /// frames late: 0 the mesh, 1 and 2 its simplifications, 3 its impostor

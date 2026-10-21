@@ -44,7 +44,11 @@ const SAMPLE_STEP: f32 = 0.5;
 /// simplification refuses the mesh (beyond what 32-bit indices address),
 /// or where no level is worth drawing.
 pub(crate) fn levels(input: &LodInput) -> Result<MeshLods, SimplifyError> {
-    let positions: Vec<[f32; 3]> = input.vertices.iter().map(|vertex| vertex.position).collect();
+    let positions: Vec<[f32; 3]> = input
+        .vertices
+        .iter()
+        .map(|vertex| vertex.position)
+        .collect();
     let points: Vec<Vec3> = positions.iter().map(|&point| Vec3::from(point)).collect();
     // Normals and texture coordinates, the latter per unit of their range so
     // tiled and atlas coordinates weigh alike.
