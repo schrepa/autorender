@@ -1248,7 +1248,11 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     point.emission = 0.0;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = occlusion * sky;
-    point.bounce = (1.0 - sky) * albedo * terrain_bounce();
+    // The light the ground around sends where it hides the sky: what the
+    // terrain's probes gather where they relight, an estimate past them.
+    let around = bounce_light(world, normal, true);
+    point.bounce = mix((1.0 - sky) * albedo * terrain_bounce(), around.light * occlusion,
+        around.weight);
     point.sky_turn = terrain_sky_turn(local);
     point.roughness = roughness;
     point.alpha = roughness * roughness;

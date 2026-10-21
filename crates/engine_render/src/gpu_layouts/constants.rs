@@ -151,8 +151,23 @@ gpu_consts! {
     pub(crate) const TERRAIN_GRID_VERTICES: u32 = TERRAIN_GRID * TERRAIN_GRID => ["TERRAIN_GRID_VERTICES"];
 
     // crate::terrain_horizons
-    /// Texels of the records each terrain's horizon map takes.
-    pub(crate) const HORIZON_RECORD_TEXELS: u32 = 2 => ["HORIZON_RECORD_TEXELS"];
+    /// Texels of the records each terrain's horizon map takes: where it lies
+    /// and how its shadows soften, then where its bounce light lies.
+    pub(crate) const HORIZON_RECORD_TEXELS: u32 = 4 => ["HORIZON_RECORD_TEXELS"];
+
+    // crate::terrain_bounce
+    /// Layers of the horizon maps each terrain's bounce light takes: per
+    /// layer of probes, the light's mean (red, green, blue) and the sky's
+    /// share (alpha), then their gradients along x, y and z.
+    pub(crate) const BOUNCE_LAYERS: usize = 4 * engine_core::terrain_data::bounce::LAYERS => ["BOUNCE_LAYERS"];
+    /// Columns at a window's edge across which bounce light hands over to
+    /// what stands in past it.
+    pub(crate) const BOUNCE_FADE: f32 = 8.0 => ["BOUNCE_FADE"];
+    /// Words of a probe in the probes' buffer.
+    pub(crate) const BOUNCE_RECORD_WORDS: usize = engine_core::terrain_data::bounce::PROBE_BYTES / 4 => ["BOUNCE_RECORD_WORDS" in BOUNCE_SHADER];
+    /// The share of their color blades' canopy shows the light it takes on
+    /// average, as terrain shades it (`meshes/terrain.wgsl`).
+    pub(crate) const BOUNCE_CANOPY: f32 = 0.6 => ["BOUNCE_CANOPY" in BOUNCE_SHADER, "TERRAIN_CANOPY_OCCLUSION" in SHADER];
 
     // crate::terrain_vt
     /// Texels along a page's side, the border around it, and a slot's side.
@@ -246,7 +261,7 @@ gpu_consts! {
     // crate::gpu_layouts::terrain
     /// Surface materials every terrain together can show: as many as fit the
     /// 16 KiB uniform binding every device allows.
-    pub(crate) const PALETTE_ENTRIES: usize = 16_384 / size_of::<PaletteEntry>() => ["TERRAIN_PALETTE_ENTRIES" in SHADER, "PALETTE_ENTRIES" in COVER_GROW_SHADER];
+    pub(crate) const PALETTE_ENTRIES: usize = 16_384 / size_of::<PaletteEntry>() => ["TERRAIN_PALETTE_ENTRIES" in SHADER, "PALETTE_ENTRIES" in COVER_GROW_SHADER, "PALETTE_ENTRIES" in BOUNCE_SHADER];
 
     /// Cells along a side of the cloud shadows' grid.
     pub(crate) const SHADOW_CELLS: u32 = 128 => ["CLOUD_SHADOW_CELLS"];
@@ -350,6 +365,7 @@ gpu_consts! {
     pub(crate) const CLOUD_GROUP: u32 = 8 => ["@march_view" in CLOUDS_SHADER, "@march_clouds" in CLOUDS_SHADER, "@shadow_clouds" in CLOUDS_SHADER, "@light_clouds" in CLOUDS_SHADER];
     pub(crate) const SKY_TABLE_GROUP: u32 = 8 => ["@build_sky_view" in SKY_SHADER];
     pub(crate) const CONTROL_GROUP: u32 = 8 => ["@tile_control" in TERRAIN_CONTROL_SHADER];
+    pub(crate) const BOUNCE_GROUP: u32 = 8 => ["@bounce_ground" in BOUNCE_SHADER, "@bounce_down" in BOUNCE_SHADER, "@bounce_gather" in BOUNCE_SHADER];
     pub(crate) const NORMALS_GROUP: u32 = 16 => ["@tile_normals" in TERRAIN_NORMALS_SHADER];
     pub(crate) const RESOLVE_ARGS_GROUP: u32 = 64 => ["@resolve_args" in VISIBILITY_SHADER];
     pub(crate) const VT_FEEDBACK_GROUP: u32 = 8 => ["@cs_terrain_vt_feedback" in SHADER];
@@ -411,6 +427,12 @@ gpu_mirrors! {
     engine_core::RIM_REACH => ["RIM_REACH" in DEFORMATION_SHADER];
     engine_core::terrain_data::lighting::DIRECTIONS => ["HORIZON_DIRECTIONS"];
     engine_core::terrain_data::lighting::HORIZON_LAYERS => ["HORIZON_LAYERS"];
+    engine_core::terrain_data::bounce::BINS => ["BOUNCE_BINS" in BOUNCE_SHADER];
+    engine_core::terrain_data::bounce::LAYERS => ["BOUNCE_PROBE_LAYERS" in BOUNCE_SHADER];
+    engine_core::terrain_data::bounce::LOW_PROBE => ["BOUNCE_LOW"];
+    engine_core::terrain_data::bounce::HIGH_PROBE => ["BOUNCE_HIGH"];
+    engine_core::terrain_data::bounce::NEAREST => ["BOUNCE_NEAREST" in BOUNCE_SHADER];
+    engine_core::terrain_data::bounce::DISTANCE_STEPS => ["BOUNCE_STEPS" in BOUNCE_SHADER];
     engine_core::terrain_data::TILE_STRIDE => ["TILE_STRIDE" in TERRAIN_CONTROL_SHADER, "TILE_STRIDE" in TERRAIN_NORMALS_SHADER];
     engine_core::terrain_data::RIVER_FAR => ["RIVER_FAR" in TERRAIN_CONTROL_SHADER];
     engine_core::terrain_data::PATH_FAR => ["PATH_FAR" in TERRAIN_CONTROL_SHADER];

@@ -34,6 +34,16 @@ impl Renderer {
                 &self.mesh_shader,
                 (&self.camera.terrain_layout, self.camera.terrain_group()),
             ),
+            Pass::Bounce => self.terrain.encode_bounce(
+                &self.device,
+                encoder,
+                &self.profiler,
+                crate::terrain_bounce::SceneSources {
+                    lighting: self.camera.lighting_buffer(),
+                    shadow: self.shadows.entries()[0].clone(),
+                    cloud_shadows: &self.camera.cloud_shadows,
+                },
+            ),
             Pass::Opaque { phase } => {
                 let draws = self.encode_opaque(state, encoder, view, node, phase.index());
                 // Phase two issues phase one's draws again for
@@ -143,6 +153,7 @@ impl Renderer {
             | Resource::CloudDome
             | Resource::Tracks
             | Resource::Pages
+            | Resource::Bounce
             | Resource::Cover
             | Resource::Feedback => {
                 unreachable!("{resource:?} is no attachment of the renderer's passes")

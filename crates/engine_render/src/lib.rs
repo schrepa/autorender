@@ -66,6 +66,7 @@ mod staging;
 mod targets;
 mod temporal;
 mod terrain;
+mod terrain_bounce;
 mod terrain_horizons;
 mod terrain_maps;
 mod terrain_sky;

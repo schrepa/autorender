@@ -7,7 +7,11 @@
 //! and compares its own height above the ground with it, softening with the
 //! crest's distance (`scene.wgsl`): the sun moves and nothing builds. A
 //! terrain's layers upload as its lighting arrives and again when it
-//! changes; two texels per terrain place its map for those lookups.
+//! changes; four texels per terrain place its map for those lookups.
+//!
+//! With bounce light on, the maps hold after every terrain's horizon layers
+//! each terrain's bounce layers (`crate::terrain_bounce`), which its probes
+//! around the camera write every frame; the records place them too.
 
 use std::sync::Arc;
 
@@ -16,10 +20,11 @@ use engine_core::terrain_data::lighting::HORIZON_LAYERS;
 use engine_core::{RenderTerrain, RenderTerrains, TerrainLighting, TerrainSettings};
 
 use crate::cached::{Bound, Versioned};
-use crate::gpu_layouts::constants::HORIZON_RECORD_TEXELS;
+use crate::gpu_layouts::constants::{BOUNCE_LAYERS, HORIZON_RECORD_TEXELS};
+use crate::terrain_bounce::BounceWindow;
 
 /// A horizon map texel: two directions' crest heights and distances, or the
-/// ground's height, filtered.
+/// ground's height, filtered; or bounce light's coefficients.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The records' texels.
 const RECORD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
@@ -27,9 +32,18 @@ const RECORD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 /// near cascades, which shadow fine detail its texels miss.
 const CASCADE_TEXELS: f32 = 4.0;
 
+/// A terrain's record without a map: its place covers no ground and it
+/// holds no bounce light.
+const NO_RECORD: [[f32; 4]; HORIZON_RECORD_TEXELS as usize] =
+    [[0.0; 4], [0.0; 4], [-1.0, 0.0, 0.0, 0.0], [0.0; 4]];
+
 struct Maps {
     texture: wgpu::Texture,
+    // Every layer, as the main passes read them; the horizon layers alone,
+    // as bounce light reads them; and the bounce layers, as it writes them.
     view: Versioned<wgpu::TextureView>,
+    horizon_view: Versioned<wgpu::TextureView>,
+    bounce_view: Option<Versioned<wgpu::TextureView>>,
     size: u32,
     terrains: usize,
 }
@@ -102,6 +116,37 @@ impl Horizons {
         ]
     }
 
+    /// Bounce light's bindings (`bindings::BOUNCE`) while the maps hold its
+    /// layers: the horizon layers alone with the records and sampler, as
+    /// the sun's lookups read them, and the bounce layers to write.
+    pub(crate) fn bounce_entries(&self) -> Option<([(&'static str, Bound<'_>); 3], Bound<'_>)> {
+        let maps = self.maps.as_ref()?;
+        let written = maps.bounce_view.as_ref()?.bound();
+        Some((
+            [
+                ("terrain_horizons", maps.horizon_view.bound()),
+                ("terrain_horizon_records", self.records_view.bound()),
+                (
+                    "terrain_horizon_sampler",
+                    Bound::fixed(crate::pipelines::sampler(&self.sampler)),
+                ),
+            ],
+            written,
+        ))
+    }
+
+    /// Whether the maps hold bounce layers.
+    pub(crate) fn bounces(&self) -> bool {
+        self.maps
+            .as_ref()
+            .is_some_and(|maps| maps.bounce_view.is_some())
+    }
+
+    /// Whether terrain `index`'s map is here.
+    pub(crate) fn held(&self, index: usize) -> bool {
+        self.held.get(index).is_some_and(Option::is_some)
+    }
+
     /// Terrains the records texture holds, which the main passes' lookups
     /// loop over.
     pub(crate) fn record_count(&self) -> u32 {
@@ -118,7 +163,7 @@ impl Horizons {
         self.maps.as_ref().map_or(0, |maps| {
             u64::from(maps.size)
                 * u64::from(maps.size)
-                * (HORIZON_LAYERS * maps.terrains) as u64
+                * u64::from(maps.texture.depth_or_array_layers())
                 * 8
         })
     }
@@ -131,14 +176,16 @@ impl Horizons {
 
     /// Uploads the maps of every terrain whose lighting arrived or changed
     /// since and writes their records, with shadows on and terrain
-    /// `settings` casting at their resolution. Without casters the maps
-    /// are released.
+    /// `settings` casting at their resolution, each placing the window of
+    /// `windows` (by terrain index) its bounce light relights there. Without
+    /// casters the maps are released.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         terrains: &RenderTerrains,
         (settings, shadows): (&TerrainSettings, bool),
+        windows: &[Option<BounceWindow>],
     ) {
         self.uploaded = 0;
         self.reaches.clear();
@@ -148,12 +195,11 @@ impl Horizons {
         }
         let size = settings.shadow_resolution;
         let count = terrains.terrains.len();
-        if self
-            .maps
-            .as_ref()
-            .is_none_or(|maps| maps.size != size || maps.terrains != count)
-        {
-            self.maps = Some(maps(device, size, count));
+        let bounce = settings.bounce;
+        if self.maps.as_ref().is_none_or(|maps| {
+            maps.size != size || maps.terrains != count || maps.bounce_view.is_some() != bounce
+        }) {
+            self.maps = Some(maps(device, size, count, bounce));
             self.held = vec![None; count];
         }
         let Some(maps) = &self.maps else {
@@ -183,13 +229,25 @@ impl Horizons {
             }
             match held {
                 Some(lighting) => {
-                    records.extend(record(terrain, lighting, index, settings));
+                    // Bounce light where its layers are and it relights.
+                    let window = windows
+                        .get(index)
+                        .copied()
+                        .flatten()
+                        .filter(|_| maps.bounce_view.is_some());
+                    let place = Place {
+                        index,
+                        count,
+                        size,
+                        window,
+                    };
+                    records.extend(record(terrain, lighting, place, settings));
                     let texel = max_extent(terrain) / size as f32;
                     self.reaches.insert(terrain.id, CASCADE_TEXELS * texel);
                 }
                 // Nothing reads a terrain without its map: its place
                 // covers no ground.
-                None => records.extend([[0.0; 4]; HORIZON_RECORD_TEXELS as usize]),
+                None => records.extend(NO_RECORD),
             }
         }
         if records != self.records_written {
@@ -231,19 +289,44 @@ fn max_extent(terrain: &RenderTerrain) -> f32 {
     engine_core::math::max(extent.x, extent.y)
 }
 
-/// Terrain `index`'s record (`scene.wgsl`): its map's first corner (world x
-/// and z) and one over its extent; its first layer, how fast its shadows
-/// soften per meter to their crests, the meters receivers rise before they
-/// compare (a tenth of a texel, within which slopes the sun grazes stay
-/// lit) and the world height its ground's heights count from.
+/// Where a terrain's record places its layers: its index among `count`
+/// terrains whose maps are `size` texels a side, and the window its bounce
+/// light relights, if it does.
+struct Place {
+    index: usize,
+    count: usize,
+    size: u32,
+    window: Option<BounceWindow>,
+}
+
+/// A terrain's record (`scene.wgsl`): its map's first corner (world x and
+/// z) and one over its extent; its first layer, how fast its shadows soften
+/// per meter to their crests, the meters receivers rise before they compare
+/// (a tenth of a texel, within which slopes the sun grazes stay lit) and
+/// the world height its ground's heights count from; its bounce layers'
+/// first (-1 without bounce light), its probe columns along a side and the
+/// first column (x and z) of its window; and the window's columns along a
+/// side and one over the maps' side.
 fn record(
     terrain: &RenderTerrain,
     lighting: &TerrainLighting,
-    index: usize,
+    place: Place,
     settings: &TerrainSettings,
-) -> [[f32; 4]; 2] {
+) -> [[f32; 4]; HORIZON_RECORD_TEXELS as usize] {
     let extent = terrain.pyramid.extent();
     let texel = max_extent(terrain) / lighting.horizon_size as f32;
+    let (bounce, window) = match place.window {
+        Some(window) => (
+            [
+                (HORIZON_LAYERS * place.count + BOUNCE_LAYERS * place.index) as f32,
+                window.probes as f32,
+                window.first[0] as f32,
+                window.first[1] as f32,
+            ],
+            [window.columns as f32, 1.0 / place.size as f32, 0.0, 0.0],
+        ),
+        None => (NO_RECORD[2], NO_RECORD[3]),
+    };
     [
         [
             terrain.origin.x,
@@ -252,11 +335,13 @@ fn record(
             1.0 / extent.y,
         ],
         [
-            (HORIZON_LAYERS * index) as f32,
+            (HORIZON_LAYERS * place.index) as f32,
             settings.shadow_softness,
             0.1 * texel,
             terrain.origin.y + lighting.lowest,
         ],
+        bounce,
+        window,
     ]
 }
 
@@ -294,24 +379,41 @@ fn write_layers(
     );
 }
 
-/// Horizon maps of `terrains` terrains, `size` texels a side.
-fn maps(device: &wgpu::Device, size: u32, terrains: usize) -> Maps {
+/// Horizon maps of `terrains` terrains, `size` texels a side, with their
+/// bounce layers after every terrain's horizon layers when `bounce`.
+fn maps(device: &wgpu::Device, size: u32, terrains: usize, bounce: bool) -> Maps {
+    let horizon_layers = (HORIZON_LAYERS * terrains) as u32;
+    let bounce_layers = if bounce {
+        (BOUNCE_LAYERS * terrains) as u32
+    } else {
+        0
+    };
+    let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+    if bounce {
+        usage |= wgpu::TextureUsages::STORAGE_BINDING;
+    }
     let texture = crate::targets::texture_2d(
         device,
         "engine/terrain-horizons",
         (size, size),
-        (HORIZON_LAYERS * terrains) as u32,
+        horizon_layers + bounce_layers,
         1,
         FORMAT,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        usage,
     );
-    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+    let layers = |first: u32, count: u32| wgpu::TextureViewDescriptor {
         dimension: Some(wgpu::TextureViewDimension::D2Array),
+        base_array_layer: first,
+        array_layer_count: Some(count),
         ..Default::default()
-    });
+    };
     Maps {
+        view: Versioned::new(texture.create_view(&layers(0, horizon_layers + bounce_layers))),
+        horizon_view: Versioned::new(texture.create_view(&layers(0, horizon_layers))),
+        bounce_view: bounce.then(|| {
+            Versioned::new(texture.create_view(&layers(horizon_layers, bounce_layers)))
+        }),
         texture,
-        view: Versioned::new(view),
         size,
         terrains,
     }

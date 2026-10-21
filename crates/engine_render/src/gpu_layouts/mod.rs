@@ -179,6 +179,7 @@ macro_rules! layout_modules {
 
 layout_modules! {
     scene,
+    bounce,
     clouds,
     debug_view,
     deformation,

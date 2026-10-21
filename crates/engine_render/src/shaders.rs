@@ -58,6 +58,14 @@ shaders! {
         "terrain_tile.wgsl",
         "terrain_control.wgsl",
     ];
+    /// Terrain bounce light after the shared scene declarations: the
+    /// ground lit, its levels and the probes' gathers.
+    BOUNCE_SHADER = [
+        "scene.wgsl",
+        "color.wgsl",
+        "math.wgsl",
+        "terrain_bounce.wgsl",
+    ];
     /// Ground cover's growth.
     COVER_GROW_SHADER = [
         "math.wgsl",
@@ -299,6 +307,9 @@ entry_points! {
     }
     terrain_control = TERRAIN_CONTROL_SHADER {
         compute: [tile_control],
+    }
+    terrain_bounce = BOUNCE_SHADER {
+        compute: [bounce_ground, bounce_down, bounce_gather],
     }
     cover_grow = COVER_GROW_SHADER {
         compute: [grow_cover, finish_cover],

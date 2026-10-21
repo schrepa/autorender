@@ -159,13 +159,18 @@ struct Shadow {
 // above its ground and how far away the crest of the highest ground ahead
 // lies (meters): layer l holds directions 2l and 2l + 1, their heights in
 // red and green and their distances in blue and alpha. The last layer holds
-// the ground's height above the terrain's lowest (red).
+// the ground's height above the terrain's lowest (red). With bounce light,
+// every terrain's BOUNCE_LAYERS bounce layers follow every terrain's
+// horizon layers (`bounce_light`).
 @group(0) @binding(14) var terrain_horizons: texture_2d_array<f32>;
 // HORIZON_RECORD_TEXELS texels per terrain: its map's first corner (world x
 // and z) and one over its extent (x and z, 0 without a map); its first
 // layer, how fast its shadows soften per meter to their crests, the meters
-// receivers rise before comparing and the lowest ground's world height. One
-// unused texel without any.
+// receivers rise before comparing and the lowest ground's world height; its
+// bounce layers' first (-1 without bounce light), its probe columns along a
+// side and the first column (x and z) of the window of them relighting; the
+// window's columns along a side and one over the maps' side. One unused
+// texel without any.
 @group(0) @binding(15) var terrain_horizon_records: texture_2d<f32>;
 @group(0) @binding(16) var terrain_horizon_sampler: sampler;
 // What placed objects cover around the camera: the densest
@@ -182,10 +187,10 @@ struct Shadow {
 
 // The features of the scene shading looks up (`scene_shading::SceneShading`):
 // sun shadow maps and their kept levels, terrains' horizons, clouds'
-// shadows, placed objects' covers, reflection probes, and windows lighting
-// room by room. One switched off compiles its lookups out of the pipelines
-// given it, which then leave what its absent uniforms and bindings would;
-// pipelines not given these keep every lookup.
+// shadows, placed objects' covers, reflection probes, windows lighting room
+// by room, and terrains' bounce light. One switched off compiles its lookups
+// out of the pipelines given it, which then leave what its absent uniforms
+// and bindings would; pipelines not given these keep every lookup.
 override SHADOW_MAPS: bool = true;
 override KEPT_LEVELS: bool = true;
 override TERRAIN_HORIZONS: bool = true;
@@ -193,6 +198,7 @@ override CLOUD_SHADOWS: bool = true;
 override OCCUPANCY: bool = true;
 override PROBES: bool = true;
 override WINDOWS: bool = true;
+override BOUNCE: bool = true;
 
 // How much the covers in occupancy layer `layer` (centered at `center`,
 // `inverse` over its side, heights above `reference`) hide the sky from
@@ -403,9 +409,15 @@ fn underwater_cover(distance: f32) -> f32 {
 // from above, half horizon and half zenith from the side (cooler than the
 // sun, so shade contrasts with light) and the ground from below.
 fn sky_average(normal: vec3<f32>) -> vec3<f32> {
+    return mix(sky_above(normal), lighting.ground.rgb, max(-normal.y, 0.0));
+}
+
+// The light of the sky alone a surface of `normal` sees: `sky_average`
+// without the ground's color, for surfaces that take the ground's own light
+// (`bounce_light`).
+fn sky_above(normal: vec3<f32>) -> vec3<f32> {
     let side = mix(lighting.horizon.rgb, lighting.zenith.rgb, 0.5);
-    let above = mix(side, lighting.zenith.rgb, max(normal.y, 0.0));
-    return mix(above, lighting.ground.rgb, max(-normal.y, 0.0));
+    return mix(side, lighting.zenith.rgb, max(normal.y, 0.0));
 }
 
 // Optical depth from `eye` to `point` beyond `start` of a medium of
@@ -859,7 +871,7 @@ fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
 
 const HORIZON_DIRECTIONS: u32 = 16u;
 const HORIZON_LAYERS: u32 = 9u;
-const HORIZON_RECORD_TEXELS: u32 = 2u;
+const HORIZON_RECORD_TEXELS: u32 = 4u;
 
 // The share of the sun terrains leave unblocked at `world`: where the sun's
 // ray toward it passes under a terrain's crest there, none; over it, all;
@@ -953,6 +965,87 @@ fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
         return 0.0;
     }
     return visible * cloud_passing(world);
+}
+
+// Terrains' bounce light (`terrain_bounce.wgsl`): the horizon maps' layers
+// a terrain's bounce light takes, the columns at its window's edge it hands
+// over across, and its probes' heights above the ground (meters).
+const BOUNCE_LAYERS: u32 = 8u;
+const BOUNCE_FADE: f32 = 8.0;
+const BOUNCE_LOW: f32 = 1.5;
+const BOUNCE_HIGH: f32 = 24.0;
+
+// Bounce light at a point: the light the ground around sends it, per unit
+// of its diffuse color; the share of the sky the ground leaves it; and how
+// much of both the probes there give (0 where none relights, what stands in
+// taking the rest).
+struct BounceLight {
+    light: vec3<f32>,
+    sky: f32,
+    weight: f32,
+}
+
+// A layer of probes' light at `texel` (the layers' coordinates) of the
+// bounce layers from `first`, around `normal`: its mean and its turn along
+// the normal, light in red, green and blue, the sky's share in alpha.
+fn bounce_layer(texel: vec2<f32>, first: u32, normal: vec3<f32>) -> vec4<f32> {
+    let mean = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first, 0.0);
+    let x = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first + 1u,
+        0.0);
+    let y = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first + 2u,
+        0.0);
+    let z = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first + 3u,
+        0.0);
+    return mean + x * normal.x + y * normal.y + z * normal.z;
+}
+
+// Bounce light at `world` on a surface of `normal`, from the first terrain
+// whose probes relight around it: between its probe columns and, for a
+// surface above its ground (not `on_terrain`, whose surfaces lie on it),
+// between its probes' two layers by its height above the ground; handing
+// over across the window's last columns.
+fn bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> BounceLight {
+    var found: BounceLight;
+    found.sky = 1.0;
+    if !BOUNCE || !TERRAIN_HORIZONS {
+        return found;
+    }
+    let count = u32(shadow.level_state.w);
+    for (var index = 0u; index < count; index++) {
+        let at = HORIZON_RECORD_TEXELS * index;
+        let columns = textureLoad(terrain_horizon_records, vec2<u32>(at + 2u, 0u), 0);
+        if columns.x < 0.0 {
+            continue;
+        }
+        let place = textureLoad(terrain_horizon_records, vec2<u32>(at, 0u), 0);
+        let window = textureLoad(terrain_horizon_records, vec2<u32>(at + 3u, 0u), 0);
+        let uv = (world.xz - place.xy) * place.zw;
+        // Where the point lies among the window's columns, each at its
+        // middle.
+        let column = uv * columns.y - 0.5 - columns.zw;
+        let edge = min(min(column.x, column.y), window.x - 1.0 - max(column.x, column.y));
+        if edge <= -0.5 {
+            continue;
+        }
+        let texel = (clamp(column, vec2<f32>(0.0), vec2<f32>(window.x - 1.0)) + 0.5) * window.y;
+        let first = u32(columns.x);
+        var held = bounce_layer(texel, first, normal);
+        if !on_terrain {
+            let shape = textureLoad(terrain_horizon_records, vec2<u32>(at + 1u, 0u), 0);
+            let ground = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
+                u32(shape.x) + HORIZON_LAYERS - 1u, 0.0).r;
+            let above = saturate((world.y - shape.w - ground - BOUNCE_LOW)
+                / (BOUNCE_HIGH - BOUNCE_LOW));
+            if above > 0.0 {
+                held = mix(held, bounce_layer(texel, first + 4u, normal), above);
+            }
+        }
+        found.light = max(held.rgb, vec3<f32>(0.0));
+        found.sky = saturate(held.a);
+        found.weight = saturate((edge + 0.5) / BOUNCE_FADE);
+        return found;
+    }
+    return found;
 }
 
 // Clouds' shadows: CLOUD_SHADOW_CELLS by CLOUD_SHADOW_CELLS

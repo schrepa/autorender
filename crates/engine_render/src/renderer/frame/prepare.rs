@@ -1417,6 +1417,7 @@ impl Renderer {
             shadows: features.shadow_frame.is_some(),
             deformation: self.terrain.deformation.pending(),
             vt_bakes: self.terrain.vt.baking(),
+            bounce: self.terrain.bounce.relights(),
             deferred: self.terrain_deferred(terrain, passes.opaque_kind),
             scatter,
             clusters: virtual_frame,

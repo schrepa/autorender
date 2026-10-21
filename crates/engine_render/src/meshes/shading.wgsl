@@ -860,11 +860,22 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     // reach; what they reflect is their probe's own capture.
     let interior = environment.interior;
     // The sky's light around the normal turned toward the sky the point
-    // sees.
+    // sees. What stands on terrains takes instead, where their probes
+    // relight, the sky's own light by the share of it the ground leaves
+    // along its normal and, in place of the sky's ground color, the light
+    // the ground around sends it, which occlusion maps darken as indirect
+    // light (terrain's own surfaces take theirs from their sky maps).
     let skyward = normalize(normal + point.sky_turn);
-    let sky_light = (point.diffuse_color * (sky_average(skyward) * lighting.zenith.w
-        + lighting.horizon.rgb * rim) * interior.x + reflection) * point.occlusion * covered_sky
-        + point.diffuse_color * point.bounce * covered_sky * interior.x;
+    var ambient = sky_average(skyward);
+    var bounce = point.bounce;
+    if !point.on_terrain {
+        let around = bounce_light(point.world, normal, false);
+        ambient = mix(ambient, sky_above(skyward) * around.sky, around.weight);
+        bounce += around.light * (around.weight * point.occlusion);
+    }
+    let sky_light = (point.diffuse_color * (ambient * lighting.zenith.w
+        + lighting.horizon.rgb * rim) * interior.x + reflection) * point.occlusion
+        * covered_sky + point.diffuse_color * bounce * covered_sky * interior.x;
     // The sun's light before shadows: where it, the point's sun shade or its
     // interior's share is zero, so is what shadows leave, which then goes
     // unlooked up.

@@ -433,6 +433,11 @@ pub struct TerrainRenderStats {
     /// changed: sky and horizon maps, one each per terrain. The sun moving
     /// uploads none.
     pub lighting_uploads: u32,
+    /// Terrains whose bounce light relit this frame, and the probe columns
+    /// it relit around the camera: every frame, however the sun and sky
+    /// stand.
+    pub bounced: u32,
+    pub bounce_probes: u32,
     /// Surface materials past the palette's capacity, or whose maps the
     /// shared arrays cannot hold (block compressed, or sized unlike the first
     /// material's), which show a plain color instead.

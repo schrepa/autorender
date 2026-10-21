@@ -24,9 +24,9 @@
 //! look up (`tables`), the frame's patches (`patches`, `culling`) and the
 //! pipelines and terrain group (`pipelines`), beside tiles' water
 //! (`water_blocks`), the material maps, the sky and horizon maps its
-//! lighting uploads, the runtime virtual texture and deformation map. Debug
-//! builds check what holds between them after every preparation
-//! (`invariants`).
+//! lighting uploads, its bounce light, the runtime virtual texture and
+//! deformation map. Debug builds check what holds between them after every
+//! preparation (`invariants`).
 
 use engine_core::collections::HashMap;
 use std::ops::Range;
@@ -50,6 +50,7 @@ use crate::gpu_layouts::terrain::{
 };
 use crate::mipmaps::MipGenerator;
 use crate::render_graph::Targets;
+use crate::terrain_bounce::{Bounce, SceneSources, TerrainSources};
 use crate::terrain_horizons::Horizons;
 use crate::terrain_maps::TerrainMaps;
 use crate::terrain_sky::SkyMaps;
@@ -239,6 +240,8 @@ pub(crate) struct TerrainPass {
     pub(crate) maps: TerrainMaps,
     /// Sky visibility.
     pub(crate) sky: SkyMaps,
+    /// Bounce light, relit every frame around the camera.
+    pub(crate) bounce: Bounce,
     /// Runtime deformation's map.
     pub(crate) deformation: crate::deformation::DeformationPass,
     /// The runtime virtual texture.
@@ -257,6 +260,7 @@ impl TerrainPass {
             horizons: Horizons::new(device),
             maps: TerrainMaps::new(device, queue),
             sky: SkyMaps::new(device, queue),
+            bounce: Bounce::new(device, queue),
             deformation: crate::deformation::DeformationPass::new(device),
             vt: crate::terrain_vt::VirtualTexture::new(device),
             water: water_blocks::WaterBlocks::new(device),
@@ -274,11 +278,12 @@ impl TerrainPass {
     }
 
     /// Bytes of the height, normal and control arrays, the horizon and sky
-    /// maps and the surface materials' maps.
+    /// maps, bounce light's and the surface materials' maps.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.atlas.capacity_bytes()
             + self.horizons.capacity_bytes()
             + self.sky.capacity_bytes()
+            + self.bounce.capacity_bytes()
             + self.maps.capacity_bytes()
             + self.deformation.capacity_bytes()
             + self.vt.capacity_bytes()
@@ -336,9 +341,14 @@ impl TerrainPass {
         let vt_pages = self.vt.wanted(&views.settings);
         self.maps.prepare(device, queue, mips, terrains, vt_pages);
         self.tables.write_palette(queue, terrains, &self.maps);
+        // Bounce light's windows, which the horizon records place.
+        self.bounce.place(terrains, views.eye, &views.settings);
         let horizon_settings = (&views.settings, views.shadows);
-        (self.horizons).prepare(device, queue, terrains, horizon_settings);
+        let windows = self.bounce.windows();
+        (self.horizons).prepare(device, queue, terrains, horizon_settings, windows);
         self.sky.prepare(device, queue, terrains, &views.settings);
+        let lighting = (&self.horizons, &self.sky, &self.tables.palette_bases[..]);
+        self.bounce.prepare(device, queue, terrains, lighting);
         // The runtime virtual texture.
         let tables = &self.tables;
         let textures = self.vt.prepare(
@@ -508,6 +518,23 @@ impl TerrainPass {
             &self.maps,
             |id| tables.uniform_of(id),
         );
+    }
+
+    /// Records bounce light's relighting, reading `scene`'s lighting, shadow
+    /// lookups and clouds' shadows, timed by `profiler`.
+    pub(crate) fn encode_bounce(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        profiler: &crate::profiling::GpuProfiler,
+        scene: SceneSources<'_>,
+    ) {
+        let terrain = TerrainSources {
+            horizons: &self.horizons,
+            sky: &self.sky,
+            palette: &self.tables.palette,
+        };
+        self.bounce.encode(device, encoder, profiler, (terrain, scene));
     }
 
     /// Records the runtime virtual texture's feedback over

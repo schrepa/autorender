@@ -16,7 +16,7 @@ gpu_structs! {
     /// variance; and its cover's canopy: the linear color its blades show
     /// seen from afar and their leaves' area per square meter of ground.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct PaletteEntry as ["TerrainPaletteEntry", "PaletteEntry" in COVER_GROW_SHADER] {
+    pub(crate) struct PaletteEntry as ["TerrainPaletteEntry", "PaletteEntry" in COVER_GROW_SHADER, "PaletteEntry" in BOUNCE_SHADER] {
         pub color: [f32; 4],
         pub params: [f32; 4],
         pub maps: [f32; 4],

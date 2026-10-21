@@ -272,6 +272,8 @@ impl Renderer {
                 horizons: self.terrain.horizons.count(),
                 sky_maps: self.terrain.sky.count(),
                 lighting_uploads: self.terrain.horizons.uploaded + self.terrain.sky.uploaded,
+                bounced: self.terrain.bounce.relit,
+                bounce_probes: self.terrain.bounce.columns,
                 dropped_materials: self.terrain.tables.dropped_materials,
                 vt_slots: self.terrain.vt.stats.slots,
                 vt_pages: self.terrain.vt.stats.pages,

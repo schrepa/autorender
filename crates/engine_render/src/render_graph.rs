@@ -98,6 +98,9 @@ resources! {
     Tracks: Kept,
     /// The runtime virtual texture's baked pages.
     Pages: Kept,
+    /// Terrains' bounce light around the camera, relit every frame, and
+    /// their ground's light it gathers.
+    Bounce: Kept,
     /// Ground cover's blades and their counts, read back later.
     Cover: Kept,
     /// Terrain's visibility target: each pixel's terrain and depth.
@@ -235,6 +238,9 @@ pub(crate) enum Pass {
     Deformation,
     /// The runtime virtual texture's pages baked.
     VtBakes,
+    /// Terrains' ground lit by the sun, its shadows and the sky as they
+    /// stand, and the probes around the camera gathering its light.
+    Bounce,
     /// The opaque pass of `phase`.
     Opaque {
         phase: Phase,
@@ -312,6 +318,7 @@ passes! {
     cloud_dome: Feature(FeaturePass::CloudDome),
     deformation: Deformation,
     vt_bakes: VtBakes,
+    bounce: Bounce,
     ground_cover: Feature(FeaturePass::GroundCover),
     opaque: Opaque { phase: Phase::One },
     terrain_ids: TerrainIds,
@@ -686,9 +693,11 @@ pub(crate) struct FrameShape {
     pub(crate) phases: u8,
     pub(crate) shadows: bool,
     /// Work before the passes reading it: tracks press into the
-    /// deformation map and the virtual texture bakes pages.
+    /// deformation map, the virtual texture bakes pages and terrains'
+    /// bounce light relights.
     pub(crate) deformation: bool,
     pub(crate) vt_bakes: bool,
+    pub(crate) bounce: bool,
     /// Terrain draws deferred in the first opaque phase: its visibility
     /// target holds the pages the virtual texture's feedback looks up.
     pub(crate) deferred: bool,
@@ -749,7 +758,7 @@ const FAR: f32 = 0.0;
 
 /// Declares the work a frame of `shape` does before its opaque passes into
 /// `graph`: GPU presentation, shadow casters and maps, cluster selection,
-/// tracks and the virtual texture's bakes.
+/// tracks, the virtual texture's bakes and terrains' bounce light.
 fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
     use Resource::*;
     let gpu = shape.gpu;
@@ -791,6 +800,10 @@ fn plan_before_opaque(graph: &mut RenderGraph, shape: &FrameShape) {
     }
     if shape.vt_bakes {
         graph.add(Pass::VtBakes).write(Pages);
+    }
+    // After the clouds' dome, whose shadows the ground's sun passes.
+    if shape.bounce {
+        graph.add(Pass::Bounce).read(CloudDome).write(Bounce);
     }
 }
 
@@ -846,6 +859,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read_if(shape.lights, Lights)
             .read_if(shape.clusters, Clusters)
             .read(Probes)
+            .read(Bounce)
             .read(CloudDome)
             .read_if(forward, Tracks)
             .read_if(forward, Pages)
@@ -873,7 +887,8 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
                 .read(Tiles)
                 .read_if(shape.shadows, ShadowMaps)
                 .read_if(shape.lights, Lights)
-                .read(Probes);
+                .read(Probes)
+                .read(Bounce);
             for &(target, _) in targets {
                 resolve = resolve.color(target, Access::Load);
             }
@@ -908,6 +923,7 @@ fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Res
         .read_if(shape.shadows, ShadowMaps)
         .read_if(shape.lights, Lights)
         .read(Probes)
+        .read(Bounce)
         .read(CloudDome)
         .read(Tracks)
         .read(Pages);
@@ -921,6 +937,7 @@ fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Res
         .read_if(shape.shadows, ShadowMaps)
         .read_if(shape.lights, Lights)
         .read(Probes)
+        .read(Bounce)
         .read(CloudDome)
         .read(Tracks)
         .read(Cover);

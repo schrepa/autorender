@@ -15,7 +15,7 @@ use crate::gpu_layouts::scene::{
 };
 use crate::gpu_layouts::virtual_geometry::MeshRecord;
 use crate::gpu_layouts::{
-    clouds, debug_view, deformation, ground_cover, occupancy, scatter, sky, terrain, water,
+    bounce, clouds, debug_view, deformation, ground_cover, occupancy, scatter, sky, terrain, water,
 };
 
 /// Shader stages, as bits.
@@ -950,6 +950,39 @@ tables! {
             uniform_of(1, "job", 32, C),
             bind(2, "data", Kind::Read { min_size: 4 }, C),
             bind(3, "control", Kind::Storage(R32Uint), C),
+        ],
+    };
+
+    /// Terrain bounce light (`terrain_bounce.wgsl`, after the scene's
+    /// declarations, whose numbers the bindings it shares keep): the scene's
+    /// lighting, the shadow lookups' uniform (the horizon records' count),
+    /// the horizon maps' own layers with their records and sampler and the
+    /// clouds' shadows, as the sun's lookups read them; the bins' moments
+    /// and each terrain's bounce this frame, the terrains' sky maps, their
+    /// cooked ground and probes, the ground's light read (a level, or all
+    /// of them) and written (a level), the bounce layers of the horizon maps
+    /// written, the light's sampler and the terrain palette.
+    const BOUNCE: Table = Table {
+        label: "engine/terrain-bounce-layout",
+        serves: [BOUNCE_SHADER @ 0],
+        bindings: &[
+            uniform_of(1, "lighting", size_of::<LightingUniform>(), C),
+            uniform_of(2, "shadow", size_of::<ShadowUniform>(), C),
+            texture(14, "terrain_horizons", Float, D2Array, C),
+            texture(15, "terrain_horizon_records", Unfilterable, D2, C),
+            sampler(16, "terrain_horizon_sampler", Filtering, C),
+            read_of(19, "cloud_shadows", clouds::CLOUD_SHADOW_BYTES, C),
+            uniform_of(60, "bounce_frame", size_of::<bounce::BounceFrame>(), C),
+            read_of(61, "bounce_terrains", size_of::<bounce::BounceTerrain>(), C),
+            texture(62, "bounce_sky", Float, D2Array, C),
+            texture(63, "bounce_surface", Uint, D2Array, C),
+            read_of(64, "bounce_blocks", 4, C),
+            read_of(65, "bounce_records", 4, C),
+            texture(66, "bounce_light_in", Float, D2Array, C),
+            bind(67, "bounce_light_out", Kind::StorageArray(Rgba16Float), C),
+            bind(68, "bounce_probes", Kind::StorageArray(Rgba16Float), C),
+            sampler(69, "bounce_sampler", Filtering, C),
+            uniform_of(70, "bounce_palette", terrain::PALETTE_BYTES, C),
         ],
     };
 

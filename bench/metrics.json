@@ -1356,6 +1356,28 @@
       "direction": null
     },
     {
+      "name": "terrain.bounce_probes",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain.bounced",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "terrain.dropped_materials",
       "kind": "work",
       "rule": "not-above",

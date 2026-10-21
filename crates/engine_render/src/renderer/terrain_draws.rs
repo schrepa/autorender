@@ -28,6 +28,7 @@ impl Renderer {
     ) -> bool {
         let terrains = &snapshot.terrain;
         if terrains.terrains.is_empty() && self.terrain.resident() == 0 {
+            self.terrain.bounce.rest();
             return false;
         }
         let jitter = temporal_frame.as_ref().map_or([0.0; 2], |frame| {
