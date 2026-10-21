@@ -21,8 +21,8 @@ use glam::Vec2;
 use crate::codec::{self, Codec, CodecError, Reader, Writer, record};
 use crate::lighting::{Ground, TerrainLighting, light};
 use crate::{
-    BiomeRules, Biomes, Gait, Generator, Layers, Placing, Pyramid, Stamp, SteadySolve,
-    SteadyWater, Tile, TileKey, TilePortals,
+    BiomeRules, Biomes, Gait, Generator, Layers, Placing, Pyramid, Stamp, SteadySolve, SteadyWater,
+    Tile, TileKey, TilePortals,
 };
 
 /// The kinds of terrain jobs, which hosts carry by name: a tile of a

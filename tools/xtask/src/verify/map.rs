@@ -668,12 +668,18 @@ pub(crate) const MAP: &[Rule] = &[
             Pure("gltf"),
             Pure("import"),
             Pure("caches"),
+            Pure("textures"),
+            Pure("tables"),
             PureWasm,
         ],
     },
     Rule {
         paths: &["tools/xtask/src/pure/terrain.rs"],
         checks: &[Pure("terrain"), PureWasm],
+    },
+    Rule {
+        paths: &["tools/xtask/src/pure/tables.rs"],
+        checks: &[Pure("tables"), PureWasm],
     },
     Rule {
         paths: &["tools/xtask/src/pure/scenes.rs"],
