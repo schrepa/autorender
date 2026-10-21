@@ -11,13 +11,6 @@ pub(crate) mod random;
 pub(crate) mod records;
 pub(crate) mod shape_builder;
 
-/// `base` to the power `exponent`, the same bits on every host (the
-/// standard library's power is the platform's own), as the records worlds
-/// generate need.
-pub(crate) fn power(base: f32, exponent: f32) -> f32 {
-    libm::powf(base, exponent)
-}
-
 // What a world reads, implements and hands the workload.
 pub(crate) use crate::StressConfig;
 pub(crate) use crate::scene::{StressFile, Workload};

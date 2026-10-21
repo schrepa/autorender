@@ -9,7 +9,6 @@
 
 use engine::prelude::*;
 
-use crate::kit::power;
 use crate::kit::random::{golden_hash, unit};
 use crate::kit::records;
 
@@ -134,7 +133,7 @@ fn conifer(seed: u32, detail: usize) -> engine::Result<Mesh> {
     let base_radius = 0.2 + 0.06 * random(2);
     let mut parts = Parts::default();
     // The trunk, narrowing to a point at the top.
-    let radius = |y: f32| base_radius * power(math::max(1.0 - y / height, 0.0), 0.85) + 0.012;
+    let radius = |y: f32| base_radius * math::pow(math::max(1.0 - y / height, 0.0), 0.85) + 0.012;
     let (sides, segments) = (build.sides, build.segments);
     for segment in 0..segments {
         let [low, high] = [segment, segment + 1]
@@ -439,7 +438,7 @@ fn srgb(value: f32) -> u8 {
     let encoded = if value <= 0.003_130_8 {
         value * 12.92
     } else {
-        1.055 * power(value, 1.0 / 2.4) - 0.055
+        1.055 * math::pow(value, 1.0 / 2.4) - 0.055
     };
     (encoded * 255.0).round() as u8
 }

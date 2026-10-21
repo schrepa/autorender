@@ -3047,7 +3047,6 @@ dependencies = [
  "engine",
  "engine_native",
  "engine_sources",
- "libm",
  "schemars",
  "serde",
  "serde_json",

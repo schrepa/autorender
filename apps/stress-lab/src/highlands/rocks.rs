@@ -19,7 +19,6 @@ use std::f32::consts::PI;
 
 use engine::prelude::*;
 
-use crate::kit::power;
 use crate::kit::random::{golden_hash, noise, unit};
 use crate::kit::records;
 
@@ -144,8 +143,8 @@ fn cliff(seed: u32) -> engine::Result<Mesh> {
     let floor = -0.3 * stretch.y;
     let shape = |direction: Vec3| {
         let a = direction.abs();
-        let block = power(
-            power(a.x, boxy) + power(a.y, boxy) + power(a.z, boxy),
+        let block = math::pow(
+            math::pow(a.x, boxy) + math::pow(a.y, boxy) + math::pow(a.z, boxy),
             -1.0 / boxy,
         );
         let broad = noise(direction * 1.4 + offset);
