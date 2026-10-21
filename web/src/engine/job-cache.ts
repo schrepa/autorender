@@ -31,6 +31,10 @@ type IndexBindings = { JobCacheIndex: typeof JobCacheIndex; PackDirectory: typeo
 /** A pack the page reads: its URL and directory. */
 interface Pack { url: string; directory: PackDirectory }
 
+/** Unpacks a pack's record of `raw` bytes from its `stored` bytes off the
+ * page's thread: `undefined` where it cannot, and the page does. */
+export type Unpacker = (stored: Uint8Array, raw: number) => Promise<Uint8Array> | undefined;
+
 /** The store's settings from the page's URL: `undefined` when off. A
  * value the native host's --jobcache refuses fails. */
 export function jobCacheSettings(): { budget: number; verify: boolean } | undefined {
@@ -49,11 +53,12 @@ export class JobStore {
   /** Records the packs handed back. */
   private packHits = 0;
 
-  private constructor(private readonly directory: FileSystemDirectoryHandle, readonly index: JobCacheIndex, private readonly packs: Pack[]) {}
+  private constructor(private readonly directory: FileSystemDirectoryHandle, readonly index: JobCacheIndex,
+    private readonly packs: Pack[], private readonly unpack: Unpacker) {}
 
   /** Opens the store, its index in `bindings`, and the packs the server
    * lists; `undefined` where the file system refuses. */
-  static async open(bindings: IndexBindings, budget: number, verify: boolean): Promise<JobStore | undefined> {
+  static async open(bindings: IndexBindings, budget: number, verify: boolean, unpack: Unpacker): Promise<JobStore | undefined> {
     try {
       const root = await navigator.storage.getDirectory();
       const directory = await root.getDirectoryHandle(DIRECTORY, { create: true });
@@ -62,7 +67,7 @@ export class JobStore {
       const available = estimate?.quota !== undefined && estimate.usage !== undefined ? Math.max(0, estimate.quota - estimate.usage) : undefined;
       // Records kept are worth keeping through storage pressure.
       void navigator.storage.persist?.().catch(() => false);
-      const store = new JobStore(directory, new bindings.JobCacheIndex(budget, available, verify, saved), await openPacks(bindings));
+      const store = new JobStore(directory, new bindings.JobCacheIndex(budget, available, verify, saved), await openPacks(bindings), unpack);
       // Files the index does not list, as those written just before a page
       // closed, are no one's.
       const names = directory as unknown as { keys(): AsyncIterable<string> };
@@ -106,8 +111,9 @@ export class JobStore {
       const entry = pack.directory.find(key);
       if (!entry) continue;
       try {
-        const [offset, stored] = entry;
-        const record = pack.directory.unpack(key, await fetchRange(pack.url, offset, stored));
+        const [offset, stored, raw] = entry;
+        const bytes = await fetchRange(pack.url, offset, stored);
+        const record = await this.unpack(bytes, raw) ?? pack.directory.unpack(key, bytes);
         this.packHits++;
         this.keep(key, record);
         return record;
@@ -190,13 +196,14 @@ async function openPacks(bindings: IndexBindings): Promise<Pack[]> {
   return packs;
 }
 
-/** Bytes `offset` to `offset + length` of `url`, fetched by range: a
- * server that answers with the whole file has it cut to the range. */
+/** Bytes `offset` to `offset + length` of `url`, fetched by range, in a
+ * buffer of their own (which a worker may take): a server that answers
+ * with the whole file has it cut to the range. */
 async function fetchRange(url: string, offset: number, length: number): Promise<Uint8Array> {
   const response = await fetch(url, { headers: { Range: `bytes=${offset}-${offset + length - 1}` } });
   if (!response.ok) throw new Error(`${url}: ${response.status}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
-  const range = response.status === 206 ? bytes : bytes.subarray(offset, offset + length);
+  const range = response.status === 206 ? bytes : bytes.slice(offset, offset + length);
   if (range.length !== length) throw new Error(`${url}: ${range.length} bytes, not ${length}`);
   return range;
 }

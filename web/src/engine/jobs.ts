@@ -17,7 +17,7 @@ import workerWasmUrl from "../../pkg/engine_worker_bg.wasm?url";
 import { CORES_PER_DEFAULT_WORKER, MAX_DEFAULT_WORKERS, MAX_WORKERS, PANIC_PREFIX } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 import { engineWorkerModule } from "./bindings";
-import { JobStore, jobCacheSettings } from "./job-cache";
+import { JobStore, jobCacheSettings, type Unpacker } from "./job-cache";
 import type { TranscodedImage } from "./ktx2";
 import { fatal, type PanicReport } from "./panic";
 
@@ -81,7 +81,8 @@ export class JobPool {
     .then(bytes => bytes && WebAssembly.compile(bytes))
     .catch(() => undefined);
   /** The records, once open; `undefined` when off. */
-  private readonly store: Promise<JobStore | undefined> = this.module.then(openStore);
+  private readonly store: Promise<JobStore | undefined> = this.module.then(module =>
+    openStore(module, (bytes, raw) => this.unpack(bytes, raw)));
 
   constructor(private readonly count: number) {
     for (let index = 0; index < count; index++) this.slots.push(this.spawn());
@@ -230,6 +231,13 @@ export class JobPool {
     return fresh;
   }
 
+  /** A pack's record of `raw` bytes from its `stored` bytes, unpacked on a
+   * worker; `undefined` without one, for the page to unpack itself. */
+  private unpack(stored: Uint8Array, raw: number): Promise<Uint8Array> | undefined {
+    if (this.size === 0) return undefined;
+    return this.task({ type: "unpack", bytes: stored, raw }, [stored.buffer as ArrayBuffer]) as Promise<Uint8Array>;
+  }
+
   /** Image `uri`'s RGBA8 pixels, decoded from its file's `bytes` on a
    * worker with the engine's decoder. */
   decodeImage(uri: string, bytes: Uint8Array): Promise<Pixels> {
@@ -360,14 +368,15 @@ async function fetchWorkerWasm(): Promise<ArrayBuffer | undefined> {
 }
 
 /** Opens the page's records, their index in the job worker module
- * (`module`, compiled), unless the page turned them off. */
-async function openStore(module: WebAssembly.Module | undefined): Promise<JobStore | undefined> {
+ * (`module`, compiled), unless the page turned them off; `unpack` unpacks
+ * pack records on a worker where it can. */
+async function openStore(module: WebAssembly.Module | undefined, unpack: Unpacker): Promise<JobStore | undefined> {
   const settings = jobCacheSettings();
   if (!settings || !module) return undefined;
   const pinned = engineWorkerModule();
   const bindings = (pinned ? await import(/* @vite-ignore */ pinned) : await import("../../pkg/engine_worker")) as typeof import("../../pkg/engine_worker");
   await bindings.default({ module_or_path: module });
-  return JobStore.open(bindings, settings.budget, settings.verify);
+  return JobStore.open(bindings, settings.budget, settings.verify, unpack);
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {

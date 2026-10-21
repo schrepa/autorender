@@ -102,7 +102,12 @@ pub fn unpack(entry: &PackEntry, stored: &[u8]) -> Result<Vec<u8>, String> {
     if stored.len() != entry.stored as usize {
         return Err("a pack's record has the wrong size".into());
     }
-    decompress(stored, entry.raw as usize)
+    unpack_bytes(stored, entry.raw)
+}
+
+/// A record of `raw` bytes from its `stored` bytes, as a pack holds it.
+pub fn unpack_bytes(stored: &[u8], raw: u32) -> Result<Vec<u8>, String> {
+    decompress(stored, raw as usize)
 }
 
 fn decompress(stored: &[u8], raw: usize) -> Result<Vec<u8>, String> {

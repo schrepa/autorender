@@ -23,6 +23,7 @@ pub use cache::JobCache;
 pub use image::{IMAGE_FORMATS, Image, ImageDecoder, ImageFormat, decode_image, image_format};
 pub use pack::{
     PACK_HEADER, PackEntry, PackIndex, key_from_hex, pack_bytes, pack_directory, unpack,
+    unpack_bytes,
 };
 
 // `SOURCE`, which keys the records this module's own code makes.
@@ -281,6 +282,12 @@ mod browser {
 
         pub fn cancel(&mut self, id: f64) {
             self.worker.cancel(id as u64);
+        }
+
+        /// A pack's record of `raw` bytes from its `stored` bytes
+        /// ([`crate::unpack_bytes`]), off the page's thread.
+        pub fn unpack(&self, stored: &[u8], raw: u32) -> Result<Vec<u8>, JsValue> {
+            crate::unpack_bytes(stored, raw).map_err(|error| JsValue::from_str(&error))
         }
 
         /// Image `uri`'s `bytes` decoded ([`crate::decode_image`]) as

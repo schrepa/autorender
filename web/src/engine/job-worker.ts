@@ -1,8 +1,8 @@
 // A job worker: runs in a Web Worker the page's pool starts,
 // holds what the engine shares with its workers and runs the jobs it hands
 // out with the engine's own code (the engine_worker module); and decodes
-// images (with the engine's decoder) and KTX2 textures at load boundaries
-// off the page's thread.
+// images (with the engine's decoder) and KTX2 textures at load boundaries,
+// and the records the page reads from packs, off the page's thread.
 // Messages take effect in the order they came, so shares come before the
 // jobs reading them. The module runs its most urgent job a slice at a
 // time; between slices the worker reads its messages, and a job the engine
@@ -23,7 +23,8 @@ type Request =
   | { type: "run"; id: number; kind: string; input: Uint8Array; priority: number }
   | { type: "cancel"; id: number }
   | { type: "ktx2"; task: number; uri: string; bytes: Uint8Array; format: TranscodedImage["format"]; basis: string }
-  | { type: "image"; task: number; uri: string; bytes: Uint8Array };
+  | { type: "image"; task: number; uri: string; bytes: Uint8Array }
+  | { type: "unpack"; task: number; bytes: Uint8Array; raw: number };
 
 /** What a slice came to (`engine_worker::Report`), as the pool reads it. */
 type Report = { type: "done"; id: number; output: Uint8Array } | { type: "failed"; id: number; error: string };
@@ -132,6 +133,15 @@ async function handle(request: Request) {
         const image = transcodeWith(await workerTranscoder(request.basis), request.uri, request.bytes, request.format);
         const transfer = image.format === "rgba8" ? [image.pixels.buffer] : [image.data.buffer, image.levels.buffer];
         scope.postMessage({ type: "task", task: request.task, result: image }, transfer as ArrayBuffer[]);
+      } catch (error) {
+        scope.postMessage({ type: "task_failed", task: request.task, error: String(error) });
+      }
+      return;
+    case "unpack":
+      try {
+        if (!worker) throw new Error("worker unavailable");
+        const record = worker.unpack(request.bytes, request.raw);
+        scope.postMessage({ type: "task", task: request.task, result: record }, [record.buffer as ArrayBuffer]);
       } catch (error) {
         scope.postMessage({ type: "task_failed", task: request.task, error: String(error) });
       }
