@@ -5,21 +5,29 @@
 //! independent decoder (texture2ddecoder) reads every level back, which
 //! must lie within the image's error of the levels the cook compressed;
 //! the engine's own BC7 decoder must read the same texels, a record must
-//! read back as the texture it holds, and the job cooking it on workers
-//! must make the same record. Observed: each family's record hash and each
-//! image's error by level.
+//! read back as the texture it holds, and the job cooking it must make the
+//! same record run whole, as hosts without workers run it, and a slice at
+//! a time, as workers do. Every job and its output's hash go into a file
+//! `cargo xtask pure --wasm` replays in the browser worker's Wasm module.
+//! Observed: each family's record hash and each image's error by level.
 
 use std::path::Path;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_assets::Texture;
 use engine_core::math::sin;
-use engine_textures::{Family, Source, Usage};
+use engine_textures::{COOK_JOB, Family, Source, TextureWorker, Usage};
 use serde_json::{Map, json};
 
 use super::Observations;
 
 /// Texels along a side of every image.
 const SIDE: u32 = 64;
+/// Every job the corpus ran, each output by its hash: what `cargo xtask
+/// pure --wasm` replays.
+pub const JOBS: &str = "target/pure/textures-jobs.json";
+/// Work units each slice of a job gets, as workers slice them.
+const SLICE: u64 = 4096;
 
 /// An image: its name, its texels and how they read, and the least peak
 /// signal-to-noise ratio (dB, over every channel) each family's base
@@ -165,7 +173,8 @@ fn reference(texture: &Texture, level: usize) -> Result<Vec<u8>, String> {
         .collect())
 }
 
-pub fn run(_root: &Path, observed: &mut Observations) -> Result<(), String> {
+pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
+    let mut worker = Worker::default();
     for image in images() {
         let levels = engine_textures::levels(&image.source);
         let mut observation = Map::new();
@@ -184,10 +193,10 @@ pub fn run(_root: &Path, observed: &mut Observations) -> Result<(), String> {
                     )
                 },
             );
-            // Cooked as workers cook it, the same record.
+            // Cooked as hosts and workers cook it, the same record.
             let input = engine_textures::cook_input(&image.source, family);
-            let job = engine_textures::cook_job(&input)?;
-            observed.check(job == record, || {
+            let (whole, sliced) = worker.both(&input)?;
+            observed.check(whole == record && sliced == record, || {
                 format!(
                     "{} {}: its cooking job makes another record",
                     image.name,
@@ -229,5 +238,56 @@ pub fn run(_root: &Path, observed: &mut Observations) -> Result<(), String> {
         }
         observed.record(format!("textures {}", image.name), observation);
     }
-    Ok(())
+    worker.write(root)
+}
+
+/// Runs texture jobs as hosts and workers run them, recording every job
+/// (with its output's hash) for the replay in Wasm.
+#[derive(Default)]
+struct Worker {
+    worker: TextureWorker,
+    next: u64,
+    log: Vec<serde_json::Value>,
+}
+
+impl Worker {
+    /// The cooking job on `input`, run whole and a slice at a time: both
+    /// outputs.
+    fn both(&mut self, input: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
+        let whole =
+            engine_textures::run(COOK_JOB, input).ok_or("the cooking job is no texture job")??;
+        self.log.push(json!({
+            "job": COOK_JOB,
+            "input": STANDARD.encode(input),
+            "output": super::hash(&whole),
+        }));
+        self.next += 1;
+        self.worker.start(self.next, COOK_JOB, input)?;
+        let sliced = loop {
+            if let Some(output) = self.worker.step(self.next, SLICE)? {
+                break output;
+            }
+        };
+        self.log.push(json!({
+            "job": COOK_JOB,
+            "input": STANDARD.encode(input),
+            "slice": SLICE,
+            "output": super::hash(&sliced),
+        }));
+        Ok((whole, sliced))
+    }
+
+    /// Writes what it ran to [`JOBS`].
+    fn write(&self, root: &Path) -> Result<(), String> {
+        let path = root.join(JOBS);
+        if let Some(folder) = path.parent() {
+            std::fs::create_dir_all(folder)
+                .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
+        }
+        std::fs::write(
+            &path,
+            serde_json::Value::Array(self.log.clone()).to_string(),
+        )
+        .map_err(|error| format!("cannot write {JOBS}: {error}"))
+    }
 }

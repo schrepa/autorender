@@ -79,7 +79,11 @@ pub(crate) const CORPORA: &[Corpus] = &[
 
 /// The corpora whose jobs `--wasm` replays in the browser worker's Wasm
 /// module, each with the file of jobs it ran.
-const REPLAYED: &[(&str, &str)] = &[("terrain", terrain::JOBS), ("tables", tables::JOBS)];
+const REPLAYED: &[(&str, &str)] = &[
+    ("terrain", terrain::JOBS),
+    ("tables", tables::JOBS),
+    ("textures", textures::JOBS),
+];
 
 /// What a corpus observed, by name, and the promises it found broken.
 #[derive(Default)]

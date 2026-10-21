@@ -21,6 +21,7 @@
 
 use engine_tables::TableWorker;
 use engine_terrain::jobs::TerrainWorker;
+use engine_textures::TextureWorker;
 
 mod cache;
 mod image;
@@ -69,14 +70,34 @@ struct Held {
     started: bool,
 }
 
-/// One worker's shares and the jobs it holds and runs, and the outputs of
-/// textures it cooked as they started, which their first step hands back.
+/// Which of a worker's runners runs a kind of job: the static tables',
+/// the textures' or the terrains'.
+#[derive(Clone, Copy)]
+enum Runner {
+    Tables,
+    Textures,
+    Terrain,
+}
+
+impl Runner {
+    fn of(kind: &str) -> Self {
+        if TableWorker::runs(kind) {
+            Self::Tables
+        } else if TextureWorker::runs(kind) {
+            Self::Textures
+        } else {
+            Self::Terrain
+        }
+    }
+}
+
+/// One worker's shares and the jobs it holds and runs.
 #[derive(Default)]
 pub struct Worker {
     terrain: TerrainWorker,
     tables: TableWorker,
+    textures: TextureWorker,
     held: Vec<Held>,
-    cooked: Vec<(u64, Result<Vec<u8>, String>)>,
 }
 
 impl Worker {
@@ -98,8 +119,8 @@ impl Worker {
     pub fn clear(&mut self) {
         self.terrain = TerrainWorker::new();
         self.tables = TableWorker::new();
+        self.textures = TextureWorker::new();
         self.held.clear();
-        self.cooked.clear();
     }
 
     /// Holds job `id` of `kind` on `input` at `priority` (lower first),
@@ -122,9 +143,9 @@ impl Worker {
     /// Stops job `id`, held or started.
     pub fn cancel(&mut self, id: u64) {
         self.held.retain(|job| job.id != id);
-        self.cooked.retain(|(cooked, _)| *cooked != id);
         self.terrain.cancel(id);
         self.tables.cancel(id);
+        self.textures.cancel(id);
     }
 
     /// One slice of the most urgent job held (the lowest priority, then
@@ -145,31 +166,23 @@ impl Worker {
                 Err(error) => Report::Failed(id, error),
             });
         }
-        // A texture cooks whole.
-        if job.kind == engine_textures::COOK_JOB {
-            let job = self.held.remove(at);
-            return Some(match engine_textures::cook_job(&job.input) {
-                Ok(output) => Report::Done(id, output),
-                Err(error) => Report::Failed(id, error),
-            });
-        }
-        let table = TableWorker::runs(&job.kind);
-        let (terrain, tables) = (&mut self.terrain, &mut self.tables);
+        let runner = Runner::of(&job.kind);
+        let (terrain, tables, textures) = (&mut self.terrain, &mut self.tables, &mut self.textures);
         let stepped = (|| {
             if !job.started {
-                if table {
-                    tables.start(id, &job.kind, &job.input)?;
-                } else {
-                    terrain.start(id, &job.kind, &job.input)?;
+                match runner {
+                    Runner::Tables => tables.start(id, &job.kind, &job.input)?,
+                    Runner::Textures => textures.start(id, &job.kind, &job.input)?,
+                    Runner::Terrain => terrain.start(id, &job.kind, &job.input)?,
                 }
                 job.started = true;
             }
             let start = clock::now_ms();
             loop {
-                let output = if table {
-                    tables.step(id, STEP_UNITS)?
-                } else {
-                    terrain.step(id, STEP_UNITS)?
+                let output = match runner {
+                    Runner::Tables => tables.step(id, STEP_UNITS)?,
+                    Runner::Textures => textures.step(id, STEP_UNITS)?,
+                    Runner::Terrain => terrain.step(id, STEP_UNITS)?,
                 };
                 if let Some(output) = output {
                     return Ok(Some(output));
@@ -189,6 +202,7 @@ impl Worker {
                 self.held.remove(at);
                 self.terrain.cancel(id);
                 self.tables.cancel(id);
+                self.textures.cancel(id);
                 Some(Report::Failed(id, error))
             }
         }
@@ -200,38 +214,28 @@ impl Worker {
         if kind == engine_lodbuild::KIND {
             return engine_lodbuild::run(input);
         }
-        if kind == engine_textures::COOK_JOB {
-            return engine_textures::cook_job(input);
-        }
-        match engine_tables::run(kind, input) {
+        match engine_tables::run(kind, input).or_else(|| engine_textures::run(kind, input)) {
             Some(output) => output,
             None => self.terrain.run(kind, input),
         }
     }
 
-    /// Starts job `id` of `kind` on `input`, to [`Self::step`] until done;
-    /// a texture cooks whole as it starts.
+    /// Starts job `id` of `kind` on `input`, to [`Self::step`] until done.
     pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
-        if kind == engine_textures::COOK_JOB {
-            self.cooked.retain(|(cooked, _)| *cooked != id);
-            self.cooked.push((id, engine_textures::cook_job(input)));
-            return Ok(());
-        }
-        if TableWorker::runs(kind) {
-            self.tables.start(id, kind, input)
-        } else {
-            self.terrain.start(id, kind, input)
+        match Runner::of(kind) {
+            Runner::Tables => self.tables.start(id, kind, input),
+            Runner::Textures => self.textures.start(id, kind, input),
+            Runner::Terrain => self.terrain.start(id, kind, input),
         }
     }
 
     /// Works on job `id` for about `budget` work units: its output once
     /// done, `None` while work is left.
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
-        if let Some(at) = self.cooked.iter().position(|(cooked, _)| *cooked == id) {
-            return self.cooked.remove(at).1.map(Some);
-        }
         if self.tables.holds(id) {
             self.tables.step(id, budget)
+        } else if self.textures.holds(id) {
+            self.textures.step(id, budget)
         } else {
             self.terrain.step(id, budget)
         }

@@ -14,7 +14,9 @@
 //!
 //! Cooking runs on the engine's workers too, as the job [`COOK_JOB`]: its
 //! input an image and a family ([`cook_input`]), its output the texture's
-//! record ([`cook_job`]), which hosts keep as engines key it.
+//! record ([`cook_job`]), which hosts keep as engines key it. Workers run it
+//! through [`TextureWorker`], whole at its first step, and hosts without
+//! workers through [`run`], the same code.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
@@ -85,6 +87,64 @@ pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, String> {
     cook(&source, family)
         .map(|texture| record(&texture))
         .map_err(|error| error.to_string())
+}
+
+/// The output of texture job `kind` on `input`, made whole; `None` where
+/// `kind` names no texture job.
+pub fn run(kind: &str, input: &[u8]) -> Option<Result<Vec<u8>, String>> {
+    TextureWorker::runs(kind).then(|| cook_job(input))
+}
+
+/// The texture jobs a worker started, by id, with their inputs: each cooks
+/// whole at its first step.
+#[derive(Default)]
+pub struct TextureWorker {
+    running: Vec<(u64, Vec<u8>)>,
+}
+
+impl TextureWorker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether `kind` names a texture job.
+    pub fn runs(kind: &str) -> bool {
+        kind == COOK_JOB
+    }
+
+    /// Whether it started job `id`, which has yet to finish.
+    pub fn holds(&self, id: u64) -> bool {
+        self.running.iter().any(|(running, _)| *running == id)
+    }
+
+    /// Starts job `id` of `kind` on `input`, to [`Self::step`] until done;
+    /// another of the same id stops.
+    pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
+        if !Self::runs(kind) {
+            return Err(format!("unknown job kind {kind}"));
+        }
+        self.cancel(id);
+        self.running.push((id, input.to_vec()));
+        Ok(())
+    }
+
+    /// Works on job `id`: its record at its first step, whatever the
+    /// budget, as a texture cooks whole. A job that failed or finished is
+    /// gone.
+    pub fn step(&mut self, id: u64, _budget: u64) -> Result<Option<Vec<u8>>, String> {
+        let at = self
+            .running
+            .iter()
+            .position(|(running, _)| *running == id)
+            .ok_or("no such job")?;
+        let (_, input) = self.running.remove(at);
+        cook_job(&input).map(Some)
+    }
+
+    /// Stops job `id`, if it runs.
+    pub fn cancel(&mut self, id: u64) {
+        self.running.retain(|(running, _)| *running != id);
+    }
 }
 
 /// How a texture's texels read, which its levels average by.

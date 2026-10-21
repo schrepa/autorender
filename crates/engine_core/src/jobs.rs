@@ -430,13 +430,11 @@ impl Jobs {
     /// worker.
     pub fn run_here(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         self.stats.in_place += 1;
-        if kind == engine_textures::COOK_JOB {
+        if engine_tables::TableWorker::runs(kind) || engine_textures::TextureWorker::runs(kind) {
             let _profile = engine_profile::span("cpu", "job_in_place");
-            return engine_textures::cook_job(input);
-        }
-        if engine_tables::TableWorker::runs(kind) {
-            let _profile = engine_profile::span("cpu", "job_in_place");
-            if let Some(output) = engine_tables::run(kind, input) {
+            if let Some(output) =
+                engine_tables::run(kind, input).or_else(|| engine_textures::run(kind, input))
+            {
                 return output;
             }
         }
