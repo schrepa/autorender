@@ -305,12 +305,13 @@ pub struct NavAgentsView {
     pub first: Vec<NavAgentRow>,
 }
 
-/// The host's job workers: workers (with none the host runs bakes, tiles
-/// and tiles' portals in place), jobs in flight, submitted, completed, failed and
-/// cancelled, keys shared and their bytes, and the host's records (the
-/// cook's packs and its store). Workers run their most urgent job a slice
-/// at a time. Pages take ?workers=N or off, and ?jobcache=off, verify or a
-/// budget in MiB.
+/// The host's job workers: workers (with none the host runs every job in
+/// place: terrains' bakes, tiles, lighting, settled water and walk graph
+/// portals, and the renderer's tables), jobs in flight, submitted,
+/// completed, failed and cancelled, keys shared and their bytes, and the
+/// host's records (the cook's packs and its store). Workers run their most
+/// urgent job a slice at a time. Pages take ?workers=N or off, and
+/// ?jobcache=off, verify or a budget in MiB.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct JobsView {

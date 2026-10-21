@@ -726,7 +726,8 @@ impl AppHost {
                 world.resource::<engine_core::FixedTime>().tick,
             )
         };
-        // A session cooking its pipeline list draws with every pass kind.
+        // A cooking session's frames draw with every pass kind, for its
+        // pipeline list, and supply every impostor.
         self.renderer.set_cooking(
             self.engine
                 .app
@@ -831,8 +832,6 @@ impl AppHost {
     /// while the session cooks, how many it has left.
     fn exchange_records(&mut self) {
         let world = self.engine.app.world_mut();
-        self.renderer
-            .set_cooking(world.contains_resource::<engine_core::Cooking>());
         let wants = self.renderer.take_record_wants();
         let made = self.renderer.take_made_records();
         let answers = match world.get_resource_mut::<engine_core::Jobs>() {

@@ -67,13 +67,6 @@ impl Renderer {
         self.impostors.atlas.left() + self.impostors.placed.left()
     }
 
-    /// While a session cooks: every impostor is supplied, whatever the
-    /// budget, its record fetched or made.
-    pub fn set_cooking(&mut self, cooking: bool) {
-        self.impostors.atlas.set_cooking(cooking);
-        self.impostors.placed.set_cooking(cooking);
-    }
-
     /// Impostors of this frame: drops those of retired or replaced meshes
     /// and materials, supplies the missing ones of opaque draw groups
     /// whose meshes have enough triangles on GPU-presented frames with
