@@ -958,6 +958,13 @@ fn sim_churn(
     sim_cells[next].w = min(churned, SIM_FOAM_MOST);
 }
 
+// Cell `at`'s water as its sums add it: its surface as meters above its
+// ground, so sums over many steps keep the precision a level hundreds of
+// meters up would lose, the mean adding its ground back.
+fn sim_above(q: Square, at: u32, water: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(water.x - sim_bed(q, at), water.yzw);
+}
+
 // The foam after the step is the next one's start; a summing rectangle
 // adds each cell's water and foam to its sums; and a sparse one's cells
 // holding water no lake holds mark their blocks.
@@ -978,7 +985,7 @@ fn sim_churned(
     water.w = sim_cells[base + sim_held() + at].w;
     sim_cells[base + at] = water;
     if sim_has(q, SIM_SUMMING) {
-        sim_averages[sim_averages_base(q) + at] += water;
+        sim_averages[sim_averages_base(q) + at] += sim_above(q, at, water);
     }
     if sim_has(q, SIM_SPARSE) && !sim_held_at(q, at) && water.x - sim_bed(q, at) > SIM_DRY {
         sim_steps[sim_block_at(q, at / SIM_BLOCK_CELLS)].x = 1.0;
@@ -1047,7 +1054,7 @@ fn sim_activity(
             let cell = first + vec2<u32>(k % WATER_SIM_GROUP, k / WATER_SIM_GROUP);
             if cell.x < q.nx && cell.y < q.nz {
                 let at = block * SIM_BLOCK_CELLS + k;
-                sim_averages[sums + at] += state.y * sim_cells[base + at];
+                sim_averages[sums + at] += state.y * sim_above(q, at, sim_cells[base + at]);
             }
         }
     }
@@ -1105,18 +1112,19 @@ fn sim_look(
         let held = sim_held();
         let averages = sim_averages_base(q);
         let now = sim_cells[sim_cells_base(q) + at];
+        let ground = sim_bed(q, at);
         var summed = sim_averages[averages + at];
         var stepping = 1.0;
         if sparse {
             let state = sim_steps[sim_block_at(q, block) + 1u];
-            summed += state.y * now;
+            summed += state.y * sim_above(q, at, now);
             stepping = state.x;
         }
-        let mean = summed / max(q.summed, 1.0);
+        var mean = summed / max(q.summed, 1.0);
+        mean.x += ground;
         let before = sim_averages[averages + held + at];
         sim_averages[averages + held + at] = mean;
         sim_averages[averages + at] = vec4<f32>(0.0);
-        let ground = sim_bed(q, at);
         let h = mean.x - ground;
         let was = before.x - ground;
         if !sim_held_at(q, at) && h > SIM_DRY {
