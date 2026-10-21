@@ -256,8 +256,9 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_render/src/**/impostor*",
             "crates/engine_render/src/**/meshes/**",
             "crates/engine_render/src/**/mesh_arena*",
-            "crates/engine_assets/src/**/simplify*",
             "crates/engine_assets/src/**/lod*",
+            "crates/engine_core/src/**/mesh_lods*",
+            "tools/lodbuild/**",
         ],
         checks: &[
             Smoke("lod"),

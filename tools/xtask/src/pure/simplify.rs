@@ -1,14 +1,19 @@
-//! The simplify corpus: `engine_assets::simplify`, a Rust port of
+//! The simplify corpus: `engine_lodbuild::simplify`, a Rust port of
 //! meshoptimizer's simplifier, against meshoptimizer itself (vendored and
 //! linked through vgbuild). Over a wavy grid, a grid with a seam and
 //! locked, protected and favored vertices, a sphere, a torus and the garden
 //! prop's primitives (tools/xtask/pure/garden-prop.glb), with every
 //! combination of options, three index targets and two error limits, both
-//! must give the same indices and the same error, bit for bit.
+//! must give the same indices and the same error, bit for bit. Over the
+//! same meshes the levels of detail the cook makes from the port
+//! (`engine_lodbuild`) are observed: each level's triangles and measured
+//! error, and their record's bytes, which must read back as they went in
+//! and suit their mesh.
 
 use std::path::Path;
 
-use engine_assets::simplify::{SimplifyInput, SimplifyOptions, VertexFlags, simplify};
+use engine_core::{MeshLods, MeshVertex};
+use engine_lodbuild::simplify::{SimplifyInput, SimplifyOptions, VertexFlags, simplify};
 use engine_core::math::{cos, sin};
 use engine_vgbuild::meshoptimizer;
 use serde_json::json;
@@ -159,7 +164,54 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 "hash": digest,
             }),
         );
+        levels(mesh, observed)?;
     }
+    Ok(())
+}
+
+/// Observes `mesh`'s levels of detail as the cook makes them: each level's
+/// triangles and error, and their record's hash; they must read back from
+/// their record as they went in and suit the mesh.
+fn levels(mesh: &Mesh, observed: &mut Observations) -> Result<(), String> {
+    // Normals and texture coordinates where the mesh weighs five values a
+    // vertex, else straight up and nothing.
+    let vertices: Vec<MeshVertex> = mesh
+        .positions
+        .iter()
+        .enumerate()
+        .map(|(vertex, &position)| {
+            let values = mesh
+                .attributes
+                .as_ref()
+                .filter(|(_, stride, _)| *stride == 5)
+                .map(|(values, _, _)| &values[vertex * 5..vertex * 5 + 5]);
+            MeshVertex {
+                position,
+                normal: values.map_or([0.0, 1.0, 0.0], |values| [values[0], values[1], values[2]]),
+                uv: values.map_or([0.0; 2], |values| [values[3], values[4]]),
+            }
+        })
+        .collect();
+    let lods = engine_lodbuild::levels(&vertices, &mesh.indices)
+        .map_err(|error| format!("levels of {}: {error}", mesh.name))?;
+    let bytes = lods.to_bytes();
+    observed.check(
+        MeshLods::from_bytes(&bytes).is_ok_and(|read| read == lods),
+        || format!("{}: its levels do not read back from their record", mesh.name),
+    );
+    observed.check(
+        lods.check(mesh.indices.len(), vertices.len()).is_ok(),
+        || format!("{}: its levels do not suit it", mesh.name),
+    );
+    observed.record(
+        format!("levels {}", mesh.name),
+        json!({
+            "triangles": lods.levels.iter().map(|level| level.index_count / 3).collect::<Vec<_>>(),
+            "errors": lods.levels.iter().map(|level| level.error).collect::<Vec<_>>(),
+            "casters": lods.casters.len(),
+            "hash": super::hash(&bytes),
+        }),
+    );
     Ok(())
 }
 

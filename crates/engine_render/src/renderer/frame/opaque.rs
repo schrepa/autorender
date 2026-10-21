@@ -325,7 +325,7 @@ impl Renderer {
                 // with its own.
                 for level in 0..lod_levels(batch, mesh, false) {
                     // An empty level draws nothing.
-                    if level > 0 && mesh.lods[level - 1].1 == 0 {
+                    if level > 0 && mesh.plan[level - 1].1 == 0 {
                         continue;
                     }
                     let (ids, args, offset) = self

@@ -1,8 +1,8 @@
-//! Mesh simplification for automatic levels of detail: a pure Rust port of
+//! Mesh simplification for levels of detail: a pure Rust port of
 //! meshoptimizer 1.3's edge collapse simplifier (`meshopt_simplify`,
 //! `meshopt_simplifyWithAttributes` and `meshopt_simplifyScale` in
-//! `vendor/meshoptimizer/src/simplifier.cpp`), for browsers, which cannot
-//! run the C++ library that native tools compile.
+//! `vendor/meshoptimizer/src/simplifier.cpp`), which gives the same bits
+//! on every host the cook runs on.
 //!
 //! [`simplify`] removes triangles by collapsing edges in passes, cheapest
 //! first by quadric error, until the index count reaches a target or the

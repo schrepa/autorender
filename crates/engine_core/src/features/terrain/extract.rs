@@ -54,22 +54,12 @@ impl RenderPlacementAsset {
     /// `missing`.
     fn of(asset: &PlacementAsset, assets: &AssetLibrary, missing: &mut usize) -> Option<Self> {
         let found = (|| {
-            let mesh = assets.mesh(asset.mesh)?;
+            let mesh = RenderMesh::of(assets, asset.mesh)?;
             let material = assets.material(asset.material)?;
             let lods = asset
                 .lods
                 .iter()
-                .map(|lod| {
-                    assets.mesh(lod.mesh).map(|mesh| {
-                        (
-                            RenderMesh {
-                                handle: lod.mesh,
-                                mesh: Arc::clone(mesh),
-                            },
-                            lod.error,
-                        )
-                    })
-                })
+                .map(|lod| RenderMesh::of(assets, lod.mesh).map(|mesh| (mesh, lod.error)))
                 .collect::<Option<Vec<_>>>()?;
             let textures = material
                 .textures()
@@ -81,10 +71,7 @@ impl RenderPlacementAsset {
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(Self {
-                mesh: RenderMesh {
-                    handle: asset.mesh,
-                    mesh: Arc::clone(mesh),
-                },
+                mesh,
                 material: RenderMaterial {
                     handle: asset.material,
                     material: *material,

@@ -20,13 +20,15 @@ const INTERNAL: &[&str] = &[
     "CHUNK_LENGTH",
     "DevStepError",
     "GroundedAt",
+    "LOD_RECORD",
+    "LodInput",
     "MAX_DEV_TICKS",
-    "SimplifyError",
     "WaterInflow",
     "WaterWindow",
     "atmosphere_fields",
     "engine_features",
     "install",
+    "lod_input",
     "state_atmosphere_rules",
 ];
 

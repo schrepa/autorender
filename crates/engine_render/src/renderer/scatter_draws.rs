@@ -20,11 +20,6 @@ use crate::scatter::{
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{Tile, TileKey};
 
-/// Levels of an automatic chain the camera draws: the mesh and its first
-/// simplification. Deeper ones prune whole parts, such as foliage cards,
-/// and serve only shadow maps whose texels hide their errors.
-const CAMERA_LEVELS: u32 = 2;
-
 /// Placed objects' draw groups and slots.
 #[derive(Default)]
 pub(super) struct ScatterDraws {
@@ -521,9 +516,10 @@ impl Renderer {
             .collect();
     }
 
-    /// The levels placed asset `asset` draws: its coarser meshes when it has
-    /// them, all of which the camera draws, as far as they are resident and
-    /// stream like its mesh; otherwise its mesh's automatic levels. `None`
+    /// The levels placed asset `asset` draws, all of which the camera draws:
+    /// its coarser meshes when it has them, as far as they are resident and
+    /// stream like its mesh; otherwise its mesh's cooked levels, whose
+    /// measured errors hold even where a level prunes whole parts. `None`
     /// while its mesh is not resident or is skinned.
     fn scatter_levels(&self, asset: &engine_core::RenderPlacementAsset) -> Option<Levels> {
         let mesh = self.meshes.get(&asset.mesh.handle)?;
@@ -556,7 +552,7 @@ impl Renderer {
                 casters.push(cast);
                 meshes.push(asset.mesh.handle);
             }
-            let camera = CAMERA_LEVELS.min(levels.len() as u32);
+            let camera = levels.len() as u32;
             return Some((levels, casters, meshes, errors, camera));
         }
         for (lod, error) in asset.lods.iter().take(LEVELS as usize - 1) {

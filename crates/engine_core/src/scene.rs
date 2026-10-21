@@ -1,5 +1,8 @@
 use bevy_ecs::prelude::{Component, Resource};
-use engine_assets::{Material, MaterialHandle, Mesh, MeshHandle, Surface, Texture, TextureHandle};
+use engine_assets::{
+    AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle, MeshLods, Surface, Texture,
+    TextureHandle,
+};
 use engine_settings::{ExtraRules, InvalidSetting, settings};
 use glam::{BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 
@@ -365,11 +368,28 @@ pub struct RenderInstance {
     pub skin: Option<u32>,
 }
 
-/// One referenced mesh, retained independently of its library's lifetime.
+/// One referenced mesh, retained independently of its library's lifetime,
+/// with its levels of detail, where it has them.
 #[derive(Debug, Clone)]
 pub struct RenderMesh {
     pub handle: MeshHandle,
     pub mesh: Arc<Mesh>,
+    pub lods: Option<Arc<MeshLods>>,
+}
+
+impl RenderMesh {
+    /// Mesh `handle` of `assets` as frames take it, with its levels of
+    /// detail: `None` without the mesh, or while its levels are awaited
+    /// ([`AssetLibrary::mesh_lods`]), which frames draw nothing of.
+    pub fn of(assets: &AssetLibrary, handle: MeshHandle) -> Option<Self> {
+        let mesh = assets.mesh(handle)?;
+        let lods = assets.mesh_lods(handle)?;
+        Some(Self {
+            handle,
+            mesh: Arc::clone(mesh),
+            lods: lods.cloned(),
+        })
+    }
 }
 
 /// One referenced texture, retained independently of its library's lifetime.

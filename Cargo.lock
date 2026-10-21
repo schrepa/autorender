@@ -836,6 +836,7 @@ name = "engine_assetc"
 version = "0.1.0"
 dependencies = [
  "engine_core",
+ "engine_lodbuild",
  "engine_scene",
  "engine_vgbuild",
  "glam 0.30.9",
@@ -904,6 +905,15 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "engine_lodbuild"
+version = "0.1.0"
+dependencies = [
+ "engine_assets",
+ "engine_math",
+ "glam 0.30.9",
 ]
 
 [[package]]
@@ -1065,6 +1075,7 @@ dependencies = [
 name = "engine_worker"
 version = "0.1.0"
 dependencies = [
+ "engine_lodbuild",
  "engine_math",
  "engine_panic",
  "engine_sources",
@@ -4025,6 +4036,7 @@ dependencies = [
  "engine_assets",
  "engine_core",
  "engine_dev",
+ "engine_lodbuild",
  "engine_native",
  "engine_profiler",
  "engine_render",

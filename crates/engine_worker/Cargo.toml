@@ -26,6 +26,10 @@ engine_sources.workspace = true
 png.workspace = true
 zune-jpeg.workspace = true
 
+# The cook's levels of detail, which native hosts' workers make.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+engine_lodbuild.workspace = true
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true
 js-sys.workspace = true

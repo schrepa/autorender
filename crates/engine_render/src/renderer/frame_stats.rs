@@ -252,7 +252,11 @@ impl Renderer {
                 impostor_instances: lod_instances.map(|levels| levels[3]),
                 impostors: self.impostors.live(),
                 dropped_impostors: self.impostors.dropped,
-                failed_meshes: self.mesh_uploads.lod_failures.0,
+                meshes_without_levels: self
+                    .meshes
+                    .values()
+                    .filter(|mesh| mesh.without_levels)
+                    .count() as u32,
             },
             terrain: TerrainRenderStats {
                 patches: self.terrain.patches.frame.patches,

@@ -223,17 +223,18 @@ impl Renderer {
             self.scatter_meshes.1,
         );
         let mesh_uploads = self.structure_keys.uploads != Some(uploads);
-        // The plan's and casters' meshes, and terrains' placed objects'.
+        // The plan's and casters' meshes, and terrains' placed objects', each
+        // with its cooked levels of detail.
         let sources = self
             .plan
             .batches
             .iter()
-            .map(|batch| (batch.mesh, &snapshot.meshes[batch.source_index].mesh))
+            .map(|batch| (batch.mesh, &snapshot.meshes[batch.source_index]))
             .chain(
                 self.shadows
                     .groups()
                     .iter()
-                    .map(|group| (group.mesh, &snapshot.meshes[group.source_index].mesh)),
+                    .map(|group| (group.mesh, &snapshot.meshes[group.source_index])),
             )
             .chain(
                 snapshot
@@ -244,10 +245,11 @@ impl Renderer {
                     .flat_map(|asset| {
                         std::iter::once(&asset.mesh).chain(asset.lods.iter().map(|(lod, _)| lod))
                     })
-                    .map(|mesh| (mesh.handle, &mesh.mesh)),
+                    .map(|mesh| (mesh.handle, mesh)),
             )
             .filter(|_| mesh_uploads);
-        for (handle, source) in sources {
+        for (handle, rendered) in sources {
+            let source = &rendered.mesh;
             if let std::collections::btree_map::Entry::Vacant(entry) = self.meshes.entry(handle) {
                 self.mesh_uploads.staging.clear();
                 self.mesh_uploads
@@ -268,19 +270,13 @@ impl Renderer {
                 if let Some(skin) = &skin {
                     streams.push(bytemuck::cast_slice(skin));
                 }
-                // Levels of detail follow the mesh's own
-                // indices in its range; placed objects' meshes
-                // simplify further, for shadow maps and distant views. Draw
-                // groups read their first levels alike.
-                let levels = if self.scatter_meshes.0.contains(&handle) {
-                    crate::scatter::LEVELS as usize - 1
-                } else {
-                    LOD_LEVELS - 1
-                };
-                let (mut indices, lods) =
-                    lod_chain(source, levels, &mut self.mesh_uploads.lod_failures);
+                // Its cooked levels of detail follow the mesh's own indices in
+                // its range, then the triangles shadow maps draw of each.
+                let (indices, lods, casters) = with_levels(source, rendered.lods.as_deref());
                 let index_count = source.indices().len() as u32;
-                let casters = caster_ranges(&mut indices, index_count, &lods);
+                let without_levels = rendered.lods.is_none()
+                    && source.joint_count() == 0
+                    && source.virtual_geometry().is_none();
                 let placement = self
                     .mesh_arena
                     .insert(
@@ -323,8 +319,10 @@ impl Renderer {
                     skinned: skin.is_some(),
                     index_count,
                     byte_len,
+                    plan: plan_levels(&lods),
                     lods,
                     casters,
+                    without_levels,
                 });
                 mesh_upload_bytes += byte_len;
                 if let Some(geometry) = source.virtual_geometry() {
@@ -799,7 +797,7 @@ impl Renderer {
                     group: shadows.batch_group(index),
                     joints: mesh.joint_count(),
                     virtual_geometry,
-                    lods: gpu_mesh.lods[..levels - 1]
+                    lods: gpu_mesh.plan[..levels - 1]
                         .iter()
                         .map(|&(offset, count, error)| (draw.first_index + offset, count, error))
                         .collect(),

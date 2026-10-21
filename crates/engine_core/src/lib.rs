@@ -34,6 +34,7 @@ mod jobs;
 mod level_of_detail;
 mod lights;
 pub mod math;
+mod mesh_lods;
 /// Hash maps and sets with a fixed hasher: the same order every run.
 pub use engine_math::collections;
 mod packed;
@@ -66,13 +67,11 @@ pub use contact_shadows::*;
 pub use debug_view::*;
 pub use decals::*;
 pub use effects::*;
-/// What the mesh simplifier refuses, as level-of-detail generation runs it.
-pub use engine_assets::simplify::SimplifyError;
 pub use engine_assets::{
-    Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding, LodLevel,
-    MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshLods,
-    MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle, TextureRef, TopLayer,
-    Transmission, UvTransform, Wrap, mesh_lods,
+    Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding, LOD_RECORD,
+    LodInput, LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh,
+    MeshHandle, MeshLods, MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle,
+    TextureRef, TopLayer, Transmission, UvTransform, Wrap, lod_input,
 };
 pub use engine_assets::{
     AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, ClipHandle,
@@ -415,6 +414,7 @@ impl Engine {
             .init_resource::<Jobs>()
             .init_resource::<TextureRecords>()
             .init_resource::<Records>()
+            .init_resource::<mesh_lods::MeshLevels>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
@@ -892,6 +892,7 @@ impl Engine {
     fn sync_world(&mut self) {
         let _profile = engine_profile::span("ecs", "WorldSync");
         records::exchange(self.app.world_mut());
+        mesh_lods::settle(self.app.world_mut());
         self.app.world_mut().run_schedule(WorldSync);
     }
 

@@ -531,7 +531,7 @@
       "direction": "lower"
     },
     {
-      "name": "level_of_detail.failed_meshes",
+      "name": "level_of_detail.meshes_without_levels",
       "kind": "work",
       "rule": "not-above",
       "statistic": "the last sampled frame's value",

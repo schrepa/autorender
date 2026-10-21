@@ -16,6 +16,7 @@ engine_assets.workspace = true
 # decoder.
 engine_textures.workspace = true
 texture2ddecoder.workspace = true
+engine_lodbuild.workspace = true
 engine_core.workspace = true
 engine_terrain.workspace = true
 # The terrain corpus packs its records as the cook does.

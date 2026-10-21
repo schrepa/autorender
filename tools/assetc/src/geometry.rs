@@ -162,6 +162,17 @@ fn import_primitive(
         };
         (file, source)
     } else {
+        // Its levels of detail, made here, offline: meshes with joints,
+        // which move their vertices, have none.
+        let lods = joints
+            .is_none()
+            .then(|| {
+                let plain: Vec<engine_core::MeshVertex> =
+                    vertices.iter().map(|&vertex| vertex.into()).collect();
+                engine_lodbuild::levels(&plain, &indices)
+                    .map_err(|message| ImportError::new("invalid_mesh", &primitive_path, message))
+            })
+            .transpose()?;
         let file = ImportedFile::named(
             id,
             &name,
@@ -174,6 +185,7 @@ fn import_primitive(
                     uv1: uv1.as_deref(),
                     joints: joints.as_deref(),
                     weights: weights.as_deref(),
+                    lods: lods.as_ref(),
                 },
             ),
         );

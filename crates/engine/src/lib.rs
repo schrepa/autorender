@@ -91,7 +91,7 @@ pub use engine_core::{
     MAX_TRACK_DEPTH, MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MaterialShare, MeshLods, OceanPoint,
     OceanSurface, OceanWave, OceanWaves, PixelProbe, PluginGroupBuilder, Records, SplineChunks,
     SunLookup, TerrainProbe, TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit,
-    Viewport, VirtualMesh, has_feature, mesh_lods,
+    Viewport, VirtualMesh, has_feature,
 };
 
 /// Terrain authoring: layer stacks, masks, stamps, bakes, placement and

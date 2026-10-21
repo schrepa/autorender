@@ -17,11 +17,11 @@ const LONG_FILES: &[(&str, usize)] = &[
     ("apps/stress-lab/src/city/mod.rs", 1583),
     ("apps/stress-lab/src/highlands/mod.rs", 2050),
     ("apps/stress-lab/src/metro/mod.rs", 3409),
-    ("crates/engine_assets/src/simplify.rs", 2387),
     ("crates/engine_core/src/hierarchy.rs", 1675),
     ("crates/engine_core/src/retained_render.rs", 1651),
     ("crates/engine_render/src/meshes/terrain.wgsl", 1797),
     ("crates/engine_terrain/src/layers.rs", 1591),
+    ("tools/lodbuild/src/simplify.rs", 2387),
 ];
 
 /// The structs with more than [`MAX_STRUCT_FIELDS`] fields, by file and

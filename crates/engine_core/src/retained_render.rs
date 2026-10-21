@@ -454,7 +454,8 @@ impl Sources {
             (cube_mesh, [r, g, b, 1.0], None, Surface::MATTE)
         };
         let color = tint.map_or(color, |tint| tint.apply(color));
-        let mesh = assets.mesh(handle)?;
+        // Meshes draw once their levels of detail are settled.
+        let rendered = RenderMesh::of(assets, handle)?;
         // Resolve all weak handles before retaining any source for this record.
         if let Some((_, material)) = mapped {
             for texture in material.textures() {
@@ -463,12 +464,9 @@ impl Sources {
         }
         let mesh_index = *self.mesh_indices.entry(handle).or_insert_with(|| {
             let index = self.meshes.len();
-            self.meshes.push(RenderMesh {
-                handle,
-                mesh: Arc::clone(mesh),
-            });
-            self.bounds.push(mesh.bounds());
-            self.skinned.push(mesh.joint_count() != 0);
+            self.bounds.push(rendered.mesh.bounds());
+            self.skinned.push(rendered.mesh.joint_count() != 0);
+            self.meshes.push(rendered);
             self.mesh_used.push(false);
             index
         });

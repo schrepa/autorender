@@ -33,7 +33,7 @@ use std::fmt;
 use engine_core::terrain_data::codec::CodecError;
 use engine_core::{
     AssetError, BiomeError, ErrorCode, HierarchyError, InterpolationError, InvalidSetting,
-    LayerError, PyramidError, SimplifyError, TransformEditError,
+    LayerError, PyramidError, TransformEditError,
 };
 
 /// An engine or game error: its code, where, and what is wrong.
@@ -146,6 +146,7 @@ impl From<AssetError> for Error {
             | AssetError::InvalidAttribute { .. }
             | AssetError::IndexOutOfBounds { .. }
             | AssetError::InvalidMeshHandle
+            | AssetError::InvalidLevels { .. }
             | AssetError::InvalidVirtualMesh { .. } => ErrorCode::InvalidMesh,
         };
         Self::new(code, "$", error.to_string())
@@ -173,22 +174,6 @@ impl From<TransformEditError> for Error {
         let code = match error {
             TransformEditError::MissingEntity(_) => ErrorCode::UnknownEntity,
             TransformEditError::MissingTransform(_) => ErrorCode::MissingComponent,
-        };
-        Self::new(code, "$", error.to_string())
-    }
-}
-
-impl From<SimplifyError> for Error {
-    fn from(error: SimplifyError) -> Self {
-        let code = match error {
-            SimplifyError::TriangleCount { .. }
-            | SimplifyError::IndexOutOfBounds { .. }
-            | SimplifyError::TooLarge { .. }
-            | SimplifyError::AttributeLayout { .. }
-            | SimplifyError::VertexFlagCount { .. } => ErrorCode::InvalidMesh,
-            SimplifyError::InvalidWeight { .. } | SimplifyError::InvalidTargetError => {
-                ErrorCode::InvalidValue
-            }
         };
         Self::new(code, "$", error.to_string())
     }

@@ -7,7 +7,9 @@
 //! steps until done or for about [`SLICE_MS`], so between slices hosts read
 //! their messages, a more urgent job goes first and one the engine
 //! cancelled stops. Hosts read the cook's packs with it too ([`PackIndex`]),
-//! and key their record stores with its index ([`JobCache`]).
+//! and key their record stores with its index ([`JobCache`]). Natively it
+//! also makes the cook's levels of detail (`engine_lodbuild`), each whole in
+//! one slice: pages never ask for them.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
@@ -122,6 +124,15 @@ impl Worker {
             (0..self.held.len()).min_by_key(|&at| (self.held[at].priority, self.held[at].id))?;
         let job = &mut self.held[at];
         let id = job.id;
+        #[cfg(not(target_arch = "wasm32"))]
+        if job.kind == engine_lodbuild::KIND {
+            let input = std::mem::take(&mut job.input);
+            self.held.remove(at);
+            return Some(match engine_lodbuild::run(&input) {
+                Ok(output) => Report::Done(id, output),
+                Err(error) => Report::Failed(id, error),
+            });
+        }
         let stepped = (|| {
             if !job.started {
                 self.terrain.start(id, &job.kind, &job.input)?;
@@ -153,6 +164,10 @@ impl Worker {
 
     /// Runs job `kind` on `input` whole; its output.
     pub fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if kind == engine_lodbuild::KIND {
+            return engine_lodbuild::run(input);
+        }
         self.terrain.run(kind, input)
     }
 

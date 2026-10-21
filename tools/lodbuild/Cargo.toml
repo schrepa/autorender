@@ -1,0 +1,16 @@
+[package]
+name = "engine_lodbuild"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Offline mesh levels of detail with measured errors (the cook and the importer only)"
+
+[dependencies]
+# The levels' format and their job's input.
+engine_assets.workspace = true
+engine_math.workspace = true
+glam.workspace = true
+
+[lints]
+workspace = true

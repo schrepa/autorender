@@ -5,7 +5,7 @@ use std::sync::{
 
 use bevy_ecs::prelude::Resource;
 
-use crate::{AnimationClip, AssetError, Material, Mesh, Texture};
+use crate::{AnimationClip, AssetError, Material, Mesh, MeshLods, Texture, takes_levels};
 
 static NEXT_LIBRARY: AtomicU64 = AtomicU64::new(1);
 
@@ -222,6 +222,29 @@ impl<T> Storage<T> {
     }
 }
 
+/// A mesh held, and its levels of detail: `None` while awaited (the cook's,
+/// which its owner asks hosts for), else those it has, if any.
+struct HeldMesh {
+    mesh: Arc<Mesh>,
+    lods: Option<Option<Arc<MeshLods>>>,
+}
+
+impl HeldMesh {
+    /// `mesh` with its own levels, none where it can have none, or awaiting
+    /// the cook's.
+    fn new(mesh: Mesh) -> Self {
+        let lods = match mesh.lods() {
+            Some(lods) => Some(Some(Arc::clone(lods))),
+            None if takes_levels(&mesh) => None,
+            None => Some(None),
+        };
+        Self {
+            mesh: Arc::new(mesh),
+            lods,
+        }
+    }
+}
+
 /// Single CPU asset owner. Insertions and removals are explicit synchronous
 /// operations; no background work or automatic eviction exist. A mesh or
 /// texture still to come (a record its owner fetches) holds a reserved handle
@@ -235,7 +258,10 @@ pub struct AssetLibrary {
     // value of its last one (0 until replaced).
     material_revision: u64,
     budget: AssetBudget,
-    meshes: Storage<Arc<Mesh>>,
+    meshes: Storage<HeldMesh>,
+    // Meshes taken since the last [`Self::take_awaiting_lods`] whose levels
+    // are awaited.
+    awaiting_lods: Vec<MeshHandle>,
     materials: Storage<(Material, u64)>,
     textures: Storage<Arc<Texture>>,
     clips: Storage<Arc<AnimationClip>>,
@@ -274,6 +300,7 @@ impl AssetLibrary {
             material_revision: 0,
             budget,
             meshes: Storage::default(),
+            awaiting_lods: Vec::new(),
             materials: Storage::default(),
             textures: Storage::default(),
             clips: Storage::default(),
@@ -289,7 +316,13 @@ impl AssetLibrary {
             });
         }
         self.reserve_bytes(mesh.byte_len())?;
-        Ok(MeshHandle(self.meshes.insert(self.id, Arc::new(mesh))))
+        let held = HeldMesh::new(mesh);
+        let awaits = held.lods.is_none();
+        let handle = MeshHandle(self.meshes.insert(self.id, held));
+        if awaits {
+            self.awaiting_lods.push(handle);
+        }
+        Ok(handle)
     }
 
     /// A handle for a mesh to come, which counts against the mesh capacity
@@ -311,8 +344,51 @@ impl AssetLibrary {
             return Err(AssetError::InvalidMeshHandle);
         }
         self.reserve_bytes(mesh.byte_len())?;
-        self.meshes.fill(self.id, handle.0, Arc::new(mesh));
+        let held = HeldMesh::new(mesh);
+        if held.lods.is_none() {
+            self.awaiting_lods.push(handle);
+        }
+        self.meshes.fill(self.id, handle.0, held);
         Ok(())
+    }
+
+    /// The meshes taken since the last call whose levels of detail are
+    /// awaited: those their owner asks hosts for, settling each
+    /// ([`Self::settle_lods`]). Meshes removed since are among them.
+    pub fn take_awaiting_lods(&mut self) -> Vec<MeshHandle> {
+        std::mem::take(&mut self.awaiting_lods)
+    }
+
+    /// Gives mesh `handle`, whose levels were awaited, `lods`, or none:
+    /// what extraction then draws it with. Levels not suiting the mesh are
+    /// refused, leaving them awaited, as are those of a mesh whose levels
+    /// were not awaited.
+    pub fn settle_lods(
+        &mut self,
+        handle: MeshHandle,
+        lods: Option<MeshLods>,
+    ) -> Result<(), AssetError> {
+        let held = self
+            .meshes
+            .get_mut(self.id, handle.0)
+            .filter(|held| held.lods.is_none())
+            .ok_or(AssetError::InvalidMeshHandle)?;
+        if let Some(lods) = &lods {
+            lods.check(held.mesh.indices().len(), held.mesh.vertices().len())?;
+        }
+        let bytes = lods.as_ref().map_or(0, MeshLods::byte_len);
+        held.lods = Some(lods.map(Arc::new));
+        self.resident_bytes += bytes;
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
+    }
+
+    /// Mesh `handle`'s levels of detail once settled, its own or the
+    /// cook's, `Some(None)` where it has none; `None` while awaited, which
+    /// extraction draws nothing of, or without a mesh.
+    pub fn mesh_lods(&self, handle: MeshHandle) -> Option<Option<&Arc<MeshLods>>> {
+        let held = self.meshes.get(self.id, handle.0)?;
+        held.lods.as_ref().map(Option::as_ref)
     }
 
     /// Admits `material`, whose textures must be live in this library or
@@ -463,7 +539,7 @@ impl AssetLibrary {
     }
 
     pub fn mesh(&self, handle: MeshHandle) -> Option<&Arc<Mesh>> {
-        self.meshes.get(self.id, handle.0)
+        self.meshes.get(self.id, handle.0).map(|held| &held.mesh)
     }
 
     /// Opaque library identity and successful mutation revision: insertions
@@ -506,7 +582,14 @@ impl AssetLibrary {
         let Some(mesh) = self.meshes.remove(self.id, handle.0) else {
             return false;
         };
-        self.resident_bytes -= mesh.map_or(0, |mesh| mesh.byte_len());
+        self.resident_bytes -= mesh.map_or(0, |held| {
+            held.mesh.byte_len()
+                + held
+                    .lods
+                    .flatten()
+                    .filter(|_| held.mesh.lods().is_none())
+                    .map_or(0, |lods| lods.byte_len())
+        });
         self.revision = self.revision.saturating_add(1);
         true
     }
@@ -548,7 +631,7 @@ impl AssetLibrary {
 
     /// Every mesh held, by slot ([`MeshHandle::slot`]), in slot order.
     pub fn meshes(&self) -> impl Iterator<Item = (usize, &Arc<Mesh>)> {
-        self.meshes.values()
+        self.meshes.values().map(|(slot, held)| (slot, &held.mesh))
     }
 
     /// Every material held, by slot ([`MaterialHandle::slot`]), in slot

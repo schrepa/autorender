@@ -9,6 +9,8 @@ publish.workspace = true
 engine_core.workspace = true
 engine_scene.workspace = true
 engine_vgbuild.workspace = true
+# Imported meshes' levels of detail, written beside them.
+engine_lodbuild.workspace = true
 glam.workspace = true
 gltf.workspace = true
 png.workspace = true

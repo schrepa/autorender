@@ -14,6 +14,10 @@
 //! hashed as git holds them, so every checkout hashes the same; the
 //! target never is, as records are the same bits on every host.
 //!
+//! A crate keying records whose code it does not link (records only a
+//! tool makes, such as the cook's levels of detail, which runtimes load)
+//! hashes that code's crate instead ([`emit_of`]).
+//!
 //! [`record_key`] is the key records are kept by, from that hash.
 #![deny(
     clippy::wildcard_enum_match_arm,
@@ -44,12 +48,40 @@ pub fn record_key(source: &[u8; 32], kind: &str, identity: &[u8]) -> [u8; 32] {
 /// a file cannot be read.
 pub fn emit() {
     let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
+    write_source(&manifest, "source.rs", "this crate");
+}
+
+/// [`emit`] for the workspace's crate `name` rather than the calling one,
+/// for a crate keying records `name`'s code makes without linking it:
+/// writes `{name}_source.rs`, declaring `SOURCE` as `name`'s own build
+/// would. Panics, failing the build, where the workspace names no such
+/// crate.
+pub fn emit_of(name: &str) {
+    let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
     let root = workspace_root(&manifest);
+    let workspace = read(&root.join("Cargo.toml"));
+    let paths = table_paths(&workspace, "workspace.dependencies");
+    let folder = paths
+        .get(name)
+        .map(|path| root.join(path))
+        .unwrap_or_else(|| panic!("the workspace names no crate {name}"));
+    write_source(
+        &folder,
+        &format!("{name}_source.rs"),
+        &format!("the crate `{name}`"),
+    );
+}
+
+/// Hashes the crate in `manifest` (its folder) as [`emit`] describes, and
+/// writes `SOURCE` into the build's output folder as `file`, its doc naming
+/// the crate as `crate_name`.
+fn write_source(manifest: &Path, file: &str, crate_name: &str) {
+    let root = workspace_root(manifest);
     let workspace = read(&root.join("Cargo.toml"));
     let paths = table_paths(&workspace, "workspace.dependencies");
     let patches = table_paths(&workspace, "patch.crates-io");
     let mut folders = BTreeSet::new();
-    let mut queue = vec![manifest];
+    let mut queue = vec![manifest.to_path_buf()];
     while let Some(folder) = queue.pop() {
         if !folders.insert(folder.clone()) {
             continue;
@@ -94,11 +126,11 @@ pub fn emit() {
         hash.update([0]);
     }
     let digest = hash.finalize();
-    let out = PathBuf::from(var("OUT_DIR")).join("source.rs");
+    let out = PathBuf::from(var("OUT_DIR")).join(file);
     let bytes: Vec<String> = digest.iter().map(|byte| format!("{byte:#04x}")).collect();
     let source = format!(
-        "/// The hash of the source code this crate builds from: its own, what it\n\
-         /// depends on in its repository, the lockfile and the toolchain.\n\
+        "/// The hash of the source code {crate_name} builds from: its own, what\n\
+         /// it depends on in its repository, the lockfile and the toolchain.\n\
          pub const SOURCE: [u8; 32] = [{}];\n",
         bytes.join(", ")
     );

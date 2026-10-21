@@ -73,6 +73,10 @@ pub enum AssetError {
     InvalidVirtualMesh {
         reason: &'static str,
     },
+    /// Levels of detail breaking a rule, or not suiting their mesh.
+    InvalidLevels {
+        reason: &'static str,
+    },
     MeshCapacity {
         limit: usize,
     },
@@ -114,6 +118,7 @@ impl AssetError {
             Self::InvalidAnimation { .. } => "asset.invalid_animation",
             Self::InvalidCompressedTexture { .. } => "asset.invalid_compressed_texture",
             Self::InvalidVirtualMesh { .. } => "asset.invalid_virtual_mesh",
+            Self::InvalidLevels { .. } => "asset.invalid_levels",
             Self::MeshCapacity { .. } => "asset.mesh_capacity",
             Self::MaterialCapacity { .. } => "asset.material_capacity",
             Self::TextureCapacity { .. } => "asset.texture_capacity",
@@ -205,6 +210,7 @@ impl fmt::Display for AssetError {
                 write!(f, "compressed texture: {reason}")
             }
             Self::InvalidVirtualMesh { reason } => write!(f, "virtual mesh: {reason}"),
+            Self::InvalidLevels { reason } => write!(f, "levels of detail: {reason}"),
             Self::MeshCapacity { limit } => write!(f, "mesh capacity of {limit} reached"),
             Self::MaterialCapacity { limit } => write!(f, "material capacity of {limit} reached"),
             Self::TextureCapacity { limit } => write!(f, "texture capacity of {limit} reached"),

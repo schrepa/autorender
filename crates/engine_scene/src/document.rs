@@ -309,14 +309,7 @@ impl MeshSource {
                 let Some(files) = files else {
                     return Ok(Mesh::cube());
                 };
-                let buffer = files.mesh(uri, &uri_path)?;
-                with_extras(
-                    Mesh::new(buffer.vertices, buffer.indices),
-                    buffer.colors,
-                    buffer.uv1,
-                    buffer.skin,
-                    path,
-                )
+                files.mesh(uri, &uri_path)?.mesh(path)
             }
             Self::Virtual {
                 uri,

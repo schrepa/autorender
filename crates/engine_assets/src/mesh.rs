@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::virtual_mesh::VirtualMesh;
 use glam::Vec3;
 
-use crate::AssetError;
+use crate::{AssetError, MeshLods};
 
 /// CPU vertex data, independent of any GPU upload layout.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -41,7 +41,9 @@ impl Aabb {
 /// Optional vertex colors and second texture coordinates and
 /// skinning joints and weights follow the vertices one to one.
 /// A mesh with virtual geometry is its hierarchy's fallback
-/// cut, which renderers draw where they cannot draw its clusters.
+/// cut, which renderers draw where they cannot draw its clusters. A mesh
+/// may carry its levels of detail, as the files the importer writes do;
+/// the cook makes the others'.
 #[derive(Debug)]
 pub struct Mesh {
     vertices: Box<[MeshVertex]>,
@@ -51,6 +53,7 @@ pub struct Mesh {
     uv1: Option<Box<[[f32; 2]]>>,
     skin: Option<MeshSkin>,
     virtual_geometry: Option<Arc<VirtualMesh>>,
+    lods: Option<Arc<MeshLods>>,
 }
 
 /// Up to four joints per vertex and their weights (glTF `JOINTS_0` and
@@ -112,6 +115,7 @@ impl Mesh {
             uv1: None,
             skin: None,
             virtual_geometry: None,
+            lods: None,
         })
     }
 
@@ -135,6 +139,25 @@ impl Mesh {
     /// The cluster hierarchy of a mesh with virtual geometry.
     pub fn virtual_geometry(&self) -> Option<&Arc<VirtualMesh>> {
         self.virtual_geometry.as_ref()
+    }
+
+    /// This mesh with its levels of detail `lods`, which must suit its
+    /// indices and vertices ([`MeshLods::check`]); not for meshes with
+    /// joints or virtual geometry, which have none.
+    pub fn with_lods(mut self, lods: MeshLods) -> Result<Self, AssetError> {
+        if self.joint_count() != 0 || self.virtual_geometry.is_some() {
+            return Err(AssetError::InvalidLevels {
+                reason: "meshes with joints or virtual geometry have no levels of detail",
+            });
+        }
+        lods.check(self.indices.len(), self.vertices.len())?;
+        self.lods = Some(Arc::new(lods));
+        Ok(self)
+    }
+
+    /// Its levels of detail, where it carries them.
+    pub fn lods(&self) -> Option<&Arc<MeshLods>> {
+        self.lods.as_ref()
     }
 
     /// This mesh deformed by joints: per vertex up to four joint indices
@@ -274,6 +297,7 @@ impl Mesh {
             + self
                 .virtual_geometry()
                 .map_or(0, |geometry| geometry.byte_len())
+            + self.lods().map_or(0, |lods| lods.byte_len())
     }
 
     /// Unit cube centered at the origin, with flat face normals.

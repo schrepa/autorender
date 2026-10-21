@@ -14,7 +14,6 @@ mod library;
 mod lod;
 mod material;
 mod mesh;
-pub mod simplify;
 mod texture;
 mod virtual_mesh;
 
@@ -25,7 +24,7 @@ pub use error::AssetError;
 pub use library::{
     AssetBudget, AssetLibrary, ClipHandle, MaterialHandle, MeshHandle, TextureHandle,
 };
-pub use lod::{LodLevel, MeshLods, mesh_lods};
+pub use lod::{LOD_RECORD, LodInput, LodLevel, MeshLods, lod_input, takes_levels};
 pub use material::{
     AlphaMode, Filter, Grounding, MAX_GROUNDING_HEIGHT, MAX_WORLD_TILING, Material,
     MaterialBinding, Sampler, Surface, TextureRef, TopLayer, Transmission, UvTransform, Wrap,

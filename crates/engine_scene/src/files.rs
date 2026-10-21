@@ -14,7 +14,7 @@
 use engine_settings::ErrorCode;
 use std::collections::BTreeMap;
 
-use engine_core::{MeshVertex, Texture, TextureFormat, VirtualMesh};
+use engine_core::{MeshLods, MeshVertex, Texture, TextureFormat, VirtualMesh};
 
 use crate::SceneError;
 
@@ -202,20 +202,23 @@ pub fn encode_mesh_buffer<V: Copy + Into<MeshVertex>>(vertices: &[V], indices: &
 
 /// Optional per-vertex streams of a mesh buffer, one entry per vertex each:
 /// vertex colors and second texture coordinates, skinning
-/// joints and weights (both or neither).
+/// joints and weights (both or neither); and the mesh's levels of detail,
+/// which the importer makes offline.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MeshStreams<'a> {
     pub colors: Option<&'a [[f32; 4]]>,
     pub uv1: Option<&'a [[f32; 2]]>,
     pub joints: Option<&'a [[u16; 4]]>,
     pub weights: Option<&'a [[f32; 4]]>,
+    pub lods: Option<&'a MeshLods>,
 }
 
 /// [`encode_mesh_buffer`] with optional streams. With any, the buffer is
 /// `EMB2`: after the counts a u32 of flags (1 colors, 2 second
-/// coordinates, 4 joints and weights), then the vertices, the colors (four
-/// f32 each), the second coordinates (two f32 each), the joints (four u16
-/// each), the weights (four f32 each) and the indices.
+/// coordinates, 4 joints and weights, 8 levels of detail), then the
+/// vertices, the colors (four f32 each), the second coordinates (two f32
+/// each), the joints (four u16 each), the weights (four f32 each), the
+/// indices and the levels of detail ([`MeshLods::to_bytes`]).
 ///
 /// # Panics
 /// Panics when only one of joints and weights is given, or with 2^32 or
@@ -230,6 +233,7 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
         uv1,
         joints,
         weights,
+        lods,
     } = streams;
     assert_eq!(
         joints.is_some(),
@@ -237,7 +241,7 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
         "joints and weights come together"
     );
     let skin = joints.zip(weights);
-    let extras = colors.is_some() || uv1.is_some() || skin.is_some();
+    let extras = colors.is_some() || uv1.is_some() || skin.is_some() || lods.is_some();
     let mut bytes = Vec::with_capacity(
         16 + vertices.len() * (32 + if extras { 48 } else { 0 }) + indices.len() * 4,
     );
@@ -251,7 +255,8 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     if extras {
         let flags = u32::from(colors.is_some())
             | u32::from(uv1.is_some()) << 1
-            | u32::from(skin.is_some()) << 2;
+            | u32::from(skin.is_some()) << 2
+            | u32::from(lods.is_some()) << 3;
         bytes.extend_from_slice(&flags.to_le_bytes());
     }
     for &vertex in vertices {
@@ -284,21 +289,17 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     for index in indices {
         bytes.extend_from_slice(&index.to_le_bytes());
     }
+    if let Some(lods) = lods {
+        bytes.extend_from_slice(&lods.to_bytes());
+    }
     bytes
 }
 
 /// The mesh an engine mesh buffer holds ([`encode_mesh_buffer_with`]),
-/// with its optional streams: what scenes' buffer files and the records
-/// keeping game code's meshes decode to.
+/// with its optional streams and levels: what scenes' buffer files and the
+/// records keeping game code's meshes decode to.
 pub fn decode_mesh_buffer(bytes: &[u8]) -> Result<engine_core::Mesh, SceneError> {
-    let buffer = mesh_buffer(bytes, "$")?;
-    crate::document::with_extras(
-        engine_core::Mesh::new(buffer.vertices, buffer.indices),
-        buffer.colors,
-        buffer.uv1,
-        buffer.skin,
-        "$",
-    )
+    mesh_buffer(bytes, "$")?.mesh("$")
 }
 
 /// Joints and weights of skinned vertices.
@@ -311,6 +312,26 @@ pub(crate) struct MeshBuffer {
     pub colors: Option<Vec<[f32; 4]>>,
     pub uv1: Option<Vec<[f32; 2]>>,
     pub skin: Option<SkinStreams>,
+    pub lods: Option<MeshLods>,
+}
+
+impl MeshBuffer {
+    /// The mesh it holds, with its streams and levels, errors at `path`.
+    pub(crate) fn mesh(self, path: &str) -> Result<engine_core::Mesh, SceneError> {
+        let mesh = crate::document::with_extras(
+            engine_core::Mesh::new(self.vertices, self.indices),
+            self.colors,
+            self.uv1,
+            self.skin,
+            path,
+        )?;
+        match self.lods {
+            Some(lods) => mesh.with_lods(lods).map_err(|error| {
+                SceneError::new(ErrorCode::InvalidMesh, path, error.to_string())
+            }),
+            None => Ok(mesh),
+        }
+    }
 }
 
 fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
@@ -330,10 +351,10 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
     };
     let flags = if extras {
         match word(12) {
-            Some(flags) if flags != 0 && flags & !7 == 0 => flags,
+            Some(flags) if flags != 0 && flags & !15 == 0 => flags,
             _ => {
                 return Err(invalid(
-                    "EMB2 flags name colors (1), second coordinates (2) and joints and weights (4)",
+                    "EMB2 flags name colors (1), second coordinates (2), joints and weights (4) and levels of detail (8)",
                 ));
             }
         }
@@ -352,7 +373,11 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
         .checked_mul(floats * 4)
         .and_then(|vertices| vertices.checked_add(index_count.checked_mul(4)?))
         .and_then(|payload| payload.checked_add(header));
-    if expected != Some(bytes.len()) {
+    // Levels of detail follow the indices, counting themselves.
+    let fits = expected.is_some_and(|expected| {
+        expected == bytes.len() || (flags & 8 != 0 && expected < bytes.len())
+    });
+    if !fits {
         return Err(invalid(
             "the buffer's length must match its vertex and index counts",
         ));
@@ -418,12 +443,19 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
             )
         })
         .collect();
+    let lods = (flags & 8 != 0)
+        .then(|| {
+            MeshLods::from_bytes(&bytes[offset + index_count * 4..])
+                .map_err(|error| SceneError::new(ErrorCode::InvalidMesh, path, error.to_string()))
+        })
+        .transpose()?;
     Ok(MeshBuffer {
         vertices,
         indices,
         colors,
         uv1,
         skin,
+        lods,
     })
 }
 

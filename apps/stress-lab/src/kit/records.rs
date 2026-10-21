@@ -58,8 +58,8 @@ pub(crate) fn mesh_then(
     Ok(handle)
 }
 
-/// `mesh` as an engine mesh buffer, with its colors, second coordinates
-/// and joints.
+/// `mesh` as an engine mesh buffer, with its colors, second coordinates,
+/// joints and levels of detail of its own.
 fn mesh_bytes(mesh: &Mesh) -> Vec<u8> {
     encode_mesh_buffer_with(
         mesh.vertices(),
@@ -69,6 +69,7 @@ fn mesh_bytes(mesh: &Mesh) -> Vec<u8> {
             uv1: mesh.uv1(),
             joints: mesh.joints(),
             weights: mesh.weights(),
+            lods: mesh.lods().map(AsRef::as_ref),
         },
     )
 }

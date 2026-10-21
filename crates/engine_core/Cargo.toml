@@ -31,5 +31,9 @@ engine_sources.workspace = true
 engine_textures.workspace = true
 schemars = { workspace = true, optional = true }
 
+# The hash of the code making the cook's levels of detail, which key them.
+[build-dependencies]
+engine_sources.workspace = true
+
 [lints]
 workspace = true
