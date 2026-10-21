@@ -15,13 +15,15 @@
 //! into its layer. Where none holds it the layer is baked on the GPU
 //! (`bake`) and read back as its record (`records`), which hosts keep and
 //! which then uploads as any record does: how the cook makes them. Atlases
-//! hold BC7 where devices sample BC formats, encoded on the CPU by the
-//! encoder every cooked texture is (`engine_textures`); otherwise RGBA8,
-//! at half the texels where a layer would pass 512 across, whose records
-//! those devices make themselves: their materials' textures, which hosts
-//! transcode for them, differ anyway. Records baked on the GPU are cooked
-//! once, not compared across GPUs, whose rasterizers differ in their last
-//! bits: what reads them takes them as they are.
+//! hold the compressed family the device samples textures in, BC7 or else
+//! ASTC 4 × 4, encoded on the CPU by the encoder every cooked texture is
+//! (`engine_textures`); on devices sampling neither, RGBA8, at half the
+//! texels where a layer would pass 512 across. Records exist per format:
+//! the cook, on a desktop, makes BC7's, and other devices make and keep
+//! their own (their materials' textures, of another family, key other
+//! records anyway). Records baked on the GPU are cooked once, not compared
+//! across GPUs, whose rasterizers differ in their last bits: what reads
+//! them takes them as they are.
 
 #![expect(
     clippy::expect_used,
@@ -108,25 +110,27 @@ impl AtlasShape {
     }
 
     /// The shape an atlas holding `format` holds this shape's impostors at:
-    /// BC7's this one; RGBA8's with half the texels a frame where a layer
-    /// would pass [`RGBA8_SIZE`] texels across, so atlases without
-    /// compression keep to that memory.
+    /// compressed atlases' this one; RGBA8's with half the texels a frame
+    /// where a layer would pass [`RGBA8_SIZE`] texels across, so atlases
+    /// without compression keep to that memory.
     fn held(self, format: AtlasFormat) -> Self {
         match format {
             AtlasFormat::Rgba8 if self.size() > RGBA8_SIZE => Self {
                 texels: self.texels / 2,
                 ..self
             },
-            AtlasFormat::Bc7 | AtlasFormat::Rgba8 => self,
+            AtlasFormat::Bc7 | AtlasFormat::Astc | AtlasFormat::Rgba8 => self,
         }
     }
 }
 
-/// What an atlas's arrays hold: BC7 blocks, where devices sample BC
-/// formats, or RGBA8 texels.
+/// What an atlas's arrays hold: blocks of the compressed family the device
+/// samples textures in (BC7, else ASTC 4 × 4), or RGBA8 texels on devices
+/// sampling neither.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AtlasFormat {
     Bc7,
+    Astc,
     Rgba8,
 }
 
@@ -146,15 +150,35 @@ const BC7_FORMATS: [wgpu::TextureFormat; 4] = [
     wgpu::TextureFormat::Bc7RgbaUnorm,
     wgpu::TextureFormat::Bc7RgbaUnorm,
 ];
+/// The arrays of ASTC atlases, decoding as [`FORMATS`] do.
+const ASTC_FORMATS: [wgpu::TextureFormat; 4] = [
+    wgpu::TextureFormat::Astc {
+        block: wgpu::AstcBlock::B4x4,
+        channel: wgpu::AstcChannel::UnormSrgb,
+    },
+    wgpu::TextureFormat::Astc {
+        block: wgpu::AstcBlock::B4x4,
+        channel: wgpu::AstcChannel::UnormSrgb,
+    },
+    wgpu::TextureFormat::Astc {
+        block: wgpu::AstcBlock::B4x4,
+        channel: wgpu::AstcChannel::Unorm,
+    },
+    wgpu::TextureFormat::Astc {
+        block: wgpu::AstcBlock::B4x4,
+        channel: wgpu::AstcChannel::Unorm,
+    },
+];
 
 impl AtlasFormat {
-    /// The format `device` holds atlases in.
+    /// The format `device` holds atlases in: the family it samples cooked
+    /// textures of (`Renderer::texture_sampling`), RGBA8 where neither.
     fn of(device: &wgpu::Device) -> Self {
-        if device
-            .features()
-            .contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
-        {
+        let features = device.features();
+        if features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
             Self::Bc7
+        } else if features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC) {
+            Self::Astc
         } else {
             Self::Rgba8
         }
@@ -165,14 +189,24 @@ impl AtlasFormat {
         match self {
             Self::Rgba8 => 0,
             Self::Bc7 => 1,
+            Self::Astc => 2,
+        }
+    }
+
+    /// The family its blocks are encoded in; `None` for RGBA8 texels.
+    fn family(self) -> Option<engine_textures::Family> {
+        match self {
+            Self::Bc7 => Some(engine_textures::Family::Bc7),
+            Self::Astc => Some(engine_textures::Family::Astc),
+            Self::Rgba8 => None,
         }
     }
 
     /// The bytes of each row of a level `size` texels a side, and its rows:
-    /// of 4 × 4 blocks in BC7, of texels in RGBA8.
+    /// of 4 × 4 blocks of 16 bytes in BC7 and ASTC, of texels in RGBA8.
     fn rows(self, size: u32) -> (u32, u32) {
         match self {
-            Self::Bc7 => (size.div_ceil(4) * 16, size.div_ceil(4)),
+            Self::Bc7 | Self::Astc => (size.div_ceil(4) * 16, size.div_ceil(4)),
             Self::Rgba8 => (size * 4, size),
         }
     }
@@ -187,6 +221,7 @@ impl AtlasFormat {
     fn textures(self) -> [wgpu::TextureFormat; 4] {
         match self {
             Self::Bc7 => BC7_FORMATS,
+            Self::Astc => ASTC_FORMATS,
             Self::Rgba8 => FORMATS,
         }
     }

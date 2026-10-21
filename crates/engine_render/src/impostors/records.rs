@@ -2,11 +2,12 @@
 //! ships it. A record holds its header (its magic, then its format's tag,
 //! frames a side, texels a frame, whether over the hemisphere and levels,
 //! little-endian u32 each) and the four arrays' levels, first level first,
-//! in its format's rows (of BC7 blocks or of RGBA8 texels). Loading one
-//! writes it into a new layer. A bake's layer is read back as RGBA8 texels
-//! and made a record: BC7 atlases' encoded by the cook's own encoder
-//! (`engine_textures::compress`), the one every texture record is made
-//! with. Hosts keep it, and it loads as any record does.
+//! in its format's rows (of BC7 or ASTC blocks, or of RGBA8 texels).
+//! Loading one writes it into a new layer. A bake's layer is read back as
+//! RGBA8 texels and made a record: compressed atlases' encoded in their
+//! family by the cook's own encoder (`engine_textures::compress`), the one
+//! every texture record is made with. Hosts keep it, and it loads as any
+//! record does.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -224,9 +225,9 @@ impl ImpostorAtlas {
     }
 
     /// Records it made since the last call, for hosts to keep: the read
-    /// backs mapped since, each made a record (encoded in BC7 for BC7
-    /// atlases), which also answers the supply waiting for it, so it loads
-    /// into a layer as any record does.
+    /// backs mapped since, each made a record (encoded in the family of
+    /// compressed atlases), which also answers the supply waiting for it,
+    /// so it loads into a layer as any record does.
     pub(crate) fn take_made(&mut self, out: &mut Vec<(RecordKey, Vec<u8>)>) {
         let mut kept = Vec::with_capacity(self.readbacks.len());
         for readback in std::mem::take(&mut self.readbacks) {
@@ -285,7 +286,7 @@ impl ImpostorAtlas {
 
     /// A record's bytes from a read back's mapped `bytes`, its levels at
     /// `regions`: its header, then each level's RGBA8 rows less their
-    /// padding, or for BC7 atlases each level's blocks.
+    /// padding, or for compressed atlases each level's blocks.
     fn assemble(&self, regions: &[Region], bytes: &[u8]) -> Vec<u8> {
         let mut out = record_header(self.shape, self.format);
         let levels = self.shape.levels() as usize;
@@ -297,16 +298,11 @@ impl ImpostorAtlas {
                     texels.extend_from_slice(row);
                 }
             }
-            match self.format {
-                AtlasFormat::Rgba8 => out.extend_from_slice(&texels),
-                AtlasFormat::Bc7 => {
+            match self.format.family() {
+                None => out.extend_from_slice(&texels),
+                Some(family) => {
                     let size = self.shape.size() >> (index % levels);
-                    out.extend_from_slice(&engine_textures::compress(
-                        size,
-                        size,
-                        &texels,
-                        engine_textures::Family::Bc7,
-                    ));
+                    out.extend_from_slice(&engine_textures::compress(size, size, &texels, family));
                 }
             }
         }
