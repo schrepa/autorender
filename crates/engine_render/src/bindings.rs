@@ -101,8 +101,6 @@ pub enum Kind {
     },
     /// A 2D texture of this format shaders write.
     Storage(Format),
-    /// A 3D texture of this format shaders write.
-    Storage3d(Format),
     /// A 2D array texture of this format shaders write.
     StorageArray(Format),
     Sampler(Sampling),
@@ -833,25 +831,19 @@ tables! {
         ],
     };
 
-    /// The clouds' noise volume (`clouds.wgsl`), made once.
-    const CLOUD_NOISE: Table = Table {
-        label: "engine/cloud-noise-layout",
-        serves: [CLOUDS_SHADER @ 0],
-        bindings: &[bind(4, "noise_out", Kind::Storage3d(Rgba8Unorm), C)],
-    };
-
     /// The clouds' march into their dome (`clouds.wgsl`): the
-    /// layer, sun and sky, the noise volume and its sampler, the dome, the
-    /// physically based sky's uniform, transmittance table and sampler, and
-    /// the light map.
+    /// layer, sun and sky, the noise's volumes and their sampler, the dome,
+    /// the physically based sky's uniform, transmittance table and sampler,
+    /// and the light map.
     const CLOUD_MARCH: Table = Table {
         label: "engine/cloud-march-layout",
         serves: [CLOUDS_SHADER @ 0],
         bindings: &[
             uniform_of(0, "clouds", size_of::<clouds::CloudUniform>(), C),
-            texture(1, "noise_volume", Float, D3, C),
+            texture(1, "noise_shape", Float, D3, C),
             sampler(2, "noise_sampler", Filtering, C),
             bind(3, "dome", Kind::Storage(Rgba16Float), C),
+            texture(4, "noise_detail", Float, D3, C),
             write(5, "shadow_cells", C),
             uniform_of(11, "cloud_air", size_of::<sky::SkyUniform>(), C),
             texture(12, "cloud_transmittance", Float, D2, C),
@@ -861,17 +853,18 @@ tables! {
     };
 
     /// The view's march of the clouds (`clouds.wgsl`'s
-    /// `march_view`): the march from the camera, the noise volume and its
-    /// sampler, the view, its depth buffer, the marched blocks' clouds and
-    /// their distances, the physically based sky's uniform, transmittance
-    /// table and sampler, and the light map.
+    /// `march_view`): the march from the camera, the noise's volumes and
+    /// their sampler, the view, its depth buffer, the marched blocks' clouds
+    /// and their distances, the physically based sky's uniform,
+    /// transmittance table and sampler, and the light map.
     const CLOUD_VIEW: Table = Table {
         label: "engine/cloud-view-layout",
         serves: [CLOUDS_SHADER @ 0],
         bindings: &[
             uniform_of(0, "clouds", size_of::<clouds::CloudUniform>(), C),
-            texture(1, "noise_volume", Float, D3, C),
+            texture(1, "noise_shape", Float, D3, C),
             sampler(2, "noise_sampler", Filtering, C),
+            texture(4, "noise_detail", Float, D3, C),
             uniform_of(6, "cloud_view", size_of::<clouds::ViewUniform>(), C),
             texture(7, "view_depth", Depth, D2, C),
             bind(8, "view_out", Kind::Storage(Rgba16Float), C),

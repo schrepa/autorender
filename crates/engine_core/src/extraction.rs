@@ -36,9 +36,9 @@ impl Extractions {
 
     /// Fills each feature's part of `retained`'s frame, after its
     /// instances, from `world` seen at `aspect`: deformation's, then this
-    /// struct's in their order, then terrains' and world streaming's,
-    /// which keep nothing between frames. `gpu` frames leave poses to the
-    /// GPU.
+    /// struct's in their order, then terrains', world streaming's and the
+    /// static tables', which keep nothing between frames. `gpu` frames
+    /// leave poses to the GPU.
     pub(crate) fn extract(
         &mut self,
         retained: &mut RetainedRender,
@@ -52,10 +52,14 @@ impl Extractions {
         retained.extract_decals(world, &mut self.decals, gpu);
         retained.extract_probes(world, &mut self.probes);
         retained.extract_terrain(world, aspect);
-        retained.set_cells(
+        retained.set_streamed(
             world
                 .get_resource::<WorldCells>()
                 .map(WorldCells::stats)
+                .unwrap_or_default(),
+            world
+                .get_resource::<crate::StaticTables>()
+                .map(crate::StaticTables::render)
                 .unwrap_or_default(),
         );
     }

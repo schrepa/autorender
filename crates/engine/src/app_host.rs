@@ -838,7 +838,13 @@ impl AppHost {
                     .app
                     .world()
                     .get_resource::<engine_core::TextureRecords>()
-                    .is_some_and(engine_core::TextureRecords::loading),
+                    .is_some_and(engine_core::TextureRecords::loading)
+                || self
+                    .engine
+                    .app
+                    .world()
+                    .get_resource::<engine_core::StaticTables>()
+                    .is_some_and(engine_core::StaticTables::loading),
             navigation: self
                 .engine
                 .app

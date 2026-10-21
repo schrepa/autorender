@@ -209,9 +209,9 @@ gpu_consts! {
     // crate::water_waves
     /// Texels along a side of a tile of water's waves: wave numbers of its
     /// spectrum, and points of its slopes.
-    pub(crate) const WAVE_TEXELS: u32 = 256 => ["WAVE_TEXELS" in WATER_WAVES_SHADER];
+    pub(crate) const WAVE_TEXELS: u32 = engine_core::table_data::waves::TEXELS => ["WAVE_TEXELS" in WATER_WAVES_SHADER];
     /// Tiles of water's waves, each repeating at its own length.
-    pub(crate) const WAVE_TILES: usize = 3 => ["WAVE_TILES" in WATER_WAVES_SHADER, "WATER_WAVE_TILES"];
+    pub(crate) const WAVE_TILES: usize = engine_core::table_data::waves::TILES => ["WAVE_TILES" in WATER_WAVES_SHADER, "WATER_WAVE_TILES"];
     /// Invocations transforming a line of a tile: a butterfly each.
     pub(crate) const WAVE_LINE_GROUP: u32 = 128 => ["@evolve_rows" in WATER_WAVES_SHADER, "@transform_columns" in WATER_WAVES_SHADER];
     /// Workgroup side of the moments' levels.
@@ -226,7 +226,7 @@ gpu_consts! {
     // crate::water_fall_map
     /// How many times longer along falling water than across it water
     /// reads falling water's map.
-    pub(crate) const FALL_MAP_STRETCH: f32 = 4.0 => ["FALL_MAP_STRETCH"];
+    pub(crate) const FALL_MAP_STRETCH: f32 = engine_core::table_data::falls::STRETCH => ["FALL_MAP_STRETCH"];
 
     // crate::ground_cover
     /// Bytes of a blade (`CoverBlade`).
@@ -347,8 +347,7 @@ gpu_consts! {
     pub(crate) const SCATTER_GROUP: u32 = 64 => ["@snap_scatter" in SCATTER_SNAP_SHADER, "@cull_scatter" in SCATTER_CULL_SHADER];
     pub(crate) const DEFORMATION_GROUP: u32 = 8 => ["@press" in DEFORMATION_SHADER, "@slopes" in DEFORMATION_SHADER, "@scroll" in DEFORMATION_SHADER, "@wipe" in DEFORMATION_SHADER, "@rebase" in DEFORMATION_SHADER];
     pub(crate) const CLOUD_GROUP: u32 = 8 => ["@march_view" in CLOUDS_SHADER, "@march_clouds" in CLOUDS_SHADER, "@shadow_clouds" in CLOUDS_SHADER, "@light_clouds" in CLOUDS_SHADER];
-    pub(crate) const NOISE_GROUP: u32 = 4 => ["@make_noise" in CLOUDS_SHADER];
-    pub(crate) const SKY_TABLE_GROUP: u32 = 8 => ["@build_transmittance" in SKY_SHADER, "@build_multiple" in SKY_SHADER, "@build_sky_view" in SKY_SHADER];
+    pub(crate) const SKY_TABLE_GROUP: u32 = 8 => ["@build_sky_view" in SKY_SHADER];
     pub(crate) const CONTROL_GROUP: u32 = 8 => ["@tile_control" in TERRAIN_CONTROL_SHADER];
     pub(crate) const NORMALS_GROUP: u32 = 16 => ["@tile_normals" in TERRAIN_NORMALS_SHADER];
     pub(crate) const RESOLVE_ARGS_GROUP: u32 = 64 => ["@resolve_args" in VISIBILITY_SHADER];
@@ -372,6 +371,7 @@ gpu_consts! {
 }
 
 gpu_mirrors! {
+    engine_core::table_data::sky::MULTIPLE_SIDE => ["SKY_MULTIPLE_SIZE"];
     engine_core::PAGE_WORDS => ["PAGE_WORDS" in VIRTUAL_SHADER, "VIRTUAL_PAGE_WORDS" in SHADER];
     engine_core::NO_PARENT => ["NO_PARENT" in PRESENTATION_SHADER];
     engine_core::NODE_VALID => ["NODE_VALID" in PRESENTATION_SHADER];

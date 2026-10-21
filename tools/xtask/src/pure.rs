@@ -14,6 +14,7 @@ mod import;
 mod requests;
 mod scenes;
 mod simplify;
+mod tables;
 mod terrain;
 mod textures;
 
@@ -70,7 +71,15 @@ pub(crate) const CORPORA: &[Corpus] = &[
         name: "textures",
         run: textures::run,
     },
+    Corpus {
+        name: "tables",
+        run: tables::run,
+    },
 ];
+
+/// The corpora whose jobs `--wasm` replays in the browser worker's Wasm
+/// module, each with the file of jobs it ran.
+const REPLAYED: &[(&str, &str)] = &[("terrain", terrain::JOBS), ("tables", tables::JOBS)];
 
 /// What a corpus observed, by name, and the promises it found broken.
 #[derive(Default)]
@@ -203,22 +212,25 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
             }
         }
     }
-    // The terrain corpus's jobs again in the browser worker's Wasm module:
-    // the same bits as natively.
-    if wasm && chosen.iter().any(|corpus| corpus.name == "terrain") {
+    // The corpora's jobs again in the browser worker's Wasm module: the
+    // same bits as natively.
+    for &(name, jobs) in REPLAYED {
+        if !(wasm && chosen.iter().any(|corpus| corpus.name == name)) {
+            continue;
+        }
         let start = Instant::now();
-        let replayed = replay_in_wasm(root)?;
+        let replayed = replay_in_wasm(root, jobs)?;
         let seconds = start.elapsed().as_secs_f64();
         let mismatched = replayed["mismatched"].as_u64().unwrap_or(0);
         summary.push(format!(
             "{:15} {:8} {:5} jobs {seconds:6.1} s",
-            "terrain in Wasm",
+            format!("{name} in Wasm"),
             if mismatched == 0 { "equal" } else { "DIFFERS" },
             replayed["jobs"]
         ));
         if mismatched > 0 {
             problems.push(format!(
-                "terrain in Wasm: {mismatched} job(s) give other bits than natively: {}",
+                "{name} in Wasm: {mismatched} job(s) give other bits than natively: {}",
                 replayed["mismatches"]
             ));
         }
@@ -243,12 +255,12 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
     )))
 }
 
-/// Replays the terrain corpus's jobs ([`terrain::JOBS`]) in the browser
-/// worker's Wasm module, built first as lint builds it, with Node
+/// Replays a corpus's `jobs` ([`REPLAYED`]) in the browser worker's Wasm
+/// module, built first as lint builds it, with Node
 /// (web/scripts/pure-wasm.mjs): its report.
-fn replay_in_wasm(root: &Path) -> Result<Value, Failure> {
+fn replay_in_wasm(root: &Path, jobs: &str) -> Result<Value, Failure> {
     crate::pipeline::build_wasm(root, true, crate::pipeline::QUICK)?;
-    let jobs = root.join(terrain::JOBS).display().to_string();
+    let jobs = root.join(jobs).display().to_string();
     println!("Running node web/scripts/pure-wasm.mjs {jobs}");
     let output = std::process::Command::new("node")
         .args(["web/scripts/pure-wasm.mjs", &jobs])

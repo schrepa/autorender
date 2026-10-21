@@ -1,0 +1,17 @@
+[package]
+name = "engine_tables"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+engine_math.workspace = true
+libm.workspace = true
+
+# `SOURCE`, the hash of the code making the tables' records.
+[build-dependencies]
+engine_sources.workspace = true
+
+[lints]
+workspace = true

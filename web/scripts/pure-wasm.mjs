@@ -1,5 +1,5 @@
 /**
- * Replays the terrain corpus's jobs (`cargo xtask pure --wasm`) in the job
+ * Replays a corpus's jobs (`cargo xtask pure --wasm`: terrain, tables) in the job
  * worker's Wasm module as browsers run it (web/pkg-dev/engine_worker_bg.wasm),
  * in Node, no browser: every share, then every job run as the corpus ran it
  * natively (whole, or a slice at a time), each output hashed and held to

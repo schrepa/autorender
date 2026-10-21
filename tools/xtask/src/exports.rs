@@ -23,6 +23,9 @@ const INTERNAL: &[&str] = &[
     "LOD_RECORD",
     "LodInput",
     "MAX_DEV_TICKS",
+    "RenderTables",
+    "StaticTable",
+    "StaticTables",
     "WaterInflow",
     "WaterWindow",
     "atmosphere_fields",
@@ -30,6 +33,7 @@ const INTERNAL: &[&str] = &[
     "install",
     "lod_input",
     "state_atmosphere_rules",
+    "table_data",
 ];
 
 /// Fails at a public name of engine_core that no facade list or

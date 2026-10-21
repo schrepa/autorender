@@ -80,7 +80,7 @@ shaders! {
         "sky_common.wgsl",
         "clouds.wgsl",
     ];
-    /// The physically based sky's tables and light.
+    /// The physically based sky's sky-view table and light.
     SKY_SHADER = [
         "color.wgsl",
         "sky_common.wgsl",
@@ -320,10 +320,10 @@ entry_points! {
         ],
     }
     clouds = CLOUDS_SHADER {
-        compute: [make_noise, shadow_clouds, light_clouds, march_clouds, march_view],
+        compute: [shadow_clouds, light_clouds, march_clouds, march_view],
     }
     sky = SKY_SHADER {
-        compute: [build_transmittance, build_multiple, build_sky_view, derive_light],
+        compute: [build_sky_view, derive_light],
     }
     scatter_cull = SCATTER_CULL_SHADER {
         compute: [cull_scatter],

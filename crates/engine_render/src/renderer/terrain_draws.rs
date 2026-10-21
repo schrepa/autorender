@@ -283,7 +283,7 @@ impl Renderer {
                 device,
                 &self.queue,
                 (tiles, &snapshot.terrain.terrains),
-                (environment.water, environment.ocean),
+                (environment.water, environment.ocean, &snapshot.tables),
                 (
                     snapshot.camera_position,
                     environment.wind,

@@ -259,11 +259,6 @@ fn mismatch(
                 {
                     return Ok(None);
                 }
-                (naga::ImageClass::Storage { format: stored, .. }, Kind::Storage3d(table))
-                    if view == Some(View::D3) && format(*stored) == Some(table) =>
-                {
-                    return Ok(None);
-                }
                 (naga::ImageClass::Storage { format: stored, .. }, Kind::StorageArray(table))
                     if view == Some(View::D2Array) && format(*stored) == Some(table) =>
                 {
@@ -662,9 +657,7 @@ impl Resource {
             Kind::Read { .. } | Kind::Write => Resource::StorageBuffer,
             Kind::Texture { .. } => Resource::SampledTexture,
             Kind::Sampler(_) => Resource::Sampler,
-            Kind::Storage(_) | Kind::Storage3d(_) | Kind::StorageArray(_) => {
-                Resource::StorageTexture
-            }
+            Kind::Storage(_) | Kind::StorageArray(_) => Resource::StorageTexture,
         }
     }
 

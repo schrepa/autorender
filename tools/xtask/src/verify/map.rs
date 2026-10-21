@@ -17,8 +17,8 @@ pub(crate) enum Check {
     Everything,
     /// A corpus of `cargo xtask pure`.
     Pure(&'static str),
-    /// The terrain corpus's jobs replayed in the browser worker's Wasm
-    /// (`cargo xtask pure --wasm`), at the merge level.
+    /// The terrain and tables corpora's jobs replayed in the browser
+    /// worker's Wasm (`cargo xtask pure --wasm`), at the merge level.
     PureWasm,
     /// The shaders against their Rust layouts (`cargo xtask gpu`).
     Shaders,
@@ -216,6 +216,8 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_render/src/**/environment*",
             "crates/engine_render/src/**/terrain_sky*",
             "crates/engine_render/src/**/terrain_horizon*",
+            "crates/engine_core/src/**/tables*",
+            "crates/engine_tables/**",
         ],
         checks: &[
             Smoke("terrain-water-sky"),
@@ -303,6 +305,14 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_core/src/**/records*",
         ],
         checks: &[Pure("terrain"), Pure("caches"), Smoke("jobs")],
+    },
+    // The renderer's static tables, which jobs make.
+    Rule {
+        paths: &[
+            "crates/engine_core/src/**/tables*",
+            "crates/engine_tables/**",
+        ],
+        checks: &[Pure("tables"), PureWasm, Smoke("jobs")],
     },
     Rule {
         paths: &[

@@ -722,7 +722,7 @@
           "description": "Auto exposure's meter, which replaces the sky's own adaptation."
         },
         "tables": {
-          "description": "Tables this frame built: two when its air changed, one more when the\nsun, the camera's height or the air changed; none without the sky.",
+          "description": "Tables this frame uploaded or built: two when its air's tables\narrived, one more when the sun, the camera's height or the air\nchanged; none without the sky.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1125,7 +1125,7 @@
       "description": "Levels of detail and impostors."
     },
     "loading": {
-      "description": "Whether terrains have yet to load the camera's view whole, read\nwhen the stats are: hosts keep preparing meanwhile.",
+      "description": "Whether terrains have yet to load the camera's view whole, or a\nstatic table the scene wants has yet to arrive, read when the stats\nare: hosts keep preparing meanwhile.",
       "type": "boolean"
     },
     "local_lights": {

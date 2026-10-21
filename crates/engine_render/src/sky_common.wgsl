@@ -5,8 +5,10 @@
 // isotropic light (by height and the sun's angle) and a sky-view table (the
 // sky's light around the camera). Distances are kilometers; the planet's
 // center is the origin and the camera stands over its north pole, so world
-// directions are the sky's. These are the shared declarations: the tables'
-// builds are `sky.wgsl`, and the sky's passes sample them.
+// directions are the sky's. These are the shared declarations: the
+// transmittance and multiple scattering tables are the scene's static
+// tables (`engine_tables::sky` makes them for its air), the sky-view's
+// build is `sky.wgsl`, and the sky's passes sample them.
 
 // WGSL `SkyUniform` (`sky.rs`).
 struct SkyUniform {
@@ -78,23 +80,6 @@ fn transmittance_uv(air: SkyUniform, r: f32, mu: f32) -> vec2<f32> {
     let d_min = top - r;
     let d_max = rho + h;
     return vec2<f32>((d - d_min) / max(d_max - d_min, 1e-6), rho / max(h, 1e-6));
-}
-
-/// The radius and zenith cosine of transmittance table coordinates `uv`.
-fn transmittance_parameters(air: SkyUniform, uv: vec2<f32>) -> vec2<f32> {
-    let bottom = air.radii.x;
-    let top = air.radii.y;
-    let h = sqrt(max(top * top - bottom * bottom, 0.0));
-    let rho = h * uv.y;
-    let r = sqrt(rho * rho + bottom * bottom);
-    let d_min = top - r;
-    let d_max = rho + h;
-    let d = d_min + uv.x * (d_max - d_min);
-    var mu = 1.0;
-    if d > 0.0 {
-        mu = clamp((h * h - rho * rho - d * d) / (2.0 * r * d), -1.0, 1.0);
-    }
-    return vec2<f32>(r, mu);
 }
 
 /// The share of light through the air from radius `r` along zenith cosine

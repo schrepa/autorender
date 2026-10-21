@@ -14,6 +14,8 @@ worker = true
 
 [dependencies]
 engine_terrain.workspace = true
+# The renderer's static tables (`TableWorker`).
+engine_tables.workspace = true
 # The job cache's keys and index (`JobCache`).
 engine_math.workspace = true
 sha2.workspace = true

@@ -115,6 +115,7 @@ pub fn generated() -> Result<Generated, String> {
         "Tint": schemars::schema_for!(views::TintView),
         "Grounded": schemars::schema_for!(views::GroundedView),
         "Jobs": schemars::schema_for!(views::JobsView),
+        "StaticTables": schemars::schema_for!(views::StaticTablesView),
         "protocol": schemars::schema_for!(protocol::DevRequest),
         "BrowserControl": control_schema(),
         "FrameStats": frame_stats(&mut problems),

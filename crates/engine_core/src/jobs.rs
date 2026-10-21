@@ -1,12 +1,12 @@
-//! Worker jobs: self-contained work, such as a terrain tile,
-//! a walk or a stack's bakes, that hosts run on workers beside the engine's
-//! thread. An owner submits a job's kind and input bytes and takes its
-//! output once a worker hands it back; what many jobs read (a terrain's
-//! layers) is shared with every worker once, by key, before the jobs that
-//! read it. Hosts hand requests to workers in the order owners make them
-//! and say how many workers run them; a host without workers runs them in
-//! place, and so does an engine no host serves. Results never depend on
-//! where a job ran.
+//! Worker jobs: self-contained work, such as a terrain tile, a walk, a
+//! stack's bakes or a table the renderer reads, that hosts run on workers
+//! beside the engine's thread. An owner submits a job's kind and input
+//! bytes and takes its output once a worker hands it back; what many jobs
+//! read (a terrain's layers) is shared with every worker once, by key,
+//! before the jobs that read it. Hosts hand requests to workers in the
+//! order owners make them and say how many workers run them; a host
+//! without workers runs them in place, and so does an engine no host
+//! serves. Results never depend on where a job ran.
 //!
 //! Jobs carry a priority: workers run the most urgent they hold first, and
 //! a job its owner cancels is dropped, so its worker takes up wanted work.
@@ -291,6 +291,12 @@ impl Jobs {
         self.verifying = verifying;
     }
 
+    /// Whether a host serves the jobs: an engine no host serves draws no
+    /// frames.
+    pub fn hosted(&self) -> bool {
+        self.hosted
+    }
+
     /// Hosts: how many workers run jobs, the host serving them from now
     /// on; one without workers runs them in place ([`Self::run_here`]).
     pub fn set_workers(&mut self, workers: u32) {
@@ -420,6 +426,10 @@ impl Jobs {
     /// and an engine no host serves with every job.
     pub fn run_here(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         self.stats.in_place += 1;
+        if let Some(output) = engine_tables::run(kind, input) {
+            let _profile = engine_profile::span("cpu", "job_in_place");
+            return output;
+        }
         let shared = &self.shared;
         let (worker, held) = self
             .here

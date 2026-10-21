@@ -68,8 +68,9 @@ export interface FrameStats {
   /** Levels of detail and impostors. */
   level_of_detail: DetailStats;
   /**
-   * Whether terrains have yet to load the camera's view whole, read
-   * when the stats are: hosts keep preparing meanwhile.
+   * Whether terrains have yet to load the camera's view whole, or a
+   * static table the scene wants has yet to arrive, read when the stats
+   * are: hosts keep preparing meanwhile.
    */
   loading: boolean;
   /** Local lights. */
@@ -521,8 +522,9 @@ export interface SkyStats {
   /** Auto exposure's meter, which replaces the sky's own adaptation. */
   exposure: ExposureStats;
   /**
-   * Tables this frame built: two when its air changed, one more when the
-   * sun, the camera's height or the air changed; none without the sky.
+   * Tables this frame uploaded or built: two when its air's tables
+   * arrived, one more when the sun, the camera's height or the air
+   * changed; none without the sky.
    */
   tables: number;
 }

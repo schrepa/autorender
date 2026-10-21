@@ -1,8 +1,9 @@
 //! The engine's job worker: a small Wasm module hosts run in
 //! Web Workers beside the engine, and natively a thread's. It holds what
 //! the engine shares with its workers (terrain stacks and recipes) and runs
-//! the jobs it hands out, terrain tiles, walks and bakes, with the code
-//! hosts without workers run in place, so outputs are the same bits. Jobs
+//! the jobs it hands out, terrain tiles, walks and bakes and the
+//! renderer's static tables, with the code hosts without workers run in
+//! place, so outputs are the same bits. Jobs
 //! run a slice at a time ([`Worker::slice`]): the most urgent held job
 //! steps until done or for about [`SLICE_MS`], so between slices hosts read
 //! their messages, a more urgent job goes first and one the engine
@@ -15,6 +16,7 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+use engine_tables::TableWorker;
 use engine_terrain::jobs::TerrainWorker;
 
 mod cache;
@@ -68,6 +70,7 @@ struct Held {
 #[derive(Default)]
 pub struct Worker {
     terrain: TerrainWorker,
+    tables: TableWorker,
     held: Vec<Held>,
 }
 
@@ -89,6 +92,7 @@ impl Worker {
     /// Drops everything shared, and every job held.
     pub fn clear(&mut self) {
         self.terrain = TerrainWorker::new();
+        self.tables = TableWorker::new();
         self.held.clear();
     }
 
@@ -113,6 +117,7 @@ impl Worker {
     pub fn cancel(&mut self, id: u64) {
         self.held.retain(|job| job.id != id);
         self.terrain.cancel(id);
+        self.tables.cancel(id);
     }
 
     /// One slice of the most urgent job held (the lowest priority, then
@@ -133,14 +138,25 @@ impl Worker {
                 Err(error) => Report::Failed(id, error),
             });
         }
+        let table = TableWorker::runs(&job.kind);
+        let (terrain, tables) = (&mut self.terrain, &mut self.tables);
         let stepped = (|| {
             if !job.started {
-                self.terrain.start(id, &job.kind, &job.input)?;
+                if table {
+                    tables.start(id, &job.kind, &job.input)?;
+                } else {
+                    terrain.start(id, &job.kind, &job.input)?;
+                }
                 job.started = true;
             }
             let start = clock::now_ms();
             loop {
-                if let Some(output) = self.terrain.step(id, STEP_UNITS)? {
+                let output = if table {
+                    tables.step(id, STEP_UNITS)?
+                } else {
+                    terrain.step(id, STEP_UNITS)?
+                };
+                if let Some(output) = output {
                     return Ok(Some(output));
                 }
                 if clock::now_ms() - start >= SLICE_MS {
@@ -157,6 +173,7 @@ impl Worker {
             Err(error) => {
                 self.held.remove(at);
                 self.terrain.cancel(id);
+                self.tables.cancel(id);
                 Some(Report::Failed(id, error))
             }
         }
@@ -168,18 +185,29 @@ impl Worker {
         if kind == engine_lodbuild::KIND {
             return engine_lodbuild::run(input);
         }
-        self.terrain.run(kind, input)
+        match engine_tables::run(kind, input) {
+            Some(output) => output,
+            None => self.terrain.run(kind, input),
+        }
     }
 
     /// Starts job `id` of `kind` on `input`, to [`Self::step`] until done.
     pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
-        self.terrain.start(id, kind, input)
+        if TableWorker::runs(kind) {
+            self.tables.start(id, kind, input)
+        } else {
+            self.terrain.start(id, kind, input)
+        }
     }
 
     /// Works on job `id` for about `budget` work units: its output once
     /// done, `None` while work is left.
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
-        self.terrain.step(id, budget)
+        if self.tables.holds(id) {
+            self.tables.step(id, budget)
+        } else {
+            self.terrain.step(id, budget)
+        }
     }
 }
 

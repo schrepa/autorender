@@ -317,8 +317,15 @@ fn steps<'a>(
         ));
     }
     if level == Level::Merge || everything || selection.pure_wasm {
-        steps.push(Step::new("pure --wasm terrain", move || {
-            crate::pure::pure(root, &["--wasm".to_owned(), "terrain".to_owned()])
+        steps.push(Step::new("pure --wasm terrain tables", move || {
+            crate::pure::pure(
+                root,
+                &[
+                    "--wasm".to_owned(),
+                    "terrain".to_owned(),
+                    "tables".to_owned(),
+                ],
+            )
         }));
     }
     let tiers = crate::equivalence::tiers(root)?;

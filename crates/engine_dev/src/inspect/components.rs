@@ -101,6 +101,29 @@ impl DevTools {
             },
         )
         .expect("built-in descriptor is bounded");
+        self.register_resource::<engine_core::StaticTables>(
+            InspectorDescriptor::generated(schemas, "StaticTables"),
+            |tables| {
+                let (failed_jobs, latest_job_failure) = tables.job_failures();
+                json!(crate::views::StaticTablesView {
+                    tables: tables
+                        .tables()
+                        .into_iter()
+                        .map(
+                            |(kind, parts, arrived, showing)| crate::views::StaticTableRow {
+                                kind: kind.to_owned(),
+                                parts,
+                                arrived,
+                                showing,
+                            }
+                        )
+                        .collect(),
+                    failed_jobs,
+                    latest_job_failure: latest_job_failure.map(str::to_owned),
+                })
+            },
+        )
+        .expect("built-in descriptor is bounded");
         self.register_component::<ParticleEmitter>(
             InspectorDescriptor::generated(schemas, "ParticleEmitter")
                 .with_default(json!(SceneEmitter::default())),

@@ -1,26 +1,29 @@
-//! A physically based sky (`sky_common.wgsl`, `sky.wgsl`):
-//! the air's transmittance and multiple scattering tables, built when the
-//! air changes; the sky-view table around the camera, built when the sun,
-//! the camera's height or the air changes; and every frame the scene's
-//! light the sky gives (the sun's color, the zenith's, the horizon's, the
-//! ground's, the air's away from the sun and the sun's glow in it), copied
-//! into the uniforms that hold the authored atmosphere's colors before any
-//! pass reads them. The sky's passes and the environment maps sample the
-//! sky-view and transmittance tables.
+//! A physically based sky (`sky_common.wgsl`, `sky.wgsl`): the air's
+//! transmittance and multiple scattering tables, which the scene's static
+//! tables hold for its air (`engine_core::table_data::sky` makes them) and
+//! which upload as they arrive; the sky-view table around the camera, built
+//! when the sun, the camera's height or the air changes; and every frame the
+//! scene's light the sky gives (the sun's color, the zenith's, the
+//! horizon's, the ground's, the air's away from the sun and the sun's glow
+//! in it), copied into the uniforms that hold the authored atmosphere's
+//! colors before any pass reads them. The sky's passes and the environment
+//! maps sample the sky-view and transmittance tables. Until the air's
+//! tables first arrive the sky stays off, and the authored atmosphere's
+//! shows.
 
 use crate::render_features::{Encode, RenderFeature};
 use crate::render_graph::{FrameShape, Node, RenderGraph};
 use crate::shaders::entry::sky;
-use engine_core::Sky;
+use engine_core::table_data::sky::SkyTables;
+use engine_core::table_data::sky::{MULTIPLE_SIZE, TRANSMITTANCE_SIZE};
+use engine_core::{Sky, StaticTable};
 use glam::Vec3;
 
 use crate::bindings::SKY_TABLES;
 use crate::gpu_layouts::constants::SKY_TABLE_GROUP;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// Texels of the tables (`sky_common.wgsl`'s sizes).
-const TRANSMITTANCE_SIZE: (u32, u32) = (256, 64);
-const MULTIPLE_SIZE: (u32, u32) = (32, 32);
+/// Texels of the sky-view table (`sky_common.wgsl`'s size).
 const VIEW_SIZE: (u32, u32) = (192, 108);
 /// Meters of the camera's height per redraw of the sky's environment map;
 /// the sky-view table follows the height exactly.
@@ -58,7 +61,7 @@ pub(crate) const DERIVED_AIR: u64 = 4;
 pub(crate) const DERIVED_GLOW: u64 = 5;
 
 struct Table {
-    _texture: wgpu::Texture,
+    texture: wgpu::Texture,
     view: wgpu::TextureView,
 }
 
@@ -83,20 +86,15 @@ fn table(
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    Table {
-        _texture: texture,
-        view,
-    }
+    Table { texture, view }
 }
 
-/// The tables' pipelines and each pass's group, made with the first frame
-/// whose sky is on.
+/// The sky-view table's and the light's pipelines and each pass's group,
+/// made with the first frame whose sky is on.
 struct Passes {
-    transmittance: wgpu::ComputePipeline,
-    multiple: wgpu::ComputePipeline,
     view: wgpu::ComputePipeline,
     derive: wgpu::ComputePipeline,
-    groups: [wgpu::BindGroup; 4],
+    groups: [wgpu::BindGroup; 2],
 }
 
 pub(crate) struct SkyPass {
@@ -112,23 +110,24 @@ pub(crate) struct SkyPass {
     sampler: wgpu::Sampler,
     uniform: wgpu::Buffer,
     derived: wgpu::Buffer,
-    // The air the tables hold, and the air, sun and height the sky-view
-    // table holds.
-    tables: Option<[u32; 20]>,
-    view_key: Option<([u32; 20], [u32; 3], u32)>,
+    // The air's tables uploaded (their number), and the tables, air, sun
+    // and height the sky-view table holds.
+    tables: Option<u64>,
+    view_key: Option<(u64, [u32; 20], [u32; 3], u32)>,
     // The presentation time of the last frame, which exposure eases from.
     last_seconds: Option<f64>,
     // Advances with each sky-view build the environment map follows.
     generation: u64,
     environment_height: i32,
     active: bool,
-    /// Tables this frame built: two for the air's, one for the sky-view.
+    /// Tables this frame uploaded or built: two for the air's, one for the
+    /// sky-view.
     pub(crate) built: u32,
 }
 
 impl SkyPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let tables = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+        let uploaded = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING;
         Self {
             layout: crate::pipelines::layout(device, &SKY_TABLES),
             passes: None,
@@ -136,10 +135,15 @@ impl SkyPass {
                 device,
                 "engine/sky-transmittance",
                 TRANSMITTANCE_SIZE,
-                tables,
+                uploaded,
             ),
-            multiple: table(device, "engine/sky-multiple", MULTIPLE_SIZE, tables),
-            view: table(device, "engine/sky-view", VIEW_SIZE, tables),
+            multiple: table(device, "engine/sky-multiple", MULTIPLE_SIZE, uploaded),
+            view: table(
+                device,
+                "engine/sky-view",
+                VIEW_SIZE,
+                wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            ),
             blank: table(
                 device,
                 "engine/sky-blank",
@@ -207,12 +211,40 @@ impl SkyPass {
         }
     }
 
+    /// Uploads the air's `tables`.
+    fn upload(&self, queue: &wgpu::Queue, tables: &SkyTables) {
+        for (table, texels, (width, height)) in [
+            (
+                &self.transmittance,
+                &tables.transmittance,
+                TRANSMITTANCE_SIZE,
+            ),
+            (&self.multiple, &tables.multiple, MULTIPLE_SIZE),
+        ] {
+            queue.write_texture(
+                table.texture.as_image_copy(),
+                bytemuck::cast_slice(texels),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 8),
+                    rows_per_image: Some(height),
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+    }
+
     /// Records this frame's sky of `settings` with the sun along `sun` (and
     /// the moon `moon`: its direction and light) seen
-    /// from `eye`, or nothing without one: its tables when their air
-    /// changed, the sky-view table when the sun, the camera's height or the
-    /// air changed, then the light it gives, copied by `copies`. Timed by
-    /// `profiler` (`sky`).
+    /// from `eye`, or nothing without one or before its air's tables first
+    /// arrived: the air's `tables` (the latest the scene's tables hold)
+    /// unless uploaded, the sky-view table when the sun, the camera's
+    /// height or the air changed, then the light it gives, copied by
+    /// `copies`. Timed by `profiler` (`sky`).
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -221,18 +253,27 @@ impl SkyPass {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        (settings, sun, eye, exposure, seconds, moon): (&Sky, Vec3, Vec3, f32, f64, [f32; 4]),
+        (settings, tables): (&Sky, Option<&StaticTable<SkyTables>>),
+        (sun, eye, exposure, seconds, moon): (Vec3, Vec3, f32, f64, [f32; 4]),
         copies: &[SkyCopy<'_>],
         profiler: &crate::profiling::GpuProfiler,
     ) -> Option<wgpu::CommandEncoder> {
         self.built = 0;
         let settings = settings.sanitized();
-        self.active = settings.enabled;
-        if !self.active {
-            self.tables = None;
+        let uploaded = match tables {
+            Some(tables) if settings.enabled && self.tables != Some(tables.id) => {
+                self.upload(queue, &tables.table);
+                self.tables = Some(tables.id);
+                self.built += 2;
+                true
+            }
+            _ => false,
+        };
+        self.active = settings.enabled && self.tables.is_some();
+        let Some(uploaded_tables) = self.tables.filter(|_| self.active) else {
             self.view_key = None;
             return None;
-        }
+        };
         let sun = sun.normalize_or(Vec3::Y);
         let height = engine_core::math::max(eye.y + settings.altitude, 0.5);
         let elapsed = self.last_seconds.replace(seconds).map_or(0.0, |last| {
@@ -284,9 +325,13 @@ impl SkyPass {
             [uniform.ground[0], uniform.ground[1], uniform.ground[2], 0.0],
             [uniform.radii[0], uniform.radii[1], 0.0, 0.0],
         ]);
-        let view_key = (air, sun.to_array().map(f32::to_bits), height.to_bits());
-        let build_tables = self.tables != Some(air);
-        let build_view = build_tables || self.view_key != Some(view_key);
+        let view_key = (
+            uploaded_tables,
+            air,
+            sun.to_array().map(f32::to_bits),
+            height.to_bits(),
+        );
+        let build_view = uploaded || self.view_key != Some(view_key);
         let passes = self.passes.get_or_insert_with(|| {
             passes(
                 device,
@@ -320,26 +365,15 @@ impl SkyPass {
                     height.div_ceil(SKY_TABLE_GROUP),
                 )
             };
-            if build_tables {
-                pass.set_pipeline(&passes.transmittance);
-                pass.set_bind_group(0, &passes.groups[0], &[]);
-                let (x, y) = groups(TRANSMITTANCE_SIZE);
-                pass.dispatch_workgroups(x, y, 1);
-                pass.set_pipeline(&passes.multiple);
-                pass.set_bind_group(0, &passes.groups[1], &[]);
-                let (x, y) = groups(MULTIPLE_SIZE);
-                pass.dispatch_workgroups(x, y, 1);
-                self.built += 2;
-            }
             if build_view {
                 pass.set_pipeline(&passes.view);
-                pass.set_bind_group(0, &passes.groups[2], &[]);
+                pass.set_bind_group(0, &passes.groups[0], &[]);
                 let (x, y) = groups(VIEW_SIZE);
                 pass.dispatch_workgroups(x, y, 1);
                 self.built += 1;
             }
             pass.set_pipeline(&passes.derive);
-            pass.set_bind_group(0, &passes.groups[3], &[]);
+            pass.set_bind_group(0, &passes.groups[1], &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
         for &(index, buffer, offset, bytes) in copies {
@@ -352,12 +386,11 @@ impl SkyPass {
             // The environment map follows the sun's steps and the camera's
             // height more coarsely.
             let environment_height = (height / ENVIRONMENT_HEIGHT_STEP).floor() as i32;
-            let sun_moved = self.view_key.is_none_or(|key| key.1 != view_key.1);
-            if build_tables || sun_moved || environment_height != self.environment_height {
+            let sun_moved = self.view_key.is_none_or(|key| key.2 != view_key.2);
+            if uploaded || sun_moved || environment_height != self.environment_height {
                 self.generation += 1;
             }
             self.environment_height = environment_height;
-            self.tables = Some(air);
             self.view_key = Some(view_key);
         }
         Some(encoder)
@@ -370,8 +403,7 @@ impl SkyPass {
     }
 }
 
-/// The tables' pipelines and the groups of each pass: building the
-/// transmittance table, the multiple scattering table, the sky-view table,
+/// The pipelines and the groups of each pass: building the sky-view table,
 /// and deriving the light; `tables` are the transmittance, multiple
 /// scattering and sky-view tables and the blank texels.
 fn passes(
@@ -415,14 +447,10 @@ fn passes(
         )
     };
     Passes {
-        transmittance: pipeline(sky::build_transmittance),
-        multiple: pipeline(sky::build_multiple),
         view: pipeline(sky::build_sky_view),
         derive: pipeline(sky::derive_light),
         // A pass never reads the table it writes.
         groups: [
-            group([blank, blank, blank], transmittance),
-            group([transmittance, blank, blank], multiple),
             group([transmittance, multiple, blank], view),
             group([transmittance, multiple, view], blank_out),
         ],

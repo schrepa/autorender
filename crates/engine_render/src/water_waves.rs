@@ -1,10 +1,9 @@
 //! Water's waves (`water_waves.wgsl`): [`WAVE_TILES`] tiles of wind-driven
 //! waves that terrains' water and the sea shade with, each repeating at
-//! its own length. Together their spectra are one spectrum the wind shapes
-//! (Phillips's, after Tessendorf), split into bands of wave numbers, each
-//! tile taking those its grid holds densely enough; they are drawn from
-//! fixed noise, and drawn again when the wind or the ripples' size
-//! changes. Each frame the spectra evolve (gravity and surface tension set
+//! its own length. Their spectra, drawn from fixed noise for the wind and
+//! the ripples' size, are one of the scene's static tables
+//! (`engine_core::table_data::waves` makes them), which upload as they
+//! arrive. Each frame the spectra evolve (gravity and surface tension set
 //! each wave's speed; frequencies are rounded so the waves loop every
 //! [`LOOP_SECONDS`]) and an inverse transform turns them into the slopes of
 //! the surface, whose moments (the slopes, and the square of their length)
@@ -21,41 +20,12 @@ use crate::gpu_layouts::constants::{WAVE_LEVEL_GROUP, WAVE_LINE_GROUP, WAVE_TEXE
 use crate::gpu_layouts::water::WaveFrame;
 use crate::shaders::entry::water_waves;
 
-/// Each tile's meters, as shares of the ripples' size: the first holds the
-/// swell longer than the largest ripples, the second ripples down to an
-/// eighth of them, the third the finer ones. Each band spans an eighth of
-/// its tile's wave numbers, so its shortest waves span eight texels and
-/// filter smoothly.
-const TILE_SHARES: [f64; WAVE_TILES] = [32.0, 4.0, 0.5];
-/// Where each band ends, in wave numbers of the next tile's grid: a tile
-/// takes the waves from its first wave number to this many of the next
-/// tile's, so every tile holds its band with enough wave numbers.
-const BAND_END: f64 = 4.0;
-/// The surface's root mean square slope at full ripples.
-const FULL_SLOPE: f64 = 0.5;
-/// Meters under which waves fade out: the shortest ripples tilt the
-/// surface too little to see.
-const SHORTEST: f64 = 0.01;
-/// The calmest wind the spectrum takes (meters a second), and the share
-/// of waves running against it.
-const CALMEST: f64 = 1.0;
-const AGAINST: f64 = 0.2;
 /// Seconds after which the waves repeat, and the steps of the loop's
 /// coarse phase.
 const LOOP_SECONDS: f64 = 256.0;
 const LOOP_STEPS: f64 = 4096.0;
-/// Meters a second squared of gravity.
-const GRAVITY: f64 = 9.80665;
 /// Mip levels of the moments, down to one texel.
 const LEVELS: u32 = WAVE_TEXELS.trailing_zeros() + 1;
-
-/// What the spectra are drawn for: the wind's velocity (meters a second
-/// along x and z) and the meters across the largest ripples.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct WaveShape {
-    pub(crate) wind: [f32; 2],
-    pub(crate) size: f32,
-}
 
 pub(crate) struct WaterWaves {
     layout: crate::pipelines::GroupLayout,
@@ -67,7 +37,8 @@ pub(crate) struct WaterWaves {
     sampler: wgpu::Sampler,
     // The rows' pass's group, the columns' and each level's.
     groups: Vec<wgpu::BindGroup>,
-    shape: Option<WaveShape>,
+    // The spectra uploaded, and their tiles' meters.
+    uploaded: Option<u64>,
     sizes: [f32; WAVE_TILES],
 }
 
@@ -157,7 +128,7 @@ impl WaterWaves {
             sampled: array(&moments, 0..LEVELS),
             sampler,
             groups,
-            shape: None,
+            uploaded: None,
             sizes: [0.0; WAVE_TILES],
         }
     }
@@ -183,29 +154,29 @@ impl WaterWaves {
         texels * 8 * 4 / 3 + texels * 8 + self.spectrum.size()
     }
 
-    /// Prepares the waves of `shape` at simulation time `seconds` for this
-    /// frame's encoding, drawing their spectra again when the shape changed
-    /// and creating the pipelines the first time.
+    /// Prepares the waves at simulation time `seconds` for this frame's
+    /// encoding, uploading `spectra` (the latest the scene's tables hold)
+    /// unless uploaded and creating the pipelines the first time. Until
+    /// spectra arrive, the surface stands still.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        shape: WaveShape,
+        spectra: Option<&engine_core::StaticTable<engine_core::table_data::waves::WaveSpectra>>,
         seconds: f64,
     ) {
         if self.pipelines.is_none() {
             self.pipelines = Some(pipelines(device, &self.layout));
         }
-        if self.shape != Some(shape) {
-            self.shape = Some(shape);
-            let size = f64::from(max(shape.size, 0.1));
-            let sizes = TILE_SHARES.map(|share| size * share);
-            self.sizes = sizes.map(|size| size as f32);
-            let wind = shape.wind.map(f64::from);
+        if let Some(spectra) = spectra
+            && self.uploaded != Some(spectra.id)
+        {
+            self.uploaded = Some(spectra.id);
+            self.sizes = spectra.table.shape.sizes();
             queue.write_buffer(
                 &self.spectrum,
                 0,
-                bytemuck::cast_slice(&spectra(sizes, wind)),
+                bytemuck::cast_slice(&spectra.table.texels),
             );
         }
         let loops = if seconds.is_finite() {
@@ -259,96 +230,6 @@ impl WaterWaves {
             pass.dispatch_workgroups(side, side, tiles);
         }
     }
-}
-
-/// The tiles' spectra, tiles of `sizes` meters (longest first) under wind
-/// `wind` (meters a second along x and z): at each texel of each tile, row
-/// by row, its wave number's amplitude and its opposite's (complex). Each
-/// amplitude is fixed noise (two normal deviates) times the square root of
-/// half Phillips's spectrum there, where the wave number lies in the tile's
-/// band, scaled so the slopes' variance over all tiles is [`FULL_SLOPE`]
-/// squared. Wave numbers at a grid's edge, which have no opposite there,
-/// hold none.
-fn spectra(sizes: [f64; WAVE_TILES], wind: [f64; 2]) -> Vec<[f32; 4]> {
-    let n = WAVE_TEXELS as usize;
-    let blown = wind[0].hypot(wind[1]);
-    let speed = blown.max(CALMEST);
-    let heading = if blown > 1.0e-3 {
-        [wind[0] / blown, wind[1] / blown]
-    } else {
-        [1.0, 0.0]
-    };
-    // The longest waves the wind raises.
-    let longest = speed * speed / GRAVITY;
-    let mut amplitudes = vec![[0.0_f64; 2]; n * n * WAVE_TILES];
-    let mut slopes = 0.0;
-    for (tile, &size) in sizes.iter().enumerate() {
-        let step = TAU / size;
-        let band = sizes
-            .get(tile + 1)
-            .map_or(f64::INFINITY, |next| BAND_END * TAU / next);
-        let first = if tile == 0 { 0.0 } else { BAND_END * step };
-        for z in 1..n {
-            for x in 1..n {
-                let kx = (x as f64 - (n / 2) as f64) * step;
-                let kz = (z as f64 - (n / 2) as f64) * step;
-                let squared = kx * kx + kz * kz;
-                let k = squared.sqrt();
-                if k <= 0.0 || k < first || k >= band {
-                    continue;
-                }
-                let along = (kx * heading[0] + kz * heading[1]) / k;
-                let directional = along * along * if along < 0.0 { AGAINST } else { 1.0 };
-                let power = (-1.0 / (squared * longest * longest)).exp() / (squared * squared)
-                    * directional
-                    * (-squared * SHORTEST * SHORTEST).exp();
-                let [a, b] = normal_pair(tile as u32, x as u32, z as u32);
-                let scale = (power * 0.5).sqrt();
-                amplitudes[(tile * n + z) * n + x] = [a * scale, b * scale];
-                slopes += squared * (a * a + b * b) * power * 0.5;
-            }
-        }
-    }
-    // Each wave number and its opposite both carry slopes.
-    let gain = if slopes > 0.0 {
-        FULL_SLOPE / (2.0 * slopes).sqrt()
-    } else {
-        0.0
-    };
-    (0..n * n * WAVE_TILES)
-        .map(|index| {
-            let (tile, x, z) = (index / (n * n), index % n, index / n % n);
-            let opposite = if x == 0 || z == 0 {
-                [0.0; 2]
-            } else {
-                amplitudes[(tile * n + n - z) * n + n - x]
-            };
-            let own = amplitudes[index];
-            [own[0], own[1], opposite[0], opposite[1]].map(|value| (value * gain) as f32)
-        })
-        .collect()
-}
-
-/// Two independent standard normal deviates for texel `(x, z)` of tile
-/// `tile`: hashed uniform numbers through Box and Muller's transform, the
-/// same on every target.
-fn normal_pair(tile: u32, x: u32, z: u32) -> [f64; 2] {
-    let first = hash(tile.wrapping_mul(0x9e37_79b9) ^ hash(x ^ hash(z)));
-    let second = hash(first ^ 0x85eb_ca6b);
-    let unit = |bits: u32| (f64::from(bits >> 8) + 0.5) / f64::from(1_u32 << 24);
-    let radius = (-2.0 * unit(first).ln()).sqrt();
-    let angle = TAU * unit(second);
-    [radius * angle.cos(), radius * angle.sin()]
-}
-
-/// A 32-bit integer hash (Wellons's lowbias32).
-pub(crate) fn hash(mut value: u32) -> u32 {
-    value ^= value >> 16;
-    value = value.wrapping_mul(0x7feb_352d);
-    value ^= value >> 15;
-    value = value.wrapping_mul(0x846c_a68b);
-    value ^= value >> 16;
-    value
 }
 
 fn pipelines(

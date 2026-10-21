@@ -40,8 +40,8 @@ use engine_core::glam::{Mat4, Vec3};
 use engine_core::math::max;
 use engine_core::terrain_data::Fall;
 use engine_core::{
-    Environment, MAX_OCEAN_WAVES, Ocean, OceanStats, RenderSnapshot, RenderTerrain, Water,
-    WaterStats, Wind,
+    Environment, MAX_OCEAN_WAVES, Ocean, OceanStats, RenderSnapshot, RenderTables, RenderTerrain,
+    Water, WaterStats, Wind,
 };
 
 use crate::bindings::{WATER, WATER_BEHIND};
@@ -55,7 +55,7 @@ use crate::terrain::{TerrainWaterDraws, WATER_GRID_INDICES, water_patch_layout};
 use crate::water_fall_map::FallMap;
 use crate::water_falls::{fall_layout, sheets};
 use crate::water_sim::WaterSim;
-use crate::water_waves::{WaterWaves, WaveShape};
+use crate::water_waves::WaterWaves;
 
 /// Cells around the sea's grid, the sectors it splits into for culling,
 /// and the rings a cell apart at its middle: about the cells around over
@@ -134,7 +134,8 @@ pub(crate) struct WaterPass {
     behind_layout: crate::pipelines::GroupLayout,
     behind: ScreenTarget<BehindCopies>,
     placeholders: Placeholders,
-    // Created with the first frame drawing water.
+    // Created with the first frame drawing water, the fall map once the
+    // scene's tables hold it.
     waves: Option<WaterWaves>,
     fall_map: Option<FallMap>,
     // Water simulated around the camera, where water asks for it.
@@ -287,7 +288,8 @@ impl WaterPass {
 
     /// Prepares this frame's water: tiles' patches holding water as the
     /// terrain pass lays them out (`tiles`) and the falls of `terrains`,
-    /// shaded as `settings` say, and
+    /// shaded as `settings` say with the waves' spectra and the fall map
+    /// the scene's `tables` hold, and
     /// the sea `ocean`, culled through `cull` and drawn through `view`
     /// (both eye-relative) over the opaque `depth` and, when `refracts`,
     /// the color it copies; seen from `eye` in the wind `wind`, its waves
@@ -298,7 +300,7 @@ impl WaterPass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (tiles, terrains): (Option<TerrainWaterDraws<'_>>, &[RenderTerrain]),
-        (settings, ocean): (Water, Ocean),
+        (settings, ocean, tables): (Water, Ocean, &RenderTables),
         (eye, wind, seconds): (Vec3, Wind, f64),
         (cull, view, depth, refracts): (Mat4, Mat4, &wgpu::Texture, bool),
     ) -> Option<WaterFrame> {
@@ -314,14 +316,11 @@ impl WaterPass {
         }
         // Terrains' water and the sea ripple with the same waves.
         let waves = self.waves.get_or_insert_with(|| WaterWaves::new(device));
-        let shape = WaveShape {
-            wind: wind.velocity,
-            size: settings.ripple_size,
-        };
-        waves.prepare(device, queue, shape, seconds);
+        waves.prepare(device, queue, tables.waves.as_ref(), seconds);
         let repeats = waves.repeats();
-        self.fall_map
-            .get_or_insert_with(|| FallMap::new(device, queue));
+        if let (None, Some(map)) = (&self.fall_map, &tables.fall_map) {
+            self.fall_map = Some(FallMap::new(device, queue, &map.table));
+        }
         // Rivers simulated where a terrain's window stands.
         let window = terrains
             .iter()

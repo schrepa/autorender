@@ -454,6 +454,8 @@ pub struct RenderSnapshot {
     pub deformation: crate::RenderDeformation,
     /// World streaming's state at this frame.
     pub cells: crate::CellStats,
+    /// The renderer's static tables: the latest of each that arrived.
+    pub tables: crate::RenderTables,
     /// Every instance's `color[3]` is its opacity; see
     /// [`RenderInstance::is_transparent`].
     pub instances: Vec<RenderInstance>,

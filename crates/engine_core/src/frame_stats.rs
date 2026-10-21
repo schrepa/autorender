@@ -50,9 +50,9 @@ pub struct FrameStats {
     /// Whether the GPU may still be compiling pipelines earlier frames
     /// created, read when the stats are.
     pub pipelines_compiling: bool,
-    /// Whether terrains have yet to load the camera's view whole, or
-    /// textures their records, read when the stats are: hosts keep
-    /// preparing meanwhile.
+    /// Whether terrains have yet to load the camera's view whole, textures
+    /// their records, or a static table the scene wants has yet to arrive,
+    /// read when the stats are: hosts keep preparing meanwhile.
     pub loading: bool,
     /// The view's width in physical pixels, as the frame drew it: the
     /// host's, unless the device's largest texture holds less, which the
@@ -532,8 +532,9 @@ pub struct CloudStats {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SkyStats {
-    /// Tables this frame built: two when its air changed, one more when the
-    /// sun, the camera's height or the air changed; none without the sky.
+    /// Tables this frame uploaded or built: two when its air's tables
+    /// arrived, one more when the sun, the camera's height or the air
+    /// changed; none without the sky.
     pub tables: u32,
     /// Auto exposure's meter, which replaces the sky's own adaptation.
     pub exposure: ExposureStats,

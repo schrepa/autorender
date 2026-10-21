@@ -49,6 +49,7 @@ mod sky;
 mod sky_occlusion;
 mod spline_mesh;
 mod statistics;
+mod tables;
 mod texture_records;
 mod ticks;
 mod transform_edits;
@@ -82,6 +83,8 @@ pub use engine_assets::{
     NODE_WORDS, PAGE_WORDS, VIRTUAL_MESH_MAGIC, VirtualMesh,
 };
 pub use engine_settings::ErrorCode;
+/// The renderer's static tables: their sizes, records and generators.
+pub use engine_tables as table_data;
 /// Heightfield terrain data: tile pyramids, layer stacks,
 /// tiles, patches and the jobs that make tiles and bakes.
 pub use engine_terrain as terrain_data;
@@ -117,6 +120,7 @@ pub use sky::*;
 pub use sky_occlusion::*;
 pub use spline_mesh::*;
 pub use statistics::{Distribution, median};
+pub use tables::*;
 pub use texture_records::*;
 pub use transform_edits::*;
 pub use virtual_geometry::*;
@@ -284,6 +288,8 @@ pub struct Engine {
     render_query: RenderQuery,
     retained: retained_render::RetainedRender,
     extractions: extraction::Extractions,
+    // The terrains, whose bakes say whether water can draw.
+    terrains: QueryState<&'static Terrain>,
     plugins_finalized: bool,
     tick_ahead: TickAhead,
 }
@@ -415,6 +421,7 @@ impl Engine {
             .init_resource::<TextureRecords>()
             .init_resource::<Records>()
             .init_resource::<mesh_lods::MeshLevels>()
+            .init_resource::<StaticTables>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
@@ -432,6 +439,7 @@ impl Engine {
             Option<Ref<Tint>>,
         ), Or<(With<Cube>, With<Mesh3d>)>>();
         let extractions = extraction::Extractions::new(app.world_mut());
+        let terrains = app.world_mut().query::<&Terrain>();
         let mut retained = retained_render::RetainedRender::new(
             cube_mesh,
             config.frustum_culling,
@@ -444,6 +452,7 @@ impl Engine {
             render_query,
             retained,
             extractions,
+            terrains,
             plugins_finalized: false,
             tick_ahead: TickAhead::None,
         }
@@ -897,10 +906,18 @@ impl Engine {
     }
 
     /// What follows the camera's view, after the frame's transforms
-    /// refresh: [`ViewSync`].
+    /// refresh: [`ViewSync`]; then the renderer's static tables, as the
+    /// scene's settings want them ([`StaticTables`]).
     fn sync_view(&mut self) {
         let _profile = engine_profile::span("ecs", "ViewSync");
-        self.app.world_mut().run_schedule(ViewSync);
+        let world = self.app.world_mut();
+        world.run_schedule(ViewSync);
+        // Water draws where a terrain's bakes give it water.
+        let water = self
+            .terrains
+            .iter(world)
+            .any(|terrain| terrain.layers.has_hydrology());
+        tables::update_tables(world, water);
     }
 
     /// Records the simulation time this frame presents ([`PresentedTime`]): the

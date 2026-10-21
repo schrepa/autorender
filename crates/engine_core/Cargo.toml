@@ -20,6 +20,8 @@ engine_assets.workspace = true
 engine_math.workspace = true
 engine_settings.workspace = true
 engine_terrain.workspace = true
+# The renderer's static tables, as records (`StaticTables`).
+engine_tables.workspace = true
 engine_profile.workspace = true
 bevy_app.workspace = true
 bevy_ecs.workspace = true

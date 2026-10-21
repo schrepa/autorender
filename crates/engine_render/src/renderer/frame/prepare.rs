@@ -667,6 +667,7 @@ impl Renderer {
             &self.queue,
             (
                 &snapshot.environment.clouds,
+                snapshot.tables.cloud_noise.as_ref(),
                 snapshot.camera_position,
                 snapshot.presented_seconds,
             ),
@@ -695,7 +696,7 @@ impl Renderer {
         self.features
             .environment
             .get_mut()
-            .set_clouds(&self.device, self.features.clouds.get().dome());
+            .set_clouds(&self.device, self.features.clouds.get().environment_dome());
         prelude.sky = self.prepare_sky(snapshot);
         let (environment, probe_list) = self.prepare_environment(snapshot, lighting);
         prelude.environment = environment;
@@ -939,10 +940,10 @@ impl Renderer {
         )
     }
 
-    /// The physically based sky's work this frame: its
-    /// tables as they need building, then the light it gives, copied over
-    /// the authored atmosphere's colors in the lighting uniform and the
-    /// clouds' march's uniform.
+    /// The physically based sky's work this frame: its air's tables as
+    /// they arrive, its sky-view table as it needs building, then the light
+    /// it gives, copied over the authored atmosphere's colors in the
+    /// lighting uniform and the clouds' march's uniform.
     fn prepare_sky(&mut self, snapshot: &RenderSnapshot) -> Option<wgpu::CommandEncoder> {
         use crate::sky::{
             DERIVED_AIR, DERIVED_GLOW, DERIVED_GROUND, DERIVED_HORIZON, DERIVED_SUN, DERIVED_ZENITH,
@@ -997,8 +998,8 @@ impl Renderer {
         self.features.sky.get_mut().encode(
             &self.device,
             &self.queue,
+            (&snapshot.environment.sky, snapshot.tables.sky.as_ref()),
             (
-                &snapshot.environment.sky,
                 sun,
                 snapshot.camera_position,
                 snapshot.environment.atmosphere.exposure,

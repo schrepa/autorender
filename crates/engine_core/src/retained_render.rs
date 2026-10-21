@@ -250,6 +250,7 @@ impl<'a> RenderFrame<'a> {
             terrain,
             deformation,
             cells,
+            tables,
             instances,
             joints,
             meshes,
@@ -292,6 +293,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.terrain.clone_from(terrain);
         snapshot.deformation.clone_from(deformation);
         snapshot.cells = *cells;
+        snapshot.tables.clone_from(tables);
         snapshot.instances.clear();
         snapshot
             .instances
@@ -1080,9 +1082,10 @@ impl RetainedRender {
         probes.extract(world, &mut self.snapshot);
     }
 
-    /// Records world streaming's state at this frame.
-    pub(crate) fn set_cells(&mut self, cells: crate::CellStats) {
+    /// Records world streaming's state and the static tables that arrived.
+    pub(crate) fn set_streamed(&mut self, cells: crate::CellStats, tables: crate::RenderTables) {
         self.snapshot.cells = cells;
+        self.snapshot.tables = tables;
     }
 
     /// Lays the frame's deformation map and lists its stamps.

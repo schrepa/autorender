@@ -1,7 +1,9 @@
-// The physically based sky's tables and light (`sky.rs`),
-// after `sky_common.wgsl`. Every pass binds one group: the sky's uniform,
-// the tables to read (a blank texel in place of the one a pass writes), the
-// table it writes and the light it derives.
+// The physically based sky's sky-view table and light (`sky.rs`), after
+// `sky_common.wgsl`, from the transmittance and multiple scattering tables
+// the scene's static tables hold for its air (`engine_tables::sky`). Every
+// pass binds one group: the sky's uniform, the tables to read (a blank
+// texel in place of the one a pass writes), the table it writes and the
+// light it derives.
 
 @group(0) @binding(0) var<uniform> air: SkyUniform;
 @group(0) @binding(1) var transmittance_table: texture_2d<f32>;
@@ -14,9 +16,6 @@
 // and the sun's glow in it (x).
 @group(0) @binding(6) var<storage, read_write> derived: array<vec4<f32>, 7>;
 
-const TRANSMITTANCE_STEPS: u32 = 40u;
-const MULTIPLE_STEPS: u32 = 20u;
-const MULTIPLE_DIRECTIONS: u32 = 64u;
 const VIEW_STEPS: u32 = 30u;
 // Starlight and the glow of the night sky (at unit intensity), which keep
 // nights from black.
@@ -24,9 +23,6 @@ const NIGHT: vec3<f32> = vec3<f32>(0.004, 0.006, 0.012);
 // What the full moon high overhead adds to the night's light (at unit
 // intensity).
 const MOON_NIGHT: vec3<f32> = vec3<f32>(0.006, 0.008, 0.014);
-// Kilometers above the ground scattering starts, avoiding the sphere's
-// own surface.
-const RADIUS_OFFSET: f32 = 0.01;
 // The light falling at noon exposure adapts toward, a multiple of the
 // sun's intensity, and the share of the adaptation setting that is the
 // power of the light's ratio exposure rises by.
@@ -87,27 +83,17 @@ fn multiple_light(r: f32, mu: f32) -> vec3<f32> {
     return textureSampleLevel(multiple_table, table_sampler, uv, 0.0).rgb;
 }
 
-struct Scattered {
-    light: vec3<f32>,
-    // The share of light scattered once more, for multiple scattering's
-    // series (Hillaire's f_ms).
-    again: vec3<f32>,
-}
-
 /// The light the air scatters toward `origin` along `direction` (unit)
 /// from the sun along `sun` with unit illuminance, `steps` samples to the
-/// top of the atmosphere or the ground; `isotropic` for multiple
-/// scattering's table (one more bounce, without that table and with the
-/// ground's reflection), otherwise single scattering plus the table's.
-fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32, isotropic: bool)
-        -> Scattered {
-    var result: Scattered;
-    result.light = vec3<f32>(0.0);
-    result.again = vec3<f32>(0.0);
+/// top of the atmosphere or the ground: single scattering plus multiple
+/// scattering's table, and where the view meets the planet its ground's
+/// reflection.
+fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32) -> vec3<f32> {
+    var light = vec3<f32>(0.0);
     let bottom = air.radii.x;
     let top_hit = sphere_hit(origin, direction, air.radii.y);
     if top_hit < 0.0 {
-        return result;
+        return light;
     }
     let ground_hit = sphere_hit(origin, direction, bottom);
     var span = top_hit;
@@ -117,7 +103,6 @@ fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32
     let cosine = dot(direction, sun);
     let rayleigh = rayleigh_phase(cosine);
     let mie = mie_phase(cosine);
-    let uniform_phase = 1.0 / (4.0 * SKY_PI);
     var throughput = vec3<f32>(1.0);
     var travelled = 0.0;
     for (var step = 0u; step < steps; step++) {
@@ -133,105 +118,32 @@ fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32
         let toward_sun = sun_transmittance(r, sun_cos);
         // The planet's shadow.
         let shadowed = sphere_hit(point, sun, bottom) >= 0.0;
-        var phased: vec3<f32>;
-        if isotropic {
-            phased = medium.scattering * uniform_phase;
-        } else {
-            phased = medium.rayleigh * rayleigh + medium.mie * mie;
-        }
-        var source = select(toward_sun, vec3<f32>(0.0), shadowed) * phased;
-        if !isotropic {
-            source += multiple_light(r, sun_cos) * medium.scattering;
-        }
+        let phased = medium.rayleigh * rayleigh + medium.mie * mie;
+        let source = select(toward_sun, vec3<f32>(0.0), shadowed) * phased
+            + multiple_light(r, sun_cos) * medium.scattering;
         let extinction = max(medium.extinction, vec3<f32>(1e-6));
         // The light scattered over the step, integrated exactly for a
         // constant medium across it.
         let integrated = (source - source * sample_transmittance) / extinction;
-        result.light += throughput * integrated;
-        let again = (medium.scattering - medium.scattering * sample_transmittance) / extinction;
-        result.again += throughput * again;
+        light += throughput * integrated;
         throughput *= sample_transmittance;
     }
-    // The ground's reflection of the sun: for multiple scattering, and
-    // where views meet the planet beyond the world. The point lies on the
-    // ground exactly: its radius in 32-bit floats rounds decimeters above
-    // or below it, which turned the planet's own shadow on and off from
-    // texel to texel. The sun reaches the ground wherever it stands above
-    // its horizon, through the air the table's bottom row holds.
+    // The ground's reflection of the sun, where views meet the planet
+    // beyond the world. The point lies on the ground exactly: its radius
+    // in 32-bit floats rounds decimeters above or below it, which turned
+    // the planet's own shadow on and off from texel to texel. The sun
+    // reaches the ground wherever it stands above its horizon, through the
+    // air the table's bottom row holds.
     if ground_hit >= 0.0 {
         let up = normalize(origin + direction * span);
         let sun_cos = dot(sun, up);
         if sun_cos > 0.0 {
             let through = textureSampleLevel(transmittance_table, table_sampler,
                 transmittance_uv(air, bottom, sun_cos), 0.0).rgb;
-            result.light += throughput * through * sun_cos * air.ground.rgb / SKY_PI;
+            light += throughput * through * sun_cos * air.ground.rgb / SKY_PI;
         }
     }
-    return result;
-}
-
-@compute @workgroup_size(8, 8)
-fn build_transmittance(@builtin(global_invocation_id) id: vec3<u32>) {
-    let size = textureDimensions(table_out);
-    if id.x >= size.x || id.y >= size.y {
-        return;
-    }
-    let uv = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(size);
-    let parameters = transmittance_parameters(air, uv);
-    let r = parameters.x;
-    let mu = parameters.y;
-    let origin = vec3<f32>(0.0, r, 0.0);
-    let direction = vec3<f32>(sqrt(max(1.0 - mu * mu, 0.0)), mu, 0.0);
-    let reach = sphere_hit(origin, direction, air.radii.y);
-    var depth = vec3<f32>(0.0);
-    if reach > 0.0 {
-        let dt = reach / f32(TRANSMITTANCE_STEPS);
-        for (var step = 0u; step < TRANSMITTANCE_STEPS; step++) {
-            let point = origin + direction * ((f32(step) + 0.5) * dt);
-            depth += medium_at(length(point) - air.radii.x).extinction * dt;
-        }
-    }
-    textureStore(table_out, id.xy, vec4<f32>(exp(-depth), 1.0));
-}
-
-/// A direction of `count` spread evenly over the sphere (Fibonacci).
-fn sphere_direction(index: u32, count: u32) -> vec3<f32> {
-    let golden = 2.39996323;
-    let y = 1.0 - (f32(index) + 0.5) / f32(count) * 2.0;
-    let radius = sqrt(max(1.0 - y * y, 0.0));
-    let angle = golden * f32(index);
-    return vec3<f32>(cos(angle) * radius, y, sin(angle) * radius);
-}
-
-@compute @workgroup_size(8, 8)
-fn build_multiple(@builtin(global_invocation_id) id: vec3<u32>) {
-    let size = textureDimensions(table_out);
-    if id.x >= size.x || id.y >= size.y {
-        return;
-    }
-    let uv = vec2<f32>(
-        from_sub_uv((f32(id.x) + 0.5) / f32(size.x), f32(size.x)),
-        from_sub_uv((f32(id.y) + 0.5) / f32(size.y), f32(size.y)),
-    );
-    let sun_cos = clamp(uv.x * 2.0 - 1.0, -1.0, 1.0);
-    let sun = vec3<f32>(0.0, sun_cos, sqrt(max(1.0 - sun_cos * sun_cos, 0.0)));
-    let r = air.radii.x + clamp(uv.y + RADIUS_OFFSET, 0.0, 1.0)
-        * (air.radii.y - air.radii.x - RADIUS_OFFSET);
-    let origin = vec3<f32>(0.0, r, 0.0);
-    var light = vec3<f32>(0.0);
-    var again = vec3<f32>(0.0);
-    for (var index = 0u; index < MULTIPLE_DIRECTIONS; index++) {
-        let result = scattered(origin, sphere_direction(index, MULTIPLE_DIRECTIONS), sun,
-            MULTIPLE_STEPS, true);
-        light += result.light;
-        again += result.again;
-    }
-    // Averaged over the sphere with an isotropic phase: the second order's
-    // light and the share scattered again, summed as a geometric series.
-    light /= f32(MULTIPLE_DIRECTIONS);
-    again /= f32(MULTIPLE_DIRECTIONS);
-    let series = 1.0 / max(vec3<f32>(1.0) - again, vec3<f32>(1e-3));
-    textureStore(table_out, id.xy, vec4<f32>(light * series, 1.0));
+    return light;
 }
 
 @compute @workgroup_size(8, 8)
@@ -254,8 +166,8 @@ fn build_sky_view(@builtin(global_invocation_id) id: vec3<u32>) {
         view_cos,
         view_sin * sqrt(max(1.0 - light_cos * light_cos, 0.0)),
     );
-    let result = scattered(vec3<f32>(0.0, r, 0.0), direction, sun, VIEW_STEPS, false);
-    textureStore(table_out, id.xy, vec4<f32>((result.light + NIGHT) * air.ozone.w, 1.0));
+    let light = scattered(vec3<f32>(0.0, r, 0.0), direction, sun, VIEW_STEPS);
+    textureStore(table_out, id.xy, vec4<f32>((light + NIGHT) * air.ozone.w, 1.0));
 }
 
 /// The sky's light looking along `direction` from the camera, without the

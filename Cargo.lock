@@ -885,6 +885,7 @@ dependencies = [
  "engine_profile",
  "engine_settings",
  "engine_sources",
+ "engine_tables",
  "engine_terrain",
  "engine_textures",
  "glam 0.30.9",
@@ -1041,6 +1042,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_tables"
+version = "0.1.0"
+dependencies = [
+ "engine_math",
+ "engine_sources",
+ "libm",
+]
+
+[[package]]
 name = "engine_terrain"
 version = "0.1.0"
 dependencies = [
@@ -1080,6 +1090,7 @@ dependencies = [
  "engine_math",
  "engine_panic",
  "engine_sources",
+ "engine_tables",
  "engine_terrain",
  "js-sys",
  "png",

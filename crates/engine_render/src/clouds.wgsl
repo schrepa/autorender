@@ -3,9 +3,10 @@
 // 2 pi u and up by the elevation mix(-asin(HORIZON), pi / 2, v), every row
 // as many degrees (`scene.wgsl`'s `cloud_dome_uv`); each holds the light
 // the clouds scatter toward the eye (linear, as the sky's) and the share of
-// the sky behind them that passes. A tiling volume of noise, made once,
-// shapes the clouds: Perlin-Worley in red, Worley at three frequencies in
-// green, blue and alpha.
+// the sky behind them that passes. Two tiling volumes of noise, the
+// scene's static tables (`engine_tables::clouds` makes them), shape the
+// clouds: Perlin-Worley shapes, and the finer wisps of Worley's cells at
+// five frequencies eroding their edges.
 
 struct CloudUniform {
     // The camera (world); w: 1 with the physically based sky, whose sun
@@ -41,8 +42,9 @@ struct CloudUniform {
 }
 
 @group(0) @binding(0) var<uniform> clouds: CloudUniform;
-@group(0) @binding(1) var noise_volume: texture_3d<f32>;
+@group(0) @binding(1) var noise_shape: texture_3d<f32>;
 @group(0) @binding(2) var noise_sampler: sampler;
+@group(0) @binding(4) var noise_detail: texture_3d<f32>;
 @group(0) @binding(3) var dome: texture_storage_2d<rgba16float, write>;
 // The shadows' grid: the sunlight passing the layer up from each cell of
 // its base, two cells (along x) a word in half floats.
@@ -110,94 +112,8 @@ const DETAIL_REACH: f32 = 20000.0;
 // Extinction per meter of fully dense cloud at density 1.
 const EXTINCTION: f32 = 0.08;
 
-fn hash3(p: vec3<u32>) -> vec3<f32> {
-    var v = p * 1664525u + 1013904223u;
-    v.x += v.y * v.z;
-    v.y += v.z * v.x;
-    v.z += v.x * v.y;
-    v = v ^ (v >> vec3<u32>(16u));
-    v.x += v.y * v.z;
-    v.y += v.z * v.x;
-    v.z += v.x * v.y;
-    return vec3<f32>(v) * (1.0 / 4294967296.0);
-}
-
-// Cellular noise repeating every `cells` cells across the unit cube: 1 at
-// its feature points, falling to 0 a cell away.
-fn worley(p: vec3<f32>, cells: i32) -> f32 {
-    let scaled = p * f32(cells);
-    let cell = vec3<i32>(floor(scaled));
-    let f = scaled - vec3<f32>(cell);
-    var nearest = 1.0e9;
-    for (var z = -1; z <= 1; z++) {
-        for (var y = -1; y <= 1; y++) {
-            for (var x = -1; x <= 1; x++) {
-                let offset = vec3<i32>(x, y, z);
-                let neighbor = ((cell + offset) % cells + cells) % cells;
-                let point = vec3<f32>(offset) + hash3(vec3<u32>(neighbor) + vec3<u32>(u32(cells)));
-                let away = point - f;
-                nearest = min(nearest, dot(away, away));
-            }
-        }
-    }
-    return 1.0 - saturate(sqrt(nearest));
-}
-
-fn worley_fbm(p: vec3<f32>, cells: i32) -> f32 {
-    return worley(p, cells) * 0.625 + worley(p, cells * 2) * 0.25 + worley(p, cells * 4) * 0.125;
-}
-
-// Gradient noise repeating every `period` cells across the unit cube, in
-// about [-1, 1].
-fn perlin(p: vec3<f32>, period: i32) -> f32 {
-    let scaled = p * f32(period);
-    let cell = vec3<i32>(floor(scaled));
-    let f = scaled - vec3<f32>(cell);
-    let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    var corners: array<f32, 8>;
-    for (var index = 0; index < 8; index++) {
-        let offset = vec3<i32>(index & 1, (index >> 1) & 1, index >> 2);
-        let wrapped = ((cell + offset) % period + period) % period;
-        let gradient = normalize(hash3(vec3<u32>(wrapped) + vec3<u32>(7u, 11u, 13u)) * 2.0 - 1.0);
-        corners[index] = dot(gradient, f - vec3<f32>(offset));
-    }
-    let x0 = mix(corners[0], corners[1], u.x);
-    let x1 = mix(corners[2], corners[3], u.x);
-    let x2 = mix(corners[4], corners[5], u.x);
-    let x3 = mix(corners[6], corners[7], u.x);
-    return mix(mix(x0, x1, u.y), mix(x2, x3, u.y), u.z);
-}
-
-fn perlin_fbm(p: vec3<f32>, period: i32) -> f32 {
-    var sum = 0.0;
-    var amplitude = 0.5;
-    var scale = period;
-    for (var octave = 0; octave < 4; octave++) {
-        sum += perlin(p, scale) * amplitude;
-        amplitude *= 0.5;
-        scale *= 2;
-    }
-    return saturate(sum * 0.9 + 0.5);
-}
-
 fn remap(value: f32, low: f32, high: f32, to_low: f32, to_high: f32) -> f32 {
     return to_low + (value - low) * (to_high - to_low) / max(high - low, 1.0e-5);
-}
-
-@group(0) @binding(4) var noise_out: texture_storage_3d<rgba8unorm, write>;
-
-// The noise volume, a texel per invocation.
-@compute @workgroup_size(4, 4, 4)
-fn make_noise(@builtin(global_invocation_id) id: vec3<u32>) {
-    let size = textureDimensions(noise_out);
-    if any(id >= size) {
-        return;
-    }
-    let p = (vec3<f32>(id) + 0.5) / vec3<f32>(size);
-    let low = worley_fbm(p, 4);
-    // Perlin's billows carved by Worley's cells: rounded cumulus shapes.
-    let shapes = saturate(remap(perlin_fbm(p, 4), low - 1.0, 1.0, 0.0, 1.0));
-    textureStore(noise_out, id, vec4<f32>(shapes, low, worley_fbm(p, 8), worley_fbm(p, 16)));
 }
 
 // The direction the dome's texel at `uv` looks.
@@ -230,7 +146,7 @@ fn cloud_density(p: vec3<f32>, detail: f32) -> f32 {
     // Where clouds gather and where the sky stays clear, broadly; coverage
     // sets the shapes' threshold around their average. Where no shape could
     // reach it at this height, the shapes are not read.
-    let gather = textureSampleLevel(noise_volume, noise_sampler,
+    let gather = textureSampleLevel(noise_shape, noise_sampler,
         vec3<f32>(moved.x / (repeat * 4.3), 0.37, moved.z / (repeat * 4.3)), 0.0).r;
     let local = saturate(clouds.layer.z * (0.4 + 1.2 * smoothstep(0.3, 0.7, gather)));
     let threshold = mix(0.95, 0.4, local);
@@ -238,11 +154,10 @@ fn cloud_density(p: vec3<f32>, detail: f32) -> f32 {
         return 0.0;
     }
     // Perlin-Worley shapes, about two thirds on average.
-    let rounded = textureSampleLevel(noise_volume, noise_sampler, moved / repeat, 0.0).r;
+    let rounded = textureSampleLevel(noise_shape, noise_sampler, moved / repeat, 0.0).r;
     var cloud = saturate(remap(rounded * profile, threshold, 1.0, 0.0, 1.0));
     if detail > 0.0 && cloud > 0.0 {
-        let fine = textureSampleLevel(noise_volume, noise_sampler, moved / (repeat * 0.13), 0.0);
-        let wisps = fine.g * 0.625 + fine.b * 0.25 + fine.a * 0.125;
+        let wisps = textureSampleLevel(noise_detail, noise_sampler, moved / (repeat * 0.13), 0.0).r;
         // Wispy below, billowing above.
         let erode = mix(wisps, 1.0 - wisps, saturate(height * 3.0)) * 0.4 * detail;
         cloud = saturate(remap(cloud, erode, 1.0, 0.0, 1.0));
