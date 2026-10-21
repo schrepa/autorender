@@ -245,6 +245,9 @@ pub(crate) struct TerrainPass {
     pub(crate) sky: SkyMaps,
     /// Bounce light, relit every frame around the camera.
     pub(crate) bounce: Bounce,
+    /// Whether the session cooks, which makes bounce light's pipelines up
+    /// front for the scene's pipeline list.
+    pub(crate) cooking: bool,
     /// Macro colors.
     pub(crate) macro_maps: MacroMaps,
     /// Runtime deformation's map.
@@ -267,6 +270,7 @@ impl TerrainPass {
             maps: TerrainMaps::new(device, queue),
             sky: SkyMaps::new(device, queue),
             bounce: Bounce::new(device, queue),
+            cooking: false,
             macro_maps: MacroMaps::new(device, queue),
             deformation: crate::deformation::DeformationPass::new(device),
             vt: crate::terrain_vt::VirtualTexture::new(device),
@@ -350,15 +354,24 @@ impl TerrainPass {
         let vt_pages = self.vt.wanted(&views.settings);
         self.maps.prepare(device, queue, mips, terrains, vt_pages);
         self.tables.write_palette(queue, terrains, &self.maps);
-        // Bounce light's windows, which the horizon records place.
-        self.bounce.place(terrains, views.eye, &views.settings);
+        // Bounce light's windows, which the horizon records place, in the
+        // slots the horizon maps' layers hold.
+        let room = crate::terrain_horizons::room(device, terrains.terrains.len());
+        self.bounce
+            .place(terrains, (views.eye, &views.settings), room);
         let horizon_settings = (&views.settings, views.shadows);
         let windows = self.bounce.windows();
         (self.horizons).prepare(device, queue, terrains, horizon_settings, windows);
         self.sky.prepare(device, queue, terrains, &views.settings);
         self.macro_maps.prepare(device, queue, terrains);
-        let lighting = (&self.horizons, &self.sky, &self.tables.palette_bases[..]);
-        self.bounce.prepare(device, queue, terrains, lighting);
+        let lighting = (
+            &self.horizons,
+            &self.sky,
+            &self.macro_maps,
+            &self.tables.palette_bases[..],
+        );
+        self.bounce
+            .prepare(device, queue, terrains, lighting, self.cooking);
         // The runtime virtual texture, its far pages baked from what each
         // terrain's pinned level holds.
         let sources = self.far.sources(
@@ -549,6 +562,7 @@ impl TerrainPass {
         let terrain = TerrainSources {
             horizons: &self.horizons,
             sky: &self.sky,
+            colors: &self.macro_maps,
             palette: &self.tables.palette,
         };
         self.bounce

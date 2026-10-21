@@ -9,7 +9,7 @@
 //! terrain's layers upload as its lighting arrives and again when it
 //! changes; a record of four vectors per terrain, in a uniform the lookups
 //! loop over, places its map. Terrains past what the device's array layers
-//! or the records hold cast no long shadows.
+//! or the records hold cast no long shadows (`room`).
 //!
 //! With bounce light on, the maps hold after every terrain's horizon layers
 //! the bounce layers of each terrain it relights, by slot
@@ -208,9 +208,7 @@ impl Horizons {
         }
         let size = settings.shadow_resolution;
         // Terrains past the device's array layers and the records cast none.
-        let room = (device.limits().max_texture_array_layers as usize / HORIZON_LAYERS)
-            .min(HORIZON_RECORDS / HORIZON_RECORD_VECTORS as usize);
-        let count = terrains.terrains.len().min(room);
+        let (count, _) = room(device, terrains.terrains.len());
         if self
             .maps
             .as_ref()
@@ -279,6 +277,20 @@ impl Horizons {
         self.held.clear();
         self.records_written.clear();
     }
+}
+
+/// What the horizon maps hold on `device` for `terrains` terrains: the
+/// terrains casting long shadows, the first as many as the device's array
+/// layers and the records hold; and the slots of bounce layers the array's
+/// layers hold after theirs, which bounce light gives the terrains it
+/// relights among those (`crate::terrain_bounce`).
+pub(crate) fn room(device: &wgpu::Device, terrains: usize) -> (usize, u32) {
+    let layers = device.limits().max_texture_array_layers as usize;
+    let casting = terrains
+        .min(layers / HORIZON_LAYERS)
+        .min(HORIZON_RECORDS / HORIZON_RECORD_VECTORS as usize);
+    let slots = (layers - HORIZON_LAYERS * casting) / BOUNCE_LAYERS;
+    (casting, slots as u32)
 }
 
 /// The larger side of `terrain`'s extent, in meters.

@@ -65,6 +65,7 @@ shaders! {
         "scene.wgsl",
         "color.wgsl",
         "math.wgsl",
+        "terrain_variety.wgsl",
         "terrain_bounce.wgsl",
     ];
     /// Ground cover's growth.

@@ -23,7 +23,8 @@ gpu_structs! {
     /// and its place among the horizon records; its ground's first layer,
     /// its light's layer, its probes' first layer among the bounce layers
     /// and its sky map's layer plus one (0 without one); and where its
-    /// materials start in the palette.
+    /// materials start in the palette and its macro colors' layer plus one
+    /// (0 without them).
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct BounceTerrain as ["BounceTerrain"] {
         pub place: [f32; 4],

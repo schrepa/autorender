@@ -15,9 +15,14 @@
 //!
 //! Each terrain bounce light relights (none of surroundings, ground seen
 //! from afar) holds a slot: its bounce layers of the horizon maps and its
-//! layers of the ground's maps. A terrain's ground and probes upload as its
-//! transfer arrives and again when it changes; the pipelines are made with
-//! the first frame relighting.
+//! layers of the ground's maps, while the horizon maps' array layers hold
+//! them after every casting terrain's own (`terrain_horizons::room`). Its
+//! ground takes the tint of its macro colors as terrain's own ground does
+//! from afar. A terrain's ground and probes upload as its transfer arrives
+//! and again when it changes; the pipelines are made with the first frame
+//! relighting, and in a cooking session as soon as a terrain holds a slot,
+//! so the scene's pipeline list holds them wherever the cook's camera
+//! stands.
 
 use std::sync::Arc;
 
@@ -33,6 +38,7 @@ use crate::gpu_layouts::bounce::{BounceFrame, BounceTerrain};
 use crate::gpu_layouts::constants::{BOUNCE_GROUP, BOUNCE_LAYERS};
 use crate::shaders::entry::terrain_bounce;
 use crate::terrain_horizons::Horizons;
+use crate::terrain_macro::MacroMaps;
 use crate::terrain_sky::SkyMaps;
 
 /// The ground's light: radiance, filtered and written.
@@ -42,7 +48,7 @@ const GROUND_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Uint;
 /// Layers of the ground's surface each terrain takes.
 const GROUND_LAYERS: u32 = 2;
 /// Bindings of the bounce group (`bindings::BOUNCE`).
-const BINDINGS: usize = 17;
+const BINDINGS: usize = 18;
 
 /// Where a terrain's probes relight this frame: its slot, its probe
 /// columns along a side, the first column of the window (x and z, even) and
@@ -64,11 +70,12 @@ pub(crate) struct SceneSources<'a> {
     pub(crate) cloud_shadows: &'a wgpu::Buffer,
 }
 
-/// What bounce light reads of the terrain pass: its horizon and sky maps,
-/// and its palette.
+/// What bounce light reads of the terrain pass: its horizon, sky and macro
+/// color maps, and its palette.
 pub(crate) struct TerrainSources<'a> {
     pub(crate) horizons: &'a Horizons,
     pub(crate) sky: &'a SkyMaps,
+    pub(crate) colors: &'a MacroMaps,
     pub(crate) palette: &'a wgpu::Buffer,
 }
 
@@ -214,23 +221,31 @@ impl Bounce {
 
     /// Gives each terrain of `terrains` bounce light relights its slot, in
     /// order, with `settings` asking for bounce light: every one but
-    /// surroundings. Places this frame's windows around `eye`: for each
+    /// surroundings among the first `casting`, while the horizon maps' layers
+    /// hold `slots` of them. Places this frame's windows around `eye`: for each
     /// terrain with a slot whose transfer is here, within the settings'
     /// reach of the eye, as many as the probes' buffers hold in order.
     pub(crate) fn place(
         &mut self,
         terrains: &RenderTerrains,
-        eye: Vec3,
-        settings: &TerrainSettings,
+        (eye, settings): (Vec3, &TerrainSettings),
+        (casting, slots): (usize, u32),
     ) {
         let on = settings.enabled && settings.sun_shadows && settings.bounce;
         let mut next = 0;
         self.slots.clear();
-        self.slots.extend(terrains.terrains.iter().map(|terrain| {
-            let slot = (on && !terrain.surroundings).then_some(next);
-            next += u32::from(slot.is_some());
-            slot
-        }));
+        self.slots.extend(
+            terrains
+                .terrains
+                .iter()
+                .enumerate()
+                .map(|(index, terrain)| {
+                    let relit = on && !terrain.surroundings && index < casting && next < slots;
+                    let slot = relit.then_some(next);
+                    next += u32::from(relit);
+                    slot
+                }),
+        );
         self.windows.clear();
         let mut room = [self.blocks.room(), self.probes.room()];
         for (terrain, &slot) in terrains.terrains.iter().zip(&self.slots) {
@@ -258,12 +273,18 @@ impl Bounce {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         terrains: &RenderTerrains,
-        (horizons, sky, palette): (&Horizons, &SkyMaps, &[u32]),
+        (horizons, sky, colors, palette): (&Horizons, &SkyMaps, &MacroMaps, &[u32]),
+        cooking: bool,
     ) {
         self.widest = 0;
         self.relit = 0;
         self.columns = 0;
         let count = self.slots.iter().flatten().count();
+        // A cooking session's pipeline list holds bounce light's pipelines
+        // wherever its camera stands.
+        if cooking && count > 0 && self.pipelines.is_none() {
+            self.pipelines = Some(pipelines(device, &self.layout));
+        }
         let side = terrains
             .terrains
             .iter()
@@ -332,7 +353,7 @@ impl Bounce {
             self.columns += window.columns * window.columns;
             let materials = palette.get(index).copied().unwrap_or(0);
             self.records[slot] = terrain_record(terrain, bounce, window, index, self.bases[slot])
-                .with_layers(sky.layer(index), materials);
+                .with_layers((sky.layer(index), colors.layer(index)), materials);
         }
         let bytes = (self.records.len() * size_of::<BounceTerrain>()) as u64;
         self.terrains.grow(device, bytes);
@@ -395,6 +416,10 @@ impl Bounce {
             sky: Bound::counted(
                 terrain.sky.generation(),
                 crate::pipelines::view(terrain.sky.view()),
+            ),
+            colors: Bound::counted(
+                terrain.colors.generation(),
+                crate::pipelines::view(terrain.colors.view()),
             ),
             palette: Bound::fixed(terrain.palette.as_entire_binding()),
             sampler: Bound::fixed(crate::pipelines::sampler(&self.sampler)),
@@ -464,10 +489,10 @@ impl Bounce {
 }
 
 /// What every bounce group binds alike: the bins' moments, the terrains'
-/// records, blocks and probes, their ground and sky maps, the palette and
-/// the light's sampler; the horizon maps' own layers with their records
-/// and sampler, and their bounce layers written; the scene's lighting,
-/// shadow lookups' uniform and clouds' shadows.
+/// records, blocks and probes, their ground, sky and macro color maps, the
+/// palette and the light's sampler; the horizon maps' own layers with their
+/// records and sampler, and their bounce layers written; the scene's
+/// lighting, shadow lookups' uniform and clouds' shadows.
 struct Shared<'a> {
     frame: Bound<'a>,
     terrains: Bound<'a>,
@@ -475,6 +500,7 @@ struct Shared<'a> {
     probes: Bound<'a>,
     surface: Bound<'a>,
     sky: Bound<'a>,
+    colors: Bound<'a>,
     palette: Bound<'a>,
     sampler: Bound<'a>,
     horizons: [(&'static str, Bound<'a>); 3],
@@ -510,16 +536,19 @@ impl<'a> Shared<'a> {
             ("bounce_probes", self.written.clone()),
             ("bounce_sampler", self.sampler.clone()),
             ("bounce_palette", self.palette.clone()),
+            ("bounce_macro", self.colors.clone()),
         ]
     }
 }
 
 impl BounceTerrain {
-    /// The record with its sky map's layer plus one (`sky`, 0 without
-    /// one) and its palette's first material (`palette`).
-    fn with_layers(mut self, sky: u32, palette: u32) -> Self {
+    /// The record with its sky map's and macro colors' layers plus one
+    /// (`sky` and `colors`, 0 without them) and its palette's first
+    /// material (`palette`).
+    fn with_layers(mut self, (sky, colors): (u32, u32), palette: u32) -> Self {
         self.layers[3] = sky;
         self.materials[0] = palette;
+        self.materials[1] = colors;
         self
     }
 }

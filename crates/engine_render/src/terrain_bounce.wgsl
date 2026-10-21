@@ -1,7 +1,8 @@
 // Terrain bounce light (`terrain_bounce.rs`), after the scene's
-// declarations (`scene.wgsl`). Every frame each terrain's ground is lit as
-// terrain shades its own, the sun through the horizon maps and the clouds'
-// shadows, the sky through its sky map, in its materials' colors; the
+// declarations (`scene.wgsl`) and ground variety's (`terrain_variety.wgsl`).
+// Every frame each terrain's ground is lit as terrain shades its own, the
+// sun through the horizon maps and the clouds' shadows, the sky through its
+// sky map, in its materials' colors tinted by its macro colors; the
 // light's levels follow, each texel the mean of the four below it; then
 // each probe around the camera gathers through its bins
 // (`engine_terrain::bounce`) the light the ground sends it into the horizon
@@ -21,7 +22,8 @@ struct BounceFrame {
 // among every terrain's, and its place among the horizon records; its
 // ground's first layer, its light's layer, its probes' first layer among
 // the bounce layers and its sky map's layer plus one (0 without
-// one); and where its materials start in the palette.
+// one); and where its materials start in the palette and its macro colors'
+// layer plus one (0 without them).
 struct BounceTerrain {
     place: vec4<f32>,
     grid: vec4<u32>,
@@ -89,6 +91,9 @@ const PALETTE_ENTRIES: u32 = 170u;
 @group(0) @binding(68) var bounce_probes: texture_storage_2d_array<rgba16float, write>;
 @group(0) @binding(69) var bounce_sampler: sampler;
 @group(0) @binding(70) var<uniform> bounce_palette: array<PaletteEntry, PALETTE_ENTRIES>;
+// Each terrain's macro colors with their mips (`meshes/terrain.wgsl`'s
+// `terrain_macro`).
+@group(0) @binding(71) var bounce_macro: texture_2d_array<f32>;
 
 // Surface material `material` of the palette from `first`: its maps' mean
 // color, and ground under cover its canopy, as it shows from afar.
@@ -101,11 +106,18 @@ fn bounce_albedo(first: u32, material: u32) -> vec3<f32> {
     return color;
 }
 
-// Each texel of each relighting terrain's ground: its materials' color
-// times the sun's light on it, wrapped about the terminator as terrain's
-// own (`finish`), through its horizons and the clouds' shadows, and the
-// sky's around its normal turned toward the sky it sees, by the share it
-// sees.
+// The share of surface material `material`'s ground, of the palette from
+// `first`, that grows plants, as its canopy covers it from afar.
+fn bounce_vegetated(first: u32, material: u32) -> f32 {
+    let entry = bounce_palette[min(first + material, PALETTE_ENTRIES - 1u)];
+    return select(0.0, 1.0 - exp(-entry.canopy.w), entry.canopy.w > 0.0);
+}
+
+// Each texel of each relighting terrain's ground: its materials' color,
+// tinted by its macro colors as terrain's own ground from afar, times the
+// sun's light on it, wrapped about the terminator as terrain's own
+// (`finish`), through its horizons and the clouds' shadows, and the sky's
+// around its normal turned toward the sky it sees, by the share it sees.
 @compute @workgroup_size(8, 8, 1)
 fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
     let terrain = bounce_terrains[id.z];
@@ -124,14 +136,24 @@ fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
         * (2.0 / 255.0) - 1.0;
     let normal = vec3<f32>(tilt.x, sqrt(max(1.0 - dot(tilt, tilt), 0.0)), tilt.y);
     let first = terrain.materials.x;
-    let albedo = mix(bounce_albedo(first, surface.x), bounce_albedo(first, surface.y),
-        f32(surface.z) / 255.0);
+    let blend = f32(surface.z) / 255.0;
+    var albedo = mix(bounce_albedo(first, surface.x), bounce_albedo(first, surface.y), blend);
+    if terrain.materials.y > 0u {
+        let vegetated = mix(bounce_vegetated(first, surface.x),
+            bounce_vegetated(first, surface.y), blend);
+        // The macro colors' level whose texels span the ground's.
+        let lod = max(log2(f32(textureDimensions(bounce_macro).x) / f32(side)), 0.0);
+        let colors = textureSampleLevel(bounce_macro, bounce_sampler, uv,
+            terrain.materials.y - 1u, lod);
+        albedo *= macro_tint(colors, vegetated, 1.0);
+    }
     var seen = 1.0;
     var turn = vec3<f32>(0.0);
     if terrain.layers.w > 0u {
-        let sky = textureSampleLevel(bounce_sky, bounce_sampler, uv, terrain.layers.w - 1u, 0.0);
-        seen = sky.r;
-        turn = sky.gba * 2.0 - 1.0;
+        let sky_texel = textureSampleLevel(bounce_sky, bounce_sampler, uv, terrain.layers.w - 1u,
+            0.0);
+        seen = sky_texel.r;
+        turn = sky_texel.gba * 2.0 - 1.0;
     }
     var light = sky_average(normalize(normal + turn)) * (lighting.zenith.w * seen);
     let wrapped = max((dot(normal, lighting.sun.xyz) + 0.25) / 1.25, 0.0);

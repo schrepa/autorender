@@ -969,7 +969,8 @@ tables! {
     /// and each terrain's bounce this frame, the terrains' sky maps, their
     /// cooked ground and probes, the ground's light read (a level, or all
     /// of them) and written (a level), the bounce layers of the horizon maps
-    /// written, the light's sampler and the terrain palette.
+    /// written, the light's sampler, the terrain palette and the terrains'
+    /// macro colors.
     const BOUNCE: Table = Table {
         label: "engine/terrain-bounce-layout",
         serves: [BOUNCE_SHADER @ 0],
@@ -991,6 +992,7 @@ tables! {
             bind(68, "bounce_probes", Kind::StorageArray(Rgba16Float), C),
             sampler(69, "bounce_sampler", Filtering, C),
             uniform_of(70, "bounce_palette", terrain::PALETTE_BYTES, C),
+            texture(71, "bounce_macro", Float, D2Array, C),
         ],
     };
 

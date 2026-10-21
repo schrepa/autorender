@@ -324,10 +324,12 @@ impl Renderer {
 
     /// Whether the session cooks: frames then create the pipelines of
     /// every pass kind their content may draw with, lit or not, beyond
-    /// those they draw, for the scene's pipeline list; and supply every
-    /// impostor whatever the budget, its record fetched or made.
+    /// those they draw, and bounce light's wherever the camera stands, for
+    /// the scene's pipeline list; and supply every impostor whatever the
+    /// budget, its record fetched or made.
     pub fn set_cooking(&mut self, cooking: bool) {
         self.mesh_pipelines.cooking = cooking;
+        self.terrain.cooking = cooking;
         self.impostors.atlas.set_cooking(cooking);
         self.impostors.placed.set_cooking(cooking);
     }
