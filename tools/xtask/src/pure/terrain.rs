@@ -1,9 +1,9 @@
 //! The terrain corpus: the tracked terrain fixture's generated terrain
 //! (web/scripts/fixtures/terrain.scene.json and its dome heightmap). Its
 //! bakes; every tile of its pyramid and some of its surroundings'; tiles
-//! under edits; its lighting; every finest tile's portals of a walk graph,
-//! and a walk over them; a tile's settled water; and a pack of what they
-//! made. Each job runs as
+//! under edits; its lighting and bounce transfer; every finest tile's
+//! portals of a walk graph, and a walk over them; a tile's settled water;
+//! and a pack of what they made. Each job runs as
 //! workers run it, whole and a slice at a time, and must give the bits its
 //! code gives in place (a tile's portals, the bits its tile's record
 //! gives); every record must read back from the pack the cook would write
@@ -16,9 +16,10 @@ use std::sync::Arc;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::Terrain;
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
+use engine_terrain::bounce;
 use engine_terrain::jobs::{
-    self, BakeJob, LightingJob, PortalsJob, StackView, TerrainRecipe, TerrainWorker, TileJob,
-    WaterJob,
+    self, BakeJob, BounceJob, LightingJob, PortalsJob, StackView, TerrainRecipe, TerrainWorker,
+    TileJob, WaterJob,
 };
 use engine_terrain::lighting::{self, Ground};
 use engine_terrain::{
@@ -45,6 +46,8 @@ const WATER_CELL: f32 = 8.0;
 const PINNED: u32 = 2;
 const SKY_TEXELS: u32 = 256;
 const HORIZON_TEXELS: u32 = 128;
+/// Probe columns along each side of its bounce transfer.
+const BOUNCE_PROBES: u32 = 64;
 /// Every share and job the corpus ran through its worker, in order, each
 /// job's output by its hash: what `cargo xtask pure --wasm` replays in the
 /// browser worker's Wasm module.
@@ -159,6 +162,10 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         }),
     );
     records.push((LightingJob::KIND.name(), bytes));
+
+    let surface = (baked.as_ref(), rules.as_ref());
+    let transfer = bounce_transfer(&mut worker, &job, surface, observed)?;
+    records.push((BounceJob::KIND.name(), transfer));
 
     // A tile under edits, which its job carries: two pits dug in the
     // meadow, the later over the earlier.
@@ -398,6 +405,61 @@ fn lighting_job(pyramid: &Pyramid, tiles: &BTreeMap<TileKey, Tile>) -> LightingJ
         sky: SKY_TEXELS,
         horizons: HORIZON_TEXELS,
     }
+}
+
+/// The terrain's bounce transfer from the heights its lighting job `job`
+/// reads, its surface chosen by the recipe's rules over its layers
+/// (`baked` and `rules`, the recipe shared as "recipe"), as engines ask for
+/// it: the job's record, which must equal the transfer made in place and the
+/// job run a slice at a time.
+fn bounce_transfer(
+    worker: &mut Worker,
+    job: &LightingJob,
+    (baked, rules): (&Layers, &BiomeRules),
+    observed: &mut Observations,
+) -> Result<Vec<u8>, String> {
+    let transfer = BounceJob {
+        recipe: "recipe".into(),
+        samples: job.samples,
+        spacing: job.spacing,
+        extent: job.extent,
+        heights: job.heights.clone(),
+        probes: BOUNCE_PROBES,
+    };
+    let input = transfer.input();
+    let bytes = worker.run(BounceJob::KIND.name(), &input)?;
+    let ground = Ground {
+        samples: job.samples,
+        spacing: job.spacing,
+        heights: &job.heights,
+    };
+    let made = bounce::bounce(
+        &ground,
+        job.extent.to_array(),
+        (baked, rules),
+        BOUNCE_PROBES,
+    );
+    observed.check(codec::encode(&made) == bytes, || {
+        "the bounce job differs from the transfer made in place".into()
+    });
+    observed.check(
+        worker.sliced(BounceJob::KIND.name(), &input)? == bytes,
+        || "the bounce job run a slice at a time differs from the job run whole".into(),
+    );
+    observed.hash("bounce", &bytes);
+    let blocks = (BOUNCE_PROBES / 2) as usize * (BOUNCE_PROBES / 2) as usize;
+    observed.record(
+        "bounce",
+        json!({
+            "blocks": blocks,
+            "detailed blocks": made.detailed_blocks(),
+            "probes": made.probe_count(),
+        }),
+    );
+    observed.check(made.probe_count() >= blocks, || {
+        "the bounce transfer holds fewer probes than blocks".into()
+    });
+    Ok(bytes)
 }
 
 /// Whether what culling knows of each of `tile`'s patches holds of its

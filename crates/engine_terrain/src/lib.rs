@@ -27,6 +27,7 @@
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
 mod bake;
+pub mod bounce;
 pub mod codec;
 mod erosion;
 mod flow;

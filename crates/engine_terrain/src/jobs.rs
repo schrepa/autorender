@@ -1,6 +1,7 @@
 //! Terrain jobs: terrain work engines hand workers, as bytes
 //! in and bytes out: a tile generated whole, a tile's portals of a walk
-//! graph, a stack baked, a terrain's lighting, a tile's water settled.
+//! graph, a stack baked, a terrain's lighting and its bounce transfer, a
+//! tile's water settled.
 //! Workers hold once what many jobs read, shared by key: layer stacks with
 //! their bakes, and the recipes generating a terrain's tiles from one. Jobs
 //! run the same code wherever they run (a worker, a host without workers,
@@ -11,13 +12,15 @@
 //! A tile's job, and its portals', carries the edits reaching its ground
 //! alone, its recipe's stack none: an edit leaves every other tile's jobs,
 //! and their records, as they were. A terrain's lighting reads a level's
-//! heights alone, under edits or not.
+//! heights alone, under edits or not; its bounce transfer the same heights
+//! and its recipe's surface.
 
 use engine_math::collections::HashMap;
 use std::sync::Arc;
 
 use glam::Vec2;
 
+use crate::bounce::{MAX_PROBES, TerrainBounce, bounce};
 use crate::codec::{self, Codec, CodecError, Reader, Writer, record};
 use crate::lighting::{Ground, TerrainLighting, light};
 use crate::{
@@ -27,8 +30,9 @@ use crate::{
 
 /// The kinds of terrain jobs, which hosts carry by name: a tile of a
 /// shared recipe, a tile's portals over a shared stack, a stack's bakes, a
-/// terrain's lighting and a tile's settled water. Workers match every kind,
-/// so a kind added without its work fails to build.
+/// terrain's lighting and its bounce transfer, and a tile's settled water.
+/// Workers match every kind, so a kind added without its work fails to
+/// build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
     Tile,
@@ -36,16 +40,18 @@ pub enum JobKind {
     Bake,
     Lighting,
     Water,
+    Bounce,
 }
 
 impl JobKind {
     /// Every kind.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Tile,
         Self::Portals,
         Self::Bake,
         Self::Lighting,
         Self::Water,
+        Self::Bounce,
     ];
 
     /// Its name, as hosts carry it and key the records they keep by.
@@ -56,6 +62,7 @@ impl JobKind {
             Self::Bake => "terrain_bake",
             Self::Lighting => "terrain_lighting",
             Self::Water => "terrain_water",
+            Self::Bounce => "terrain_bounce",
         }
     }
 
@@ -334,6 +341,84 @@ pub fn water_output(bytes: &[u8]) -> Result<SteadyWater, CodecError> {
     codec::decode(bytes)
 }
 
+/// A [`JobKind::Bounce`]: the bounce transfer ([`crate::bounce`]) of a
+/// terrain's ground over `extent` meters along x and z, from `heights`,
+/// `samples` along x and z `spacing` meters apart, row by row along z (the
+/// heights its lighting reads), with `probes` columns along each side, its
+/// surface chosen by the rules and layers of the recipe shared as `recipe`.
+/// Its input is the job; as it holds a whole level's heights, hosts keep its
+/// output by that input's content hash, which engines compute (the recipe's
+/// key names its content too).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BounceJob {
+    pub recipe: String,
+    pub samples: [u32; 2],
+    pub spacing: f32,
+    pub extent: Vec2,
+    pub heights: Box<[f32]>,
+    pub probes: u32,
+}
+
+impl Codec for BounceJob {
+    fn write(&self, out: &mut Writer) {
+        out.put(&self.recipe)
+            .put(&self.samples)
+            .put(&self.spacing)
+            .put(&self.extent)
+            .put(&self.probes);
+        codec::put_grid(out, &self.heights, self.samples[0] as usize);
+    }
+
+    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+        let recipe = input.get()?;
+        let samples: [u32; 2] = input.get()?;
+        let spacing = input.get()?;
+        let extent = input.get()?;
+        let probes = input.get()?;
+        let heights = codec::get_grid(input, samples[0] as usize)?;
+        Ok(Self {
+            recipe,
+            samples,
+            spacing,
+            extent,
+            heights,
+            probes,
+        })
+    }
+}
+
+impl BounceJob {
+    pub const KIND: JobKind = JobKind::Bounce;
+
+    /// Its input: the job.
+    pub fn input(&self) -> Vec<u8> {
+        codec::encode(self)
+    }
+
+    /// Whether its grid holds at least two samples a side, as many
+    /// heights, all numbers, and its probes are an even count from 2 to
+    /// the most.
+    fn valid(&self) -> bool {
+        let [columns, rows] = self.samples.map(|count| count as usize);
+        columns >= 2
+            && rows >= 2
+            && self.heights.len() == columns * rows
+            && self.heights.iter().all(|height| height.is_finite())
+            && self.spacing.is_finite()
+            && self.spacing > 0.0
+            && self.extent.is_finite()
+            && self.extent.x > 0.0
+            && self.extent.y > 0.0
+            && (2..=MAX_PROBES).contains(&self.probes)
+            && self.probes.is_multiple_of(2)
+    }
+}
+
+/// A [`JobKind::Bounce`]'s output: the terrain's bounce transfer.
+pub fn bounce_output(bytes: &[u8]) -> Result<TerrainBounce, CodecError> {
+    codec::decode(bytes)
+}
+
 /// A shared recipe as a worker holds it: its layers seen as its terrain
 /// sees them, its pyramid and its compiled surface.
 struct Recipe {
@@ -363,6 +448,7 @@ enum Running {
     Bake(Box<(Layers, Pyramid)>),
     Lighting(Box<LightingJob>),
     Water(Box<SteadySolve>),
+    Bounce(Box<(BounceJob, Arc<Layers>, Arc<BiomeRules>)>),
 }
 
 /// What a worker holds of terrains, and runs their jobs over.
@@ -528,14 +614,25 @@ impl TerrainWorker {
                 };
                 Running::Water(Box::new(SteadySolve::new(layers, pyramid, key, cell)))
             }
+            JobKind::Bounce => {
+                let job: BounceJob = reader.get().map_err(invalid)?;
+                reader.finish().map_err(invalid)?;
+                if !job.valid() {
+                    return Err("bounce of an invalid grid".into());
+                }
+                let recipe = self.recipe(&job.recipe)?;
+                let (layers, rules) = (recipe.layers.clone(), recipe.rules.clone());
+                Running::Bounce(Box::new((job, layers, rules)))
+            }
         };
         self.running.insert(id, running);
         Ok(())
     }
 
     /// Works on job `id` for about `budget` work units (about one per
-    /// sample; portals, bakes and lighting run whole): its output once done,
-    /// `None` while work is left. A job that failed or finished is gone.
+    /// sample; portals, bakes, lighting and bounce transfers run whole):
+    /// its output once done, `None` while work is left. A job that failed
+    /// or finished is gone.
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
         let Some(running) = self.running.get_mut(&id) else {
             return Err("no such job".into());
@@ -574,6 +671,20 @@ impl TerrainWorker {
                 Some(water) => Ok(codec::encode(&water)),
                 None => return Ok(None),
             },
+            Running::Bounce(held) => {
+                let (job, layers, rules) = &**held;
+                let ground = Ground {
+                    samples: job.samples,
+                    spacing: job.spacing,
+                    heights: &job.heights,
+                };
+                Ok(codec::encode(&bounce(
+                    &ground,
+                    job.extent.to_array(),
+                    (layers.as_ref(), rules.as_ref()),
+                    job.probes,
+                )))
+            }
         };
         self.running.remove(&id);
         output.map(Some)

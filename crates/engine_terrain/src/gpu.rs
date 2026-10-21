@@ -185,10 +185,31 @@ pub fn sample_control(
         at(up, column),
         at(down, column),
     );
-    let gx = (east - west) / (2.0 * spacing);
-    let gz = (south - north) / (2.0 * spacing);
     let x = (first[0] + column as i64 - 1) as f32 * spacing;
     let z = (first[1] + row as i64 - 1) as f32 * spacing;
+    control_at(
+        (layers, rules),
+        [x, z],
+        [height, west, east, north, south],
+        spacing,
+        &mut Vec::new(),
+    )
+}
+
+/// The control value `rules` give ground over `layers` at `(x, z)` in the
+/// layers' frame, whose height there is `height` and `spacing` meters to its
+/// west, east, north and south `west`, `east`, `north` and `south`: the
+/// inputs a tile's sample takes, evaluated as [`sample_control`] evaluates
+/// them. `weights` is scratch space, reused across samples.
+pub(crate) fn control_at(
+    (layers, rules): (&Layers, &BiomeRules),
+    [x, z]: [f32; 2],
+    [height, west, east, north, south]: [f32; 5],
+    spacing: f32,
+    weights: &mut Vec<(u8, f32)>,
+) -> Control {
+    let gx = (east - west) / (2.0 * spacing);
+    let gz = (south - north) / (2.0 * spacing);
     let reads = rules.reads();
     let river = match layers.hydrology() {
         Some(water) if reads.water => water
@@ -221,7 +242,7 @@ pub fn sample_control(
             PathSample::FAR
         },
     };
-    rules.control(&inputs, &mut Vec::new())
+    rules.control(&inputs, weights)
 }
 
 fn push_f32(words: &mut Vec<u32>, values: impl IntoIterator<Item = f32>) {

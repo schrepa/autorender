@@ -187,7 +187,7 @@ pub struct Ground<'a> {
 impl Ground<'_> {
     /// The height at terrain-local `(x, z)`, interpolated between samples,
     /// held within the grid: beyond it its edge carries on.
-    fn height(&self, x: f32, z: f32) -> f32 {
+    pub(crate) fn height(&self, x: f32, z: f32) -> f32 {
         let [columns, rows] = self.samples.map(|count| count as usize);
         let fx = clamp(x / self.spacing, 0.0, (columns - 1) as f32);
         let fz = clamp(z / self.spacing, 0.0, (rows - 1) as f32);
@@ -529,14 +529,14 @@ fn arctangent(x: f32) -> f32 {
     }
 }
 
-fn normalized(vector: [f32; 3]) -> [f32; 3] {
+pub(crate) fn normalized(vector: [f32; 3]) -> [f32; 3] {
     let length = (vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]).sqrt();
     let scale = 1.0 / max(length, 1.0e-12);
     vector.map(|value| value * scale)
 }
 
 /// `value` within 0 to 1 as a byte, rounded.
-fn unorm(value: f32) -> u8 {
+pub(crate) fn unorm(value: f32) -> u8 {
     (clamp(value, 0.0, 1.0) * 255.0 + 0.5) as u8
 }
 

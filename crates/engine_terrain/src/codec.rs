@@ -249,6 +249,52 @@ pub(crate) fn get_wide_planes(
     Ok(planes.into_boxed_slice())
 }
 
+/// Writes `values`, records of `stride` bytes one after another, a place of
+/// the records at a time: each record's byte there as its difference
+/// (wrapping) from the record's before, which records changing little from
+/// one to the next, as neighbours' do, leave mostly small for the cook's
+/// compression. `values` holds whole records.
+pub(crate) fn put_records(out: &mut Writer, values: &[u8], stride: usize) {
+    out.put(&(values.len() as u64));
+    let count = if stride == 0 {
+        0
+    } else {
+        values.len() / stride
+    };
+    let mut residuals = Vec::with_capacity(values.len());
+    for place in 0..stride {
+        let mut before = 0_u8;
+        for record in 0..count {
+            let value = values[record * stride + place];
+            residuals.push(value.wrapping_sub(before));
+            before = value;
+        }
+    }
+    out.raw(&residuals);
+}
+
+/// Reads records [`put_records`] wrote, `stride` bytes each.
+pub(crate) fn get_records(input: &mut Reader<'_>, stride: usize) -> Result<Box<[u8]>, CodecError> {
+    let count = input.count()?;
+    if stride == 0 || !count.is_multiple_of(stride) {
+        return Err(CodecError("records of another size"));
+    }
+    let (residuals, rest) = input.bytes.split_at(count);
+    input.bytes = rest;
+    let records = count / stride;
+    let mut values = vec![0_u8; count];
+    let mut at = 0;
+    for place in 0..stride {
+        let mut before = 0_u8;
+        for record in 0..records {
+            before = before.wrapping_add(residuals[at]);
+            values[record * stride + place] = before;
+            at += 1;
+        }
+    }
+    Ok(values.into_boxed_slice())
+}
+
 /// What value `at`'s written neighbours (rows of `side`) predict it,
 /// wrapping, as [`predict_byte`] predicts bytes.
 fn predict_wide(at: usize, side: usize, value: impl Fn(usize) -> u16) -> u16 {
