@@ -43,8 +43,9 @@ use crate::{Generator, Layers, Pyramid, Stamp, TILE_STRIDE, Tile, TileKey};
 /// Meters past its tiles a region's square reaches on each side, within
 /// the terrain, so what its edges do to the water stays outside them.
 pub const MARGIN: f32 = 64.0;
-/// The most cells a region's square holds: the GPU binds each cell's
-/// faces, 64 bytes, in one buffer, a gibibyte at most.
+/// The most cells a region's square holds: the GPU takes about 124 bytes a
+/// cell to settle them, two gibibytes, and binds 32 of them (each cell's
+/// water's two states) in one buffer, half a gibibyte.
 pub const REGION_CELLS: u64 = 1 << 24;
 /// Cells inside the region's edge within which rivers count as crossing
 /// into it (closer, their water leaves again at once).

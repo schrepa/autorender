@@ -1,7 +1,7 @@
 //! The shallow-water scheme's passes (`water_sim.wgsl`) and the buffers
 //! they run over: slots of rectangles side by side, each a rectangle's
-//! ground, cells, faces, fluxes, sources, foam, waves, seconds and blocks,
-//! and sums. The square simulated around the camera (`water_sim.rs`) is one
+//! ground, cells, faces' depths, fluxes, sources, foam, waves, seconds and
+//! blocks, and sums. The square simulated around the camera (`water_sim.rs`) is one
 //! slot with a ring past its edges; regions settling for their tiles'
 //! records (`water_settle.rs`) fill as many as fit. One scheme runs both:
 //! what sets them apart is each slot's flags ([`SimSlot`]).
@@ -20,7 +20,6 @@ pub(crate) struct Kernels {
 
 /// The pipelines of the scheme's passes.
 pub(crate) struct Pipelines {
-    reconstruct: wgpu::ComputePipeline,
     exchange: wgpu::ComputePipeline,
     waves: wgpu::ComputePipeline,
     seconds: wgpu::ComputePipeline,
@@ -58,7 +57,6 @@ impl Kernels {
             let entry =
                 |entry| crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry);
             Pipelines {
-                reconstruct: entry(water_sim::sim_reconstruct),
                 exchange: entry(water_sim::sim_exchange),
                 waves: entry(water_sim::sim_waves),
                 seconds: entry(water_sim::sim_seconds),
@@ -102,34 +100,42 @@ fn slot_entries(capacity: [u32; 2]) -> [u64; 5] {
 }
 
 /// Bytes a slot holding rectangles of up to `capacity` cells along x and z
-/// takes in every buffer.
-pub(crate) fn slot_bytes(capacity: [u32; 2]) -> u64 {
+/// and up to `sources` cells rivers bring water to takes in every buffer:
+/// about 124 a cell.
+pub(crate) fn slot_bytes(capacity: [u32; 2], sources: u32) -> u64 {
     let [cells, corners, fluxes, blocks, _] = slot_entries(capacity);
     corners * 4
         + 2 * cells * 16
-        + 4 * cells * 16
+        + cells * 8
         + fluxes * 16
-        + cells * 16
+        + u64::from(sources) * 16
         + 2 * cells * 4
         + (cells + 2 * blocks) * 8
         + (2 * cells + blocks) * 16
 }
 
-/// The largest of a slot's entries in one buffer, its faces', in bytes.
-pub(crate) fn slot_faces_bytes(capacity: [u32; 2]) -> u64 {
-    4 * slot_entries(capacity)[0] * 16
+/// The most bytes a slot holding rectangles of up to `capacity` cells
+/// along x and z takes in one buffer: its cells' two states', its fluxes'
+/// or its sums', 32 a cell.
+pub(crate) fn slot_largest_bytes(capacity: [u32; 2]) -> u64 {
+    let [cells, _, fluxes, blocks, _] = slot_entries(capacity);
+    (2 * cells * 16)
+        .max(fluxes * 16)
+        .max((2 * cells + blocks) * 16)
 }
 
 /// The scheme's buffers: `slots` slots of rectangles up to `capacity`
-/// cells along x and z, with a ring past each one's edges where it has
-/// one; the uniforms of the slots' rectangles and of each stage's frame;
-/// and the groups binding them for each stage.
+/// cells along x and z, each with up to `sources` cells rivers bring water
+/// to and with a ring past its edges where it has one; the uniforms of the
+/// slots' rectangles and of each stage's frame; and the groups binding them
+/// for each stage.
 pub(crate) struct SlotBuffers {
     pub(crate) capacity: [u32; 2],
     pub(crate) slots: u32,
+    pub(crate) sources: u32,
     pub(crate) ground: wgpu::Buffer,
     pub(crate) cells: wgpu::Buffer,
-    pub(crate) faces: wgpu::Buffer,
+    pub(crate) depths: wgpu::Buffer,
     pub(crate) fluxes: wgpu::Buffer,
     pub(crate) inputs: wgpu::Buffer,
     pub(crate) foam: wgpu::Buffer,
@@ -145,7 +151,7 @@ impl SlotBuffers {
         device: &wgpu::Device,
         layout: &crate::pipelines::GroupLayout,
         (capacity, slots): ([u32; 2], u32),
-        ring: bool,
+        (sources, ring): (u32, bool),
     ) -> Self {
         let [held, corners, faces_between, blocks, ring_entries] = slot_entries(capacity);
         let all = u64::from(slots);
@@ -155,10 +161,14 @@ impl SlotBuffers {
         let none = wgpu::BufferUsages::empty();
         let ground = storage("engine/water-sim-ground", all * corners * 4, none);
         let cells = storage("engine/water-sim-cells", all * 2 * held * 16, none);
-        let faces = storage("engine/water-sim-faces", all * 4 * held * 16, none);
+        let depths = storage("engine/water-sim-depths", all * held * 8, none);
         let fluxes = storage("engine/water-sim-fluxes", all * faces_between * 16, none);
         let rings = if ring { all * ring_entries } else { 0 };
-        let inputs = storage("engine/water-sim-inputs", (all * held + rings) * 16, none);
+        let inputs = storage(
+            "engine/water-sim-inputs",
+            (all * u64::from(sources) + rings) * 16,
+            none,
+        );
         let foam = storage("engine/water-sim-foam", all * 2 * held * 4, none);
         let steps = storage(
             "engine/water-sim-steps",
@@ -197,7 +207,7 @@ impl SlotBuffers {
                     crate::buffers::entry("frame", &frames[stage]),
                     crate::buffers::entry("sim_ground", &ground),
                     crate::buffers::entry("sim_cells", &cells),
-                    crate::buffers::entry("sim_faces", &faces),
+                    crate::buffers::entry("sim_depths", &depths),
                     crate::buffers::entry("sim_fluxes", &fluxes),
                     crate::buffers::entry("sim_inputs", &inputs),
                     crate::buffers::entry("sim_foam", &foam),
@@ -210,9 +220,10 @@ impl SlotBuffers {
         Self {
             capacity,
             slots,
+            sources,
             ground,
             cells,
-            faces,
+            depths,
             fluxes,
             inputs,
             foam,
@@ -225,12 +236,14 @@ impl SlotBuffers {
     }
 
     /// Writes each stage's frame: the stage, the slots' count and capacity,
-    /// and the cells the square around the camera moved by.
+    /// the cells the square around the camera moved by, and the cells rivers
+    /// bring water to a slot holds.
     pub(crate) fn write_frames(&self, queue: &wgpu::Queue, shift: [i32; 2]) {
         for (stage, buffer) in self.frames.iter().enumerate() {
             let frame = SimFrame {
                 stage: [stage as u32, self.slots, self.capacity[0], self.capacity[1]],
                 shift: [shift[0], shift[1], 0, 0],
+                inputs: [self.sources, 0, 0, 0],
             };
             queue.write_buffer(buffer, 0, bytemuck::bytes_of(&frame));
         }
@@ -262,12 +275,12 @@ impl SlotBuffers {
     }
 
     pub(crate) fn sources_at(&self, slot: u32) -> u64 {
-        u64::from(slot) * self.held()
+        u64::from(slot) * u64::from(self.sources)
     }
 
     pub(crate) fn ring_at(&self, slot: u32) -> u64 {
         let ring = slot_entries(self.capacity)[4];
-        u64::from(self.slots) * self.held() + u64::from(slot) * ring
+        u64::from(self.slots) * u64::from(self.sources) + u64::from(slot) * ring
     }
 
     pub(crate) fn steps_at(&self, slot: u32) -> u64 {
@@ -298,7 +311,7 @@ impl SlotBuffers {
         [
             &self.ground,
             &self.cells,
-            &self.faces,
+            &self.depths,
             &self.fluxes,
             &self.inputs,
             &self.foam,
@@ -315,8 +328,9 @@ impl SlotBuffers {
 /// `pipelines`, over the `extent` cells along x and z the largest
 /// rectangle stepping holds, whose rivers bring water to up to `sourced`
 /// cells a slot: each step's blocks that step (where `sparse` slots run),
-/// its two stages (each slot stepping locally finding its cells' seconds
-/// from the first's waves), what rivers bring, and the foam.
+/// its two stages (each finding the faces' fluxes and updating the cells,
+/// each slot stepping locally finding its cells' seconds from the first's
+/// waves), what rivers bring, and the foam.
 pub(crate) fn encode_steps(
     pass: &mut wgpu::ComputePass<'_>,
     pipelines: &Pipelines,
@@ -325,7 +339,6 @@ pub(crate) fn encode_steps(
     extent: [u32; 2],
 ) {
     let [cells_x, cells_z] = groups_of(extent);
-    let [between_x, between_z] = groups_of(extent.map(|count| count + 1));
     let [blocks_x, blocks_z] = groups_of(groups_of(extent));
     let slots = buffers.slots;
     for _ in 0..steps {
@@ -336,10 +349,8 @@ pub(crate) fn encode_steps(
         }
         for (stage, group) in buffers.groups.iter().enumerate() {
             pass.set_bind_group(0, group, &[]);
-            pass.set_pipeline(&pipelines.reconstruct);
-            pass.dispatch_workgroups(cells_x, cells_z, slots);
             pass.set_pipeline(&pipelines.exchange);
-            pass.dispatch_workgroups(between_x, between_z, slots);
+            pass.dispatch_workgroups(cells_x, cells_z, slots);
             if stage == 0 && local {
                 pass.set_pipeline(&pipelines.waves);
                 pass.dispatch_workgroups(cells_x, cells_z, slots);

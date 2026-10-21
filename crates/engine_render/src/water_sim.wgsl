@@ -9,9 +9,11 @@
 // cell holds its water's surface, its flow along x and z (square meters a
 // second) and the level a lake holds it at, if one does: lakes stand still,
 // taking the water that runs into them and giving none. The ground stands at
-// the cells' corners. A stage reconstructs each cell's faces, finds the flux
-// through every face and updates every cell; rivers bring their water to
-// their cells after each step. The water carries foam: it churns it up
+// the cells' corners. A stage finds the flux through every face, each cell
+// reconstructing its water at its own faces and at its neighbors' beside
+// them (computing them twice costs less than carrying them through memory),
+// and updates every cell; rivers bring their water to their cells after each
+// step. The water carries foam: it churns it up
 // where it runs faster than its waves and where it slams into slower water,
 // the current carries it off, and it fades as its bubbles break.
 //
@@ -46,12 +48,10 @@ const SIM_THETA: f32 = 1.3;
 const SIM_THIN: f32 = 0.01;
 const SIM_DRY: f32 = 1.0e-4;
 const SIM_FASTEST: f32 = 20.0;
-// The meters a second the water rivers bring runs as it comes, what a cell
-// no lake holds holds as its lake's level, and what a dry cell past the
-// edges stands at.
+// The meters a second the water rivers bring runs as it comes, and what a
+// cell no lake holds holds as its lake's level.
 const SIM_SOURCE_SPEED: f32 = 1.5;
 const SIM_UNHELD: f32 = -1.0e30;
-const SIM_GHOST_DRY: f32 = -1.0e30;
 // Local steps: the share of a cell the fastest wave crosses in one, the
 // share of that they take, and the slowest wave they count (meters a
 // second).
@@ -70,11 +70,13 @@ const SIM_LOOKING: u32 = 16u;
 const SIM_SPARSE: u32 = 32u;
 
 // The stage (0: the first, 1: the second), the slots the buffers hold and
-// the most cells along x and z a slot holds; and, as the square around the
-// camera follows it, the cells it moved by along x and z.
+// the most cells along x and z a slot holds; as the square around the
+// camera follows it, the cells it moved by along x and z; and the most cells
+// rivers bring water to a slot holds.
 struct SimFrame {
     stage: vec4<u32>,
     shift: vec4<i32>,
+    inputs: vec4<u32>,
 }
 
 // A slot's rectangle: its cells along x and z, its flags and the cells
@@ -98,10 +100,10 @@ struct SimSlots {
 // a time: the water's surface, its flow along x and z, and the level a lake
 // holds it at (SIM_UNHELD where none does).
 @group(0) @binding(2) var<storage, read_write> sim_cells: array<vec4<f32>>;
-// Each cell's faces as reconstructed, east, west, north and south: the
-// water's surface and depth there, and its velocity across the face and
-// along it.
-@group(0) @binding(3) var<storage, read_write> sim_faces: array<vec4<f32>>;
+// Each cell's water's depth at its faces as reconstructed, the mean of its
+// west and east faces' and of its south and north faces', which the pull of
+// gravity down its ground reads.
+@group(0) @binding(3) var<storage, read_write> sim_depths: array<vec2<f32>>;
 // The fluxes through each slot's faces between columns (cells + 1 a row),
 // then through those between rows (cells a row): its mass and its momentum
 // across and along the face, and the fastest wave through it.
@@ -111,7 +113,7 @@ struct SimSlots {
 // second they bring; and the way the water runs as it comes, x and z, a
 // share of SIM_SOURCE_SPEED); after every slot's, each slot's ring, the
 // cells just past its edges as their water settled, two entries each: its
-// surface (SIM_GHOST_DRY where dry), its flow along x and z and the level a
+// surface (far below the ground where dry), its flow along x and z and the level a
 // lake holds it at (SIM_UNHELD where none does); then its foam. South then
 // north of each column, then west then east of each row.
 @group(0) @binding(5) var<storage, read> sim_inputs: array<vec4<f32>>;
@@ -192,8 +194,8 @@ fn sim_ground_base(q: Square) -> u32 {
     return q.slot * (sim_capacity().x + 1u) * (sim_capacity().y + 1u);
 }
 
-fn sim_faces_base(q: Square) -> u32 {
-    return q.slot * 4u * sim_held();
+fn sim_depths_base(q: Square) -> u32 {
+    return q.slot * sim_held();
 }
 
 fn sim_fluxes_base(q: Square) -> u32 {
@@ -202,12 +204,12 @@ fn sim_fluxes_base(q: Square) -> u32 {
 }
 
 fn sim_sources_base(q: Square) -> u32 {
-    return q.slot * sim_held();
+    return q.slot * frame.inputs.x;
 }
 
 fn sim_ring_base(q: Square) -> u32 {
     let c = sim_capacity();
-    return sim_slot_count() * sim_held() + q.slot * 4u * (c.x + c.y);
+    return sim_slot_count() * frame.inputs.x + q.slot * 4u * (c.x + c.y);
 }
 
 fn sim_steps_base(q: Square) -> u32 {
@@ -297,51 +299,55 @@ fn sim_face(w: f32, ground: f32, across: f32, along: f32) -> vec4<f32> {
     return vec4<f32>(w, h, velocity);
 }
 
-@compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
-fn sim_reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
-    let q = sim_square(id.z);
-    if !sim_runs(q, id) || !sim_active(q, id.x, id.y) {
-        return;
-    }
-    let state = frame.stage.x;
-    let i = i32(id.x);
-    let j = i32(id.y);
-    let here = sim_cell(q, state, i, j);
-    let west = sim_cell(q, state, i - 1, j);
-    let east = sim_cell(q, state, i + 1, j);
-    let south = sim_cell(q, state, i, j - 1);
-    let north = sim_cell(q, state, i, j + 1);
-    let ground_x = vec2<f32>(sim_ground_x(q, id.x, id.y), sim_ground_x(q, id.x + 1u, id.y));
-    let ground_z = vec2<f32>(sim_ground_z(q, id.x, id.y), sim_ground_z(q, id.x, id.y + 1u));
-    let cell = sim_faces_base(q) + (id.y * q.nx + id.x) * 4u;
-    // Across x: east then west, kept above the ground at both faces.
-    let slope_x = vec3<f32>(sim_half_slope(west.x, here.x, east.x),
+// A cell's two faces across an axis as reconstructed, the low one (west or
+// south) and the high one (east or north): the water's surface and depth at
+// each, and its velocity across the face and along it.
+struct SimSides {
+    low: vec4<f32>,
+    high: vec4<f32>,
+}
+
+// Cell (i, j)'s faces across x from the state `state`: its slopes limited
+// by its neighbors', its water kept above the ground at both faces.
+fn sim_across_x(q: Square, state: u32, i: u32, j: u32) -> SimSides {
+    let here = sim_cell(q, state, i32(i), i32(j));
+    let west = sim_cell(q, state, i32(i) - 1, i32(j));
+    let east = sim_cell(q, state, i32(i) + 1, i32(j));
+    let ground = vec2<f32>(sim_ground_x(q, i, j), sim_ground_x(q, i + 1u, j));
+    let slope = vec3<f32>(sim_half_slope(west.x, here.x, east.x),
         sim_half_slope(west.y, here.y, east.y), sim_half_slope(west.z, here.z, east.z));
-    var east_w = here.x + slope_x.x;
-    var west_w = here.x - slope_x.x;
-    if east_w < ground_x.y {
-        east_w = ground_x.y;
-        west_w = 2.0 * here.x - ground_x.y;
-    } else if west_w < ground_x.x {
-        west_w = ground_x.x;
-        east_w = 2.0 * here.x - ground_x.x;
+    var high_w = here.x + slope.x;
+    var low_w = here.x - slope.x;
+    if high_w < ground.y {
+        high_w = ground.y;
+        low_w = 2.0 * here.x - ground.y;
+    } else if low_w < ground.x {
+        low_w = ground.x;
+        high_w = 2.0 * here.x - ground.x;
     }
-    sim_faces[cell] = sim_face(east_w, ground_x.y, here.y + slope_x.y, here.z + slope_x.z);
-    sim_faces[cell + 1u] = sim_face(west_w, ground_x.x, here.y - slope_x.y, here.z - slope_x.z);
-    // Across z: north then south, the flow along z across these faces.
-    let slope_z = vec3<f32>(sim_half_slope(south.x, here.x, north.x),
+    return SimSides(sim_face(low_w, ground.x, here.y - slope.y, here.z - slope.z),
+        sim_face(high_w, ground.y, here.y + slope.y, here.z + slope.z));
+}
+
+// Cell (i, j)'s faces across z, the flow along z across them.
+fn sim_across_z(q: Square, state: u32, i: u32, j: u32) -> SimSides {
+    let here = sim_cell(q, state, i32(i), i32(j));
+    let south = sim_cell(q, state, i32(i), i32(j) - 1);
+    let north = sim_cell(q, state, i32(i), i32(j) + 1);
+    let ground = vec2<f32>(sim_ground_z(q, i, j), sim_ground_z(q, i, j + 1u));
+    let slope = vec3<f32>(sim_half_slope(south.x, here.x, north.x),
         sim_half_slope(south.y, here.y, north.y), sim_half_slope(south.z, here.z, north.z));
-    var north_w = here.x + slope_z.x;
-    var south_w = here.x - slope_z.x;
-    if north_w < ground_z.y {
-        north_w = ground_z.y;
-        south_w = 2.0 * here.x - ground_z.y;
-    } else if south_w < ground_z.x {
-        south_w = ground_z.x;
-        north_w = 2.0 * here.x - ground_z.x;
+    var high_w = here.x + slope.x;
+    var low_w = here.x - slope.x;
+    if high_w < ground.y {
+        high_w = ground.y;
+        low_w = 2.0 * here.x - ground.y;
+    } else if low_w < ground.x {
+        low_w = ground.x;
+        high_w = 2.0 * here.x - ground.x;
     }
-    sim_faces[cell + 2u] = sim_face(north_w, ground_z.y, here.z + slope_z.z, here.y + slope_z.y);
-    sim_faces[cell + 3u] = sim_face(south_w, ground_z.x, here.z - slope_z.z, here.y - slope_z.y);
+    return SimSides(sim_face(low_w, ground.x, here.z - slope.z, here.y - slope.y),
+        sim_face(high_w, ground.y, here.z + slope.z, here.y + slope.y));
 }
 
 // The central-upwind flux through a face whose water stands as `l` on its
@@ -420,86 +426,94 @@ fn sim_open(face: vec4<f32>, inward: f32) -> vec4<f32> {
     return flux;
 }
 
-// Each face beside a cell that steps: between two that step, as their
-// faces say; on the edges, open or between the inside and the ring cell
-// past it; and between a cell that steps and one standing still, nothing,
-// as no water reaches either this step.
+// Each cell that steps, and each beside one that does, finds the fluxes
+// through its east and north faces (and its west and south ones on the
+// rectangle's edges): between two cells that step, as their faces say; on
+// the edges, open or between the inside and the ring cell past it; and
+// between a cell that steps and one standing still, nothing, as no water
+// reaches either this step. A cell that steps keeps its faces' depths.
 @compute @workgroup_size(WATER_SIM_GROUP, WATER_SIM_GROUP)
 fn sim_exchange(@builtin(global_invocation_id) id: vec3<u32>) {
     let q = sim_square(id.z);
+    if !sim_runs(q, id) {
+        return;
+    }
     let nx = q.nx;
     let nz = q.nz;
     let i = id.x;
     let j = id.y;
-    if id.z >= sim_slot_count() || !sim_has(q, SIM_STEPPING) {
-        return;
-    }
+    let at = j * nx + i;
+    let state = frame.stage.x;
     let open = sim_has(q, SIM_OPEN);
-    let faces = sim_faces_base(q);
     let fluxes = sim_fluxes_base(q);
-    // The face between columns i - 1 and i.
-    if j < nz && i <= nx {
-        let west_steps = i > 0u && sim_active(q, i - 1u, j);
-        let east_steps = i < nx && sim_active(q, i, j);
-        if west_steps || east_steps {
-            var flux = vec4<f32>(0.0);
-            if i == 0u {
-                let inside = sim_faces[faces + (j * nx) * 4u + 1u];
-                if open {
-                    flux = sim_open(inside, 1.0);
-                } else {
-                    let ghost = 2u * nx + 2u * j;
-                    flux = sim_edge(sim_ghost_face(q, ghost, sim_ground_x(q, 0u, j), false),
-                        inside, sim_ghost_held(q, ghost), sim_held_at(q, j * nx));
-                }
-            } else if i == nx {
-                let inside = sim_faces[faces + (j * nx + nx - 1u) * 4u];
-                if open {
-                    flux = sim_open(inside, -1.0);
-                } else {
-                    let ghost = 2u * nx + 2u * j + 1u;
-                    flux = sim_edge(inside, sim_ghost_face(q, ghost, sim_ground_x(q, nx, j), false),
-                        sim_held_at(q, j * nx + nx - 1u), sim_ghost_held(q, ghost));
-                }
-            } else if west_steps && east_steps {
-                let l = sim_faces[faces + (j * nx + i - 1u) * 4u];
-                let r = sim_faces[faces + (j * nx + i) * 4u + 1u];
-                flux = sim_from_lakes(q, sim_flux(l, r), j * nx + i - 1u, j * nx + i);
-            }
-            sim_fluxes[fluxes + j * (nx + 1u) + i] = flux;
-        }
+    let steps = sim_active(q, i, j);
+    let east_steps = i + 1u < nx && sim_active(q, i + 1u, j);
+    let north_steps = j + 1u < nz && sim_active(q, i, j + 1u);
+    var x = SimSides(vec4<f32>(0.0), vec4<f32>(0.0));
+    var z = SimSides(vec4<f32>(0.0), vec4<f32>(0.0));
+    if steps {
+        x = sim_across_x(q, state, i, j);
+        z = sim_across_z(q, state, i, j);
+        sim_depths[sim_depths_base(q) + at] =
+            vec2<f32>(0.5 * (x.low.y + x.high.y), 0.5 * (z.low.y + z.high.y));
     }
-    // The face between rows j - 1 and j.
-    if i < nx && j <= nz {
-        let south_steps = j > 0u && sim_active(q, i, j - 1u);
-        let north_steps = j < nz && sim_active(q, i, j);
-        if south_steps || north_steps {
-            var flux = vec4<f32>(0.0);
-            if j == 0u {
-                let inside = sim_faces[faces + i * 4u + 3u];
-                if open {
-                    flux = sim_open(inside, 1.0);
-                } else {
-                    let ghost = 2u * i;
-                    flux = sim_edge(sim_ghost_face(q, ghost, sim_ground_z(q, i, 0u), true), inside,
-                        sim_ghost_held(q, ghost), sim_held_at(q, i));
-                }
-            } else if j == nz {
-                let inside = sim_faces[faces + ((nz - 1u) * nx + i) * 4u + 2u];
-                if open {
-                    flux = sim_open(inside, -1.0);
-                } else {
-                    let ghost = 2u * i + 1u;
-                    flux = sim_edge(inside, sim_ghost_face(q, ghost, sim_ground_z(q, i, nz), true),
-                        sim_held_at(q, (nz - 1u) * nx + i), sim_ghost_held(q, ghost));
-                }
-            } else if south_steps && north_steps {
-                let l = sim_faces[faces + ((j - 1u) * nx + i) * 4u + 2u];
-                let r = sim_faces[faces + (j * nx + i) * 4u + 3u];
-                flux = sim_from_lakes(q, sim_flux(l, r), (j - 1u) * nx + i, j * nx + i);
+    // The face between columns i and i + 1, or the east edge.
+    if steps || east_steps {
+        var flux = vec4<f32>(0.0);
+        if i + 1u == nx {
+            if open {
+                flux = sim_open(x.high, -1.0);
+            } else {
+                let ghost = 2u * nx + 2u * j + 1u;
+                flux = sim_edge(x.high, sim_ghost_face(q, ghost, sim_ground_x(q, nx, j), false),
+                    sim_held_at(q, at), sim_ghost_held(q, ghost));
             }
-            sim_fluxes[fluxes + (nx + 1u) * nz + j * nx + i] = flux;
+        } else if steps && east_steps {
+            let far = sim_across_x(q, state, i + 1u, j).low;
+            flux = sim_from_lakes(q, sim_flux(x.high, far), at, at + 1u);
         }
+        sim_fluxes[fluxes + j * (nx + 1u) + i + 1u] = flux;
+    }
+    // The west edge.
+    if i == 0u && steps {
+        var flux: vec4<f32>;
+        if open {
+            flux = sim_open(x.low, 1.0);
+        } else {
+            let ghost = 2u * nx + 2u * j;
+            flux = sim_edge(sim_ghost_face(q, ghost, sim_ground_x(q, 0u, j), false), x.low,
+                sim_ghost_held(q, ghost), sim_held_at(q, at));
+        }
+        sim_fluxes[fluxes + j * (nx + 1u)] = flux;
+    }
+    // The face between rows j and j + 1, or the north edge.
+    if steps || north_steps {
+        var flux = vec4<f32>(0.0);
+        if j + 1u == nz {
+            if open {
+                flux = sim_open(z.high, -1.0);
+            } else {
+                let ghost = 2u * i + 1u;
+                flux = sim_edge(z.high, sim_ghost_face(q, ghost, sim_ground_z(q, i, nz), true),
+                    sim_held_at(q, at), sim_ghost_held(q, ghost));
+            }
+        } else if steps && north_steps {
+            let far = sim_across_z(q, state, i, j + 1u).low;
+            flux = sim_from_lakes(q, sim_flux(z.high, far), at, at + nx);
+        }
+        sim_fluxes[fluxes + (nx + 1u) * nz + (j + 1u) * nx + i] = flux;
+    }
+    // The south edge.
+    if j == 0u && steps {
+        var flux: vec4<f32>;
+        if open {
+            flux = sim_open(z.low, 1.0);
+        } else {
+            let ghost = 2u * i;
+            flux = sim_edge(sim_ghost_face(q, ghost, sim_ground_z(q, i, 0u), true), z.low,
+                sim_ghost_held(q, ghost), sim_held_at(q, at));
+        }
+        sim_fluxes[fluxes + (nx + 1u) * nz + i] = flux;
     }
 }
 
@@ -619,9 +633,9 @@ fn sim_update(@builtin(global_invocation_id) id: vec3<u32>) {
     let east = sim_east(q, i, j).xyz;
     let south = sim_south(q, i, j).xyz;
     let north = sim_north(q, i, j).xyz;
-    let faces = sim_faces_base(q) + at * 4u;
-    let depth_x = 0.5 * (sim_faces[faces].y + sim_faces[faces + 1u].y);
-    let depth_z = 0.5 * (sim_faces[faces + 2u].y + sim_faces[faces + 3u].y);
+    let depths = sim_depths[sim_depths_base(q) + at];
+    let depth_x = depths.x;
+    let depth_z = depths.y;
     let slope_x = (sim_ground_x(q, i + 1u, j) - sim_ground_x(q, i, j)) / dx;
     let slope_z = (sim_ground_z(q, i, j + 1u) - sim_ground_z(q, i, j)) / dx;
     // The flux through faces between rows carries the flow along z across

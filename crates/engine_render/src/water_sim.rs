@@ -83,7 +83,9 @@ impl WaterSim {
             .as_ref()
             .is_none_or(|current| !Arc::ptr_eq(&current.source, window));
         let same_size = self.window.as_ref().is_some_and(|current| {
-            current.source.cells == window.cells && current.source.cell == window.cell
+            current.source.cells == window.cells
+                && current.source.cell == window.cell
+                && window.sources.len() <= current.buffers.sources as usize
         });
         if changed && same_size {
             self.carried = self.refill(queue, window);
@@ -128,11 +130,12 @@ impl WaterSim {
         window: &Arc<WaterWindow>,
     ) -> SimWindow {
         let n = window.cells as usize;
+        let sources = (window.sources.len() as u32).max(1);
         let buffers = SlotBuffers::new(
             device,
             &self.kernels.layout,
             ([window.cells, window.cells], 1),
-            true,
+            (sources, true),
         );
         let start = start(window);
         let both = [start.as_slice(), start.as_slice()].concat();

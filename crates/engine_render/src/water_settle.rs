@@ -27,7 +27,7 @@ use crate::gpu_layouts::constants::{
 };
 use crate::gpu_layouts::water::SimSlot;
 use crate::water_kernels::{
-    Kernels, SlotBuffers, encode_look, encode_steps, groups_of, slot_bytes, slot_faces_bytes,
+    Kernels, SlotBuffers, encode_look, encode_steps, groups_of, slot_bytes, slot_largest_bytes,
 };
 
 /// Steps between a region's looks at its water, which its frames' steps
@@ -235,7 +235,11 @@ impl WaterSettle {
         }
         self.kernels.pipelines(device);
         self.ensure_buffers(device);
-        let Some(capacity) = self.buffers.as_ref().map(|buffers| buffers.capacity) else {
+        let Some((capacity, sourced)) = self
+            .buffers
+            .as_ref()
+            .map(|buffers| (buffers.capacity, buffers.sources))
+        else {
             return;
         };
         // Waiting starts fill free slots, those larger than the slots hold
@@ -246,7 +250,9 @@ impl WaterSettle {
             }
             let fits = |start: &SettleStart| {
                 let cells = start.level.cells;
-                cells[0] <= capacity[0] && cells[1] <= capacity[1]
+                cells[0] <= capacity[0]
+                    && cells[1] <= capacity[1]
+                    && start.level.sources.len() <= sourced as usize
             };
             let Some(at) = self.waiting.iter().position(|(_, start)| fits(start)) else {
                 break;
@@ -393,9 +399,10 @@ impl WaterSettle {
     }
 
     /// Its buffers for the regions waiting and settling: as large along x
-    /// and z as the largest of them, as many slots as its memory holds,
-    /// made anew where larger are wanted and no region settles. A start
-    /// larger than the GPU binds fails its records.
+    /// and z as the largest of them, as many cells rivers bring water to
+    /// as the most of them, and as many slots as its memory holds, made
+    /// anew where more are wanted and no region settles. A start larger than
+    /// the GPU binds fails its records.
     fn ensure_buffers(&mut self, device: &wgpu::Device) {
         let limits = device.limits();
         let binding = limits
@@ -404,7 +411,8 @@ impl WaterSettle {
         let mut kept = VecDeque::with_capacity(self.waiting.len());
         for (records, start) in std::mem::take(&mut self.waiting) {
             let cells = start.level.cells;
-            if slot_faces_bytes(cells) <= binding {
+            let sources = start.level.sources.len() as u64 * 16;
+            if slot_largest_bytes(cells).max(sources) <= binding {
                 kept.push_back((records, start));
                 continue;
             }
@@ -424,27 +432,31 @@ impl WaterSettle {
             .iter()
             .map(|(_, start)| start)
             .chain(self.squares.iter().flatten().map(|square| &square.start));
-        let mut largest = [1, 1];
+        let (mut largest, mut sources) = ([1, 1], 1);
         for start in starts {
             let cells = start.level.cells;
             largest = [largest[0].max(cells[0]), largest[1].max(cells[1])];
+            sources = sources.max(start.level.sources.len() as u32);
         }
         let settling = self.squares.iter().any(Option::is_some) || !self.readbacks.is_empty();
         let fits = self.buffers.as_ref().is_some_and(|buffers| {
-            buffers.capacity[0] >= largest[0] && buffers.capacity[1] >= largest[1]
+            buffers.capacity[0] >= largest[0]
+                && buffers.capacity[1] >= largest[1]
+                && buffers.sources >= sources
         });
         if fits || (settling && self.buffers.is_some()) {
             return;
         }
         let budget = if self.cooking { COOK_BYTES } else { PLAY_BYTES };
-        let slots = (budget / slot_bytes(largest))
-            .min(binding / slot_faces_bytes(largest))
+        let slots = (budget / slot_bytes(largest, sources))
+            .min(binding / slot_largest_bytes(largest))
+            .min(binding / (u64::from(sources) * 16))
             .clamp(1, SIM_SLOTS as u64) as u32;
         self.buffers = Some(SlotBuffers::new(
             device,
             &self.kernels.layout,
             (largest, slots),
-            false,
+            (sources, false),
         ));
         self.squares = (0..slots).map(|_| None).collect();
     }

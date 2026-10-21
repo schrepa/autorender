@@ -25,12 +25,14 @@ gpu_structs! {
     }
 
     /// WGSL `SimFrame` of `water_sim.wgsl`: the stage, the slots the
-    /// buffers hold and the most cells along x and z a slot holds; and the
-    /// cells the square around the camera moved by.
+    /// buffers hold and the most cells along x and z a slot holds; the
+    /// cells the square around the camera moved by; and the most cells
+    /// rivers bring water to a slot holds.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimFrame as ["SimFrame" in WATER_SIM_SHADER] {
         pub stage: [u32; 4],
         pub shift: [i32; 4],
+        pub inputs: [u32; 4],
     }
 
     /// WGSL `SimSlot` of `water_sim.wgsl`: a slot's rectangle, its cells

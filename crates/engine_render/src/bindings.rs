@@ -1081,7 +1081,7 @@ tables! {
             uniform_of(0, "frame", size_of::<water::SimFrame>(), C),
             read(1, "sim_ground", C),
             write(2, "sim_cells", C),
-            write(3, "sim_faces", C),
+            write(3, "sim_depths", C),
             write(4, "sim_fluxes", C),
             read(5, "sim_inputs", C),
             write(6, "sim_foam", C),
