@@ -47,6 +47,7 @@ mod sky;
 mod sky_occlusion;
 mod spline_mesh;
 mod statistics;
+mod texture_records;
 mod ticks;
 mod transform_edits;
 mod virtual_geometry;
@@ -115,6 +116,7 @@ pub use sky::*;
 pub use sky_occlusion::*;
 pub use spline_mesh::*;
 pub use statistics::{Distribution, median};
+pub use texture_records::*;
 pub use transform_edits::*;
 pub use virtual_geometry::*;
 pub use water::{WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource, WaterSources};
@@ -351,14 +353,18 @@ impl Engine {
             .init_schedule(FixedTickEnd)
             // Before the frame's transforms refresh, the world follows the
             // camera; after, what follows its view. Grounded entities stand
-            // on the ground and spline meshes build here; features add the
-            // rest.
+            // on the ground and spline meshes build here, and textures load
+            // as records; features add the rest.
             .add_systems(
                 WorldSync,
                 (
                     grounded::settle.in_set(WorldSyncSystems::Ground),
                     spline_mesh::build.in_set(WorldSyncSystems::Build),
                 ),
+            )
+            .add_systems(
+                ViewSync,
+                texture_records::load_textures.in_set(ViewSyncSystems::Stream),
             )
             .configure_sets(
                 WorldSync,
@@ -405,6 +411,7 @@ impl Engine {
             .init_resource::<Features>()
             .init_resource::<WaterSources>()
             .init_resource::<Jobs>()
+            .init_resource::<TextureRecords>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()

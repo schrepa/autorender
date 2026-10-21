@@ -16,8 +16,8 @@ use crate::pipeline::QUICK;
 use crate::process::run;
 
 /// The presets cooked when none is named: those whose content makes
-/// records.
-const PRESETS: &[&str] = &["highlands"];
+/// records (terrain tiles and bakes, generated textures).
+const PRESETS: &[&str] = &["highlands", "metro", "city"];
 
 /// Where packs are written and read, from the repository's root.
 const COOKED: &str = "web/public/cooked";

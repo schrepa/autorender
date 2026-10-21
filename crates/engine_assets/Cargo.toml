@@ -13,6 +13,8 @@ schema = ["dep:schemars", "engine_settings/schema"]
 [dependencies]
 bevy_ecs.workspace = true
 engine_math.workspace = true
+# sRGB decoding, the same bits on every host.
+libm.workspace = true
 engine_settings.workspace = true
 schemars = { workspace = true, optional = true }
 glam.workspace = true

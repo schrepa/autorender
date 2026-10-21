@@ -141,6 +141,26 @@ pub fn clamp(x: f32, low: f32, high: f32) -> f32 {
     min(max(x, low), high)
 }
 
+/// e raised to `x`: musl's `expf`, the same bits on native targets and in
+/// browsers (the standard function calls each platform's own).
+#[inline]
+pub fn exp(x: f32) -> f32 {
+    libm::expf(x)
+}
+
+/// The natural logarithm of `x`: musl's `logf`, the same bits on every
+/// host.
+#[inline]
+pub fn ln(x: f32) -> f32 {
+    libm::logf(x)
+}
+
+/// `x` raised to `y`: musl's `powf`, the same bits on every host.
+#[inline]
+pub fn pow(x: f32, y: f32) -> f32 {
+    libm::powf(x, y)
+}
+
 /// Arguments beyond the fast path's exact reduction: rare, so a
 /// well-predicted branch to musl (identical on every platform).
 #[cold]

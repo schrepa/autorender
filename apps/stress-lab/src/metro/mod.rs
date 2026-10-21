@@ -19,7 +19,6 @@
 //! people) always keep their own node trees, as imported glTF models do.
 
 mod animated;
-mod bc7;
 mod materials;
 mod models;
 mod people;
@@ -3208,45 +3207,49 @@ pub(crate) struct Spawned {
 )]
 pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Result<Spawned> {
     let mut city = build(config);
+    let mut library = Library::new(config.mesh_variety, config.textured);
+    let mut records = world
+        .remove_resource::<TextureRecords>()
+        .unwrap_or_default();
     let mut assets = world.resource_mut::<AssetLibrary>();
-    let mut library = Library::new(
-        config.mesh_variety,
-        config.textured,
-        config.compressed_textures,
-    );
-    // Meshes, materials and the size stand-ins scale to.
-    let mut drawn = Vec::with_capacity(city.nodes.len());
-    for node in &city.nodes {
-        let Some(look) = node.look else {
-            drawn.push(None);
-            continue;
-        };
-        let (mesh, size) = library.mesh(&mut assets, look.model)?;
-        let material = library.material(&mut assets, look.mat)?;
-        drawn.push(Some((Mesh3d { mesh, material }, size)));
-    }
-    let mut pictures = Vec::with_capacity(AD_SLOTS as usize);
-    for slot in 0..AD_SLOTS {
-        let handle = library.material(&mut assets, Mat::Ad(slot))?;
-        let ads = (0..textures::ADS)
-            .map(|ad| library.advert(&mut assets, slot, ad))
-            .collect::<Result<Vec<_>, _>>()?;
-        pictures.push((handle, ads));
-    }
-    // Each clip once, in the order the city's players first name them, so
-    // the library holds them in the same slots every run.
-    let mut named: Vec<Clip> = Vec::new();
-    for (_, extra) in &city.extras {
-        if let Extra::Player { clip, .. } = extra
-            && !named.contains(clip)
-        {
-            named.push(*clip);
+    // Meshes, materials and the size stand-ins scale to; each clip once, in
+    // the order the city's players first name them, so the library holds
+    // them in the same slots every run.
+    let admitted = (|| {
+        let mut drawn = Vec::with_capacity(city.nodes.len());
+        for node in &city.nodes {
+            let Some(look) = node.look else {
+                drawn.push(None);
+                continue;
+            };
+            let (mesh, size) = library.mesh(&mut assets, look.model)?;
+            let material = library.material((&mut records, &mut assets), look.mat)?;
+            drawn.push(Some((Mesh3d { mesh, material }, size)));
         }
-    }
-    let clips: HashMap<Clip, ClipHandle> = named
-        .into_iter()
-        .map(|clip| library.clip(&mut assets, clip).map(|handle| (clip, handle)))
-        .collect::<Result<_, _>>()?;
+        let mut pictures = Vec::with_capacity(AD_SLOTS as usize);
+        for slot in 0..AD_SLOTS {
+            let handle = library.material((&mut records, &mut assets), Mat::Ad(slot))?;
+            let ads = (0..textures::ADS)
+                .map(|ad| library.advert((&mut records, &mut assets), slot, ad))
+                .collect::<Result<Vec<_>, _>>()?;
+            pictures.push((handle, ads));
+        }
+        let mut named: Vec<Clip> = Vec::new();
+        for (_, extra) in &city.extras {
+            if let Extra::Player { clip, .. } = extra
+                && !named.contains(clip)
+            {
+                named.push(*clip);
+            }
+        }
+        let clips: HashMap<Clip, ClipHandle> = named
+            .into_iter()
+            .map(|clip| library.clip(&mut assets, clip).map(|handle| (clip, handle)))
+            .collect::<Result<_, _>>()?;
+        Ok::<_, engine::Error>((drawn, pictures, clips))
+    })();
+    world.insert_resource(records);
+    let (drawn, pictures, clips) = admitted?;
     let renderables = drawn.iter().filter(|mesh| mesh.is_some()).count() as u32;
     debug_assert_eq!(renderables, config.renderables, "renderables as configured");
     let dense = if config.dense_colliders {

@@ -509,19 +509,6 @@
       "captures": ["exact", "gpu:0.5"]
     },
     {
-      "name": "metro-bc7-off",
-      "tier": "full",
-      "note": "Metro with its textures uncompressed, beside the smoke tier's BC7 metro: the compressed-texture paths and the plain ones.",
-      "scene": "metro",
-      "options": { "config": { "compressed_textures": false } },
-      "ticks": 30,
-      "views": ["overview", "close"],
-      "captures": ["exact", "gpu:0.5"],
-      "unstable": {
-        "close gpu:0.5": "Two to four images in four runs of the full-tier A/A (2026-10-12) in the close GPU-presented capture, as in most of metro's variants. Suspected: hash maps seeded at random per process, and GPU timing."
-      }
-    },
-    {
       "name": "dense-visibility",
       "tier": "full",
       "note": "Dense virtual geometry shaded through the visibility buffer.",

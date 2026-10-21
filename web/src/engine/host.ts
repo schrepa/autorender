@@ -180,8 +180,8 @@ let paused = development && !preparedDevelopment;
 // sessions first render their starting state without advancing time behind a
 // hidden canvas (Firefox paints a visible WebGPU canvas by waiting on its GPU
 // process), until rendered frames stop creating pipelines, the GPU has
-// compiled them and terrains have loaded the camera's view;
-// then play starts. Development sessions start paused and compile with the
+// compiled them, terrains have loaded the camera's view and textures their
+// records; then play starts. Development sessions start paused and compile with the
 // frames their commands render.
 let preparing = !development || preparedDevelopment;
 // Hidden from the start: creating the renderer already compiles pipelines.

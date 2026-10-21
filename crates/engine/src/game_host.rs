@@ -219,6 +219,7 @@ impl<G: Game> GameHost<G> {
     /// what jobs make), and runs every job anyway to verify them.
     pub fn set_job_cache(&mut self, caching: bool, verify: bool) {
         self.jobs.set_cache(caching, verify);
+        self.app.set_job_verifying(caching && verify);
     }
 
     /// What the host does for the engine's jobs since the last call, in

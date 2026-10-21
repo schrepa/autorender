@@ -332,7 +332,10 @@ impl Renderer {
                 meshes.contains_key(mesh)
                     && material.is_none_or(|handle| materials.group(handle).is_some())
             },
-            |handle| Self::placed_material(snapshot, handle),
+            |handle| {
+                let version = materials.version(handle)?;
+                Self::placed_material(snapshot, handle).map(|material| (material, version))
+            },
         );
         // Plan batches' impostors come first within a budget.
         let budget = settings
@@ -357,7 +360,11 @@ impl Renderer {
                     .is_some_and(|source| source.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES);
             if let (true, Some(mesh), Some(source)) = (eligible, mesh, source) {
                 let key = (group.meshes[0], Some(group.material));
-                if let Some(baked) = self.impostors.placed.record(key, Some(&group.source)) {
+                let baked_as = (
+                    group.source,
+                    self.materials.version(group.material).unwrap_or(0),
+                );
+                if let Some(baked) = self.impostors.placed.record(key, Some(&baked_as)) {
                     record = baked;
                 } else {
                     let (bind_group, variant) = self.materials.binding(Some(group.material));
@@ -374,7 +381,7 @@ impl Renderer {
                         group: bind_group,
                         variant: variant.with_extended(mesh.extended).with_skinned(false),
                         bounds: (bounds.min(), bounds.max()),
-                        material: Some(group.source),
+                        material: Some(baked_as),
                     };
                     if self.impostors.placed.bake(
                         &self.device,
@@ -389,7 +396,7 @@ impl Renderer {
                         record = self
                             .impostors
                             .placed
-                            .record(key, Some(&group.source))
+                            .record(key, Some(&baked_as))
                             .unwrap_or_default();
                     } else {
                         self.impostors.dropped += 1;

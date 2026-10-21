@@ -6,8 +6,8 @@ use engine::collections::HashMap;
 use crate::{StressConfig, StressFile, StressLab, set_view, stress_observation};
 
 /// Files workloads read, by name: the dense scene's virtual meshes,
-/// whose prefixes the page fetches, and the highlands'
-/// terrain material maps, which it decodes.
+/// whose prefixes the page fetches, and the highlands' optional scanned
+/// rock maps, which it decodes.
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct StressFiles {
@@ -64,11 +64,6 @@ impl StressFiles {
     /// The files the dense scene reads, as a JSON array of names.
     pub fn dense_names() -> String {
         serde_json::to_string(&crate::DENSE_FILES).unwrap_or_else(|_| "[]".into())
-    }
-
-    /// The images the highlands read, as a JSON array of names.
-    pub fn highlands_names() -> String {
-        serde_json::to_string(&crate::HIGHLANDS_FILES).unwrap_or_else(|_| "[]".into())
     }
 
     /// The scanned rock maps the highlands read when present, as a JSON

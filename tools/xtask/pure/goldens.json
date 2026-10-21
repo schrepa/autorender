@@ -947,5 +947,137 @@
       "level": 0,
       "points": 61
     }
+  },
+  "textures": {
+    "textures cutout": {
+      "astc": {
+        "hash": "1be601a3b16afff1",
+        "psnr by level": [
+          99.0,
+          60.2,
+          45.8,
+          45.4,
+          44.5,
+          54.2,
+          99.0
+        ]
+      },
+      "bc7": {
+        "hash": "b58edd0bb3ebdf28",
+        "psnr by level": [
+          57.2,
+          57.2,
+          99.0,
+          99.0,
+          55.4,
+          57.2,
+          99.0
+        ]
+      }
+    },
+    "textures data with height": {
+      "astc": {
+        "hash": "aadc51116ef176a4",
+        "psnr by level": [
+          41.4,
+          37.1,
+          33.4,
+          31.9,
+          49.3,
+          50.6,
+          99.0
+        ]
+      },
+      "bc7": {
+        "hash": "42b5e52cab910fc5",
+        "psnr by level": [
+          43.2,
+          39.7,
+          36.1,
+          33.4,
+          51.3,
+          55.4,
+          54.2
+        ]
+      }
+    },
+    "textures noisy color": {
+      "astc": {
+        "hash": "4cae628c0d0aa77a",
+        "psnr by level": [
+          26.2,
+          31.6,
+          37.7,
+          43.0,
+          47.6,
+          55.4,
+          99.0
+        ]
+      },
+      "bc7": {
+        "hash": "beb33d1a51fc436f",
+        "psnr by level": [
+          28.0,
+          33.6,
+          39.5,
+          43.5,
+          48.4,
+          55.4,
+          54.2
+        ]
+      }
+    },
+    "textures normal map": {
+      "astc": {
+        "hash": "f3ae5a2c834c59f1",
+        "psnr by level": [
+          32.0,
+          27.5,
+          27.0,
+          29.7,
+          44.5,
+          60.2,
+          99.0
+        ]
+      },
+      "bc7": {
+        "hash": "6da5e741f7ce84d7",
+        "psnr by level": [
+          36.4,
+          30.2,
+          28.6,
+          32.6,
+          53.2,
+          60.2,
+          51.1
+        ]
+      }
+    },
+    "textures smooth color": {
+      "astc": {
+        "hash": "d4ad2b74fa11e1e6",
+        "psnr by level": [
+          46.4,
+          40.7,
+          35.1,
+          29.1,
+          23.2,
+          24.3,
+          99.0
+        ]
+      },
+      "bc7": {
+        "hash": "4f21d3df0a527437",
+        "psnr by level": [
+          46.8,
+          41.3,
+          36.9,
+          31.9,
+          26.4,
+          55.4,
+          51.1
+        ]
+      }
+    }
   }
 }

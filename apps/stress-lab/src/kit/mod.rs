@@ -9,6 +9,7 @@ pub(crate) mod motion;
 pub(crate) mod plan;
 pub(crate) mod random;
 pub(crate) mod shape_builder;
+pub(crate) mod textures;
 
 // What a world reads, implements and hands the workload.
 pub(crate) use crate::StressConfig;

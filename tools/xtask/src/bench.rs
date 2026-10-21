@@ -65,20 +65,6 @@ const GENERATED: &[(&str, &[&str])] = &[
             "--",
         ],
     ),
-    (
-        "stress/terrain",
-        &[
-            "-p",
-            "engine_assetc",
-            "--profile",
-            "quick",
-            "--locked",
-            "--bin",
-            "terrain_materials",
-            "--",
-            "--out",
-        ],
-    ),
 ];
 
 pub fn bench(root: &Path, options: &[String]) -> Result<(), String> {

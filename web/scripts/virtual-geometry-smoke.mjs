@@ -16,7 +16,7 @@ try {
 const config = {
   seed: 1337, renderables: 2000, moving_percent: 5, hierarchy: false, interpolation: true, colliders: 0,
   sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 8, textured: true, culling: true,
-  scene: "dense", compressed_textures: false,
+  scene: "dense",
 };
 // A street-level view across the boulders, and one along the ground where
 // nearer boulders hide farther ones.

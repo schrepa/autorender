@@ -3,7 +3,9 @@
 //! fewest in flight the one whose most urgent job is least urgent; what
 //! every worker holds; which records the host's packs and store answer, and
 //! which a fresh run verifies; which jobs run in place, on a host without
-//! workers; and what a new engine's first message drops. Hosts carry its
+//! workers; which records fetched alone a verifying host compares with
+//! what their owners make again; and what a new engine's first message
+//! drops. Hosts carry its
 //! orders ([`JobOrder`]) to their workers and their records (the cook's
 //! packs, `engine_worker::JobCache` and the bytes they keep), and hand back
 //! what workers report and the records read.
@@ -68,6 +70,9 @@ pub struct JobScheduler {
     keys: HashMap<u64, String>,
     // Records that a fresh run verifies, the engine having taken them.
     verifying: HashMap<u64, Vec<u8>>,
+    // Records fetched alone and handed back while verifying, by key: what
+    // their owners keep next is compared with them.
+    fetched: HashMap<String, Vec<u8>>,
     // Lookups in flight.
     looking: HashMap<u64, Looking>,
     // Jobs no worker takes, which the host runs in place.
@@ -120,6 +125,7 @@ impl JobScheduler {
                     self.running.clear();
                     self.keys.clear();
                     self.verifying.clear();
+                    self.fetched.clear();
                     self.looking.clear();
                     self.here.clear();
                     self.orders.push(JobOrder::Share(JobShare::Clear));
@@ -138,11 +144,13 @@ impl JobScheduler {
                     finished.push((fetch.id, Err(MISSING_RECORD.to_owned())));
                 }
                 JobMessage::Keep(record, output) => {
-                    if self.caching {
-                        self.orders.push(JobOrder::Keep {
-                            key: record.hex(),
-                            output,
-                        });
+                    let key = record.hex();
+                    if let Some(handed) = self.fetched.remove(&key) {
+                        if handed != output {
+                            self.orders.push(JobOrder::Mismatch { key });
+                        }
+                    } else if self.caching {
+                        self.orders.push(JobOrder::Keep { key, output });
                     }
                 }
             }
@@ -175,6 +183,10 @@ impl JobScheduler {
         };
         let request = match looking {
             Looking::Fetch => {
+                // Verifying, its owner makes it again and keeps it.
+                if let (true, Some(output)) = (self.verify, &output) {
+                    self.fetched.insert(key, output.clone());
+                }
                 finished.push((id, output.ok_or_else(|| MISSING_RECORD.to_owned())));
                 return;
             }

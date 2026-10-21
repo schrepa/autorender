@@ -339,7 +339,9 @@ impl Tex {
         }
     }
 
-    fn build(self) -> engine::Result<Texture> {
+    /// Its texels, a source the cook compresses: colors, alpha masking
+    /// emission.
+    fn source(self) -> TextureSource {
         let facade = matches!(
             self,
             Tex::Office | Tex::Glass | Tex::Residential | Tex::Industrial
@@ -354,7 +356,12 @@ impl Tex {
                 pixels.extend_from_slice(&[rgb[0], rgb[1], rgb[2], if emits { 255 } else { 0 }]);
             }
         }
-        Texture::from_rgba(width as u32, height as u32, pixels).map_err(engine::Error::from)
+        TextureSource {
+            width: width as u32,
+            height: height as u32,
+            pixels,
+            usage: TextureUsage::Color,
+        }
     }
 
     /// A texel's color and whether it emits.
@@ -527,9 +534,10 @@ pub(crate) struct Library {
 
 impl Library {
     /// Inserts the meshes `variety` keeps (1, 8, 32 or all) and, when
-    /// `textured`, the textures, whose alpha masks emission.
+    /// `textured`, asks `records` for the textures, whose alpha masks
+    /// emission.
     pub(crate) fn new(
-        assets: &mut AssetLibrary,
+        (records, assets): (&mut TextureRecords, &mut AssetLibrary),
         variety: u32,
         textured: bool,
     ) -> engine::Result<Self> {
@@ -542,9 +550,18 @@ impl Library {
         }
         let mut textures = HashMap::default();
         if textured {
-            for tex in Tex::ALL {
-                textures.insert(tex, assets.insert_texture(tex.build()?)?);
-            }
+            let names: Vec<String> = Tex::ALL.iter().map(|tex| format!("{tex:?}")).collect();
+            let named: Vec<(&str, TextureUsage)> = names
+                .iter()
+                .map(|name| (name.as_str(), TextureUsage::Color))
+                .collect();
+            let handles = crate::kit::textures::request(
+                (records, assets),
+                "city".into(),
+                &named,
+                || Ok(Tex::ALL.map(Tex::source).to_vec()),
+            )?;
+            textures.extend(Tex::ALL.into_iter().zip(handles));
         }
         Ok(Self {
             variety,

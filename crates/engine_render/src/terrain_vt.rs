@@ -12,11 +12,14 @@
 //! them, kept with a border of
 //! [`VT_BORDER_TEXELS`](crate::gpu_layouts::constants::VT_BORDER_TEXELS) so
 //! filtering never reaches
-//! a neighbor. Pages lie in slots of sheets past the materials' layers of
-//! the material arrays (`terrain_maps.rs`), which grow as the views ask for
-//! more pages than they hold, up to `TerrainSettings::virtual_texture_pages`
-//! where set and the device's texture array layers; pages asked for beyond
-//! those drop and count. Each textured terrain keeps, per mip, a window of
+//! a neighbor. Pages lie in slots of sheets, an array of their own beside
+//! the material arrays (`terrain_maps.rs`), which grows as the views ask
+//! for more pages than it holds, up to
+//! `TerrainSettings::virtual_texture_pages` where set and the device's
+//! texture array layers; pages asked for beyond those drop and count. A
+//! page's normal turns, occlusion and leaves are linear data, stored in the
+//! sheets' sRGB layers as they are: sampling decodes them before it
+//! filters. Each textured terrain keeps, per mip, a window of
 //! [`WINDOW`]² pages around the eye, its table entries in the directory
 //! buffer after the directory's words (the resolve's fragments are at their
 //! device's limits of textures and storage buffers, so the texture adds no
@@ -238,14 +241,12 @@ pub(crate) struct VirtualTexture {
     // The pages it asks the sheets to hold, and the most they may.
     want: u32,
     limit: u32,
-    // The sheets' slots along a side and per sheet, and the material maps
-    // generation, layers of materials and texels along a side they lie in.
+    // The sheets' slots along a side and per sheet, their capacity and the
+    // material maps' generation they lie beside.
     per_row: u32,
     per_sheet: u32,
     capacity: u32,
     maps_generation: u64,
-    materials: u32,
-    sheet_texels: u32,
     // Each textured terrain by terrain ID, the order its feedback
     // dispatches and directory writes run in.
     terrains: BTreeMap<u64, Textured>,
@@ -291,8 +292,6 @@ impl VirtualTexture {
             per_sheet: 0,
             capacity: 0,
             maps_generation: u64::MAX,
-            materials: 0,
-            sheet_texels: 1,
             terrains: BTreeMap::new(),
             resident: HashMap::default(),
             owners: Vec::new(),
@@ -405,7 +404,7 @@ impl VirtualTexture {
         self.bakes.list.clear();
         self.frame += 1;
         self.bakes_per_frame = settings.virtual_texture_bakes;
-        let per_row = maps.size.0 / SLOT_TEXELS;
+        let per_row = crate::terrain_maps::SHEET_TEXELS / SLOT_TEXELS;
         let budget = settings.virtual_texture_pages.unwrap_or(u32::MAX);
         let capacity = (maps.sheets * per_row * per_row).min(budget);
         self.limit = (maps.sheet_room(device) * maps.per_sheet()).min(budget);
@@ -415,8 +414,6 @@ impl VirtualTexture {
             self.per_row = per_row;
             self.per_sheet = per_row * per_row;
             self.capacity = capacity;
-            self.materials = maps.materials;
-            self.sheet_texels = maps.size.0.max(1);
             self.reset();
         } else if capacity > self.capacity {
             // Sheets grown, their pages copied: the new slots free.
@@ -471,13 +468,13 @@ impl VirtualTexture {
                     self.per_row,
                     (self.frame % 64) as u32,
                 ],
-                [TEXEL, 1.0 / self.sheet_texels as f32, 0.0, 0.0],
                 [
-                    base + vt_index * TERRAIN_WORDS as u32,
-                    self.materials,
-                    self.materials,
-                    0,
+                    TEXEL,
+                    1.0 / crate::terrain_maps::SHEET_TEXELS as f32,
+                    0.0,
+                    0.0,
                 ],
+                [base + vt_index * TERRAIN_WORDS as u32, 0, 0, 0],
             ));
         }
         // Terrains no longer textured leave.
@@ -877,12 +874,10 @@ impl VirtualTexture {
                 &crate::pipeline_layouts::TERRAIN_VT_BAKE_PIPELINES,
                 &[camera_layout, terrain_layout, &self.bake_layout],
             );
-            let formats = [
+            let target = Some(wgpu::ColorTargetState::from(
                 wgpu::TextureFormat::Rgba8UnormSrgb,
-                wgpu::TextureFormat::Rgba8UnormSrgb,
-                wgpu::TextureFormat::Rgba8Unorm,
-            ];
-            let targets = formats.map(|format| Some(wgpu::ColorTargetState::from(format)));
+            ));
+            let targets = [target.clone(), target.clone(), target];
             crate::pipelines::fullscreen(
                 device,
                 &crate::pipelines::Fullscreen {

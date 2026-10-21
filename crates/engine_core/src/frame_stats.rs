@@ -50,8 +50,9 @@ pub struct FrameStats {
     /// Whether the GPU may still be compiling pipelines earlier frames
     /// created, read when the stats are.
     pub pipelines_compiling: bool,
-    /// Whether terrains have yet to load the camera's view whole, read
-    /// when the stats are: hosts keep preparing meanwhile.
+    /// Whether terrains have yet to load the camera's view whole, or
+    /// textures their records, read when the stats are: hosts keep
+    /// preparing meanwhile.
     pub loading: bool,
     /// The view's width in physical pixels, as the frame drew it: the
     /// host's, unless the device's largest texture holds less, which the

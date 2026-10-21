@@ -34,6 +34,10 @@ profiling = ["engine/profiling", "engine_native/profiling"]
 # Schemas of the configuration and snapshot, for `cargo xtask schema`.
 schema = ["dep:schemars", "engine/schema"]
 
+# `SOURCE`, the hash of the code making the Stress Lab's records.
+[build-dependencies]
+engine_sources.workspace = true
+
 [dependencies]
 engine.workspace = true
 serde.workspace = true

@@ -42,7 +42,8 @@ pub use engine_core::{bevy_ecs, glam};
 pub use engine_core::environment_sections;
 
 /// What games use, at the root and in the [`prelude`] alike: the engine and
-/// its schedules, time, input, transforms, objects and assets, the look's
+/// its schedules, time, input, transforms, objects and assets (textures
+/// loading as records among them), the look's
 /// settings, the engine's features and their plugins, the ground, the
 /// stores gameplay reads and the deterministic trigonometry (`math::sin`,
 /// not `f32::sin`).
@@ -59,7 +60,7 @@ mod games {
         GlobalTransforms, Ground, GroundCover, GroundSample, Grounded, Grounding, Haze, HeightHeld,
         HierarchyError, Highlights, InputState, Interior, InterpolateTransform, InterpolationError,
         KeyInterpolation, Keyframes, LevelOfDetail, LightRegion, LocalLight, LocalLightSettings,
-        Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, NavAgent, NavAgents,
+        MakeTextures, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, NavAgent, NavAgents,
         NavStatus, NavSystems, NavWalk, Navigation, NavigationPlugin, NightSky, OcclusionCulling,
         Occupancy, Ocean, OceanPlugin, OceanSystems, Parent, ParticleBlend, ParticleEmitter,
         ParticleSettings, Physics, Plugin, PluginGroup, Presentation, PresentationState,
@@ -68,7 +69,7 @@ mod games {
         SkyOcclusion, SplineMesh, Spot, StreamSet, Streamed, StreamedId, StreamedItem,
         StreamingFocus, SubpixelCulling, SunShafts, Surface, TemporalAntialiasing, Terrain,
         TerrainPlugin, TerrainSample, TerrainSettings, Terrains, Texture, TextureHandle,
-        TextureRef, TimeOfDay, TimeOfDayPlugin, Tint, TopLayer, Track, TrackDepth, Tracks,
+        TextureRecords, TextureRef, TextureSet, TextureSource, TextureUsage, TimeOfDay, TimeOfDayPlugin, Tint, TopLayer, Track, TrackDepth, Tracks,
         Transform, TransformEditError, Transmission, UvTransform, ViewSync, ViewSyncSystems,
         VirtualGeometry, Water, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource,
         WaterSources, Wind, Windows, WorldCells, WorldChanges, WorldStreaming,
@@ -88,7 +89,7 @@ pub use engine_core::{
     MAX_SPLINE_POINTS, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION,
     MAX_TRACK_DEPTH, MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MaterialShare, MeshLods, OceanPoint,
     OceanSurface, OceanWave, OceanWaves, PixelProbe, PluginGroupBuilder, SplineChunks, SunLookup,
-    TerrainProbe, TextureFormat, TransformNodeLimit, Viewport, VirtualMesh, has_feature, mesh_lods,
+    TerrainProbe, TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit, Viewport, VirtualMesh, has_feature, mesh_lods,
 };
 
 /// Terrain authoring: layer stacks, masks, stamps, bakes, placement and

@@ -204,8 +204,9 @@ mod gpu {
 
     struct Baked {
         record: ImpostorRecord,
-        // The material baked, to rebake one replaced in place.
-        material: Option<Material>,
+        // The material baked and its group's version, to rebake one
+        // replaced in place or whose textures were.
+        material: Option<(Material, u64)>,
     }
 
     /// What a bake draws: the mesh as the arena holds it, with its
@@ -216,7 +217,8 @@ mod gpu {
         pub group: &'a wgpu::BindGroup,
         pub variant: Variant,
         pub bounds: (Vec3, Vec3),
-        pub material: Option<Material>,
+        /// The material and its group's version (`MaterialStore::version`).
+        pub material: Option<(Material, u64)>,
     }
 
     /// What every atlas shares: the bakes' and draws' layouts and
@@ -372,11 +374,12 @@ mod gpu {
             self.baked.contains_key(&key)
         }
 
-        /// The impostor of `key`, when baked for `material`.
+        /// The impostor of `key`, when baked for `material` at its group's
+        /// version.
         pub(crate) fn record(
             &self,
             key: ImpostorKey,
-            material: Option<&Material>,
+            material: Option<&(Material, u64)>,
         ) -> Option<ImpostorRecord> {
             self.baked
                 .get(&key)
@@ -384,12 +387,12 @@ mod gpu {
                 .map(|baked| baked.record)
         }
 
-        /// Drops impostors `keep` refuses and those whose material changed
-        /// from `material`, freeing their layers.
+        /// Drops impostors `keep` refuses and those whose material or its
+        /// group's version changed from `material`, freeing their layers.
         pub(crate) fn retain(
             &mut self,
             mut keep: impl FnMut(&ImpostorKey) -> bool,
-            mut material: impl FnMut(MaterialHandle) -> Option<Material>,
+            mut material: impl FnMut(MaterialHandle) -> Option<(Material, u64)>,
         ) {
             let layers = &mut self.layers;
             let before = self.baked.len();
@@ -471,11 +474,11 @@ mod gpu {
             let emissive = source
                 .material
                 .as_ref()
-                .map_or([0.0; 3], Material::emissive);
+                .map_or([0.0; 3], |(material, _)| material.emissive());
             let rooms = source
                 .material
                 .as_ref()
-                .is_some_and(|material| material.windows().is_some());
+                .is_some_and(|(material, _)| material.windows().is_some());
             let record = ImpostorRecord::new(
                 source.bounds.0,
                 source.bounds.1,

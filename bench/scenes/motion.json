@@ -15,8 +15,7 @@
       "mesh_variety": 1,
       "textured": false,
       "culling": true,
-      "scene": "field",
-      "compressed_textures": false
+      "scene": "field"
     },
     "view": "overview"
   }

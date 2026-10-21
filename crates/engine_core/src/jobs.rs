@@ -219,6 +219,8 @@ pub struct Jobs {
     workers: u32,
     // A host takes the requests, the fetches and the records kept.
     hosted: bool,
+    // The host makes every record it hands back again and compares.
+    verifying: bool,
     requests: Vec<JobRequest>,
     fetches: Vec<RecordFetch>,
     keeps: Vec<(RecordKey, Vec<u8>)>,
@@ -248,6 +250,7 @@ impl Default for Jobs {
         Self {
             workers: 0,
             hosted: false,
+            verifying: false,
             requests: Vec::new(),
             fetches: Vec::new(),
             keeps: Vec::new(),
@@ -274,6 +277,18 @@ impl Jobs {
     /// Jobs submitted and not yet done.
     pub fn running(&self) -> usize {
         self.running.len()
+    }
+
+    /// Whether the host verifies the records it hands back: jobs it runs
+    /// anyway, and records fetched alone their owners make again and keep
+    /// ([`Self::keep`]), which it compares.
+    pub fn verifying(&self) -> bool {
+        self.verifying
+    }
+
+    /// Hosts: whether they verify the records they hand back.
+    pub fn set_verifying(&mut self, verifying: bool) {
+        self.verifying = verifying;
     }
 
     /// Hosts: how many workers run jobs, the host serving them from now
@@ -347,7 +362,9 @@ impl Jobs {
     }
 
     /// Hands hosts `bytes`, the record `record` its owner made itself, to
-    /// keep: a later fetch of it, in this session or another, takes them.
+    /// keep: a later fetch of it, in this session or another, takes them. A
+    /// verifying host compares a record it handed back with the bytes its
+    /// owner made again.
     pub fn keep(&mut self, record: RecordKey, bytes: Vec<u8>) {
         if self.hosted {
             self.keeps.push((record, bytes));

@@ -855,6 +855,7 @@ dependencies = [
  "engine_math",
  "engine_settings",
  "glam 0.30.9",
+ "libm",
  "schemars",
 ]
 
@@ -884,6 +885,7 @@ dependencies = [
  "engine_settings",
  "engine_sources",
  "engine_terrain",
+ "engine_textures",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -983,6 +985,7 @@ dependencies = [
  "bytemuck",
  "engine_core",
  "engine_profile",
+ "engine_textures",
  "glam 0.30.9",
  "js-sys",
  "libm",
@@ -1037,6 +1040,15 @@ dependencies = [
  "libm",
  "schemars",
  "serde",
+]
+
+[[package]]
+name = "engine_textures"
+version = "0.1.0"
+dependencies = [
+ "engine_assets",
+ "engine_math",
+ "libm",
 ]
 
 [[package]]
@@ -3006,6 +3018,7 @@ version = "0.1.0"
 dependencies = [
  "engine",
  "engine_native",
+ "engine_sources",
  "schemars",
  "serde",
  "serde_json",
@@ -3049,6 +3062,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "texture2ddecoder"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "427ae8ec7f2f0fdd3146b77cfa44bea880caf066f7e55398a8467afe2645c832"
+dependencies = [
+ "paste",
 ]
 
 [[package]]
@@ -4008,6 +4030,7 @@ dependencies = [
  "engine_scene",
  "engine_sources",
  "engine_terrain",
+ "engine_textures",
  "engine_vgbuild",
  "engine_worker",
  "glam 0.30.9",
@@ -4017,6 +4040,7 @@ dependencies = [
  "policy",
  "serde_json",
  "sha2",
+ "texture2ddecoder",
  "tiff",
  "zstd",
 ]

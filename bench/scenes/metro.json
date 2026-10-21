@@ -15,8 +15,7 @@
       "mesh_variety": 64,
       "textured": true,
       "culling": true,
-      "scene": "metro",
-      "compressed_textures": true
+      "scene": "metro"
     },
     "view": "overview"
   }

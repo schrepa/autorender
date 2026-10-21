@@ -78,15 +78,26 @@ impl TerrainClock {
 
 /// Wires `engine` to the host `renderer` draws for: terrain residency never
 /// exceeds the device's texture array layers and its work runs by `clock`;
-/// jobs run on the host's `workers`.
-fn wire(engine: &mut Engine, renderer: &Renderer, workers: u32, clock: TerrainClock) {
+/// textures load as records of the family the device samples; jobs run on
+/// the host's `workers`, which verify the records they hand back where
+/// `verifying`.
+fn wire(
+    engine: &mut Engine,
+    renderer: &Renderer,
+    (workers, verifying): (u32, bool),
+    clock: TerrainClock,
+) {
     let world = engine.app.world_mut();
     if let Some(mut terrains) = world.get_resource_mut::<engine_core::Terrains>() {
         terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
         terrains.set_clock(clock.reading());
     }
+    if let Some(mut records) = world.get_resource_mut::<engine_core::TextureRecords>() {
+        records.set_sampling(Some(renderer.texture_sampling()));
+    }
     if let Some(mut jobs) = world.get_resource_mut::<engine_core::Jobs>() {
         jobs.set_workers(workers);
+        jobs.set_verifying(verifying);
     }
 }
 
@@ -167,7 +178,7 @@ impl AppHost {
     }
 
     fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
-        wire(&mut engine, &renderer, 0, TerrainClock::Wall);
+        wire(&mut engine, &renderer, (0, false), TerrainClock::Wall);
         Self {
             engine,
             renderer,
@@ -197,13 +208,13 @@ impl AppHost {
     /// Runs `engine` from the next frame, wired to this host as the first
     /// was; returns the replaced one.
     pub fn replace_engine(&mut self, mut engine: Engine) -> Engine {
-        let workers = self
+        let jobs = self
             .engine
             .app
             .world()
             .get_resource::<engine_core::Jobs>()
-            .map_or(0, engine_core::Jobs::workers);
-        wire(&mut engine, &self.renderer, workers, self.terrain_clock);
+            .map_or((0, false), |jobs| (jobs.workers(), jobs.verifying()));
+        wire(&mut engine, &self.renderer, jobs, self.terrain_clock);
         self.gpu_inputs_stale = false;
         let replaced = std::mem::replace(&mut self.engine, engine);
         self.apply_overrides();
@@ -386,6 +397,19 @@ impl AppHost {
             .get_resource_mut::<engine_core::Jobs>()
         {
             jobs.set_workers(workers);
+        }
+    }
+
+    /// Whether the host verifies the records it hands back, in this and
+    /// later engines.
+    pub fn set_job_verifying(&mut self, verifying: bool) {
+        if let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Jobs>()
+        {
+            jobs.set_verifying(verifying);
         }
     }
 
@@ -756,7 +780,13 @@ impl AppHost {
                 .app
                 .world()
                 .get_resource::<engine_core::Terrains>()
-                .is_some_and(engine_core::Terrains::loading),
+                .is_some_and(engine_core::Terrains::loading)
+                || self
+                    .engine
+                    .app
+                    .world()
+                    .get_resource::<engine_core::TextureRecords>()
+                    .is_some_and(engine_core::TextureRecords::loading),
             navigation: self
                 .engine
                 .app

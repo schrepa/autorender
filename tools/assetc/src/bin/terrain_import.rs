@@ -22,8 +22,9 @@
 //! (a multiple of 256, 16384 by default) whose first layer is the import,
 //! with `--detail` meters of noise (8 by default, 0 for none) and the
 //! import's rivers (a hydrology bake) on top,
-//! an alpine surface (textured with the `terrain_materials` maps copied from
-//! `--materials`, plain colors without), and a camera facing the highest
+//! an alpine surface (textured with the KTX2 maps copied from
+//! `--materials`, each material's `NAME_albedo`, `NAME_normal` and
+//! `NAME_orm`, plain colors without), and a camera facing the highest
 //! summit. `--center` is the terrain's center: latitude and longitude for
 //! geographic inputs, the inputs' own x and y otherwise (their middle by
 //! default). PNG and RAW inputs span `--extent` meters with samples 0 and

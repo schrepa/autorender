@@ -4,7 +4,6 @@ import { Recorder, type RecordingReport } from "../engine/recording";
 import type { DetailedProfiler, DetailedProfileReport } from "../engine/profiling";
 import type { StressFiles, StressGame } from "../../pkg/stress_lab";
 import { fetchVirtualPrefix } from "../engine/virtual-mesh";
-import { adapterFeatures } from "../engine/adapter";
 import { jobPool } from "../engine/jobs";
 import {
   STRESS_CATALOG, STRESS_CONFIG_LIMITS, type StressConfig, type StressSampleField, type StressScene, type StressSnapshot,
@@ -74,28 +73,14 @@ async function denseFiles(): Promise<StressFiles | undefined> {
   denseSupplied = true;
   return files;
 }
-// The highlands' terrain material maps, fetched once: the
-// game keeps them for later workloads. Without them its ground shows plain
-// colors.
+// The highlands' scanned rock maps, kept locally and optional, fetched
+// once: the game keeps them for later workloads. Without them rocks wear
+// the terrain rock's maps; only those the server found are requested. The
+// ground's maps load as cooked texture records.
 let highlandsSupplied = false;
 async function highlandsFiles(): Promise<StressFiles | undefined> {
   if (highlandsSupplied || !filesClass) return undefined;
   const files = new filesClass();
-  try {
-    const names = JSON.parse(filesClass.highlands_names()) as string[];
-    const images = await Promise.all(names.map(async name => {
-      const response = await fetch(new URL(`${import.meta.env.BASE_URL}stress/terrain/${name}`, location.href));
-      if (!response.ok) throw new Error(`stress/terrain/${name} is missing.`);
-      return new Uint8Array(await response.arrayBuffer());
-    }));
-    names.forEach((name, index) => files.add_encoded_image(name, images[index]));
-  } catch (error) {
-    files.free();
-    notice(`The ground shows plain colors: ${String(error)} Build its materials with \`cargo run -p engine_assetc --release --bin terrain_materials\`.`);
-    return undefined;
-  }
-  // Scanned rock maps, kept locally and optional: without them rocks wear
-  // the terrain rock's maps. Only those the server found are requested.
   const rocks = (JSON.parse(filesClass.rock_names()) as string[]).filter(name => __STRESS_ROCKS__.includes(name));
   await Promise.all(rocks.map(async name => {
     try {
@@ -174,8 +159,7 @@ function fill(config: StressConfig) {
     }
     input.value = String(config[field]);
   }
-  for (const [id, field] of [["hierarchy", "hierarchy"], ["interpolation", "interpolation"], ["textures", "textured"], ["dense", "dense_colliders"], ["culling", "culling"],
-    ["compressed", "compressed_textures"]] as const) {
+  for (const [id, field] of [["hierarchy", "hierarchy"], ["interpolation", "interpolation"], ["textures", "textured"], ["dense", "dense_colliders"], ["culling", "culling"]] as const) {
     el<HTMLInputElement>(id).checked = config[field];
   }
   choice("scene-select").value = config.scene;
@@ -185,7 +169,7 @@ function readConfig(): StressConfig {
     bodies: number("bodies"),
     sensor_percent: number("sensors"), queries_per_tick: number("queries"), mesh_variety: number("meshes"), hierarchy: checked("hierarchy"),
     interpolation: checked("interpolation"), textured: checked("textures"), dense_colliders: checked("dense"), culling: checked("culling"),
-    scene: choice("scene-select").value as StressScene, compressed_textures: checked("compressed") };
+    scene: choice("scene-select").value as StressScene };
 }
 /** One fingerprint of the module, taken in the background at startup,
  * outside measurement windows: exports made before it ends carry none.
@@ -208,22 +192,8 @@ async function fingerprintWasm() {
     }
   } catch { /* A missing optional fingerprint remains explicit in the export. */ }
 }
-/** Whether the adapter samples BC7, which compressed metro textures need. */
-let blockCompression: boolean | undefined;
-async function detectBlockCompression(): Promise<boolean> {
-  return (await adapterFeatures()).has("texture-compression-bc");
-}
-/** `config` with compressed textures off where BC7 is unavailable. */
-function supported(config: StressConfig): StressConfig {
-  if (!config.compressed_textures || blockCompression !== false) return config;
-  notice("This GPU lacks texture-compression-bc: textures stay RGBA8.", true);
-  const fallback = { ...config, compressed_textures: false };
-  fill(fallback);
-  return fallback;
-}
-async function apply(requested: StressConfig, title: string) {
+async function apply(config: StressConfig, title: string) {
   if (!controls) return;
-  const config = supported(requested);
   if (profiler?.busy || recorder.active) { notice("Finish the active capture before changing the workload.", true); return; }
   let files: StressFiles | undefined;
   try { files = await sceneFiles(config); } catch (error) { notice(`Workload unchanged: ${String(error)}`, true); return; }
@@ -303,12 +273,10 @@ if (params.has("config")) {
     const source = params.get("config")!;
     if (source.length > 2000) throw new Error("Workload link is too large.");
     const parsed = JSON.parse(source) as Partial<StressConfig>;
-    // Links from before scenes existed build the tower field.
-    // and before compressed textures, without them, and before rigid
-    // bodies, with none.
+    // Links from before scenes existed build the tower field, and before
+    // rigid bodies, with none.
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       parsed.scene ??= "field";
-      parsed.compressed_textures ??= false;
       parsed.bodies ??= 0;
     }
     if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" || Object.keys(parsed).length !== Object.keys(baseline).length ||
@@ -365,13 +333,9 @@ startGame({
     const { default: init, StressGame, StressFiles: files, virtual_prefix_bytes } = await stressBindings();
     filesClass = files;
     prefixBytes = virtual_prefix_bytes;
-    // The adapter's features arrive while the module compiles.
-    const compression = detectBlockCompression();
     const initialized = await init();
     wasmMemory = (initialized as { memory?: WebAssembly.Memory }).memory;
     void fingerprintWasm();
-    blockCompression = await compression;
-    activeConfig = supported(activeConfig);
     return StressGame.create(canvas, JSON.stringify(activeConfig), await sceneFiles(activeConfig));
   },
   ready(runtime, host) {

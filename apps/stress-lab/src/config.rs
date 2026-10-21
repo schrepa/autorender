@@ -94,9 +94,6 @@ settings! {
         pub culling: bool = true => any,
         /// The world the workload builds.
         pub scene: StressScene = StressScene::Field => any,
-        /// Metro textures as BC7 blocks with their mip chains,
-        /// for devices with `texture-compression-bc`; RGBA8 otherwise.
-        pub compressed_textures: bool = false => any,
     }
 }
 

@@ -10,7 +10,7 @@ import { openTerrain } from "./terrain-fixture.mjs";
 const config = {
   seed: 1337, renderables: 20000, moving_percent: 10, hierarchy: true, interpolation: true, colliders: 0,
   sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 64, textured: true, culling: true,
-  scene: "metro", compressed_textures: false, bodies: 0,
+  scene: "metro", bodies: 0,
 };
 const url = devUrl("stress.html", { config });
 const output = await artifacts("debug-view-smoke");

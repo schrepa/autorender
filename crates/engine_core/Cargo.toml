@@ -27,6 +27,8 @@ glam.workspace = true
 serde.workspace = true
 # Record keys (`RecordKey`).
 engine_sources.workspace = true
+# Textures loading as records: the cook's mips, compression and records.
+engine_textures.workspace = true
 schemars = { workspace = true, optional = true }
 
 [lints]

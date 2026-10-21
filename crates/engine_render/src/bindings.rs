@@ -749,10 +749,12 @@ tables! {
             read(23, "terrain_directory", F),
             texture(24, "terrain_control", Uint, D2Array, F),
             uniform_of(25, "terrain_palette", terrain::PALETTE_BYTES, F),
-            // Surface materials' maps and their sampler.
+            // Surface materials' maps, base color and data (each
+            // material's normal and packed maps), the runtime virtual
+            // texture's sheets, and their sampler.
             texture(26, "terrain_albedo", Float, D2Array, F),
-            texture(27, "terrain_material_normals", Float, D2Array, F),
-            texture(28, "terrain_orm", Float, D2Array, F),
+            texture(27, "terrain_material_data", Float, D2Array, F),
+            texture(28, "terrain_vt_sheets", Float, D2Array, F),
             sampler(29, "terrain_material_sampler", Filtering, F),
             // Each terrain's sky visibility map, read through
             // the normals' sampler.
@@ -1465,7 +1467,7 @@ shared_groups! {
         terrain: 17..33 [
             terrain_heights, terrain_view, terrain, terrain_holes, terrain_normals,
             terrain_normal_sampler, terrain_directory, terrain_control, terrain_palette,
-            terrain_albedo, terrain_material_normals, terrain_orm, terrain_material_sampler,
+            terrain_albedo, terrain_material_data, terrain_vt_sheets, terrain_material_sampler,
             terrain_sky, terrain_deformation, terrain_control_sampler
         ],
         cover: 33..35 [cover_blades, cover_frame],

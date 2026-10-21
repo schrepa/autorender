@@ -103,7 +103,7 @@ impl SceneFiles {
     /// Image `uri` as a texture, validated, its alpha channel kept.
     pub(crate) fn texture(&self, uri: &str, path: &str) -> Result<Texture, SceneError> {
         if let Some((format, width, height, levels)) = self.compressed.get(uri) {
-            return Texture::compressed(*format, *width, *height, levels.clone()).map_err(
+            return Texture::from_levels(*format, *width, *height, levels.clone()).map_err(
                 |error| SceneError::new(ErrorCode::InvalidTexture, path, error.to_string()),
             );
         }

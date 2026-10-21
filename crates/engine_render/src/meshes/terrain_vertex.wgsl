@@ -52,9 +52,8 @@ struct TerrainUniform {
     // among the textured terrains, its mips (0 without one), slots along a
     // sheet's side, and this frame's feedback pixel (0 to 63) of each 8x8
     // block; the meters a texel of mip 0 spans and the inverse of a sheet's
-    // texels along a side; where its windows and tables start in
-    // `terrain_directory`, and its sheets' first layers in the base color and
-    // normal map arrays.
+    // texels along a side; and where its windows and tables start in
+    // `terrain_directory`.
     vt: vec4<u32>,
     vt_scale: vec4<f32>,
     vt_layout: vec4<u32>,

@@ -3,10 +3,9 @@
 //! leveled for a hamlet, a flat valley floor and a cave mouth cut as a
 //! hole), streamed around the camera, with the scene's renderables standing
 //! on the plateau as the tower field does. Its ground is
-//! meadow, dry grass, dirt, scree, rock and snow, each textured by maps
-//! built offline (`cargo run -p engine_assetc --release --bin
-//! terrain_materials`) and fetched by the page, or in plain colors without
-//! them. Boulders lie on its meadows, stones on its scree and outcrops on
+//! meadow, dry grass, dirt, scree, rock and snow, each textured by maps its
+//! `ground` module generates, which load as cooked texture records.
+//! Boulders lie on its meadows, stones on its scree and outcrops on
 //! its rock, and spruce forests cover the lower slopes.
 //! Gravel roads wind from the plateau down to the crater
 //! lake, west over a river on a stone bridge and east
@@ -16,6 +15,7 @@
 
 mod bodies;
 mod caves;
+mod ground;
 mod hiker;
 mod looks;
 mod rocks;
@@ -31,31 +31,6 @@ use engine::terrain::*;
 use crate::kit::{StressConfig, StressFile};
 use looks::{LOOKS, Look};
 pub(crate) use world::HighlandsWorld;
-
-/// The images the page fetches for this scene, from `stress/terrain/`:
-/// each surface material's base color, normal, and occlusion, roughness,
-/// metalness and height maps, which `tools/assetc`'s `terrain_materials`
-/// writes.
-pub const FILES: [&str; 18] = [
-    "grass_albedo.ktx2",
-    "grass_normal.ktx2",
-    "grass_orm.ktx2",
-    "dry_grass_albedo.ktx2",
-    "dry_grass_normal.ktx2",
-    "dry_grass_orm.ktx2",
-    "dirt_albedo.ktx2",
-    "dirt_normal.ktx2",
-    "dirt_orm.ktx2",
-    "scree_albedo.ktx2",
-    "scree_normal.ktx2",
-    "scree_orm.ktx2",
-    "rock_albedo.ktx2",
-    "rock_normal.ktx2",
-    "rock_orm.ktx2",
-    "snow_albedo.ktx2",
-    "snow_normal.ktx2",
-    "snow_orm.ktx2",
-];
 
 /// Scanned rock maps the page supplies when present, from `stress/rocks/`
 /// (kept locally, never committed): boulders' and cliffs' base color,
@@ -716,7 +691,7 @@ fn plateau_ring(center: [f32; 2], radius: f32, roads: &[Vec<[f32; 2]>]) -> Vec<A
 }
 
 /// The highlands' surface: its rules over [`LOOKS`], each material textured
-/// by its maps when `files` holds them, and the objects authors stand on it.
+/// by its ground material's maps, and the objects authors stand on it.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -726,25 +701,30 @@ fn surface(
     files: &HashMap<String, StressFile>,
     authored: Vec<AuthoredPlacement>,
 ) -> engine::Result<TerrainSurface> {
+    let materials = world.resource_scope(|world, mut records: Mut<TextureRecords>| {
+        let mut assets = world.resource_mut::<AssetLibrary>();
+        let mut loaded = HashMap::default();
+        LOOKS
+            .iter()
+            .map(|look| {
+                Ok(SurfaceMaterial {
+                    material: Some(maps((&mut records, &mut assets), look, &mut loaded)?),
+                    color: look.color,
+                    roughness: look.roughness,
+                    tiling: look.tiling,
+                    height_contrast: look.height_contrast,
+                    projection: look.projection,
+                    cover: look.cover,
+                    relief: look.relief,
+                    deform: look.deform,
+                })
+            })
+            .collect::<engine::Result<Vec<_>>>()
+    })?;
     let mut assets = world.resource_mut::<AssetLibrary>();
-    let mut materials = Vec::with_capacity(LOOKS.len());
-    let mut loaded = HashMap::default();
-    for look in &LOOKS {
-        materials.push(SurfaceMaterial {
-            material: maps(&mut assets, files, look, &mut loaded)?,
-            color: look.color,
-            roughness: look.roughness,
-            tiling: look.tiling,
-            height_contrast: look.height_contrast,
-            projection: look.projection,
-            cover: look.cover,
-            relief: look.relief,
-            deform: look.deform,
-        });
-    }
     // Boulders of a few shapes in their scanned maps where present
-    // (`ROCK_FILES`), otherwise in the rock's maps where the page supplied
-    // them: lighter than the cliffs' and gentler in relief, as weathered
+    // (`ROCK_FILES`), otherwise in the terrain rock's maps: lighter than
+    // the cliffs' and gentler in relief, as weathered
     // stones are.
     let boulder_scan = scanned(&mut assets, files, "boulder", BOULDER_SCAN_TILING, MOSS)?;
     let base = Material::new([0.8, 0.77, 0.72, 1.0]).and_then(|material| {
@@ -1428,35 +1408,33 @@ const BOULDERS: usize = 5;
 const SPRUCES: usize = 3;
 const CLIFFS: usize = 4;
 
-/// `look`'s maps from `files` as an engine material tinted by its tint,
-/// when the page supplied all three: base color, normal, and occlusion
-/// (red), roughness (green), metalness (blue) and height (alpha) in one.
-/// Looks borrowing the same maps share their textures through `loaded`.
+/// `look`'s ground material's maps ([`ground::sources`]) as an engine
+/// material tinted by its tint: base color, normal, and occlusion (red),
+/// roughness (green), metalness (blue) and height (alpha) in one, texture
+/// records asked of `records`. Looks borrowing the same maps share their
+/// textures through `loaded`.
 fn maps(
-    assets: &mut AssetLibrary,
-    files: &HashMap<String, StressFile>,
+    (records, assets): (&mut TextureRecords, &mut AssetLibrary),
     look: &Look,
-    loaded: &mut HashMap<String, TextureHandle>,
-) -> engine::Result<Option<MaterialHandle>> {
-    let mut textures = Vec::with_capacity(3);
-    for map in ["albedo", "normal", "orm"] {
-        let file_name = format!("{}_{map}.ktx2", look.maps);
-        if let Some(&texture) = loaded.get(&file_name) {
-            textures.push(texture);
-            continue;
+    loaded: &mut HashMap<&'static str, Vec<TextureHandle>>,
+) -> engine::Result<MaterialHandle> {
+    let name = look.maps;
+    let textures = match loaded.get(name) {
+        Some(textures) => textures.clone(),
+        None => {
+            let maps = [
+                ("albedo", TextureUsage::Color),
+                ("normal", TextureUsage::Normal),
+                ("orm", TextureUsage::Data),
+            ];
+            let set = format!("highlands/{name}");
+            let textures = crate::kit::textures::request((records, &mut *assets), set, &maps, move || {
+                ground::sources(name)
+            })?;
+            loaded.insert(name, textures.clone());
+            textures
         }
-        let Some(file) = files.get(&file_name) else {
-            return Ok(None);
-        };
-        let Some([width, height]) = file.size else {
-            return Ok(None);
-        };
-        let texture = Texture::from_rgba(width, height, file.bytes.clone())
-            .map_err(|error| engine::Error::from(error).context(&file_name))?;
-        let texture = assets.insert_texture(texture)?;
-        loaded.insert(file_name, texture);
-        textures.push(texture);
-    }
+    };
     let [red, green, blue] = look.tint;
     let material = Material::new([red, green, blue, 1.0])
         .and_then(|material| {
@@ -1469,10 +1447,7 @@ fn maps(
         .and_then(|material| material.with_normal_texture(TextureRef::new(textures[1]), 1.0))
         .and_then(|material| material.with_metallic_roughness_texture(TextureRef::new(textures[2])))
         .and_then(|material| material.with_occlusion_texture(TextureRef::new(textures[2]), 1.0))?;
-    assets
-        .insert_material(material)
-        .map(Some)
-        .map_err(engine::Error::from)
+    assets.insert_material(material).map_err(engine::Error::from)
 }
 
 /// The scanned rock set `name`'s material from `files` (`ROCK_FILES`,

@@ -1,14 +1,12 @@
 //! Materials of the metro over the generated texture sets, and the library that
 //! admits meshes, textures, materials and clips into a workload's asset
-//! library. Generated texture data (RGBA8 or BC7 levels) is kept for the page's
-//! lifetime: workloads rebuild their assets from it without generating again.
+//! library. Each texture set loads as texture records (`kit::textures`),
+//! generated and cooked only where no pack or store holds them.
 
 use engine::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
 
 use engine::prelude::*;
 
-use super::bc7;
 use super::models::Model;
 use super::people;
 use super::textures::{self, Image, Set};
@@ -85,39 +83,23 @@ enum Slot {
     Emissive,
 }
 
-/// Texture data ready for admission.
-enum Payload {
-    Rgba8 {
-        width: u32,
-        height: u32,
-        pixels: Vec<u8>,
-        alpha: bool,
-    },
-    Bc7 {
-        width: u32,
-        height: u32,
-        levels: Vec<Vec<u8>>,
-    },
+impl Slot {
+    /// The maps `set` has, in the order its records list them: each one's
+    /// slot, name and how its texels read.
+    fn of(set: Set) -> Vec<(Slot, &'static str, TextureUsage)> {
+        let mut slots = vec![(Slot::Base, "base", TextureUsage::Color)];
+        if set.has_mr() {
+            slots.push((Slot::Mr, "mr", TextureUsage::Data));
+        }
+        if set.has_normal() {
+            slots.push((Slot::Normal, "normal", TextureUsage::Normal));
+        }
+        if set.emits() {
+            slots.push((Slot::Emissive, "emissive", TextureUsage::Color));
+        }
+        slots
+    }
 }
-
-/// Generated maps per set, and their BC7 levels once compressed: a set's
-/// maps go once all of them are compressed, and `None` then answers for
-/// maps the set lacks.
-#[derive(Default)]
-struct Cache {
-    maps: HashMap<Set, Arc<textures::Maps>>,
-    compressed: HashMap<(Set, Slot), Option<Arc<Compressed>>>,
-}
-
-/// A map's size and BC7 levels.
-struct Compressed {
-    width: u32,
-    height: u32,
-    levels: Vec<Vec<u8>>,
-}
-
-/// Every slot, in the order maps list them.
-const SLOTS: [Slot; 4] = [Slot::Base, Slot::Mr, Slot::Normal, Slot::Emissive];
 
 /// `slot`'s map of `maps`, when the set has one.
 fn slot_image(maps: &textures::Maps, slot: Slot) -> Option<&Image> {
@@ -129,74 +111,29 @@ fn slot_image(maps: &textures::Maps, slot: Slot) -> Option<&Image> {
     }
 }
 
-fn cache() -> &'static Mutex<Cache> {
-    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
-    CACHE.get_or_init(Mutex::default)
-}
-
-fn maps(set: Set) -> Arc<textures::Maps> {
-    let mut cache = cache().lock().expect("texture cache");
-    cache
-        .maps
-        .entry(set)
-        .or_insert_with(|| Arc::new(textures::generate(set)))
-        .clone()
-}
-
-fn payload(set: Set, slot: Slot, compressed: bool) -> Option<Payload> {
-    if compressed {
-        let cache = cache().lock().expect("texture cache");
-        if let Some(compressed) = cache.compressed.get(&(set, slot)) {
-            let compressed = compressed.as_ref()?;
-            return Some(Payload::Bc7 {
-                width: compressed.width,
-                height: compressed.height,
-                levels: compressed.levels.clone(),
-            });
-        }
-    }
-    let maps = maps(set);
-    let image = slot_image(&maps, slot)?;
-    if !compressed {
-        return Some(Payload::Rgba8 {
-            width: image.width,
-            height: image.height,
-            pixels: image.pixels.clone(),
-            alpha: slot == Slot::Base && set.masked(),
-        });
-    }
-    let levels: Vec<Vec<u8>> = textures::mip_chain(image)
+/// The sources of `set`'s maps in `slots`, generated.
+fn sources(set: Set, slots: &[Slot]) -> Result<Vec<TextureSource>, String> {
+    let maps = textures::generate(set);
+    slots
         .iter()
-        .map(|(width, height, pixels)| bc7::encode(*width, *height, pixels))
-        .collect();
-    {
-        let mut cache = cache().lock().expect("texture cache");
-        let compressed = Compressed {
-            width: image.width,
-            height: image.height,
-            levels: levels.clone(),
-        };
-        cache
-            .compressed
-            .insert((set, slot), Some(Arc::new(compressed)));
-        let compressed = |slot| cache.compressed.contains_key(&(set, slot));
-        if SLOTS
-            .iter()
-            .all(|&slot| slot_image(&maps, slot).is_none() || compressed(slot))
-        {
-            for slot in SLOTS {
-                if slot_image(&maps, slot).is_none() {
-                    cache.compressed.insert((set, slot), None);
-                }
-            }
-            cache.maps.remove(&set);
-        }
-    }
-    Some(Payload::Bc7 {
-        width: image.width,
-        height: image.height,
-        levels,
-    })
+        .map(|&slot| {
+            let image = slot_image(&maps, slot)
+                .ok_or_else(|| format!("the metro's {set:?} set has no {slot:?} map"))?;
+            let usage = if image.normal {
+                TextureUsage::Normal
+            } else if image.srgb {
+                TextureUsage::Color
+            } else {
+                TextureUsage::Data
+            };
+            Ok(TextureSource {
+                width: image.width,
+                height: image.height,
+                pixels: image.pixels.clone(),
+                usage,
+            })
+        })
+        .collect()
 }
 
 impl Mat {
@@ -327,19 +264,18 @@ pub(crate) enum Clip {
 pub(crate) struct Library {
     variety: u32,
     textured: bool,
-    compressed: bool,
     meshes: HashMap<Model, (MeshHandle, Vec3)>,
     materials: HashMap<Mat, MaterialHandle>,
-    textures: HashMap<(Set, Slot), TextureHandle>,
+    // Each set asked for: its maps' textures by slot.
+    textures: HashMap<Set, Vec<(Slot, TextureHandle)>>,
     clips: HashMap<Clip, ClipHandle>,
 }
 
 impl Library {
-    pub(crate) fn new(variety: u32, textured: bool, compressed: bool) -> Self {
+    pub(crate) fn new(variety: u32, textured: bool) -> Self {
         Self {
             variety,
             textured,
-            compressed,
             meshes: HashMap::default(),
             materials: HashMap::default(),
             textures: HashMap::default(),
@@ -365,40 +301,32 @@ impl Library {
         Ok(entry)
     }
 
+    /// `set`'s `slot` map, when the set has one: the set's textures asked
+    /// of `records` the first time any of them is.
     fn texture(
         &mut self,
-        assets: &mut AssetLibrary,
+        (records, assets): (&mut TextureRecords, &mut AssetLibrary),
         set: Set,
         slot: Slot,
     ) -> engine::Result<Option<TextureRef>> {
-        if let Some(texture) = self.textures.get(&(set, slot)) {
-            return Ok(Some(self.reference(set, *texture)));
+        if !self.textures.contains_key(&set) {
+            let maps = Slot::of(set);
+            let named: Vec<(&str, TextureUsage)> =
+                maps.iter().map(|&(_, name, usage)| (name, usage)).collect();
+            let slots: Vec<Slot> = maps.iter().map(|&(slot, _, _)| slot).collect();
+            let made = slots.clone();
+            let name = format!("metro/{set:?}");
+            let handles = crate::kit::textures::request((records, assets), name, &named, move || {
+                sources(set, &made)
+            })?;
+            self.textures
+                .insert(set, slots.into_iter().zip(handles).collect());
         }
-        let Some(payload) = payload(set, slot, self.compressed) else {
-            return Ok(None);
-        };
-        let texture = match payload {
-            Payload::Rgba8 {
-                width,
-                height,
-                pixels,
-                alpha,
-            } => {
-                if alpha {
-                    Texture::from_rgba(width, height, pixels)
-                } else {
-                    Texture::new(width, height, pixels)
-                }
-            }
-            Payload::Bc7 {
-                width,
-                height,
-                levels,
-            } => Texture::compressed(engine::TextureFormat::Bc7, width, height, levels),
-        }?;
-        let handle = assets.insert_texture(texture)?;
-        self.textures.insert((set, slot), handle);
-        Ok(Some(self.reference(set, handle)))
+        let found = self.textures[&set]
+            .iter()
+            .find(|(held, _)| *held == slot)
+            .map(|&(_, texture)| texture);
+        Ok(found.map(|texture| self.reference(set, texture)))
     }
 
     fn reference(&self, set: Set, texture: TextureHandle) -> TextureRef {
@@ -416,13 +344,13 @@ impl Library {
     /// The asset material of `mat`; ads start on their own slot's picture.
     pub(crate) fn material(
         &mut self,
-        assets: &mut AssetLibrary,
+        (records, assets): (&mut TextureRecords, &mut AssetLibrary),
         mat: Mat,
     ) -> engine::Result<MaterialHandle> {
         if let Some(handle) = self.materials.get(&mat) {
             return Ok(*handle);
         }
-        let material = self.describe(assets, mat, None)?;
+        let material = self.describe((records, &mut *assets), mat, None)?;
         let handle = assets.insert_material(material)?;
         self.materials.insert(mat, handle);
         Ok(handle)
@@ -431,16 +359,16 @@ impl Library {
     /// Board slot `slot` showing advertisement `ad` (a set of its own).
     pub(crate) fn advert(
         &mut self,
-        assets: &mut AssetLibrary,
+        stores: (&mut TextureRecords, &mut AssetLibrary),
         slot: u8,
         ad: u8,
     ) -> engine::Result<Material> {
-        self.describe(assets, Mat::Ad(slot), Some(ad))
+        self.describe(stores, Mat::Ad(slot), Some(ad))
     }
 
     fn describe(
         &mut self,
-        assets: &mut AssetLibrary,
+        (records, assets): (&mut TextureRecords, &mut AssetLibrary),
         mat: Mat,
         ad: Option<u8>,
     ) -> engine::Result<Material> {
@@ -487,19 +415,19 @@ impl Library {
                 _ => Ok(material),
             };
         };
-        if let Some(base) = self.texture(assets, set, Slot::Base)? {
+        if let Some(base) = self.texture((&mut *records, &mut *assets), set, Slot::Base)? {
             material = material.with_base_color_texture(base)?;
         }
-        if let Some(mr) = self.texture(assets, set, Slot::Mr)? {
+        if let Some(mr) = self.texture((&mut *records, &mut *assets), set, Slot::Mr)? {
             material = material.with_metallic_roughness_texture(mr)?;
         }
-        if let Some(normal) = self.texture(assets, set, Slot::Normal)? {
+        if let Some(normal) = self.texture((&mut *records, &mut *assets), set, Slot::Normal)? {
             let scale = if mat == Mat::Water { 0.6 } else { 1.0 };
             material = material.with_normal_texture(normal, scale)?;
         }
         if mat.facade() {
             // Grime spans each building through its second coordinates.
-            if let Some(grime) = self.texture(assets, Set::Grime, Slot::Mr)? {
+            if let Some(grime) = self.texture((&mut *records, &mut *assets), Set::Grime, Slot::Mr)? {
                 material = material.with_occlusion_texture(grime.with_tex_coord(1), 1.0)?;
             }
         } else if matches!(
@@ -507,11 +435,11 @@ impl Library {
             Mat::Concrete | Mat::Plaza | Mat::Pavers | Mat::Tiles | Mat::Container
         ) {
             // Occlusion packed in the metallic-roughness texture's red.
-            if let Some(mr) = self.texture(assets, set, Slot::Mr)? {
+            if let Some(mr) = self.texture((&mut *records, &mut *assets), set, Slot::Mr)? {
                 material = material.with_occlusion_texture(mr, 1.0)?;
             }
         }
-        if let Some(glow) = self.texture(assets, set, Slot::Emissive)? {
+        if let Some(glow) = self.texture((&mut *records, &mut *assets), set, Slot::Emissive)? {
             let factor = match mat {
                 Mat::Neon(color) => {
                     NEON_COLORS[color as usize % NEON_COLORS.len()].map(|c| c * 4.0)

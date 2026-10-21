@@ -12,6 +12,10 @@ engine_dev.workspace = true
 # the terrain corpus's jobs replay in Wasm from base64.
 base64.workspace = true
 engine_assets.workspace = true
+# The textures corpus cooks images and reads them back with an independent
+# decoder.
+engine_textures.workspace = true
+texture2ddecoder.workspace = true
 engine_core.workspace = true
 engine_terrain.workspace = true
 # The terrain corpus packs its records as the cook does.

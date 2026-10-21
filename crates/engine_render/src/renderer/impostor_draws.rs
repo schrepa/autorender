@@ -71,7 +71,11 @@ impl Renderer {
                 meshes.contains_key(mesh)
                     && material.is_none_or(|handle| materials.group(handle).is_some())
             },
-            |handle| plan.material(snapshot, handle).copied(),
+            |handle| {
+                let version = materials.version(handle)?;
+                plan.material(snapshot, handle)
+                    .map(|material| (*material, version))
+            },
         );
         let settings = snapshot.environment.level_of_detail;
         if !(gpu_mode && settings.enabled && settings.impostors) {
@@ -91,10 +95,12 @@ impl Renderer {
                 && source.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES;
             let mut record = ImpostorRecord::default();
             if eligible {
-                let material = batch
-                    .material
-                    .and_then(|handle| self.plan.material(snapshot, handle))
-                    .copied();
+                let material = batch.material.and_then(|handle| {
+                    let version = self.materials.version(handle)?;
+                    self.plan
+                        .material(snapshot, handle)
+                        .map(|material| (*material, version))
+                });
                 let key = (batch.mesh, batch.material);
                 if let Some(baked) = self.impostors.atlas.record(key, material.as_ref()) {
                     record = baked;

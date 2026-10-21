@@ -38,7 +38,6 @@ fn baseline() -> StressConfig {
         textured: true,
         culling: true,
         scene: StressScene::Field,
-        compressed_textures: false,
     }
 }
 
@@ -82,7 +81,6 @@ pub fn presets() -> Vec<Preset> {
                 hierarchy: true,
                 interpolation: true,
                 mesh_variety: 64,
-                compressed_textures: true,
                 ..base.clone()
             },
         },

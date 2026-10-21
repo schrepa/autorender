@@ -24,7 +24,7 @@ pub use catalog::{Catalog, Choice, Switch, catalog, switches};
 pub use config::{MESH_VARIETIES, StressConfig, StressScene};
 pub use dense::FILES as DENSE_FILES;
 pub use game::StressLab;
-pub use highlands::{FILES as HIGHLANDS_FILES, ROCK_FILES};
+pub use highlands::ROCK_FILES;
 pub use metrics::{FrameMetrics, StressMetrics};
 pub use observation::{StressSample, StressSnapshot, stress_observation, stress_sample};
 pub use presets::{Preset, preset, presets};
@@ -32,3 +32,7 @@ pub use scene::{
     StressFile, create_workload, create_workload_with, look, set_view, stress_reflections,
     stress_shafts,
 };
+
+// The hash of the Stress Lab's code and the engine it builds on, which keys
+// the records it makes (its generated textures): `SOURCE`.
+include!(concat!(env!("OUT_DIR"), "/source.rs"));

@@ -13,7 +13,7 @@ use engine::{Error, ErrorCode};
 use engine_native::files;
 
 #[cfg(not(target_arch = "wasm32"))]
-use super::{FILES, ROCK_FILES};
+use super::ROCK_FILES;
 use super::{Plateau, add_systems, populate};
 use crate::kit::field::{SPACING, animate, field};
 use crate::kit::motion::Animation;
@@ -141,8 +141,8 @@ impl StressWorld for HighlandsWorld {
         160.0
     }
 
-    /// The terrain material maps, without which its ground shows plain
-    /// colors, and with `rocks` the optional scanned rock maps.
+    /// With `rocks`, the optional scanned rock maps: the ground's maps load
+    /// as texture records.
     #[cfg(not(target_arch = "wasm32"))]
     fn files(&self, assets: &Path, rocks: bool) -> engine::Result<HashMap<String, StressFile>> {
         let mut found = HashMap::default();
@@ -171,26 +171,6 @@ impl StressWorld for HighlandsWorld {
                 },
             );
         };
-        let materials = FILES.iter().try_for_each(|name| {
-            let path = assets.join("stress/terrain").join(name);
-            let decoded = image(&path)?.ok_or_else(|| {
-                Error::new(
-                    ErrorCode::InvalidTexture,
-                    "$",
-                    format!("{} is not an uncompressed RGBA8 KTX2 image", path.display()),
-                )
-            })?;
-            add((*name).to_owned(), decoded);
-            Ok::<_, Error>(())
-        });
-        if let Err(error) = materials {
-            eprintln!(
-                "The ground shows plain colors: {}. Build its materials with \
-                 `cargo run -p engine_assetc --release --bin terrain_materials`.",
-                error.message
-            );
-            return Ok(HashMap::default());
-        }
         // Scanned rock maps, kept locally and optional: without them
         // rocks wear the terrain rock's maps.
         for name in ROCK_FILES.iter().filter(|_| rocks) {

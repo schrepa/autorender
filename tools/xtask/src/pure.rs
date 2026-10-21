@@ -15,6 +15,7 @@ mod requests;
 mod scenes;
 mod simplify;
 mod terrain;
+mod textures;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -64,6 +65,10 @@ pub(crate) const CORPORA: &[Corpus] = &[
     Corpus {
         name: "caches",
         run: caches::run,
+    },
+    Corpus {
+        name: "textures",
+        run: textures::run,
     },
 ];
 

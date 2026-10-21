@@ -144,10 +144,10 @@ impl TerrainPipelines {
                     ),
                     ("terrain_albedo", crate::pipelines::view(&material_maps[0])),
                     (
-                        "terrain_material_normals",
+                        "terrain_material_data",
                         crate::pipelines::view(&material_maps[1]),
                     ),
-                    ("terrain_orm", crate::pipelines::view(&material_maps[2])),
+                    ("terrain_vt_sheets", crate::pipelines::view(&material_maps[2])),
                     (
                         "terrain_material_sampler",
                         crate::pipelines::sampler(&maps.sampler),
@@ -163,9 +163,9 @@ impl TerrainPipelines {
         };
         if self.group.stale(&key) {
             let group = build("engine/terrain-group", &maps.views);
-            // The runtime virtual texture's bakes read the materials' layers
-            // alone while they draw into its sheets.
-            let bake = build("engine/terrain-bake-group", &maps.material_views);
+            // The runtime virtual texture's bakes bind a stand-in for the
+            // sheets they draw into.
+            let bake = build("engine/terrain-bake-group", &maps.bake_views);
             self.group.set(key, group);
             self.bake_group.set(key, bake);
         }

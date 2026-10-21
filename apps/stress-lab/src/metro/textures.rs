@@ -160,7 +160,18 @@ impl Set {
         }
     }
 
-    fn emits(self) -> bool {
+    /// Whether it has a metallic-roughness map.
+    pub(crate) fn has_mr(self) -> bool {
+        !matches!(self, Set::Ad(_) | Set::Neon)
+    }
+
+    /// Whether it has a normal map.
+    pub(crate) fn has_normal(self) -> bool {
+        self.relief() > 0.0
+    }
+
+    /// Whether it has an emissive map.
+    pub(crate) fn emits(self) -> bool {
         matches!(
             self,
             Set::Glass
@@ -286,7 +297,7 @@ fn encode_with_powf(value: f32) -> u8 {
     let srgb = if value <= 0.003_130_8 {
         12.92 * value
     } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
+        1.055 * math::pow(value, 1.0 / 2.4) - 0.055
     };
     (srgb * 255.0 + 0.5) as u8
 }
@@ -1021,7 +1032,8 @@ fn foliage(set: Set, width: u32, height: u32) -> Vec<Texel> {
                     }
                     let (fx, fy) = (x as f32 - cx, y as f32 - cy);
                     let (a, b) = (fx * cos + fy * sin, -fx * sin + fy * cos);
-                    let inside = (a / length).powi(2) + (b / breadth).powi(2);
+                    let (along, across) = (a / length, b / breadth);
+                    let inside = along * along + across * across;
                     if inside < 1.0 {
                         let texel = &mut texels[(y as u32 * width + x as u32) as usize];
                         let dome = (1.0 - inside).sqrt();
@@ -1122,13 +1134,13 @@ pub(crate) fn generate(set: Set) -> Maps {
             if masked { byte(texel.alpha) } else { 255 },
         ]
     });
-    let mr = (!matches!(set, Set::Ad(_) | Set::Neon)).then(|| {
+    let mr = set.has_mr().then(|| {
         image(false, false, &|texel| {
             [byte(texel.ao), byte(texel.rough), byte(texel.metal), 255]
         })
     });
     let relief = set.relief();
-    let normal = (relief > 0.0).then(|| {
+    let normal = set.has_normal().then(|| {
         let at = |x: i32, y: i32| {
             let (x, y) = (x.rem_euclid(width as i32), y.rem_euclid(height as i32));
             texels[(y as u32 * width + x as u32) as usize].height
@@ -1172,72 +1184,4 @@ pub(crate) fn generate(set: Set) -> Maps {
         normal,
         emissive,
     }
-}
-
-// Mip chains for block-compressed textures, which renderers cannot generate.
-
-fn linear_table() -> [f32; 256] {
-    let mut table = [0.0; 256];
-    for (index, value) in table.iter_mut().enumerate() {
-        let srgb = index as f32 / 255.0;
-        *value = if srgb <= 0.040_45 {
-            srgb / 12.92
-        } else {
-            ((srgb + 0.055) / 1.055).powf(2.4)
-        };
-    }
-    table
-}
-
-/// Levels of `image` from its base down to 4 texels on its shorter side,
-/// averaged in linear light for color data and renormalized for normals.
-pub(crate) fn mip_chain(image: &Image) -> Vec<(u32, u32, Vec<u8>)> {
-    let table = linear_table();
-    let mut levels = vec![(image.width, image.height, image.pixels.clone())];
-    loop {
-        let (width, height, pixels) = levels.last().expect("the base level exists");
-        let (width, height) = (*width, *height);
-        if width <= 4 || height <= 4 {
-            break;
-        }
-        let (next_width, next_height) = (width / 2, height / 2);
-        let mut next = Vec::with_capacity((next_width * next_height * 4) as usize);
-        for y in 0..next_height {
-            for x in 0..next_width {
-                let mut sum = [0.0f32; 4];
-                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    let index = (((y * 2 + dy) * width + x * 2 + dx) * 4) as usize;
-                    for channel in 0..4 {
-                        let value = pixels[index + channel];
-                        sum[channel] += if image.srgb && channel < 3 {
-                            table[value as usize]
-                        } else {
-                            value as f32 / 255.0
-                        };
-                    }
-                }
-                let mut texel = sum.map(|value| value * 0.25);
-                if image.normal {
-                    let normal = Vec3::new(
-                        texel[0] * 2.0 - 1.0,
-                        texel[1] * 2.0 - 1.0,
-                        texel[2] * 2.0 - 1.0,
-                    )
-                    .normalize_or(Vec3::Z);
-                    texel[0] = normal.x * 0.5 + 0.5;
-                    texel[1] = normal.y * 0.5 + 0.5;
-                    texel[2] = normal.z * 0.5 + 0.5;
-                }
-                for (channel, value) in texel.iter().enumerate() {
-                    next.push(if image.srgb && channel < 3 {
-                        encode(*value)
-                    } else {
-                        byte(*value)
-                    });
-                }
-            }
-        }
-        levels.push((next_width, next_height, next));
-    }
-    levels
 }

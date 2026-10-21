@@ -464,7 +464,19 @@ pub(crate) const MAP: &[Rule] = &[
         checks: &[
             Smoke("texture"),
             Smoke("surfaces"),
-            Cells(&["metro-bc7-off"]),
+            Cells(&["metro-views"]),
+        ],
+    },
+    // The cook's textures and the textures loading as records.
+    Rule {
+        paths: &[
+            "crates/engine_textures/**",
+            "crates/engine_core/src/texture_records*",
+        ],
+        checks: &[
+            Pure("textures"),
+            Smoke("texture"),
+            Cells(&["metro-views", "highlands", "city-views"]),
         ],
     },
     // Assets: meshes, materials, glTF, simplification.
@@ -554,7 +566,7 @@ pub(crate) const MAP: &[Rule] = &[
     },
     Rule {
         paths: &["apps/stress-lab/src/metro/**"],
-        checks: &[Cells(&["metro-views", "metro-bc7-off"])],
+        checks: &[Cells(&["metro-views"])],
     },
     Rule {
         paths: &["apps/stress-lab/src/highlands/**"],
@@ -668,6 +680,10 @@ pub(crate) const MAP: &[Rule] = &[
     Rule {
         paths: &["tools/xtask/src/pure/caches.rs"],
         checks: &[Pure("caches")],
+    },
+    Rule {
+        paths: &["tools/xtask/src/pure/textures.rs"],
+        checks: &[Pure("textures")],
     },
     Rule {
         paths: &["tools/xtask/src/equivalence/**", "tools/xtask/src/bench.rs"],

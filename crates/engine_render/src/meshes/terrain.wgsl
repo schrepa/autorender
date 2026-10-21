@@ -52,12 +52,13 @@ const TERRAIN_PALETTE_ENTRIES: u32 = 170u;
 // Every terrain's surface materials, each terrain's from
 // `terrain.directory.z`.
 @group(1) @binding(25) var<uniform> terrain_palette: array<TerrainPaletteEntry, TERRAIN_PALETTE_ENTRIES>;
-// Surface materials' maps, a layer per material with maps: base color,
-// tangent-space normal (green up the image, toward -z), and occlusion,
-// roughness, metalness and height; and their sampler.
+// Surface materials' maps: base color, a layer per material with maps;
+// data, two layers per material: tangent-space normal (green up the image,
+// toward -z), then occlusion, roughness, metalness and height; the runtime
+// virtual texture's sheets, three layers each; and the maps' sampler.
 @group(1) @binding(26) var terrain_albedo: texture_2d_array<f32>;
-@group(1) @binding(27) var terrain_material_normals: texture_2d_array<f32>;
-@group(1) @binding(28) var terrain_orm: texture_2d_array<f32>;
+@group(1) @binding(27) var terrain_material_data: texture_2d_array<f32>;
+@group(1) @binding(28) var terrain_vt_sheets: texture_2d_array<f32>;
 @group(1) @binding(29) var terrain_material_sampler: sampler;
 // Each terrain's sky visibility map: over the whole terrain,
 // the share of the sky its ground sees about its normal (red).
@@ -409,34 +410,35 @@ fn terrain_lattice(uv: vec2<f32>, axis: u32, lattice: u32) -> vec2<f32> {
     return vec2<f32>(uv.x * TERRAIN_STRETCH, uv.y);
 }
 
-// `map`'s texel at `world` (with its screen derivatives) on axis `axis`'s
-// plane in lattice `lattice`, as `mapping` lays it.
-fn terrain_plane_texel(map: texture_2d_array<f32>, mapping: TerrainMapping, world: vec3<f32>,
-        world_dx: vec3<f32>, world_dy: vec3<f32>, axis: u32, lattice: u32) -> vec4<f32> {
+// Layer `layer` of `map` at `world` (with its screen derivatives) on axis
+// `axis`'s plane in lattice `lattice`, as `mapping` lays it.
+fn terrain_plane_texel(map: texture_2d_array<f32>, layer: u32, mapping: TerrainMapping,
+        world: vec3<f32>, world_dx: vec3<f32>, world_dy: vec3<f32>, axis: u32, lattice: u32)
+        -> vec4<f32> {
     let shift = vec2<f32>(0.37, 0.71) * f32(lattice);
     return textureSampleGrad(map, terrain_material_sampler,
         terrain_lattice(world_plane(world, axis) * mapping.scale, axis, lattice) + shift,
-        mapping.layer,
+        layer,
         terrain_lattice(world_plane(world_dx, axis) * mapping.scale, axis, lattice),
         terrain_lattice(world_plane(world_dy, axis) * mapping.scale, axis, lattice));
 }
 
-// `map`'s texel at `world` (with its screen derivatives) as `mapping`
-// lays it in `lattice`, mixed over its planes.
-fn terrain_map(map: texture_2d_array<f32>, mapping: TerrainMapping, world: vec3<f32>,
-        world_dx: vec3<f32>, world_dy: vec3<f32>, lattice: u32) -> vec4<f32> {
+// Layer `layer` of `map` at `world` (with its screen derivatives) as
+// `mapping` lays it in `lattice`, mixed over its planes.
+fn terrain_map(map: texture_2d_array<f32>, layer: u32, mapping: TerrainMapping,
+        world: vec3<f32>, world_dx: vec3<f32>, world_dy: vec3<f32>, lattice: u32) -> vec4<f32> {
     var texel = vec4<f32>(0.0);
     if mapping.planes.x > 0.0 {
         texel += mapping.planes.x
-            * terrain_plane_texel(map, mapping, world, world_dx, world_dy, 0u, lattice);
+            * terrain_plane_texel(map, layer, mapping, world, world_dx, world_dy, 0u, lattice);
     }
     if mapping.planes.y > 0.0 {
         texel += mapping.planes.y
-            * terrain_plane_texel(map, mapping, world, world_dx, world_dy, 1u, lattice);
+            * terrain_plane_texel(map, layer, mapping, world, world_dx, world_dy, 1u, lattice);
     }
     if mapping.planes.z > 0.0 {
         texel += mapping.planes.z
-            * terrain_plane_texel(map, mapping, world, world_dx, world_dy, 2u, lattice);
+            * terrain_plane_texel(map, layer, mapping, world, world_dx, world_dy, 2u, lattice);
     }
     return texel;
 }
@@ -449,8 +451,8 @@ fn terrain_map(map: texture_2d_array<f32>, mapping: TerrainMapping, world: vec3<
 fn terrain_plane_normal(mapping: TerrainMapping, world: vec3<f32>, world_dx: vec3<f32>,
         world_dy: vec3<f32>, axis: u32, lattice: u32, normal: vec3<f32>, scale: f32)
         -> vec3<f32> {
-    let sampled = terrain_plane_texel(terrain_material_normals, mapping, world, world_dx,
-        world_dy, axis, lattice).xyz * 2.0 - 1.0;
+    let sampled = terrain_plane_texel(terrain_material_data, 2u * mapping.layer, mapping, world,
+        world_dx, world_dy, axis, lattice).xyz * 2.0 - 1.0;
     var n = vec3<f32>(sampled.xy * scale, sampled.z);
     if lattice == 1u {
         // Slopes in the second lattice, in the plane's: its turn, or its
@@ -655,12 +657,12 @@ fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
         var first = vec4<f32>(0.0);
         var other = vec4<f32>(0.0);
         if second < 1.0 {
-            first = terrain_map(terrain_orm, mapping, site.world, site.world_dx, site.world_dy,
-                0u);
+            first = terrain_map(terrain_material_data, 2u * mapping.layer + 1u, mapping,
+                site.world, site.world_dx, site.world_dy, 0u);
         }
         if second > 0.0 {
-            other = terrain_map(terrain_orm, mapping, site.world, site.world_dx, site.world_dy,
-                1u);
+            other = terrain_map(terrain_material_data, 2u * mapping.layer + 1u, mapping,
+                site.world, site.world_dx, site.world_dy, 1u);
         }
         slot.second = second;
         if second > 0.0 && second < 1.0 {
@@ -698,14 +700,14 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         let mapping = terrain_mapping(entry, site.geometric);
         var albedo = vec3<f32>(0.0);
         if slot.pattern < 1.0 {
-            first_albedo = terrain_map(terrain_albedo, mapping, site.world, site.world_dx,
-                site.world_dy, 0u).rgb;
+            first_albedo = terrain_map(terrain_albedo, mapping.layer, mapping, site.world,
+                site.world_dx, site.world_dy, 0u).rgb;
             have_first = true;
             albedo += (1.0 - slot.pattern) * first_albedo;
         }
         if slot.pattern > 0.0 {
-            second_albedo = terrain_map(terrain_albedo, mapping, site.world, site.world_dx,
-                site.world_dy, 1u).rgb;
+            second_albedo = terrain_map(terrain_albedo, mapping.layer, mapping, site.world,
+                site.world_dx, site.world_dy, 1u).rgb;
             have_second = true;
             albedo += slot.pattern * second_albedo;
         }
@@ -723,8 +725,8 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         if slot.second < 1.0 {
             var texel = first_albedo;
             if !have_first {
-                texel = terrain_map(terrain_albedo, mapping, site.world, site.world_dx,
-                    site.world_dy, 0u).rgb;
+                texel = terrain_map(terrain_albedo, mapping.layer, mapping, site.world,
+                    site.world_dx, site.world_dy, 0u).rgb;
             }
             albedo += (1.0 - slot.second) * texel;
             if deflected {
@@ -735,8 +737,8 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         if slot.second > 0.0 {
             var texel = second_albedo;
             if !have_second {
-                texel = terrain_map(terrain_albedo, mapping, site.world, site.world_dx,
-                    site.world_dy, 1u).rgb;
+                texel = terrain_map(terrain_albedo, mapping.layer, mapping, site.world,
+                    site.world_dx, site.world_dy, 1u).rgb;
             }
             albedo += slot.second * texel;
             if deflected {
@@ -903,8 +905,8 @@ fn terrain_relief_sink(layer: TerrainReliefLayer, point: vec2<f32>) -> f32 {
     if layer.depth <= 0.0 {
         return 0.0;
     }
-    let height = textureSampleGrad(terrain_orm, terrain_material_sampler, point * layer.scale,
-        layer.layer, layer.dx, layer.dy).a;
+    let height = textureSampleGrad(terrain_material_data, terrain_material_sampler,
+        point * layer.scale, 2u * layer.layer + 1u, layer.dx, layer.dy).a;
     return layer.depth * (1.0 - height);
 }
 
@@ -1288,19 +1290,17 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     return point;
 }
 
-// Runtime virtual texture: the ground of each textured
-// terrain baked into pages of VT_PAGE² texels, VT_BORDER more around them so
-// filtering never reaches a neighbor. Pages lie in sheets past the
-// materials' layers of their arrays (`terrain.vt_layout.y` the first), each
-// sheet three layers: albedo (its detail and variety applied) and
-// roughness, then the cover's canopy color and the ground's vegetated
-// share, in the base color array; the normal maps' turn of the terrain's
-// normal (in `terrain_vt_frame`), occlusion and the cover's leaves in the
-// normal maps' array. Mip m's texels span `terrain.vt_scale.x` · 2^m
-// meters. Each terrain keeps, per mip, a window of VT_WINDOW² pages around
-// the eye in `terrain_directory` from `terrain.vt_layout.x`: its first page,
-// then a table of each page's slot plus one (0 while absent), addressed by
-// page modulo VT_WINDOW.
+// Runtime virtual texture: the ground of each textured terrain baked into
+// pages of VT_PAGE² texels, VT_BORDER more around them so filtering never
+// reaches a neighbor. Pages lie in sheets, the layers of `terrain_vt_sheets`,
+// three a sheet: albedo (its detail and variety applied) and roughness, then
+// the cover's canopy color and the ground's vegetated share, then the normal
+// maps' turn of the terrain's normal (in `terrain_vt_frame`), occlusion and
+// the cover's leaves, linear data the sRGB layer decodes before it filters.
+// Mip m's texels span `terrain.vt_scale.x` · 2^m meters. Each terrain keeps,
+// per mip, a window of VT_WINDOW² pages around the eye in `terrain_directory`
+// from `terrain.vt_layout.x`: its first page, then a table of each page's slot
+// plus one (0 while absent), addressed by page modulo VT_WINDOW.
 const VT_PAGE: f32 = 128.0;
 const VT_BORDER: f32 = 8.0;
 const VT_SLOT: f32 = 144.0;
@@ -1365,18 +1365,18 @@ fn terrain_vt_place(slot: u32) -> vec3<u32> {
     return vec3<u32>(slot / per_sheet, within % per_row, within / per_row);
 }
 
-// The texture's three texels of `slot` at texel `texel` of its mip,
-// bilinear in the sheets' first level (they have no others).
+// The texture's three texels of `slot` at texel `texel` of its mip (base
+// color, normal turn, canopy), bilinear in the sheets' first level (they
+// have no others).
 fn terrain_vt_sample(slot: i32, texel: vec2<f32>) -> array<vec4<f32>, 3> {
     let place = terrain_vt_place(u32(slot));
     let corner = vec2<f32>(place.yz) * VT_SLOT + VT_BORDER;
     let uv = (corner + texel - floor(texel / VT_PAGE) * VT_PAGE) * terrain.vt_scale.y;
-    let sheet = terrain.vt_layout.y + 2u * place.x;
-    let turn_layer = terrain.vt_layout.z + place.x;
+    let sheet = 3u * place.x;
     return array<vec4<f32>, 3>(
-        textureSampleLevel(terrain_albedo, terrain_material_sampler, uv, sheet, 0.0),
-        textureSampleLevel(terrain_material_normals, terrain_material_sampler, uv, turn_layer, 0.0),
-        textureSampleLevel(terrain_albedo, terrain_material_sampler, uv, sheet + 1u, 0.0));
+        textureSampleLevel(terrain_vt_sheets, terrain_material_sampler, uv, sheet, 0.0),
+        textureSampleLevel(terrain_vt_sheets, terrain_material_sampler, uv, sheet + 2u, 0.0),
+        textureSampleLevel(terrain_vt_sheets, terrain_material_sampler, uv, sheet + 1u, 0.0));
 }
 
 // The texture's ground at `site` where its pages hold it, from one of the

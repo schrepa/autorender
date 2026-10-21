@@ -27,7 +27,10 @@ pub(crate) struct GpuTexture {
     // Keep texture ownership explicit alongside its reusable view.
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
-    // Base level (asset) bytes, and the generated levels' bytes.
+    // The asset texture uploaded (its id), which a replacement in its
+    // library changes.
+    source: u64,
+    // The asset's levels' bytes, and the generated levels' bytes.
     pub byte_len: u64,
     pub mip_bytes: u64,
 }
@@ -205,18 +208,19 @@ impl MaterialStore {
                 let Some(map) = map else {
                     continue;
                 };
-                if let std::collections::btree_map::Entry::Vacant(entry) =
-                    self.textures.entry((map.texture, srgb))
-                {
-                    let texture = snapshot
-                        .textures
-                        .iter()
-                        .chain(&snapshot.decals.textures)
-                        .chain(placed_textures(snapshot))
-                        .find(|texture| texture.handle == map.texture)
-                        .expect(
-                            "the plan and decal extraction validated every material's textures",
-                        );
+                let texture = snapshot
+                    .textures
+                    .iter()
+                    .chain(&snapshot.decals.textures)
+                    .chain(placed_textures(snapshot))
+                    .find(|texture| texture.handle == map.texture)
+                    .expect("the plan and decal extraction validated every material's textures");
+                // A texture replaced in its library uploads again.
+                let current = self
+                    .textures
+                    .get(&(map.texture, srgb))
+                    .is_some_and(|gpu| gpu.source == texture.texture.id());
+                if !current {
                     let gpu = create_texture(
                         device,
                         queue,
@@ -227,7 +231,7 @@ impl MaterialStore {
                         &mut levels,
                     );
                     bytes += gpu.byte_len;
-                    entry.insert(gpu);
+                    self.textures.insert((map.texture, srgb), gpu);
                 }
             }
             let gpu = self.create_material(device, material, source.version);
@@ -286,6 +290,15 @@ impl MaterialStore {
         self.materials
             .get(&material)
             .map(|material| &material.group)
+    }
+
+    /// The library version `material`'s group was built from, when
+    /// uploaded: it advances when the material or one of its textures is
+    /// replaced.
+    pub(crate) fn version(&self, material: MaterialHandle) -> Option<u64> {
+        self.materials
+            .get(&material)
+            .map(|material| material.version)
     }
 
     /// The bind group and pipeline variant of `material` (the default group
@@ -427,15 +440,19 @@ fn bind_group(
     )
 }
 
-/// The GPU format of a compressed `format` read as sRGB or linear, and the
-/// device feature sampling it; `None` for RGBA8.
-fn compressed_format(
-    format: TextureFormat,
-    srgb: bool,
-) -> Option<(wgpu::TextureFormat, wgpu::Features)> {
+/// The GPU format of `format` read as sRGB or linear, and the device
+/// feature sampling it (none for RGBA8).
+pub(crate) fn gpu_format(format: TextureFormat, srgb: bool) -> (wgpu::TextureFormat, wgpu::Features) {
     use wgpu::TextureFormat as Gpu;
-    Some(match format {
-        TextureFormat::Rgba8 => return None,
+    match format {
+        TextureFormat::Rgba8 => (
+            if srgb {
+                Gpu::Rgba8UnormSrgb
+            } else {
+                Gpu::Rgba8Unorm
+            },
+            wgpu::Features::empty(),
+        ),
         TextureFormat::Bc7 => (
             if srgb {
                 Gpu::Bc7RgbaUnormSrgb
@@ -463,95 +480,56 @@ fn compressed_format(
             },
             wgpu::Features::TEXTURE_COMPRESSION_ASTC,
         ),
-    })
+    }
 }
 
-/// Uploads a compressed texture's levels as they are; a
-/// device without its format samples a white texel instead.
-fn create_compressed(
-    device: &wgpu::Device,
+/// Writes `bytes`, level `level` of a `width` × `height` texture in
+/// `format`, into layer `layer` of `texture`: whole blocks for compressed
+/// formats, including those past the edge of small levels.
+pub(crate) fn write_level(
     queue: &wgpu::Queue,
-    source: &Texture,
-    (format, feature): (wgpu::TextureFormat, wgpu::Features),
-) -> GpuTexture {
-    let supported = device.features().contains(feature);
-    let levels: &[Box<[u8]>] = if supported { source.levels() } else { &[] };
-    let (width, height) = if supported {
-        (source.width(), source.height())
+    texture: &wgpu::Texture,
+    (level, layer): (u32, u32),
+    (width, height): (u32, u32),
+    format: TextureFormat,
+    bytes: &[u8],
+) {
+    let (width, height) = ((width >> level).max(1), (height >> level).max(1));
+    let (bytes_per_row, rows, extent) = if format.is_compressed() {
+        let blocks = [width.div_ceil(4), height.div_ceil(4)];
+        (blocks[0] * 16, blocks[1], (blocks[0] * 4, blocks[1] * 4))
     } else {
-        (1, 1)
+        (width * 4, height, (width, height))
     };
-    let texture = crate::targets::texture_2d(
-        device,
-        "engine/compressed-texture",
-        (width, height),
-        1,
-        levels.len().max(1) as u32,
-        if supported {
-            format
-        } else {
-            wgpu::TextureFormat::Rgba8Unorm
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: level,
+            origin: wgpu::Origin3d {
+                x: 0,
+                y: 0,
+                z: layer,
+            },
+            aspect: wgpu::TextureAspect::All,
         },
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        bytes,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(bytes_per_row),
+            rows_per_image: Some(rows),
+        },
+        wgpu::Extent3d {
+            width: extent.0,
+            height: extent.1,
+            depth_or_array_layers: 1,
+        },
     );
-    if !supported {
-        queue.write_texture(
-            texture.as_image_copy(),
-            &[255; 4],
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-    }
-    for (level, bytes) in levels.iter().enumerate() {
-        // Whole blocks, including those past the edge of small levels.
-        let blocks = [
-            (width >> level).max(1).div_ceil(4),
-            (height >> level).max(1).div_ceil(4),
-        ];
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: level as u32,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytes,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(blocks[0] * 16),
-                rows_per_image: Some(blocks[1]),
-            },
-            wgpu::Extent3d {
-                width: blocks[0] * 4,
-                height: blocks[1] * 4,
-                depth_or_array_layers: 1,
-            },
-        );
-    }
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    GpuTexture {
-        _texture: texture,
-        view,
-        byte_len: if supported {
-            source.byte_len() as u64
-        } else {
-            4
-        },
-        mip_bytes: 0,
-    }
 }
 
-/// Uploads `source` as the base level of an sRGB or linear texture with a
-/// full mip chain, whose remaining levels are recorded into `encoder`;
-/// compressed textures upload their own levels.
+/// Uploads `source` as an sRGB or linear texture with every level it
+/// holds; an RGBA8 texture holding its base level alone gets a full mip
+/// chain, recorded into `encoder` from that level. A device without the
+/// source's format samples a white texel instead.
 fn create_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -561,48 +539,53 @@ fn create_texture(
     encoder: &mut Option<wgpu::CommandEncoder>,
     generated: &mut u32,
 ) -> GpuTexture {
-    if let Some(format) = compressed_format(source.format(), srgb) {
-        return create_compressed(device, queue, source, format);
+    let (format, feature) = gpu_format(source.format(), srgb);
+    if !device.features().contains(feature) {
+        let texture = crate::targets::texel(
+            device,
+            queue,
+            "engine/unsupported-texture",
+            wgpu::TextureFormat::Rgba8Unorm,
+            [255; 4],
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        return GpuTexture {
+            _texture: texture,
+            view,
+            source: source.id(),
+            byte_len: 4,
+            mip_bytes: 0,
+        };
     }
-    let extent = wgpu::Extent3d {
-        width: source.width(),
-        height: source.height(),
-        depth_or_array_layers: 1,
+    let (width, height) = (source.width(), source.height());
+    // Cooked textures carry their levels; others' render from their base.
+    let generate = !source.format().is_compressed() && source.levels().len() == 1;
+    let levels = if generate {
+        mip_levels(width, height)
+    } else {
+        source.levels().len() as u32
     };
-    let levels = mip_levels(source.width(), source.height());
     let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
-    if levels > 1 {
+    if generate && levels > 1 {
         usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
     }
-    let texture = crate::targets::texture_2d(
-        device,
-        if srgb {
-            "engine/color-texture"
-        } else {
-            "engine/data-texture"
-        },
-        (extent.width, extent.height),
-        extent.depth_or_array_layers,
-        levels,
-        if srgb {
-            wgpu::TextureFormat::Rgba8UnormSrgb
-        } else {
-            wgpu::TextureFormat::Rgba8Unorm
-        },
-        usage,
-    );
-    // Queue writes accept tightly packed rows; no 256-byte buffer-copy padding.
-    queue.write_texture(
-        texture.as_image_copy(),
-        source.pixels(),
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(source.width() * 4),
-            rows_per_image: Some(source.height()),
-        },
-        extent,
-    );
-    if levels > 1 {
+    let label = match (source.format().is_compressed(), srgb) {
+        (true, _) => "engine/compressed-texture",
+        (false, true) => "engine/color-texture",
+        (false, false) => "engine/data-texture",
+    };
+    let texture = crate::targets::texture_2d(device, label, (width, height), 1, levels, format, usage);
+    for (level, bytes) in source.levels().iter().enumerate() {
+        write_level(
+            queue,
+            &texture,
+            (level as u32, 0),
+            (width, height),
+            source.format(),
+            bytes,
+        );
+    }
+    if generate && levels > 1 {
         let encoder = encoder.get_or_insert_with(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/texture-mips"),
@@ -614,9 +597,10 @@ fn create_texture(
     GpuTexture {
         _texture: texture,
         view,
+        source: source.id(),
         byte_len: source.byte_len() as u64,
-        mip_bytes: if levels > 1 {
-            mip_chain_bytes(source.width(), source.height())
+        mip_bytes: if generate && levels > 1 {
+            mip_chain_bytes(width, height)
         } else {
             0
         },

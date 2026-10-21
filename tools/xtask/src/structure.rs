@@ -22,7 +22,6 @@ const LONG_FILES: &[(&str, usize)] = &[
     ("crates/engine_core/src/retained_render.rs", 1651),
     ("crates/engine_render/src/meshes/terrain.wgsl", 1797),
     ("crates/engine_terrain/src/layers.rs", 1591),
-    ("tools/assetc/src/bin/terrain_materials.rs", 1530),
 ];
 
 /// The structs with more than [`MAX_STRUCT_FIELDS`] fields, by file and
@@ -42,11 +41,6 @@ const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
     ("crates/engine_render/src/clouds.rs", "CloudPass", 48),
     ("crates/engine_render/src/renderer.rs", "Renderer", 37),
     ("crates/engine_render/src/scatter.rs", "ScatterPass", 40),
-    (
-        "crates/engine_render/src/terrain_vt.rs",
-        "VirtualTexture",
-        31,
-    ),
 ];
 
 /// Checks every source file git would commit against the limits and lists.

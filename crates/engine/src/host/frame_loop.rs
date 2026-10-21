@@ -1,12 +1,12 @@
 //! What every host runs at each animation frame, the page's or a window's
 //! redraw: preparation, which draws the starting state without advancing
-//! time until frames stop creating pipelines and terrains have loaded the
-//! view (or [`PREPARE_LIMIT_MS`] passed), loading meanwhile while the GPU
-//! compiles; then ordinary frames of play, paced by the recent interval
-//! between them, so terrain loads in the time frames leave free. A view
-//! without area goes idle: no frame runs and time stands still until it has
-//! area again. Hosts keep their transports: animation frames and tasks, or
-//! redraws.
+//! time until frames stop creating pipelines, terrains have loaded the view
+//! and textures their records (or [`PREPARE_LIMIT_MS`] passed), loading
+//! meanwhile while the GPU compiles; then ordinary frames of play, paced by
+//! the recent interval between them, so terrain loads in the time frames
+//! leave free. A view without area goes idle: no frame runs and time stands
+//! still until it has area again. Hosts keep their transports: animation
+//! frames and tasks, or redraws.
 
 use super::now_ms;
 use super::policy::{

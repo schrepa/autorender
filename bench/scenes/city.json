@@ -15,8 +15,7 @@
       "mesh_variety": 64,
       "textured": true,
       "culling": true,
-      "scene": "city",
-      "compressed_textures": false
+      "scene": "city"
     },
     "view": "overview"
   }

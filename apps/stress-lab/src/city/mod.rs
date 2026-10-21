@@ -1479,8 +1479,15 @@ pub(crate) struct Spawned {
 /// Builds and spawns the city of `config` into `world`.
 pub(crate) fn populate(world: &mut World, config: &StressConfig) -> engine::Result<Spawned> {
     let city = build(config);
+    let mut library = world.resource_scope(|world, mut records: Mut<TextureRecords>| {
+        let mut assets = world.resource_mut::<AssetLibrary>();
+        Library::new(
+            (&mut records, &mut assets),
+            config.mesh_variety,
+            config.textured,
+        )
+    })?;
     let mut assets = world.resource_mut::<AssetLibrary>();
-    let mut library = Library::new(&mut assets, config.mesh_variety, config.textured)?;
     let meshes = city
         .nodes
         .iter()

@@ -7,11 +7,12 @@
 //! vendored glam (`vendor/glam/VENDORED.md`). Use [`min`], [`max`] and
 //! [`clamp`] instead of the `f32` methods, which browsers compile to
 //! data-dependent branches; glam's `Vec3A` and `Vec4` methods are already
-//! single SIMD instructions.
+//! single SIMD instructions. Code whose results must agree between hosts,
+//! as generators of records, takes [`exp`], [`ln`] and [`pow`] too.
 
 use glam::Vec4;
 
-pub use engine_math::{REDUCTION_LIMIT, clamp, cos, max, min, sin, sin_cos};
+pub use engine_math::{REDUCTION_LIMIT, clamp, cos, exp, ln, max, min, pow, sin, sin_cos};
 
 /// [`sin_cos`] of four angles in SIMD lanes, lane for lane the same bits as
 /// the scalar function; about twice its throughput for bulk work.

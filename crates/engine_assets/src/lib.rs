@@ -31,7 +31,9 @@ pub use material::{
     MaterialBinding, Sampler, Surface, TextureRef, TopLayer, Transmission, UvTransform, Wrap,
 };
 pub use mesh::{Aabb, Mesh, MeshVertex};
-pub use texture::{MAX_TEXTURE_DIMENSION, Texture, TextureFormat};
+pub use texture::{
+    MAX_TEXTURE_DIMENSION, Texture, TextureFormat, TextureSummary, full_chain, srgb_decoded,
+};
 pub use virtual_mesh::header as virtual_mesh_header;
 pub use virtual_mesh::{
     CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, ClusterInfo, DEFAULT_FALLBACK_TRIANGLES,

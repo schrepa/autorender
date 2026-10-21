@@ -15,6 +15,21 @@ impl Renderer {
         self.display.max_layers
     }
 
+    /// What the device samples of cooked textures: BC7 where it samples
+    /// `texture-compression-bc`, else ASTC 4 × 4 where it samples
+    /// `texture-compression-astc`, else BC7's decompressed.
+    pub fn texture_sampling(&self) -> engine_core::TextureSampling {
+        use engine_core::{TextureFamily, TextureSampling};
+        let features = self.device.features();
+        if features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+            TextureSampling::Family(TextureFamily::Bc7)
+        } else if features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC) {
+            TextureSampling::Family(TextureFamily::Astc)
+        } else {
+            TextureSampling::Decompressed
+        }
+    }
+
     /// The size frames draw at, in physical pixels: the size asked for,
     /// fitted within the device's largest texture; `None` while a view
     /// without area suspends drawing.
