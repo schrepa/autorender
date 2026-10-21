@@ -707,6 +707,28 @@
       "direction": null
     },
     {
+      "name": "navigation.grounds",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "navigation.portals",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "navigation.searching",
       "kind": "work",
       "rule": "shown",
@@ -727,6 +749,17 @@
       ],
       "unit": "count",
       "direction": "lower"
+    },
+    {
+      "name": "navigation.waiting",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
     },
     {
       "name": "navigation.walking",
@@ -947,6 +980,28 @@
       ],
       "unit": "count",
       "direction": null
+    },
+    {
+      "name": "pipelines_listed",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "pipelines_unlisted",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
     },
     {
       "name": "reflection_probes.dropped",
