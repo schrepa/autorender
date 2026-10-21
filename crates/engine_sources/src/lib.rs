@@ -190,7 +190,8 @@ fn quoted_after(value: &str, key: &str) -> Option<String> {
     rest.split_once('"').map(|(path, _)| path.to_owned())
 }
 
-/// Every file under `folder`, but build outputs.
+/// Every file under `folder` a checkout holds: not build outputs, hidden
+/// files or editors' scratch files, which differ between machines.
 fn list(folder: &Path, files: &mut Vec<PathBuf>) {
     let entries = fs::read_dir(folder)
         .unwrap_or_else(|error| panic!("cannot list {}: {error}", folder.display()));
@@ -198,8 +199,20 @@ fn list(folder: &Path, files: &mut Vec<PathBuf>) {
         let path = entry
             .unwrap_or_else(|error| panic!("cannot list {}: {error}", folder.display()))
             .path();
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let scratch = name.starts_with('.')
+            || name.ends_with('~')
+            || [".swp", ".tmp", ".orig", ".rej"]
+                .iter()
+                .any(|suffix| name.ends_with(suffix));
+        if scratch {
+            continue;
+        }
         if path.is_dir() {
-            if path.file_name().is_some_and(|name| name != "target") {
+            if name != "target" {
                 list(&path, files);
             }
         } else {

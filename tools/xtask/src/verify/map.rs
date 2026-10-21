@@ -291,8 +291,12 @@ pub(crate) const MAP: &[Rule] = &[
         ],
     },
     Rule {
-        paths: &["crates/engine_core/src/**/jobs*", "crates/engine_worker/**"],
-        checks: &[Smoke("jobs"), PureWasm],
+        paths: &[
+            "crates/engine_core/src/**/jobs*",
+            "crates/engine_worker/**",
+            "crates/engine_sources/**",
+        ],
+        checks: &[Smoke("jobs"), PureWasm, Pure("terrain")],
     },
     Rule {
         paths: &[

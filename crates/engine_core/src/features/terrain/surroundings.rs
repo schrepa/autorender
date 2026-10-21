@@ -103,9 +103,11 @@ impl Terrains {
     }
 
     /// Follows each terrain's surroundings: drawn, once its
-    /// bakes are done, from the layers its tiles generate from, and dropped
-    /// with it or when those or its settings for them change. They stream
-    /// after every terrain, which take the frame's work first.
+    /// bakes are done, from its baked layers without its edits (which lie
+    /// under the ground the terrain covers itself), so an edit leaves their
+    /// tiles' records as they were; dropped with it or when those layers or
+    /// its settings for them change. They stream after every terrain, which
+    /// take the frame's work first.
     pub(super) fn sync_surroundings(&mut self) {
         let mut wanted = Vec::new();
         for state in &mut self.entries {
@@ -122,11 +124,10 @@ impl Terrains {
             let TerrainSource::Generated(authored) = &state.terrain.source else {
                 continue;
             };
-            let layers = state.baked.clone().unwrap_or_else(|| authored.clone());
-            if layers.unbaked().is_some() {
+            let base = state.baked.clone().unwrap_or_else(|| authored.clone());
+            if base.unbaked().is_some() {
                 continue;
             }
-            let base = state.generation(layers);
             if let Some(layout) = surroundings.layout(&state.terrain) {
                 let surface = state.terrain.surface.clone();
                 wanted.push((state.entity, base, surroundings, layout, surface));

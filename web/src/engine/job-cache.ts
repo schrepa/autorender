@@ -1,9 +1,10 @@
-// The page's records: the cook's packs, read by byte range from the
-// server (`cooked/index.json` lists them), then what the page kept in the
-// origin's private file system: records the engine's jobs made and the
-// engine handed over, and KTX2 textures transcoded on workers. Keys are
-// the engine's, so what is kept outlives builds that leave the code making
-// it alone. Which records the store keeps, under which keys, and which go
+// The page's records: what the page kept in the origin's private file
+// system (records the engine's jobs made and the engine handed over,
+// records it read from packs, and KTX2 textures transcoded on workers),
+// then the cook's packs, read by byte range from the server
+// (`cooked/index.json` lists them), whose records the page keeps as it
+// reads them, so a later visit reads them here. Keys are the engine's, so
+// what is kept outlives builds that leave the code making it alone. Which records the store keeps, under which keys, and which go
 // beyond its byte budget is the job worker module's (its JobCacheIndex,
 // as the native host's); this file keeps the bytes and the index's JSON
 // beside them. ?jobcache=off keeps none, ?jobcache=verify runs every job
@@ -88,33 +89,34 @@ export class JobStore {
     return [hits + this.packHits, misses, bytes, mismatches];
   }
 
-  /** The record kept as `key`, if a pack or the store holds it. */
+  /** The record kept as `key`, if the store or a pack holds it: one read
+   * from a pack is kept too. */
   async lookup(key: string): Promise<Uint8Array | undefined> {
+    if (this.index.holds(key)) {
+      let bytes: Uint8Array | undefined;
+      try {
+        await this.writing.get(key);
+        bytes = new Uint8Array(await (await (await this.directory.getFileHandle(key)).getFile()).arrayBuffer());
+      } catch { /* A file that is gone is a miss. */ }
+      const hit = this.index.hit(key, bytes?.length);
+      this.changed();
+      if (hit) return bytes;
+    }
     for (const pack of this.packs) {
       const entry = pack.directory.find(key);
       if (!entry) continue;
       try {
         const [offset, stored] = entry;
-        const bytes = await fetchRange(pack.url, offset, stored);
-        const record = pack.directory.unpack(key, bytes);
+        const record = pack.directory.unpack(key, await fetchRange(pack.url, offset, stored));
         this.packHits++;
+        this.keep(key, record);
         return record;
       } catch (error) {
         console.warn(`A record of ${pack.url} does not read: ${String(error)}`);
       }
     }
-    if (!this.index.holds(key)) {
-      this.index.miss();
-      return undefined;
-    }
-    let bytes: Uint8Array | undefined;
-    try {
-      await this.writing.get(key);
-      bytes = new Uint8Array(await (await (await this.directory.getFileHandle(key)).getFile()).arrayBuffer());
-    } catch { /* A file that is gone is a miss. */ }
-    const hit = this.index.hit(key, bytes?.length);
-    this.changed();
-    return hit ? bytes : undefined;
+    this.index.miss();
+    return undefined;
   }
 
   /** Keeps `output` as `key`, where the index takes it. */

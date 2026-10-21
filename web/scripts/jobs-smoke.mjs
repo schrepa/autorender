@@ -1,13 +1,16 @@
 /**
  * Worker jobs: the Stress Lab's highlands load with their
- * bakes and tiles made on the page's job workers and their hiker's walks
- * searched there, every job's output the engine's own. Heights, normals,
- * holes, the tile levels answering and what the bakes and roads give at
- * points across the view match a session without workers (?workers=off)
- * bit for bit, as do the tiles, patches, water and objects placed on them
- * an exact frame of the same view draws; without workers the page hands
- * out no jobs. Screenshots of both views are kept to compare by eye: the
- * sky, wind and water move with time, which the sessions spend differently.
+ * bakes and tiles as records, read from the cook's packs the page serves
+ * where they hold them and made on the page's job workers where not, and
+ * their hiker's walks searched there, every job's output the engine's own.
+ * Heights, normals, holes, the tile levels answering and what the bakes and
+ * roads give at points across the view match a session without workers or
+ * records (?workers=off&jobcache=off), which runs its jobs in place, bit
+ * for bit, as do the
+ * tiles, patches, water and objects placed on them an exact frame of the
+ * same view draws. Screenshots of both views are kept to compare by eye:
+ * the sky, wind and water move with time, which the sessions spend
+ * differently.
  */
 // @ts-check
 import assert from "node:assert/strict";
@@ -124,11 +127,11 @@ try {
   assert.ok(workers.jobs.workers > 0, `workers run jobs: ${JSON.stringify(workers.jobs)}`);
   assert.ok(workers.jobs.completed > 0 && workers.jobs.failed === 0, `the bakes and tiles ran there: ${JSON.stringify(workers.jobs)}`);
   assert.ok(workers.jobs.shares > 0 && workers.jobs.shared_bytes > 0, `the terrain's layers are shared with them: ${JSON.stringify(workers.jobs)}`);
-  // Tiles hand out their shape before the rest.
-  assert.ok(workers.jobs.parts > 0, `tiles hand out their shapes first: ${JSON.stringify(workers.jobs)}`);
-  const page_ = await session("page", { workers: "off" }, false);
+  assert.equal(workers.jobs.in_place, 0, `with workers no job runs in place: ${JSON.stringify(workers.jobs)}`);
+  // Without workers or records, every job runs in place.
+  const page_ = await session("page", { workers: "off", jobcache: "off" }, false);
   assert.equal(page_.jobs.workers, 0, `?workers=off runs none: ${JSON.stringify(page_.jobs)}`);
-  assert.equal(page_.jobs.submitted, 0, "without workers no job is handed out");
+  assert.ok(page_.jobs.in_place > 0 && page_.jobs.failed === 0, `without workers the page runs its jobs in place: ${JSON.stringify(page_.jobs)}`);
   assert.equal(workers.samples.length, page_.samples.length);
   const answered = workers.samples.filter(sample => sample !== null).length;
   assert.ok(answered > points.length / 2, `most points have ground: ${answered}`);

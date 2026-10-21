@@ -47,7 +47,6 @@ const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
         "VirtualTexture",
         31,
     ),
-    ("crates/engine_terrain/src/tile.rs", "Generator", 33),
 ];
 
 /// Checks every source file git would commit against the limits and lists.
