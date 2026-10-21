@@ -80,10 +80,12 @@ struct Shaded {
 }
 
 // The fragment being shaded: its vertex stage's material word, whose top
-// byte is its slot's origin key's (`origin_key`), and its pixel. Fragments
-// outside the mesh entry points keep zero.
+// byte is its slot's origin key's (`origin_key`), its pixel and, for
+// placed objects blending into the ground (`GROUNDING`), its slot.
+// Fragments outside the mesh entry points keep zero.
 var<private> fragment_plant: u32;
 var<private> fragment_pixel: vec2<f32>;
+var<private> fragment_slot: u32;
 
 // How much of a surface of linear color `albedo` reads as leaf: green over
 // its other channels; bark's browns and greys read none.
@@ -622,12 +624,52 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     } else {
         texels = material_texels(uv, uv1);
     }
-    let point = textured_point(color, surface_normal, world, world_dx, world_dy, texels, packed,
+    var point = textured_point(color, surface_normal, world, world_dx, world_dy, texels, packed,
         front);
+    if GROUNDING {
+        point = grounded(point);
+    }
     let result = widened(point, dpdx(point.normal), dpdy(point.normal));
     if ALPHA_MASK && result.opacity * texels.coverage < alpha_cutoff(material_maps.params.z) {
         discard;
     }
+    return result;
+}
+
+// `point` of a placed object blending into the ground (`GROUNDING`),
+// from its slot's ground and pose: below its reach above the plane through
+// the ground under its sunk base, its color, roughness and shading normal
+// turn toward the ground's there, all the way where it enters the ground,
+// so no seam shows where the two meet. Objects whose ground's color is not
+// read yet keep theirs.
+fn grounded(point: SurfacePoint) -> SurfacePoint {
+    let ground = grounds[fragment_slot];
+    let reach = bitcast<f32>(ground.z);
+    if !(reach > 0.0) || ground.w == 0u {
+        return point;
+    }
+    let pose = poses[fragment_slot];
+    let origin = vec3<f32>(pose.row_0.w, pose.row_1.w, pose.row_2.w);
+    let tilt = unpack2x16snorm(ground.x);
+    let up = sqrt(max(1.0 - dot(tilt, tilt), 0.01));
+    let above = point.world.y - origin.y - bitcast<f32>(ground.y)
+        + dot(tilt, point.world.xz - origin.xz) / up;
+    if above >= reach {
+        return point;
+    }
+    let amount = 1.0 - smoothstep(0.0, reach, above);
+    // The ground's color as its linear channels' square roots, and its
+    // roughness.
+    let texel = unpack4x8unorm(ground.w);
+    let albedo = texel.rgb * texel.rgb;
+    var result = point;
+    result.albedo = mix(point.albedo, albedo, amount);
+    result.diffuse_color = mix(point.diffuse_color, albedo, amount);
+    result.f0 = mix(point.f0, vec3<f32>(0.04), amount);
+    result.roughness = mix(point.roughness, max(texel.a, 0.03), amount);
+    result.alpha = result.roughness * result.roughness;
+    result.normal = stable_normalize(mix(point.normal, vec3<f32>(tilt.x, up, tilt.y), amount));
+    result.n_v = max(dot(result.normal, result.view), 1.0e-4);
     return result;
 }
 
@@ -928,6 +970,16 @@ struct Fragment {
     origin: u32,
 }
 
+// Linear color and opacity of a fragment's material word; placed objects
+// blending into the ground (`placed_material`) note their slot.
+fn fragment_color(material: vec4<u32>) -> vec4<f32> {
+    if GROUNDING {
+        fragment_slot = material.y;
+        return unpack4x8unorm(material.x);
+    }
+    return output_color(material);
+}
+
 // Meshes without a second stream read their first coordinates as second.
 fn fragment(input: VertexOutput) -> Fragment {
     // Placed objects fading leave the pixels their fade
@@ -938,7 +990,7 @@ fn fragment(input: VertexOutput) -> Fragment {
     fragment_plant = input.material.w;
     fragment_pixel = input.clip_position.xy;
     var values: Fragment;
-    values.color = output_color(input.material);
+    values.color = fragment_color(input.material);
     values.normal = input.normal_u.xyz;
     values.world = input.world_v.xyz;
     values.uv = vec2<f32>(input.normal_u.w, input.world_v.w);
@@ -957,7 +1009,7 @@ fn extended_fragment(input: ExtendedOutput) -> Fragment {
     fragment_plant = input.material.w;
     fragment_pixel = input.clip_position.xy;
     var values: Fragment;
-    values.color = output_color(input.material) * input.color;
+    values.color = fragment_color(input.material) * input.color;
     values.normal = input.normal_u.xyz;
     values.world = input.world_v.xyz;
     values.uv = vec2<f32>(input.normal_u.w, input.world_v.w);

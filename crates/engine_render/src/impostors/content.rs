@@ -110,7 +110,6 @@ impl Contents {
         match material.grounding() {
             Some(grounding) => {
                 bytes.push(1);
-                floats(&mut bytes, &grounding.color);
                 floats(&mut bytes, &[grounding.height]);
             }
             None => bytes.push(0),

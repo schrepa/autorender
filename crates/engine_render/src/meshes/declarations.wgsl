@@ -59,7 +59,9 @@ override TRANSMISSION: bool = false;
 // layer settling on faces turned up.
 override WORLD_MAPPING: bool = false;
 override TOP_LAYER: bool = false;
-// Bases the ground stains: slot vertex stages read `grounds`.
+// Placed objects whose bases blend into the ground: slot vertex stages
+// pass their slots (`placed_material`), whose `grounds` and poses their
+// fragments read (`grounded`).
 override GROUNDING: bool = false;
 // Placed objects fading between how the camera shows them
 // draw from lists of their own, each entry carrying its fade: see
@@ -133,8 +135,10 @@ struct SlotColor {
 @group(2) @binding(4) var<storage, read> previous_palette: array<AffinePose>;
 // What lies under placed objects (`gpu_data::GroundData`): x
 // and z of the ground's normal as two signed fractions, the meters each
-// one's base sinks, the meters up its stain reaches (0 for none, as for
-// every retained slot) and the stain's color as four bytes.
+// one's base sinks, the meters up it blends into the ground (0 for none, as
+// for every retained slot) and the ground's color there as four bytes,
+// its linear channels' square roots and its roughness (0 until
+// `scatter_snap.wgsl` reads it).
 @group(2) @binding(5) var<storage, read> grounds: array<vec4<u32>>;
 // Temporal visible IDs mark moving slots; others kept their previous pose.
 const MOVED_SLOT: u32 = 0x80000000u;

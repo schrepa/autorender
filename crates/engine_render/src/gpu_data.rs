@@ -303,8 +303,9 @@ pub(crate) use crate::gpu_layouts::scene::ColorData;
 pub(crate) use crate::gpu_layouts::scene::GroundData;
 
 /// The ground of an object at `scale` whose base sinks `sink` meters below
-/// ground of normal `normal` (x and z), stained as its material's
-/// `grounding` says.
+/// ground of normal `normal` (x and z), blending into it as far up as its
+/// material's `grounding` reaches; the ground's color there waits for the
+/// objects' snap to read it.
 pub(crate) fn ground_data(
     grounding: Option<engine_core::Grounding>,
     normal: [f32; 2],
@@ -317,13 +318,11 @@ pub(crate) fn ground_data(
     let snorm = |value: f32| {
         u32::from((engine_core::math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16 as u16)
     };
-    let byte = |value: f32| (engine_core::math::clamp(value, 0.0, 1.0) * 255.0).round() as u32;
-    let [red, green, blue] = grounding.color;
     [
         snorm(normal[0]) | snorm(normal[1]) << 16,
         sink.to_bits(),
         (grounding.height * scale).to_bits(),
-        byte(red) | byte(green) << 8 | byte(blue) << 16 | 255 << 24,
+        0,
     ]
 }
 
@@ -542,8 +541,9 @@ impl Variant {
     // Maps laid from the world's axes, and a layer on faces turned up.
     const WORLD_MAPPING: u16 = constants::VARIANT_WORLD_MAPPING;
     const TOP_LAYER: u16 = constants::VARIANT_TOP_LAYER;
-    // Bases the ground stains: slot vertex stages read
-    // placed objects' grounds.
+    // Placed objects whose bases blend into the ground: their slot
+    // vertex stages pass their slots, whose grounds and poses their
+    // fragments read. A draw's, not a material's.
     const GROUNDING: u16 = 16384;
     // Placed objects fading between how the camera shows them:
     // their lists' entries carry their fades, which their pixels
@@ -596,9 +596,6 @@ impl Variant {
         }
         if material.top_layer().is_some() {
             bits |= Self::TOP_LAYER;
-        }
-        if material.grounding().is_some() {
-            bits |= Self::GROUNDING;
         }
         Self(bits)
     }
@@ -688,6 +685,16 @@ impl Variant {
             self.0 | Self::FADING
         } else {
             self.0 & !Self::FADING
+        })
+    }
+
+    /// This variant drawing placed objects whose bases blend into the
+    /// ground, or not.
+    pub(crate) fn with_grounding(self, grounding: bool) -> Self {
+        Self(if grounding {
+            self.0 | Self::GROUNDING
+        } else {
+            self.0 & !Self::GROUNDING
         })
     }
 }

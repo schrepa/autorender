@@ -51,32 +51,17 @@ fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
         output.clip_position = camera.view_projection * vec4<f32>(world, 1.0);
     }
     if GROUNDING {
-        output.material = vec4<u32>(grounded(slot.color, index, model[3].xyz,
-            output.world_v.xyz), output.material.zw);
+        output.material = placed_material(output.material, index);
     }
     return output;
 }
 
-// Packed color `color` of slot `index`, whose origin is `origin`, at
-// `world`: where its material has grounding, multiplied by
-// its ground's stain at the plane of the ground under its base, the stain
-// fading out as far up as it reaches.
-fn grounded(color: vec2<u32>, index: u32, origin: vec3<f32>, world: vec3<f32>) -> vec2<u32> {
-    let ground = grounds[index];
-    let reach = bitcast<f32>(ground.z);
-    if !(reach > 0.0) {
-        return color;
-    }
-    let tilt = unpack2x16snorm(ground.x);
-    let up = sqrt(max(1.0 - dot(tilt, tilt), 0.01));
-    // Height above the plane through the ground over the sunk base.
-    let above = world.y - origin.y - bitcast<f32>(ground.y)
-        + dot(tilt, world.xz - origin.xz) / up;
-    let stain = unpack4x8unorm(ground.w).rgb;
-    let amount = 1.0 - smoothstep(0.0, reach, above);
-    let linear = vec4<f32>(unpack2x16unorm(color.x), unpack2x16unorm(color.y));
-    let stained = linear.rgb * mix(vec3<f32>(1.0), stain, amount);
-    return vec2<u32>(pack2x16unorm(stained.rg), pack2x16unorm(vec2<f32>(stained.b, linear.a)));
+// The material word of a placed object blending into the ground
+// (`GROUNDING`), from its word `material`: its linear color and opacity as
+// four bytes, its slot `slot`, whose ground and pose its fragments read,
+// then its packed surface and fade word.
+fn placed_material(material: vec4<u32>, slot: u32) -> vec4<u32> {
+    return vec4<u32>(pack4x8unorm(output_color(material)), slot, material.zw);
 }
 
 // The offset the wind gives the vertex at `world` of a slot posed by
@@ -373,8 +358,7 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
         world = vec4<f32>(world.xyz + slot_wind(model, world.xyz, sway, camera.wind.w), 1.0);
     }
     if GROUNDING {
-        vertex.material = vec4<u32>(grounded(material.color, slot, model[3].xyz,
-            vertex.world_v.xyz), vertex.material.zw);
+        vertex.material = placed_material(vertex.material, slot);
     }
     let previous = camera.previous_view_projection * world;
     var output: TemporalOutput;

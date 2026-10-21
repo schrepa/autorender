@@ -100,7 +100,7 @@ pub struct SceneMaterial {
     /// lichen, dust or snow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top: Option<SceneTopLayer>,
-    /// The ground staining the base of objects terrains place.
+    /// How the base of objects terrains place blends into the ground.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grounding: Option<SceneGrounding>,
     /// Divides the material into rooms, this many across its
@@ -133,9 +133,9 @@ fn state_material_rules(schema: &mut schemars::Schema) {
     }
 }
 
-/// The ground staining the base of an object standing on terrain:
-/// the linear color its color is multiplied by where it meets the
-/// ground, and how many units of its mesh up the stain fades out, from the
+/// How the base of an object standing on terrain blends into the ground:
+/// how many units of its mesh up from where it enters the ground its
+/// surface takes the ground's color, roughness and slope, from the
 /// ground's slope under it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
@@ -145,7 +145,6 @@ fn state_material_rules(schema: &mut schemars::Schema) {
 )]
 #[serde(deny_unknown_fields)]
 pub struct SceneGrounding {
-    pub color: [f32; 3],
     pub height: f32,
 }
 
@@ -371,7 +370,6 @@ impl SceneMaterial {
                 roughness: Some(top.roughness),
             }),
             grounding: material.grounding().map(|grounding| SceneGrounding {
-                color: grounding.color,
                 height: grounding.height,
             }),
         }
@@ -479,7 +477,6 @@ impl SceneMaterial {
         if let Some(grounding) = self.grounding {
             material = material
                 .with_grounding(engine_core::Grounding {
-                    color: grounding.color,
                     height: grounding.height,
                 })
                 .map_err(|error| invalid("grounding", error.to_string()))?;

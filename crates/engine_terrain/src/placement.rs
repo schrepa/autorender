@@ -96,17 +96,13 @@ settings! {
         /// normal.
         #[serde(default)]
         pub align: f32 = 0.0 => range(0.0, 1.0),
-        /// How far they turn to face down its slope, their x across it and z
-        /// down it: 0 any way, 1 straight down it.
-        #[serde(default, skip_serializing_if = "is_zero_f32")]
-        pub face: f32 = 0.0 => range(0.0, 1.0),
         /// How deep they sink, in meters at scale 1, below the lowest ground
         /// within their bed.
         #[serde(default)]
         pub sink: f32 = 0.0 => finite,
         /// How far around them they rest on, in meters at scale 1: 0, the
-        /// ground at their point; blocks on steep slopes stand in it instead
-        /// of hanging over it.
+        /// ground at their point; objects on steep slopes then stand in it
+        /// instead of hanging over it.
         #[serde(default, skip_serializing_if = "is_zero_f32")]
         pub bed: f32 = 0.0 => range(0.0, MAX_BED),
         /// The pyramid level whose tiles hold its candidates: 0, the finest.
@@ -377,7 +373,6 @@ pub(crate) struct CompiledPlacement {
     reads: Reads,
     scale: [f32; 2],
     align: f32,
-    face: f32,
     sink: f32,
     bed: f32,
 }
@@ -456,7 +451,6 @@ pub(crate) fn compile(
             mask,
             scale: layer.scale,
             align: layer.align,
-            face: layer.face,
             sink: layer.sink,
             bed: layer.bed,
         });
@@ -784,17 +778,8 @@ pub(crate) fn place_row(
             });
         let scale =
             layer.scale[0] + (layer.scale[1] - layer.scale[0]) * unit(hash(square ^ 0xc2b2_ae35));
-        // Turned at random, or as far as the layer faces them, across the
-        // slope with z down it, the rest of their turn at random.
-        let turn = unit(hash(square ^ 0x85eb_ca6b));
-        let downhill = (normal.x * normal.x + normal.z * normal.z).sqrt();
-        let yaw = if layer.face > 0.0 && downhill > 0.05 {
-            // libm's, as browsers compute it: the platform's differs.
-            libm::atan2f(-normal.x, normal.z)
-                + (turn - 0.5) * std::f32::consts::TAU * (1.0 - layer.face)
-        } else {
-            turn * std::f32::consts::TAU
-        };
+        // Turned at random.
+        let yaw = unit(hash(square ^ 0x85eb_ca6b)) * std::f32::consts::TAU;
         // Its up leans toward the ground's normal as far as the
         // layer aligns; a wobble keeps upright objects from
         // standing too straight.
@@ -851,7 +836,6 @@ crate::codec::record!(PlacementLayer {
     mask,
     scale,
     align,
-    face,
     sink,
     bed,
     level,

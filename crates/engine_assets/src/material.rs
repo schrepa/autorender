@@ -78,23 +78,21 @@ pub const MAX_WORLD_TILING: f32 = 10_000.0;
 
 settings! {
     unauthored;
-    /// The ground staining the base of an object standing on terrain:
-    /// soil, damp or dust where rock or wood meets the ground. Where the
-    /// object meets the ground its color is multiplied by `color`, the stain
-    /// fading out `height` units of its mesh higher (so it scales with the
-    /// object), measured from the ground's own slope under it. Objects
-    /// terrains place stand on terrain; others are never stained.
+    /// How an object standing on terrain meets the ground: where it enters
+    /// the ground its surface takes the ground's color, roughness and
+    /// slope there, blending back into its own `height` units of its mesh
+    /// higher (so it scales with the object), measured from the ground's
+    /// own slope under it, so no seam shows where the two meet. Objects
+    /// terrains place stand on terrain; others never blend.
     /// [`Material::with_grounding`] checks the rules.
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct Grounding {
-        /// Linear color the stain multiplies by.
-        pub color: [f32; 3] = [0.5; 3] => range(0.0, 1.0),
-        /// How far up the stain reaches, in mesh units.
+        /// How far up the blend reaches, in mesh units.
         pub height: f32 = 1.0 => above_to(0.0, MAX_GROUNDING_HEIGHT),
     }
 }
 
-/// The mesh units a ground stain may reach up at most.
+/// The mesh units the ground's blend may reach up at most.
 pub const MAX_GROUNDING_HEIGHT: f32 = 10_000.0;
 
 settings! {
@@ -487,8 +485,8 @@ impl Material {
         self.top
     }
 
-    /// This material with the ground staining its base where it stands on
-    /// terrain.
+    /// This material with its base blending into the ground where it
+    /// stands on terrain.
     pub fn with_grounding(mut self, grounding: Grounding) -> Result<Self, AssetError> {
         grounding
             .validate()

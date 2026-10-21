@@ -382,15 +382,16 @@ tables! {
     };
 
     /// Group 2 of retained mesh pipelines: slot poses, colors, the joint
-    /// palettes of skinned slots and placed objects' grounds.
+    /// palettes of skinned slots and placed objects' grounds, which the
+    /// fragments of those blending into the ground read with their poses.
     const RETAINED_POSES: Table = Table {
         label: "engine/retained-pose-layout",
         serves: [SHADER @ 2],
         bindings: &[
-            read_of(0, "poses", POSE, V),
+            read_of(0, "poses", POSE, VF),
             read_of(1, "colors", COLOR, V),
             read_of(3, "palette", POSE, V),
-            read_of(5, "grounds", GROUND, V),
+            read_of(5, "grounds", GROUND, F),
         ],
     };
 
@@ -400,24 +401,27 @@ tables! {
         label: "engine/temporal-pose-layout",
         serves: [SHADER @ 2],
         bindings: &[
-            read_of(0, "poses", POSE, V),
+            read_of(0, "poses", POSE, VF),
             read_of(1, "colors", COLOR, V),
             read_of(2, "previous_poses", POSE, V),
             read_of(3, "palette", POSE, V),
             read_of(4, "previous_palette", POSE, V),
-            read_of(5, "grounds", GROUND, V),
+            read_of(5, "grounds", GROUND, F),
         ],
     };
 
     /// Group 2 of virtual geometry's pipelines: poses, colors,
-    /// previous poses and the arena's meshes, clusters and pages.
+    /// previous poses and the arena's meshes, clusters and pages; and
+    /// grounds none of its slots stand on, as the forward fragments they
+    /// share with retained meshes read.
     const VIRTUAL_POSES: Table = Table {
         label: "engine/virtual-pose-layout",
         serves: [SHADER @ 2],
         bindings: &[
-            read_of(0, "poses", POSE, V),
+            read_of(0, "poses", POSE, VF),
             read_of(1, "colors", COLOR, V),
             read_of(2, "previous_poses", POSE, V),
+            read_of(5, "grounds", GROUND, F),
             read_of(6, "virtual_meshes", VIRTUAL_MESH, V),
             read_of(7, "virtual_clusters", VIRTUAL_CLUSTER, V),
             read_of(8, "virtual_pages", VIRTUAL_PAGE, V),
@@ -1145,7 +1149,9 @@ tables! {
     /// Placed objects set on the terrain as drawn (
     /// `scatter_snap.wgsl`): the slots and terrains, every object's record and
     /// pose, each terrain's place in the directory, the directory and the
-    /// resident heights.
+    /// resident heights; and every object's ground, whose color it writes
+    /// from the resident control values, the terrain palette and the
+    /// terrains' macro colors.
     const SCATTER_SNAP: Table = Table {
         label: "engine/scatter-snap-layout",
         serves: [SCATTER_SNAP_SHADER @ 0],
@@ -1156,6 +1162,10 @@ tables! {
             read(3, "terrains", C),
             read(4, "directory", C),
             texture(5, "heights", Unfilterable, D2Array, C),
+            write(6, "grounds", C),
+            texture(7, "control", Uint, D2Array, C),
+            uniform_of(8, "palette", terrain::PALETTE_BYTES, C),
+            texture(9, "macro_maps", Float, D2Array, C),
         ],
     };
 

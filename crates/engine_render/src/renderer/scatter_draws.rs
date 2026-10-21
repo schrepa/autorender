@@ -152,19 +152,17 @@ impl Renderer {
             }
         }
         // Objects stand on the ground as each level draws it, of the
-        // heights resident this frame.
+        // heights resident this frame, and take its colors there.
         let infos: Vec<TerrainInfo> = terrains
             .iter()
             .enumerate()
-            .map(|(index, terrain)| TerrainInfo {
-                origin: terrain.origin.extend(terrain.pyramid.spacing(0)).to_array(),
-                levels: [
-                    self.terrain.cover_terrain(index).0,
-                    terrain.pyramid.levels(),
-                    0,
-                    0,
-                ],
-                ranges: crate::ground_cover::morph_ranges(terrain),
+            .map(|(index, terrain)| {
+                let (directory, palette, _, colors) = self.terrain.cover_terrain(index);
+                TerrainInfo {
+                    origin: terrain.origin.extend(terrain.pyramid.spacing(0)).to_array(),
+                    levels: [directory, terrain.pyramid.levels(), palette, colors],
+                    ranges: crate::ground_cover::morph_ranges(terrain),
+                }
             })
             .collect();
         // How each terrain's layers thin with distance this frame:
@@ -235,8 +233,15 @@ impl Renderer {
         }
         let sources = self.terrain.cover_sources().map(|sources| SnapSources {
             heights: sources.heights,
+            control: sources.control,
             directory: sources.directory,
-            generation: (sources.generation.0, sources.generation.1),
+            palette: sources.palette,
+            macro_maps: sources.macro_maps,
+            generation: (
+                sources.generation.0,
+                sources.generation.1,
+                sources.generation.3,
+            ),
             revision: sources.revision,
             terrains: &infos,
         });
@@ -569,13 +574,15 @@ impl Renderer {
         Some((levels, casters, meshes, errors, camera))
     }
 
-    /// The material group and pipeline variant of placed group `draw`.
+    /// The material group and pipeline variant of placed group `draw`,
+    /// blending into the ground where its material says.
     fn scatter_binding(&self, draw: &ScatterDraw) -> (&wgpu::BindGroup, Variant) {
         let mesh = self.meshes.get(&draw.meshes[0]);
         let (group, variant) = self.materials.binding(Some(draw.material));
         let variant = variant
             .with_extended(mesh.is_some_and(|mesh| mesh.extended))
-            .with_skinned(false);
+            .with_skinned(false)
+            .with_grounding(draw.source.grounding().is_some());
         (group, variant)
     }
 

@@ -35,9 +35,10 @@ use looks::{LOOKS, Look};
 pub(crate) use world::HighlandsWorld;
 
 /// Scanned rock maps the page supplies when present, from `stress/rocks/`
-/// (kept locally, never committed): boulders' and cliffs' base color,
-/// normal, and occlusion, roughness, metalness and height. Without them
-/// rocks wear the terrain rock's maps.
+/// (kept locally, never committed): the base color, normal, and
+/// occlusion, roughness, metalness and height of a boulder's scan and of a
+/// rock face's, which the cave's rock wears. Without them rocks wear the
+/// terrain rock's maps.
 pub const ROCK_FILES: [&str; 6] = [
     "boulder_albedo.ktx2",
     "boulder_normal.ktx2",
@@ -47,11 +48,11 @@ pub const ROCK_FILES: [&str; 6] = [
     "cliff_orm.ktx2",
 ];
 
-/// Meters one repeat of the scanned boulder and cliff maps covers: the
-/// boulder scan's own size, and the cliff's a little larger, so its
-/// repeats show less across a face many meters wide.
+/// Meters one repeat of the scanned boulder and cave rock maps covers: the
+/// boulder scan's own size, and the rock face's a little larger, so its
+/// repeats show less across the cave's walls.
 const BOULDER_SCAN_TILING: f32 = 1.8;
-const CLIFF_SCAN_TILING: f32 = 2.5;
+const WALL_SCAN_TILING: f32 = 2.5;
 
 /// Level-0 tiles along each axis, and their sample spacing: 8,192 meters.
 const TILES: u32 = 32;
@@ -515,7 +516,7 @@ pub(crate) fn populate(
     ))
 }
 
-/// Moss settling on boulders' tops and lichen on cliffs' ledges.
+/// Moss settling on boulders' tops, and lichen on the cave's rock.
 const MOSS: TopLayer = TopLayer {
     color: [0.055, 0.07, 0.03],
     coverage: 0.36,
@@ -527,17 +528,11 @@ const LICHEN: TopLayer = TopLayer {
     roughness: 0.85,
 };
 
-/// Soil staining boulders' bases, and the damper rock at cliffs' feet,
-/// where the terrain places them: a few centimeters up a
-/// meter-wide boulder, a meter or so up a cliff.
-const SOIL: Grounding = Grounding {
-    color: [0.6, 0.53, 0.43],
-    height: 0.12,
-};
-const FOOT: Grounding = Grounding {
-    color: [0.68, 0.64, 0.58],
-    height: 0.05,
-};
+/// How far up boulders' bases and spruces' trunks blend into the ground
+/// where the terrain places them: a few centimeters up a meter-wide
+/// boulder, a quarter meter up a trunk.
+const SOIL: Grounding = Grounding { height: 0.12 };
+const ROOTS: Grounding = Grounding { height: 0.25 };
 
 /// Meters between lanterns along a road, and from its middle line to them.
 const LANTERN_SPACING: f32 = 40.0;
@@ -656,9 +651,8 @@ fn lanterns(world: &mut World, road: &[[f32; 2]], half: f32) -> engine::Result<(
 }
 
 /// Stones authors stand round `center` (terrain-local) `radius` meters out:
-/// a block of the cliffs' rock every seven meters, turned
-/// along the ring and varied in size, none within twelve meters of a road
-/// in `roads`.
+/// a large boulder every seven meters, turned along the ring and varied in
+/// size, none within twelve meters of a road in `roads`.
 fn plateau_ring(center: [f32; 2], radius: f32, roads: &[Vec<[f32; 2]>]) -> Vec<AuthoredPlacement> {
     let distance = |point: Vec2, from: Vec2, to: Vec2| {
         let along = to - from;
@@ -680,7 +674,7 @@ fn plateau_ring(center: [f32; 2], radius: f32, roads: &[Vec<[f32; 2]>]) -> Vec<A
                     .any(|pair| distance(point, Vec2::from(pair[0]), Vec2::from(pair[1])) < 12.0)
             });
             (!near_road).then(|| AuthoredPlacement {
-                asset: format!("cliff{}", index % CLIFFS),
+                asset: format!("boulder{}", index % BOULDERS),
                 position: point.to_array(),
                 yaw: 90.0 - angle.to_degrees(),
                 scale: 2.0 + 1.2 * ((index * 7919) % 13) as f32 / 12.0,
@@ -705,13 +699,10 @@ fn surface(
 ) -> engine::Result<TerrainSurface> {
     // The shapes and the bark atlas are records: their handles now, their
     // content once hosts hand it back or it is built in place. Boulders
-    // and cliffs come at one detail, their coarser levels their meshes'
-    // own; spruces at each of their details.
+    // come at one detail, their coarser levels their meshes' own; spruces
+    // at each of their details.
     let boulders = (0..BOULDERS as u32)
         .map(|seed| rocks::boulder_record(world, seed))
-        .collect::<engine::Result<Vec<_>>>()?;
-    let cliffs = (0..CLIFFS as u32)
-        .map(|seed| rocks::cliff_record(world, seed))
         .collect::<engine::Result<Vec<_>>>()?;
     let spruces = (0..SPRUCES as u32)
         .map(|seed| {
@@ -742,50 +733,33 @@ fn surface(
             .collect::<engine::Result<Vec<_>>>()
     })?;
     let mut assets = world.resource_mut::<AssetLibrary>();
-    // Boulders of a few shapes in their scanned maps where present
-    // (`ROCK_FILES`), otherwise in the terrain rock's maps: lighter than
-    // the cliffs' and gentler in relief, as weathered
-    // stones are.
-    let boulder_scan = scanned(&mut assets, files, "boulder", BOULDER_SCAN_TILING, MOSS)?;
-    let base = Material::new([0.8, 0.77, 0.72, 1.0]).and_then(|material| {
-        material.with_surface(Surface {
-            roughness: 0.85,
-            ..Surface::MATTE
-        })
-    })?;
     let terrain_rock = materials[4]
         .material
         .and_then(|rock| assets.material(rock).copied());
+    // Boulders of a few shapes in their scanned maps where present
+    // (`ROCK_FILES`), otherwise in the terrain rock's maps a repeat every
+    // three meters: lighter than the cave's rock and gentler in relief, as
+    // weathered stones are, and mossed on top.
+    let boulder_scan = scanned(&mut assets, files, "boulder", BOULDER_SCAN_TILING, MOSS)?;
     let material = match (boulder_scan, terrain_rock) {
         (Some(scan), _) => scan,
-        (None, Some(rock)) => {
-            let mut material = base;
-            if let Some(map) = rock.base_color_texture() {
-                material = material.with_base_color_texture(map)?;
-            }
-            if let Some(map) = rock.normal_texture() {
-                material = material.with_normal_texture(map, 0.8)?;
-            }
-            if let Some(map) = rock.metallic_roughness_texture() {
-                material = material
-                    .with_metallic_roughness_texture(map)
-                    .and_then(|material| material.with_occlusion_texture(map, 1.0))?;
-            }
-            // Laid from the world's axes, a repeat every three meters, and
-            // mossed on top.
-            material
-                .with_world_mapping(3.0)
-                .and_then(|material| material.with_top_layer(MOSS))?
+        (None, Some(terrain_rock)) => {
+            in_terrain_rock(terrain_rock, ([0.8, 0.77, 0.72], 0.85), 3.0, MOSS)?
         }
         (None, None) => Material::new([0.3, 0.28, 0.26, 1.0])
-            .and_then(|material| material.with_surface(base.surface()))
+            .and_then(|material| {
+                material.with_surface(Surface {
+                    roughness: 0.85,
+                    ..Surface::MATTE
+                })
+            })
             .and_then(|material| material.with_top_layer(MOSS))?,
     };
     let rock = material
         .with_grounding(SOIL)
         .and_then(|material| assets.insert_material(material))?;
-    let mut placed = Vec::with_capacity(BOULDERS + SPRUCES + CLIFFS);
-    for mesh in boulders {
+    let mut placed = Vec::with_capacity(BOULDERS + SPRUCES);
+    for &mesh in &boulders {
         // Boulders collide as spheres a little inside their faces.
         placed.push(PlacementAsset {
             mesh,
@@ -799,7 +773,8 @@ fn surface(
         });
     }
     // Spruces of a few shapes over one bark and needle atlas, their needles
-    // cut out by its alpha.
+    // cut out by its alpha and their trunks blending into the forest
+    // floor.
     let needles = Material::new([1.0, 1.0, 1.0, 1.0])
         .and_then(|material| {
             material.with_surface(Surface {
@@ -809,6 +784,7 @@ fn surface(
         })
         .and_then(|material| material.with_base_color_texture(TextureRef::new(atlas)))
         .and_then(|material| material.with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 }))
+        .and_then(|material| material.with_grounding(ROOTS))
         .and_then(|material| assets.insert_material(material))?;
     for details in spruces {
         let lods = details[1..]
@@ -832,72 +808,31 @@ fn surface(
             )),
         });
     }
-    // Cliffs: blocks of rock many meters across in the terrain rock's maps
-    // and tint, darker than the boulders, so where they rise from rock
-    // ground the two read as one face. They collide as spheres well inside
-    // their faces.
-    let mut cave_rocks = Vec::with_capacity(CLIFFS);
-    // Scanned where present, its color pulled toward the terrain rock's
-    // when converted.
-    let cliff_scan = scanned(&mut assets, files, "cliff", CLIFF_SCAN_TILING, LICHEN)?;
-    let cliff_rock = match (cliff_scan, terrain_rock) {
-        (Some(scan), _) => scan
-            .with_grounding(FOOT)
-            .and_then(|material| assets.insert_material(material))?,
+    // The rock the cave is hewn in, which the boulders framing its mouth
+    // wear too: the scanned rock face where present, its color pulled
+    // toward the terrain rock's when converted; otherwise the terrain
+    // rock's maps and tint, darker than the boulders, laid as the terrain's
+    // rock lies, a repeat every four meters, lichen on its faces turned up.
+    // Its walls show both sides.
+    let wall_scan = scanned(&mut assets, files, "cliff", WALL_SCAN_TILING, LICHEN)?;
+    let wall_rock = match (wall_scan, terrain_rock) {
+        (Some(scan), _) => assets.insert_material(scan)?,
         (None, Some(terrain_rock)) => {
-            let [red, green, blue] = LOOKS[4].tint;
-            let mut material = Material::new([red, green, blue, 1.0]).and_then(|material| {
-                material.with_surface(Surface {
-                    roughness: 0.9,
-                    ..Surface::MATTE
-                })
-            })?;
-            if let Some(map) = terrain_rock.base_color_texture() {
-                material = material.with_base_color_texture(map)?;
-            }
-            if let Some(map) = terrain_rock.normal_texture() {
-                material = material.with_normal_texture(map, 0.8)?;
-            }
-            if let Some(map) = terrain_rock.metallic_roughness_texture() {
-                material = material
-                    .with_metallic_roughness_texture(map)
-                    .and_then(|material| material.with_occlusion_texture(map, 1.0))?;
-            }
-            // As the terrain's rock lies: a repeat every four
-            // meters whatever a block's size, lichen on its ledges.
-            let material = material
-                .with_world_mapping(4.0)
-                .and_then(|material| material.with_top_layer(LICHEN))
-                .and_then(|material| material.with_grounding(FOOT))?;
+            let material = in_terrain_rock(terrain_rock, (LOOKS[4].tint, 0.9), 4.0, LICHEN)?;
             assets.insert_material(material)?
         }
         (None, None) => rock,
     };
-    for mesh in cliffs {
-        cave_rocks.push(mesh);
-        placed.push(PlacementAsset {
-            mesh,
-            material: cliff_rock,
-            lods: Vec::new(),
-            sway: 0.0,
-            collider: Some(PlacedCollider::new(
-                PlacedShape::Sphere { radius: 0.4 },
-                [0.0, 0.1, 0.0],
-            )),
-        });
-    }
-    // The cave is hewn in the cliffs' rock, its walls seen
-    // from both sides, and framed by their blocks.
-    let cave_wall = assets
-        .material(cliff_rock)
+    let wall = assets
+        .material(wall_rock)
         .copied()
         .map(|material| material.with_double_sided(true))
-        .ok_or_else(|| engine::Error::game_rule("the cliffs' rock is resident"))?;
-    let cave_wall = assets.insert_material(cave_wall)?;
+        .ok_or_else(|| engine::Error::game_rule("the cave's rock is resident"))?;
+    let wall = assets.insert_material(wall)?;
     world.insert_resource(CaveRock {
-        meshes: cave_rocks,
-        material: cliff_rock,
-        wall: cave_wall,
+        boulders,
+        material: wall_rock,
+        wall,
     });
     // Bridges are built of the boulders' weathered stone.
     TerrainSurface::new(
@@ -921,11 +856,11 @@ fn surface(
 struct CaveMouth(Vec2);
 const CAVE_MOUTH: f32 = 3.5;
 
-/// The rock the cave is hewn in: the cliffs' blocks framing its mouth,
-/// their material, and its walls'.
+/// The rock the cave is hewn in: the boulders' shapes, which frame its
+/// mouth, the rock they wear there, and its walls'.
 #[derive(Resource, Clone)]
 struct CaveRock {
-    meshes: Vec<MeshHandle>,
+    boulders: Vec<MeshHandle>,
     material: MaterialHandle,
     wall: MaterialHandle,
 }
@@ -1245,7 +1180,7 @@ fn make_tracks(
 /// - an interior over it, the region its lamp keeps to; it lets in all of
 ///   the sky and the sun, as the cave's own walls, hiding the sky (sky
 ///   occlusion), darken it;
-/// - cliff blocks framing its mouth.
+/// - boulders framing its mouth.
 ///
 /// Its tube's mesh is a record of the ground the bakes leave
 /// ([`Terrains::bake_record`]) and the mouth: the cave spawns once it is
@@ -1315,20 +1250,20 @@ fn open_cave(world: &mut World) {
         at(44.0, -5.0, fall * 18.0 + fall * 16.0),
         at(58.0, 0.0, fall * 18.0 + fall * 22.0),
     ];
-    // Blocks over and beside the mouth, facing down the slope: one over
-    // the tube's shell where it leaves the slope, its face the mouth's
-    // overhang, and one either side.
+    // Boulders over and beside the mouth, turned down the slope: one over
+    // the tube's shell where it leaves the slope, overhanging the mouth,
+    // and one either side, sunk in the hillside.
     let facing = Quat::from_rotation_y((-uphill.x).atan2(-uphill.y));
-    let blocks: Vec<(Transform, MeshHandle)> = [
-        (4.0, 0.0, 1.5, 8.0, 0),
-        (-1.0, 10.0, -1.5, 6.0, 1),
-        (-1.0, -10.0, -1.5, 6.0, 2),
+    let framing: Vec<(Transform, MeshHandle)> = [
+        (4.0, 0.0, 1.5, 10.0, 0),
+        (-1.0, 10.0, -1.5, 7.0, 1),
+        (-1.0, -10.0, -1.5, 7.0, 2),
     ]
     .into_iter()
     .filter_map(
         |(along, across, rise, scale, index): (f32, f32, f32, f32, usize)| {
             let point = mouth + uphill * along + side * across;
-            let mesh = *rock.meshes.get(index % rock.meshes.len().max(1))?;
+            let mesh = *rock.boulders.get(index % rock.boulders.len().max(1))?;
             Some((
                 Transform {
                     translation: Vec3::new(point.x, height(point) + rise, point.y),
@@ -1346,7 +1281,7 @@ fn open_cave(world: &mut World) {
     identity.extend_from_slice(&mouth.y.to_bits().to_le_bytes());
     world.insert_resource(CaveOpened);
     let spawn = move |world: &mut World, mesh: MeshHandle, built: &Mesh| {
-        spawn_cave(world, (mesh, built), &points, inward, (&rock, blocks));
+        spawn_cave(world, (mesh, built), &points, inward, (&rock, framing));
         Ok(())
     };
     let made = records::mesh_then(
@@ -1362,14 +1297,15 @@ fn open_cave(world: &mut World) {
 }
 
 /// The cave through `points` (going `inward` from the first) of `mesh`,
-/// its handle and its built mesh, hewn in `rock` and framed by `blocks`:
-/// its walls, its chamber's light, its interior and the blocks.
+/// its handle and its built mesh, hewn in `rock` and framed by the
+/// boulders of `framing`: its walls, its chamber's light, its interior and
+/// the boulders.
 fn spawn_cave(
     world: &mut World,
     (mesh, built): (MeshHandle, &Mesh),
     points: &[Vec3; 5],
     inward: Vec3,
-    (rock, blocks): (&CaveRock, Vec<(Transform, MeshHandle)>),
+    (rock, framing): (&CaveRock, Vec<(Transform, MeshHandle)>),
 ) {
     let (low, high) = cave_interior(built, points, inward);
     world.spawn((
@@ -1401,7 +1337,7 @@ fn spawn_cave(
             .with_blend(CAVE_MARGIN)
             .with_interior(Interior { sky: 1.0, sun: 1.0 }),
     ));
-    for (transform, mesh) in blocks {
+    for (transform, mesh) in framing {
         world.spawn((
             transform,
             Mesh3d {
@@ -1415,7 +1351,7 @@ fn spawn_cave(
 /// The box of the cave `mesh`'s interior, around its walls from its first
 /// bend in (`points[1]`, `inward` from `points[0]`) and CAVE_MARGIN wider on
 /// every side, the distance it fades in over, so it holds the walls whole;
-/// the mouth's walls and the blocks framing it stand in the open.
+/// the mouth's walls and the boulders framing it stand in the open.
 fn cave_interior(mesh: &Mesh, points: &[Vec3], inward: Vec3) -> (Vec3, Vec3) {
     let bend = (points[1] - points[0]).dot(inward);
     let (low, high) = mesh
@@ -1433,10 +1369,9 @@ fn cave_interior(mesh: &Mesh, points: &[Vec3], inward: Vec3) -> (Vec3, Vec3) {
     )
 }
 
-/// Boulder, spruce and cliff shapes the placement layers choose from.
+/// Boulder and spruce shapes the placement layers choose from.
 const BOULDERS: usize = 5;
 const SPRUCES: usize = 3;
-const CLIFFS: usize = 4;
 
 /// `look`'s ground material's maps ([`ground::sources`]) as an engine
 /// material tinted by its tint: base color, normal, and occlusion (red),
@@ -1525,11 +1460,46 @@ fn scanned(
         .map_err(engine::Error::from)
 }
 
+/// A rock material of linear `color` and `roughness` in the maps of the
+/// terrain's rock material `terrain_rock`, its normals at four fifths:
+/// laid from the world's axes, one repeat every `tiling` meters, with `top`
+/// settling on its faces turned up.
+fn in_terrain_rock(
+    terrain_rock: Material,
+    (color, roughness): ([f32; 3], f32),
+    tiling: f32,
+    top: TopLayer,
+) -> engine::Result<Material> {
+    let [red, green, blue] = color;
+    let mut material = Material::new([red, green, blue, 1.0]).and_then(|material| {
+        material.with_surface(Surface {
+            roughness,
+            ..Surface::MATTE
+        })
+    })?;
+    if let Some(map) = terrain_rock.base_color_texture() {
+        material = material.with_base_color_texture(map)?;
+    }
+    if let Some(map) = terrain_rock.normal_texture() {
+        material = material.with_normal_texture(map, 0.8)?;
+    }
+    if let Some(map) = terrain_rock.metallic_roughness_texture() {
+        material = material
+            .with_metallic_roughness_texture(map)
+            .and_then(|material| material.with_occlusion_texture(map, 1.0))?;
+    }
+    material
+        .with_world_mapping(tiling)
+        .and_then(|material| material.with_top_layer(top))
+        .map_err(engine::Error::from)
+}
+
 /// Where each material lies: meadow everywhere, dry grass in broad patches
 /// with ragged edges, bare dirt in smaller ones, needle litter under the
 /// forests, lush grass where water gathers, beds along streams and rivers,
-/// gravel on the roads and snow on the peaks; and rock over all of them
-/// wherever the ground is steep.
+/// gravel on the roads and snow on the peaks; rock over all of them
+/// wherever the ground is steep; and the boulders and spruces placed over
+/// them.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -1580,11 +1550,11 @@ fn rules() -> Biomes {
             Mask::Invert(Box::new(Mask::Path([10.0, 4.0]))),
         ])
     };
-    let boulders = |weight: f32| {
+    let boulders = || {
         (0..BOULDERS)
             .map(|index| PlacementChoice {
                 asset: format!("boulder{index}"),
-                weight,
+                weight: 1.0,
             })
             .collect::<Vec<_>>()
     };
@@ -1592,7 +1562,6 @@ fn rules() -> Biomes {
         assets: (0..BOULDERS)
             .map(|index| format!("boulder{index}"))
             .chain((0..SPRUCES).map(|index| format!("spruce{index}")))
-            .chain((0..CLIFFS).map(|index| format!("cliff{index}")))
             .collect(),
         // Boulders in clumps over the meadows, resting on the lowest ground
         // under them, stones strewn on scree, outcrops on
@@ -1620,7 +1589,6 @@ fn rules() -> Biomes {
                 mask: forest(),
                 scale: [0.65, 1.15],
                 align: 0.04,
-                face: 0.0,
                 sink: 0.3,
                 bed: 0.0,
                 level: 3,
@@ -1635,7 +1603,7 @@ fn rules() -> Biomes {
             },
             PlacementLayer {
                 id: "boulders".into(),
-                assets: boulders(1.0),
+                assets: boulders(),
                 density: 18.0,
                 footprint: 7.0,
                 materials: vec!["grass".into(), "dry_grass".into(), "dirt".into()],
@@ -1645,7 +1613,6 @@ fn rules() -> Biomes {
                 ]),
                 scale: [0.6, 2.4],
                 align: 0.3,
-                face: 0.0,
                 sink: 0.1,
                 bed: 0.45,
                 level: 0,
@@ -1659,67 +1626,27 @@ fn rules() -> Biomes {
             },
             PlacementLayer {
                 id: "stones".into(),
-                assets: boulders(1.0),
+                assets: boulders(),
                 density: 450.0,
                 footprint: 1.5,
-                materials: vec!["scree".into()],
+                materials: vec!["rock".into()],
                 mask: Mask::one(),
                 scale: [0.12, 0.45],
                 align: 0.8,
-                face: 0.0,
                 sink: 0.08,
                 bed: 0.0,
                 level: 0,
                 far: None,
-            },
-            // Cliffs rise in bands from the steepest rock, overlapping where
-            // the ground stays steep, sunk a little below the lowest ground
-            // under them, so their faces stand in the slope
-            // instead of over it; standing on two-kilometer tiles and half
-            // of them on the pinned four-kilometer ones, so cliff bands show
-            // from afar. None stand by rivers, whose channels the finer
-            // tiles cut deeper than the ground they stand on.
-            PlacementLayer {
-                id: "cliffs".into(),
-                assets: (0..CLIFFS)
-                    .map(|index| PlacementChoice {
-                        asset: format!("cliff{index}"),
-                        weight: 1.0,
-                    })
-                    .collect(),
-                density: 24.0,
-                footprint: 11.0,
-                materials: vec!["rock".into()],
-                mask: Mask::Multiply(vec![
-                    Mask::Slope([36.0, 46.0]),
-                    remap(noise(260.0, 31, 2), 0.45, 0.65),
-                    Mask::Invert(Box::new(Mask::River([16.0, 10.0]))),
-                ]),
-                scale: [12.0, 30.0],
-                align: 0.15,
-                face: 0.85,
-                sink: 0.2,
-                bed: 0.55,
-                level: 3,
-                far: Some(FarPlacement {
-                    level: 4,
-                    share: 0.5,
-                }),
             },
             // Boulders in steep channels, breaking the white water running
             // down them, as cascades' beds hold them (Montgomery and
             // Buffington).
             PlacementLayer {
                 id: "channel_boulders".into(),
-                assets: boulders(1.0),
+                assets: boulders(),
                 density: 300.0,
                 footprint: 3.0,
-                materials: vec![
-                    "riverbed".into(),
-                    "wet_rock".into(),
-                    "moss".into(),
-                    "rock".into(),
-                ],
+                materials: vec!["riverbed".into(), "rock".into()],
                 mask: Mask::Multiply(vec![
                     Mask::River([-0.5, -2.0]),
                     Mask::Slope([14.0, 24.0]),
@@ -1727,7 +1654,6 @@ fn rules() -> Biomes {
                 ]),
                 scale: [0.6, 1.6],
                 align: 0.7,
-                face: 0.0,
                 sink: 0.3,
                 bed: 0.3,
                 level: 0,
@@ -1735,14 +1661,13 @@ fn rules() -> Biomes {
             },
             PlacementLayer {
                 id: "outcrops".into(),
-                assets: boulders(1.0),
+                assets: boulders(),
                 density: 25.0,
                 footprint: 8.0,
                 materials: vec!["rock".into()],
                 mask: Mask::one(),
                 scale: [2.0, 5.0],
                 align: 0.6,
-                face: 0.0,
                 sink: 0.5,
                 bed: 0.0,
                 level: 0,

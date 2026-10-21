@@ -21,8 +21,8 @@ pub(crate) type PoseData = engine_core::PoseRows;
 /// WGSL `grounds` of `meshes/declarations.wgsl`: what lies
 /// under a placed object, x and z of the ground's normal as two signed
 /// 16-bit fractions, the meters its base sinks below the ground, the meters
-/// up its stain reaches (0: none) and the stain's linear color as four
-/// bytes.
+/// up it blends into the ground (0: none) and the ground's color there as
+/// four bytes, which `scatter_snap.wgsl` writes (0 until it does).
 pub(crate) type GroundData = [u32; 4];
 
 gpu_structs! {

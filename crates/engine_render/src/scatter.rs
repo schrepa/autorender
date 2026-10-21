@@ -3,7 +3,8 @@
 //! Objects hold slots of a pool whose poses and colors are laid out as
 //! slots' are, so the mesh and depth shaders read them unchanged; each
 //! tile's objects upload when it arrives. Each frame a compute pass first
-//! sets every object on its terrain's finest resident heights
+//! sets every object on its terrain's finest resident heights, giving
+//! those blending into the ground the ground's color under them
 //! (`scatter_snap.wgsl`), then culls it against each view (the camera,
 //! then the shadow maps drawn every frame) and picks its level of detail
 //! from the camera (`scatter_cull.wgsl`), appending it to its draw
@@ -69,12 +70,17 @@ pub(crate) use crate::gpu_layouts::scatter::Record;
 pub(crate) use crate::gpu_layouts::scatter::TerrainInfo;
 
 /// What setting objects on the terrain reads: the terrain pass's resident
-/// heights and directory, their generations, a revision advancing whenever
-/// resident tiles change, and each terrain's place.
+/// heights and control values, its directory, the terrains' palette and
+/// macro colors, the generations of the tiles' arrays, the directory and
+/// the macro colors, a revision advancing whenever resident tiles change,
+/// and each terrain's place.
 pub(crate) struct SnapSources<'a> {
     pub heights: &'a wgpu::TextureView,
+    pub control: &'a wgpu::TextureView,
     pub directory: &'a wgpu::Buffer,
-    pub generation: (u64, u64),
+    pub palette: &'a wgpu::Buffer,
+    pub macro_maps: &'a wgpu::TextureView,
+    pub generation: (u64, u64, u64),
     pub revision: u64,
     pub terrains: &'a [TerrainInfo],
 }
@@ -82,9 +88,9 @@ pub(crate) struct SnapSources<'a> {
 use crate::gpu_layouts::scatter::GroupData;
 
 /// What setting objects on the terrain binds: the generations of the
-/// objects' buffers, the terrains' places and the terrain pass's heights
-/// and directory.
-type SnapKey = (u64, u64, (u64, u64));
+/// objects' buffers, the terrains' places and the terrain pass's tiles,
+/// directory and macro colors.
+type SnapKey = (u64, u64, (u64, u64, u64));
 
 use crate::gpu_layouts::scatter::DrawArgs;
 
@@ -731,6 +737,10 @@ impl ScatterPass {
                     crate::buffers::entry("terrains", &self.terrains),
                     crate::buffers::entry("directory", sources.directory),
                     ("heights", crate::pipelines::view(sources.heights)),
+                    crate::buffers::entry("grounds", &self.grounds),
+                    ("control", crate::pipelines::view(sources.control)),
+                    crate::buffers::entry("palette", sources.palette),
+                    ("macro_maps", crate::pipelines::view(sources.macro_maps)),
                 ],
             );
             self.snap_group.set(key, group);

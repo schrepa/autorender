@@ -4,8 +4,10 @@
 // the object's distance (`terrain_ground.wgsl`), as ground cover's roots
 // do (`cover_grow.wgsl`), so objects stand on the ground drawn under them
 // as its levels morph and settle as finer tiles arrive. Its pose's height
-// and its bounding sphere follow its base. Objects standing far away hide
-// where tiles of the level holding them instead are resident.
+// and its bounding sphere follow its base, and an object blending into the
+// ground takes the ground's color under it, as ground cover's roots do.
+// Objects standing far away hide where tiles of the level holding them
+// instead are resident.
 
 struct Snap {
     // Slots and terrains.
@@ -14,14 +16,27 @@ struct Snap {
     eye: vec4<f32>,
 }
 
-// A terrain: its origin (world) and level-0 sample spacing, where its
-// levels start in the directory and how many there are, and the meters
-// from the eye up to which each of its first eight levels draws
-// (`terrain_ground.wgsl`'s `GroundTerrain`).
+// A terrain: its origin (world) and level-0 sample spacing; where its
+// levels start in the directory, how many there are, where its materials
+// start in the palette and its macro colors' layer plus one (0 until they
+// arrive); and the meters from the eye up to which each of its first eight
+// levels draws (`terrain_ground.wgsl`'s `GroundTerrain`).
 struct TerrainInfo {
     origin: vec4<f32>,
     levels: vec4<u32>,
     ranges: array<vec4<f32>, 2>,
+}
+
+// A surface material as the terrain palette holds it (`terrain.wgsl`):
+// its maps' mean color and roughness, its factors applied, in `far`, and
+// its cover's leaves per square meter of ground in `canopy.w`.
+struct PaletteEntry {
+    color: vec4<f32>,
+    params: vec4<f32>,
+    maps: vec4<f32>,
+    far: vec4<f32>,
+    relief: vec4<f32>,
+    canopy: vec4<f32>,
 }
 
 // `scatter_cull.wgsl`'s record: the bounding sphere, draw group and scale,
@@ -56,6 +71,17 @@ const HIDDEN: u32 = 0x80000000u;
 @group(0) @binding(3) var<storage, read> terrains: array<TerrainInfo>;
 @group(0) @binding(4) var<storage, read> directory: array<u32>;
 @group(0) @binding(5) var heights: texture_2d_array<f32>;
+// What lies under each object (`meshes/declarations.wgsl`'s `grounds`):
+// the meters up it blends into the ground (z, 0 for none) and the ground's
+// color there (w), which this writes.
+@group(0) @binding(6) var<storage, read_write> grounds: array<vec4<u32>>;
+// The resident tiles' control values, the terrains' palette, as many
+// entries as fit 16 KiB (`terrain::PALETTE_ENTRIES`), and their macro
+// colors.
+@group(0) @binding(7) var control: texture_2d_array<u32>;
+const PALETTE_ENTRIES: u32 = 170u;
+@group(0) @binding(8) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
+@group(0) @binding(9) var macro_maps: texture_2d_array<f32>;
 
 // The ground of terrain `info` at terrain-local `local` from its finest
 // resident level: its height there, its samples blended, whether one is
@@ -97,6 +123,52 @@ fn finest_ground(info: TerrainInfo, terrain: GroundTerrain, local: vec2<f32>) ->
     return ground;
 }
 
+// The macro colors of terrain `info` at terrain-local `local`,
+// interpolated between their texels; ground as it is before they arrive.
+fn macro_colors(info: TerrainInfo, local: vec2<f32>) -> vec4<f32> {
+    let layer = info.levels.w;
+    if layer == 0u {
+        return vec4<f32>(0.5);
+    }
+    let extent = vec2<f32>(f32(directory[info.levels.x + 1u]),
+        f32(directory[info.levels.x + 2u])) * 256.0 * info.origin.w;
+    let size = vec2<i32>(textureDimensions(macro_maps));
+    let at = local / extent * vec2<f32>(size) - 0.5;
+    let first = vec2<i32>(floor(at));
+    let f = at - floor(at);
+    let last = size - vec2<i32>(1);
+    let a = textureLoad(macro_maps, clamp(first, vec2<i32>(0), last), layer - 1u, 0);
+    let b = textureLoad(macro_maps, clamp(first + vec2<i32>(1, 0), vec2<i32>(0), last),
+        layer - 1u, 0);
+    let c = textureLoad(macro_maps, clamp(first + vec2<i32>(0, 1), vec2<i32>(0), last),
+        layer - 1u, 0);
+    let d = textureLoad(macro_maps, clamp(first + vec2<i32>(1, 1), vec2<i32>(0), last),
+        layer - 1u, 0);
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// The ground's color under an object at terrain-local `local` of terrain
+// `info`, `away` meters from the eye, where `ground` is its finest
+// resident level: the nearest sample's control value's two materials'
+// mean colors and roughness blended by their shares, tinted by the macro
+// colors as the ground and ground cover's roots are
+// (`terrain_variety.wgsl`); as `grounds` hold it, the colors' square roots
+// and the roughness (never 0) in bytes.
+fn ground_color(info: TerrainInfo, local: vec2<f32>, ground: FinestGround, away: f32) -> u32 {
+    let samples = local / (info.origin.w * f32(1u << ground.level));
+    let texel = min(vec2<u32>(round(samples)) - ground.tile.first, vec2<u32>(256u))
+        + vec2<u32>(1u);
+    let value = textureLoad(control, texel, ground.tile.layer, 0).x;
+    let share = f32((value >> 16u) & 0xffu) / 255.0;
+    let first = palette[min(info.levels.z + (value & 0xffu), PALETTE_ENTRIES - 1u)];
+    let second = palette[min(info.levels.z + ((value >> 8u) & 0xffu), PALETTE_ENTRIES - 1u)];
+    let far = mix(first.far, second.far, share);
+    let vegetated = mix(step(1.0e-6, first.canopy.w), step(1.0e-6, second.canopy.w), share);
+    let tint = macro_tint(macro_colors(info, local), vegetated, macro_strength(away));
+    return pack4x8unorm(vec4<f32>(sqrt(saturate(far.rgb * tint)),
+        max(saturate(far.w), 1.0 / 255.0)));
+}
+
 @compute @workgroup_size(64)
 fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= snap.counts.x {
@@ -129,4 +201,7 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         + drawn_height(ground_terrain, local, away, ground.level, ground.tile) - record.sink;
     poses[id.x].r1.w = base;
     records[id.x].center.y = record.center.y + (base - pose.r1.w);
+    if grounds[id.x].z != 0u {
+        grounds[id.x].w = ground_color(info, local, ground, away);
+    }
 }

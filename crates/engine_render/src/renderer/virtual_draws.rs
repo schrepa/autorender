@@ -14,18 +14,18 @@ use crate::entries;
 
 /// Virtual geometry's draws: the arena and cluster
 /// selection; pipelines per pass kind and material variant over their
-/// layouts (unlit, lit) and pose groups (poses, colors, previous poses and
-/// the arena); this frame's camera bins (material and variant), the plan
-/// batches whose clusters draw instead of their fallback meshes, each
-/// shadow map's bin and view offset, and the first of the camera bins'
-/// phase-two twins; the depth pyramid generation and projection of the
-/// last frame that drew two phases.
+/// layouts (unlit, lit) and pose groups (poses, colors, previous poses,
+/// grounds and the arena); this frame's camera bins (material and
+/// variant), the plan batches whose clusters draw instead of their
+/// fallback meshes, each shadow map's bin and view offset, and the first
+/// of the camera bins' phase-two twins; the depth pyramid generation and
+/// projection of the last frame that drew two phases.
 pub(super) struct VirtualDraws {
     pub(super) pass: VirtualGeometryPass,
     pub(super) pipelines: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
     pub(super) pose_layout: crate::pipelines::GroupLayout,
     pub(super) layouts: [Option<wgpu::PipelineLayout>; 2],
-    pub(super) pose_groups: [GroupCache<6>; 4],
+    pub(super) pose_groups: [GroupCache<7>; 4],
     pub(super) bins: Vec<(Option<MaterialHandle>, Variant)>,
     pub(super) drawn: Vec<bool>,
     pub(super) shadow_bins: Vec<(usize, usize, u32)>,
@@ -35,8 +35,8 @@ pub(super) struct VirtualDraws {
 
 impl VirtualDraws {
     pub(super) fn new(device: &wgpu::Device) -> Self {
-        // Poses, colors, previous poses and the arena's meshes, clusters and
-        // pages.
+        // Poses, colors, previous poses, grounds and the arena's meshes,
+        // clusters and pages.
         let pose_layout = crate::pipelines::layout(device, &VIRTUAL_POSES);
         Self {
             pass: VirtualGeometryPass::new(device),
@@ -280,13 +280,14 @@ impl Renderer {
 
     /// Pose groups of virtual geometry pipelines: each pair
     /// of this frame's and the previous frame's pose buffers, with the
-    /// colors and the arena.
+    /// colors, the grounds none of the slots stand on and the arena.
     pub(super) fn ensure_virtual_pose_groups(&mut self) {
         let Some(([meshes, clusters, pages], arena)) = self.virtual_draws.pass.arena() else {
             return;
         };
         let buffers = self.instances.pose_bounds();
         let colors = self.instances.colors().bound();
+        let grounds = Bound::fixed(self.instances.grounds().as_entire_binding());
         // The arena counts its buffers' replacements itself.
         let arena = [meshes, clusters, pages]
             .map(|buffer| Bound::counted(arena, buffer.as_entire_binding()));
@@ -301,6 +302,7 @@ impl Renderer {
                     ("poses", buffers[current].clone()),
                     ("colors", colors.clone()),
                     ("previous_poses", buffers[previous].clone()),
+                    ("grounds", grounds.clone()),
                     ("virtual_meshes", meshes),
                     ("virtual_clusters", clusters),
                     ("virtual_pages", pages),

@@ -278,7 +278,7 @@ gpu_consts! {
     // crate::gpu_layouts::terrain
     /// Surface materials every terrain together can show: as many as fit the
     /// 16 KiB uniform binding every device allows.
-    pub(crate) const PALETTE_ENTRIES: usize = 16_384 / size_of::<PaletteEntry>() => ["TERRAIN_PALETTE_ENTRIES" in SHADER, "PALETTE_ENTRIES" in COVER_GROW_SHADER, "PALETTE_ENTRIES" in BOUNCE_SHADER];
+    pub(crate) const PALETTE_ENTRIES: usize = 16_384 / size_of::<PaletteEntry>() => ["TERRAIN_PALETTE_ENTRIES" in SHADER, "PALETTE_ENTRIES" in COVER_GROW_SHADER, "PALETTE_ENTRIES" in BOUNCE_SHADER, "PALETTE_ENTRIES" in SCATTER_SNAP_SHADER];
 
     /// Cells along a side of the cloud shadows' grid.
     pub(crate) const SHADOW_CELLS: u32 = 128 => ["CLOUD_SHADOW_CELLS"];
