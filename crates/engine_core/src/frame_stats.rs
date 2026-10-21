@@ -459,6 +459,9 @@ pub struct TerrainRenderStats {
     pub dropped_vt_pages: u32,
     /// Virtual texture pages evicted for others this frame.
     pub vt_evictions: u32,
+    /// Of the resident pages, far pages: terrains' coarse mips, the same
+    /// whatever the eye, cooked once and pinned in their slots.
+    pub vt_far_pages: u32,
     /// Objects placement layers stand on resident level-0 tiles, each culled
     /// on the GPU every frame.
     pub placed_objects: u32,

@@ -312,6 +312,16 @@ impl TerrainTables {
         self.uniform_ids = terrains.terrains.iter().map(|terrain| terrain.id).collect();
     }
 
+    /// The palette entries of the frame's terrain `index`, which has
+    /// `materials` surface materials, as the palette holds them; none where
+    /// they did not fit.
+    pub(super) fn palette_of(&self, index: usize, materials: usize) -> &[PaletteEntry] {
+        let base = self.palette_bases.get(index).copied().unwrap_or(0) as usize;
+        self.palette_written
+            .get(base..base + materials)
+            .unwrap_or_default()
+    }
+
     /// The uniform offset of the frame terrain `id`.
     pub(super) fn uniform_of(&self, id: u64) -> Option<u32> {
         self.uniform_ids

@@ -13,7 +13,8 @@
 // keeps, per mip, a window of VT_WINDOW² pages around the eye in
 // `terrain_directory` from `terrain.vt_layout.x`: its first page, then a table
 // of each page's slot plus one (0 while absent), addressed by page modulo
-// VT_WINDOW.
+// VT_WINDOW. Its coarse mips' pages are far pages (`terrain_vt.rs`), the same
+// whatever the eye, cooked once and resident from its first frames.
 const VT_PAGE: f32 = 128.0;
 const VT_BORDER: f32 = 8.0;
 const VT_SLOT: f32 = 144.0;
@@ -21,6 +22,9 @@ const VT_WINDOW: u32 = 64u;
 const VT_MIPS: u32 = 18u;
 // Leaves per square meter of ground the leaves texel's 1 stands for.
 const VT_LEAVES: f32 = 16.0;
+// The footprint far pages see every material from: wider than any repeat,
+// so each shows its maps' means.
+const VT_FAR_FOOTPRINT: f32 = 1.0e6;
 // Ground steeper than this (its normal's y below) stays exact: its texels
 // would stretch down cliffs.
 const VT_STEEP: f32 = 0.7;
@@ -164,7 +168,8 @@ fn terrain_vt_ground(texels: TerrainVtTexels, site: TerrainSite) -> TerrainGroun
 }
 
 // What the texture's bakes and feedback bind beside the terrain group.
-// Pages to bake: each one's slot, mip, and page along x and z.
+// Pages to bake: each one's slot, mip (bits 0 to 7; for far pages, the
+// level they read plus one from bit 8), and page along x and z.
 struct TerrainVtBake {
     slot: u32,
     mip: u32,
@@ -178,11 +183,12 @@ struct TerrainVtBake {
 @group(2) @binding(19) var<storage, read_write> terrain_vt_wanted: array<atomic<u32>>;
 
 // The terrain's height at terrain-local `local` in its finest resident
-// level, bilinear between its samples (heights from the terrain's origin).
-fn terrain_vt_height(local: vec2<f32>) -> f32 {
+// level from `finest` on, bilinear between its samples (heights from the
+// terrain's origin).
+fn terrain_vt_height(local: vec2<f32>, finest: u32) -> f32 {
     let base = terrain.directory.x;
     let levels = terrain.directory.y;
-    for (var index = 0u; index < levels; index++) {
+    for (var index = finest; index < levels; index++) {
         let header = base + index * 4u;
         let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
         let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
@@ -235,19 +241,29 @@ struct TerrainVtTargets {
 // where a pixel's footprint spans the texel, at the shading levels its
 // distance from the eye gives (`terrain_shading_level`, as the exact path),
 // without the cover's canopy, which pixels lay over it as seen from them.
-// A bake draws one sheet's pages.
+// A far page's texel is the ground seen from afar whatever the eye: its
+// level alone shades it (the terrain's finest pinned), every material shows
+// its maps' means and its macro colors their whole tint. A bake draws one
+// sheet's pages.
 @fragment
 fn fs_terrain_vt_bake(input: TerrainVtBakeOutput) -> TerrainVtTargets {
     let bake = terrain_vt_bakes[input.bake];
+    let mip = bake.mip & 0xffu;
+    let far = bake.mip >> 8u;
     let place = terrain_vt_place(bake.slot);
     let corner = vec2<f32>(place.yz) * VT_SLOT;
-    let size = terrain.vt_scale.x * f32(1u << bake.mip);
+    let size = terrain.vt_scale.x * f32(1u << mip);
     let texel = vec2<f32>(bake.page) * VT_PAGE + (input.clip_position.xy - corner) - VT_BORDER;
     let local = texel * size;
-    let world = vec3<f32>(local.x + terrain.origin.x, terrain.origin.y + terrain_vt_height(local),
-        local.y + terrain.origin.z);
+    let first = select(0u, far - 1u, far > 0u);
+    let world = vec3<f32>(local.x + terrain.origin.x,
+        terrain.origin.y + terrain_vt_height(local, first), local.y + terrain.origin.z);
     let distance = length(world - terrain.eye.xyz);
-    let shading = terrain_shading_level(distance);
+    var shading = terrain_shading_level(distance);
+    if far > 0u {
+        shading.level = first;
+        shading.blend = 0.0;
+    }
     let geometric = terrain_surface_normal(local, shading);
     let slope = -geometric.xz / max(geometric.y, 0.05);
     var site: TerrainSite;
@@ -255,22 +271,27 @@ fn fs_terrain_vt_bake(input: TerrainVtBakeOutput) -> TerrainVtTargets {
     site.world_dx = vec3<f32>(size, slope.x * size, 0.0);
     site.world_dy = vec3<f32>(0.0, slope.y * size, size);
     let along = vec2<f32>(length(site.world_dx), length(site.world_dy));
-    site.footprint = max(along.x, along.y);
-    site.texel = max(min(along.x, along.y), site.footprint / 16.0);
+    let footprint = max(along.x, along.y);
+    site.footprint = footprint;
+    site.texel = max(min(along.x, along.y), footprint / 16.0);
+    if far > 0u {
+        site.footprint = VT_FAR_FOOTPRINT;
+        site.texel = VT_FAR_FOOTPRINT;
+    }
     site.geometric = geometric;
     site.distance = distance;
     site.toward = vec3<f32>(0.0, 1.0, 0.0);
     site.thinned = 0.0;
     let ground = terrain_ground(site, shading);
     // The detail and macro colors pixels apply (`terrain_point_seen`).
-    let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, site.footprint);
-    let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, site.footprint);
-    let fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, site.footprint);
+    let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
+    let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
+    let fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, footprint);
     let plain = (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
     let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
-    let colors = terrain_macro_texel(local, site.footprint);
-    let tint = mix(plain, mapped, ground.mapped)
-        * macro_tint(colors, ground.vegetated, macro_strength(distance));
+    let colors = terrain_macro_texel(local, footprint);
+    let strength = select(macro_strength(distance), 1.0, far > 0u);
+    let tint = mix(plain, mapped, ground.mapped) * macro_tint(colors, ground.vegetated, strength);
     let frame = terrain_vt_frame(geometric);
     let vegetated = max(ground.vegetated, 1.0e-6);
     var targets: TerrainVtTargets;

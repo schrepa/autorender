@@ -282,6 +282,7 @@ impl Renderer {
                 vt_missing: self.terrain.vt.stats.missing,
                 dropped_vt_pages: self.terrain.vt.stats.dropped,
                 vt_evictions: self.terrain.vt.stats.evictions,
+                vt_far_pages: self.terrain.vt.stats.far,
                 placed_objects: self.features.scatter.get().resident,
                 placed_far_objects: self.scatter_draws.far_objects(),
                 placed_impostors: self.impostors.placed.live(),

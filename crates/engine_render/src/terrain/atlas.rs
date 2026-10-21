@@ -446,6 +446,13 @@ impl TileAtlas {
         words
     }
 
+    /// Whether terrain `id`'s tile `key` is resident and stands as it is:
+    /// no coarser level's normals or surface materials show over it this
+    /// frame.
+    pub(super) fn settled(&self, key: (u64, TileKey)) -> bool {
+        self.slots.contains_key(&key) && !self.fading.contains(&key)
+    }
+
     /// Creates the compute pipelines tiles' normal maps and control values
     /// build with unless they exist.
     pub(super) fn warm(&mut self, device: &wgpu::Device) {

@@ -457,7 +457,7 @@ pub(crate) const MAP: &[Rule] = &[
     Rule {
         paths: &[
             "crates/engine_render/src/**/terrain*",
-            "crates/engine_render/src/**/terrain/**",
+            "crates/engine_render/src/**/terrain*/**",
             "crates/engine_render/src/**/bounce*",
             "crates/engine_render/src/**/scatter*",
         ],

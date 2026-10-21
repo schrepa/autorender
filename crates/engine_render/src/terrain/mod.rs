@@ -25,8 +25,9 @@
 //! pipelines and terrain group (`pipelines`), beside tiles' water
 //! (`water_blocks`), the material maps, the sky and horizon maps its
 //! lighting uploads, its bounce light, its macro colors, the runtime
-//! virtual texture and deformation map. Debug builds check what holds
-//! between them after every preparation (`invariants`).
+//! virtual texture with its far pages (what they are baked from: `far`)
+//! and deformation map. Debug builds check what holds between them after
+//! every preparation (`invariants`).
 
 use engine_core::collections::HashMap;
 use std::ops::Range;
@@ -58,6 +59,7 @@ use crate::terrain_sky::SkyMaps;
 
 mod atlas;
 mod culling;
+mod far;
 #[cfg(debug_assertions)]
 mod invariants;
 mod patches;
@@ -247,8 +249,9 @@ pub(crate) struct TerrainPass {
     pub(crate) macro_maps: MacroMaps,
     /// Runtime deformation's map.
     pub(crate) deformation: crate::deformation::DeformationPass,
-    /// The runtime virtual texture.
+    /// The runtime virtual texture, and what its far pages are baked from.
     pub(crate) vt: crate::terrain_vt::VirtualTexture,
+    far: far::FarInputs,
     /// Tiles' water.
     pub(crate) water: water_blocks::WaterBlocks,
 }
@@ -267,6 +270,7 @@ impl TerrainPass {
             macro_maps: MacroMaps::new(device, queue),
             deformation: crate::deformation::DeformationPass::new(device),
             vt: crate::terrain_vt::VirtualTexture::new(device),
+            far: far::FarInputs::default(),
             water: water_blocks::WaterBlocks::new(device),
         }
     }
@@ -355,7 +359,13 @@ impl TerrainPass {
         self.macro_maps.prepare(device, queue, terrains);
         let lighting = (&self.horizons, &self.sky, &self.tables.palette_bases[..]);
         self.bounce.prepare(device, queue, terrains, lighting);
-        // The runtime virtual texture.
+        // The runtime virtual texture, its far pages baked from what each
+        // terrain's pinned level holds.
+        let sources = self.far.sources(
+            terrains,
+            &views.settings,
+            (&self.atlas, &self.tables, &self.macro_maps),
+        );
         let tables = &self.tables;
         let textures = self.vt.prepare(
             device,
@@ -363,7 +373,7 @@ impl TerrainPass {
             terrains,
             (views.eye, &views.settings),
             (&self.maps, &self.macro_maps),
-            &self.atlas.changed,
+            (&self.atlas.changed, &sources),
             (
                 &tables.directory,
                 tables.vt_base,

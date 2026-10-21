@@ -41,7 +41,8 @@ workspace = true
 features = ["dx12", "vulkan", "metal"]
 
 # `SOURCE`, the hash of the code making the records the renderer makes:
-# impostors' layers and the scene's pipeline list.
+# impostors' layers, the runtime virtual texture's far pages and the
+# scene's pipeline list.
 [build-dependencies]
 engine_sources.workspace = true
 

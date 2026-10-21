@@ -32,7 +32,7 @@ type LayerKey = [Option<TextureHandle>; 3];
 pub(crate) const SHEET_TEXELS: u32 = 1024;
 /// Layers of the sheets' array a sheet takes: its base color, its cover's
 /// canopy and its normals' turn (sRGB, linear data stored as is).
-const SHEET_LAYERS: u32 = 3;
+pub(crate) const SHEET_LAYERS: u32 = 3;
 
 /// What a layer holds where its material lacks a map: white, a flat
 /// normal, and full occlusion, roughness and metalness factors at middle
@@ -191,6 +191,12 @@ impl TerrainMaps {
     /// Bytes of the arrays with their levels, and of the sheets.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.bytes
+    }
+
+    /// The virtual texture's sheets, three layers a sheet, which its far
+    /// pages upload into and are read back from.
+    pub(crate) fn sheet_texture(&self) -> &wgpu::Texture {
+        &self.sheet_array
     }
 
     /// The views a bake of the virtual texture's sheet `sheet` draws into:

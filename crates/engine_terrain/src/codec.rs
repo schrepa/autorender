@@ -173,7 +173,7 @@ pub(crate) fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32
 /// neighbours predict (left plus up less their corner, as [`put_grid`]
 /// predicts), which smooth maps leave mostly small for the cook's
 /// compression.
-pub(crate) fn put_planes(out: &mut Writer, planes: &[u8], side: usize) {
+pub fn put_planes(out: &mut Writer, planes: &[u8], side: usize) {
     out.put(&(planes.len() as u64));
     let area = side * side;
     let mut residuals = Vec::with_capacity(planes.len());
@@ -187,7 +187,7 @@ pub(crate) fn put_planes(out: &mut Writer, planes: &[u8], side: usize) {
 }
 
 /// Reads planes [`put_planes`] wrote, `side` texels a side.
-pub(crate) fn get_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u8]>, CodecError> {
+pub fn get_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u8]>, CodecError> {
     let count = input.count()?;
     let area = side * side;
     if area == 0 || count % area != 0 {

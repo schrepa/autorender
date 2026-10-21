@@ -1,6 +1,6 @@
 //! Impostors: supplying the frame's missing ones, from their records or
-//! baked, and preparing their records and draw pipeline; and the records
-//! hosts exchange with the renderer.
+//! baked, and preparing their records and draw pipeline (hosts exchange the
+//! records with the renderer: `records`).
 
 use super::*;
 
@@ -30,43 +30,6 @@ impl ImpostorDraws {
 }
 
 impl Renderer {
-    /// Records the renderer asks hosts for since the last call: the layers
-    /// of impostors it would otherwise bake. Hosts answer each
-    /// ([`Self::give_record`]).
-    pub fn take_record_wants(&mut self) -> Vec<RecordKey> {
-        let mut wants = Vec::new();
-        self.impostors.atlas.take_wants(&mut wants);
-        self.impostors.placed.take_wants(&mut wants);
-        wants
-    }
-
-    /// Hosts' answer for record `record`, which the renderer asked for
-    /// ([`Self::take_record_wants`]): its bytes, or `None` where no pack or
-    /// store holds it, which bakes what it holds.
-    pub fn give_record(&mut self, record: RecordKey, bytes: Option<Vec<u8>>) {
-        let impostors = &mut self.impostors;
-        if impostors.atlas.asks(record) {
-            impostors.atlas.answer(record, bytes);
-        } else if impostors.placed.asks(record) {
-            impostors.placed.answer(record, bytes);
-        }
-    }
-
-    /// Records the renderer made since the last call, for hosts to keep:
-    /// the layers of impostors it baked.
-    pub fn take_made_records(&mut self) -> Vec<(RecordKey, Vec<u8>)> {
-        let mut made = Vec::new();
-        self.impostors.atlas.take_made(&mut made);
-        self.impostors.placed.take_made(&mut made);
-        made
-    }
-
-    /// Records the renderer still has to come: asked of hosts, or reading
-    /// back.
-    pub fn records_left(&self) -> u64 {
-        self.impostors.atlas.left() + self.impostors.placed.left()
-    }
-
     /// Impostors of this frame: drops those of retired or replaced meshes
     /// and materials, supplies the missing ones of opaque draw groups
     /// whose meshes have enough triangles on GPU-presented frames with

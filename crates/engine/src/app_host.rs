@@ -826,12 +826,21 @@ impl AppHost {
         Ok(())
     }
 
-    /// Hands records between the renderer and the engine's jobs: the
-    /// answers to what the renderer asked for, its new asks (fetched from
-    /// the host's packs and store), the records it made (to keep), and,
-    /// while the session cooks, how many it has left.
+    /// Hands records between the renderer and the engine's jobs: how the
+    /// host's records stand (whether it verifies those it hands back,
+    /// whether textures still load), the answers to what the renderer asked
+    /// for, its new asks (fetched from the host's packs and store), the
+    /// records it made (to keep), and, while the session cooks, how many it
+    /// has left.
     fn exchange_records(&mut self) {
         let world = self.engine.app.world_mut();
+        let loading = world
+            .get_resource::<engine_core::Records>()
+            .is_some_and(engine_core::Records::loading);
+        let verifying = world
+            .get_resource::<engine_core::Jobs>()
+            .is_some_and(engine_core::Jobs::verifying);
+        self.renderer.set_records(verifying, loading);
         let wants = self.renderer.take_record_wants();
         let made = self.renderer.take_made_records();
         let answers = match world.get_resource_mut::<engine_core::Jobs>() {
@@ -862,7 +871,7 @@ impl AppHost {
             self.renderer.give_record(record, bytes);
         }
         if let Some(mut cooking) = world.get_resource_mut::<engine_core::Cooking>() {
-            cooking.left("impostors", self.renderer.records_left());
+            cooking.left("renderer records", self.renderer.records_left());
         }
     }
 
@@ -890,7 +899,8 @@ impl AppHost {
                     .world()
                     .get_resource::<engine_core::StaticTables>()
                     .is_some_and(engine_core::StaticTables::loading)
-                || self.pipeline_list.waiting(),
+                || self.pipeline_list.waiting()
+                || self.renderer.records_loading(),
             navigation: self
                 .engine
                 .app

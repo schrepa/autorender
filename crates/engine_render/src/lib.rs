@@ -11,9 +11,9 @@
 
 pub use engine_core::RenderStats;
 
-// `SOURCE`, which keys the records the renderer makes, impostors' layers and
-// the scene's pipeline list: hosts keep them, and the cook ships them, while
-// this code stays the same.
+// `SOURCE`, which keys the records the renderer makes, impostors' layers,
+// the runtime virtual texture's far pages and the scene's pipeline list:
+// hosts keep them, and the cook ships them, while this code stays the same.
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
 pub mod bindings;
