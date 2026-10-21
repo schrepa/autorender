@@ -1,8 +1,9 @@
 //! Baking an impostor no host holds the record of: its mesh drawn with its
 //! material from every frame's direction into a layer at the atlas's shape
 //! (the frames' nearest depths first, which the colors' bake looks up for
-//! the sky each surface sees past its mesh), then the levels below, stored
-//! into the arrays and read back as records (`super::records`).
+//! the sky each surface sees past its mesh), then the levels below, read
+//! back as its record (`super::records`), which then loads as any record
+//! does.
 
 use super::*;
 use crate::gpu_layouts::impostors::ImpostorBakeUniform;
@@ -19,8 +20,7 @@ const SHADE_MOST: u32 = 2048;
 
 /// Targets every bake renders into: the frames' nearest depths, the
 /// multisampled colors and their depth, and the layer they resolve to at
-/// the bake's shape, with its levels, which the arrays take and records
-/// read back.
+/// the bake's shape, with its levels, which records read back.
 pub(super) struct BakeTargets {
     shade: wgpu::TextureView,
     colors: [wgpu::TextureView; 4],
@@ -30,20 +30,15 @@ pub(super) struct BakeTargets {
 }
 
 impl ImpostorAtlas {
-    /// Records the bake of `key` from `source`, whose mesh and material
-    /// hold `content`, into `gpu`'s encoder: the layer drawn at the bake's
-    /// shape with its levels, stored into a new layer of the arrays in
-    /// their format and read back as its records. Whether it was baked:
-    /// not where `budget` impostors, or as many as the device's array
-    /// layers, already are.
+    /// Records the bake of `source`, whose mesh and material hold
+    /// `content`, into `gpu`'s encoder: the layer drawn at the bake's shape
+    /// with its levels, read back as its record.
     pub(super) fn bake(
         &mut self,
         gpu: BakeGpu<'_>,
-        key: ImpostorKey,
         source: &BakeSource<'_>,
         content: (u128, u128),
-        budget: Option<u32>,
-    ) -> bool {
+    ) {
         let BakeGpu {
             device,
             queue: _,
@@ -52,9 +47,6 @@ impl ImpostorAtlas {
             shader,
             pipelines,
         } = gpu;
-        let Some(layer) = self.layer(device, encoder, budget) else {
-            return false;
-        };
         let encoder = prelude(device, encoder);
         let shape = self.shape;
         let targets = self
@@ -66,9 +58,7 @@ impl ImpostorAtlas {
         for texture in &targets.layer {
             mips.record(device, encoder, texture);
         }
-        self.store(device, encoder, pipelines, layer, content);
-        self.resident(key, source, layer);
-        true
+        self.read_back(device, encoder, content);
     }
 }
 
@@ -280,8 +270,8 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
         target(FORMATS[3]),
         target(BAKE_DEPTH),
     ];
-    // The layer the colors resolve to, with its levels: read as stored by
-    // BC7's encoder, copied into arrays and read back.
+    // The layer the colors resolve to, with its levels, which records
+    // read back.
     let layer = FORMATS.map(|format| {
         device.create_texture(&wgpu::TextureDescriptor {
             label: Some("engine/impostor-bake-layer"),
@@ -297,7 +287,7 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
+            view_formats: &[],
         })
     });
     let view = |texture: &wgpu::Texture| texture.create_view(&Default::default());

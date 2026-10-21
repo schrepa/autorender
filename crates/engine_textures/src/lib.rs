@@ -118,8 +118,9 @@ pub fn cook(source: &Source, family: Family) -> Result<Texture, AssetError> {
 
 /// The blocks of an RGBA8 level `width` × `height` in `family`'s format,
 /// row by row: texels past a small level's edge repeat its last row and
-/// column.
-fn compress(width: u32, height: u32, pixels: &[u8], family: Family) -> Vec<u8> {
+/// column. What [`cook`] makes of each level, and what levels made
+/// elsewhere (impostors' layers, which the renderer bakes) compress by.
+pub fn compress(width: u32, height: u32, pixels: &[u8], family: Family) -> Vec<u8> {
     let (columns, rows) = (width.div_ceil(4) as usize, height.div_ceil(4) as usize);
     let block_row = |row: usize| -> Vec<u8> {
         let mut out = Vec::with_capacity(columns * 16);
@@ -154,13 +155,18 @@ fn rows_in_parallel<T: Send>(rows: usize, make: impl Fn(usize) -> T + Sync) -> V
                     .step_by(per)
                     .map(|first| {
                         scope.spawn(move || {
-                            (first..(first + per).min(rows)).map(make).collect::<Vec<T>>()
+                            (first..(first + per).min(rows))
+                                .map(make)
+                                .collect::<Vec<T>>()
                         })
                     })
                     .collect();
                 parts
                     .into_iter()
-                    .flat_map(|part| part.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic)))
+                    .flat_map(|part| {
+                        part.join()
+                            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                    })
                     .collect()
             });
         }
@@ -281,7 +287,9 @@ pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
     };
     let masked = header[5] != 0;
     let count = usize::from(header[6]);
-    let word = |at: usize| u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]]);
+    let word = |at: usize| {
+        u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
+    };
     let (width, height) = (word(8), word(12));
     let value = |index: usize| f32::from_bits(word(16 + 4 * index));
     let summary = TextureSummary {

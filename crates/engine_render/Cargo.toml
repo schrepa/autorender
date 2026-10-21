@@ -14,7 +14,8 @@ profiling = ["engine_profile/enabled", "engine_core/profiling"]
 [dependencies]
 engine_core.workspace = true
 engine_profile.workspace = true
-# The blocks of terrain material layers lacking a map.
+# The cook's texture encoder: the blocks of terrain material layers lacking
+# a map, and impostors' layers in BC7.
 engine_textures.workspace = true
 bytemuck.workspace = true
 glam.workspace = true

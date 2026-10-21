@@ -13,14 +13,15 @@
 //! the atlas's shape and format and the content of the mesh and of the
 //! material ([`Contents`]): hosts hand back a group's record, which uploads
 //! into its layer. Where none holds it the layer is baked on the GPU
-//! (`bake`) and read back for hosts to keep (`records`), which is how the
-//! cook makes them. Atlases hold BC7, encoded by a compute pass
-//! (`impostor_bc7.wgsl`), where devices sample BC formats; otherwise
-//! RGBA8, at half the texels where a layer would pass 512 across, whose
-//! records those devices make themselves: their materials' textures, which
-//! hosts transcode for them, differ anyway. Records made on the GPU are
-//! cooked once, not compared across GPUs, whose rasterizers differ in their
-//! last bits: what reads them takes them as they are.
+//! (`bake`) and read back as its record (`records`), which hosts keep and
+//! which then uploads as any record does: how the cook makes them. Atlases
+//! hold BC7 where devices sample BC formats, encoded on the CPU by the
+//! encoder every cooked texture is (`engine_textures`); otherwise RGBA8,
+//! at half the texels where a layer would pass 512 across, whose records
+//! those devices make themselves: their materials' textures, which hosts
+//! transcode for them, differ anyway. Records baked on the GPU are cooked
+//! once, not compared across GPUs, whose rasterizers differ in their last
+//! bits: what reads them takes them as they are.
 
 #![expect(
     clippy::expect_used,
@@ -364,7 +365,7 @@ pub(crate) struct BakeGpu<'a> {
 }
 
 /// What every atlas shares: the bakes' and draws' layouts and pipelines,
-/// BC7's encoder, and the draws' sampler.
+/// and the draws' sampler.
 pub(crate) struct ImpostorPipelines {
     bake_layout: crate::pipelines::GroupLayout,
     bake_pipeline_layout: wgpu::PipelineLayout,
@@ -375,9 +376,6 @@ pub(crate) struct ImpostorPipelines {
     sampler: wgpu::Sampler,
     // Stands in for the frames' depths while bakes draw them.
     no_shade: Option<wgpu::TextureView>,
-    // BC7's encoder (its group's layout and its pipeline), created with the
-    // first bake encoding one.
-    bc7: Option<(crate::pipelines::GroupLayout, wgpu::ComputePipeline)>,
 }
 
 impl ImpostorPipelines {
@@ -412,7 +410,6 @@ impl ImpostorPipelines {
             draw_pipelines: HashMap::default(),
             sampler,
             no_shade: None,
-            bc7: None,
         }
     }
 
@@ -635,8 +632,9 @@ impl ImpostorAtlas {
 
     /// The impostor of `key`, drawing `source`, whose mesh and material
     /// hold `content`: resident; coming, its record asked of hosts, which
-    /// uploads into a layer once they hand it back; or baked into `gpu`'s
-    /// encoder where none holds it. Refused where `budget` impostors (none
+    /// uploads into a layer once they hand it back, or, where none holds
+    /// it, baked into `gpu`'s encoder and read back as its record, which
+    /// then uploads the same way. Refused where `budget` impostors (none
     /// while a session cooks), or as many as the device's array layers,
     /// already are.
     pub(crate) fn supply(
@@ -681,30 +679,16 @@ impl ImpostorAtlas {
         let Some(answer) = self.answers.remove(&record) else {
             return Supplied::Coming;
         };
-        self.supplies.remove(&key);
         if let Some(bytes) = answer
             && self.load(&mut gpu, key, source, &bytes, budget)
         {
+            self.supplies.remove(&key);
             return self.supplied(key, source);
         }
-        // What no host held, or a record that does not load, bakes.
-        self.bake_now(gpu, key, source, content, budget)
-    }
-
-    /// The impostor of `key` baked now from `source`, or refused.
-    fn bake_now(
-        &mut self,
-        gpu: BakeGpu<'_>,
-        key: ImpostorKey,
-        source: &BakeSource<'_>,
-        content: (u128, u128),
-        budget: Option<u32>,
-    ) -> Supplied {
-        if self.bake(gpu, key, source, content, budget) {
-            self.supplied(key, source)
-        } else {
-            Supplied::Refused
-        }
+        // What no host held, or a record that does not load, bakes: its
+        // record comes as the bake reads back, and answers this supply.
+        self.bake(gpu, source, content);
+        Supplied::Coming
     }
 
     /// The impostor of `key`, resident for `source`'s material.

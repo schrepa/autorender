@@ -25,14 +25,4 @@ gpu_structs! {
         /// The record's flags; the rest unused.
         pub flags: [u32; 4],
     }
-
-    /// A level of a bake encoded in BC7, as `impostor_bc7.wgsl` reads it:
-    /// its blocks across and down, where its blocks start in the output and
-    /// how many blocks apart its rows start there.
-    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct Bc7Level as ["Bc7Level"] {
-        pub blocks: [u32; 2],
-        pub first: u32,
-        pub row: u32,
-    }
 }
