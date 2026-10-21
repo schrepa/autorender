@@ -1,9 +1,9 @@
 //! The engine's job worker: a small Wasm module hosts run in
 //! Web Workers beside the engine, and natively a thread's. It holds what
 //! the engine shares with its workers (terrain stacks and recipes) and runs
-//! the jobs it hands out, terrain tiles, walks and bakes and the
-//! renderer's static tables, with the code hosts without workers run in
-//! place, so outputs are the same bits. Jobs
+//! the jobs it hands out, terrain tiles, tiles' walk graph portals, bakes
+//! and lighting and the renderer's static tables, with the code hosts
+//! without workers run in place, so outputs are the same bits. Jobs
 //! run a slice at a time ([`Worker::slice`]): the most urgent held job
 //! steps until done or for about [`SLICE_MS`], so between slices hosts read
 //! their messages, a more urgent job goes first and one the engine

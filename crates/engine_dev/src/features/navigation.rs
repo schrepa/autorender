@@ -2,7 +2,11 @@
 //! walks, sending agents and the query of walks.
 
 use engine_core::bevy_ecs::prelude::Entity;
-use engine_core::{Engine, Feature, Terrain, Terrains, Transform, glam::Vec2, has_feature};
+use engine_core::bevy_ecs::world::Mut;
+use engine_core::{
+    Engine, Feature, Jobs, NavAgents, NavQuery, Terrain, Terrains, Transform, glam::Vec2,
+    has_feature,
+};
 use engine_scene::{SceneEntity, SceneInstance};
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
@@ -92,10 +96,13 @@ pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
                 Some(json!(crate::views::NavAgentsView {
                     agents: stats.agents,
                     searching: stats.searching,
+                    waiting: stats.waiting,
                     walking: stats.walking,
                     arrived: stats.arrived,
                     unreachable: stats.unreachable,
                     work: stats.work,
+                    grounds: stats.grounds,
+                    portals: stats.portals,
                     failed_jobs,
                     latest_job_failure,
                     first,
@@ -194,7 +201,8 @@ pub struct NavGoResult {
     pub destination: Option<[f32; 2]>,
 }
 
-/// What `nav_path` answers: the walk found, if one reaches.
+/// What `nav_path` answers: the walk found, if one reaches, or that its
+/// search goes on.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct NavPathResult {
@@ -202,7 +210,11 @@ pub struct NavPathResult {
     pub terrain: TerrainKey,
     /// How the walk weighed the ground.
     pub options: engine_core::terrain_data::NavOptions,
-    /// The walk; null where none reaches.
+    /// Whether its search waits for records the host has yet to hand back,
+    /// or the terrain's bakes: ask again (after a render or a step) for the
+    /// same walk.
+    pub searching: bool,
+    /// The walk; null where none reaches, or while searching.
     pub walk: Option<WalkResult>,
 }
 
@@ -216,20 +228,22 @@ pub struct WalkResult {
     pub length: f32,
     /// The pyramid level walked.
     pub level: u32,
-    /// Samples searched.
+    /// Samples and walk graph portals searched.
     pub searched: usize,
 }
 
-/// The shortest walk over a generated terrain from world `from` to `to`
+/// The cheapest walk over the terrain under world `from` and `to`
 /// `[x, z]`: across ground an agent stands on (no holes,
 /// no water deeper than `max_water`, no closer than `radius` to placed
 /// objects that collide on resident tiles), each step no steeper than
-/// `max_slope` (rise per meter), pulled taut and following the ground.
-/// It walks pyramid `level` (0 by default) unless the area within
-/// `margin` meters of the ends holds more than `max_samples` samples,
-/// then the finest level within. Returns its points (world, rounded to
-/// centimeters), length, the level walked and samples searched, or a
-/// null walk where none reaches.
+/// `max_slope` (rise per meter) and costing its run and rise, over pyramid
+/// `level` (0 by default): first over the terrain's walk graph of tiles'
+/// portals, then the samples of the tiles that crosses; pulled taut and
+/// following the ground. Its search reads records the host hands back
+/// (the cook's packs, its store, or jobs making them): while it waits for
+/// them, `searching` is true; ask again for the same walk. Returns its
+/// points (world, rounded to centimeters), length, the level walked and
+/// samples and portals searched, or a null walk where none reaches.
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -246,7 +260,7 @@ impl EngineQuery for NavPathQuery {
     }
 }
 
-/// A navigation walk over the first generated terrain from `from` to `to`.
+/// A navigation walk from `from` to `to` over the terrain under them.
 fn walk(
     engine: &mut Engine,
     from: [f64; 2],
@@ -273,20 +287,38 @@ fn walk(
         .map(|(entity, _)| entity)
         .next()
         .ok_or_else(|| DevError::new(ErrorCode::UnknownTerrain, "$", "no terrain"))?;
-    let walk = world
-        .get_resource::<Terrains>()
-        .filter(|_| has_feature(world, Feature::Terrain))
-        .ok_or_else(|| missing(Feature::Terrain))?
-        .walk(entity, from, to, &options);
+    if !has_feature(world, Feature::Terrain) || !world.contains_resource::<Terrains>() {
+        return Err(missing(Feature::Terrain));
+    }
+    if !has_feature(world, Feature::Navigation)
+        || !world.contains_resource::<NavAgents>()
+        || !world.contains_resource::<Jobs>()
+    {
+        return Err(missing(Feature::Navigation));
+    }
+    let found = world.resource_scope(|world, mut navigation: Mut<NavAgents>| {
+        world.resource_scope(|world, mut jobs: Mut<Jobs>| {
+            navigation.query(
+                world.resource::<Terrains>(),
+                &mut jobs,
+                (from, to),
+                &options,
+            )
+        })
+    });
     let round = |value: f32| (f64::from(value) * 100.0).round() / 100.0;
     Ok(result::nav_path(NavPathResult {
         terrain: terrain_key(world, entity),
         options,
-        walk: walk.map(|walk| WalkResult {
-            points: walk.points.iter().map(|point| point.map(round)).collect(),
-            length: walk.length,
-            level: walk.level,
-            searched: walk.searched,
-        }),
+        searching: found == NavQuery::Searching,
+        walk: match found {
+            NavQuery::Found(walk) => Some(WalkResult {
+                points: walk.points.iter().map(|point| point.map(round)).collect(),
+                length: walk.length,
+                level: walk.level,
+                searched: walk.searched,
+            }),
+            NavQuery::Searching | NavQuery::Unreachable => None,
+        },
     }))
 }

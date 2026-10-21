@@ -1,10 +1,12 @@
 //! The terrain corpus: the tracked terrain fixture's generated terrain
 //! (web/scripts/fixtures/terrain.scene.json and its dome heightmap). Its
 //! bakes; every tile of its pyramid and some of its surroundings'; tiles
-//! under edits; its lighting; a walk; and a pack of what they made. Each
-//! job runs as workers run it, whole and a slice at a time, and must give
-//! the bits its code gives in place; every record must read back from the
-//! pack the cook would write as it went in.
+//! under edits; its lighting; every finest tile's portals of a walk graph,
+//! and a walk over them; and a pack of what they made. Each job runs as
+//! workers run it, whole and a slice at a time, and must give the bits its
+//! code gives in place (a tile's portals, the bits its tile's record
+//! gives); every record must read back from the pack the cook would write
+//! as it went in.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -14,12 +16,13 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::Terrain;
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use engine_terrain::jobs::{
-    self, BakeJob, LightingJob, StackView, TerrainRecipe, TerrainWorker, TileJob, WalkJob,
+    self, BakeJob, LightingJob, PortalsJob, StackView, TerrainRecipe, TerrainWorker, TileJob,
 };
 use engine_terrain::lighting::{self, Ground};
 use engine_terrain::{
-    BiomeRules, Generator, Layer, Layers, NavOptions, Obstacle, PATCH_QUADS, PATCHES_PER_TILE,
-    Pyramid, Stamp, StampOp, TILE_QUADS, Tile, TileKey, codec, walk,
+    BiomeRules, Gait, Generator, Layer, Layers, NavOptions, NavPath, Obstacle, PATCH_QUADS,
+    PATCHES_PER_TILE, Pyramid, Stamp, StampOp, TILE_QUADS, Tile, TileKey, TilePortals, WalkData,
+    WalkGround, WalkSearch, codec,
 };
 use glam::Vec2;
 use serde_json::json;
@@ -216,32 +219,74 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         }
     }
 
+    // Every finest tile's portals of the walk graph agents walk by default,
+    // made by their jobs, which generate each tile's ground, and from the
+    // tiles' records, which must give the same bits; and the edited tile's.
+    let gait = NavOptions::default().gait(&pyramid);
+    let mut graph = Graph::default();
+    let mut bytes_held = 0;
+    for key in pyramid.level_tiles(gait.level) {
+        let (ground, bytes) = portals(
+            &mut worker,
+            (&tiles[&key], &baked),
+            (&pyramid, &gait),
+            (&[], observed),
+        )?;
+        observed.hash(format!("portals {}", name(key)), &bytes);
+        let held: TilePortals = codec::decode(&bytes).map_err(|error| error.to_string())?;
+        graph.portals.insert(key, Arc::new(held));
+        graph.grounds.insert(key, Arc::new(ground));
+        bytes_held += bytes.len();
+        records.push((PortalsJob::KIND.name(), bytes));
+    }
+    let edited_layers = Arc::new(
+        baked
+            .with_stamps(&edits)
+            .map_err(|error| error.to_string())?,
+    );
+    let (_, bytes) = portals(
+        &mut worker,
+        (&tile, &edited_layers),
+        (&pyramid, &gait),
+        (&edits, observed),
+    )?;
+    observed.hash(format!("edited portals {}", name(edited)), &bytes);
+    let count: usize = graph
+        .portals
+        .values()
+        .map(|held| held.portals().len())
+        .sum();
+    observed.record(
+        "walk graph",
+        json!({"tiles": graph.portals.len(), "portals": count, "bytes": bytes_held}),
+    );
+    observed.check(count > 0, || "no tile has portals".into());
+
     // A walk over the south-western hills, around a boulder on the
-    // straight line (where terrain-smoke's walk goes around a pit).
+    // straight line (where terrain-smoke's walk goes around a pit), from
+    // one tile into the next: whole, and a slice at a time.
     let route = (Vec2::new(212.0, 262.0), Vec2::new(412.0, 262.0));
     let obstacles = [Obstacle {
         center: Vec2::new(312.0, 262.0),
         radius: 12.0,
     }];
-    let options = NavOptions::default();
-    let walked = WalkJob {
-        recipe: "recipe".into(),
-        stamps: Vec::new(),
-        from: route.0,
-        to: route.1,
-        obstacles: obstacles.to_vec(),
-        options,
-    };
-    let job = worker.run(WalkJob::KIND.name(), &walked.identity())?;
-    let found = walk(&baked, &pyramid, route.0, route.1, &obstacles, &options);
-    observed.check(job == codec::encode(&found), || {
-        "the walk job differs from the walk in place".into()
+    let walked = |slice: u64| graph.walk(&pyramid, route, &obstacles, slice);
+    let whole = codec::encode(&walked(u64::MAX)?);
+    observed.check(whole == codec::encode(&walked(SLICE)?), || {
+        "the walk a slice at a time differs from the walk whole".into()
     });
-    observed.hash("walk", &job);
-    let found = found.ok_or("no walk reaches over the hills")?;
+    observed.hash("walk", &whole);
+    let found = walked(u64::MAX)?.ok_or("no walk reaches over the hills")?;
     observed.check(found.length > route.1.distance(route.0), || {
         "the walk is no longer than the straight line it leaves around the boulder".into()
     });
+    observed.check(
+        found.points.iter().all(|point| {
+            Vec2::new(point[0], point[2]).distance(obstacles[0].center)
+                >= obstacles[0].radius + NavOptions::default().radius - 1.0
+        }),
+        || "the walk crosses the boulder".into(),
+    );
     observed.record(
         "walk",
         json!({"points": found.points.len(), "length": found.length, "level": found.level}),
@@ -409,6 +454,83 @@ const PACK_LEVEL: i32 = 19;
 fn codec_identity(bytes: &[u8]) -> Vec<u8> {
     use sha2::Digest;
     sha2::Sha256::digest(bytes).to_vec()
+}
+
+/// A tile's portals of `gait`'s walk graph over `pyramid` made by their job
+/// on `worker` (under `stamps`, the edits reaching it), which must equal
+/// those its record `tile` gives over `layers` (its stack under those
+/// edits): the tile's ground and the job's bytes.
+fn portals(
+    worker: &mut Worker,
+    (tile, layers): (&Tile, &Arc<Layers>),
+    (pyramid, gait): (&Pyramid, &Gait),
+    (stamps, observed): (&[Stamp], &mut Observations),
+) -> Result<(WalkGround, Vec<u8>), String> {
+    let key = tile.key();
+    let job = PortalsJob {
+        stack: "stack".into(),
+        pyramid: *pyramid,
+        key,
+        stamps: stamps.to_vec(),
+        gait: *gait,
+    };
+    let bytes = worker.run(PortalsJob::KIND.name(), &job.identity())?;
+    let ground = WalkGround::new(tile, layers, pyramid);
+    observed.check(
+        codec::encode(&TilePortals::new(&ground, pyramid, gait)) == bytes,
+        || {
+            format!(
+                "tile {} under {} edits: its portals' job differs from its record's portals",
+                name(key),
+                stamps.len()
+            )
+        },
+    );
+    Ok((ground, bytes))
+}
+
+/// The walk graph's portals and the tiles' grounds of the corpus's walks.
+#[derive(Default)]
+struct Graph {
+    grounds: BTreeMap<TileKey, Arc<WalkGround>>,
+    portals: BTreeMap<TileKey, Arc<TilePortals>>,
+}
+
+impl WalkData for Graph {
+    fn ground(&self, key: TileKey) -> Option<Arc<WalkGround>> {
+        self.grounds.get(&key).cloned()
+    }
+
+    fn portals(&self, key: TileKey) -> Option<Arc<TilePortals>> {
+        self.portals.get(&key).cloned()
+    }
+}
+
+impl Graph {
+    /// The walk from `route.0` to `route.1` among `obstacles` as agents walk
+    /// by default, searched `slice` samples of work at a time.
+    fn walk(
+        &self,
+        pyramid: &Pyramid,
+        route: (Vec2, Vec2),
+        obstacles: &[Obstacle],
+        slice: u64,
+    ) -> Result<Option<NavPath>, String> {
+        let mut search =
+            WalkSearch::new(pyramid, route, obstacles.to_vec(), &NavOptions::default());
+        loop {
+            let mut budget = slice;
+            if let Some(found) = search.step(&mut budget, self) {
+                return Ok(found);
+            }
+            if !search.wants().is_empty() {
+                return Err(format!(
+                    "the walk waits for {:?}, which the corpus holds",
+                    search.wants()
+                ));
+            }
+        }
+    }
 }
 
 /// What the bakes found, as readable numbers.

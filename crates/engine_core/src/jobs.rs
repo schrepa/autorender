@@ -1,9 +1,9 @@
-//! Worker jobs: self-contained work, such as a terrain tile, a walk, a
-//! stack's bakes or a table the renderer reads, that hosts run on workers
-//! beside the engine's thread. An owner submits a job's kind and input
-//! bytes and takes its output once a worker hands it back; what many jobs
-//! read (a terrain's layers) is shared with every worker once, by key,
-//! before the jobs that read it. Hosts hand requests to workers in the
+//! Worker jobs: self-contained work, such as a terrain tile, a tile's walk
+//! graph portals, a stack's bakes or a table the renderer reads, that hosts
+//! run on workers beside the engine's thread. An owner submits a job's kind
+//! and input bytes and takes its output once a worker hands it back; what
+//! many jobs read (a terrain's layers) is shared with every worker once, by
+//! key, before the jobs that read it. Hosts hand requests to workers in the
 //! order owners make them and say how many workers run them; a host
 //! without workers runs them in place, and so does an engine no host
 //! serves. Results never depend on where a job ran.

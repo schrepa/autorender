@@ -394,11 +394,21 @@ try {
   }
   // Walks cross ground an agent stands on: around a hole
   // cut across the straight line, never into it, and longer than the
-  // straight line; options out of range are refused.
+  // straight line; options out of range are refused. A walk's search
+  // reads its tiles' portals and records as the page's jobs make them,
+  // and says it goes on until they are back.
   {
     const [start, end] = [[-300, -250], [-100, -250]];
     await command("terrain_edit", { id: "smoke-pit", center: [-200, -250], radius: 18, change: "hole" });
-    const walked = (await command("nav_path", { from: start, to: end })).result.walk;
+    let found;
+    for (let attempt = 0; attempt < 600; attempt++) {
+      found = (await command("nav_path", { from: start, to: end })).result;
+      if (!found.searching) break;
+      await command("render");
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.equal(found.searching, false, `the walk's search ends: ${JSON.stringify(found).slice(0, 300)}`);
+    const walked = found.walk;
     assert.ok(walked && walked.points.length > 2, `a walk reaches: ${JSON.stringify(walked)?.slice(0, 300)}`);
     const straight = Math.hypot(end[0] - start[0], end[1] - start[1]);
     const clear = walked.points.every(([x, , z]) => Math.hypot(x + 200, z + 250) > 18);
@@ -418,8 +428,9 @@ try {
     const sent = await command("nav_go", { entity: "hiker", destination: goal });
     assert.deepEqual(sent.result.destination, goal);
     let agent;
-    // Its walk is searched on a job worker beside the page,
-    // in the page's time, which paused steps outrun; or over ticks.
+    // Its walk is searched over ticks from its tiles' portals and records,
+    // which the page's jobs make in the page's time, which paused steps
+    // outrun.
     for (let attempt = 0; attempt < 400; attempt++) {
       await command("step", { ticks: 1 });
       agent = (await command("inspect", { entity: "hiker", component: "NavAgent" })).result.entity.components.NavAgent;

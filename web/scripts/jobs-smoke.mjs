@@ -1,8 +1,9 @@
 /**
  * Worker jobs: the Stress Lab's highlands load with their
- * bakes and tiles as records, read from the cook's packs the page serves
- * where they hold them and made on the page's job workers where not, and
- * their hiker's walks searched there, every job's output the engine's own.
+ * bakes and tiles as records, and the portals of the walk graph their
+ * hiker walks, read from the cook's packs the page serves where they hold
+ * them and made on the page's job workers where not, every job's output
+ * the engine's own.
  * Heights, normals, holes, the tile levels answering and what the bakes and
  * roads give at points across the view match a session without workers or
  * records (?workers=off&jobcache=off), which runs its jobs in place, bit
@@ -69,8 +70,8 @@ async function session(name, query, walk) {
   await developmentReady(page, { timeout: 600_000 });
   await page.waitForFunction(() => document.querySelector("canvas")?.style.visibility !== "hidden", null, { timeout: 600_000, polling: 100 });
   const shown = (Date.now() - opened) / 1000;
-  // The hiker's first walk is searched while the view loads: at once on a
-  // worker, over many ticks of their budget on the page.
+  // The hiker's first walk is searched over ticks while the view loads,
+  // from its tiles' portals and records, which workers make.
   let agents;
   for (let attempt = 0; walk && attempt < 400; attempt++) {
     agents = await inspect("NavAgents");
@@ -79,8 +80,8 @@ async function session(name, query, walk) {
   }
   if (walk) {
     assert.equal(agents.walking, 1, `${name}: the hiker walks: ${JSON.stringify(agents)}`);
-    assert.equal(agents.work, 0, `${name}: no tick searched on the page: ${JSON.stringify(agents)}`);
-    assert.equal(agents.failed_jobs, 0, `${name}: no walk failed on a worker: ${agents.latest_job_failure}`);
+    assert.ok(agents.portals > 0 && agents.grounds > 0, `${name}: the walk read its tiles' portals and grounds: ${JSON.stringify(agents)}`);
+    assert.equal(agents.failed_jobs, 0, `${name}: no record a walk read failed on a worker: ${agents.latest_job_failure}`);
   }
   await command("pause");
   const [ground] = (await command("terrain_height", { points: [[view.position[0], view.position[2]]] })).result.samples;

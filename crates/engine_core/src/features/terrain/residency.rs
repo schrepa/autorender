@@ -453,7 +453,7 @@ pub(super) struct Retired {
 
 /// Whether `stamp` reaches tile `key`'s ground, or its samples' two beyond
 /// (its border and the normals there).
-fn reaches(stamp: &Stamp, pyramid: &Pyramid, key: TileKey) -> bool {
+pub(super) fn reaches(stamp: &Stamp, pyramid: &Pyramid, key: TileKey) -> bool {
     let spacing = pyramid.spacing(u32::from(key.level));
     let size = TILE_QUADS as f32 * spacing;
     let first = Vec2::new(f32::from(key.x), f32::from(key.z)) * size - Vec2::splat(2.0 * spacing);

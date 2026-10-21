@@ -102,12 +102,12 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
-use engine_terrain::jobs::{BakeJob, LightingJob, StackView, TerrainRecipe, TileJob, WalkJob};
+use engine_terrain::jobs::{BakeJob, LightingJob, PortalsJob, StackView, TerrainRecipe, TileJob};
 pub use engine_terrain::lighting::TerrainLighting;
 use engine_terrain::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats, Fall,
-    HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask, NavOptions, NavPath, NoiseMask,
-    Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Patch, PathStage, Pyramid, Remap, Route, RouteOptions,
+    Gait, HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask, NoiseMask, Obstacle,
+    PATCH_QUADS, PATCHES_PER_TILE, Patch, PathStage, Pyramid, Remap, Route, RouteOptions,
     Selection, Stamp, TILE_QUADS, TILE_STRIDE, Tile, TileKey, TileSample, WantedTile, WantedView,
     WaterPoint,
 };

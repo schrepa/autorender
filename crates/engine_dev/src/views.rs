@@ -267,7 +267,7 @@ pub struct StreamedCellView {
 /// terrain to its destination (world x, z) at its speed, on the ground, around
 /// obstacles widened by its radius, no steeper than max_slope, wading no deeper
 /// than max_water; with its walk's status, length, points, next point, meters
-/// left and samples searched. Send it with nav_go.
+/// left and samples and walk graph portals searched. Send it with nav_go.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct NavAgentView {
@@ -281,29 +281,32 @@ pub struct NavAgentView {
     pub searched: usize,
 }
 
-/// What navigation did at the last fixed tick: agents, those searching,
-/// walking, arrived and unable to reach their destination, the samples of
-/// search work the tick did, the walks that failed on workers since
-/// navigation started (each then searched on the engine's thread) and why
-/// the latest did, and the first 16 agents with their status, position,
-/// destination and meters left. Settings: the navigation environment
-/// section.
+/// What navigation did at the last fixed tick: agents, those searching (of
+/// them, those waiting for records or their terrain's bakes), walking,
+/// arrived and unable to reach their destination, the samples of search
+/// work the tick did, the tiles whose grounds and walk graph portals it
+/// holds, the records walks read that failed on workers and why the latest
+/// did, and the first 16 agents with their status, position, destination
+/// and meters left. Settings: the navigation environment section.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct NavAgentsView {
     pub agents: u32,
     pub searching: u32,
+    pub waiting: u32,
     pub walking: u32,
     pub arrived: u32,
     pub unreachable: u32,
     pub work: u64,
+    pub grounds: u32,
+    pub portals: u32,
     pub failed_jobs: u64,
     pub latest_job_failure: Option<String>,
     pub first: Vec<NavAgentRow>,
 }
 
 /// The host's job workers: workers (with none the host runs bakes, tiles
-/// and walks in place), jobs in flight, submitted, completed, failed and
+/// and tiles' portals in place), jobs in flight, submitted, completed, failed and
 /// cancelled, keys shared and their bytes, and the host's records (the
 /// cook's packs and its store). Workers run their most urgent job a slice
 /// at a time. Pages take ?workers=N or off, and ?jobcache=off, verify or a

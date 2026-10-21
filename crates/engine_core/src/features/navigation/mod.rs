@@ -1,27 +1,43 @@
-//! Navigation agents: entities that walk over terrains to a
-//! destination. When an agent's destination changes, the shortest walk to
-//! it from where it stands is searched over the generated terrain under it,
-//! in steps: every agent's search shares the fixed tick's
-//! budget of [`Navigation::samples_per_tick`], so long walks take several
-//! ticks. Each fixed tick a walking agent moves along its walk at its
-//! speed, on the ground (the finest resident tile's height, else the
+//! Navigation agents: entities that walk over terrains to a destination.
+//! When an agent's destination changes, the cheapest walk to it from where
+//! it stands is searched over its terrain's walk graph, then over the
+//! samples of the tiles the graph's way crosses
+//! ([`engine_terrain::WalkSearch`]), from records the host hands back: each
+//! tile's portals of the graph of the agent's gait (cooked, or made by a
+//! job where the packs lack them) and the tiles' records, which walks read
+//! the ground from. A search waits for the records it reads without holding
+//! anything up and does its work in steps: every agent's search shares the
+//! fixed tick's budget of [`Navigation::samples_per_tick`], so long walks
+//! take several ticks. Each fixed tick a walking agent moves along its walk
+//! at its speed, on the ground (the finest resident tile's height, else the
 //! walk's), turning toward where it walks; it arrives at the walk's end.
 //! Agents walk unparented entities; give them `InterpolateTransform` to
-//! present smoothly between ticks. Where the host runs workers,
-//! they search the walks instead, the tick's budget untouched, and
-//! agents start walking once a worker hands its walk back.
+//! present smoothly between ticks. A session cooking asks for the portals
+//! of every tile of each agent's terrain at its gait.
+
+mod cook;
+mod records;
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_terrain::jobs::WalkJob;
-use engine_terrain::{NavOptions, NavPath, WalkSearch};
+use engine_terrain::jobs::{PortalsJob, TileJob};
+use engine_terrain::{
+    Gait, NavOptions, NavPath, TileKey, TilePortals, WalkData, WalkGround, WalkSearch, Want,
+};
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::features::terrain::{Walked, WalkedTerrain};
 use crate::math::{clamp, max};
 use crate::{
-    FixedTime, JobBudget, JobFailures, JobId, Jobs, Parent, Terrains, Transform, job_output,
+    Cooking, FixedTime, JobBudget, JobFailures, JobId, Jobs, Parent, RecordKey, Terrains,
+    Transform, job_output,
 };
+use cook::CookGraph;
 use engine_settings::settings;
+use records::{Resolved, WalkRecords};
 
 settings! {
     /// Navigation.
@@ -87,7 +103,6 @@ impl NavAgent {
             max_slope: self.max_slope,
             radius: self.radius,
             max_water: self.max_water,
-            ..NavOptions::default()
         }
     }
 }
@@ -109,7 +124,7 @@ pub enum NavStatus {
 
 /// An agent's walk: its status, the destination it was
 /// searched for, its points (world, on the ground), the next it walks to,
-/// its length (meters) and the samples its search took.
+/// its length (meters) and the samples and portals its search took.
 #[derive(Component, Clone, Debug, Default)]
 pub struct NavWalk {
     pub status: NavStatus,
@@ -121,8 +136,10 @@ pub struct NavWalk {
 }
 
 /// What navigation did at the last fixed tick: agents, and
-/// those searching, walking, arrived and unable to reach their
-/// destination; and the samples of search work the tick did.
+/// those searching (and of them those waiting for records or their
+/// terrain's bakes), walking, arrived and unable to reach their
+/// destination; the samples of search work the tick did; and the tiles'
+/// grounds and portals held for walks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NavStats {
@@ -130,6 +147,9 @@ pub struct NavStats {
     pub agents: u32,
     /// Agents whose walk is being searched.
     pub searching: u32,
+    /// Agents whose search waits for records the host has yet to hand
+    /// back, or for its terrain's bakes.
+    pub waiting: u32,
     /// Agents walking a found path.
     pub walking: u32,
     /// Agents at their destination.
@@ -138,21 +158,160 @@ pub struct NavStats {
     pub unreachable: u32,
     /// Samples of search work the tick did.
     pub work: u64,
+    /// Tiles whose ground navigation holds for walks.
+    pub grounds: u32,
+    /// Tiles whose portals of a walk graph navigation holds.
+    pub portals: u32,
 }
 
-/// Agents' walks being searched, and what navigation did
-/// at the last fixed tick. Inserted by default.
+/// Agents' walks being searched, the records they read, walks asked of
+/// navigation alone ([`NavAgents::query`]), and what navigation did at the
+/// last fixed tick. Inserted by default.
 #[derive(Resource, Default)]
 pub struct NavAgents {
-    // Each search: its agent, the terrain's origin and the search; and each
-    // search on a worker, with its job.
-    searches: Vec<(Entity, Vec3, WalkSearch)>,
-    walks: Vec<(Entity, Vec3, JobId)>,
-    // Where the next tick's searches start, round robin.
+    // Each agent's search, and each walk asked for alone.
+    searches: Vec<(Entity, Search)>,
+    queries: Vec<WalkQuery>,
+    records: WalkRecords,
+    // The walk graphs cooking, while a session cooks.
+    cook: Vec<CookGraph>,
+    // Where the next tick's searches start, round robin, and the fixed
+    // tick now.
     turn: usize,
+    tick: u64,
     stats: NavStats,
-    // Walks that failed on workers, by fixed tick.
+    // Records walks read that failed on workers, by fixed tick.
     failures: JobFailures,
+}
+
+/// A walk being searched: waiting for its terrain's bakes, or under way.
+enum Search {
+    Starting {
+        from: Vec2,
+        to: Vec2,
+        options: NavOptions,
+    },
+    Running(Box<Running>),
+}
+
+/// A search under way: the terrain it walks as it stood when it set out,
+/// the search, the records it read, and how many of the tiles ahead of it
+/// it asked for the portals of.
+struct Running {
+    terrain: Arc<WalkedTerrain>,
+    search: WalkSearch,
+    held: Held,
+    asked_ahead: usize,
+}
+
+/// The tiles' grounds and portals a search read, by tile.
+#[derive(Default)]
+struct Held {
+    grounds: BTreeMap<TileKey, Arc<WalkGround>>,
+    portals: BTreeMap<TileKey, Arc<TilePortals>>,
+}
+
+impl WalkData for Held {
+    fn ground(&self, key: TileKey) -> Option<Arc<WalkGround>> {
+        self.grounds.get(&key).cloned()
+    }
+
+    fn portals(&self, key: TileKey) -> Option<Arc<TilePortals>> {
+        self.portals.get(&key).cloned()
+    }
+}
+
+/// What a walk found: its terrain's origin, and the walk (terrain-local),
+/// none where no walk reaches.
+type Found = (Vec3, Option<NavPath>);
+
+impl Search {
+    fn new(from: Vec2, to: Vec2, options: NavOptions) -> Self {
+        Self::Starting { from, to, options }
+    }
+
+    /// Whether it waits for records or its terrain's bakes.
+    fn waiting(&self) -> bool {
+        match self {
+            Self::Starting { .. } => true,
+            Self::Running(running) => !running.search.wants().is_empty(),
+        }
+    }
+
+    /// Advances the search within `budget` over `terrains` and the records
+    /// held, asking `slots` for those it lacks at fixed tick `tick`: what it
+    /// found once done.
+    fn advance(
+        &mut self,
+        terrains: &Terrains,
+        records: &mut WalkRecords,
+        slots: &mut Option<JobBudget<'_>>,
+        budget: &mut u64,
+        tick: u64,
+    ) -> Option<Found> {
+        if let Self::Starting { from, to, options } = self {
+            let terrain = match terrains.walked_terrain(*from, *to) {
+                Walked::Ready(terrain) => terrain,
+                Walked::Baking => return None,
+                Walked::Off => return Some((Vec3::ZERO, None)),
+            };
+            let corner = Vec2::new(terrain.origin.x, terrain.origin.z);
+            let search = WalkSearch::new(
+                &terrain.pyramid,
+                (*from - corner, *to - corner),
+                terrains.walk_obstacles(terrain.entity),
+                options,
+            );
+            *self = Self::Running(Box::new(Running {
+                terrain: Arc::new(terrain),
+                search,
+                held: Held::default(),
+                asked_ahead: 0,
+            }));
+        }
+        let Self::Running(running) = self else {
+            return None;
+        };
+        let origin = running.terrain.origin;
+        loop {
+            records.ask_ahead(running, slots, tick);
+            if let Some(found) = running.search.step(budget, &running.held) {
+                return Some((origin, found));
+            }
+            records.ask_ahead(running, slots, tick);
+            if running.search.wants().is_empty() {
+                return None;
+            }
+            match records.resolve(running, slots, tick) {
+                Resolved::Progress => {}
+                Resolved::Waiting => return None,
+                Resolved::Failed => return Some((origin, None)),
+            }
+        }
+    }
+}
+
+/// A walk asked of navigation alone: its ends (world x and z), how it
+/// walks, and its search.
+struct WalkQuery {
+    ends: (Vec2, Vec2),
+    options: NavOptions,
+    search: Search,
+}
+
+/// Walks asked of navigation alone it keeps searching at most: the oldest
+/// goes past them.
+const QUERIES: usize = 8;
+
+/// What a walk asked of navigation alone found so far.
+#[derive(Clone, Debug, PartialEq)]
+pub enum NavQuery {
+    /// Its search waits for records, or its terrain's bakes: ask again.
+    Searching,
+    /// The walk, its points world.
+    Found(NavPath),
+    /// No walk reaches, or no terrain lies under both ends.
+    Unreachable,
 }
 
 impl NavAgents {
@@ -161,11 +320,80 @@ impl NavAgents {
         self.stats
     }
 
-    /// The walks that failed on workers since navigation started, and the
-    /// latest one's error.
+    /// The records walks read that failed on workers since navigation
+    /// started, and the latest one's error.
     pub fn job_failures(&self) -> (u64, Option<&str>) {
         let last = self.failures.last.as_ref();
         (self.failures.count, last.map(|(_, error)| error.as_str()))
+    }
+
+    /// The cheapest walk from world `ends.0` to `ends.1` (x and z) over the
+    /// terrain both lie on, as `options` walk, its points world,
+    /// searched at once over the records the host handed back, those it
+    /// lacks asked of `jobs`; until they are back, [`NavQuery::Searching`]:
+    /// asked again, the same search goes on. Its work grows with the walk's
+    /// length: for planning and tools, not every frame.
+    pub fn query(
+        &mut self,
+        terrains: &Terrains,
+        jobs: &mut Jobs,
+        ends: (Vec2, Vec2),
+        options: &NavOptions,
+    ) -> NavQuery {
+        self.records.take(jobs, self.tick, &mut self.failures);
+        let at = match self
+            .queries
+            .iter()
+            .position(|query| query.ends == ends && query.options == *options)
+        {
+            Some(at) => at,
+            None => {
+                if self.queries.len() >= QUERIES {
+                    self.queries.remove(0);
+                }
+                self.queries.push(WalkQuery {
+                    ends,
+                    options: *options,
+                    search: Search::new(ends.0, ends.1, *options),
+                });
+                self.queries.len() - 1
+            }
+        };
+        let mut slots = Some(JobBudget::of(jobs));
+        let mut unlimited = u64::MAX;
+        let found = self.queries[at].search.advance(
+            terrains,
+            &mut self.records,
+            &mut slots,
+            &mut unlimited,
+            self.tick,
+        );
+        let Some((origin, found)) = found else {
+            return NavQuery::Searching;
+        };
+        self.queries.remove(at);
+        match found {
+            Some(mut path) => {
+                for point in &mut path.points {
+                    *point = (Vec3::from_array(*point) + origin).to_array();
+                }
+                NavQuery::Found(path)
+            }
+            None => NavQuery::Unreachable,
+        }
+    }
+
+    /// Stops every search, its records' jobs cancelled.
+    fn stop(&mut self, mut jobs: Option<&mut Jobs>) {
+        if let Some(jobs) = jobs.as_deref_mut() {
+            for id in self.cooking_jobs() {
+                jobs.cancel(id);
+            }
+        }
+        self.searches.clear();
+        self.queries.clear();
+        self.cook.clear();
+        self.records.clear(jobs);
     }
 }
 
@@ -189,50 +417,39 @@ type Agents<'w, 's> = Query<
 >;
 
 /// Searches the walks of agents whose destination changed, then moves
-/// walking agents along theirs.
+/// walking agents along theirs; while a session cooks, cooks agents' walk
+/// graphs.
 pub(crate) fn walk_agents(
     time: Res<FixedTime>,
     settings: Option<Res<Navigation>>,
     terrains: Res<Terrains>,
     mut jobs: Option<ResMut<Jobs>>,
+    mut cooking: Option<ResMut<Cooking>>,
     mut navigation: ResMut<NavAgents>,
     mut agents: Agents,
 ) {
-    let settings = settings.map_or(
-        Navigation {
-            enabled: false,
-            ..Navigation::default()
-        },
-        |settings| settings.sanitized(),
-    );
+    let settings = settings.map_or(Navigation::off(), |settings| settings.sanitized());
     navigation.stats = NavStats::default();
+    navigation.tick = time.tick;
     let mut jobs = jobs.as_deref_mut();
     if !settings.enabled {
-        navigation.searches.clear();
-        for (_, _, id) in navigation.walks.drain(..) {
-            if let Some(jobs) = jobs.as_deref_mut() {
-                jobs.cancel(id);
-            }
-        }
+        navigation.stop(jobs);
         return;
     }
-    // New destinations start searches from where agents stand: on workers
-    // where the jobs' one admission rule leaves a slot, else here.
-    let mut slots = jobs.as_deref_mut().map(JobBudget::of);
+    // Records handed back since the last tick.
+    if let Some(jobs) = jobs.as_deref_mut() {
+        let navigation = navigation.as_mut();
+        navigation
+            .records
+            .take(jobs, navigation.tick, &mut navigation.failures);
+    }
+    // New destinations start searches from where agents stand.
     for (entity, agent, mut walk, transform) in &mut agents {
         let agent = agent.sanitized();
         if walk.destination == agent.destination {
             continue;
         }
-        navigation.searches.retain(|(owner, ..)| *owner != entity);
-        navigation.walks.retain(|&(owner, _, id)| {
-            if owner == entity
-                && let Some(slots) = slots.as_mut()
-            {
-                slots.jobs.cancel(id);
-            }
-            owner != entity
-        });
+        navigation.searches.retain(|(owner, _)| *owner != entity);
         *walk = NavWalk {
             destination: agent.destination,
             ..NavWalk::default()
@@ -241,43 +458,23 @@ pub(crate) fn walk_agents(
             continue;
         };
         let from = Vec2::new(transform.translation.x, transform.translation.z);
-        let to = Vec2::from(destination);
-        let options = agent.options();
-        let handed = slots
-            .as_mut()
-            .filter(|slots| slots.jobs.workers() > 0)
-            .and_then(|slots| {
-                let (_, origin, input, record) = terrains.walk_job(from, to, &options)?;
-                let priority = crate::job_priority(crate::GAMEPLAY_JOBS, 0);
-                if !slots.take(priority) {
-                    return None;
-                }
-                // Hosts keep walks: their input names the
-                // recipe by its content.
-                Some((
-                    origin,
-                    slots
-                        .jobs
-                        .submit_record(WalkJob::KIND.name(), input, priority, record),
-                ))
-            });
-        if let Some((origin, id)) = handed {
-            navigation.walks.push((entity, origin, id));
-            walk.status = NavStatus::Searching;
-            continue;
-        }
-        match terrains.walk_search(from, to, &options) {
-            Some((_, origin, search)) => {
-                navigation.searches.push((entity, origin, search));
-                walk.status = NavStatus::Searching;
-            }
-            None => walk.status = NavStatus::Unreachable,
-        }
+        let search = Search::new(from, Vec2::from(destination), agent.options());
+        navigation.searches.push((entity, search));
+        walk.status = NavStatus::Searching;
     }
-    search(&settings, &mut navigation, &mut agents);
-    if let Some(jobs) = jobs {
-        take_walks(jobs, &terrains, &mut navigation, &mut agents, time.tick);
+    search(
+        &settings,
+        &terrains,
+        jobs.as_deref_mut(),
+        &mut navigation,
+        &mut agents,
+    );
+    if let (Some(jobs), Some(cooking)) = (jobs, cooking.as_deref_mut()) {
+        navigation.cook(&terrains, &agents, jobs, cooking);
     }
+    let (grounds, portals) = navigation.records.held();
+    navigation.stats.grounds = grounds;
+    navigation.stats.portals = portals;
     // Walkers move along their walks, on the ground.
     let seconds = time.delta_seconds;
     for (_, agent, mut walk, mut transform) in &mut agents {
@@ -299,8 +496,15 @@ pub(crate) fn walk_agents(
 
 /// Advances the searches in progress by the tick's budget, round robin,
 /// and gives finished ones' walks to their agents.
-fn search(settings: &Navigation, navigation: &mut NavAgents, agents: &mut Agents) {
+fn search(
+    settings: &Navigation,
+    terrains: &Terrains,
+    jobs: Option<&mut Jobs>,
+    navigation: &mut NavAgents,
+    agents: &mut Agents,
+) {
     let mut budget = u64::from(settings.samples_per_tick);
+    let mut slots = jobs.map(JobBudget::of);
     let count = navigation.searches.len();
     let mut finished = Vec::new();
     for offset in 0..count {
@@ -308,71 +512,40 @@ fn search(settings: &Navigation, navigation: &mut NavAgents, agents: &mut Agents
             break;
         }
         let index = (navigation.turn + offset) % count;
-        let (entity, origin, search) = &mut navigation.searches[index];
-        if let Some(found) = search.step(&mut budget) {
-            finished.push((index, *entity, *origin, found, search.searched()));
+        let (entity, search) = &mut navigation.searches[index];
+        if let Some(found) = search.advance(
+            terrains,
+            &mut navigation.records,
+            &mut slots,
+            &mut budget,
+            navigation.tick,
+        ) {
+            finished.push((index, *entity, found));
         }
     }
     navigation.turn = navigation.turn.wrapping_add(1);
     navigation.stats.work = u64::from(settings.samples_per_tick) - budget;
+    navigation.stats.waiting = navigation
+        .searches
+        .iter()
+        .filter(|(_, search)| search.waiting())
+        .count() as u32;
     finished.sort_by_key(|&(index, ..)| std::cmp::Reverse(index));
-    for (index, entity, origin, found, searched) in finished {
+    for (index, entity, (origin, found)) in finished {
         navigation.searches.swap_remove(index);
         let Ok((_, _, mut walk, _)) = agents.get_mut(entity) else {
             continue;
         };
-        give(&mut walk, origin, found, searched);
+        give(&mut walk, origin, found);
     }
 }
 
-/// Gives agents the walks workers found; a walk that failed
-/// there is counted at fixed tick `tick` and searched here instead.
-fn take_walks(
-    jobs: &mut Jobs,
-    terrains: &Terrains,
-    navigation: &mut NavAgents,
-    agents: &mut Agents,
-    tick: u64,
-) {
-    for (entity, origin, id) in std::mem::take(&mut navigation.walks) {
-        let Some(output) = jobs.take(id) else {
-            navigation.walks.push((entity, origin, id));
-            continue;
-        };
-        let Ok((_, agent, mut walk, transform)) = agents.get_mut(entity) else {
-            continue;
-        };
-        match job_output(
-            WalkJob::KIND.name(),
-            output,
-            engine_terrain::jobs::walk_output,
-        ) {
-            Ok(found) => {
-                let searched = found.as_ref().map_or(0, |path| path.searched);
-                give(&mut walk, origin, found, searched);
-            }
-            Err(error) => {
-                navigation.failures.record(tick, error);
-                let agent = agent.sanitized();
-                let from = Vec2::new(transform.translation.x, transform.translation.z);
-                let search = agent.destination.and_then(|destination| {
-                    terrains.walk_search(from, Vec2::from(destination), &agent.options())
-                });
-                match search {
-                    Some((_, origin, search)) => navigation.searches.push((entity, origin, search)),
-                    None => walk.status = NavStatus::Unreachable,
-                }
-            }
-        }
-    }
-}
-
-/// Gives `walk` the walk a search `found` (terrain-local, of a terrain at
-/// `origin`) after `searched` samples, or no walk where none reaches.
-fn give(walk: &mut NavWalk, origin: Vec3, found: Option<NavPath>, searched: usize) {
-    walk.searched = searched;
+/// Gives `walk` the walk a search found (terrain-local, of a terrain at
+/// `origin`), or no walk where none reaches.
+fn give(walk: &mut NavWalk, origin: Vec3, found: Option<NavPath>) {
     match found {
         Some(path) => {
+            walk.searched = path.searched;
             walk.points = path
                 .points
                 .iter()

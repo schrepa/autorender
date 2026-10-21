@@ -919,6 +919,7 @@
       "tunnels": 1
     },
     "bakes": "8a4cfefdfed5ef88",
+    "edited portals 0/2/2": "6857918d6590a9a7",
     "edited tile 0/2/2": "caef32170cc877e4",
     "lighting": "4a0f740b44d7d914",
     "lighting maps": {
@@ -959,9 +960,14 @@
     "tile objects": 12711,
     "tiles": 21,
     "walk": {
-      "length": 228.92881774902344,
+      "length": 229.18960571289062,
       "level": 0,
       "points": 61
+    },
+    "walk graph": {
+      "bytes": 26676,
+      "portals": 428,
+      "tiles": 16
     }
   },
   "textures": {

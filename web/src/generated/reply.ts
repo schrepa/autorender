@@ -574,15 +574,8 @@ export interface NavGoResult {
 
 /** How an agent walks. */
 export interface NavOptions {
-  /** The finest pyramid level it walks. */
+  /** The pyramid level it walks: 0 the finest. */
   level?: number;
-  /** The meters around the walk's ends it may stray. */
-  margin?: number;
-  /**
-   * The most samples a walk searches, beyond which it walks a coarser
-   * level.
-   */
-  max_samples?: number;
   /** The steepest step it climbs: rise per meter. */
   max_slope?: number;
   /** The deepest water it wades, meters. */
@@ -591,13 +584,22 @@ export interface NavOptions {
   radius?: number;
 }
 
-/** What `nav_path` answers: the walk found, if one reaches. */
+/**
+ * What `nav_path` answers: the walk found, if one reaches, or that its
+ * search goes on.
+ */
 export interface NavPathResult {
   /** How the walk weighed the ground. */
   options: NavOptions;
+  /**
+   * Whether its search waits for records the host has yet to hand back,
+   * or the terrain's bakes: ask again (after a render or a step) for the
+   * same walk.
+   */
+  searching: boolean;
   /** The terrain walked. */
   terrain: TerrainKey;
-  /** The walk; null where none reaches. */
+  /** The walk; null where none reaches, or while searching. */
   walk?: WalkResult | null;
 }
 
@@ -1257,7 +1259,7 @@ export interface WalkResult {
   level: number;
   /** Its points, world space, rounded to centimeters. */
   points: number[][];
-  /** Samples searched. */
+  /** Samples and walk graph portals searched. */
   searched: number;
 }
 

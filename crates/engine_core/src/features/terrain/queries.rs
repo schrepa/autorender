@@ -1,5 +1,5 @@
-//! Queries of the resident tiles: heights, samples, layers, walks and
-//! routes, bridges and falls.
+//! Queries of the resident tiles: heights, samples, layers, what walks read
+//! and routes, bridges and falls.
 
 use super::*;
 
@@ -134,96 +134,43 @@ impl Terrains {
         Some(base.with_stamps(&stamps).map_or(base, Arc::new))
     }
 
-    /// The shortest walk over `entity`'s generated terrain from world
-    /// `from` to `to` (x and z) as `options` walk: around the
-    /// placed objects that collide on its resident tiles, their footprints
-    /// widened by the agent's radius, its points world and following the
-    /// ground. `None` for terrains read from files and where no walk
-    /// reaches. Its work grows with the area around the ends: for planning,
-    /// not every frame.
-    pub fn walk(
-        &self,
-        entity: Entity,
-        from: Vec2,
-        to: Vec2,
-        options: &NavOptions,
-    ) -> Option<NavPath> {
-        let state = self
-            .entries
-            .iter()
-            .find(|state| state.entity == entity && state.around.is_none())?;
-        let layers = self.layers(entity)?;
-        let origin = state.terrain.origin;
-        let corner = Vec2::new(origin.x, origin.z);
-        let mut path = engine_terrain::walk(
-            &layers,
-            &state.terrain.pyramid,
-            from - corner,
-            to - corner,
-            &Self::obstacles(state),
-            options,
-        )?;
-        for point in &mut path.points {
-            *point = [
-                point[0] + origin.x,
-                point[1] + origin.y,
-                point[2] + origin.z,
-            ];
-        }
-        Some(path)
-    }
-
-    /// A walk over the generated terrain under world `from` and `to` (x
-    /// and z) as `options` walk, to search in budgeted steps:
-    /// the terrain, its origin, which the search's terrain-local
-    /// points are from, and the search. `None` unless both ends lie on one
-    /// generated terrain.
-    pub fn walk_search(
-        &self,
-        from: Vec2,
-        to: Vec2,
-        options: &NavOptions,
-    ) -> Option<(Entity, Vec3, engine_terrain::WalkSearch)> {
-        let state = self.walked(from, to)?;
-        let layers = self.layers(state.entity)?;
-        let origin = state.terrain.origin;
-        let corner = Vec2::new(origin.x, origin.z);
-        let search = engine_terrain::WalkSearch::new(
-            layers,
-            &state.terrain.pyramid,
-            (from - corner, to - corner),
-            Self::obstacles(state),
-            options,
-        );
-        Some((state.entity, origin, search))
-    }
-
-    /// A walk job over the generated terrain under world `from` and `to`
-    /// (x and z) as `options` walk, under its edits, once jobs hold its
-    /// recipe: the terrain, its origin, which the walk's terrain-local
-    /// points are from, the job's input and its record's key. `None`
-    /// otherwise, as for [`Self::walk_search`].
-    pub fn walk_job(
-        &self,
-        from: Vec2,
-        to: Vec2,
-        options: &NavOptions,
-    ) -> Option<(Entity, Vec3, Vec<u8>, crate::RecordKey)> {
-        let state = self.walked(from, to)?;
-        let (entity, origin) = (state.entity, state.terrain.origin);
-        let recipe = state.recipe.as_ref()?;
-        let corner = Vec2::new(origin.x, origin.z);
-        let job = WalkJob {
-            recipe: recipe.key.clone(),
-            stamps: state.terrain.edits.iter().map(|edit| edit.stamp).collect(),
-            from: from - corner,
-            to: to - corner,
-            obstacles: Self::obstacles(state),
-            options: *options,
+    /// What walks between world `from` and `to` (x and z) read of the
+    /// terrain both lie on ([`Walked`]): never surroundings, which no one
+    /// walks.
+    pub(crate) fn walked_terrain(&self, from: Vec2, to: Vec2) -> Walked {
+        let Some(state) = self.walked(from, to) else {
+            return Walked::Off;
         };
-        let input = job.identity();
-        let record = crate::RecordKey::new(&engine_terrain::SOURCE, WalkJob::KIND.name(), &input);
-        Some((entity, origin, input, record))
+        let (Some(recipe), Some(layers)) = (state.recipe.as_ref(), self.layers(state.entity))
+        else {
+            return Walked::Baking;
+        };
+        let Some(stack) = self
+            .stacks
+            .iter()
+            .find(|(stack, _)| Arc::ptr_eq(stack, &recipe.stack))
+            .map(|(_, key)| key.clone())
+        else {
+            return Walked::Baking;
+        };
+        Walked::Ready(WalkedTerrain {
+            entity: state.entity,
+            origin: state.terrain.origin,
+            pyramid: state.terrain.pyramid,
+            layers,
+            stack,
+            recipe: recipe.key.clone(),
+            edits: state.terrain.edits.iter().map(|edit| edit.stamp).collect(),
+        })
+    }
+
+    /// The footprints of the placed objects that collide on `entity`'s
+    /// resident tiles, terrain-local: what walks over it keep clear of.
+    pub(crate) fn walk_obstacles(&self, entity: Entity) -> Vec<Obstacle> {
+        self.entries
+            .iter()
+            .find(|state| state.entity == entity && state.around.is_none())
+            .map_or_else(Vec::new, Self::obstacles)
     }
 
     /// The terrain both world `from` and `to` (x and z) lie on, which walks
@@ -401,5 +348,66 @@ impl Terrains {
             .iter()
             .map(TerrainState::revision)
             .fold(self.entries.len() as u64, u64::wrapping_add)
+    }
+}
+
+/// What walks read of a terrain: the terrain, its origin, its
+/// pyramid, its layers with their bakes and edits (which tiles' grounds
+/// read), the keys its stack and recipe are shared with workers by, and its
+/// edits, as they stood when a walk set out.
+pub(crate) struct WalkedTerrain {
+    pub(crate) entity: Entity,
+    pub(crate) origin: Vec3,
+    pub(crate) pyramid: Pyramid,
+    pub(crate) layers: Arc<Layers>,
+    pub(crate) stack: String,
+    pub(crate) recipe: String,
+    pub(crate) edits: Vec<Stamp>,
+}
+
+/// What walks between two points find of the terrain under them: one ready
+/// to walk, one whose bakes or recipe are not done yet, or none under both.
+pub(crate) enum Walked {
+    Ready(WalkedTerrain),
+    Baking,
+    Off,
+}
+
+impl WalkedTerrain {
+    /// The edits reaching tile `key`'s ground, in order.
+    fn reaching(&self, key: TileKey) -> Vec<Stamp> {
+        self.edits
+            .iter()
+            .copied()
+            .filter(|stamp| reaches(stamp, &self.pyramid, key))
+            .collect()
+    }
+
+    /// Tile `key`'s portals as `gait` walks it: its job's input, and its
+    /// record's key.
+    pub(crate) fn portals_record(&self, key: TileKey, gait: &Gait) -> (Vec<u8>, RecordKey) {
+        let job = PortalsJob {
+            stack: self.stack.clone(),
+            pyramid: self.pyramid,
+            key,
+            stamps: self.reaching(key),
+            gait: *gait,
+        };
+        let input = job.identity();
+        let record = RecordKey::new(&engine_terrain::SOURCE, PortalsJob::KIND.name(), &input);
+        (input, record)
+    }
+
+    /// Tile `key`'s record, which its ground for walks reads, as the terrain
+    /// loads it: its job's input, and its record's key.
+    pub(crate) fn tile_record(&self, key: TileKey) -> (Vec<u8>, RecordKey) {
+        let job = TileJob {
+            recipe: self.recipe.clone(),
+            key,
+            stamps: self.reaching(key),
+        };
+        let input = job.identity();
+        let record = RecordKey::new(&engine_terrain::SOURCE, TileJob::KIND.name(), &input);
+        (input, record)
     }
 }

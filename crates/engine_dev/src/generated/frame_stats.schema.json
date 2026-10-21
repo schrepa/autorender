@@ -451,7 +451,7 @@
       "type": "object"
     },
     "NavStats": {
-      "description": "What navigation did at the last fixed tick: agents, and\nthose searching, walking, arrived and unable to reach their\ndestination; and the samples of search work the tick did.",
+      "description": "What navigation did at the last fixed tick: agents, and\nthose searching (and of them those waiting for records or their\nterrain's bakes), walking, arrived and unable to reach their\ndestination; the samples of search work the tick did; and the tiles'\ngrounds and portals held for walks.",
       "properties": {
         "agents": {
           "description": "Navigation agents.",
@@ -465,6 +465,18 @@
           "minimum": 0,
           "type": "integer"
         },
+        "grounds": {
+          "description": "Tiles whose ground navigation holds for walks.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "portals": {
+          "description": "Tiles whose portals of a walk graph navigation holds.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "searching": {
           "description": "Agents whose walk is being searched.",
           "format": "uint32",
@@ -473,6 +485,12 @@
         },
         "unreachable": {
           "description": "Agents whose destination no walk reaches.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "waiting": {
+          "description": "Agents whose search waits for records the host has yet to hand\nback, or for its terrain's bakes.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -493,10 +511,13 @@
       "required": [
         "agents",
         "searching",
+        "waiting",
         "walking",
         "arrived",
         "unreachable",
-        "work"
+        "work",
+        "grounds",
+        "portals"
       ],
       "type": "object"
     },

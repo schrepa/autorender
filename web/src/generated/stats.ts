@@ -400,18 +400,29 @@ export interface LightStats {
 
 /**
  * What navigation did at the last fixed tick: agents, and
- * those searching, walking, arrived and unable to reach their
- * destination; and the samples of search work the tick did.
+ * those searching (and of them those waiting for records or their
+ * terrain's bakes), walking, arrived and unable to reach their
+ * destination; the samples of search work the tick did; and the tiles'
+ * grounds and portals held for walks.
  */
 export interface NavStats {
   /** Navigation agents. */
   agents: number;
   /** Agents at their destination. */
   arrived: number;
+  /** Tiles whose ground navigation holds for walks. */
+  grounds: number;
+  /** Tiles whose portals of a walk graph navigation holds. */
+  portals: number;
   /** Agents whose walk is being searched. */
   searching: number;
   /** Agents whose destination no walk reaches. */
   unreachable: number;
+  /**
+   * Agents whose search waits for records the host has yet to hand
+   * back, or for its terrain's bakes.
+   */
+  waiting: number;
   /** Agents walking a found path. */
   walking: number;
   /** Samples of search work the tick did. */

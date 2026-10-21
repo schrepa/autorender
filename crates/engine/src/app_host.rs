@@ -424,9 +424,9 @@ impl AppHost {
         self.engine.work_terrain(milliseconds)
     }
 
-    /// Workers the host runs jobs on: terrains' bakes and tiles and agents'
-    /// walks run there, or in place on a host without any; the host serves
-    /// the engine's jobs from now on.
+    /// Workers the host runs jobs on: terrains' bakes and tiles and their
+    /// walk graphs' portals run there, or in place on a host without any;
+    /// the host serves the engine's jobs from now on.
     pub fn set_job_workers(&mut self, workers: u32) {
         if let Some(mut jobs) = self
             .engine

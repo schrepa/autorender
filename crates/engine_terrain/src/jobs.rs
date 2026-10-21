@@ -1,16 +1,16 @@
 //! Terrain jobs: terrain work engines hand workers, as bytes
-//! in and bytes out: a tile generated whole, a walk searched, a stack
-//! baked. Workers hold once what many jobs read, shared by key: layer
-//! stacks with their bakes, and the recipes generating a terrain's tiles
-//! from one. Jobs run the same code wherever they run (a worker, a host
-//! without workers, the cook), so their results are the same bits, and a
-//! tile's and a bake's output is a record hosts keep and the cook ships:
-//! every field of a job is something its output depends on.
+//! in and bytes out: a tile generated whole, a tile's portals of a walk
+//! graph, a stack baked. Workers hold once what many jobs read, shared by
+//! key: layer stacks with their bakes, and the recipes generating a
+//! terrain's tiles from one. Jobs run the same code wherever they run (a
+//! worker, a host without workers, the cook), so their results are the
+//! same bits, and every job's output is a record hosts keep and the cook
+//! ships: every field of a job is something its output depends on.
 //!
-//! A tile's job carries the edits reaching its ground alone, its recipe's
-//! stack none: an edit leaves every other tile's job, and its record, as
-//! it was. A terrain's lighting reads a level's heights alone, under edits
-//! or not.
+//! A tile's job, and its portals', carries the edits reaching its ground
+//! alone, its recipe's stack none: an edit leaves every other tile's jobs,
+//! and their records, as they were. A terrain's lighting reads a level's
+//! heights alone, under edits or not.
 
 use engine_math::collections::HashMap;
 use std::sync::Arc;
@@ -20,31 +20,31 @@ use glam::Vec2;
 use crate::codec::{self, Codec, CodecError, Reader, Writer, record};
 use crate::lighting::{Ground, TerrainLighting, light};
 use crate::{
-    BiomeRules, Biomes, Generator, Layers, NavOptions, NavPath, Obstacle, Placing, Pyramid, Stamp,
-    Tile, TileKey, WalkSearch,
+    BiomeRules, Biomes, Gait, Generator, Layers, Placing, Pyramid, Stamp, Tile, TileKey,
+    TilePortals,
 };
 
 /// The kinds of terrain jobs, which hosts carry by name: a tile of a
-/// shared recipe, a walk over one, a stack's bakes and a terrain's
-/// lighting. Workers match every kind, so a kind added without its work
-/// fails to build.
+/// shared recipe, a tile's portals over a shared stack, a stack's bakes and
+/// a terrain's lighting. Workers match every kind, so a kind added without
+/// its work fails to build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
     Tile,
-    Walk,
+    Portals,
     Bake,
     Lighting,
 }
 
 impl JobKind {
     /// Every kind.
-    pub const ALL: [Self; 4] = [Self::Tile, Self::Walk, Self::Bake, Self::Lighting];
+    pub const ALL: [Self; 4] = [Self::Tile, Self::Portals, Self::Bake, Self::Lighting];
 
     /// Its name, as hosts carry it and key the records they keep by.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Tile => "terrain_tile",
-            Self::Walk => "terrain_walk",
+            Self::Portals => "terrain_portals",
             Self::Bake => "terrain_bake",
             Self::Lighting => "terrain_lighting",
         }
@@ -149,30 +149,30 @@ pub fn tile_output(bytes: &[u8]) -> Result<Tile, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`JobKind::Walk`]: the shortest walk over the recipe shared as `recipe`
-/// under `stamps`, the terrain's edits in order, from terrain-local `from`
-/// to `to` among `obstacles`, as `options` walk.
+/// A [`JobKind::Portals`]: tile `key`'s portals of the walk graph of `gait`
+/// over `pyramid` ([`TilePortals`]), its ground generated from the stack
+/// shared as `stack` under `stamps`, the terrain's edits reaching its
+/// ground, in order, as its tile's record holds it. Like every terrain job,
+/// it is its own identity and its own input.
 #[derive(Clone, Debug, PartialEq)]
-pub struct WalkJob {
-    pub recipe: String,
+pub struct PortalsJob {
+    pub stack: String,
+    pub pyramid: Pyramid,
+    pub key: TileKey,
     pub stamps: Vec<Stamp>,
-    pub from: Vec2,
-    pub to: Vec2,
-    pub obstacles: Vec<Obstacle>,
-    pub options: NavOptions,
+    pub gait: Gait,
 }
 
-record!(WalkJob {
-    recipe,
+record!(PortalsJob {
+    stack,
+    pyramid,
+    key,
     stamps,
-    from,
-    to,
-    obstacles,
-    options,
+    gait,
 });
 
-impl WalkJob {
-    pub const KIND: JobKind = JobKind::Walk;
+impl PortalsJob {
+    pub const KIND: JobKind = JobKind::Portals;
 
     /// What its output is kept by, and its input: the job.
     pub fn identity(&self) -> Vec<u8> {
@@ -180,8 +180,8 @@ impl WalkJob {
     }
 }
 
-/// A [`JobKind::Walk`]'s output: the walk, `None` where none reaches.
-pub fn walk_output(bytes: &[u8]) -> Result<Option<NavPath>, CodecError> {
+/// A [`JobKind::Portals`]'s output: the tile's portals.
+pub fn portals_output(bytes: &[u8]) -> Result<TilePortals, CodecError> {
     codec::decode(bytes)
 }
 
@@ -314,7 +314,7 @@ impl Recipe {
 /// A job a worker started, to step until done.
 enum Running {
     Tile(Box<Generator>),
-    Walk(Box<WalkSearch>),
+    Portals(Box<(Arc<Layers>, Pyramid, TileKey, Gait)>),
     Bake(Box<(Layers, Pyramid)>),
     Lighting(Box<LightingJob>),
 }
@@ -414,25 +414,33 @@ impl TerrainWorker {
                         .with_materials(recipe.materials),
                 ))
             }
-            JobKind::Walk => {
-                let WalkJob {
-                    recipe,
+            JobKind::Portals => {
+                let PortalsJob {
+                    stack,
+                    pyramid,
+                    key,
                     stamps,
-                    from,
-                    to,
-                    obstacles,
-                    options,
+                    gait,
                 } = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
-                options.validate().map_err(|invalid| invalid.to_string())?;
-                let recipe = self.recipe(&recipe)?;
-                Running::Walk(Box::new(WalkSearch::new(
-                    recipe.stamped(&stamps)?,
-                    &recipe.pyramid,
-                    (from, to),
-                    obstacles,
-                    &options,
-                )))
+                gait.validate(&pyramid)?;
+                if !pyramid.contains(key) || u32::from(key.level) != gait.level {
+                    return Err("portals of a tile outside its gait's level".into());
+                }
+                let stack = self
+                    .stacks
+                    .get(&stack)
+                    .ok_or_else(|| format!("unknown stack {stack}"))?;
+                let layers = if stamps.is_empty() {
+                    stack.clone()
+                } else {
+                    Arc::new(
+                        stack
+                            .with_stamps(&stamps)
+                            .map_err(|error| error.to_string())?,
+                    )
+                };
+                Running::Portals(Box::new((layers, pyramid, key, gait)))
             }
             JobKind::Bake => {
                 let BakeJob { layers, pyramid } = reader.get().map_err(invalid)?;
@@ -453,8 +461,8 @@ impl TerrainWorker {
     }
 
     /// Works on job `id` for about `budget` work units (about one per
-    /// sample; bakes and lighting run whole): its output once done, `None`
-    /// while work is left. A job that failed or finished is gone.
+    /// sample; portals, bakes and lighting run whole): its output once done,
+    /// `None` while work is left. A job that failed or finished is gone.
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
         let Some(running) = self.running.get_mut(&id) else {
             return Err("no such job".into());
@@ -466,10 +474,11 @@ impl TerrainWorker {
                 None if generator.failed() => Err("the tile's heights are invalid".into()),
                 None => return Ok(None),
             },
-            Running::Walk(search) => match search.step(&mut budget) {
-                Some(walk) => Ok(codec::encode(&walk)),
-                None => return Ok(None),
-            },
+            Running::Portals(job) => {
+                let (layers, pyramid, key, gait) = &**job;
+                crate::nav::tile_portals(layers, pyramid, *key, gait)
+                    .map(|portals| codec::encode(&portals))
+            }
             Running::Bake(bake) => {
                 let (layers, pyramid) = &**bake;
                 Ok(codec::encode(&layers.bake_all(pyramid)))
