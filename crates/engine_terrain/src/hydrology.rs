@@ -849,13 +849,6 @@ impl WaterGrid {
         (depth > 0.0).then(|| (blend(&self.surface), depth))
     }
 
-    /// The level of the lake holding the sample nearest terrain-local
-    /// `(x, z)`, if one does.
-    pub fn lake_level(&self, x: f32, z: f32) -> Option<f32> {
-        let sample = self.nearest(x, z)?;
-        (self.depth[sample] > 0.0).then(|| self.levels[usize::from(self.lake[sample]) - 1])
-    }
-
     /// The highest level of the lakes holding the sample nearest
     /// terrain-local `(x, z)` or one beside it, if any do: where a river
     /// leaving a lake begins.

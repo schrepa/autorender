@@ -26,7 +26,6 @@ use engine_math::{max, min};
 use glam::Vec2;
 
 use crate::hydrology::RIVER_FAR;
-use crate::noise::gradient_value;
 use serde::Serialize;
 
 /// Meters between a river's points.
@@ -872,12 +871,6 @@ impl RiverRaster {
 fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
     let h = max(k - (a - b).abs(), 0.0) / k;
     min(a, b) - h * h * k * 0.25
-}
-
-/// 0 at 0 rising smoothly to 1 at 1.
-fn smoothstep(t: f32) -> f32 {
-    let t = min(max(t, 0.0), 1.0);
-    t * t * (3.0 - 2.0 * t)
 }
 
 /// A river's line from the bake's grid before its channel and water are
