@@ -362,12 +362,12 @@ impl Terrains {
                 unbounced += u32::from(waits(state, settings));
             }
             want_colors(state, settings);
-            stats.lit += u32::from(state.lighting.made.is_some());
-            stats.lighting += u32::from(state.lighting.job.is_some());
-            stats.bounced += u32::from(state.bounce.made.is_some());
-            stats.bouncing += u32::from(state.bounce.job.is_some());
-            stats.colored += u32::from(state.macro_colors.shown());
-            stats.coloring += u32::from(state.macro_colors.asking());
+            stats.lit += u32::from(state.whole.lighting.made.is_some());
+            stats.lighting += u32::from(state.whole.lighting.job.is_some());
+            stats.bounced += u32::from(state.whole.bounce.made.is_some());
+            stats.bouncing += u32::from(state.whole.bounce.job.is_some());
+            stats.colored += u32::from(state.whole.colors.shown());
+            stats.coloring += u32::from(state.whole.colors.asking());
             let missing = std::mem::take(&mut state.missing);
             state.missing = missing
                 .into_iter()

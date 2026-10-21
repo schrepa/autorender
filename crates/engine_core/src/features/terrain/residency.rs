@@ -98,11 +98,8 @@ pub(super) struct TerrainState {
     pub(super) cook: Option<CookTiles>,
     pub(super) cook_water: Option<CookTiles>,
     pub(super) settled: Settled,
-    /// Its lighting, bounce transfer and macro colors, and its asking for
-    /// them.
-    pub(super) lighting: Lighting,
-    pub(super) bounce: Bounce,
-    pub(super) macro_colors: MacroColors,
+    /// What it makes over its whole extent, and its asking for it.
+    pub(super) whole: Whole,
     /// The layers its tiles generate from and its surface's data for the
     /// GPU from them, `None` where the program needs more
     /// than the GPU's interpreter holds; and whether its tiles hold control
@@ -162,9 +159,7 @@ impl TerrainState {
             cook: None,
             cook_water: None,
             settled: Settled::default(),
-            lighting: Lighting::default(),
-            bounce: Bounce::default(),
-            macro_colors: MacroColors::default(),
+            whole: Whole::default(),
             surface: None,
             materials: true,
         }
@@ -221,11 +216,11 @@ impl TerrainState {
         retired.jobs.extend(self.settled.asked());
         retired
             .jobs
-            .extend(self.lighting.job.iter().map(|&(id, _)| id));
-        retired.textures.extend(self.macro_colors.handles());
+            .extend(self.whole.lighting.job.iter().map(|&(id, _)| id));
+        retired.textures.extend(self.whole.colors.handles());
         retired
             .jobs
-            .extend(self.bounce.job.iter().map(|&(id, _)| id));
+            .extend(self.whole.bounce.job.iter().map(|&(id, _)| id));
         retired
             .recipes
             .extend(self.recipe.as_ref().map(|recipe| recipe.key.clone()));
@@ -463,6 +458,16 @@ pub struct Terrains {
     /// The textures of macro colors replaced or gone with their terrains,
     /// which leave the asset library once filled.
     pub(super) colors_gone: Vec<engine_assets::TextureHandle>,
+}
+
+/// What a terrain makes over its whole extent once its finest pinned level
+/// is resident, each a record: its lighting, its bounce transfer and its
+/// macro colors, with its asking for each.
+#[derive(Default)]
+pub(super) struct Whole {
+    pub(super) lighting: Lighting,
+    pub(super) bounce: Bounce,
+    pub(super) colors: MacroColors,
 }
 
 /// The workers' jobs and recipes of terrains gone, and their macro colors'

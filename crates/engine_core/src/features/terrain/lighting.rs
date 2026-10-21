@@ -58,7 +58,7 @@ pub(super) fn light(
     slots: &mut JobBudget<'_>,
     frame: u64,
 ) {
-    let lighting = &mut state.lighting;
+    let lighting = &mut state.whole.lighting;
     if !lit(settings) {
         if let Some((id, _)) = lighting.job.take() {
             slots.jobs.cancel(id);
@@ -93,7 +93,7 @@ pub(super) fn light(
     let Some(tiles) = source_tiles(state, level) else {
         return;
     };
-    let lighting = &state.lighting;
+    let lighting = &state.whole.lighting;
     // The same tiles make the same input: nothing to ask again.
     let same = tiles.len() == lighting.tiles.len()
         && tiles
@@ -107,7 +107,7 @@ pub(super) fn light(
     let job = lighting_job(state, level, &tiles, sizes);
     let input = job.input();
     let hash = content_hash(&input);
-    let lighting = &mut state.lighting;
+    let lighting = &mut state.whole.lighting;
     lighting.tiles = tiles;
     lighting.sizes = sizes;
     if lighting.from == Some(hash) {

@@ -96,7 +96,7 @@ fn macro_texels(settings: &TerrainSettings) -> u32 {
 /// leaves those shown as they are.
 pub(super) fn want_colors(state: &mut TerrainState, settings: &TerrainSettings) {
     let recipe = state.recipe.as_ref().filter(|_| settings.enabled);
-    state.macro_colors.wanted = recipe.map(|recipe| MacroJob {
+    state.whole.colors.wanted = recipe.map(|recipe| MacroJob {
         recipe: recipe.key.clone(),
         level: lighting_level(&state.terrain.pyramid, settings.pinned_levels),
         size: macro_texels(settings),
@@ -135,7 +135,7 @@ impl Terrains {
     pub(super) fn ask_colors(&mut self, records: &mut Records, assets: &mut AssetLibrary) {
         let frame = self.frame;
         for state in &mut self.entries {
-            let colors = &mut state.macro_colors;
+            let colors = &mut state.whole.colors;
             if let Some(Asked {
                 job,
                 held: Some((handle, identity)),

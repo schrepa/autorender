@@ -39,10 +39,10 @@ impl Bounce {
 /// views start on the transfer, never on the far field's estimate standing
 /// in for it.
 pub(super) fn waits(state: &TerrainState, settings: &TerrainSettings) -> bool {
-    let held = &state.bounce;
+    let held = &state.whole.bounce;
     bounces(settings)
         && state.around.is_none()
-        && !state.lighting.failed()
+        && !state.whole.lighting.failed()
         && (held.job.is_some() || (held.made.is_none() && held.failed.is_none()))
 }
 
@@ -86,29 +86,29 @@ pub(super) fn bounce(
     frame: u64,
 ) {
     if !bounces(settings) || state.around.is_some() {
-        if let Some((id, _)) = state.bounce.job.take() {
+        if let Some((id, _)) = state.whole.bounce.job.take() {
             slots.jobs.cancel(id);
         }
-        state.bounce = Bounce::default();
+        state.whole.bounce = Bounce::default();
         return;
     }
-    if let Some((id, hash)) = state.bounce.job
+    if let Some((id, hash)) = state.whole.bounce.job
         && let Some(output) = slots.jobs.take(id)
     {
-        state.bounce.job = None;
+        state.whole.bounce.job = None;
         match job_output(
             BounceJob::KIND.name(),
             output,
             engine_terrain::jobs::bounce_output,
         ) {
             Ok(made) => {
-                state.bounce.made = Some(Arc::new(made));
-                state.bounce.from = Some(hash);
-                state.bounce.failed = None;
+                state.whole.bounce.made = Some(Arc::new(made));
+                state.whole.bounce.from = Some(hash);
+                state.whole.bounce.failed = None;
             }
             Err(error) => {
                 state.failures.record(frame, error);
-                state.bounce.failed = Some(frame);
+                state.whole.bounce.failed = Some(frame);
             }
         }
     }
@@ -121,7 +121,7 @@ pub(super) fn bounce(
     }
     // The lighting first: both read the same heights, and the lighting
     // shows sooner.
-    if state.lighting.made.is_none() {
+    if state.whole.lighting.made.is_none() {
         return;
     }
     let Some(recipe) = state.recipe.as_ref().map(|recipe| recipe.key.clone()) else {
@@ -132,7 +132,7 @@ pub(super) fn bounce(
         return;
     };
     let probes = probe_columns(&state.terrain.pyramid, settings);
-    let held = &state.bounce;
+    let held = &state.whole.bounce;
     // The same tiles make the same heights: nothing to ask again.
     let same = tiles.len() == held.tiles.len()
         && tiles
@@ -153,7 +153,7 @@ pub(super) fn bounce(
     };
     let input = job.input();
     let hash = content_hash(&input);
-    let bounce = &mut state.bounce;
+    let bounce = &mut state.whole.bounce;
     bounce.tiles = tiles;
     bounce.probes = probes;
     bounce.recipe = recipe;

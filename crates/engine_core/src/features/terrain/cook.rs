@@ -86,13 +86,13 @@ impl Terrains {
         for state in &mut self.entries {
             let streams = state.around.is_none() || settings.surroundings;
             if streams && lit(settings) && state.terrain.validate().is_ok() {
-                left += u64::from(state.lighting.left());
+                left += u64::from(state.whole.lighting.left());
             }
             if state.around.is_none() && bounces(settings) && state.terrain.validate().is_ok() {
-                left += u64::from(state.bounce.left());
+                left += u64::from(state.whole.bounce.left());
             }
             if streams && settings.enabled && state.terrain.validate().is_ok() {
-                left += u64::from(state.macro_colors.left());
+                left += u64::from(state.whole.colors.left());
             }
             let authored = state.terrain.layers.clone();
             if state.terrain.validate().is_err() {
