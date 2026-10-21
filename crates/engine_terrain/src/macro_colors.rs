@@ -172,15 +172,15 @@ fn patches(x: f32, z: f32, wavelength: f32, index: u32) -> f32 {
 
 /// What the ground holds at terrain-local `(x, z)`, a texel `footprint`
 /// meters across: its shape from `shape`, its water and lakes from the
-/// hydrology bake, what `erosions` changed and its roads, each of the
-/// bakes' and roads' parts as much as the stack shows them there (the
-/// surroundings fade them out past their terrain). The stack's parts and
-/// the noise are read where the point lies in the ground the stack was
-/// drawn for, as tiles read it, so surroundings carry on their terrain's
-/// colors.
+/// hydrology bake, `change`, the meters its erosions changed it by, and its
+/// roads, each of the bakes' and roads' parts as much as the stack shows
+/// them there (the surroundings fade them out past their terrain). The
+/// stack's parts and the noise are read where the point lies in the ground
+/// the stack was drawn for, as tiles read it, so surroundings carry on
+/// their terrain's colors.
 fn ground(
     layers: &Layers,
-    (shape, erosions): (&Shape, &[&Erosion]),
+    (shape, change): (&Shape, f32),
     (x, z): (f32, f32),
     footprint: f32,
 ) -> Ground {
@@ -202,11 +202,7 @@ fn ground(
             shore = (1.0 - ramp(height - level, 0.0, 2.5)) * shown;
         }
     }
-    let change: f32 = erosions
-        .iter()
-        .map(|erosion| erosion.change_at(sx, sz, footprint))
-        .sum::<f32>()
-        * shown;
+    let change = change * shown;
     let road = if shown > 0.0 {
         layers.path_at(sx, sz)
     } else {
@@ -315,11 +311,21 @@ pub fn macro_colors(
         .collect();
     let count = size as usize;
     let mut texels = Vec::with_capacity(count * count * 4);
+    let mut changes = vec![0.0_f32; count];
     for z in 0..count {
         let pz = (z as f32 + 0.5) * step[1];
-        for x in 0..count {
+        // What the erosions changed along the row, read a row at a time
+        // where the stack was drawn for, as tiles read it.
+        changes.fill(0.0);
+        let xs = (0..count).map(|x| (x as f32 + 0.5) * step[0] + layers.offset.x);
+        for erosion in &erosions {
+            erosion.change_row(xs.clone(), pz + layers.offset.y, footprint, |x, change| {
+                changes[x] += change;
+            });
+        }
+        for (x, &change) in changes.iter().enumerate() {
             let px = (x as f32 + 0.5) * step[0];
-            let ground = ground(layers, (&shape, &erosions), (px, pz), footprint);
+            let ground = ground(layers, (&shape, change), (px, pz), footprint);
             texels.extend(texel(&ground));
         }
     }

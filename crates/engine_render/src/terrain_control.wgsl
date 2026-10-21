@@ -183,14 +183,17 @@ struct Inputs {
     path_half: f32,
 }
 
-fn catmull_rom(t: f32) -> vec4<f32> {
+// Uniform cubic B-spline weights of the four image samples around
+// fraction t, as the CPU computes them.
+fn image_weights(t: f32) -> vec4<f32> {
+    let s = 1.0 - t;
     let t2 = t * t;
     let t3 = t2 * t;
     return vec4<f32>(
-        0.5 * (-t3 + 2.0 * t2 - t),
-        0.5 * (3.0 * t3 - 5.0 * t2 + 2.0),
-        0.5 * (-3.0 * t3 + 4.0 * t2 + t),
-        0.5 * (t3 - t2));
+        s * s * s * (1.0 / 6.0),
+        (3.0 * t3 - 6.0 * t2 + 4.0) * (1.0 / 6.0),
+        (-3.0 * t3 + 3.0 * t2 + 3.0 * t + 1.0) * (1.0 / 6.0),
+        t3 * (1.0 / 6.0));
 }
 
 // Texel (x, z) of one of an image's levels, edges clamped: `level` points
@@ -203,9 +206,10 @@ fn image_texel(level: u32, x: i32, z: i32) -> f32 {
     return real(data[level + 2u] + u32(cz * width + cx));
 }
 
-// Catmull-Rom interpolation of the image whose table starts at `table` at
+// The uniform cubic B-spline of the image whose table starts at `table` at
 // image coordinates (u, v), read from level `level` (the image's own where
-// it has no such level).
+// it has no such level): the four columns around the point blended along
+// v, then across, as the CPU blends them.
 fn image_sample(table: u32, u: f32, v: f32, level: u32) -> f32 {
     let levels = data[table];
     var entry = table + 1u;
@@ -221,16 +225,15 @@ fn image_sample(table: u32, u: f32, v: f32, level: u32) -> f32 {
     let v0 = floor(sv);
     let x = i32(u0);
     let z = i32(v0);
-    let wx = catmull_rom(su - u0);
-    let wz = catmull_rom(sv - v0);
-    var sum = 0.0;
-    for (var row = 0; row < 4; row++) {
-        let zi = z - 1 + row;
-        let line = wx.x * image_texel(entry, x - 1, zi) + wx.y * image_texel(entry, x, zi)
-            + wx.z * image_texel(entry, x + 1, zi) + wx.w * image_texel(entry, x + 2, zi);
-        sum += wz[row] * line;
+    let wx = image_weights(su - u0);
+    let wz = image_weights(sv - v0);
+    var columns: array<f32, 4>;
+    for (var column = 0; column < 4; column++) {
+        let xi = x - 1 + column;
+        columns[column] = wz.x * image_texel(entry, xi, z - 1) + wz.y * image_texel(entry, xi, z)
+            + wz.z * image_texel(entry, xi, z + 1) + wz.w * image_texel(entry, xi, z + 2);
     }
-    return sum;
+    return wx.x * columns[0] + wx.y * columns[1] + wx.z * columns[2] + wx.w * columns[3];
 }
 
 fn decode(sample: f32, low: f32, high: f32) -> f32 {

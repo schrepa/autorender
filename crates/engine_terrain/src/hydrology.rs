@@ -2,19 +2,23 @@
 //! cuts. A bake reads the heights the layers below it give at one
 //! pyramid level, fills their pits so that every sample drains off the
 //! grid's edge (Priority-Flood with epsilon; Barnes, Lehman and Mulla
-//! 2014), sends each sample's water to its steepest neighbor among those
-//! the flood reached before it, and sums upstream area in the reverse of
-//! the flood's order. Inside a filled pit the flood spreads from the spill
-//! point over the lowest ground first and water drains back the way the
-//! flood came, so rivers crossing a pit follow its low line rather than
-//! straight rays from the spill point. Channels then run where enough
-//! area drains, deeper and wider downstream, and a wetness index and the
-//! depths of filled pits follow from the same grids. Each result is a
-//! 16-bit image with coarser levels, so every terrain level samples it
-//! without aliasing, and every sample is the same on every target: the bake
-//! is deterministic. Rivers (`rivers.rs`) follow the channels as lines,
-//! each cutting its channel into the ground with its water in it, the one
-//! place channels are cut; the grid of standing water holds lakes alone.
+//! 2014), sends each sample's water to one of its lower neighbors, drawn
+//! by a hash of the sample with odds in proportion to the slope down to
+//! each, so courses follow the ground's fall rather than the grid's eight
+//! ways, and sums upstream area in the reverse of the flood's order.
+//! Inside a filled pit the flood spreads from the spill point over the
+//! lowest ground first and water drains back the way the flood came, so
+//! rivers crossing a pit follow its low line rather than straight rays from
+//! the spill point. Channels then run where enough area drains, deeper and
+//! wider downstream. The maps of flow and the wetness index spread each
+//! sample's water over all its lower neighbors instead, and the depths of
+//! filled pits follow from the same grids. Each result is a 16-bit image
+//! with coarser levels, read through its uniform cubic B-spline, so every
+//! terrain level samples it without aliasing or the image's grid, and
+//! every sample is the same on every target: the bake is deterministic.
+//! Rivers (`rivers.rs`) follow the channels as lines, each cutting its
+//! channel into the ground with its water in it, the one place channels
+//! are cut; the grid of standing water holds lakes alone.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -29,6 +33,7 @@ use std::sync::Arc;
 use glam::Vec2;
 
 use crate::layers::HeightImage;
+use crate::noise::hash;
 use crate::rivers::{Channels, MIN_DEPTH, RiverLine, Rivers, trace, wander};
 
 settings! {
@@ -155,11 +160,12 @@ pub const LAKE_RANGE: [f32; 2] = [0.0, 200.0];
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hydrology {
     pub spacing: f32,
-    /// Upstream area, as [`FLOW_RANGE`] encodes it.
+    /// Upstream area, each sample's water spread over all its lower
+    /// neighbors, as [`FLOW_RANGE`] encodes it.
     pub flow: HeightImage,
     /// The topographic wetness index ln(a / tan b): a the area draining
-    /// through a meter of contour, b the ground's slope; as
-    /// [`WETNESS_RANGE`] encodes it.
+    /// through a meter of contour, spread as `flow`'s, b the ground's
+    /// steepest slope down; as [`WETNESS_RANGE`] encodes it.
     pub wetness: HeightImage,
     /// How deep water would stand in filled pits, as [`LAKE_RANGE`]
     /// encodes it.
@@ -221,18 +227,17 @@ const NEIGHBORS: [(i32, i32, f32); 8] = [
     (-1, -1, std::f32::consts::SQRT_2),
 ];
 
-/// Meters of water a filled pit must hold somewhere, and square meters it
-/// must cover, to stand as a lake: shallower or smaller pits, such as fine
-/// detail leaves on flat ground, stay dry and rivers run through them.
+/// Meters of water a filled pit must hold somewhere to stand as a lake:
+/// shallower pits stay dry and rivers run through them, such as the
+/// hollows erosion's smoothly read change leaves, centimeters deep over the
+/// pits its sediment filled and decimeters deep beside its sharpest cuts.
 const LAKE_DEPTH: f32 = 2.0;
-const LAKE_AREA: f32 = 4000.0;
 /// Meters of water a sample of a lake holds at least.
 const WET: f32 = 1.0e-3;
 
 /// Which samples lie in lakes: the connected samples a pit fills (eight
-/// neighbors each, `spacing` meters apart), where it fills [`LAKE_DEPTH`] or
-/// deeper somewhere over [`LAKE_AREA`] or more.
-fn lakes(heights: &[f32], filled: &[f32], width: usize, spacing: f32) -> Vec<bool> {
+/// neighbors each), where it fills [`LAKE_DEPTH`] or deeper somewhere.
+fn lakes(heights: &[f32], filled: &[f32], width: usize) -> Vec<bool> {
     let count = heights.len();
     let height = count / width;
     let depth = |sample: usize| filled[sample] - heights[sample];
@@ -266,7 +271,7 @@ fn lakes(heights: &[f32], filled: &[f32], width: usize, spacing: f32) -> Vec<boo
                 }
             }
         }
-        if deepest >= LAKE_DEPTH && region.len() as f32 * spacing * spacing >= LAKE_AREA {
+        if deepest >= LAKE_DEPTH {
             for &sample in &region {
                 lake[sample] = true;
             }
@@ -275,22 +280,14 @@ fn lakes(heights: &[f32], filled: &[f32], width: usize, spacing: f32) -> Vec<boo
     lake
 }
 
-/// A height ordered totally, lowest first in the flood's queue.
-#[derive(Clone, Copy, PartialEq)]
-struct Level(f32);
-
-impl Eq for Level {}
-
-impl PartialOrd for Level {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Level {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.total_cmp(&other.0)
-    }
+/// `height` as a key whose order as an unsigned integer is
+/// [`f32::total_cmp`]'s: negative heights' bits flipped, the others' sign
+/// bit set.
+#[inline]
+fn level_key(height: f32) -> u64 {
+    let bits = height.to_bits();
+    let flip = (((bits as i32) >> 31) as u32) | 0x8000_0000;
+    u64::from(bits ^ flip)
 }
 
 /// Encodes `value` over `range` as a 16-bit sample.
@@ -304,69 +301,89 @@ pub fn decode(sample: f32, range: [f32; 2]) -> f32 {
     range[0] + (range[1] - range[0]) * sample * (1.0 / 65_535.0)
 }
 
-/// Fills `heights`' pits so every sample drains off the edge of a grid
-/// `width` samples wide, each raised just above the sample it spills into;
-/// returns the samples in the order the flood reached them, and for each
-/// raised sample the one it spills into (`u32::MAX` for the others). The
-/// flood fills a pit from its spill point over the lowest ground first,
-/// in the order it reached samples of equal heights.
-fn flood(heights: &mut [f32], width: usize) -> (Vec<u32>, Vec<u32>) {
-    let count = heights.len();
-    let height = count / width;
-    let mut closed = vec![false; count];
-    let mut open = BinaryHeap::new();
-    // Raised samples by their own ground, then by when the flood reached
-    // them.
-    let mut pits = BinaryHeap::new();
-    let mut reached = 0_u32;
-    let mut parents = vec![u32::MAX; count];
-    let mut order = Vec::with_capacity(count);
-    let edges = (0..width)
-        .flat_map(|x| [(x, 0), (x, height - 1)])
-        .chain((0..height).flat_map(|z| [(0, z), (width - 1, z)]));
-    for (x, z) in edges {
-        let sample = z * width + x;
-        if !closed[sample] {
-            closed[sample] = true;
-            open.push(Reverse((Level(heights[sample]), sample as u32)));
-        }
-    }
-    loop {
-        let sample = match pits.pop() {
-            Some(Reverse((_, _, sample))) => sample as usize,
-            None => match open.pop() {
-                Some(Reverse((_, sample))) => sample as usize,
-                None => break,
-            },
-        };
-        order.push(sample as u32);
-        let (x, z) = ((sample % width) as i32, (sample / width) as i32);
-        let spill = heights[sample].next_up();
-        for (dx, dz, _) in NEIGHBORS {
-            let (nx, nz) = (x + dx, z + dz);
-            if nx < 0 || nz < 0 || nx >= width as i32 || nz >= height as i32 {
-                continue;
-            }
-            let neighbor = nz as usize * width + nx as usize;
-            if closed[neighbor] {
-                continue;
-            }
-            closed[neighbor] = true;
-            if heights[neighbor] < spill {
-                pits.push(Reverse((
-                    Level(heights[neighbor]),
-                    reached,
-                    neighbor as u32,
-                )));
-                reached += 1;
-                heights[neighbor] = spill;
-                parents[neighbor] = sample as u32;
-            } else {
-                open.push(Reverse((Level(heights[neighbor]), neighbor as u32)));
+/// A flood's marks and queues, kept from one flood to the next: whether it
+/// has reached each sample, the sample each one it raised spills into
+/// (`u32::MAX` for the others), its open edge by height then sample, and
+/// the raised samples of the pit it fills by their own ground, then by when
+/// it reached them.
+#[derive(Default)]
+pub(crate) struct Flood {
+    closed: Vec<bool>,
+    parents: Vec<u32>,
+    open: BinaryHeap<Reverse<u64>>,
+    pits: BinaryHeap<Reverse<(u64, u32)>>,
+}
+
+impl Flood {
+    /// Fills `heights`' pits so every sample drains off the edge of a grid
+    /// `width` samples wide, each raised just above the sample it spills
+    /// into; puts the samples in `order` in the order the flood reached
+    /// them, and notes the sample each raised one spills into. The flood
+    /// fills a pit from its spill point over the lowest ground first, in
+    /// the order it reached samples of equal heights.
+    fn fill(&mut self, heights: &mut [f32], width: usize, order: &mut Vec<u32>) {
+        let count = heights.len();
+        let height = count / width;
+        let Self {
+            closed,
+            parents,
+            open,
+            pits,
+        } = self;
+        closed.clear();
+        closed.resize(count, false);
+        parents.clear();
+        parents.resize(count, u32::MAX);
+        open.clear();
+        pits.clear();
+        order.clear();
+        order.reserve(count);
+        let mut reached = 0_u32;
+        let edges = (0..width)
+            .flat_map(|x| [(x, 0), (x, height - 1)])
+            .chain((0..height).flat_map(|z| [(0, z), (width - 1, z)]));
+        for (x, z) in edges {
+            let sample = z * width + x;
+            if !closed[sample] {
+                closed[sample] = true;
+                open.push(Reverse((level_key(heights[sample]) << 32) | sample as u64));
             }
         }
+        let (columns, rows) = (width as u32, height as u32);
+        loop {
+            let sample = match pits.pop() {
+                Some(Reverse((_, sample))) => sample,
+                None => match open.pop() {
+                    // The sample is the key's low half.
+                    Some(Reverse(key)) => key as u32,
+                    None => break,
+                },
+            };
+            order.push(sample);
+            let (x, z) = (sample % columns, sample / columns);
+            let spill = heights[sample as usize].next_up();
+            for (dx, dz, _) in NEIGHBORS {
+                let (nx, nz) = (x.wrapping_add_signed(dx), z.wrapping_add_signed(dz));
+                if nx >= columns || nz >= rows {
+                    continue;
+                }
+                let neighbor = (nz * columns + nx) as usize;
+                if closed[neighbor] {
+                    continue;
+                }
+                closed[neighbor] = true;
+                let key = level_key(heights[neighbor]) << 32;
+                if heights[neighbor] < spill {
+                    pits.push(Reverse((key | u64::from(reached), neighbor as u32)));
+                    reached += 1;
+                    heights[neighbor] = spill;
+                    parents[neighbor] = sample;
+                } else {
+                    open.push(Reverse(key | neighbor as u64));
+                }
+            }
+        }
     }
-    (order, parents)
 }
 
 /// Where water drains over a grid: its heights
@@ -374,6 +391,7 @@ fn flood(heights: &mut [f32], width: usize) -> (Vec<u32>, Vec<u32>) {
 /// reached them, each sample's receiver (`u32::MAX` on the edge, which
 /// drains off the grid) and the slope down to it, and the area draining
 /// through each sample (square meters).
+#[derive(Default)]
 pub(crate) struct Drainage {
     pub(crate) filled: Vec<f32>,
     pub(crate) order: Vec<u32>,
@@ -382,62 +400,169 @@ pub(crate) struct Drainage {
     pub(crate) area: Vec<f32>,
 }
 
+/// Seed of the hash drawing each sample's receiver among its lower
+/// neighbors; each draw of receivers hashes under a seed of its own.
+const RECEIVER_SEED: u32 = 0x2f6b_3c91;
+
+/// The eight neighbors' offsets in a grid `width` samples wide, in
+/// [`NEIGHBORS`]' order, and the inverse of the meters to each where its
+/// samples lie `spacing` meters apart.
+fn neighbor_steps(width: usize, spacing: f32) -> [(isize, f32); 8] {
+    NEIGHBORS.map(|(dx, dz, distance)| {
+        (
+            dz as isize * width as isize + dx as isize,
+            1.0 / (distance * spacing),
+        )
+    })
+}
+
 /// How water drains over the grid of `heights`, `width` samples wide
 /// (row by row along z, at least two each way), whose samples lie
 /// `spacing` meters apart.
 pub(crate) fn drainage(heights: &[f32], width: usize, spacing: f32) -> Drainage {
+    let mut drainage = Drainage {
+        filled: heights.to_vec(),
+        ..Drainage::default()
+    };
+    drainage.route(width, spacing, 0, &mut Flood::default());
+    drainage
+}
+
+impl Drainage {
+    /// How water drains over the grid its filled heights hold, `width`
+    /// samples wide (row by row along z, at least two each way) and
+    /// `spacing` meters apart, found in place: its pits filled, then its
+    /// receivers, slopes and areas, in its own buffers and `flood`'s kept
+    /// from the routing before. `draw` says which of the hash's draws picks
+    /// the receivers.
+    pub(crate) fn route(&mut self, width: usize, spacing: f32, draw: u32, flood: &mut Flood) {
+        let Self {
+            filled,
+            order,
+            receivers,
+            slopes,
+            area,
+        } = self;
+        let count = filled.len();
+        let height = count / width;
+        flood.fill(filled, width, order);
+        // Each sample drains to one of its lower neighbors, drawn by a hash
+        // of the sample with odds in proportion to the slope down to each.
+        // The flood reached every lower neighbor of a sample it did not
+        // raise before that sample, so courses only fall and the reverse of
+        // its order visits every sample before the one it drains to. Each
+        // raised sample drains to the one it spills into, back the way the
+        // flood came; edge samples drain off the grid.
+        receivers.clear();
+        receivers.resize(count, u32::MAX);
+        slopes.clear();
+        slopes.resize(count, 0.0);
+        let seed = RECEIVER_SEED.wrapping_add(draw.wrapping_mul(0x9e37_79b9));
+        let steps = neighbor_steps(width, spacing);
+        for z in 1..height - 1 {
+            for x in 1..width - 1 {
+                let sample = z * width + x;
+                if flood.parents[sample] != u32::MAX {
+                    receivers[sample] = flood.parents[sample];
+                    continue;
+                }
+                let ground = filled[sample];
+                let mut down = [0.0_f32; 8];
+                let (mut total, mut first) = (0.0_f32, None);
+                for (index, &(offset, inverse)) in steps.iter().enumerate() {
+                    let drop = ground - filled[sample.wrapping_add_signed(offset)];
+                    if drop > 0.0 {
+                        down[index] = drop * inverse;
+                        total += down[index];
+                        first = first.or(Some(index));
+                    }
+                }
+                let Some(first) = first else {
+                    continue;
+                };
+                // A draw from 0 up to the slopes' sum falls within one of
+                // theirs.
+                let unit = (hash(x as i32, z as i32, seed) >> 8) as f32 * (1.0 / 16_777_216.0);
+                let mut pick = unit * total;
+                let mut chosen = first;
+                for (index, &slope) in down.iter().enumerate().skip(first) {
+                    if slope > 0.0 {
+                        chosen = index;
+                        if pick < slope {
+                            break;
+                        }
+                        pick -= slope;
+                    }
+                }
+                receivers[sample] = sample.wrapping_add_signed(steps[chosen].0) as u32;
+                slopes[sample] = down[chosen];
+            }
+        }
+        area.clear();
+        area.resize(count, spacing * spacing);
+        for &sample in order.iter().rev() {
+            let receiver = receivers[sample as usize];
+            if receiver != u32::MAX {
+                area[receiver as usize] += area[sample as usize];
+            }
+        }
+    }
+}
+
+/// The area draining through each sample of the grid `drained` routes over
+/// `heights` (`width` samples wide, `spacing` meters apart, square meters)
+/// as the maps read it, and the steepest slope down from each: every
+/// sample's water spread over all its lower neighbors in proportion to the
+/// fourth power of the slope down to each (Holmgren 1994), in the reverse
+/// of the flood's order, so it neither runs in the grid's eight ways nor
+/// gathers into single courses as rivers do. Samples the flood raised pass
+/// theirs back the way the flood came, as they drain.
+fn spread(heights: &[f32], drained: &Drainage, width: usize, spacing: f32) -> (Vec<f32>, Vec<f32>) {
     let count = heights.len();
-    let height = count / width;
-    let mut filled = heights.to_vec();
-    let (order, parents) = flood(&mut filled, width);
-    let mut rank = vec![0_u32; count];
-    for (position, &sample) in order.iter().enumerate() {
-        rank[sample as usize] = position as u32;
-    }
-    // Each sample drains to its steepest neighbor the flood reached before
-    // it, and each raised sample to the one it spills into, back the way the
-    // flood came, so the reverse of the flood's order visits every sample
-    // before the one it drains to; edge samples drain off the grid.
-    let (last_x, last_z) = (width as i32 - 1, height as i32 - 1);
-    let mut receivers = vec![u32::MAX; count];
-    let mut slopes = vec![0.0_f32; count];
-    for sample in 0..count {
-        let (x, z) = ((sample % width) as i32, (sample / width) as i32);
-        if x == 0 || z == 0 || x == last_x || z == last_z {
-            continue;
-        }
-        if parents[sample] != u32::MAX {
-            receivers[sample] = parents[sample];
-            continue;
-        }
-        let mut best = (u32::MAX, f32::NEG_INFINITY);
-        for (dx, dz, distance) in NEIGHBORS {
-            let neighbor = (z + dz) as usize * width + (x + dx) as usize;
-            if rank[neighbor] >= rank[sample] {
-                continue;
-            }
-            let slope = (filled[sample] - filled[neighbor]) / (distance * spacing);
-            if slope > best.1 {
-                best = (neighbor as u32, slope);
-            }
-        }
-        receivers[sample] = best.0;
-        slopes[sample] = max(best.1, 0.0);
-    }
+    let steps = neighbor_steps(width, spacing);
     let mut area = vec![spacing * spacing; count];
-    for &sample in order.iter().rev() {
-        let receiver = receivers[sample as usize];
-        if receiver != u32::MAX {
-            area[receiver as usize] += area[sample as usize];
+    let mut steepest = vec![0.0_f32; count];
+    for &sample in drained.order.iter().rev() {
+        let sample = sample as usize;
+        let receiver = drained.receivers[sample];
+        if receiver == u32::MAX {
+            continue;
+        }
+        let ground = drained.filled[sample];
+        let mut down = [0.0_f32; 8];
+        let mut most = 0.0_f32;
+        if ground <= heights[sample] {
+            for (index, &(offset, inverse)) in steps.iter().enumerate() {
+                let drop = ground - drained.filled[sample.wrapping_add_signed(offset)];
+                if drop > 0.0 {
+                    down[index] = drop * inverse;
+                    most = max(most, down[index]);
+                }
+            }
+        }
+        let water = area[sample];
+        if most == 0.0 {
+            area[receiver as usize] += water;
+            continue;
+        }
+        steepest[sample] = most;
+        // Shares of the steepest's, whose own is 1.
+        let scale = 1.0 / most;
+        let mut total = 0.0_f32;
+        for slope in &mut down {
+            let ratio = *slope * scale;
+            let squared = ratio * ratio;
+            *slope = squared * squared;
+            total += *slope;
+        }
+        let share = water / total;
+        for (&(offset, _), &weight) in steps.iter().zip(&down) {
+            if weight > 0.0 {
+                area[sample.wrapping_add_signed(offset)] += weight * share;
+            }
         }
     }
-    Drainage {
-        filled,
-        order,
-        receivers,
-        slopes,
-        area,
-    }
+    (area, steepest)
 }
 
 /// Bakes `layer` over the grid of `heights`, `width` samples wide (row by
@@ -452,19 +577,18 @@ pub(crate) fn bake(
 ) -> (Hydrology, Vec<RiverLine>) {
     let count = heights.len();
     let height = count / width;
-    // Water runs over the ground smoothed a sample wide: hollows narrower
-    // than that, such as the finest detail leaves on flat ground, hold no
-    // lakes.
-    let smoothed = smooth_grid(heights, width);
-    let heights = smoothed.as_slice();
+    let routed = drainage(heights, width, spacing);
+    let lake = lakes(heights, &routed.filled, width);
+    // The maps read water spread over every lower neighbor; rivers run
+    // where single courses gather it.
+    let (spread_area, steepest) = spread(heights, &routed, width, spacing);
     let Drainage {
         filled,
         order,
         receivers,
-        slopes,
         area,
-    } = drainage(heights, width, spacing);
-    let lake = lakes(heights, &filled, width, spacing);
+        ..
+    } = routed;
     // Channels run where enough area drains; water crossing a filled pit
     // runs as a lake, not a channel.
     let channel_samples = area
@@ -526,9 +650,9 @@ pub(crate) fn bake(
         };
         // libm's logarithms, as browsers compute them: the platform's
         // differ.
-        flow.push(encode(libm::log10f(area[sample]), FLOW_RANGE));
-        let catchment = area[sample] / spacing;
-        let index = libm::logf(catchment / max(slopes[sample], 1.0e-3));
+        flow.push(encode(libm::log10f(spread_area[sample]), FLOW_RANGE));
+        let catchment = spread_area[sample] / spacing;
+        let index = libm::logf(catchment / max(steepest[sample], 1.0e-3));
         wetness.push(encode(index, WETNESS_RANGE));
         lakes.push(encode(standing, LAKE_RANGE));
     }
@@ -601,14 +725,15 @@ impl Hydrology {
     }
 
     /// [`Self::at`] with the meters to the nearest river's edge, `river`,
-    /// already read.
+    /// already read: the images through their uniform cubic B-splines, as
+    /// the GPU reads them.
     pub(crate) fn masks_at(&self, x: f32, z: f32, spacing: f32, river: f32) -> HydrologySample {
         let level = self.level_for(spacing);
         let (u, v) = (x / self.spacing, z / self.spacing);
         HydrologySample {
-            flow: decode(self.flow.sample(u, v, level), FLOW_RANGE),
-            wetness: decode(self.wetness.sample(u, v, level), WETNESS_RANGE),
-            lake: decode(self.lakes.sample(u, v, level), LAKE_RANGE),
+            flow: decode(self.flow.sample_smooth(u, v, level), FLOW_RANGE),
+            wetness: decode(self.wetness.sample_smooth(u, v, level), WETNESS_RANGE),
+            lake: decode(self.lakes.sample_smooth(u, v, level), LAKE_RANGE),
             river,
         }
     }
@@ -874,33 +999,6 @@ pub(crate) fn image_level(image_spacing: f32, levels: usize, spacing: f32) -> us
         level += 1;
     }
     level
-}
-
-/// The grid of `heights` (`width` samples wide) blurred by binomial
-/// weights `[1, 4, 6, 4, 1] / 16` along each axis, edges clamped.
-fn smooth_grid(heights: &[f32], width: usize) -> Vec<f32> {
-    const WEIGHTS: [f32; 5] = [0.0625, 0.25, 0.375, 0.25, 0.0625];
-    let height = heights.len() / width;
-    let pass = |source: &[f32], along_x: bool| -> Vec<f32> {
-        let mut out = vec![0.0_f32; source.len()];
-        for z in 0..height {
-            for x in 0..width {
-                let mut sum = 0.0;
-                for (tap, weight) in WEIGHTS.iter().enumerate() {
-                    let offset = tap as i64 - 2;
-                    let (sx, sz) = if along_x {
-                        ((x as i64 + offset).clamp(0, width as i64 - 1) as usize, z)
-                    } else {
-                        (x, (z as i64 + offset).clamp(0, height as i64 - 1) as usize)
-                    };
-                    sum += weight * source[sz * width + sx];
-                }
-                out[z * width + x] = sum;
-            }
-        }
-        out
-    };
-    pass(&pass(heights, true), false)
 }
 
 crate::codec::record!(HydrologyLayer {

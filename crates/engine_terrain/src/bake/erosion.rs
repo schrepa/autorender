@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::{Bake, Gather};
 use crate::Pyramid;
-use crate::erosion::{Erosion, ErosionLayer, erode_round, finish};
+use crate::erosion::{Erosion, ErosionLayer, Scratch, erode_round, finish};
 use crate::layers::Layers;
 
 /// What rivers and creep wear away from the layers before it.
@@ -13,12 +13,14 @@ use crate::layers::Layers;
 pub struct ErosionBake;
 
 /// An erosion bake in progress: its layer, its level's grid, and once
-/// gathered, the heights it started from and the rounds done.
+/// gathered, the heights it started from, the rounds done and what each
+/// round keeps for the next.
 pub struct ErosionWork {
     layer: ErosionLayer,
     gather: Gather,
     original: Option<Vec<f32>>,
     rounds: u32,
+    scratch: Scratch,
 }
 
 impl Bake for ErosionBake {
@@ -32,6 +34,7 @@ impl Bake for ErosionBake {
             gather: Gather::new(layer.level, pyramid),
             original: None,
             rounds: 0,
+            scratch: Scratch::default(),
         }
     }
 
@@ -50,6 +53,7 @@ impl Bake for ErosionBake {
             gather,
             original,
             rounds,
+            scratch,
         } = work;
         let spacing = pyramid.spacing(gather.level);
         let original = original.get_or_insert_with(|| gather.heights.clone());
@@ -58,7 +62,13 @@ impl Bake for ErosionBake {
             if *budget == 0 {
                 return None;
             }
-            erode_round(&mut gather.heights, gather.width, spacing, layer);
+            erode_round(
+                &mut gather.heights,
+                (gather.width, spacing),
+                layer,
+                *rounds,
+                scratch,
+            );
             *rounds += 1;
             *budget = budget.saturating_sub(cost);
         }

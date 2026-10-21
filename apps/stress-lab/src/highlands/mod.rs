@@ -394,15 +394,16 @@ pub(crate) fn populate(
     let layers = Layers::new(vec![
         mountains,
         plateau_stamp.clone(),
-        // Rivers wear valleys into the mountains and slopes creep toward
-        // them, baked over the sixteen-meter tiles, so most
-        // basins drain.
+        // Rivers wear valleys into the mountains, debris flows gully their
+        // steep slopes and slopes creep toward them, baked over the
+        // eight-meter tiles, so most basins drain.
         Layer::Erosion(ErosionStage {
             layer: ErosionLayer {
-                level: 4,
-                rounds: 40,
-                incision: 0.0015,
-                creep: 3.0,
+                level: 3,
+                rounds: 20,
+                incision: 0.003,
+                debris: 2.0,
+                creep: 6.0,
             },
             baked: None,
         }),
