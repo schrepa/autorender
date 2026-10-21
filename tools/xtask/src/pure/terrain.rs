@@ -2,8 +2,9 @@
 //! (web/scripts/fixtures/terrain.scene.json and its dome heightmap). Its
 //! bakes; every tile of its pyramid and some of its surroundings'; tiles
 //! under edits; its lighting, bounce transfer and macro colors; every
-//! finest tile's portals of a walk graph, and a walk over them; a tile's
-//! settled water; and a pack of what they made. Each job runs as
+//! finest tile's portals of a walk graph, and a walk over them; what a
+//! tile's water settles from (which the GPU settles, cooked once, so its
+//! record is no corpus's); and a pack of what they made. Each job runs as
 //! workers run it, whole and a slice at a time, and must give the bits its
 //! code gives in place (a tile's portals, the bits its tile's record
 //! gives); every record must read back from the pack the cook would write
@@ -340,8 +341,8 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         json!({"points": found.points.len(), "length": found.length, "level": found.level}),
     );
 
-    // The settled water of the first finest tile the bake's water reaches,
-    // its rivers run to their steady state: whole, and a slice at a time.
+    // What the water of the first finest tile the bake's water reaches
+    // settles from: whole, and a slice at a time.
     let watered = engine_terrain::watered_tiles(&baked, &pyramid);
     let key = *watered
         .first()
@@ -352,27 +353,26 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         key,
         stamps: Vec::new(),
         cell: WATER_CELL,
+        warm: None,
     }
-    .identity();
+    .input();
     let bytes = worker.run(WaterJob::KIND.name(), &input)?;
     observed.check(
         worker.sliced(WaterJob::KIND.name(), &input)? == bytes,
-        || "the settled water's job run a slice at a time differs from the job run whole".into(),
+        || "the water's start run a slice at a time differs from the job run whole".into(),
     );
-    let settled = jobs::water_output(&bytes).map_err(|error| error.to_string())?;
-    observed.hash(format!("settled water {}", name(key)), &bytes);
+    let start = jobs::water_output(&bytes).map_err(|error| error.to_string())?;
+    observed.hash(format!("water start {}", name(key)), &bytes);
     observed.record(
-        "settled water",
+        "water start",
         json!({
             "watered tiles": watered.len(),
             "tile": name(key),
-            "cells": settled.cells,
-            "sources": settled.sources.len(),
-            "steps": settled.stats.steps,
-            "settled": settled.stats.settled,
+            "levels": start.levels.iter().map(|level| level.side).collect::<Vec<_>>(),
+            "sources": start.finest().sources.len(),
+            "datum": start.datum,
         }),
     );
-    records.push((WaterJob::KIND.name(), bytes));
 
     // The pack the cook writes of every record above, which reads each
     // back as it went in.

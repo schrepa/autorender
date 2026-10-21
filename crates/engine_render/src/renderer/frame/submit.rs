@@ -54,9 +54,11 @@ impl Renderer {
         }
         self.shadows.after_submit();
         self.terrain.vt.after_submit();
-        // Impostors' records read back from bakes the frame submitted.
+        // Impostors' records read back from bakes the frame submitted, and
+        // settled water from its slots.
         self.impostors.atlas.after_submit();
         self.impostors.placed.after_submit();
+        self.water_settle.after_submit();
         if virtual_frame {
             self.virtual_draws.pass.after_submit();
         }

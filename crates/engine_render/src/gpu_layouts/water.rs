@@ -3,7 +3,7 @@
 use bytemuck::{Pod, Zeroable};
 use engine_core::MAX_OCEAN_WAVES;
 
-use super::constants::WAVE_TILES;
+use super::constants::{SIM_SLOTS, WAVE_TILES};
 
 gpu_structs! {
     /// WGSL `WaterUniform` of `meshes/water.wgsl`; the sea's parts are zero
@@ -24,12 +24,29 @@ gpu_structs! {
         pub sim: [f32; 4],
     }
 
-    /// WGSL `SimFrame` of `water_sim.wgsl`.
+    /// WGSL `SimFrame` of `water_sim.wgsl`: the stage, the most cells a
+    /// slot holds along a side and the slots the buffers hold; and the cells
+    /// the square around the camera moved by.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimFrame as ["SimFrame" in WATER_SIM_SHADER] {
+        pub stage: [u32; 4],
+        pub shift: [i32; 4],
+    }
+
+    /// WGSL `SimSlot` of `water_sim.wgsl`: a slot's square, its cells along
+    /// a side, flags and cells rivers bring water to; the meters across a
+    /// cell, the seconds of a step alike for every cell, Manning's roughness
+    /// and the steps its sums hold at a look.
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct SimSlot as ["SimSlot" in WATER_SIM_SHADER] {
         pub shape: [u32; 4],
         pub step: [f32; 4],
-        pub shift: [i32; 4],
+    }
+
+    /// WGSL `SimSlots` of `water_sim.wgsl`: every slot's square.
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct SimSlots as ["SimSlots" in WATER_SIM_SHADER] {
+        pub slot: [SimSlot; SIM_SLOTS],
     }
 
     /// WGSL `WaveFrame` of `water_waves.wgsl`.

@@ -238,7 +238,18 @@ gpu_consts! {
 
     // crate::water_sim
     /// Workgroup side of the simulation's passes over cells and faces.
-    pub(crate) const WATER_SIM_GROUP: u32 = 8 => ["WATER_SIM_GROUP" in WATER_SIM_SHADER, "@sim_reconstruct" in WATER_SIM_SHADER, "@sim_exchange" in WATER_SIM_SHADER, "@sim_update" in WATER_SIM_SHADER, "@sim_carry" in WATER_SIM_SHADER, "@sim_restart" in WATER_SIM_SHADER, "@sim_churn" in WATER_SIM_SHADER, "@sim_churned" in WATER_SIM_SHADER];
+    pub(crate) const WATER_SIM_GROUP: u32 = 8 => ["WATER_SIM_GROUP" in WATER_SIM_SHADER, "@sim_reconstruct" in WATER_SIM_SHADER, "@sim_exchange" in WATER_SIM_SHADER, "@sim_waves" in WATER_SIM_SHADER, "@sim_seconds" in WATER_SIM_SHADER, "@sim_update" in WATER_SIM_SHADER, "@sim_carry" in WATER_SIM_SHADER, "@sim_restart" in WATER_SIM_SHADER, "@sim_churn" in WATER_SIM_SHADER, "@sim_churned" in WATER_SIM_SHADER, "@sim_look" in WATER_SIM_SHADER];
+    /// The most squares a dispatch of the simulation runs, each a slot of
+    /// its buffers.
+    pub(crate) const SIM_SLOTS: usize = 64 => ["SIM_SLOTS" in WATER_SIM_SHADER];
+    /// A square's flags: it steps; each cell by its own seconds; water
+    /// leaves over its edges freely and none comes in; it sums each cell's
+    /// water over its steps; and the dispatch looks at its sums.
+    pub(crate) const SIM_STEPPING: u32 = 1 => ["SIM_STEPPING" in WATER_SIM_SHADER];
+    pub(crate) const SIM_LOCAL: u32 = 2 => ["SIM_LOCAL" in WATER_SIM_SHADER];
+    pub(crate) const SIM_OPEN: u32 = 4 => ["SIM_OPEN" in WATER_SIM_SHADER];
+    pub(crate) const SIM_SUMMING: u32 = 8 => ["SIM_SUMMING" in WATER_SIM_SHADER];
+    pub(crate) const SIM_LOOKING: u32 = 16 => ["SIM_LOOKING" in WATER_SIM_SHADER];
     /// Cells rivers bring water to a workgroup of the simulation's source
     /// pass takes.
     pub(crate) const WATER_SIM_SOURCE_GROUP: u32 = 64 => ["WATER_SIM_SOURCE_GROUP" in WATER_SIM_SHADER, "@sim_source" in WATER_SIM_SHADER];
@@ -406,6 +417,9 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::FOAM_LIFE => ["SIM_FOAM_LIFE" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_MOST => ["SIM_FOAM_MOST" in WATER_SIM_SHADER, "WATER_FOAM_MOST"];
     engine_core::terrain_data::shallow_water::FOAM_WET => ["SIM_FOAM_WET" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::COURANT => ["SIM_COURANT" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::LOCAL_SHARE => ["SIM_LOCAL_SHARE" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::SLOWEST => ["SIM_SLOWEST" in WATER_SIM_SHADER];
     engine_core::GHOST_DRY => ["SIM_GHOST_DRY" in WATER_SIM_SHADER];
     engine_core::PAGE_WORDS => ["PAGE_WORDS" in VIRTUAL_SHADER, "VIRTUAL_PAGE_WORDS" in SHADER];
     engine_core::NO_PARENT => ["NO_PARENT" in PRESENTATION_SHADER];

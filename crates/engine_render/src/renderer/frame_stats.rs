@@ -467,7 +467,8 @@ impl Renderer {
                 + self.features.ground_cover.get().capacity_bytes()
                 + self.features.scatter.get().capacity_bytes()
                 + self.features.occupancy.get().capacity_bytes()
-                + self.features.water.get().capacity_bytes()) as f64,
+                + self.features.water.get().capacity_bytes()
+                + self.water_settle.capacity_bytes()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_transparent_bytes",

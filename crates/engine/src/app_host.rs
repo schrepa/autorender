@@ -92,6 +92,8 @@ fn wire(
     if let Some(mut terrains) = world.get_resource_mut::<engine_core::Terrains>() {
         terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
         terrains.set_clock(clock.reading());
+        // The renderer settles terrains' water for its records.
+        terrains.set_water_settling(engine_render::sources::WATER, true);
     }
     if let Some(mut records) = world.get_resource_mut::<engine_core::Records>() {
         records.set_sampling(Some(renderer.texture_sampling()));
@@ -872,7 +874,42 @@ impl AppHost {
             self.renderer.give_record(record, bytes);
         }
         if let Some(mut cooking) = world.get_resource_mut::<engine_core::Cooking>() {
-            cooking.left("renderer records", self.renderer.records_left());
+            for (part, left) in self.renderer.records_left() {
+                cooking.left(part, left);
+            }
+        }
+        self.exchange_settled_water();
+    }
+
+    /// Hands water to settle between the terrains and the renderer: what
+    /// terrains asked to settle to the renderer, and the records it made to
+    /// the host's store (kept within their tolerance) and the terrains;
+    /// while the session cooks, the renderer settles with more of the GPU.
+    fn exchange_settled_water(&mut self) {
+        let world = self.engine.app.world_mut();
+        let cooking = world.get_resource::<engine_core::Cooking>().is_some();
+        self.renderer.set_water_cooking(cooking);
+        if let Some(mut terrains) = world.get_resource_mut::<engine_core::Terrains>() {
+            let starts = terrains.take_water_settles();
+            if !starts.is_empty() {
+                self.renderer.settle_water(starts);
+            }
+        }
+        let settled = self.renderer.take_settled_water();
+        if settled.is_empty() {
+            return;
+        }
+        if let Some(mut jobs) = world.get_resource_mut::<engine_core::Jobs>() {
+            for (record, made) in &settled {
+                if let Ok(bytes) = made {
+                    jobs.keep_with(*record, bytes.clone(), engine_core::SETTLED_PARITY);
+                }
+            }
+        }
+        if let Some(mut terrains) = world.get_resource_mut::<engine_core::Terrains>() {
+            for (record, made) in settled {
+                terrains.water_settled(record, made);
+            }
         }
     }
 

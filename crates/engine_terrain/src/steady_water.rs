@@ -1,18 +1,26 @@
 //! Water as it settles: each level-0 tile's rivers run to their steady
-//! state by the shallow-water equations ([`crate::shallow_water`]), the
-//! scheme the renderer runs around the camera, over a square of ground
-//! reaching [`MARGIN`] meters past the tile, from the water the hydrology
-//! bake stands there. Lakes hold their level; rivers bring their water
-//! where they start (at heads and lakes' outlets), along their course as
-//! the ground they drain grows, and where they cross into the square, so
-//! what each carries is what its bake says it does; water leaves over the
-//! square's edges. It runs until the water it holds and the way it runs
-//! stop changing. What a tile keeps of it, a [`SteadyWater`], is a record
-//! hosts keep and the cook ships: level-0 tiles' water stands, runs and
-//! foams as it says ([`Tile::steadied`]), coarser tiles' runs and foams as
-//! its summary does ([`Tile::flowing`]), and the window simulated around
-//! the camera starts from it, takes its water at its edges and its rivers'
-//! water where they bring it.
+//! state by the shallow-water equations ([`crate::shallow_water`]), which
+//! the renderer runs on the GPU, around the camera and to settle tiles,
+//! over a square of ground reaching [`MARGIN`] meters past the tile, from
+//! the water the hydrology bake stands there. Lakes hold their level;
+//! rivers bring their water where they start (at heads and lakes'
+//! outlets), along their course as the ground they drain grows, and where
+//! they cross into the square, so what each carries is what its bake says
+//! it does; water leaves over the square's edges and none comes in over
+//! them. A [`WaterStart`] job generates the square's ground and prepares
+//! what settling starts from ([`SettleStart`]): the square at its cells'
+//! size and at coarser ones, down to [`COARSEST`] meters across, each
+//! level settling from the one before it ([`SettleStart::prolong`]), so
+//! the water spreads and fills at the coarse levels' cost and the finest
+//! settles the detail; a tile whose earlier record its host holds settles
+//! at its cells' size from that water. Settled, the finest level's water,
+//! averaged over its last steps, becomes what the tile keeps of it
+//! ([`SettleStart::finish`]), a [`SteadyWater`], a record hosts keep and
+//! the cook ships: level-0 tiles' water stands, runs and foams as it says
+//! ([`Tile::steadied`]), coarser tiles' runs and foams as its summary does
+//! ([`Tile::flowing`]), and the window simulated around the camera starts
+//! from it, takes its water at its edges and its rivers' water where they
+//! bring it.
 
 use std::sync::Arc;
 
@@ -21,7 +29,7 @@ use glam::{IVec2, Vec2};
 use engine_math::{max, min};
 
 use crate::codec::{self, Reader, Writer, record};
-use crate::shallow_water::{self, Rates, ShallowWater, Source, Steps};
+use crate::shallow_water::{self, DRY, velocity};
 use crate::tile_water::{WATER_WIDTH_RANGE, pack, unpack};
 use crate::{Generator, Layers, Pyramid, TILE_STRIDE, Tile, TileKey};
 
@@ -35,59 +43,36 @@ const ENTRY: f32 = 2.0;
 /// The least water a source brings (cubic meters a second): what a river
 /// gains along its course gathers until it brings this much.
 const SOURCE_LEAST: f32 = 0.01;
-/// Settling: steps between looks at the water and the least and most steps
-/// it runs. It has settled once, over [`STILL_LOOKS`] looks in a row, the
-/// water it holds changed by no more than [`SETTLED_VOLUME`] of it a look,
-/// and its flowing cells' velocities in the tile changed by
-/// [`SETTLED_SPEED`] meters a second or less on average, or by no less than
-/// [`STILL_SHARE`] of their change [`STILL_LOOKS`] looks before: water
-/// running unsteadily (down rough steep rock) varies about its steady flow
-/// for good.
-const LOOK_EVERY: u32 = 256;
-const STEPS: [u32; 2] = [2048, 16_384];
-const STILL_LOOKS: usize = 4;
-const SETTLED_VOLUME: f64 = 1.0e-3;
-const SETTLED_SPEED: f64 = 0.01;
-const STILL_SHARE: f64 = 0.75;
+/// Meters across the coarsest cells a square settles at first, and the
+/// fewest cells along a side a level holds: coarser levels halve the cells'
+/// size until either would be passed.
+pub const COARSEST: f32 = 8.0;
+const FEWEST: u32 = 16;
 
 /// What settling a tile's water came to: the cubic meters a second its
-/// square's rivers bring and its water leaves over its edges and into
-/// lakes, as its last step found them; the cubic meters it holds; its
-/// cells holding flowing water and those stepping; the steps it ran; and
-/// whether its water settled.
+/// square's rivers bring; the cubic meters its square holds, averaged over
+/// its last steps; its cells holding flowing water; the steps its levels
+/// ran, all told, and its levels; and whether its water settled before its
+/// steps ran out (water running unsteadily, down rough steep rock, settles
+/// once its averages stop changing).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SteadyStats {
     pub sources: f32,
-    pub outflow: f32,
-    pub absorbed: f32,
     pub volume: f32,
     pub flowing: u32,
-    pub stepping: u32,
     pub steps: u32,
+    pub levels: u32,
     pub settled: bool,
 }
 
 record!(SteadyStats {
     sources,
-    outflow,
-    absorbed,
     volume,
     flowing,
-    stepping,
     steps,
+    levels,
     settled,
 });
-
-impl SteadyStats {
-    /// The share of what the rivers bring that does not leave: how far the
-    /// water is from balancing.
-    pub fn imbalance(&self) -> f32 {
-        if self.sources <= 0.0 {
-            return 0.0;
-        }
-        (self.sources - self.outflow - self.absorbed).abs() / self.sources
-    }
-}
 
 /// Where a tile's rivers bring water to one of its cells (its index within
 /// the tile, row by row): the cubic meters a second, and the way the water
@@ -314,7 +299,7 @@ struct Start {
     corners: Vec<f32>,
     water: Vec<[f32; 3]>,
     held: Vec<f32>,
-    sources: Vec<Source>,
+    sources: Vec<SteadySource>,
 }
 
 /// The water of the square from cell `first`, `side` cells `cell` meters
@@ -389,7 +374,7 @@ fn sources(
     layers: &Layers,
     (origin, n, cell): (Vec2, usize, f32),
     (held, wet): (&[f32], &[bool]),
-) -> Vec<Source> {
+) -> Vec<SteadySource> {
     let Some(hydrology) = layers.hydrology() else {
         return Vec::new();
     };
@@ -479,7 +464,14 @@ fn sources(
         }
     }
     brought.sort_by_key(|&(cell, _, _)| cell);
-    let mut sources: Vec<Source> = Vec::new();
+    merged(brought)
+}
+
+/// Sources from the water brought to cells, `(cell, rate, way × rate)` in
+/// cell order: each cell's rates summed, the way it brings them their
+/// rate-weighted mean.
+fn merged(brought: Vec<(u32, f32, [f32; 2])>) -> Vec<SteadySource> {
+    let mut sources: Vec<SteadySource> = Vec::new();
     let mut weighted = [0.0_f32; 2];
     for (cell, rate, way) in brought {
         match sources.last_mut() {
@@ -489,7 +481,7 @@ fn sources(
                     last.way = [weighted[0] / last.rate, weighted[1] / last.rate];
                 }
                 weighted = [0.0; 2];
-                sources.push(Source {
+                sources.push(SteadySource {
                     cell,
                     rate,
                     way: [0.0; 2],
@@ -504,126 +496,309 @@ fn sources(
     sources
 }
 
-/// Settling a square's water: steps, and at the last look its water and
-/// the velocities of the cells its tile keeps, with what the looks before
-/// found: whether its water held still, and how much its velocities
-/// changed.
-struct Settling {
-    water: ShallowWater,
-    steps: u32,
-    volume: f64,
-    kept: Vec<usize>,
-    speeds: Vec<[f32; 2]>,
-    looks: Vec<(bool, f64)>,
-    last: Option<SteadyStats>,
+/// A level of a square settling ([`SettleStart`]): the meters across its
+/// cells and its cells along a side; the ground at its cells' corners
+/// (`side + 1` a row, rows along z); each cell's water to start from (its
+/// surface, or its ground where dry, and its flow along x and z in square
+/// meters a second) and the level a lake holds it at (NaN where none
+/// does), row by row; and where its rivers bring water. Its heights stand
+/// above its square's datum.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SettleLevel {
+    pub cell: f32,
+    pub side: u32,
+    pub corners: Vec<f32>,
+    pub water: Vec<[f32; 3]>,
+    pub held: Vec<f32>,
+    pub sources: Vec<SteadySource>,
 }
 
-impl Settling {
-    fn new(water: ShallowWater, kept: Vec<usize>) -> Self {
-        let mut settling = Self {
-            volume: water.volume(),
-            water,
-            steps: 0,
-            kept,
-            speeds: Vec::new(),
-            looks: Vec::new(),
-            last: None,
-        };
-        settling.speeds = settling.velocities();
-        settling
+record!(SettleLevel {
+    cell,
+    side,
+    corners,
+    water,
+    held,
+    sources,
+});
+
+impl SettleLevel {
+    /// Cell `at`'s ground: the mean of its corners'.
+    pub fn bed(&self, at: usize) -> f32 {
+        let n = self.side as usize;
+        let (i, j) = (at % n, at / n);
+        let corner = |x: usize, z: usize| self.corners[z * (n + 1) + x];
+        0.25 * (corner(i, j) + corner(i + 1, j) + corner(i, j + 1) + corner(i + 1, j + 1))
     }
 
-    /// The velocities of the cells kept, zero where a lake holds them or
-    /// they are dry.
-    fn velocities(&self) -> Vec<[f32; 2]> {
-        self.kept
+    /// Whether its arrays hold its cells: its corners, its water and its
+    /// lakes' levels, and sources at cells within it.
+    fn valid(&self) -> bool {
+        let n = self.side as usize;
+        self.side > 0
+            && self.cell.is_finite()
+            && self.cell > 0.0
+            && self.corners.len() == (n + 1) * (n + 1)
+            && self.water.len() == n * n
+            && self.held.len() == n * n
+            && self.sources.iter().all(|source| (source.cell as usize) < n * n)
+    }
+
+    /// This level at cells twice the size: its ground at every other
+    /// corner; each cell held by a lake where most of the cells it covers
+    /// are (at their levels' mean), else holding their mean depth over its
+    /// own ground and their mean flow; its rivers' water brought to the
+    /// cells covering those they brought it to.
+    fn coarser(&self) -> Self {
+        let n = self.side as usize;
+        let side = n.div_ceil(2);
+        let mut corners = Vec::with_capacity((side + 1) * (side + 1));
+        for j in 0..=side {
+            for i in 0..=side {
+                corners.push(self.corners[(2 * j).min(n) * (n + 1) + (2 * i).min(n)]);
+            }
+        }
+        let mut level = Self {
+            cell: 2.0 * self.cell,
+            side: side as u32,
+            corners,
+            water: Vec::with_capacity(side * side),
+            held: Vec::with_capacity(side * side),
+            sources: Vec::new(),
+        };
+        for at in 0..side * side {
+            let (i, j) = (at % side, at / side);
+            let (mut cells, mut lakes) = (0_u32, 0_u32);
+            let (mut lake_level, mut depth) = (0.0_f32, 0.0_f32);
+            let mut flow = [0.0_f32; 2];
+            for (x, z) in [
+                (2 * i, 2 * j),
+                (2 * i + 1, 2 * j),
+                (2 * i, 2 * j + 1),
+                (2 * i + 1, 2 * j + 1),
+            ] {
+                if x >= n || z >= n {
+                    continue;
+                }
+                let fine = z * n + x;
+                cells += 1;
+                if !self.held[fine].is_nan() {
+                    lakes += 1;
+                    lake_level += self.held[fine];
+                    continue;
+                }
+                let [surface, along_x, along_z] = self.water[fine];
+                depth += max(surface - self.bed(fine), 0.0);
+                flow = [flow[0] + along_x, flow[1] + along_z];
+            }
+            if lakes > 0 && 2 * lakes >= cells {
+                let held = lake_level / lakes as f32;
+                level.water.push([held, 0.0, 0.0]);
+                level.held.push(held);
+                continue;
+            }
+            let share = 1.0 / cells.max(1) as f32;
+            let bed = level.bed(at);
+            let mean = depth * share;
+            let surface = if mean > DRY { bed + mean } else { bed };
+            level
+                .water
+                .push([surface, flow[0] * share, flow[1] * share]);
+            level.held.push(f32::NAN);
+        }
+        let mut brought: Vec<(u32, f32, [f32; 2])> = self
+            .sources
             .iter()
-            .map(|&at| self.water.flowing(at).map_or([0.0; 2], |[_, x, z]| [x, z]))
+            .map(|source| {
+                let (i, j) = (source.cell as usize % n, source.cell as usize / n);
+                let cell = ((j / 2) * side + i / 2) as u32;
+                let way = [source.way[0] * source.rate, source.way[1] * source.rate];
+                (cell, source.rate, way)
+            })
+            .collect();
+        brought.sort_by_key(|&(cell, _, _)| cell);
+        level.sources = merged(brought);
+        level
+    }
+}
+
+/// What settling level-0 tile `key`'s water starts from, made by a
+/// [`WaterStart`] job: the meters across the cells it settles at; the first
+/// cell along x and z of the square it settles over, on the terrain's
+/// lattice of cells that size; the height its heights stand above (the
+/// square's lowest ground, whole meters down, which keeps them small for
+/// the GPU's single precision); the tile's own cells within the square (its
+/// first along x and z, and its cells along each); and the levels it
+/// settles at, coarsest first, each starting from the one before it
+/// ([`Self::prolong`]), the last at its cells' size: one alone where it
+/// settles from the tile's earlier water.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SettleStart {
+    pub key: TileKey,
+    pub cell: f32,
+    pub first: [i64; 2],
+    pub datum: f32,
+    pub kept: [u32; 4],
+    pub levels: Vec<SettleLevel>,
+}
+
+record!(SettleStart {
+    key,
+    cell,
+    first,
+    datum,
+    kept,
+    levels,
+});
+
+impl SettleStart {
+    /// Whether it holds levels whose arrays hold their cells, each half the
+    /// cells along a side of the next (rounding up), the last at its cells'
+    /// size and holding the tile's cells.
+    pub fn valid(&self) -> bool {
+        let Some(finest) = self.levels.last() else {
+            return false;
+        };
+        let [x, z, columns, rows] = self.kept;
+        self.levels.iter().all(SettleLevel::valid)
+            && self
+                .levels
+                .windows(2)
+                .all(|pair| pair[0].side == pair[1].side.div_ceil(2))
+            && finest.cell == self.cell
+            && self.datum.is_finite()
+            && x + columns <= finest.side
+            && z + rows <= finest.side
+    }
+
+    /// The level at its cells' size.
+    pub fn finest(&self) -> &SettleLevel {
+        &self.levels[self.levels.len() - 1]
+    }
+
+    /// Level `level + 1`'s water to start from once level `level` settled
+    /// to `state` (each cell's surface, flow along x and z and foam, row by
+    /// row): each cell takes the surface of the coarser cell covering it
+    /// over its own ground and that cell's velocity, dry where the coarser
+    /// cell is or its ground stands above that surface, and its lake's
+    /// level where one holds it; and the coarser cell's foam.
+    pub fn prolong(&self, level: usize, state: &[[f32; 4]]) -> Vec<[f32; 4]> {
+        let coarse = &self.levels[level];
+        let fine = &self.levels[level + 1];
+        let (n, m) = (fine.side as usize, coarse.side as usize);
+        (0..n * n)
+            .map(|at| {
+                let (i, j) = (at % n, at / n);
+                let parent = (j / 2).min(m - 1) * m + (i / 2).min(m - 1);
+                let [surface, along_x, along_z, foam] =
+                    state.get(parent).copied().unwrap_or_default();
+                if !fine.held[at].is_nan() {
+                    return [fine.held[at], 0.0, 0.0, foam];
+                }
+                let bed = fine.bed(at);
+                let depth = surface - coarse.bed(parent);
+                let own = max(surface, bed) - bed;
+                if depth <= DRY || own <= DRY {
+                    return [bed, 0.0, 0.0, 0.0];
+                }
+                [
+                    bed + own,
+                    velocity(depth, along_x) * own,
+                    velocity(depth, along_z) * own,
+                    foam,
+                ]
+            })
             .collect()
     }
 
-    /// Runs up to `budget` cell steps; whether the water settled or ran its
-    /// most steps.
-    fn run(&mut self, budget: &mut u64) -> bool {
-        loop {
-            if *budget == 0 {
-                return false;
+    /// What the tile keeps of its square's water settled at its cells' size
+    /// to `state` (each cell's surface, flow along x and z and foam, row by
+    /// row, averaged over its last steps), after `steps` steps all told and
+    /// `settled` or not: its own cells, standing at its lakes' levels where
+    /// they hold them and its water's where it flows, dry elsewhere; the
+    /// water its rivers bring to them; and its summary.
+    pub fn finish(&self, state: &[[f32; 4]], steps: u32, settled: bool) -> SteadyWater {
+        let finest = self.finest();
+        let n = finest.side as usize;
+        let [x0, z0, columns, rows] = self.kept.map(|value| value as usize);
+        let count = columns * rows;
+        let mut surface = vec![f32::NAN; count];
+        let mut velocities = [vec![f32::NAN; count], vec![f32::NAN; count]];
+        let mut foam = vec![f32::NAN; count];
+        let mut flowing = 0;
+        let mut volume = 0.0_f64;
+        for (at, cell) in state.iter().enumerate().take(n * n) {
+            if finest.held[at].is_nan() {
+                volume += f64::from(max(cell[0] - finest.bed(at), 0.0));
             }
-            *budget = budget.saturating_sub(self.water.listed().len().max(1) as u64);
-            self.water.step(Steps::Local);
-            self.steps += 1;
-            if !self.steps.is_multiple_of(LOOK_EVERY) {
-                continue;
-            }
-            let volume = self.water.volume();
-            let speeds = self.velocities();
-            // How much the flowing cells' velocities changed, on average.
-            let (mut change, mut moving) = (0.0_f64, 0_u32);
-            for (now, before) in speeds.iter().zip(&self.speeds) {
-                if *now != [0.0; 2] || *before != [0.0; 2] {
-                    let (x, z) = (now[0] - before[0], now[1] - before[1]);
-                    change += f64::from((x * x + z * z).sqrt());
-                    moving += 1;
+        }
+        for row in 0..rows {
+            for column in 0..columns {
+                let out = row * columns + column;
+                let at = (z0 + row) * n + x0 + column;
+                let Some(&[level, along_x, along_z, cell_foam]) = state.get(at) else {
+                    continue;
+                };
+                if !finest.held[at].is_nan() {
+                    surface[out] = finest.held[at] + self.datum;
+                    foam[out] = cell_foam;
+                    continue;
+                }
+                let depth = level - finest.bed(at);
+                if depth > DRY {
+                    surface[out] = level + self.datum;
+                    velocities[0][out] = velocity(depth, along_x);
+                    velocities[1][out] = velocity(depth, along_z);
+                    foam[out] = cell_foam;
+                    flowing += 1;
                 }
             }
-            let change = change / f64::from(moving.max(1));
-            let still = (volume - self.volume).abs() <= SETTLED_VOLUME * larger(volume, 1.0);
-            self.looks.push((still, change));
-            self.volume = volume;
-            self.speeds = speeds;
-            let settled = self.steps >= STEPS[0] && self.settled();
-            self.last = Some(self.stats(settled));
-            if settled || self.steps >= STEPS[1] {
-                return true;
-            }
         }
-    }
-
-    /// Whether the looks so far find the water settled.
-    fn settled(&self) -> bool {
-        let looks = &self.looks;
-        if looks.len() <= STILL_LOOKS {
-            return false;
-        }
-        let recent = &looks[looks.len() - STILL_LOOKS..];
-        let (_, change) = looks[looks.len() - 1];
-        let (_, before) = looks[looks.len() - 1 - STILL_LOOKS];
-        recent.iter().all(|&(still, _)| still)
-            && (change <= SETTLED_SPEED || change >= STILL_SHARE * before)
-    }
-
-    fn stats(&self, settled: bool) -> SteadyStats {
-        let Rates {
-            sources,
-            outflow,
-            absorbed,
-        } = self.water.rates();
-        let flowing = self
-            .water
-            .listed()
+        let sources = finest
+            .sources
             .iter()
-            .filter(|&&at| self.water.flowing(at as usize).is_some())
-            .count();
-        SteadyStats {
-            sources: sources as f32,
-            outflow: outflow as f32,
-            absorbed: absorbed as f32,
-            volume: self.volume as f32,
-            flowing: flowing as u32,
-            stepping: self.water.listed().len() as u32,
-            steps: self.steps,
-            settled,
+            .filter_map(|source| {
+                let (i, j) = (source.cell as usize % n, source.cell as usize / n);
+                let inside = i >= x0 && j >= z0 && i < x0 + columns && j < z0 + rows;
+                inside.then(|| SteadySource {
+                    cell: ((j - z0) * columns + i - x0) as u32,
+                    rate: source.rate,
+                    way: source.way,
+                })
+            })
+            .collect();
+        let cells = [columns as u32, rows as u32];
+        let summary = SteadySummary::of(cells, (&velocities, &foam));
+        let [along_x, along_z] = velocities;
+        let area = f64::from(finest.cell * finest.cell);
+        SteadyWater {
+            key: self.key,
+            cell: self.cell,
+            first: [self.first[0] + x0 as i64, self.first[1] + z0 as i64],
+            cells,
+            surface: surface.into(),
+            velocity: [along_x.into(), along_z.into()],
+            foam: foam.into(),
+            sources,
+            summary,
+            stats: SteadyStats {
+                sources: finest.sources.iter().map(|source| source.rate).sum(),
+                volume: (volume * area) as f32,
+                flowing,
+                steps,
+                levels: self.levels.len() as u32,
+                settled,
+            },
         }
     }
 }
 
-fn larger(a: f64, b: f64) -> f64 {
-    if a > b { a } else { b }
-}
-
-/// Settling tile `key`'s water: generating the level-0 tiles its square
-/// reaches, then the water running, in steps a job's budget sizes.
-pub struct SteadySolve {
+/// Preparing what settling tile `key`'s water starts from
+/// ([`SettleStart`]): generating the level-0 tiles its square reaches, in
+/// steps a job's budget sizes, then its levels; from `warm`, the tile's
+/// earlier settled water at its cells' size, where its host holds it, the
+/// finest alone.
+pub struct WaterStart {
     layers: Arc<Layers>,
     pyramid: Pyramid,
     key: TileKey,
@@ -631,16 +806,22 @@ pub struct SteadySolve {
     // The square it settles over: its first cell and side.
     first: [i64; 2],
     side: usize,
+    warm: Option<SteadyWater>,
     pending: Vec<TileKey>,
     generating: Option<Generator>,
     tiles: Vec<(TileKey, Tile)>,
-    settling: Option<Settling>,
 }
 
-impl SteadySolve {
+impl WaterStart {
     /// Tile `key`'s water over `layers` (with their bakes) and `pyramid`,
-    /// in cells `cell` meters across.
-    pub fn new(layers: Arc<Layers>, pyramid: Pyramid, key: TileKey, cell: f32) -> Self {
+    /// in cells `cell` meters across, from `warm` where held.
+    pub fn new(
+        layers: Arc<Layers>,
+        pyramid: Pyramid,
+        key: TileKey,
+        cell: f32,
+        warm: Option<SteadyWater>,
+    ) -> Self {
         let (first, side) = square(&pyramid, key, cell);
         let pending = tiles_reached(&pyramid, first, side, cell);
         Self {
@@ -650,40 +831,18 @@ impl SteadySolve {
             cell,
             first,
             side,
+            warm,
             pending,
             generating: None,
             tiles: Vec::new(),
-            settling: None,
         }
     }
 
-    /// The cells of its square the tile keeps: the tile's first cell along
-    /// x and z, its cells along each, and each kept cell's index in the
-    /// square, row by row.
-    fn kept_cells(&self) -> ([i64; 2], [u32; 2], Vec<usize>) {
-        let origin = self.pyramid.tile_origin(self.key);
-        let size = self.pyramid.tile_size(0);
-        let (x, columns) = lattice(origin.x, origin.x + size, self.cell);
-        let (z, rows) = lattice(origin.y, origin.y + size, self.cell);
-        let n = self.side;
-        let mut kept = Vec::with_capacity(columns as usize * rows as usize);
-        for row in 0..rows as usize {
-            for column in 0..columns as usize {
-                let (i, j) = (
-                    (x - self.first[0]) as usize + column,
-                    (z - self.first[1]) as usize + row,
-                );
-                kept.push(j * n + i);
-            }
-        }
-        ([x, z], [columns, rows], kept)
-    }
-
-    /// Works for about `budget` units (a cell's step, or a sample generated,
-    /// each): the tile's settled water once done; an error where its ground
-    /// does not generate.
-    pub fn advance(&mut self, budget: &mut u64) -> Result<Option<SteadyWater>, String> {
-        while self.settling.is_none() {
+    /// Works for about `budget` units (a sample generated each): what
+    /// settling starts from once done; an error where its ground does not
+    /// generate.
+    pub fn advance(&mut self, budget: &mut u64) -> Result<Option<SettleStart>, String> {
+        loop {
             if *budget == 0 {
                 return Ok(None);
             }
@@ -698,83 +857,118 @@ impl SteadySolve {
                 self.generating = None;
                 continue;
             }
-            if let Some(key) = self.pending.pop() {
-                self.generating = Some(Generator::new(self.layers.clone(), &self.pyramid, key));
-                continue;
-            }
-            let ground = Ground {
-                pyramid: self.pyramid,
-                tiles: std::mem::take(&mut self.tiles),
+            let Some(key) = self.pending.pop() else {
+                break;
             };
-            let start = start(&self.layers, &ground, (self.first, self.side), self.cell);
-            let foam = vec![0.0; self.side * self.side];
-            let water = ShallowWater::new(
-                (self.side, self.cell),
-                &start.corners,
-                (&start.water, &start.held, &foam),
-                start.sources,
-            )
-            .ok_or("the square's water does not fit it")?;
-            let (_, _, kept) = self.kept_cells();
-            self.settling = Some(Settling::new(water, kept));
+            self.generating = Some(Generator::new(self.layers.clone(), &self.pyramid, key));
         }
-        let Some(settling) = self.settling.as_mut() else {
-            return Ok(None);
+        let ground = Ground {
+            pyramid: self.pyramid,
+            tiles: std::mem::take(&mut self.tiles),
         };
-        if !settling.run(budget) {
-            return Ok(None);
-        }
-        let Some(settling) = self.settling.as_ref() else {
-            return Ok(None);
-        };
-        Ok(Some(self.kept(settling)))
+        let start = start(&self.layers, &ground, (self.first, self.side), self.cell);
+        Ok(Some(self.levels(start)))
     }
 
-    /// What the tile keeps of its square's `settling`, settled: its own
-    /// cells, the water its rivers bring to them, and its summary.
-    fn kept(&self, settling: &Settling) -> SteadyWater {
-        let water = &settling.water;
-        let (first, cells, kept) = self.kept_cells();
-        let count = kept.len();
-        let mut surface = vec![f32::NAN; count];
-        let mut velocity = [vec![f32::NAN; count], vec![f32::NAN; count]];
-        let mut foam = vec![f32::NAN; count];
-        for (out, &at) in kept.iter().enumerate() {
-            let ([level, _, _], held, cell_foam) = water.water(at);
-            if let Some(held) = held {
-                surface[out] = held;
-                foam[out] = cell_foam;
-            } else if let Some([_, x, z]) = water.flowing(at) {
-                surface[out] = level;
-                velocity[0][out] = x;
-                velocity[1][out] = z;
-                foam[out] = cell_foam;
+    /// What settling starts from over `start`, the square's ground and
+    /// water: its heights above the square's datum, the tile's cells within
+    /// it, and its levels.
+    fn levels(&self, start: Start) -> SettleStart {
+        let lowest = start
+            .corners
+            .iter()
+            .copied()
+            .fold(f32::INFINITY, |low, height| min(low, height));
+        let datum = if lowest.is_finite() {
+            lowest.floor()
+        } else {
+            0.0
+        };
+        let lift = |height: f32| height - datum;
+        let mut finest = SettleLevel {
+            cell: self.cell,
+            side: self.side as u32,
+            corners: start.corners.iter().map(|&height| lift(height)).collect(),
+            water: start
+                .water
+                .iter()
+                .map(|&[surface, x, z]| [lift(surface), x, z])
+                .collect(),
+            held: start
+                .held
+                .iter()
+                .map(|&level| if level.is_nan() { level } else { lift(level) })
+                .collect(),
+            sources: start.sources,
+        };
+        let origin = self.pyramid.tile_origin(self.key);
+        let size = self.pyramid.tile_size(0);
+        let (x, columns) = lattice(origin.x, origin.x + size, self.cell);
+        let (z, rows) = lattice(origin.y, origin.y + size, self.cell);
+        let kept = [
+            (x - self.first[0]) as u32,
+            (z - self.first[1]) as u32,
+            columns,
+            rows,
+        ];
+        let levels = match &self.warm {
+            Some(warm) if warm.cell == self.cell && warm.key == self.key => {
+                warmed(&mut finest, warm, self.first, datum);
+                vec![finest]
             }
-        }
-        let mut sources: Vec<SteadySource> = Vec::new();
-        for source in water.sources() {
-            if let Ok(out) = kept.binary_search(&(source.cell as usize)) {
-                sources.push(SteadySource {
-                    cell: out as u32,
-                    rate: source.rate,
-                    way: source.way,
-                });
+            _ => {
+                let mut levels = vec![finest];
+                loop {
+                    let finer = &levels[levels.len() - 1];
+                    if 2.0 * finer.cell > COARSEST || finer.side.div_ceil(2) < FEWEST {
+                        break;
+                    }
+                    let coarser = finer.coarser();
+                    levels.push(coarser);
+                }
+                levels.reverse();
+                levels
             }
-        }
-        let summary = SteadySummary::of(cells, (&velocity, &foam));
-        let [vx, vz] = velocity;
-        SteadyWater {
+        };
+        SettleStart {
             key: self.key,
             cell: self.cell,
-            first,
-            cells,
-            surface: surface.into(),
-            velocity: [vx.into(), vz.into()],
-            foam: foam.into(),
-            sources,
-            summary,
-            stats: settling.last.unwrap_or_default(),
+            first: self.first,
+            datum,
+            kept,
+            levels,
         }
+    }
+}
+
+/// `level`'s water (the finest, over the square from cell `first`, its
+/// heights above `datum`) where `warm`, the tile's earlier settled water,
+/// holds the cells and no lake holds them now: its depth over the ground as
+/// it stands now and its velocity, dry where it was dry or a lake held it.
+fn warmed(level: &mut SettleLevel, warm: &SteadyWater, first: [i64; 2], datum: f32) {
+    let n = level.side as usize;
+    for at in 0..n * n {
+        if !level.held[at].is_nan() {
+            continue;
+        }
+        let (i, j) = ((at % n) as i64 + first[0], (at / n) as i64 + first[1]);
+        let Some(cell) = warm.at(i, j) else {
+            continue;
+        };
+        let bed = level.bed(at);
+        level.water[at] = match cell {
+            SteadyCell::Dry | SteadyCell::Held { .. } => [bed, 0.0, 0.0],
+            SteadyCell::Flowing {
+                surface, velocity, ..
+            } => {
+                let depth = max(surface - datum - bed, 0.0);
+                if depth <= DRY {
+                    [bed, 0.0, 0.0]
+                } else {
+                    [bed + depth, velocity[0] * depth, velocity[1] * depth]
+                }
+            }
+        };
     }
 }
 

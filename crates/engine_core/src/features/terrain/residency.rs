@@ -93,10 +93,10 @@ pub(super) struct TerrainState {
     /// Records of tiles places games name, loading into memory: each one's
     /// job and the generation it was asked for under.
     pub(super) prefetched: TileMap<(JobId, Generation)>,
-    /// Its tiles and their settled water cooking, while a session cooks,
-    /// and the settled water its resident tiles take.
+    /// Its tiles cooking, while a session cooks, and its settled water:
+    /// what its resident tiles take, and while a session cooks every
+    /// watered tile's.
     pub(super) cook: Option<CookTiles>,
-    pub(super) cook_water: Option<CookTiles>,
     pub(super) settled: Settled,
     /// What it makes over its whole extent, and its asking for it.
     pub(super) whole: Whole,
@@ -157,7 +157,6 @@ impl TerrainState {
             failures: JobFailures::default(),
             prefetched: TileMap::default(),
             cook: None,
-            cook_water: None,
             settled: Settled::default(),
             whole: Whole::default(),
             surface: None,
@@ -207,12 +206,9 @@ impl TerrainState {
         retired
             .jobs
             .extend(self.prefetched.iter().map(|(_, &(id, _))| id));
-        retired.jobs.extend(
-            self.cook
-                .iter()
-                .chain(&self.cook_water)
-                .flat_map(CookTiles::asked),
-        );
+        retired
+            .jobs
+            .extend(self.cook.iter().flat_map(CookTiles::asked));
         retired.jobs.extend(self.settled.asked());
         retired
             .jobs
@@ -285,7 +281,7 @@ impl TerrainState {
                 .collect(),
         };
         let record = RecordKey::new(
-            &engine_terrain::SOURCE,
+            &engine_terrain::sources::TILES,
             TileJob::KIND.name(),
             &job.identity(),
         );
@@ -458,6 +454,9 @@ pub struct Terrains {
     /// The textures of macro colors replaced or gone with their terrains,
     /// which leave the asset library once filled.
     pub(super) colors_gone: Vec<engine_assets::TextureHandle>,
+    /// Water settling on the GPU, which every terrain's settled water
+    /// shares.
+    pub(super) settling: SettleQueue,
 }
 
 /// What a terrain makes over its whole extent once its finest pinned level

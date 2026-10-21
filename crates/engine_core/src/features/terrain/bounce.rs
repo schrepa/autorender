@@ -178,7 +178,7 @@ pub(super) fn bounce(
         slots.jobs.cancel(id);
     }
     let record = RecordKey::new(
-        &engine_terrain::SOURCE,
+        &engine_terrain::sources::BOUNCE,
         BounceJob::KIND.name(),
         &hash.to_le_bytes(),
     );

@@ -129,7 +129,7 @@ pub(super) fn light(
         slots.jobs.cancel(id);
     }
     let record = RecordKey::new(
-        &engine_terrain::SOURCE,
+        &engine_terrain::sources::LIGHTING,
         LightingJob::KIND.name(),
         &hash.to_le_bytes(),
     );

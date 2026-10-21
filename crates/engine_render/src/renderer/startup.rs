@@ -203,6 +203,7 @@ impl Renderer {
             ]
             .map(|bytes| bytes as u64),
         );
+        let water_settle = crate::water_settle::WaterSettle::new(&device);
         let renderer = Self {
             device,
             queue,
@@ -239,6 +240,7 @@ impl Renderer {
                 records: Vec::new(),
                 dropped: 0,
             },
+            water_settle,
             terrain,
 
             scatter_meshes: (BTreeSet::new(), 0),

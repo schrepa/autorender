@@ -2,7 +2,8 @@
 //! terrain's bakes, then every tile a camera on it could want, as records
 //! asked for coarsest level first and dropped as they arrive, which the
 //! host keeps for its pack, and where water asks for water, every level-0
-//! tile's settled water its bake's water reaches. A terrain's surroundings
+//! tile's settled water its bake's water reaches, which its settled water
+//! makes once every tile was asked for ([`super::settled`]). A terrain's surroundings
 //! cook the tiles within reach of the ground they surround, as a view from
 //! it wants them. Every streaming terrain's lighting and macro colors cook
 //! as streaming asks for them, the colors in every family of compressed
@@ -14,9 +15,8 @@ use super::*;
 /// covers: past what hosts draw.
 const COOK_VIEW_HEIGHT: f32 = 2160.0;
 
-/// A terrain's tiles cooking, or their settled water: the tiles it makes,
-/// in order, the next to ask for, and the records asked for and not yet
-/// back.
+/// A terrain's tiles cooking: the tiles it makes, in order, the next to
+/// ask for, and the records asked for and not yet back.
 pub(super) struct CookTiles {
     keys: Vec<TileKey>,
     next: usize,
@@ -104,11 +104,7 @@ impl Terrains {
                 continue;
             }
             share_recipe(state, slots.jobs, &mut self.stacks, &mut released);
-            let Some((recipe, stack)) = state
-                .recipe
-                .as_ref()
-                .map(|recipe| (recipe.key.clone(), recipe.stack_key.clone()))
-            else {
+            let Some(recipe) = state.recipe.as_ref().map(|recipe| recipe.key.clone()) else {
                 continue;
             };
             let mut cook = state
@@ -137,45 +133,17 @@ impl Terrains {
             }
             left += cook.left();
             state.cook = Some(cook);
-            // Settled water, once every tile was asked for.
-            let cell = water
-                .filter(|water| water.enabled && state.around.is_none())
-                .map(|water| water.simulation_cell);
-            let (Some(cell), Some(baked)) = (cell, state.baked.clone()) else {
-                continue;
-            };
-            let mut cook_water = state.cook_water.take().unwrap_or_else(|| {
-                CookTiles::of(engine_terrain::watered_tiles(
-                    &baked,
-                    &state.terrain.pyramid,
-                ))
-            });
-            cook_water.take(
-                engine_terrain::jobs::WaterJob::KIND.name(),
-                slots.jobs,
-                (&mut state.failures, frame),
-            );
+            // Settled water, once every tile was asked for: every watered
+            // tile's.
             let tiles_asked = state
                 .cook
                 .as_ref()
                 .is_some_and(|cook| cook.next == cook.keys.len());
-            while tiles_asked && let Some(&key) = cook_water.keys.get(cook_water.next) {
-                let priority = job_priority(IDLE_JOBS, cook_water.next as u32);
-                if !slots.take(priority) {
-                    break;
-                }
-                let (job, record) = state.water_record(&stack, key, cell);
-                let id = slots.jobs.submit_record(
-                    engine_terrain::jobs::WaterJob::KIND.name(),
-                    job.identity(),
-                    priority,
-                    record,
-                );
-                cook_water.flight.insert(key, id);
-                cook_water.next += 1;
+            let watering = water.is_some_and(|water| water.enabled) && state.around.is_none();
+            if tiles_asked && watering {
+                state.settled.cooking = true;
+                water_left += state.settled.left();
             }
-            water_left += cook_water.left();
-            state.cook_water = Some(cook_water);
         }
         cooking.left("terrain", left);
         cooking.left("water", water_left);

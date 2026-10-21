@@ -280,6 +280,8 @@ pub struct Renderer {
     visibility: VisibilityDraws,
     // Impostors.
     impostors: ImpostorDraws,
+    // Water settling on the GPU for tiles' records.
+    water_settle: crate::water_settle::WaterSettle,
     // Terrain: heights of resident tiles, patches, pipelines.
     terrain: crate::terrain::TerrainPass,
     // Objects placed on terrain: their meshes and a counter advancing when

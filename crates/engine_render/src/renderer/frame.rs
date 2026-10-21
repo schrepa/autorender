@@ -352,6 +352,8 @@ impl Renderer {
         let drawn = features.frames.post.is_some();
         features.frames.exposure = self.prepare_exposure(snapshot, drawn, &mut prelude.inputs);
         drop(profile_writes);
+        // Water settling for tiles' records runs first in the frame.
+        self.water_settle.prepare(&self.device, &self.queue);
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let view = surface
             .texture()
@@ -361,6 +363,7 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/frame-encoder"),
             });
+        self.water_settle.encode(&mut encoder);
         let passes = self.prepare_pipelines(kind, &packing.temporal_frame, &features);
         let (virtual_frame, resolving) = self.prepare_virtual_frame(
             snapshot,

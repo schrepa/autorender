@@ -88,13 +88,14 @@ use plan::*;
 pub use queries::*;
 pub use residency::*;
 pub use settings::*;
-use settled::Settled;
+use settled::{SettleQueue, Settled};
 pub use stats::*;
 use store::*;
 pub(crate) use streaming::*;
 pub use surroundings::*;
 use tile_map::TileMap;
 pub use water::*;
+pub use settled::{SETTLED_KIND, SETTLED_PARITY, settled_alike};
 pub use water_sim::{GHOST_DRY, WaterGhost, WaterSourceCell, WaterWindow};
 pub use wind::*;
 

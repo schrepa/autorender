@@ -63,15 +63,50 @@ impl Renderer {
         made
     }
 
-    /// Records the renderer still has to come: asked of hosts, baking or
-    /// reading back.
-    pub fn records_left(&self) -> u64 {
-        self.impostors.atlas.left() + self.impostors.placed.left() + self.terrain.vt.records_left()
+    /// Records the renderer still has to come (asked of hosts, baking or
+    /// reading back), by what makes them: impostors' layers and terrains'
+    /// far pages.
+    pub fn records_left(&self) -> [(&'static str, u64); 2] {
+        [
+            (
+                "impostors",
+                self.impostors.atlas.left() + self.impostors.placed.left(),
+            ),
+            ("far pages", self.terrain.vt.records_left()),
+        ]
     }
 
     /// Whether far ground still waits for its records, which preparation
     /// waits for.
     pub fn records_loading(&self) -> bool {
         self.terrain.vt.records_loading()
+    }
+
+    /// Settles the water of each of `starts` on the GPU for its record
+    /// (`settled_water`), those already settling left as they are: terrains
+    /// hand them over ([`engine_core::Terrains::take_water_settles`]).
+    pub fn settle_water(
+        &mut self,
+        starts: Vec<(RecordKey, std::sync::Arc<engine_core::terrain_data::SettleStart>)>,
+    ) {
+        self.water_settle.settle(starts);
+    }
+
+    /// The records of settled water made since the last call, or why one
+    /// failed, for hosts to keep within their tolerance
+    /// ([`engine_core::SETTLED_PARITY`]) and hand the terrains that asked.
+    pub fn take_settled_water(&mut self) -> Vec<(RecordKey, Result<Vec<u8>, String>)> {
+        self.water_settle.take_made()
+    }
+
+    /// Tiles whose water waits to settle or settles.
+    pub fn water_settling_left(&self) -> u64 {
+        self.water_settle.left()
+    }
+
+    /// Whether the session cooks, which has water settle with more of the
+    /// GPU's memory and more steps a frame.
+    pub fn set_water_cooking(&mut self, cooking: bool) {
+        self.water_settle.set_cooking(cooking);
     }
 }

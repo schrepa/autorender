@@ -34,7 +34,7 @@ mod bake;
 mod content;
 mod records;
 
-use engine_core::collections::HashMap;
+use engine_core::collections::{HashMap, HashSet};
 use engine_core::glam::Vec3;
 use engine_core::{Material, MaterialHandle, MeshHandle, RecordKey};
 
@@ -490,10 +490,11 @@ pub(crate) struct ImpostorAtlas {
     targets: Option<bake::BakeTargets>,
     layers: Layers,
     baked: HashMap<ImpostorKey, Baked>,
-    // Impostors whose records hosts were asked for, the asks not yet
-    // taken and the answers hosts gave; read backs of records made for
-    // hosts to keep.
+    // Impostors whose records hosts were asked for, those asked for since
+    // the last frame's drops, the asks not yet taken and the answers hosts
+    // gave; read backs of records made for hosts to keep.
     supplies: HashMap<ImpostorKey, Supply>,
+    supplied: HashSet<ImpostorKey>,
     wants: Vec<RecordKey>,
     answers: HashMap<RecordKey, Option<Vec<u8>>>,
     readbacks: Vec<records::Readback>,
@@ -539,6 +540,7 @@ impl ImpostorAtlas {
             layers: Layers::default(),
             baked: HashMap::default(),
             supplies: HashMap::default(),
+            supplied: HashSet::default(),
             wants: Vec::new(),
             answers: HashMap::default(),
             readbacks: Vec::new(),
@@ -630,7 +632,10 @@ impl ImpostorAtlas {
 
     /// Drops impostors `keep` refuses and those whose material changed
     /// from `material`, freeing their layers, and what was asked of hosts
-    /// for those `keep` refuses.
+    /// for those `keep` refuses and for those no draw supplied since the
+    /// last frame's drops: an impostor its draws no longer want waits for
+    /// no answer (a cooking session's view moved past it), and one wanted
+    /// again asks anew.
     pub(crate) fn retain(
         &mut self,
         mut keep: impl FnMut(&ImpostorKey) -> bool,
@@ -649,7 +654,17 @@ impl ImpostorAtlas {
         if self.baked.len() != before {
             self.generation += 1;
         }
+        let supplied = std::mem::take(&mut self.supplied);
+        let asked = self.supplies.len();
         self.supplies.retain(|key, _| keep(key));
+        let kept = self.supplies.len();
+        self.supplies.retain(|key, _| supplied.contains(key));
+        if self.cooking && self.supplies.len() < kept {
+            eprintln!(
+                "Impostors no draw supplies any more stop waiting: {} of {asked}",
+                kept - self.supplies.len()
+            );
+        }
         let supplies = &self.supplies;
         self.answers
             .retain(|record, _| supplies.values().any(|supply| supply.record == *record));
@@ -684,6 +699,7 @@ impl ImpostorAtlas {
         if let Some(resident) = self.record(key, source.material.as_ref()) {
             return Supplied::Resident(resident);
         }
+        self.supplied.insert(key);
         let budget = budget.filter(|_| !self.cooking);
         if self.layers.live() >= layer_limit(gpu.device, budget) {
             self.supplies.remove(&key);

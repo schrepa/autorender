@@ -385,6 +385,7 @@ impl Terrains {
                     state,
                     water,
                     slots,
+                    &mut self.settling,
                     (Vec2::new(local_eye.x, local_eye.z), frame),
                 );
             }
@@ -416,6 +417,8 @@ impl Terrains {
                 stats.surroundings_patches += state.selection.patches.len() as u32;
             }
         }
+        // What the GPU settled that no terrain took is wanted no more.
+        self.settling.drop_untaken();
         // Tiles kept in memory beyond its budget go, those that left first.
         let cached: u64 = self
             .entries

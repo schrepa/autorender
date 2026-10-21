@@ -78,6 +78,8 @@ mod visibility;
 mod water;
 mod water_fall_map;
 mod water_falls;
+mod water_kernels;
+mod water_settle;
 mod water_sim;
 mod water_waves;
 pub use platform::{AdapterInfo, RenderError, RenderTarget, read_range};

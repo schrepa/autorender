@@ -1,13 +1,14 @@
 //! Terrain jobs: terrain work engines hand workers, as bytes
 //! in and bytes out: a tile generated whole, a tile's portals of a walk
 //! graph, a stack baked, a terrain's lighting, bounce transfer and macro
-//! colors, a tile's water settled.
+//! colors, and what a tile's water settles from (which the renderer
+//! settles on the GPU).
 //! Workers hold once what many jobs read, shared by key: layer stacks with
 //! their bakes, and the recipes generating a terrain's tiles from one. Jobs
 //! run the same code wherever they run (a worker, a host without workers,
-//! the cook), so their results are the same bits, and every job's output is
-//! a record hosts keep and the cook ships: every field of a job is
-//! something its output depends on.
+//! the cook), so their results are the same bits, and every job's output
+//! but a water's start is a record hosts keep and the cook ships: every
+//! field of a job is something its output depends on.
 //!
 //! A tile's job, and its portals', carries the edits reaching its ground
 //! alone, its recipe's stack none: an edit leaves every other tile's jobs,
@@ -25,14 +26,14 @@ use crate::codec::{self, Codec, CodecError, Reader, Writer, record};
 use crate::lighting::{Ground, TerrainLighting, light};
 use crate::macro_colors::{MACRO_BLOCK, MAX_MACRO_TEXELS, macro_colors};
 use crate::{
-    BiomeRules, Biomes, Gait, Generator, Layers, Placing, Pyramid, Stamp, SteadySolve, SteadyWater,
-    Tile, TileKey, TilePortals,
+    BiomeRules, Biomes, Gait, Generator, Layers, Placing, Pyramid, SettleStart, Stamp,
+    SteadyWater, Tile, TileKey, TilePortals, WaterStart,
 };
 
 /// The kinds of terrain jobs, which hosts carry by name: a tile of a
 /// shared recipe, a tile's portals over a shared stack, a stack's bakes, a
-/// terrain's lighting, its bounce transfer and its macro colors, and a
-/// tile's settled water. Workers match every kind, so a kind added without
+/// terrain's lighting, its bounce transfer and its macro colors, and what a
+/// tile's water settles from. Workers match every kind, so a kind added without
 /// its work fails to build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
@@ -309,11 +310,13 @@ pub fn lighting_output(bytes: &[u8]) -> Result<TerrainLighting, CodecError> {
     codec::decode(bytes)
 }
 
-/// A [`JobKind::Water`]: level-0 tile `key`'s water settled over the stack
-/// shared as `stack` (with its bakes) and `pyramid` under `stamps`, the
-/// terrain's edits reaching the ground it settles over, in order, in cells
-/// `cell` meters across ([`SteadySolve`]). Like every terrain job, it is its
-/// own identity and its own input.
+/// A [`JobKind::Water`]: what level-0 tile `key`'s water settles from
+/// ([`WaterStart`]) over the stack shared as `stack` (with its bakes) and
+/// `pyramid` under `stamps`, the terrain's edits reaching the ground it
+/// settles over, in order, in cells `cell` meters across, from `warm`, the
+/// tile's earlier settled water, where its host holds it. Its input is the
+/// job; the settled water's record is kept by its identity, everything but
+/// `warm`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterJob {
     pub stack: String,
@@ -321,6 +324,7 @@ pub struct WaterJob {
     pub key: TileKey,
     pub stamps: Vec<Stamp>,
     pub cell: f32,
+    pub warm: Option<SteadyWater>,
 }
 
 record!(WaterJob {
@@ -329,20 +333,38 @@ record!(WaterJob {
     key,
     stamps,
     cell,
+    warm,
 });
 
 impl WaterJob {
     pub const KIND: JobKind = JobKind::Water;
 
-    /// What its output is kept by, and its input: the job.
+    /// What the settled water's record is kept by: the job but where it
+    /// starts from.
     pub fn identity(&self) -> Vec<u8> {
+        let mut out = Writer::new();
+        out.put(&self.stack)
+            .put(&self.pyramid)
+            .put(&self.key)
+            .put(&self.stamps)
+            .put(&self.cell);
+        out.into_bytes()
+    }
+
+    /// Its input: the job.
+    pub fn input(&self) -> Vec<u8> {
         codec::encode(self)
     }
 }
 
-/// A [`JobKind::Water`]'s output: the tile's settled water.
-pub fn water_output(bytes: &[u8]) -> Result<SteadyWater, CodecError> {
-    codec::decode(bytes)
+/// A [`JobKind::Water`]'s output: what the tile's water settles from,
+/// valid ([`SettleStart::valid`]).
+pub fn water_output(bytes: &[u8]) -> Result<SettleStart, CodecError> {
+    let start: SettleStart = codec::decode(bytes)?;
+    if !start.valid() {
+        return Err(CodecError("invalid start of settling water"));
+    }
+    Ok(start)
 }
 
 /// A [`JobKind::Bounce`]: the bounce transfer ([`crate::bounce`]) of a
@@ -485,7 +507,7 @@ enum Running {
     Portals(Box<(Arc<Layers>, Pyramid, TileKey, Gait)>),
     Bake(Box<(Layers, Pyramid)>),
     Lighting(Box<LightingJob>),
-    Water(Box<SteadySolve>),
+    Water(Box<WaterStart>),
     Bounce(Box<(BounceJob, Arc<Layers>, Arc<BiomeRules>)>),
     Macro(Box<(Arc<Layers>, Pyramid, MacroJob)>),
 }
@@ -633,6 +655,7 @@ impl TerrainWorker {
                     key,
                     stamps,
                     cell,
+                    warm,
                 } = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
                 if key.level != 0 || !pyramid.contains(key) || !(cell.is_finite() && cell > 0.0) {
@@ -651,7 +674,7 @@ impl TerrainWorker {
                             .map_err(|error| error.to_string())?,
                     )
                 };
-                Running::Water(Box::new(SteadySolve::new(layers, pyramid, key, cell)))
+                Running::Water(Box::new(WaterStart::new(layers, pyramid, key, cell, warm)))
             }
             JobKind::Bounce => {
                 let job: BounceJob = reader.get().map_err(invalid)?;
@@ -715,8 +738,8 @@ impl TerrainWorker {
                     job.horizons,
                 )))
             }
-            Running::Water(solve) => match solve.advance(&mut budget)? {
-                Some(water) => Ok(codec::encode(&water)),
+            Running::Water(start) => match start.advance(&mut budget)? {
+                Some(start) => Ok(codec::encode(&start)),
                 None => return Ok(None),
             },
             Running::Bounce(held) => {

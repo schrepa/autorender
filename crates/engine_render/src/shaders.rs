@@ -82,7 +82,8 @@ shaders! {
     WATER_WAVES_SHADER = [
         "water_waves.wgsl",
     ];
-    /// Water simulated by the shallow-water equations around the camera.
+    /// Water simulated by the shallow-water equations around the camera and
+    /// settling for tiles' records.
     WATER_SIM_SHADER = [
         "water_sim.wgsl",
     ];
@@ -324,8 +325,8 @@ entry_points! {
     }
     water_sim = WATER_SIM_SHADER {
         compute: [
-            sim_reconstruct, sim_exchange, sim_update, sim_source, sim_carry, sim_restart, sim_churn,
-            sim_churned
+            sim_reconstruct, sim_exchange, sim_waves, sim_seconds, sim_update, sim_source, sim_carry,
+            sim_restart, sim_churn, sim_churned, sim_look
         ],
     }
     clouds = CLOUDS_SHADER {
