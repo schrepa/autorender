@@ -715,6 +715,16 @@ impl ImpostorAtlas {
         let Some(answer) = self.answers.remove(&record) else {
             return Supplied::Coming;
         };
+        // Impostors of meshes and materials holding the same contents share
+        // a record: its bytes stay for the others still coming.
+        if answer.is_some()
+            && self
+                .supplies
+                .iter()
+                .any(|(other, supply)| *other != key && supply.record == record)
+        {
+            self.answers.insert(record, answer.clone());
+        }
         if let Some(bytes) = answer
             && self.load(&mut gpu, key, source, &bytes, budget)
         {
