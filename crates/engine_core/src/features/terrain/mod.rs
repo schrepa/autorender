@@ -20,8 +20,9 @@
 //! each terrain's layers with the jobs, ask for the most important missing
 //! tiles and make the records that arrive resident within their time and
 //! uploads, larger until the camera's view first loads whole than after.
-//! While a session cooks ([`crate::Cooking`]), every tile a camera could
-//! want is asked for, for the host's pack.
+//! So are its lighting and bounce transfer, from its finest pinned level
+//! once resident. While a session cooks ([`crate::Cooking`]), every tile a
+//! camera could want is asked for, for the host's pack.
 //!
 //! Tiles load in the order the view needs them: the pinned
 //! levels; the tiles the view draws and shows, with those under focus
@@ -41,6 +42,7 @@
 //! disabled, terrains neither stream nor draw.
 
 mod bakes;
+mod bounce;
 mod bridges;
 mod components;
 mod cook;
@@ -69,6 +71,7 @@ mod waterfalls;
 mod wind;
 
 use bakes::*;
+use bounce::{Bounce, bounce, bounces};
 pub use bridges::*;
 pub use components::*;
 use cook::CookTiles;
@@ -76,7 +79,7 @@ use dispatch::*;
 pub use extract::*;
 pub use ground_cover::*;
 use identity::Generation;
-use lighting::{Lighting, light, lit};
+use lighting::{Lighting, ground_grid, light, lighting_level, lit, source_tiles};
 pub use occupancy::*;
 use plan::*;
 pub use queries::*;
@@ -104,7 +107,10 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
-use engine_terrain::jobs::{BakeJob, LightingJob, PortalsJob, StackView, TerrainRecipe, TileJob};
+pub use engine_terrain::bounce::TerrainBounce;
+use engine_terrain::jobs::{
+    BakeJob, BounceJob, LightingJob, PortalsJob, StackView, TerrainRecipe, TileJob,
+};
 pub use engine_terrain::lighting::TerrainLighting;
 use engine_terrain::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats, Fall,

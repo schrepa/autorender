@@ -5,7 +5,7 @@
 //! tile's settled water its bake's water reaches. A terrain's surroundings
 //! cook the tiles within reach of the ground they surround, as a view from
 //! it wants them. Every streaming terrain's lighting cooks as streaming
-//! asks for it.
+//! asks for it, and every terrain's bounce transfer after its lighting.
 
 use super::*;
 
@@ -64,8 +64,9 @@ impl Terrains {
     /// Cooks every generated terrain within `settings`, asking for records
     /// as `jobs` admits them, the settled water too where `water` asks for
     /// water; says in `cooking` how many are left: a bake under way counts
-    /// one, each tile or tile's water not back yet one, and each terrain
-    /// streaming whose lighting is still asked for or not yet made one.
+    /// one, each tile or tile's water not back yet one, each terrain
+    /// streaming whose lighting is still asked for or not yet made one, and
+    /// each terrain (not surroundings) whose bounce transfer is one.
     pub(crate) fn cook(
         &mut self,
         settings: &TerrainSettings,
@@ -83,6 +84,9 @@ impl Terrains {
             let streams = state.around.is_none() || settings.surroundings;
             if streams && lit(settings) && state.terrain.validate().is_ok() {
                 left += u64::from(state.lighting.left());
+            }
+            if state.around.is_none() && bounces(settings) && state.terrain.validate().is_ok() {
+                left += u64::from(state.bounce.left());
             }
             let authored = state.terrain.layers.clone();
             if state.terrain.validate().is_err() {

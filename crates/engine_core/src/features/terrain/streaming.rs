@@ -355,9 +355,12 @@ impl Terrains {
             }
             if let Some(slots) = slots.as_mut() {
                 light(state, settings, slots, frame);
+                bounce(state, settings, slots, frame);
             }
             stats.lit += u32::from(state.lighting.made.is_some());
             stats.lighting += u32::from(state.lighting.job.is_some());
+            stats.bounced += u32::from(state.bounce.made.is_some());
+            stats.bouncing += u32::from(state.bounce.job.is_some());
             let missing = std::mem::take(&mut state.missing);
             state.missing = missing
                 .into_iter()

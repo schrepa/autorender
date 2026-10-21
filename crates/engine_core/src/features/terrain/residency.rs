@@ -98,8 +98,9 @@ pub(super) struct TerrainState {
     pub(super) cook: Option<CookTiles>,
     pub(super) cook_water: Option<CookTiles>,
     pub(super) settled: Settled,
-    /// Its lighting, and its asking for it.
+    /// Its lighting and bounce transfer, and its asking for them.
     pub(super) lighting: Lighting,
+    pub(super) bounce: Bounce,
     /// The layers its tiles generate from and its surface's data for the
     /// GPU from them, `None` where the program needs more
     /// than the GPU's interpreter holds; and whether its tiles hold control
@@ -160,6 +161,7 @@ impl TerrainState {
             cook_water: None,
             settled: Settled::default(),
             lighting: Lighting::default(),
+            bounce: Bounce::default(),
             surface: None,
             materials: true,
         }
@@ -217,6 +219,9 @@ impl TerrainState {
         retired
             .jobs
             .extend(self.lighting.job.iter().map(|&(id, _)| id));
+        retired
+            .jobs
+            .extend(self.bounce.job.iter().map(|&(id, _)| id));
         retired
             .recipes
             .extend(self.recipe.as_ref().map(|recipe| recipe.key.clone()));

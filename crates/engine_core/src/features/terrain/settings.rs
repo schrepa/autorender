@@ -70,11 +70,33 @@ settings! {
         /// Ambient light on terrain scaled by how much sky its ground sees,
         /// and taken from the sky it sees: each terrain's sky visibility map,
         /// cooked with its lighting from its finest pinned level, where
-        /// valleys and hollows see less sky and take their own light back
-        /// instead.
+        /// valleys and hollows see less sky and take the light of the ground
+        /// around them instead (bounce light's, or past its reach an
+        /// estimate of their own).
         pub sky_visibility: bool = true => any,
         /// Texels along a sky visibility map's sides, 8 bytes each.
         pub sky_resolution: u32 = 1024 => range(64, 4096),
+        /// Bounce light, with long sun shadows: probes over each terrain
+        /// whose transfer is cooked from its finest pinned level and its
+        /// surface's rules, nothing of the sun or sky in it, gather every
+        /// frame the light the ground around sends them as the sun, its
+        /// shadows and the sky light it now, so slopes the sun lights light
+        /// the valleys beside them through the day. Terrain takes its light
+        /// from the ground around it there, and what stands on terrain that
+        /// light and the share of the sky the ground leaves it. Surroundings
+        /// take none.
+        pub bounce: bool = true => any,
+        /// Meters between probe columns at most: a terrain takes the power of
+        /// two of them along its longer side within this spacing, at most
+        /// 512 (larger terrains spread theirs wider). Each block of two by two
+        /// columns holds one probe where the ground around stays open and
+        /// four where it rises around them, in two layers: about 100 bytes a
+        /// probe in the record, 7 to 27 MB a terrain of 512 columns.
+        pub bounce_spacing: f32 = 16.0 => range(1.0, 1024.0),
+        /// Meters around the camera within which probes relight every frame,
+        /// as many columns as the horizon maps' texels at most; past them
+        /// terrain takes its estimate and what stands on it the open sky.
+        pub bounce_reach: f32 = 2048.0 => range(64.0, 32768.0),
         /// Meters from the camera within which the ground's relief shows, its
         /// view rays marching through its materials' heights; 0 none.
         pub relief_distance: f32 = 24.0 => range(0.0, 200.0),

@@ -143,6 +143,9 @@ pub struct RenderTerrain {
     /// Its lighting, once here: the sky its ground sees and its horizons,
     /// which renderers upload as it changes.
     pub lighting: Option<Arc<TerrainLighting>>,
+    /// Its bounce transfer, once here: what probes over its ground see of
+    /// it, which renderers upload as it changes and relight every frame.
+    pub bounce: Option<Arc<TerrainBounce>>,
 }
 
 /// The frame's terrains.
@@ -194,6 +197,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 falls: Arc::from(Vec::new()),
                 water_window: None,
                 lighting: None,
+                bounce: None,
             });
         }
         let render = &mut listing.terrains[index];
@@ -257,5 +261,6 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         render.falls = state.falls.clone();
         render.water_window = state.hydrology.window.clone();
         render.lighting.clone_from(&state.lighting.made);
+        render.bounce.clone_from(&state.bounce.made);
     }
 }

@@ -46,6 +46,11 @@ pub struct TerrainStats {
     /// their ground sees the whole sky and casts no long shadows.
     pub lit: u32,
     pub lighting: u32,
+    /// Terrains whose bounce transfer is here, and those whose transfer is
+    /// asked for: until it arrives their ground takes an estimate of the
+    /// light around it, and what stands on it the open sky.
+    pub bounced: u32,
+    pub bouncing: u32,
     /// Bridges terrains' roads span, tunnels they bore,
     /// and waterfalls their rivers drop over.
     pub bridges: u32,

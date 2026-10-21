@@ -32,7 +32,7 @@ impl Lighting {
 
 /// The level a terrain's lighting reads: the finest of the coarsest
 /// `pinned` levels, kept resident over the whole terrain.
-fn lighting_level(pyramid: &Pyramid, pinned: u32) -> u32 {
+pub(super) fn lighting_level(pyramid: &Pyramid, pinned: u32) -> u32 {
     pyramid.levels().saturating_sub(pinned.max(1))
 }
 
@@ -137,7 +137,7 @@ pub(super) fn light(
 /// resident and current, or where its surroundings leave its ground to
 /// their terrain and load no tile, its nearest resident ancestor; `None`
 /// while any is missing or regenerates.
-fn source_tiles(state: &TerrainState, level: u32) -> Option<Vec<Arc<Tile>>> {
+pub(super) fn source_tiles(state: &TerrainState, level: u32) -> Option<Vec<Arc<Tile>>> {
     let pyramid = state.terrain.pyramid;
     pyramid
         .level_tiles(level)
@@ -178,6 +178,29 @@ fn lighting_job(
     tiles: &[Arc<Tile>],
     (sky, horizons): (u32, u32),
 ) -> LightingJob {
+    let grid = ground_grid(state, level, tiles);
+    LightingJob {
+        samples: grid.samples,
+        spacing: grid.spacing,
+        extent: state.terrain.pyramid.extent(),
+        heights: grid.heights,
+        sky,
+        horizons,
+    }
+}
+
+/// A level's samples over a whole terrain, as its lighting and its bounce
+/// transfer read them: `samples` along x and z, `spacing` meters apart, row
+/// by row along z.
+pub(super) struct GroundGrid {
+    pub(super) samples: [u32; 2],
+    pub(super) spacing: f32,
+    pub(super) heights: Box<[f32]>,
+}
+
+/// `state`'s `level` from `tiles`, its tiles row by row (or their ancestors
+/// standing in).
+pub(super) fn ground_grid(state: &TerrainState, level: u32, tiles: &[Arc<Tile>]) -> GroundGrid {
     let pyramid = state.terrain.pyramid;
     let [tiles_x, tiles_z] = pyramid.tiles(level);
     let quads = TILE_QUADS as usize;
@@ -211,13 +234,10 @@ fn lighting_job(
             }
         }
     }
-    LightingJob {
+    GroundGrid {
         samples: [columns as u32, rows as u32],
         spacing: pyramid.spacing(level),
-        extent: pyramid.extent(),
         heights: heights.into_boxed_slice(),
-        sky,
-        horizons,
     }
 }
 
