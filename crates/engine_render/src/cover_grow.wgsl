@@ -110,6 +110,9 @@ const PALETTE_ENTRIES: u32 = 170u;
 @group(0) @binding(7) var<storage, read_write> counts: Counts;
 @group(0) @binding(9) var<storage, read> deformation: array<u32>;
 @group(0) @binding(10) var macro_maps: texture_2d_array<f32>;
+// Every resident tile's normal maps (`terrain_normals.wgsl`): the smooth
+// surface's gradient at each sample, two halves of a float.
+@group(0) @binding(11) var normals: texture_2d_array<u32>;
 
 const TAU: f32 = 6.2831853;
 
@@ -300,7 +303,8 @@ fn cell_samples(corner: vec2<f32>, spacing: f32, level: u32, first: vec2<u32>) -
 }
 
 // The ground's normal at terrain-local `local` from its finest resident
-// level, its samples' slopes blended across their cell.
+// level: its smooth surface's, the gradients at its cell's samples blended
+// across it, as the terrain shades it.
 fn ground_normal(local: vec2<f32>) -> vec3<f32> {
     for (var index = 0u; index < grow.counts.y; index++) {
         let per = grow.origin.w * f32(1u << index);
@@ -311,12 +315,14 @@ fn ground_normal(local: vec2<f32>) -> vec3<f32> {
         }
         let corner = min(vec2<u32>(samples), tile.first + vec2<u32>(255u));
         let f = saturate(samples - vec2<f32>(corner));
-        let a = tile_height(tile, corner);
-        let b = tile_height(tile, corner + vec2<u32>(1u, 0u));
-        let c = tile_height(tile, corner + vec2<u32>(0u, 1u));
-        let d = tile_height(tile, corner + vec2<u32>(1u, 1u));
-        let slope = vec2<f32>(mix(b - a, d - c, f.y), mix(c - a, d - b, f.x)) / per;
-        return normalize(vec3<f32>(-slope.x, 1.0, -slope.y));
+        // Layers keep a border sample before the tile's first.
+        let texel = corner - tile.first + vec2<u32>(1u);
+        let a = unpack2x16float(textureLoad(normals, texel, tile.layer, 0).x);
+        let b = unpack2x16float(textureLoad(normals, texel + vec2<u32>(1u, 0u), tile.layer, 0).x);
+        let c = unpack2x16float(textureLoad(normals, texel + vec2<u32>(0u, 1u), tile.layer, 0).x);
+        let d = unpack2x16float(textureLoad(normals, texel + vec2<u32>(1u, 1u), tile.layer, 0).x);
+        let gradient = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+        return normalize(vec3<f32>(-gradient.x, 1.0, -gradient.y));
     }
     return vec3<f32>(0.0, 1.0, 0.0);
 }

@@ -25,7 +25,7 @@ fn terrain_sky_map(local: vec2<f32>) -> vec4<f32> {
     if terrain.directory.w == 0u {
         return vec4<f32>(1.0, 0.5, 0.5, 0.5);
     }
-    return textureSampleLevel(terrain_sky, terrain_normal_sampler, terrain_sky_uv(local),
+    return textureSampleLevel(terrain_sky, terrain_sky_sampler, terrain_sky_uv(local),
         terrain.directory.w - 1u, 0.0);
 }
 

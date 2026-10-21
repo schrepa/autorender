@@ -1,7 +1,8 @@
 // Terrain surface materials on the GPU: a tile's control
 // values from its heights, once when it uploads, into the same layer of the
 // control array. Each sample's inputs are read as the CPU reads them for a
-// tile's rows (height, gradient and curvature from the heights around it;
+// tile's rows (height, and the slope and curvature of the smooth surface
+// through the heights around it, `terrain_tile.wgsl`'s `tile_shape`;
 // the hydrology bake's flow, wetness and lakes; the meters to the nearest
 // river's edge the tile holds; the nearest road), and the surface's rules
 // run as a program for this interpreter (`engine_terrain::gpu`), in the
@@ -366,25 +367,14 @@ fn shown(point: vec2<f32>) -> f32 {
 }
 
 fn sample_inputs(column: u32, row: u32) -> Inputs {
-    let last = TILE_STRIDE - 1u;
-    let up = select(row - 1u, 0u, row == 0u);
-    let down = min(row + 1u, last);
-    let left = select(column - 1u, 0u, column == 0u);
-    let right = min(column + 1u, last);
     let spacing = job.spacing;
-    let height = tile_height(column, row);
-    let west = tile_height(left, row);
-    let east = tile_height(right, row);
-    let north = tile_height(column, up);
-    let south = tile_height(column, down);
-    let gx = (east - west) / (2.0 * spacing);
-    let gz = (south - north) / (2.0 * spacing);
+    let shape = tile_shape(column, row, spacing);
     var inputs: Inputs;
     inputs.x = f32(job.first.x + i32(column) - 1) * spacing;
     inputs.z = f32(job.first.y + i32(row) - 1) * spacing;
-    inputs.height = height;
-    inputs.gradient = sqrt(gx * gx + gz * gz);
-    inputs.curvature = (west + east + north + south - 4.0 * height) / (spacing * spacing);
+    inputs.height = tile_height(column, row);
+    inputs.gradient = sqrt(shape.x * shape.x + shape.y * shape.y);
+    inputs.curvature = shape.z;
     inputs.spacing = spacing;
     inputs.river = RIVER_FAR;
     inputs.path_distance = PATH_FAR;

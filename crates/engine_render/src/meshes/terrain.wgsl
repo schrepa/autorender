@@ -10,10 +10,12 @@
 // never test.
 override TERRAIN_HOLES: bool = false;
 
-// Every resident tile's normals, in the same layers as its heights, and
-// their sampler.
-@group(1) @binding(21) var terrain_normals: texture_2d_array<f32>;
-@group(1) @binding(22) var terrain_normal_sampler: sampler;
+// Every resident tile's normal maps, in the same layers as its heights: the
+// smooth surface's gradient at each sample, two halves of a float
+// (`terrain_normals.wgsl`), gathered through the control values' sampler.
+@group(1) @binding(21) var terrain_normals: texture_2d_array<u32>;
+// The sky maps' sampler (`meshes/terrain_sky.wgsl`).
+@group(1) @binding(22) var terrain_sky_sampler: sampler;
 // Each terrain's levels, finest first, from `terrain.directory.x`: four
 // words each (where its tiles' entries start, its tiles along x and z, and
 // the meters from the eye its tiles load within, as bits); then the entries,
@@ -23,7 +25,8 @@ override TERRAIN_HOLES: bool = false;
 // heights: per sample, its two strongest surface materials (bits 0 to 7
 // and 8 to 15), the second's share (16 to 23) and its strongest biome.
 @group(1) @binding(24) var terrain_control: texture_2d_array<u32>;
-// Gathers a 2x2 block of control values at once.
+// Gathers a 2x2 block of control values, or of normal maps' texels, at
+// once.
 @group(1) @binding(32) var terrain_control_sampler: sampler;
 
 // A surface material: its linear color (its base color factor with maps)
@@ -178,6 +181,31 @@ fn terrain_hash_of(mixed: u32) -> f32 {
     return f32((h ^ (h >> 16u)) >> 8u) * (1.0 / 16777216.0);
 }
 
+// Two values of the hash `terrain_hash_of` mixes from `mixed`, each 0 to 1:
+// its high and low halves.
+fn terrain_hash2(mixed: u32) -> vec2<f32> {
+    var h = mixed;
+    h = (h ^ (h >> 16u)) * 0x7feb352du;
+    h = (h ^ (h >> 15u)) * 0x846ca68bu;
+    h = h ^ (h >> 16u);
+    return vec2<f32>(f32(h >> 16u), f32(h & 0xffffu)) * (1.0 / 65535.0);
+}
+
+// Two channels of value noise at `p` on `terrain_value`'s lattice, each 0
+// to 1.
+fn terrain_value2(p: vec2<f32>) -> vec2<f32> {
+    let cell = floor(p);
+    let f = p - cell;
+    let u = f * f * (3.0 - 2.0 * f);
+    let q = vec2<u32>(vec2<i32>(cell));
+    let x0 = q.x * 0x8da6b343u;
+    let x1 = x0 + 0x8da6b343u;
+    let y0 = q.y * 0xd8163841u;
+    let y1 = y0 + 0xd8163841u;
+    return mix(mix(terrain_hash2(x0 ^ y0), terrain_hash2(x1 ^ y0), u.x),
+        mix(terrain_hash2(x0 ^ y1), terrain_hash2(x1 ^ y1), u.x), u.y);
+}
+
 // Noise of feature size `size` meters at `p`, fading to its mean where a
 // pixel spans more than its features (`footprint` meters).
 fn terrain_detail(p: vec2<f32>, size: f32, footprint: f32) -> f32 {
@@ -198,13 +226,16 @@ fn terrain_layer_fades(layer: u32) -> vec2<f32> {
     return vec2<f32>(f32(half & 0xffu), f32(half >> 8u)) * (1.0 / 255.0);
 }
 
-// The normal at terrain-local `local` in `level`'s normal maps, or in the
-// nearest coarser level's where its tile is not resident; a tile fading in
-// shows the next resident coarser level's under it.
-fn terrain_level_normal(local: vec2<f32>, level: u32) -> vec3<f32> {
+// The smooth surface's gradient (rise per meter along x and z) at
+// terrain-local `local` in `level`'s normal maps, or in the nearest coarser
+// level's where its tile is not resident: the gradients at the four samples
+// around it blended bilinearly, as `engine_terrain::Tile::sample` blends
+// them. A tile fading in shows the next resident coarser level's under it;
+// ground no level holds is level.
+fn terrain_level_gradient(local: vec2<f32>, level: u32) -> vec2<f32> {
     let base = terrain.directory.x;
     let levels = terrain.directory.y;
-    var normal = vec3<f32>(0.0);
+    var gradient = vec2<f32>(0.0);
     var left = 1.0;
     for (var index = level; index < levels; index++) {
         let header = base + index * 4u;
@@ -215,17 +246,26 @@ fn terrain_level_normal(local: vec2<f32>, level: u32) -> vec3<f32> {
         if layer == 0xffffffffu {
             continue;
         }
-        // Layers keep a border sample before the tile's first.
-        let uv = (samples - vec2<f32>(tile * 256u) + vec2<f32>(1.5)) / 259.0;
+        // Samples 0 to 256 within the tile; layers keep a border texel
+        // before the first.
+        let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
+        let corner = min(vec2<u32>(within), vec2<u32>(255u));
+        let f = within - vec2<f32>(corner);
+        // The 2x2 block's gradients in one gather at its shared corner (x:
+        // (0, 1), y: (1, 1), z: (1, 0), w: (0, 0)), which no subtexel
+        // rounding moves off the block.
+        let texels = textureGather(0, terrain_normals, terrain_control_sampler,
+            (vec2<f32>(corner) + vec2<f32>(2.0)) / 259.0, layer);
+        let low = mix(unpack2x16float(texels.w), unpack2x16float(texels.z), f.x);
+        let high = mix(unpack2x16float(texels.x), unpack2x16float(texels.y), f.x);
         let fade = terrain_layer_fades(layer).x;
-        normal += textureSampleLevel(terrain_normals, terrain_normal_sampler, uv, layer, 0.0).xyz
-            * (left * (1.0 - fade));
+        gradient += mix(low, high, f.y) * (left * (1.0 - fade));
         left *= fade;
         if left <= 0.0 {
-            return normal;
+            return gradient;
         }
     }
-    return normal + vec3<f32>(0.0, left, 0.0);
+    return gradient;
 }
 
 // Which level shades a point `distance` from the eye its tiles load
@@ -258,13 +298,15 @@ fn terrain_shading_level(distance: f32) -> TerrainShadingLevel {
     return shading;
 }
 
-// The terrain's normal at terrain-local `local` at `shading`'s levels.
+// The normal of the terrain's smooth surface at terrain-local `local` at
+// `shading`'s levels, their gradients blended.
 fn terrain_surface_normal(local: vec2<f32>, shading: TerrainShadingLevel) -> vec3<f32> {
-    var normal = terrain_level_normal(local, shading.level);
+    var gradient = terrain_level_gradient(local, shading.level);
     if shading.blend > 0.0 {
-        normal = mix(normal, terrain_level_normal(local, shading.level + 1u), shading.blend);
+        gradient = mix(gradient, terrain_level_gradient(local, shading.level + 1u),
+            shading.blend);
     }
-    return stable_normalize(normal);
+    return normalize(vec3<f32>(-gradient.x, 1.0, -gradient.y));
 }
 
 // Surface material `material` of this fragment's terrain.
@@ -366,6 +408,94 @@ fn terrain_level_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>, lev
         }
     }
     terrain_blend_add(blend, 0u, left);
+}
+
+// Paints the terrain's steep material (`terrain.steep`) over `blend` on
+// ground of smooth normal `normal`, decided at this point of the ground as
+// the samples decide it at theirs: none up to the first tangent of its
+// slopes, all of it from the second, smoothly between, the other materials
+// sharing what it leaves as they share the rest. Ground whose samples hold
+// the steep material alone keeps it.
+fn terrain_steep_blend(blend: ptr<function, TerrainBlend>, normal: vec3<f32>) {
+    let steep = terrain.steep;
+    if steep.x <= 0.0 {
+        return;
+    }
+    let material = u32(steep.x) - 1u;
+    let share = smoothstep(steep.y, steep.z, length(normal.xz) / max(normal.y, 1.0e-4));
+    let weights = (*blend).weights;
+    let others = select(weights, vec4<f32>(0.0), (*blend).ids == vec4<u32>(material));
+    let rest = dot(others, vec4<f32>(1.0));
+    if rest <= 0.0 {
+        return;
+    }
+    let total = dot(weights, vec4<f32>(1.0));
+    (*blend).weights = others * ((1.0 - share) * total / rest);
+    if share > 0.0 {
+        terrain_blend_add(blend, material, share * total);
+    }
+}
+
+// How far noise carries the borders between materials: each material's
+// weight is scaled by e raised to this times the noise's turn along a
+// direction of its own, which moves a border between two most of the way
+// across its cell of samples.
+const TERRAIN_BORDER_TURN: f32 = 4.0;
+
+// The noise moving the borders between the materials of `level`'s control
+// values at terrain-local `local` (two channels, 0 to 1): features about
+// two and a half of the level's samples across, on a lattice turned off
+// theirs so that neither lines up with the other.
+fn terrain_border_noise(local: vec2<f32>, level: u32) -> vec2<f32> {
+    let turned = vec2<f32>(0.8 * local.x - 0.6 * local.y, 0.6 * local.x + 0.8 * local.y);
+    return terrain_value2(turned / (2.5 * terrain.anchor.w * f32(1u << level))
+        + vec2<f32>(11.3, -6.7));
+}
+
+// Moves the borders between `blend`'s materials at terrain-local `local` by
+// noise at `shading`'s levels: each material's weight is scaled by e to
+// the noise's turn along a direction of its own, then all of them back to
+// their sum, so ground of one material keeps it while borders wander
+// across their cells instead of following the samples' grid.
+fn terrain_border_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>,
+        shading: TerrainShadingLevel) {
+    let weights = (*blend).weights;
+    // Ground of one material has no border to move.
+    let present = select(vec4<f32>(0.0), vec4<f32>(1.0), weights > vec4<f32>(0.0));
+    if dot(present, vec4<f32>(1.0)) < 2.0 {
+        return;
+    }
+    var noise = terrain_border_noise(local, shading.level);
+    if shading.blend > 0.0 {
+        noise = mix(noise, terrain_border_noise(local, shading.level + 1u), shading.blend);
+    }
+    let turn = noise - vec2<f32>(0.5);
+    var moved = weights;
+    for (var slot = 0u; slot < 4u; slot++) {
+        if weights[slot] > 0.0 {
+            let direction = terrain_hash2((*blend).ids[slot] * 0x9e3779b9u) * 2.0 - 1.0;
+            moved[slot] = weights[slot] * exp(TERRAIN_BORDER_TURN * dot(turn, direction));
+        }
+    }
+    (*blend).weights = moved * (dot(weights, vec4<f32>(1.0)) / dot(moved, vec4<f32>(1.0)));
+}
+
+// The materials of the ground at terrain-local `local`, of smooth normal
+// `normal`, at `shading`'s levels: each level's control values at the four
+// samples around it, bilinearly; the steep material decided again at this
+// point; and the borders between them moved by noise.
+fn terrain_blend(local: vec2<f32>, normal: vec3<f32>, shading: TerrainShadingLevel)
+        -> TerrainBlend {
+    var blend: TerrainBlend;
+    blend.ids = vec4<u32>(0xffffffffu);
+    blend.weights = vec4<f32>(0.0);
+    terrain_level_blend(&blend, local, shading.level, 1.0 - shading.blend);
+    if shading.blend > 0.0 {
+        terrain_level_blend(&blend, local, shading.level + 1u, shading.blend);
+    }
+    terrain_steep_blend(&blend, normal);
+    terrain_border_blend(&blend, local, shading);
+    return blend;
 }
 
 // What a terrain fragment's ground shows: its linear albedo, roughness,
@@ -642,7 +772,7 @@ fn terrain_canopy(leaves: f32, site: TerrainSite) -> f32 {
 // roughness, metalness and height texel, the share of its second lattice,
 // how much of all its maps shows and how much of its color map, the second
 // lattice's share by its pattern alone, its weight raised by its height,
-// and its share of the height contrast.
+// and its share of the height contrast its maps show.
 struct TerrainSlot {
     texel: vec4<f32>,
     second: f32,
@@ -654,10 +784,11 @@ struct TerrainSlot {
 }
 
 // The first pass of material `material` at weight `weight`: its heights
-// where its maps show; materials without maps, or too far to show them,
-// lie flat at middle height. All its maps show while a repeat spans enough
-// pixels along the footprint's long side; its color map alone farther out,
-// as long as its filtering keeps it.
+// where its maps show, and its height contrast as far as they show, so
+// materials without maps, or too far to show them, blend by their weights
+// alone. All its maps show while a repeat spans enough pixels along the
+// footprint's long side; its color map alone farther out, as long as its
+// filtering keeps it.
 fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
     var slot: TerrainSlot;
     slot.texel = vec4<f32>(1.0, 1.0, 1.0, 0.5);
@@ -674,6 +805,7 @@ fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
         slot.pattern = terrain_second_lattice(site.world, entry.params.x, site.texel);
         slot.second = slot.pattern;
     }
+    let contrast = entry.params.y * slot.detail;
     if slot.detail > 0.0 {
         let mapping = terrain_mapping(entry, site.geometric);
         let second = slot.pattern;
@@ -689,12 +821,12 @@ fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
         }
         slot.second = second;
         if second > 0.0 && second < 1.0 {
-            slot.second = terrain_lattice_share(second, first.a, other.a, entry.params.y);
+            slot.second = terrain_lattice_share(second, first.a, other.a, contrast);
         }
         slot.texel = mix(first, other, slot.second);
     }
-    slot.raised = weight + entry.params.y * mix(0.5, slot.texel.a, slot.detail);
-    slot.contrast = weight * entry.params.y;
+    slot.raised = weight + contrast * slot.texel.a;
+    slot.contrast = weight * contrast;
     return slot;
 }
 
@@ -813,12 +945,8 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     *normal += weight * turned;
 }
 
-// The ground at `site` from the control values of `shading`'s levels: up
-// to four materials, each where it has maps raised by its height map as
-// sharply as its height contrast asks, so stones and tufts stand through
-// what they meet before it covers them.
-// Up to four surface materials at `site` from the control values of
-// `shading`'s levels, their slots, and the shares the ground shows them in.
+// Up to four surface materials at `site` at `shading`'s levels
+// (`terrain_blend`), their slots, and the shares the ground shows them in.
 struct TerrainShares {
     ids: vec4<u32>,
     weights: vec4<f32>,
@@ -828,19 +956,16 @@ struct TerrainShares {
     fourth: TerrainSlot,
 }
 
+// The ground at `site` at `shading`'s levels: up to four materials, each
+// where its maps show raised by its height map as sharply as its height
+// contrast asks, so stones and tufts stand through what they meet before
+// it covers them.
 fn terrain_ground(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainGround {
     return terrain_shared_ground(terrain_shares(site, shading), site);
 }
 
 fn terrain_shares(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainShares {
-    var blend: TerrainBlend;
-    blend.ids = vec4<u32>(0xffffffffu);
-    blend.weights = vec4<f32>(0.0);
-    let local = site.world.xz - terrain.origin.xz;
-    terrain_level_blend(&blend, local, shading.level, 1.0 - shading.blend);
-    if shading.blend > 0.0 {
-        terrain_level_blend(&blend, local, shading.level + 1u, shading.blend);
-    }
+    let blend = terrain_blend(site.world.xz - terrain.origin.xz, site.geometric, shading);
     let first = terrain_slot(blend.ids.x, blend.weights.x, site);
     let second = terrain_slot(blend.ids.y, blend.weights.y, site);
     let third = terrain_slot(blend.ids.z, blend.weights.z, site);
@@ -870,14 +995,13 @@ fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGro
 
 // One material's part in the ground's relief: the meters it
 // sinks the ground at most, already weighted and faded, and where its
-// maps' heights lie: their scale, layer and the derivatives they are read
-// with.
+// maps' heights lie: as its maps lie there (from above, or across their
+// planes on steep ground), read with the point's change per pixel.
 struct TerrainReliefLayer {
     depth: f32,
-    scale: f32,
-    layer: u32,
-    dx: vec2<f32>,
-    dy: vec2<f32>,
+    mapping: TerrainMapping,
+    dx: vec3<f32>,
+    dy: vec3<f32>,
 }
 
 fn terrain_relief_layer(material: u32, weight: f32, fade: f32, site: TerrainSite)
@@ -888,26 +1012,34 @@ fn terrain_relief_layer(material: u32, weight: f32, fade: f32, site: TerrainSite
         return layer;
     }
     let entry = terrain_material(material);
-    // Materials with maps, lying from above, close enough to show them.
-    if entry.params.w <= 0.0 || entry.params.z > 0.5 {
+    // Materials with maps, close enough to show them.
+    if entry.params.w <= 0.0 {
         return layer;
     }
-    layer.scale = 1.0 / entry.params.x;
-    layer.layer = u32(entry.params.w) - 1u;
-    layer.dx = site.world_dx.xz * layer.scale;
-    layer.dy = site.world_dy.xz * layer.scale;
+    layer.mapping = terrain_mapping(entry, site.geometric);
+    layer.dx = site.world_dx;
+    layer.dy = site.world_dy;
     layer.depth = entry.relief.x * weight * fade
         * terrain_map_detail(site.footprint, entry.params.x);
     return layer;
 }
 
-// How far below the ground's top `layer` sinks it at `point` (x and z).
-fn terrain_relief_sink(layer: TerrainReliefLayer, point: vec2<f32>) -> f32 {
+// How far below the ground's top `layer` sinks it at `point`: its heights
+// there mixed over its planes.
+fn terrain_relief_sink(layer: TerrainReliefLayer, point: vec3<f32>) -> f32 {
     if layer.depth <= 0.0 {
         return 0.0;
     }
-    let height = textureSampleGrad(terrain_material_data, terrain_material_sampler,
-        point * layer.scale, 2u * layer.layer + 1u, layer.dx, layer.dy).a;
+    let scale = layer.mapping.scale;
+    var height = 0.0;
+    for (var axis = 0u; axis < 3u; axis++) {
+        let share = layer.mapping.planes[axis];
+        if share > 0.0 {
+            height += share * textureSampleGrad(terrain_material_data, terrain_material_sampler,
+                world_plane(point, axis) * scale, 2u * layer.mapping.layer + 1u,
+                world_plane(layer.dx, axis) * scale, world_plane(layer.dy, axis) * scale).a;
+        }
+    }
     return layer.depth * (1.0 - height);
 }
 
@@ -1011,18 +1143,19 @@ struct TerrainRelief {
 
 // How far below the ground's top the relief layers `a` and `b` and the
 // tracks of the ground's `deform` (faded by `fade`) sink it at `point`.
-fn terrain_sink(a: TerrainReliefLayer, b: TerrainReliefLayer, point: vec2<f32>, deform: f32,
+fn terrain_sink(a: TerrainReliefLayer, b: TerrainReliefLayer, point: vec3<f32>, deform: f32,
         fade: f32) -> f32 {
     var sink = terrain_relief_sink(a, point) + terrain_relief_sink(b, point);
     if deform > 0.0 {
-        sink -= terrain_track_height(terrain_deform_track(point), deform) * fade;
+        sink -= terrain_track_height(terrain_deform_track(point.xz), deform) * fade;
     }
     return sink;
 }
 
 // Where a fragment's view ray meets the ground's relief:
 // within the relief distance, the ray marches down through the heights of
-// its two heaviest top-projected materials, each as deep as its relief
+// its two heaviest materials, from above or across their planes on steep
+// ground as their maps lie, each as deep as its relief
 // reaches and flattening toward the distance's end, and through the
 // tracks deformers pressed, from the top of their rims to
 // the bottom of the deepest; the ground shades from where the ray meets
@@ -1039,10 +1172,7 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
     if !marching && tracked < 5.0e-4 {
         return relief;
     }
-    var blend: TerrainBlend;
-    blend.ids = vec4<u32>(0xffffffffu);
-    blend.weights = vec4<f32>(0.0);
-    terrain_level_blend(&blend, site.world.xz - terrain.origin.xz, shading.level, 1.0);
+    let blend = terrain_blend(site.world.xz - terrain.origin.xz, site.geometric, shading);
     let weights = blend.weights;
     if tracked >= 5.0e-4 {
         var deform = 0.0;
@@ -1092,6 +1222,8 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
     let travel = ray / max(into, 0.08);
     let across = length(travel.xz);
     let along = travel.xz * min(1.0, 3.0 / max(across, 1.0e-6));
+    // The point's move per meter of depth.
+    let march = vec3<f32>(along.x, travel.y, along.y);
     // Relief whose deepest point would move under a pixel takes no march.
     if (depth - top) * min(across, 3.0) < 0.75 * site.footprint {
         return relief;
@@ -1100,13 +1232,13 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
     // A step every two centimeters of tracks, up to twice the relief's.
     let steps = max(u32(round(clamp((depth - top) / 0.02, base, 2.0 * terrain.relief.y))), 2u);
     var previous = top;
-    var gap = top - terrain_sink(a, b, site.world.xz + along * top, deform, fade);
+    var gap = top - terrain_sink(a, b, site.world + march * top, deform, fade);
     var hit = top;
     if gap < 0.0 {
         hit = depth;
         for (var step = 1u; step <= steps; step++) {
             let at = top + (depth - top) * f32(step) / f32(steps);
-            let point = site.world.xz + along * at;
+            let point = site.world + march * at;
             let next_gap = at - terrain_sink(a, b, point, deform, fade);
             if next_gap >= 0.0 {
                 // Between the last step and this one, where the ray reaches
@@ -1118,7 +1250,7 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
             gap = next_gap;
         }
     }
-    relief.world = site.world + vec3<f32>(along.x, travel.y, along.y) * hit;
+    relief.world = site.world + march * hit;
     return relief;
 }
 

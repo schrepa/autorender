@@ -1,14 +1,17 @@
 //! Terrain surfaces: which materials the ground is made of,
 //! where. A surface names its materials and lists biomes; each biome has a
 //! fitness mask saying where it applies and layers of materials, each
-//! painted over the layers before it by its own mask. Every tile sample
+//! painted over the layers before it by its own mask; and one material may
+//! cover its steep ground over every biome. Every tile sample
 //! gets its control value: the two materials weighing most there, their
 //! blend and the biome weighing most, a pure function of the sample's
-//! position, height, slope and curvature at its level, so neighboring tiles
-//! agree on the samples they share.
+//! position, height and the shape of the smooth surface through the samples
+//! around it at its level ([`SampleShape`]), so neighboring tiles agree on
+//! the samples they share. Renderers decide the steep material again at
+//! every point of the ground, from the smooth surface's slope there.
 
 use engine_math::{clamp, max, min, sin_cos};
-use engine_settings::{Rule, Setting, settings};
+use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
 use serde::{Deserialize, Serialize};
 
 use crate::PathSample;
@@ -37,13 +40,15 @@ pub enum Mask {
     Constant(f32),
     /// A ramp over meters above the terrain's origin.
     Height([f32; 2]),
-    /// A ramp over the ground's slope, in degrees from level.
+    /// A ramp over the ground's slope, in degrees from level: the smooth
+    /// surface's through its samples ([`SampleShape`]).
     Slope(
         #[cfg_attr(feature = "schema", schemars(inner(range(min = 0.0, max = MAX_SLOPE_DEGREES))))]
         [f32; 2],
     ),
     /// A ramp over the ground's curvature: how fast its slope grows per
-    /// meter, positive in hollows and valleys, negative on ridges.
+    /// meter, positive in hollows and valleys, negative on ridges (the
+    /// smooth surface's Laplacian, [`SampleShape`]).
     Curvature([f32; 2]),
     /// A ramp over the base-10 logarithm of the area draining through the
     /// ground, in square meters, as the terrain's hydrology bake found it:
@@ -84,6 +89,13 @@ pub enum Mask {
 
 /// The steepest slope a mask names, in degrees: a wall.
 pub const MAX_SLOPE_DEGREES: f32 = 90.0;
+
+/// The tangent of a slope of `degrees` from level, which masks compare
+/// gradients with, 90 degrees standing in for a vertical wall.
+fn tangent(degrees: f32) -> f32 {
+    let (sin, cos) = sin_cos(min(degrees, 89.9).to_radians());
+    sin / cos
+}
 
 settings! {
     /// Gradient noise from 0 to 1, summed over octaves each half as long and
@@ -167,13 +179,55 @@ pub struct Biome {
     pub layers: Vec<BiomeLayer>,
 }
 
+settings! {
+    extra_rules;
+    /// The material covering a surface's steep ground, painted over every
+    /// biome and layer: none of it where the ground's slope is the first of
+    /// `slope`'s degrees from level, all of it from the second, smoothly
+    /// between, on the smooth surface through the ground's samples
+    /// ([`SampleShape`]). Samples hold it as they hold their other materials;
+    /// renderers decide it again at every point of the ground from the slope
+    /// there, so its edges follow the ground's form, not its samples.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct SteepLayer {
+        /// The material covering it, an ID of the surface's materials.
+        pub material: String = String::new() => any,
+        /// The slopes its share rises between, in degrees from level.
+        pub slope: [f32; 2] = [28.0, 35.0] => range(0.0, MAX_SLOPE_DEGREES),
+    }
+}
+
+impl ExtraRules for SteepLayer {
+    /// Its share rises with the slope.
+    fn check_extra(&self) -> Result<(), InvalidSetting> {
+        if self.slope[0] < self.slope[1] {
+            Ok(())
+        } else {
+            Err(InvalidSetting::new("slope", "must rise: its first slope below its second"))
+        }
+    }
+}
+
+/// A surface's steep layer as renderers decide it: the index of its
+/// material and the tangents of the slopes its share rises between
+/// ([`SteepLayer`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Steep {
+    pub material: u8,
+    pub gradient: [f32; 2],
+}
+
 /// A surface as authored: its materials' IDs, in the order control values
-/// index them, its biomes, and the IDs of the assets its placement layers
-/// stand on it, in the order placements index them.
+/// index them, its biomes, the material covering its steep ground, and the
+/// IDs of the assets its placement layers stand on it, in the order
+/// placements index them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Biomes {
     pub materials: Vec<String>,
     pub biomes: Vec<Biome>,
+    pub steep: Option<SteepLayer>,
     pub assets: Vec<String>,
     pub placements: Vec<crate::PlacementLayer>,
     /// Objects authors stand on it.
@@ -270,11 +324,54 @@ pub(crate) enum Compiled {
     Remap(Box<Compiled>, [f32; 2]),
 }
 
+/// The ground's shape at a sample, as masks, normals and renderers read
+/// it: the gradient (rise per meter along x and z) and the Laplacian (per
+/// meter) at the sample of the smooth surface through the samples, the
+/// uniform cubic B-spline whose control points are their heights. The
+/// ground's normal anywhere blends these gradients across its cell
+/// ([`crate::Tile::sample`]), as renderers shade it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SampleShape {
+    pub gradient: [f32; 2],
+    pub curvature: f32,
+}
+
+impl SampleShape {
+    /// The shape at the middle of `around`, the heights of the 3 × 3
+    /// samples centered on it, `spacing` meters apart: rows along z from
+    /// the least, each along x from the least.
+    pub fn of(around: [[f32; 3]; 3], spacing: f32) -> Self {
+        let [[a, b, c], [d, e, f], [g, h, i]] = around;
+        Self {
+            gradient: smooth_gradient(around, spacing),
+            curvature: (a + b + c + d + f + g + h + i - 8.0 * e) / (3.0 * spacing * spacing),
+        }
+    }
+
+    /// The slope's tangent: the gradient's length.
+    pub fn slope(&self) -> f32 {
+        let [x, z] = self.gradient;
+        (x * x + z * z).sqrt()
+    }
+}
+
+/// [`SampleShape::of`]'s gradient alone: the spline's central differences,
+/// weighted 1, 4 and 1 across them.
+pub(crate) fn smooth_gradient(around: [[f32; 3]; 3], spacing: f32) -> [f32; 2] {
+    let [[a, b, c], [d, _, f], [g, h, i]] = around;
+    let across = 12.0 * spacing;
+    [
+        ((c - a) + 4.0 * (f - d) + (i - g)) / across,
+        ((g - a) + 4.0 * (h - b) + (i - c)) / across,
+    ]
+}
+
 /// What a sample's masks read: its terrain-local position in meters, its
-/// height above the terrain's origin, the length of its height gradient
-/// (the slope's tangent), its curvature per meter, and the meters between
-/// samples at its level, below twice which noise fades to its mean, so
-/// coarse levels show the same patches as fine ones, filtered.
+/// height above the terrain's origin, the slope's tangent and the
+/// curvature per meter of the smooth surface there ([`SampleShape`]), and
+/// the meters between samples at its level, below twice which noise fades
+/// to its mean, so coarse levels show the same patches as fine ones,
+/// filtered.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SampleInputs {
     pub x: f32,
@@ -375,12 +472,8 @@ impl Compiled {
                 {
                     return Err(fail(&invalid.rule));
                 }
-                // As gradients: the tangent of each slope, 90 degrees
-                // standing in for a vertical wall.
-                Self::Gradient(ends.map(|degrees| {
-                    let (sin, cos) = sin_cos(min(degrees, 89.9).to_radians());
-                    sin / cos
-                }))
+                // As gradients: the tangent of each slope.
+                Self::Gradient(ends.map(tangent))
             }
             Mask::Curvature(ends) => {
                 if !finite(ends) {
@@ -731,11 +824,14 @@ struct CompiledBiome {
     layers: Vec<CompiledLayer>,
 }
 
-/// A validated surface, ready to evaluate per sample.
+/// A validated surface, ready to evaluate per sample: its biomes, then its
+/// steep layer as one more painted over them, fit as steep as the ground
+/// is, of its one material.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BiomeRules {
     authored: Biomes,
     biomes: Vec<CompiledBiome>,
+    steep: Option<Steep>,
     cost: u64,
     reads: Reads,
     placements: Vec<crate::placement::CompiledPlacement>,
@@ -744,7 +840,8 @@ pub struct BiomeRules {
 
 /// A sample's control value: the material weighing most (`a`), the one
 /// weighing second (`b`, `a` again when none), `b`'s share of the two from
-/// 0 to 255, and the biome weighing most.
+/// 0 to 255, and the biome weighing most (the steep layer counting as one
+/// after the last).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Control {
     pub a: u8,
@@ -776,7 +873,7 @@ impl Control {
 impl Biomes {
     /// Validates and prepares the surface: 1 to 255 materials with unique
     /// IDs, 1 to 255 biomes with unique IDs, each with 1 to 64 layers
-    /// naming its materials.
+    /// naming its materials, and a steep layer naming one.
     pub fn compile(&self) -> Result<BiomeRules, BiomeError> {
         let fail = |path: String, rule: &str| BiomeError {
             path,
@@ -825,6 +922,33 @@ impl Biomes {
             }
             biomes.push(CompiledBiome { fitness, layers });
         }
+        let steep = match &self.steep {
+            Some(layer) => {
+                if let Err(invalid) = layer.validate() {
+                    return Err(fail(format!("steep.{}", invalid.field), &invalid.rule));
+                }
+                let material = self
+                    .materials
+                    .iter()
+                    .position(|id| *id == layer.material)
+                    .ok_or_else(|| fail("steep.material".into(), "must name a material"))?;
+                let steep = Steep {
+                    material: material as u8,
+                    gradient: layer.slope.map(tangent),
+                };
+                // Painted over every biome, as steep as the ground is.
+                biomes.push(CompiledBiome {
+                    fitness: Compiled::Gradient(steep.gradient),
+                    layers: vec![CompiledLayer {
+                        material: steep.material,
+                        mask: Compiled::Constant(1.0),
+                        opacity: 1.0,
+                    }],
+                });
+                Some(steep)
+            }
+            None => None,
+        };
         let cost = 1 + biomes
             .iter()
             .map(|biome| {
@@ -846,6 +970,7 @@ impl Biomes {
         Ok(BiomeRules {
             authored: self.clone(),
             biomes,
+            steep,
             cost,
             reads,
             placements,
@@ -858,6 +983,12 @@ impl BiomeRules {
     /// The biomes as authored.
     pub fn authored(&self) -> &Biomes {
         &self.authored
+    }
+
+    /// The steep layer, which renderers decide at every point of the
+    /// ground; `None` without one.
+    pub fn steep(&self) -> Option<Steep> {
+        self.steep
     }
 
     /// Which of a sample's inputs the biomes' masks read.
@@ -1141,9 +1272,11 @@ record!(Biome {
     fitness,
     layers,
 });
+record!(SteepLayer { material, slope });
 record!(Biomes {
     materials,
     biomes,
+    steep,
     assets,
     placements,
     placed,

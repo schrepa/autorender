@@ -88,7 +88,7 @@ pub use steady_water::{
 };
 pub use surface::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,
-    Mask, NoiseMask, Remap, SampleInputs,
+    Mask, NoiseMask, Remap, SampleInputs, SampleShape, Steep, SteepLayer,
 };
 pub use tile::{Generator, RIVER_EDGE_FAR, RIVER_EDGE_STEP, RIVER_EDGE_ZERO, Tile, TileSample};
 pub use tile_water::{

@@ -28,6 +28,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
 use engine_math::{clamp, max, min, sin_cos};
 
+use crate::SampleShape;
 use crate::codec::{self, Codec, CodecError, Reader, Writer};
 
 /// Directions around each texel horizons are found in: direction `k` points
@@ -376,12 +377,13 @@ pub fn light(
     for z in 0..sky_count {
         for x in 0..sky_count {
             let (px, pz) = center(sky_step, x, z);
-            // The ground's normal across a texel either way.
-            texels[z * sky_count + x].normal = normalized([
-                ground.height(px - across, pz) - ground.height(px + across, pz),
-                2.0 * across,
-                ground.height(px, pz - across) - ground.height(px, pz + across),
-            ]);
+            // The normal of the ground's smooth surface across a texel
+            // either way.
+            let around = [-1.0, 0.0, 1.0].map(|dz| {
+                [-1.0, 0.0, 1.0].map(|dx| ground.height(px + dx * across, pz + dz * across))
+            });
+            let [gx, gz] = SampleShape::of(around, across).gradient;
+            texels[z * sky_count + x].normal = normalized([-gx, 1.0, -gz]);
         }
     }
     let horizon_area = horizon_count * horizon_count;

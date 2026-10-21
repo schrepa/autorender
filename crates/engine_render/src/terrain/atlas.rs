@@ -1,7 +1,8 @@
-//! The tile atlas: every resident tile's heights, normals, control values
-//! and meters to rivers' edges in four texture arrays, a layer each; which
-//! tile each layer holds, when it arrived, and the layers free; the GPU's
-//! normal maps and control values of tiles uploaded each frame.
+//! The tile atlas: every resident tile's heights, normals (the smooth
+//! surface's gradient at each sample), control values and meters to rivers'
+//! edges in four texture arrays, a layer each; which tile each layer holds,
+//! when it arrived, and the layers free; the GPU's normal maps and control
+//! values of tiles uploaded each frame.
 
 #![expect(
     clippy::expect_used,
@@ -58,8 +59,8 @@ pub(crate) struct TileAtlas {
     pub(crate) dropped: u32,
     /// Tiles the GPU gave control values this frame.
     pub(crate) controls: u32,
-    // Normal maps of tiles uploaded this frame (layer, spacing), the pass
-    // computing them, and their sampler.
+    // Normal maps of tiles uploaded this frame (layer, spacing), and the
+    // pass computing them.
     normal_jobs: Vec<(u32, f32)>,
     normal_pass: Option<(crate::pipelines::GroupLayout, wgpu::ComputePipeline)>,
     // Control values the GPU gives tiles uploaded this frame,
@@ -68,7 +69,9 @@ pub(crate) struct TileAtlas {
     control_jobs: Vec<ControlJob>,
     control_pass: Option<(crate::pipelines::GroupLayout, wgpu::ComputePipeline)>,
     surfaces: HashMap<u64, (Arc<SurfaceData>, wgpu::Buffer)>,
-    pub(super) normal_sampler: wgpu::Sampler,
+    // The sky maps' sampler, linear; and the nearest one the control
+    // values and normal maps gather through.
+    pub(super) sky_sampler: wgpu::Sampler,
     pub(super) control_sampler: wgpu::Sampler,
     /// The tiles that arrived, left, were replaced or finished fading in
     /// this frame, whose pages the runtime virtual texture drops, and the
@@ -98,13 +101,14 @@ impl TileAtlas {
             control_jobs: Vec::new(),
             control_pass: None,
             surfaces: HashMap::default(),
-            // Nearest texels: control values gather as stored.
+            // Nearest texels: control values and normal maps gather as
+            // stored.
             control_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/terrain-control-sampler"),
                 ..Default::default()
             }),
-            normal_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("engine/terrain-normal-sampler"),
+            sky_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("engine/terrain-sky-sampler"),
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()

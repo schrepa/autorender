@@ -358,6 +358,7 @@ impl GroundCoverPass {
                     crate::buffers::entry("args", &self.args),
                     crate::buffers::entry("deformation", sources.deformation),
                     ("macro_maps", crate::pipelines::view(sources.macro_maps)),
+                    ("normals", crate::pipelines::view(sources.normals)),
                 ],
             );
             self.grow_group.set(key, group);

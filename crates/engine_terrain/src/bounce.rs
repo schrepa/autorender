@@ -34,7 +34,7 @@ use engine_math::{clamp, max, min, sin_cos};
 use crate::codec::{self, Codec, CodecError, Reader, Writer};
 use crate::gpu::control_at;
 use crate::lighting::{Ground, normalized, unorm};
-use crate::{BiomeRules, Layers};
+use crate::{BiomeRules, Layers, SampleShape};
 
 /// The probes' heights above the ground, in meters: the lower where the
 /// ground's own surfaces and what stands on it read their light, the upper
@@ -442,9 +442,9 @@ pub fn bounce(
 }
 
 /// The ground's surface planes, `texels` a side over `extent`: each texel's
-/// control value as `surface`'s rules give it there, from the ground's
-/// heights a texel (or a sample, whichever is wider) around it, and its
-/// normal across the same.
+/// control value as `surface`'s rules give it there, from the smooth
+/// surface through the ground's heights a texel (or a sample, whichever is
+/// wider) around it, and that surface's normal.
 fn surface_planes(
     ground: &Ground<'_>,
     extent: [f32; 2],
@@ -460,19 +460,19 @@ fn surface_planes(
     for z in 0..texels {
         for x in 0..texels {
             let (px, pz) = ((x as f32 + 0.5) * step[0], (z as f32 + 0.5) * step[1]);
-            let height = ground.height(px, pz);
-            let west = ground.height(px - across, pz);
-            let east = ground.height(px + across, pz);
-            let north = ground.height(px, pz - across);
-            let south = ground.height(px, pz + across);
+            let around = [-1.0, 0.0, 1.0].map(|dz| {
+                [-1.0, 0.0, 1.0].map(|dx| ground.height(px + dx * across, pz + dz * across))
+            });
+            let shape = SampleShape::of(around, across);
             let control = control_at(
                 (layers, rules),
                 [px + offset.x, pz + offset.y],
-                [height, west, east, north, south],
+                (around[1][1], shape),
                 across,
                 &mut weights,
             );
-            let normal = normalized([west - east, 2.0 * across, north - south]);
+            let [gx, gz] = shape.gradient;
+            let normal = normalized([-gx, 1.0, -gz]);
             let at = z * texels + x;
             planes[at] = control.a;
             planes[area + at] = control.b;

@@ -4,8 +4,8 @@
 use super::*;
 
 /// The surface of a terrain at a point: its terrain, world height, the
-/// normal of its triangle, whether its cell is a hole, and the level of the
-/// tile it came from (0 is the finest).
+/// normal of its smooth surface there, whether its cell is a hole, and the
+/// level of the tile it came from (0 is the finest).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TerrainSample {
     pub terrain: Entity,

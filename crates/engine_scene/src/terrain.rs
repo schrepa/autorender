@@ -111,6 +111,9 @@ fn is_true(value: &bool) -> bool {
 pub struct SceneTerrainSurface {
     pub materials: Vec<SceneTerrainMaterial>,
     pub biomes: Vec<Biome>,
+    /// The material covering its steep ground over every biome.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steep: Option<engine_core::terrain_data::SteepLayer>,
     /// ID of the document material its roads' bridges draw
     /// with; omitted, a weathered stone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -262,7 +265,7 @@ pub struct SceneTerrainMaterial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<Cover>,
     /// Meters its maps' heights span where the ground's relief shows:
-    /// 0, flat, to 1; top projections only.
+    /// 0, flat, to 1.
     #[serde(default, skip_serializing_if = "is_flat")]
     pub relief: f32,
     /// Meters tracks sink it at most: 0, rigid, to 2.
@@ -539,6 +542,7 @@ impl SceneTerrain {
                 .map(|material| material.id.clone())
                 .collect(),
             biomes: surface.biomes.clone(),
+            steep: surface.steep.clone(),
             assets: surface
                 .assets
                 .iter()
@@ -712,6 +716,7 @@ impl SceneTerrain {
                     })
                     .collect(),
                 biomes: authored.biomes.clone(),
+                steep: authored.steep.clone(),
                 bridge: terrain.surface.bridge.and_then(&materials),
                 assets: authored
                     .assets

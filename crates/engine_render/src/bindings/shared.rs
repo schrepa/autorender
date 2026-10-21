@@ -68,7 +68,7 @@ shared_groups! {
         ],
         terrain: 17..33 [
             terrain_heights, terrain_view, terrain, terrain_holes, terrain_normals,
-            terrain_normal_sampler, terrain_directory, terrain_control, terrain_palette,
+            terrain_sky_sampler, terrain_directory, terrain_control, terrain_palette,
             terrain_albedo, terrain_material_data, terrain_vt_sheets, terrain_material_sampler,
             terrain_sky, terrain_deformation, terrain_control_sampler
         ],

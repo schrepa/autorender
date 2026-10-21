@@ -589,6 +589,14 @@ fn terrain_uniform(
         vt_scale: [0.0; 4],
         vt_layout: [0; 4],
         macro_map: [0; 4],
+        steep: terrain.steep.map_or([0.0; 4], |steep| {
+            [
+                f32::from(steep.material) + 1.0,
+                steep.gradient[0],
+                steep.gradient[1],
+                0.0,
+            ]
+        }),
     };
     (uniform, anchors)
 }

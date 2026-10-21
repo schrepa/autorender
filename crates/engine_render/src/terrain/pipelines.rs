@@ -133,8 +133,8 @@ impl TerrainPipelines {
                     crate::buffers::entry("terrain_holes", &tables.holes),
                     ("terrain_normals", crate::pipelines::view(normals)),
                     (
-                        "terrain_normal_sampler",
-                        crate::pipelines::sampler(&sources.atlas.normal_sampler),
+                        "terrain_sky_sampler",
+                        crate::pipelines::sampler(&sources.atlas.sky_sampler),
                     ),
                     crate::buffers::entry("terrain_directory", &tables.directory),
                     ("terrain_control", crate::pipelines::view(control)),

@@ -226,7 +226,7 @@ const fn sampler(binding: u32, name: &'static str, sampling: Sampling, stages: S
     bind(binding, name, Kind::Sampler(sampling), stages)
 }
 
-use Format::{R32Float, R32Uint, Rgba8Snorm, Rgba16Float};
+use Format::{R32Float, R32Uint, Rgba16Float};
 use Sample::{Depth, Float, Uint, Unfilterable};
 use Sampling::{Comparison, Filtering, NonFiltering};
 use View::{Cube, CubeArray, D2, D2Array, D3};
@@ -749,8 +749,10 @@ tables! {
                 VF,
             ),
             read(20, "terrain_holes", F),
-            texture(21, "terrain_normals", Float, D2Array, F),
-            sampler(22, "terrain_normal_sampler", Filtering, F),
+            // Each tile's normal maps, gathered through the control
+            // values' sampler; and the sky maps' sampler.
+            texture(21, "terrain_normals", Uint, D2Array, F),
+            sampler(22, "terrain_sky_sampler", Filtering, F),
             read(23, "terrain_directory", F),
             texture(24, "terrain_control", Uint, D2Array, F),
             uniform_of(25, "terrain_palette", terrain::PALETTE_BYTES, F),
@@ -761,8 +763,7 @@ tables! {
             texture(27, "terrain_material_data", Float, D2Array, F),
             texture(28, "terrain_vt_sheets", Float, D2Array, F),
             sampler(29, "terrain_material_sampler", Filtering, F),
-            // Each terrain's sky visibility map, read through
-            // the normals' sampler.
+            // Each terrain's sky visibility map.
             texture(30, "terrain_sky", Float, D2Array, F),
             // Runtime deformation's map.
             read(31, "terrain_deformation", F),
@@ -947,7 +948,7 @@ tables! {
         bindings: &[
             texture(0, "heights", Unfilterable, D2Array, C),
             uniform_of(1, "job", 16, C),
-            bind(2, "normals", Kind::Storage(Rgba8Snorm), C),
+            bind(2, "normals", Kind::Storage(R32Uint), C),
         ],
     };
 
@@ -1003,7 +1004,7 @@ tables! {
     };
 
     /// Ground cover's growth (`cover_grow.wgsl`): terrain's
-    /// height and control arrays, directory, palette and covers, each
+    /// height, control and normal arrays, directory, palette and covers, each
     /// terrain's growth at a dynamic offset, the blades and their counts, and
     /// the indirect draw's arguments.
     const COVER_GROW: Table = Table {
@@ -1025,6 +1026,9 @@ tables! {
             // The terrains' macro colors: they tint blades as they do the
             // ground.
             texture(10, "macro_maps", Float, D2Array, C),
+            // The normal maps: blades stand along the ground's smooth
+            // surface, as it shades.
+            texture(11, "normals", Uint, D2Array, C),
         ],
     };
 

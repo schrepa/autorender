@@ -60,6 +60,10 @@ struct TerrainUniform {
     // Its macro colors' layer of `terrain_macro` plus one (0 until they
     // arrive).
     macro_map: vec4<u32>,
+    // Its surface's steep layer, which fragments decide at every point of
+    // the ground (`engine_terrain::Steep`): its material plus one (0
+    // without one) and the tangents of the slopes its share rises between.
+    steep: vec4<f32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;
 
@@ -87,8 +91,8 @@ fn terrain_load(layer: u32, texel: vec2<u32>) -> f32 {
 }
 
 // A vertex relative to the terrain's eye, and where it lies in its tile's
-// cells. Fragments take their normals from the terrain's normal maps, not
-// from the level drawn.
+// cells. Fragments take their normals from the smooth surface of the
+// terrain's normal maps, not from the level drawn.
 struct TerrainVertex {
     relative: vec3<f32>,
     cell: vec2<f32>,

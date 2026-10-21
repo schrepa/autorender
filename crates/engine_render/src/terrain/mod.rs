@@ -14,9 +14,10 @@
 //! long shadows through their horizon maps, only the near
 //! cascades draw terrain, near their receivers.
 //!
-//! Each tile's normals are computed once on upload into a parallel array;
-//! fragments read them through a directory of every level's resident tiles,
-//! from the finest level loaded at their distance whatever level the
+//! Each tile's normal map, the gradient of the smooth surface through its
+//! heights at each sample, is computed once on upload into a parallel
+//! array; fragments blend it through a directory of every level's resident
+//! tiles, from the finest level loaded at their distance whatever level the
 //! geometry draws at, so light and materials hold still as levels of
 //! detail hand over.
 //!
@@ -84,8 +85,9 @@ const SLOT: u64 = 256;
 /// The camera's view, then a reflection probe's six faces.
 const VIEWS: u64 = 7;
 pub(crate) const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
-/// Each tile's normals, filtered.
-const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Snorm;
+/// Each tile's normals: the smooth surface's rise along x and z at each
+/// sample, the two halves of a float, gathered and blended in shaders.
+const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// Each tile's control values: its samples' two strongest
 /// materials, their blend and biome, read texel by texel.
 const CONTROL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
@@ -130,6 +132,7 @@ pub(crate) struct TerrainWaterDraws<'a> {
 pub(crate) struct CoverSources<'a> {
     pub heights: &'a wgpu::TextureView,
     pub control: &'a wgpu::TextureView,
+    pub normals: &'a wgpu::TextureView,
     pub directory: &'a wgpu::Buffer,
     pub palette: &'a wgpu::Buffer,
     pub covers: &'a wgpu::Buffer,
@@ -459,16 +462,17 @@ impl TerrainPass {
         self.atlas.warm(device);
     }
 
-    /// What ground cover's growth reads: the height and
-    /// control arrays, the directory, palette and covers, and generations
+    /// What ground cover's growth reads: the height, control
+    /// and normal arrays, the directory, palette and covers, and generations
     /// advancing when any is another buffer or texture; `None` before
     /// tiles arrive.
     pub(crate) fn cover_sources(&self) -> Option<CoverSources<'_>> {
-        let (heights, _, control) = self.atlas.views()?;
+        let (heights, normals, control) = self.atlas.views()?;
         let tables = &self.tables;
         Some(CoverSources {
             heights,
             control,
+            normals,
             directory: &tables.directory,
             palette: &tables.palette,
             covers: &tables.covers,

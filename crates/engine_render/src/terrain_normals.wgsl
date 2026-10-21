@@ -1,7 +1,10 @@
-// Terrain normal maps: a tile's normals from its heights,
-// once when the tile uploads, into the same layer of the normal array.
-// Fragments read them whatever level of detail the geometry draws at, so
-// the ground's light holds still as levels hand over.
+// Terrain normal maps: a tile's smooth surface at its samples
+// (`terrain_tile.wgsl`'s `tile_shape`), once when the tile uploads, into the
+// same layer of the normal array: each texel the surface's gradient there,
+// its rise along x and z as the two halves of a float, precise on the
+// gentlest slopes. Fragments blend the gradients around them whatever level
+// of detail the geometry draws at, as `engine_terrain::Tile::sample` blends
+// them for gameplay, so the ground's light holds still as levels hand over.
 
 struct Job {
     // The layer, and the tile's sample spacing (as bits).
@@ -12,19 +15,13 @@ struct Job {
 
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
 @group(0) @binding(1) var<uniform> job: Job;
-@group(0) @binding(2) var normals: texture_storage_2d<rgba8snorm, write>;
+@group(0) @binding(2) var normals: texture_storage_2d<r32uint, write>;
 
 @compute @workgroup_size(16, 16)
 fn tile_normals(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= TILE_STRIDE || id.y >= TILE_STRIDE {
         return;
     }
-    // Border texels take their neighbor's normal; only samples 0 to 256 are
-    // ever read.
-    let x = clamp(id.x, 1u, TILE_STRIDE - 2u);
-    let z = clamp(id.y, 1u, TILE_STRIDE - 2u);
-    let spacing = bitcast<f32>(job.spacing);
-    let normal = normalize(vec3<f32>(tile_height(x - 1u, z) - tile_height(x + 1u, z), 2.0 * spacing,
-        tile_height(x, z - 1u) - tile_height(x, z + 1u)));
-    textureStore(normals, id.xy, vec4<f32>(normal, 0.0));
+    let gradient = tile_shape(id.x, id.y, bitcast<f32>(job.spacing)).xy;
+    textureStore(normals, id.xy, vec4<u32>(pack2x16float(gradient), 0u, 0u, 0u));
 }

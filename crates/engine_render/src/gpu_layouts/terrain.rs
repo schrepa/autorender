@@ -67,5 +67,6 @@ gpu_structs! {
         pub vt_scale: [f32; 4],
         pub vt_layout: [u32; 4],
         pub macro_map: [u32; 4],
+        pub steep: [f32; 4],
     }
 }

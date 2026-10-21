@@ -97,6 +97,9 @@ pub struct RenderTerrain {
     /// How each of its surface's materials looks, by the index tiles'
     /// control values hold.
     pub surface: Vec<SurfaceMaterial>,
+    /// Its surface's steep layer, which renderers decide at every point of
+    /// the ground; `None` without one.
+    pub steep: Option<engine_terrain::Steep>,
     /// Each surface material's engine material, where it names one that
     /// exists.
     pub maps: Vec<Option<RenderSurfaceMaps>>,
@@ -196,6 +199,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 origin: Vec3::ZERO,
                 pyramid: state.terrain.pyramid,
                 surface: Vec::new(),
+                steep: None,
                 maps: Vec::new(),
                 assets: Vec::new(),
                 thinning: Vec::new(),
@@ -223,6 +227,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         render.origin = state.terrain.origin;
         render.pyramid = state.terrain.pyramid;
         render.surface.clone_from(&state.terrain.surface.materials);
+        render.steep = state.terrain.surface.rules.steep();
         render.assets.clear();
         for asset in &state.terrain.surface.assets {
             render

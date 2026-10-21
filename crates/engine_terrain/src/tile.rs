@@ -11,7 +11,7 @@ use engine_math::{clamp, max, min};
 use crate::hydrology::RIVER_FAR;
 use crate::layers::{Layer, Layers, state_len};
 use crate::rivers::RiverRaster;
-use crate::surface::{BiomeRules, Control, RowInputs, RowScratch};
+use crate::surface::{BiomeRules, Control, RowInputs, RowScratch, SampleShape, smooth_gradient};
 use crate::tile_water::{TileWater, WaterPoint};
 use crate::{
     HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placing, Pyramid, TILE_QUADS,
@@ -99,8 +99,8 @@ crate::codec::record!(PatchCulling {
 /// Slopes' steps: 256 a unit of rise per meter.
 const SLOPE_STEPS: f32 = 256.0;
 
-/// The surface at a point: its height, the normal of its triangle and
-/// whether its cell is a hole.
+/// The surface at a point: its height on its triangle, the normal of the
+/// smooth surface there ([`SampleShape`]) and whether its cell is a hole.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TileSample {
     pub height: f32,
@@ -499,8 +499,11 @@ impl Tile {
         Some((i, j, u - i as f32, v - j as f32))
     }
 
-    /// The surface at `local`, meters from the tile's first corner, on the
-    /// triangles every consumer splits cells into; `None` outside the tile.
+    /// The surface at `local`, meters from the tile's first corner: its
+    /// height on the triangles every consumer splits cells into, and the
+    /// normal of the smooth surface there, the gradients at the cell's four
+    /// samples blended across it as renderers shade the ground; `None`
+    /// outside the tile.
     pub fn sample(&self, local: Vec2) -> Option<TileSample> {
         let (i, j, fu, fv) = self.cell(local)?;
         let corners = [
@@ -509,13 +512,24 @@ impl Tile {
             self.height(i, j + 1),
             self.height(i + 1, j + 1),
         ];
-        let [h00, h10, h01, h11] = corners;
-        let slope = if fu + fv <= 1.0 {
-            Vec2::new(h10 - h00, h01 - h00)
-        } else {
-            Vec2::new(h11 - h01, h11 - h10)
+        // The 4 × 4 samples around the cell, each of its corners' gradients
+        // from the 3 × 3 around that corner.
+        let around: [[f32; 4]; 4] =
+            [-1, 0, 1, 2].map(|dz| [-1, 0, 1, 2].map(|dx| self.height(i + dx, j + dz)));
+        let gradient = |x: usize, z: usize| {
+            let [gx, gz] = smooth_gradient(
+                [0, 1, 2].map(|row| [0, 1, 2].map(|column| around[z + row][x + column])),
+                self.spacing,
+            );
+            Vec2::new(gx, gz)
         };
-        let normal = Vec3::new(-slope.x / self.spacing, 1.0, -slope.y / self.spacing).normalize();
+        let blend = |a: Vec2, b: Vec2, t: f32| a + (b - a) * t;
+        let slope = blend(
+            blend(gradient(0, 0), gradient(1, 0), fu),
+            blend(gradient(0, 1), gradient(1, 1), fu),
+            fv,
+        );
+        let normal = Vec3::new(-slope.x, 1.0, -slope.y).normalize();
         Some(TileSample {
             height: on_triangle(corners, fu, fv),
             normal,
@@ -822,8 +836,9 @@ impl Generator {
     }
 
     /// Control values of stored row `row` (0 to 258, samples -1 to 257),
-    /// from the heights around each sample; border samples read their
-    /// nearest neighbors inside.
+    /// from the smooth surface through the heights around each sample
+    /// ([`SampleShape`]); border samples read their nearest neighbors
+    /// inside.
     fn surface_row(&mut self, row: usize) {
         let stride = TILE_STRIDE as usize;
         let Some(surface) = self.surface.clone() else {
@@ -849,14 +864,10 @@ impl Generator {
             let (left, right) = (column.saturating_sub(1), (column + 1).min(stride - 1));
             let at = |r: usize, c: usize| heights[r * stride + c];
             let height = at(row, column);
-            let (west, east, north, south) = (
-                at(row, left),
-                at(row, right),
-                at(up, column),
-                at(down, column),
+            let shape = SampleShape::of(
+                [up, row, down].map(|r| [left, column, right].map(|c| at(r, c))),
+                spacing,
             );
-            let gx = (east - west) / (2.0 * spacing);
-            let gz = (south - north) / (2.0 * spacing);
             let x = self.xs[column];
             // Surroundings lose the masks of the bakes and
             // roads they fade out.
@@ -866,10 +877,8 @@ impl Generator {
                 _ => HydrologySample::default(),
             };
             inputs.height.push(height);
-            inputs.gradient.push((gx * gx + gz * gz).sqrt());
-            inputs
-                .curvature
-                .push((west + east + north + south - 4.0 * height) / (spacing * spacing));
+            inputs.gradient.push(shape.slope());
+            inputs.curvature.push(shape.curvature);
             inputs.water.push(HydrologySample {
                 flow: water.flow * shown,
                 wetness: water.wetness * shown,

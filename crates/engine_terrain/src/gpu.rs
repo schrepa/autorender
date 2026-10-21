@@ -10,7 +10,7 @@
 
 use crate::hydrology::{FLOW_RANGE, Hydrology, LAKE_RANGE, RIVER_FAR, WETNESS_RANGE};
 use crate::path::PathProfile;
-use crate::surface::{BiomeRules, Control, SampleInputs};
+use crate::surface::{BiomeRules, Control, SampleInputs, SampleShape};
 use crate::{HydrologySample, Layers, PathSample, TILE_STRIDE, Tile};
 
 /// Opcodes of a surface program's masks, in postfix order: each leaf pushes
@@ -171,12 +171,9 @@ pub fn sample_control(
     let (up, down) = (row.saturating_sub(1), (row + 1).min(stride - 1));
     let (left, right) = (column.saturating_sub(1), (column + 1).min(stride - 1));
     let at = |r: usize, c: usize| heights[r * stride + c];
-    let height = at(row, column);
-    let (west, east, north, south) = (
-        at(row, left),
-        at(row, right),
-        at(up, column),
-        at(down, column),
+    let shape = SampleShape::of(
+        [up, row, down].map(|r| [left, column, right].map(|c| at(r, c))),
+        spacing,
     );
     let x = (first[0] + column as i64 - 1) as f32 * spacing;
     let z = (first[1] + row as i64 - 1) as f32 * spacing;
@@ -184,22 +181,22 @@ pub fn sample_control(
     control_with(
         (layers, rules),
         [x, z],
-        [height, west, east, north, south],
+        (at(row, column), shape),
         (spacing, river),
         &mut Vec::new(),
     )
 }
 
 /// The control value `rules` give ground over `layers` at `(x, z)` in the
-/// layers' frame, whose heights there and `spacing` meters to its west,
-/// east, north and south are `heights`, in that order: the inputs a tile's
-/// sample takes, the meters to rivers' edges read from the rivers there,
-/// evaluated as [`sample_control`] evaluates them. `weights` is scratch
-/// space, reused across samples.
+/// layers' frame, whose height there is `height` and whose smooth surface
+/// there, through heights `spacing` meters apart, has `shape`: the inputs a
+/// tile's sample takes, the meters to rivers' edges read from the rivers
+/// there, evaluated as [`sample_control`] evaluates them. `weights` is
+/// scratch space, reused across samples.
 pub(crate) fn control_at(
     (layers, rules): (&Layers, &BiomeRules),
     [x, z]: [f32; 2],
-    heights: [f32; 5],
+    (height, shape): (f32, SampleShape),
     spacing: f32,
     weights: &mut Vec<(u8, f32)>,
 ) -> Control {
@@ -207,7 +204,7 @@ pub(crate) fn control_at(
         Some(water) if rules.reads().water => water.rivers.edge(x, z, spacing),
         _ => RIVER_FAR,
     };
-    control_with((layers, rules), [x, z], heights, (spacing, river), weights)
+    control_with((layers, rules), [x, z], (height, shape), (spacing, river), weights)
 }
 
 /// [`control_at`] at samples `spacing` meters apart, with the meters to the
@@ -215,12 +212,10 @@ pub(crate) fn control_at(
 fn control_with(
     (layers, rules): (&Layers, &BiomeRules),
     [x, z]: [f32; 2],
-    [height, west, east, north, south]: [f32; 5],
+    (height, shape): (f32, SampleShape),
     (spacing, river): (f32, f32),
     weights: &mut Vec<(u8, f32)>,
 ) -> Control {
-    let gx = (east - west) / (2.0 * spacing);
-    let gz = (south - north) / (2.0 * spacing);
     let reads = rules.reads();
     let shown = layers.shown(x, z);
     let water = match layers.hydrology() {
@@ -231,8 +226,8 @@ fn control_with(
         x,
         z,
         height,
-        gradient: (gx * gx + gz * gz).sqrt(),
-        curvature: (west + east + north + south - 4.0 * height) / (spacing * spacing),
+        gradient: shape.slope(),
+        curvature: shape.curvature,
         spacing,
         water: HydrologySample {
             flow: water.flow * shown,

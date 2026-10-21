@@ -158,15 +158,17 @@ settings! {
         pub roughness: f32 = 0.9 => range(0.03, 1.0),
         /// The meters its textures repeat over.
         pub tiling: f32 = 4.0 => range(0.01, 1000.0),
-        /// How sharply its height map wins where it blends with another: 0
-        /// even, 1 sharpest.
+        /// How sharply its height map wins where it blends with another, as
+        /// far as its maps show: 0 even, 1 sharpest. Where they no longer
+        /// show, it blends by its share alone.
         pub height_contrast: f32 = 0.5 => range(0.0, 1.0),
         /// Whether steep ground projects it from the side.
         pub projection: SurfaceProjection = SurfaceProjection::Top => any,
         /// The cover growing where it lies.
         pub cover: Option<crate::Cover> = None => any,
         /// The meters its maps' heights span where relief sinks the ground
-        /// between its stones and tufts: 0 flat. Top projections only.
+        /// between its stones, tufts and ledges: 0 flat. Biplanar ones sink
+        /// it across their planes, as on rock faces.
         pub relief: f32 = 0.0 => range(0.0, 1.0),
         /// The meters tracks sink it at most: 0 rigid.
         pub deform: f32 = 0.0 => range(0.0, 2.0),
@@ -275,8 +277,8 @@ impl TerrainSurface {
     }
 
     /// The default surface's rules as authored: grass, bare dirt where noise
-    /// and slope open it up, rock on steep ground and snow above
-    /// `snow_height` meters on gentler slopes.
+    /// opens it up, snow above `snow_height` meters, and rock over them
+    /// wherever the ground is steep.
     pub fn default_rules(snow_height: f32) -> Biomes {
         let noise = |wavelength: f32, seed: u32| {
             Mask::Noise(NoiseMask {
@@ -314,37 +316,29 @@ impl TerrainSurface {
                             Mask::Add(vec![
                                 scaled(noise(60.0, 1), 0.7),
                                 scaled(noise(9.0, 2), 0.3),
-                                scaled(Mask::Slope([10.0, 40.0]), 0.5),
                             ]),
-                            0.55,
-                            0.75,
-                        ),
-                    ),
-                    layer(
-                        "rock",
-                        remap(
-                            Mask::Add(vec![Mask::Slope([25.0, 45.0]), scaled(noise(60.0, 1), 0.3)]),
-                            0.55,
-                            0.75,
+                            0.58,
+                            0.72,
                         ),
                     ),
                     layer(
                         "snow",
-                        Mask::Multiply(vec![
-                            remap(
-                                Mask::Add(vec![
-                                    Mask::Height([snow_height - 100.0, snow_height + 100.0]),
-                                    scaled(noise(60.0, 3), 0.4),
-                                    Mask::Constant(-0.2),
-                                ]),
-                                0.4,
-                                0.6,
-                            ),
-                            Mask::Invert(Box::new(Mask::Slope([35.0, 50.0]))),
-                        ]),
+                        remap(
+                            Mask::Add(vec![
+                                Mask::Height([snow_height - 100.0, snow_height + 100.0]),
+                                scaled(noise(60.0, 3), 0.4),
+                                Mask::Constant(-0.2),
+                            ]),
+                            0.4,
+                            0.6,
+                        ),
                     ),
                 ],
             }],
+            steep: Some(engine_terrain::SteepLayer {
+                material: "rock".into(),
+                slope: [28.0, 35.0],
+            }),
         }
     }
 
