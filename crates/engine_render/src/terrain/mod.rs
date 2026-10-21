@@ -24,9 +24,9 @@
 //! look up (`tables`), the frame's patches (`patches`, `culling`) and the
 //! pipelines and terrain group (`pipelines`), beside tiles' water
 //! (`water_blocks`), the material maps, the sky and horizon maps its
-//! lighting uploads, its bounce light, the runtime virtual texture and
-//! deformation map. Debug builds check what holds between them after every
-//! preparation (`invariants`).
+//! lighting uploads, its bounce light, its macro colors, the runtime
+//! virtual texture and deformation map. Debug builds check what holds
+//! between them after every preparation (`invariants`).
 
 use engine_core::collections::HashMap;
 use std::ops::Range;
@@ -52,6 +52,7 @@ use crate::mipmaps::MipGenerator;
 use crate::render_graph::Targets;
 use crate::terrain_bounce::{Bounce, SceneSources, TerrainSources};
 use crate::terrain_horizons::Horizons;
+use crate::terrain_macro::MacroMaps;
 use crate::terrain_maps::TerrainMaps;
 use crate::terrain_sky::SkyMaps;
 
@@ -130,9 +131,9 @@ pub(crate) struct CoverSources<'a> {
     /// Runtime deformation's map and its shading inputs.
     pub deformation: &'a wgpu::Buffer,
     pub shading: crate::deformation::DeformationShading,
-    /// The terrains' sky maps, whose large-scale variety tints blades as
-    /// it does the ground.
-    pub sky: &'a wgpu::TextureView,
+    /// The terrains' macro colors, which tint blades as they do the
+    /// ground.
+    pub macro_maps: &'a wgpu::TextureView,
     pub generation: (u64, u64, u64, u64),
     /// Advances whenever the directory's resident tiles change.
     pub revision: u64,
@@ -242,6 +243,8 @@ pub(crate) struct TerrainPass {
     pub(crate) sky: SkyMaps,
     /// Bounce light, relit every frame around the camera.
     pub(crate) bounce: Bounce,
+    /// Macro colors.
+    pub(crate) macro_maps: MacroMaps,
     /// Runtime deformation's map.
     pub(crate) deformation: crate::deformation::DeformationPass,
     /// The runtime virtual texture.
@@ -261,6 +264,7 @@ impl TerrainPass {
             maps: TerrainMaps::new(device, queue),
             sky: SkyMaps::new(device, queue),
             bounce: Bounce::new(device, queue),
+            macro_maps: MacroMaps::new(device, queue),
             deformation: crate::deformation::DeformationPass::new(device),
             vt: crate::terrain_vt::VirtualTexture::new(device),
             water: water_blocks::WaterBlocks::new(device),
@@ -277,13 +281,14 @@ impl TerrainPass {
         self.atlas.slots.len() as u32
     }
 
-    /// Bytes of the height, normal and control arrays, the horizon and sky
-    /// maps, bounce light's and the surface materials' maps.
+    /// Bytes of the height, normal and control arrays, the horizon, sky and
+    /// macro color maps, bounce light's and the surface materials' maps.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.atlas.capacity_bytes()
             + self.horizons.capacity_bytes()
             + self.sky.capacity_bytes()
             + self.bounce.capacity_bytes()
+            + self.macro_maps.capacity_bytes()
             + self.maps.capacity_bytes()
             + self.deformation.capacity_bytes()
             + self.vt.capacity_bytes()
@@ -347,6 +352,7 @@ impl TerrainPass {
         let windows = self.bounce.windows();
         (self.horizons).prepare(device, queue, terrains, horizon_settings, windows);
         self.sky.prepare(device, queue, terrains, &views.settings);
+        self.macro_maps.prepare(device, queue, terrains);
         let lighting = (&self.horizons, &self.sky, &self.tables.palette_bases[..]);
         self.bounce.prepare(device, queue, terrains, lighting);
         // The runtime virtual texture.
@@ -356,8 +362,7 @@ impl TerrainPass {
             queue,
             terrains,
             (views.eye, &views.settings),
-            &self.maps,
-            &self.sky,
+            (&self.maps, &self.macro_maps),
             &self.atlas.changed,
             (
                 &tables.directory,
@@ -378,6 +383,7 @@ impl TerrainPass {
             atlas: &self.atlas,
             tables: &self.tables,
             sky: &self.sky,
+            macro_maps: &self.macro_maps,
             horizons: &self.horizons,
             shading: self.deformation.shading(),
             textures: &textures,
@@ -396,6 +402,7 @@ impl TerrainPass {
                 patches: &self.patches,
                 maps: &self.maps,
                 sky: &self.sky,
+                macro_maps: &self.macro_maps,
                 deformation: &self.deformation,
             },
         );
@@ -440,12 +447,12 @@ impl TerrainPass {
             covers: &tables.covers,
             deformation: self.deformation.map().0,
             shading: self.deformation.shading(),
-            sky: self.sky.view(),
+            macro_maps: self.macro_maps.view(),
             generation: (
                 self.atlas.generation,
                 tables.directory_generation,
                 self.deformation.map().1,
-                self.sky.generation(),
+                self.macro_maps.generation(),
             ),
             revision: tables.directory_revision,
         })
@@ -459,8 +466,8 @@ impl TerrainPass {
 
     /// Terrain `index`'s place in the directory and palette, its densest
     /// cover (blades per square meter) and that cover's mean blade height
-    /// (meters), as the last preparation wrote them, and its sky map's
-    /// first layer plus one (0 until it arrives).
+    /// (meters), as the last preparation wrote them, and its macro colors'
+    /// layer plus one (0 until they arrive).
     pub(crate) fn cover_terrain(&self, index: usize) -> (u32, u32, [f32; 2], u32) {
         let tables = &self.tables;
         (
@@ -471,7 +478,7 @@ impl TerrainPass {
                 .get(index)
                 .copied()
                 .unwrap_or([0.0; 2]),
-            self.sky.layer(index),
+            self.macro_maps.layer(index),
         )
     }
 

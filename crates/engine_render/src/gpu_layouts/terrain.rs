@@ -66,5 +66,6 @@ gpu_structs! {
         pub vt: [u32; 4],
         pub vt_scale: [f32; 4],
         pub vt_layout: [u32; 4],
+        pub macro_map: [u32; 4],
     }
 }

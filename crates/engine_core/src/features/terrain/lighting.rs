@@ -36,7 +36,8 @@ impl Lighting {
 }
 
 /// The level a terrain's lighting reads: the finest of the coarsest
-/// `pinned` levels, kept resident over the whole terrain.
+/// `pinned` levels, kept resident over the whole terrain. Its bounce
+/// transfer and macro colors read the same level.
 pub(super) fn lighting_level(pyramid: &Pyramid, pinned: u32) -> u32 {
     pyramid.levels().saturating_sub(pinned.max(1))
 }

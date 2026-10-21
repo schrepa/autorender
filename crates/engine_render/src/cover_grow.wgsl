@@ -20,8 +20,8 @@
 // rise as the eye nears instead of popping in. Blades stand on the ground
 // as the terrain draws it, morphing between its levels.
 // Survivors in the view append to the frame's blades; past capacity they
-// are only counted. Blades take the ground's large-scale variety from its
-// sky map, as the ground does (`terrain_variety.wgsl`).
+// are only counted. Blades take the tint of the ground's macro colors, as
+// the ground does (`terrain_variety.wgsl`).
 
 struct Grow {
     // The terrain's origin (world) and its level-0 sample spacing.
@@ -36,8 +36,8 @@ struct Grow {
     // capacity.
     counts: vec4<u32>,
     // The density scale, how many of each finest cell's candidates this
-    // tier tries, the terrain's sky map's first layer plus one
-    // (0 until it arrives), and the tallest blade any material grows.
+    // tier tries, the terrain's macro colors' layer plus one
+    // (0 until they arrive), and the tallest blade any material grows.
     scale: vec4<f32>,
     // This tier: the meters from the eye it starts at, the
     // radius, where tiers end (0 without tiers), and how many level-0
@@ -109,7 +109,7 @@ const PALETTE_ENTRIES: u32 = 170u;
 @group(0) @binding(6) var<storage, read_write> blades: array<CoverBlade>;
 @group(0) @binding(7) var<storage, read_write> counts: Counts;
 @group(0) @binding(9) var<storage, read> deformation: array<u32>;
-@group(0) @binding(10) var sky_maps: texture_2d_array<f32>;
+@group(0) @binding(10) var macro_maps: texture_2d_array<f32>;
 
 const TAU: f32 = 6.2831853;
 
@@ -336,29 +336,28 @@ fn pack_color(color: vec3<f32>, w: f32) -> u32 {
     return pack4x8unorm(vec4<f32>(sqrt(saturate(color)), saturate(w)));
 }
 
-// The ground's large-scale variety at terrain-local `local`:
-// its sky map's hollows and ridges, interpolated between texels;
-// level ground before the map arrives.
-fn variety_at(local: vec2<f32>) -> vec2<f32> {
+// The ground's macro colors at terrain-local `local`, interpolated
+// between their texels; ground as it is before they arrive.
+fn colors_at(local: vec2<f32>) -> vec4<f32> {
     let layer = u32(grow.scale.z);
     if layer == 0u {
-        return vec2<f32>(0.5);
+        return vec4<f32>(0.5);
     }
     let base = grow.counts.x;
     let extent = vec2<f32>(f32(directory[base + 1u]), f32(directory[base + 2u])) * 256.0
         * grow.origin.w;
-    let size = vec2<i32>(textureDimensions(sky_maps));
+    let size = vec2<i32>(textureDimensions(macro_maps));
     let at = local / extent * vec2<f32>(size) - 0.5;
     let first = vec2<i32>(floor(at));
     let f = at - floor(at);
     let last = size - vec2<i32>(1);
-    let a = textureLoad(sky_maps, clamp(first, vec2<i32>(0), last), layer - 1u, 0).gb;
-    let b = textureLoad(sky_maps, clamp(first + vec2<i32>(1, 0), vec2<i32>(0), last), layer - 1u,
-        0).gb;
-    let c = textureLoad(sky_maps, clamp(first + vec2<i32>(0, 1), vec2<i32>(0), last), layer - 1u,
-        0).gb;
-    let d = textureLoad(sky_maps, clamp(first + vec2<i32>(1, 1), vec2<i32>(0), last), layer - 1u,
-        0).gb;
+    let a = textureLoad(macro_maps, clamp(first, vec2<i32>(0), last), layer - 1u, 0);
+    let b = textureLoad(macro_maps, clamp(first + vec2<i32>(1, 0), vec2<i32>(0), last),
+        layer - 1u, 0);
+    let c = textureLoad(macro_maps, clamp(first + vec2<i32>(0, 1), vec2<i32>(0), last),
+        layer - 1u, 0);
+    let d = textureLoad(macro_maps, clamp(first + vec2<i32>(1, 1), vec2<i32>(0), last),
+        layer - 1u, 0);
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
@@ -554,7 +553,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             continue;
         }
         let variation = (0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u)))
-            * ground_variety(variety_at(local), world_xz, 1.0);
+            * macro_tint(colors_at(local), 1.0, macro_strength(away));
         var blade: CoverBlade;
         blade.root = root;
         blade.height = height;

@@ -98,9 +98,11 @@ pub(super) struct TerrainState {
     pub(super) cook: Option<CookTiles>,
     pub(super) cook_water: Option<CookTiles>,
     pub(super) settled: Settled,
-    /// Its lighting and bounce transfer, and its asking for them.
+    /// Its lighting, bounce transfer and macro colors, and its asking for
+    /// them.
     pub(super) lighting: Lighting,
     pub(super) bounce: Bounce,
+    pub(super) macro_colors: MacroColors,
     /// The layers its tiles generate from and its surface's data for the
     /// GPU from them, `None` where the program needs more
     /// than the GPU's interpreter holds; and whether its tiles hold control
@@ -162,6 +164,7 @@ impl TerrainState {
             settled: Settled::default(),
             lighting: Lighting::default(),
             bounce: Bounce::default(),
+            macro_colors: MacroColors::default(),
             surface: None,
             materials: true,
         }
@@ -219,6 +222,7 @@ impl TerrainState {
         retired
             .jobs
             .extend(self.lighting.job.iter().map(|&(id, _)| id));
+        retired.jobs.extend(self.macro_colors.jobs());
         retired
             .jobs
             .extend(self.bounce.job.iter().map(|&(id, _)| id));
@@ -456,6 +460,10 @@ pub struct Terrains {
     pub(super) restored: u64,
     pub(super) upload_left: u64,
     pub(super) between: u64,
+    /// The family of compressed formats the device samples, `None` without
+    /// a renderer, and whether the session cooks: which records of macro
+    /// colors frames ask for.
+    pub(super) coloring: (Option<crate::TextureSampling>, bool),
 }
 
 /// The workers' jobs and recipes of terrains gone.

@@ -22,7 +22,7 @@ gpu_structs! {
     /// where its blocks' words and its probes start among every terrain's,
     /// and its place among the horizon records; its ground's first layer,
     /// its light's layer, its probes' first layer among the bounce layers
-    /// and its sky map's first layer plus one (0 without one); and where its
+    /// and its sky map's layer plus one (0 without one); and where its
     /// materials start in the palette.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct BounceTerrain as ["BounceTerrain"] {

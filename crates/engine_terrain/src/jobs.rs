@@ -1,7 +1,7 @@
 //! Terrain jobs: terrain work engines hand workers, as bytes
 //! in and bytes out: a tile generated whole, a tile's portals of a walk
-//! graph, a stack baked, a terrain's lighting and its bounce transfer, a
-//! tile's water settled.
+//! graph, a stack baked, a terrain's lighting, bounce transfer and macro
+//! colors, a tile's water settled.
 //! Workers hold once what many jobs read, shared by key: layer stacks with
 //! their bakes, and the recipes generating a terrain's tiles from one. Jobs
 //! run the same code wherever they run (a worker, a host without workers,
@@ -13,7 +13,7 @@
 //! alone, its recipe's stack none: an edit leaves every other tile's jobs,
 //! and their records, as they were. A terrain's lighting reads a level's
 //! heights alone, under edits or not; its bounce transfer the same heights
-//! and its recipe's surface.
+//! and its recipe's surface; its macro colors its recipe, without edits.
 
 use engine_math::collections::HashMap;
 use std::sync::Arc;
@@ -23,6 +23,7 @@ use glam::Vec2;
 use crate::bounce::{MAX_PROBES, TerrainBounce, bounce};
 use crate::codec::{self, Codec, CodecError, Reader, Writer, record};
 use crate::lighting::{Ground, TerrainLighting, light};
+use crate::macro_colors::{MACRO_BLOCK, MAX_MACRO_TEXELS, macro_colors};
 use crate::{
     BiomeRules, Biomes, Gait, Generator, Layers, Placing, Pyramid, Stamp, SteadySolve, SteadyWater,
     Tile, TileKey, TilePortals,
@@ -30,9 +31,9 @@ use crate::{
 
 /// The kinds of terrain jobs, which hosts carry by name: a tile of a
 /// shared recipe, a tile's portals over a shared stack, a stack's bakes, a
-/// terrain's lighting and its bounce transfer, and a tile's settled water.
-/// Workers match every kind, so a kind added without its work fails to
-/// build.
+/// terrain's lighting, its bounce transfer and its macro colors, and a
+/// tile's settled water. Workers match every kind, so a kind added without
+/// its work fails to build.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JobKind {
     Tile,
@@ -41,17 +42,19 @@ pub enum JobKind {
     Lighting,
     Water,
     Bounce,
+    Macro,
 }
 
 impl JobKind {
     /// Every kind.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Tile,
         Self::Portals,
         Self::Bake,
         Self::Lighting,
         Self::Water,
         Self::Bounce,
+        Self::Macro,
     ];
 
     /// Its name, as hosts carry it and key the records they keep by.
@@ -63,6 +66,7 @@ impl JobKind {
             Self::Lighting => "terrain_lighting",
             Self::Water => "terrain_water",
             Self::Bounce => "terrain_bounce",
+            Self::Macro => "terrain_macro",
         }
     }
 
@@ -419,6 +423,40 @@ pub fn bounce_output(bytes: &[u8]) -> Result<TerrainBounce, CodecError> {
     codec::decode(bytes)
 }
 
+/// A [`JobKind::Macro`]: the macro colors ([`crate::macro_colors`]) of the
+/// terrain the recipe shared as `recipe` generates, `size` texels a side,
+/// its shape read from the heights of its `level`'s tiles (its finest
+/// pinned level, which its lighting reads too). Like a tile's job it is its
+/// own identity and its own input. Its output is the map's RGBA8 texels,
+/// rows along z.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MacroJob {
+    pub recipe: String,
+    pub level: u32,
+    pub size: u32,
+}
+
+record!(MacroJob {
+    recipe,
+    level,
+    size,
+});
+
+impl MacroJob {
+    pub const KIND: JobKind = JobKind::Macro;
+
+    /// What its output is kept by, and its input: the job.
+    pub fn identity(&self) -> Vec<u8> {
+        codec::encode(self)
+    }
+
+    /// Whether its map's sides are whole blocks, at most
+    /// [`MAX_MACRO_TEXELS`].
+    fn valid(&self) -> bool {
+        (MACRO_BLOCK..=MAX_MACRO_TEXELS).contains(&self.size) && self.size % MACRO_BLOCK == 0
+    }
+}
+
 /// A shared recipe as a worker holds it: its layers seen as its terrain
 /// sees them, its pyramid and its compiled surface.
 struct Recipe {
@@ -449,6 +487,7 @@ enum Running {
     Lighting(Box<LightingJob>),
     Water(Box<SteadySolve>),
     Bounce(Box<(BounceJob, Arc<Layers>, Arc<BiomeRules>)>),
+    Macro(Box<(Arc<Layers>, Pyramid, MacroJob)>),
 }
 
 /// What a worker holds of terrains, and runs their jobs over.
@@ -624,15 +663,24 @@ impl TerrainWorker {
                 let (layers, rules) = (recipe.layers.clone(), recipe.rules.clone());
                 Running::Bounce(Box::new((job, layers, rules)))
             }
+            JobKind::Macro => {
+                let job: MacroJob = reader.get().map_err(invalid)?;
+                reader.finish().map_err(invalid)?;
+                let recipe = self.recipe(&job.recipe)?;
+                if !job.valid() || job.level >= recipe.pyramid.levels() {
+                    return Err("macro colors of an invalid size or level".into());
+                }
+                Running::Macro(Box::new((recipe.layers.clone(), recipe.pyramid, job)))
+            }
         };
         self.running.insert(id, running);
         Ok(())
     }
 
     /// Works on job `id` for about `budget` work units (about one per
-    /// sample; portals, bakes, lighting and bounce transfers run whole):
-    /// its output once done, `None` while work is left. A job that failed
-    /// or finished is gone.
+    /// sample; portals, bakes, lighting, bounce transfers and macro colors
+    /// run whole): its output once done, `None` while work is left. A job
+    /// that failed or finished is gone.
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
         let Some(running) = self.running.get_mut(&id) else {
             return Err("no such job".into());
@@ -684,6 +732,11 @@ impl TerrainWorker {
                     (layers.as_ref(), rules.as_ref()),
                     job.probes,
                 )))
+            }
+            Running::Macro(colors) => {
+                let (layers, pyramid, job) = &**colors;
+                macro_colors(layers, pyramid, job.level, job.size)
+                    .ok_or_else(|| "the macro colors' heights are invalid".to_owned())
             }
         };
         self.running.remove(&id);

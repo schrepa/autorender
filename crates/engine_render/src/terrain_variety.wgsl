@@ -1,9 +1,7 @@
-// Ground variety: the tint a terrain's large-scale map gives
-// its ground at every distance and the blades growing on it, the same in
-// both (`meshes/terrain.wgsl`, `cover_grow.wgsl`). The map holds where the
-// ground lies in a hollow (0.5 on level ground, toward 1 in hollows) and on
-// a ridge (0.5 level, toward 1 on ridges); broad patches vary it further.
-// Ground cover's density, which both read too, follows.
+// Ground variety: the tint a terrain's macro colors give its
+// ground and the blades growing on it, the same in both
+// (`meshes/terrain.wgsl`, `cover_grow.wgsl`). Ground cover's density, which
+// both read too, follows.
 
 fn variety_hash(cell: vec2<i32>) -> f32 {
     var h = (u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u);
@@ -24,18 +22,23 @@ fn variety_noise(p: vec2<f32>) -> f32 {
     return mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
 }
 
-// The tint of ground at world `world` (x and z) whose map texel holds
-// `map` (hollow, ridge), `vegetated` the share of it growing plants:
-// plants grow lusher and darker where water gathers and drier and paler on
-// exposed ground and in broad patches; bare ground and rock only weather,
-// paler on ridges.
-fn ground_variety(map: vec2<f32>, world: vec2<f32>, vegetated: f32) -> vec3<f32> {
-    let patches = variety_noise(world / 340.0 + vec2<f32>(13.1, -7.7)) * 0.65
-        + variety_noise(world / 130.0 + vec2<f32>(-3.3, 21.9)) * 0.35;
-    let lush = saturate(0.5 + 1.6 * (map.x - 0.5) - 1.2 * (map.y - 0.5) + 0.8 * (patches - 0.5));
-    let growth = mix(vec3<f32>(1.05, 1.02, 0.88), vec3<f32>(0.85, 0.97, 0.82), lush);
-    let weather = vec3<f32>(1.0 + 0.14 * (map.y - 0.5) - 0.08 * (patches - 0.5));
-    return mix(weather, growth, vegetated);
+// The tint of ground whose macro colors' texel holds `colors` (the tint, 128
+// of 255 leaving it as it is, and how lush plants grow there:
+// `engine_terrain::macro_colors`), `vegetated` the share of it growing
+// plants, `strength` of it shown (1 in the distance): every ground takes the
+// tint, and plants grow lusher and darker where it holds them lush, drier
+// and paler where dry.
+fn macro_tint(colors: vec4<f32>, vegetated: f32, strength: f32) -> vec3<f32> {
+    let growth = mix(vec3<f32>(1.05, 1.02, 0.88), vec3<f32>(0.85, 0.97, 0.82), colors.a);
+    let tint = colors.rgb * (255.0 / 128.0) * mix(vec3<f32>(1.0), growth, vegetated);
+    return mix(vec3<f32>(1.0), tint, strength);
+}
+
+// How much of their tint macro colors give ground `distance` meters from the
+// eye: a little near, where its materials' own detail shows, all of it from
+// a few hundred meters, where those repeat too small to vary it.
+fn macro_strength(distance: f32) -> f32 {
+    return 0.35 + 0.65 * smoothstep(40.0, 400.0, distance);
 }
 
 // Ground cover's density as a share of its densest, `away`

@@ -37,6 +37,7 @@ mod hydrology;
 pub mod jobs;
 mod layers;
 pub mod lighting;
+pub mod macro_colors;
 mod nav;
 mod noise;
 mod path;

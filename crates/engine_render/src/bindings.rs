@@ -764,6 +764,10 @@ tables! {
             read(31, "terrain_deformation", F),
             // Gathers of the control values (nearest).
             sampler(32, "terrain_control_sampler", NonFiltering, F),
+            // Each terrain's macro colors with their mips, read through
+            // the materials' sampler: the slot the horizon records' uniform
+            // left of the 16 sampled textures a fragment stage binds.
+            texture(35, "terrain_macro", Float, D2Array, F),
         ],
     };
 
@@ -1010,9 +1014,9 @@ tables! {
             // Runtime deformation's map: blades lie down in
             // tracks.
             read(9, "deformation", C),
-            // The terrains' sky maps: their variety tints blades as it does the
+            // The terrains' macro colors: they tint blades as they do the
             // ground.
-            texture(10, "sky_maps", Float, D2Array, C),
+            texture(10, "macro_maps", Float, D2Array, C),
         ],
     };
 
@@ -1474,6 +1478,7 @@ shared_groups! {
             terrain_sky, terrain_deformation, terrain_control_sampler
         ],
         cover: 33..35 [cover_blades, cover_frame],
+        macro_colors: 35..36 [terrain_macro],
         sky: 38..46 [
             sky_clouds, sky_cloud_sampler, sky_air, sky_view_table, sky_transmittance_table,
             sky_table_sampler, sky_clouds_old, sky_domes

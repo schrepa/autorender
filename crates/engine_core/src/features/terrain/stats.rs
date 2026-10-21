@@ -50,6 +50,11 @@ pub struct TerrainStats {
     /// asked for: the camera's view waits for it, as for their lighting.
     pub bounced: u32,
     pub bouncing: u32,
+    /// Terrains whose macro colors are here (the tint and growth their
+    /// bakes give their ground), and those asking for them: until they
+    /// arrive their ground shows its materials' own colors.
+    pub colored: u32,
+    pub coloring: u32,
     /// Bridges terrains' roads span, tunnels they bore,
     /// and waterfalls their rivers drop over.
     pub bridges: u32,

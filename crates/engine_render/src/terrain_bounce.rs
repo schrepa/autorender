@@ -515,7 +515,7 @@ impl<'a> Shared<'a> {
 }
 
 impl BounceTerrain {
-    /// The record with its sky map's first layer plus one (`sky`, 0 without
+    /// The record with its sky map's layer plus one (`sky`, 0 without
     /// one) and its palette's first material (`palette`).
     fn with_layers(mut self, sky: u32, palette: u32) -> Self {
         self.layers[3] = sky;

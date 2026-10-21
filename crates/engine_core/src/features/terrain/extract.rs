@@ -146,6 +146,20 @@ pub struct RenderTerrain {
     /// Its bounce transfer, once here: what probes over its ground see of
     /// it, which renderers upload as it changes and relight every frame.
     pub bounce: Option<Arc<TerrainBounce>>,
+    /// Its macro colors ([`engine_terrain::macro_colors`]), once here: the
+    /// tint and growth its bakes give its ground over its extent, which
+    /// renderers upload as they change.
+    pub macro_map: Option<MacroMap>,
+}
+
+/// A terrain's macro colors as renderers take them: the map, in the family
+/// of formats the device samples, with its mips; and the hash of what made
+/// it, the same in every family, which records renderers bake from it are
+/// kept by.
+#[derive(Clone, Debug)]
+pub struct MacroMap {
+    pub texture: Arc<engine_assets::Texture>,
+    pub identity: u128,
 }
 
 /// The frame's terrains.
@@ -198,6 +212,7 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
                 water_window: None,
                 lighting: None,
                 bounce: None,
+                macro_map: None,
             });
         }
         let render = &mut listing.terrains[index];
@@ -262,5 +277,6 @@ pub(crate) fn extract_terrains(world: &World, aspect: f32, snapshot: &mut Render
         render.water_window = state.hydrology.window.clone();
         render.lighting.clone_from(&state.lighting.made);
         render.bounce.clone_from(&state.bounce.made);
+        render.macro_map.clone_from(&state.macro_colors.made);
     }
 }

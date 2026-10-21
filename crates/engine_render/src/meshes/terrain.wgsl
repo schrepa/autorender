@@ -64,6 +64,32 @@ const TERRAIN_PALETTE_ENTRIES: u32 = 170u;
 // reference units: each block's deepest track or highest rim, widened by a
 // block; each texel's track depth and rim height; and each texel's slopes.
 @group(1) @binding(31) var<storage, read> terrain_deformation: array<u32>;
+// Each terrain's macro colors with their mips, a layer each from
+// `terrain.macro_map.x` less one, over its extent as its sky map lies: the
+// tint its bakes give its ground, halved (red, green and blue), and how
+// lush plants grow there (alpha).
+@group(1) @binding(35) var terrain_macro: texture_2d_array<f32>;
+
+// The terrain's macro colors at terrain-local `local`, filtered over
+// `footprint` meters (a pixel's, or a page's texel's), once they arrived;
+// before, ground as it is (`macro_tint`).
+fn terrain_macro_texel(local: vec2<f32>, footprint: f32) -> vec4<f32> {
+    let layer = terrain.macro_map.x;
+    if layer == 0u {
+        return vec4<f32>(0.5);
+    }
+    let header = terrain.directory.x;
+    let extent = vec2<f32>(f32(terrain_directory[header + 1u]),
+        f32(terrain_directory[header + 2u])) * 256.0 * terrain.anchor.w;
+    let size = vec2<f32>(textureDimensions(terrain_macro));
+    let step = max(extent.x / size.x, extent.y / size.y);
+    let lod = max(log2(max(footprint, 1.0e-6) / step), 0.0);
+    // Held within the texels of the coarser level read, which the
+    // materials' sampler would otherwise wrap past the terrain's edges.
+    let edge = 0.5 * exp2(ceil(lod)) / size;
+    let uv = clamp(local / extent, edge, vec2<f32>(1.0) - edge);
+    return textureSampleLevel(terrain_macro, terrain_material_sampler, uv, layer - 1u, lod);
+}
 
 struct TerrainOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -344,7 +370,7 @@ fn terrain_level_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>, lev
 
 // What a terrain fragment's ground shows: its linear albedo, roughness,
 // occlusion and metalness, its normal, and the share of it that has maps;
-// for its variety and detail, the shares of it growing
+// for its macro colors and detail, the shares of it growing
 // cover, showing as canopy, showing all its maps and showing their color.
 struct TerrainGround {
     albedo: vec3<f32>,
@@ -1097,9 +1123,9 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
 }
 
 // The surface a terrain fragment `relative` to the eye shows: its surface
-// materials, varied across the ground so their maps do not repeat evenly,
-// lit by the sky it sees, from where it sees it, and by the ground around
-// where that hides the sky.
+// materials, tinted by its macro colors and varied across the ground so
+// their maps do not repeat evenly, lit by the sky it sees, from where it
+// sees it, and by the ground around where that hides the sky.
 fn terrain_point(relative: vec3<f32>) -> SurfacePoint {
     let point = terrain_point_seen(relative, terrain_forward_look(relative));
     return widened(point, dpdx(point.normal), dpdy(point.normal));
@@ -1189,7 +1215,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     let geometric = site.geometric;
     let footprint = site.footprint;
     // The runtime virtual texture's ground where its pages hold it, its
-    // detail and variety baked in; computed here otherwise.
+    // detail and macro colors baked in; computed here otherwise.
     var ground: TerrainGround;
     var baked = false;
     if look.textured {
@@ -1234,13 +1260,13 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
         let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
         albedo *= mix(plain, mapped, ground.mapped);
     }
+    if !baked {
+        // Its macro colors, as on the blades growing on it.
+        let colors = terrain_macro_texel(local, footprint);
+        albedo *= macro_tint(colors, ground.vegetated, macro_strength(site.distance));
+    }
     let sky_map = terrain_sky_map(local);
     let sky = sky_map.r;
-    if !baked {
-        // Its large-scale variety, as on the blades growing
-        // on it.
-        albedo *= ground_variety(sky_map.gb, world.xz, ground.vegetated);
-    }
     let roughness = max(ground.roughness, 0.03);
     var point: SurfacePoint;
     point.albedo = albedo;
@@ -1254,7 +1280,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook) -> SurfacePoint {
     let around = bounce_light(world, normal, true);
     point.bounce = mix((1.0 - sky) * albedo * terrain_bounce(), around.light * occlusion,
         around.weight);
-    point.sky_turn = terrain_sky_turn(local);
+    point.sky_turn = sky_map.gba * 2.0 - 1.0;
     point.roughness = roughness;
     point.alpha = roughness * roughness;
     point.f0 = mix(vec3<f32>(0.04), albedo, ground.metalness);

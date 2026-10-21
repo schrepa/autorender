@@ -20,7 +20,7 @@ struct BounceFrame {
 // side (0: it relights none), where its blocks' words and its probes start
 // among every terrain's, and its place among the horizon records; its
 // ground's first layer, its light's layer, its probes' first layer among
-// the bounce layers and its sky map's first layer plus one (0 without
+// the bounce layers and its sky map's layer plus one (0 without
 // one); and where its materials start in the palette.
 struct BounceTerrain {
     place: vec4<f32>,
@@ -68,7 +68,9 @@ const PALETTE_ENTRIES: u32 = 170u;
 
 @group(0) @binding(60) var<uniform> bounce_frame: BounceFrame;
 @group(0) @binding(61) var<storage, read> bounce_terrains: array<BounceTerrain>;
-// Each terrain's sky map, two layers (`meshes/terrain_sky.wgsl`).
+// Each terrain's sky map, a layer each (`meshes/terrain_sky.wgsl`): the
+// share of the sky its ground sees (red) and its normal's turn toward it
+// (green, blue and alpha, from 0.5).
 @group(0) @binding(62) var bounce_sky: texture_2d_array<f32>;
 // Each terrain's ground, two layers in its first texels: its strongest
 // material, the second and the second's share (red, green, blue); its
@@ -127,9 +129,9 @@ fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
     var seen = 1.0;
     var turn = vec3<f32>(0.0);
     if terrain.layers.w > 0u {
-        seen = textureSampleLevel(bounce_sky, bounce_sampler, uv, terrain.layers.w - 1u, 0.0).r;
-        turn = textureSampleLevel(bounce_sky, bounce_sampler, uv, terrain.layers.w, 0.0).rgb
-            * 2.0 - 1.0;
+        let sky = textureSampleLevel(bounce_sky, bounce_sampler, uv, terrain.layers.w - 1u, 0.0);
+        seen = sky.r;
+        turn = sky.gba * 2.0 - 1.0;
     }
     var light = sky_average(normalize(normal + turn)) * (lighting.zenith.w * seen);
     let wrapped = max((dot(normal, lighting.sun.xyz) + 0.25) / 1.25, 0.0);

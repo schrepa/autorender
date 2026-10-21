@@ -1,9 +1,9 @@
 //! The terrain corpus: the tracked terrain fixture's generated terrain
 //! (web/scripts/fixtures/terrain.scene.json and its dome heightmap). Its
 //! bakes; every tile of its pyramid and some of its surroundings'; tiles
-//! under edits; its lighting and bounce transfer; every finest tile's
-//! portals of a walk graph, and a walk over them; a tile's settled water;
-//! and a pack of what they made. Each job runs as
+//! under edits; its lighting, bounce transfer and macro colors; every
+//! finest tile's portals of a walk graph, and a walk over them; a tile's
+//! settled water; and a pack of what they made. Each job runs as
 //! workers run it, whole and a slice at a time, and must give the bits its
 //! code gives in place (a tile's portals, the bits its tile's record
 //! gives); every record must read back from the pack the cook would write
@@ -18,10 +18,11 @@ use engine_core::Terrain;
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 use engine_terrain::bounce;
 use engine_terrain::jobs::{
-    self, BakeJob, BounceJob, LightingJob, PortalsJob, StackView, TerrainRecipe, TerrainWorker,
-    TileJob, WaterJob,
+    self, BakeJob, BounceJob, LightingJob, MacroJob, PortalsJob, StackView, TerrainRecipe,
+    TerrainWorker, TileJob, WaterJob,
 };
 use engine_terrain::lighting::{self, Ground};
+use engine_terrain::macro_colors;
 use engine_terrain::{
     BiomeRules, Gait, Generator, Layer, Layers, NavOptions, NavPath, Obstacle, PATCH_QUADS,
     PATCHES_PER_TILE, Pyramid, Stamp, StampOp, TILE_QUADS, Tile, TileKey, TilePortals, WalkData,
@@ -48,6 +49,8 @@ const SKY_TEXELS: u32 = 256;
 const HORIZON_TEXELS: u32 = 128;
 /// Probe columns along each side of its bounce transfer.
 const BOUNCE_PROBES: u32 = 64;
+/// Texels along its macro colors' sides.
+const MACRO_TEXELS: u32 = 256;
 /// Every share and job the corpus ran through its worker, in order, each
 /// job's output by its hash: what `cargo xtask pure --wasm` replays in the
 /// browser worker's Wasm module.
@@ -166,6 +169,39 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let surface = (baked.as_ref(), rules.as_ref());
     let transfer = bounce_transfer(&mut worker, &job, surface, observed)?;
     records.push((BounceJob::KIND.name(), transfer));
+    // Its macro colors from its recipe, read at its finest pinned level as
+    // engines ask for them: no record of their own, the records engines
+    // cook from them are the textures corpus' kind.
+    let colors = MacroJob {
+        recipe: "recipe".into(),
+        level: pyramid.levels().saturating_sub(PINNED),
+        size: MACRO_TEXELS,
+    };
+    let bytes = worker.run(MacroJob::KIND.name(), &colors.identity())?;
+    let made = macro_colors::macro_colors(&baked, &pyramid, colors.level, colors.size)
+        .ok_or("the macro colors' heights are invalid")?;
+    observed.check(made == bytes, || {
+        "the macro colors job differs from the colors made in place".into()
+    });
+    observed.check(
+        worker.sliced(MacroJob::KIND.name(), &colors.identity())? == bytes,
+        || "the macro colors job run a slice at a time differs from the job run whole".into(),
+    );
+    observed.hash("macro colors", &bytes);
+    let texels = bytes.len() / 4;
+    let mean = |channel: usize| {
+        let sum: u64 = bytes.chunks(4).map(|texel| u64::from(texel[channel])).sum();
+        sum as f64 / texels.max(1) as f64 / 255.0
+    };
+    let tint = |channel: usize| mean(channel) * 255.0 / 128.0;
+    observed.record(
+        "macro colors",
+        json!({
+            "texels": texels,
+            "mean tint": [tint(0), tint(1), tint(2)],
+            "mean lushness": mean(3),
+        }),
+    );
 
     // A tile under edits, which its job carries: two pits dug in the
     // meadow, the later over the earlier.

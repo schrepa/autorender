@@ -1071,6 +1071,7 @@ version = "0.1.0"
 dependencies = [
  "engine_assets",
  "engine_math",
+ "engine_sources",
  "libm",
 ]
 
@@ -1094,6 +1095,7 @@ dependencies = [
  "engine_sources",
  "engine_tables",
  "engine_terrain",
+ "engine_textures",
  "js-sys",
  "png",
  "ruzstd",

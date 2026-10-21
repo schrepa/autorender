@@ -438,6 +438,9 @@ pub struct TerrainRenderStats {
     /// stand.
     pub bounced: u32,
     pub bounce_probes: u32,
+    /// Terrains whose macro color maps are here: the tint and growth their
+    /// bakes give their ground.
+    pub macro_maps: u32,
     /// Surface materials past the palette's capacity, or whose maps the
     /// shared arrays cannot hold (block compressed, or sized unlike the first
     /// material's), which show a plain color instead.

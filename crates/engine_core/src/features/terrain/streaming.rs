@@ -359,11 +359,14 @@ impl Terrains {
                 light(state, settings, slots, frame);
                 bounce(state, settings, slots, frame);
                 unbounced += u32::from(waits(state, settings));
+                take_macro_colors(state, settings, self.coloring, slots, frame);
             }
             stats.lit += u32::from(state.lighting.made.is_some());
             stats.lighting += u32::from(state.lighting.job.is_some());
             stats.bounced += u32::from(state.bounce.made.is_some());
             stats.bouncing += u32::from(state.bounce.job.is_some());
+            stats.colored += u32::from(state.macro_colors.made.is_some());
+            stats.coloring += u32::from(state.macro_colors.asking());
             let missing = std::mem::take(&mut state.missing);
             state.missing = missing
                 .into_iter()
@@ -485,8 +488,8 @@ impl Terrains {
             }
         }
         // The camera's view has loaded whole once nothing bakes, loads,
-        // stands in for a finer level or waits for its lighting or bounce
-        // transfer.
+        // stands in for a finer level or waits for its lighting, bounce
+        // transfer or macro colors.
         if !self.loaded
             && stats.terrains > 0
             && stats.baking == 0
@@ -494,6 +497,7 @@ impl Terrains {
             && stats.fallback_patches == 0
             && stats.lighting == 0
             && unbounced == 0
+            && stats.coloring == 0
         {
             self.loaded = true;
         }
@@ -603,12 +607,17 @@ impl TerrainStreaming {
             .map(|(entity, terrain)| (entity, terrain.clone()))
             .collect();
         // Jobs stream with the terrains, and cook with them in a session
-        // that cooks.
+        // that cooks; macro colors load in the family of compressed
+        // formats the device samples.
         let water = world.get_resource::<Water>().copied();
+        let sampling = world
+            .get_resource::<crate::Records>()
+            .and_then(crate::Records::sampling);
         let mut jobs = world.remove_resource::<Jobs>();
         let mut cooking = world.remove_resource::<Cooking>();
         if let Some(mut terrains) = world.get_resource_mut::<Terrains>() {
             let terrains = terrains.as_mut();
+            terrains.coloring = (sampling, cooking.is_some());
             terrains.follow(present);
             match settings {
                 Some(settings) => {

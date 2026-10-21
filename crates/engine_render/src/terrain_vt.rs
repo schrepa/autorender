@@ -32,7 +32,8 @@
 //! `virtual_texture_bakes` a frame, coarsest first, into free slots or the
 //! least recently asked for. Until a pixel's two pages are baked it
 //! computes its ground as before, so pages arriving never change what
-//! shows, only what it costs. A terrain's sky map replaced drops its pages.
+//! shows, only what it costs. A terrain's macro colors replaced drop its
+//! pages.
 //!
 //! Pages go stale and bake again with the budget absent pages leave, those
 //! still asked for only: pages over tiles that arrived, left or were edited
@@ -102,13 +103,13 @@ use crate::gpu_layouts::terrain_vt::BakeRecord;
 /// A textured terrain: its index this frame (its windows' and tables'
 /// place, and its feedback bits'), its windows' first pages, its table
 /// entries (slot plus one, 0 while absent) and which mips' tables changed
-/// since written, and the sky map upload its pages follow.
+/// since written, and the macro colors' upload its pages follow.
 struct Textured {
     index: u32,
     firsts: [[i32; 2]; MIPS],
     entries: Vec<u32>,
     dirty: [bool; MIPS],
-    sky: u64,
+    colors: u64,
 }
 
 impl Textured {
@@ -118,7 +119,7 @@ impl Textured {
             firsts: [[i32::MIN / 2; 2]; MIPS],
             entries: vec![0; MIPS * (WINDOW * WINDOW) as usize],
             dirty: [true; MIPS],
-            sky: u64::MAX,
+            colors: u64::MAX,
         }
     }
 }
@@ -384,10 +385,10 @@ impl VirtualTexture {
     /// Lays out this frame's texture: the slots the material maps' sheets
     /// hold (new ones free; new materials empty them), each terrain's
     /// windows around `eye`, the pages tiles that changed (`changed`) or
-    /// replaced sky maps drop, the pages pixels asked for, and the bakes this
-    /// frame draws; writes the windows and tables into the directory buffer
-    /// at word `base` and the bakes into their buffer. Returns each
-    /// terrain's uniform words, by its index in `terrains`.
+    /// replaced macro colors (`colors`) drop, the pages pixels asked for, and
+    /// the bakes this frame draws; writes the windows and tables into the
+    /// directory buffer at word `base` and the bakes into their buffer.
+    /// Returns each terrain's uniform words, by its index in `terrains`.
     #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
     pub(crate) fn prepare(
         &mut self,
@@ -395,8 +396,10 @@ impl VirtualTexture {
         queue: &wgpu::Queue,
         terrains: &RenderTerrains,
         (eye, settings): (Vec3, &TerrainSettings),
-        maps: &crate::terrain_maps::TerrainMaps,
-        sky: &crate::terrain_sky::SkyMaps,
+        (maps, colors): (
+            &crate::terrain_maps::TerrainMaps,
+            &crate::terrain_macro::MacroMaps,
+        ),
         changed: &[(u64, TileKey)],
         (directory, base, generation): (&wgpu::Buffer, u32, u64),
     ) -> Vec<VtUniform> {
@@ -430,14 +433,11 @@ impl VirtualTexture {
             }
             return vec![([0; 4], [0.0; 4], [0; 4]); terrains.terrains.len()];
         }
-        // Textured terrains: those drawing whose sky maps arrived.
+        // Textured terrains: those drawing. Their pages follow their macro
+        // colors' uploads.
         let mut uniforms = Vec::with_capacity(terrains.terrains.len());
         let mut kept = Vec::new();
         for (index, terrain) in terrains.terrains.iter().enumerate() {
-            let Some(sky_upload) = sky.settled(index) else {
-                uniforms.push(([0; 4], [0.0; 4], [0; 4]));
-                continue;
-            };
             if terrain.patches.is_empty() {
                 uniforms.push(([0; 4], [0.0; 4], [0; 4]));
                 continue;
@@ -449,8 +449,9 @@ impl VirtualTexture {
                 .entry(terrain.id)
                 .or_insert_with(Textured::new);
             textured.index = vt_index;
-            if textured.sky != sky_upload {
-                textured.sky = sky_upload;
+            let upload = colors.uploads(index);
+            if textured.colors != upload {
+                textured.colors = upload;
                 let drop: Vec<u32> = self
                     .resident
                     .iter()

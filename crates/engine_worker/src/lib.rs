@@ -2,10 +2,11 @@
 //! Web Workers beside the engine, and natively a thread's. It holds what
 //! the engine shares with its workers (terrain stacks and recipes) and runs
 //! the jobs it hands out, each kind once: terrain tiles, tiles' walk graph
-//! portals, bakes, lighting, bounce transfers and tiles' settled water
-//! (`engine_terrain::jobs`), and the renderer's static tables
-//! (`engine_tables`), with the code hosts without workers run in place, so
-//! outputs are the same bits. Jobs
+//! portals, bakes, lighting, bounce transfers, macro colors and tiles'
+//! settled water (`engine_terrain::jobs`), the renderer's static tables
+//! (`engine_tables`) and textures cooked for a device family
+//! ([`engine_textures::COOK_JOB`]), with the code hosts without workers run
+//! in place, so outputs are the same bits. Jobs
 //! run a slice at a time ([`Worker::slice`]): the most urgent held job
 //! steps until done or for about [`SLICE_MS`], so between slices hosts read
 //! their messages, a more urgent job goes first and one the engine
@@ -68,12 +69,14 @@ struct Held {
     started: bool,
 }
 
-/// One worker's shares and the jobs it holds and runs.
+/// One worker's shares and the jobs it holds and runs, and the outputs of
+/// textures it cooked as they started, which their first step hands back.
 #[derive(Default)]
 pub struct Worker {
     terrain: TerrainWorker,
     tables: TableWorker,
     held: Vec<Held>,
+    cooked: Vec<(u64, Result<Vec<u8>, String>)>,
 }
 
 impl Worker {
@@ -96,6 +99,7 @@ impl Worker {
         self.terrain = TerrainWorker::new();
         self.tables = TableWorker::new();
         self.held.clear();
+        self.cooked.clear();
     }
 
     /// Holds job `id` of `kind` on `input` at `priority` (lower first),
@@ -118,6 +122,7 @@ impl Worker {
     /// Stops job `id`, held or started.
     pub fn cancel(&mut self, id: u64) {
         self.held.retain(|job| job.id != id);
+        self.cooked.retain(|(cooked, _)| *cooked != id);
         self.terrain.cancel(id);
         self.tables.cancel(id);
     }
@@ -136,6 +141,14 @@ impl Worker {
             let input = std::mem::take(&mut job.input);
             self.held.remove(at);
             return Some(match engine_lodbuild::run(&input) {
+                Ok(output) => Report::Done(id, output),
+                Err(error) => Report::Failed(id, error),
+            });
+        }
+        // A texture cooks whole.
+        if job.kind == engine_textures::COOK_JOB {
+            let job = self.held.remove(at);
+            return Some(match engine_textures::cook_job(&job.input) {
                 Ok(output) => Report::Done(id, output),
                 Err(error) => Report::Failed(id, error),
             });
@@ -187,14 +200,23 @@ impl Worker {
         if kind == engine_lodbuild::KIND {
             return engine_lodbuild::run(input);
         }
+        if kind == engine_textures::COOK_JOB {
+            return engine_textures::cook_job(input);
+        }
         match engine_tables::run(kind, input) {
             Some(output) => output,
             None => self.terrain.run(kind, input),
         }
     }
 
-    /// Starts job `id` of `kind` on `input`, to [`Self::step`] until done.
+    /// Starts job `id` of `kind` on `input`, to [`Self::step`] until done;
+    /// a texture cooks whole as it starts.
     pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
+        if kind == engine_textures::COOK_JOB {
+            self.cooked.retain(|(cooked, _)| *cooked != id);
+            self.cooked.push((id, engine_textures::cook_job(input)));
+            return Ok(());
+        }
         if TableWorker::runs(kind) {
             self.tables.start(id, kind, input)
         } else {
@@ -205,6 +227,9 @@ impl Worker {
     /// Works on job `id` for about `budget` work units: its output once
     /// done, `None` while work is left.
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
+        if let Some(at) = self.cooked.iter().position(|(cooked, _)| *cooked == id) {
+            return self.cooked.remove(at).1.map(Some);
+        }
         if self.tables.holds(id) {
             self.tables.step(id, budget)
         } else {

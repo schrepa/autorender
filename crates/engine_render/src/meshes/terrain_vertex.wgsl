@@ -29,7 +29,7 @@ struct TerrainView {
 // world position, its origin (w: 0), where its levels start in
 // `terrain_directory` and how many there are, where its surface materials
 // start in `terrain_palette`, and its layer of
-// `terrain_sky` plus one, 0 until built.
+// `terrain_sky` plus one, 0 until its lighting arrives.
 struct TerrainUniform {
     anchor: vec4<f32>,
     eye: vec4<f32>,
@@ -57,6 +57,9 @@ struct TerrainUniform {
     vt: vec4<u32>,
     vt_scale: vec4<f32>,
     vt_layout: vec4<u32>,
+    // Its macro colors' layer of `terrain_macro` plus one (0 until they
+    // arrive).
+    macro_map: vec4<u32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;
 

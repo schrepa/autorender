@@ -74,7 +74,7 @@ settings! {
         /// around them instead (bounce light's, or past its reach an
         /// estimate of their own).
         pub sky_visibility: bool = true => any,
-        /// Texels along a sky visibility map's sides, 8 bytes each.
+        /// Texels along a sky visibility map's sides, 4 bytes each.
         pub sky_resolution: u32 = 1024 => range(64, 4096),
         /// Bounce light, with long sun shadows: probes over each terrain
         /// whose transfer is cooked from its finest pinned level and its
@@ -99,6 +99,11 @@ settings! {
         /// it (as all ground does with bounce light off, and surroundings)
         /// and what stands on it the open sky.
         pub bounce_reach: f32 = 2048.0 => range(64.0, 32768.0),
+        /// Texels along the sides of each terrain's macro color map (the tint
+        /// and growth its bakes give its ground over its whole extent),
+        /// rounded up to a multiple of four: a byte each with a third more for
+        /// their mips on devices sampling compressed textures, four elsewhere.
+        pub macro_resolution: u32 = 2048 => range(64, 4096),
         /// Meters from the camera within which the ground's relief shows, its
         /// view rays marching through its materials' heights; 0 none.
         pub relief_distance: f32 = 24.0 => range(0.0, 200.0),

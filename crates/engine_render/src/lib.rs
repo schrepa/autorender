@@ -68,6 +68,7 @@ mod temporal;
 mod terrain;
 mod terrain_bounce;
 mod terrain_horizons;
+mod terrain_macro;
 mod terrain_maps;
 mod terrain_sky;
 mod terrain_vt;

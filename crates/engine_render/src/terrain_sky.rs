@@ -1,21 +1,21 @@
 //! Terrain sky visibility: each terrain's sky map, cooked with its
 //! lighting ([`engine_core::TerrainLighting`]): a grid over the whole
 //! terrain holding at every texel the share of the sky its ground sees
-//! about its normal, its large-scale variety (hollows and ridges) and the
-//! turn of its normal toward the middle of the sky it sees. Terrain scales
-//! its ambient light by the share, taking the hidden sky's share back as its
-//! own light, and takes the sky's light around the turned normal.
+//! about its normal and the turn of its normal toward the middle of the
+//! sky it sees. Terrain scales its ambient light by the share, taking the
+//! hidden sky's share back as its own light, and takes the sky's light
+//! around the turned normal.
 //!
-//! A terrain's two layers upload as its lighting arrives, and again when it
-//! changes; until then its ground sees the whole sky.
+//! A terrain's layer uploads as its lighting arrives, and again when it
+//! changes; until then its ground sees the whole sky. Terrains past the
+//! device's array layers see it always.
 
 use std::sync::Arc;
 
 use engine_core::terrain_data::lighting::SKY_LAYERS;
 use engine_core::{RenderTerrains, TerrainLighting, TerrainSettings};
 
-/// A sky map texel: the share of the sky seen, hollows and ridges; then the
-/// normal's turn.
+/// A sky map texel: the share of the sky seen and the normal's turn.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 struct Maps {
@@ -29,11 +29,8 @@ pub(crate) struct SkyMaps {
     maps: Option<Maps>,
     // A one-texel map of open sky bound while no terrain has one.
     empty: wgpu::TextureView,
-    // The lighting each terrain's layers hold, and the uploads each has
-    // taken, which pages of the runtime virtual texture baked from it
-    // follow.
+    // The lighting each terrain's layers hold.
     held: Vec<Option<Arc<TerrainLighting>>>,
-    uploads: Vec<u64>,
     // Advances when the bound view is replaced.
     generation: u64,
     /// Terrains whose maps uploaded this frame.
@@ -69,7 +66,6 @@ impl SkyMaps {
             maps: None,
             empty: array_view(&empty),
             held: Vec::new(),
-            uploads: Vec::new(),
             generation: 0,
             uploaded: 0,
         }
@@ -80,30 +76,16 @@ impl SkyMaps {
         self.generation
     }
 
-    /// The maps, two layers per terrain, or a texel of open sky.
+    /// The maps, a layer per terrain, or a texel of open sky.
     pub(crate) fn view(&self) -> &wgpu::TextureView {
         self.maps.as_ref().map_or(&self.empty, |maps| &maps.view)
     }
 
-    /// The layer of terrain `index`'s share, hollows and ridges plus one
-    /// once uploaded, which is the layer of its turn; 0 before.
+    /// Terrain `index`'s layer plus one once uploaded; 0 before.
     pub(crate) fn layer(&self, index: usize) -> u32 {
         match self.held.get(index) {
             Some(Some(_)) => (SKY_LAYERS * index) as u32 + 1,
             _ => 0,
-        }
-    }
-
-    /// The uploads terrain `index`'s map took, which pages baked from it
-    /// follow; `None` until its first; 0 without maps, which leave open
-    /// sky everywhere.
-    pub(crate) fn settled(&self, index: usize) -> Option<u64> {
-        if self.maps.is_none() {
-            return Some(0);
-        }
-        match self.held.get(index) {
-            Some(Some(_)) => self.uploads.get(index).copied(),
-            _ => None,
         }
     }
 
@@ -138,7 +120,10 @@ impl SkyMaps {
             return;
         }
         let size = settings.sky_resolution;
-        let count = terrains.terrains.len();
+        let count = terrains
+            .terrains
+            .len()
+            .min(device.limits().max_texture_array_layers as usize / SKY_LAYERS);
         if self
             .maps
             .as_ref()
@@ -146,13 +131,12 @@ impl SkyMaps {
         {
             self.maps = Some(maps(device, size, count));
             self.held = vec![None; count];
-            self.uploads.resize(count, 0);
             self.generation += 1;
         }
         let Some(maps) = &self.maps else {
             return;
         };
-        for (index, terrain) in terrains.terrains.iter().enumerate() {
+        for (index, terrain) in terrains.terrains.iter().take(count).enumerate() {
             let lighting = terrain
                 .lighting
                 .as_ref()
@@ -163,7 +147,6 @@ impl SkyMaps {
                 (Some(lighting), _) => {
                     write_layers(queue, &maps.texture, index, size, &lighting.sky_layers());
                     *held = Some(lighting.clone());
-                    self.uploads[index] += 1;
                     self.uploaded += 1;
                 }
                 (None, _) => *held = None,

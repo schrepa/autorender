@@ -1,7 +1,7 @@
 //! Terrain's pipelines and the terrain group: patches in the opaque passes
 //! (forward, or deferred as visibility and resolves), reflection probe
 //! faces and shadow maps, and the group binding the arrays, tables, views,
-//! material and sky maps and deformation's map they read.
+//! material, sky and macro color maps and deformation's map they read.
 
 use super::atlas::TileAtlas;
 use super::patches::{PatchDraws, patch_layout};
@@ -11,17 +11,20 @@ use crate::scene_shading::SceneShading;
 use crate::shaders::entry::meshes;
 
 /// The generations of what the terrain group binds: the atlas, uniforms,
-/// hole bits, directory, material maps, sky maps and deformation map.
-type GroupKey = (u64, u64, u64, u64, u64, u64, u64);
+/// hole bits, directory, material maps, sky maps, macro color maps and
+/// deformation map.
+type GroupKey = (u64, u64, u64, u64, u64, u64, u64, u64);
 
 /// What the terrain group binds besides the pipelines' own: the arrays,
-/// tables, views, material and sky maps and deformation's map.
+/// tables, views, material, sky and macro color maps and deformation's
+/// map.
 pub(super) struct GroupSources<'a> {
     pub(super) atlas: &'a TileAtlas,
     pub(super) tables: &'a TerrainTables,
     pub(super) patches: &'a PatchDraws,
     pub(super) maps: &'a TerrainMaps,
     pub(super) sky: &'a SkyMaps,
+    pub(super) macro_maps: &'a MacroMaps,
     pub(super) deformation: &'a crate::deformation::DeformationPass,
 }
 
@@ -100,6 +103,7 @@ impl TerrainPipelines {
             tables.directory_generation,
             maps.views_generation,
             sky.generation(),
+            sources.macro_maps.generation(),
             deformation.map().1,
         );
         let build = |label: &str, material_maps: &[wgpu::TextureView; 3]| {
@@ -147,12 +151,19 @@ impl TerrainPipelines {
                         "terrain_material_data",
                         crate::pipelines::view(&material_maps[1]),
                     ),
-                    ("terrain_vt_sheets", crate::pipelines::view(&material_maps[2])),
+                    (
+                        "terrain_vt_sheets",
+                        crate::pipelines::view(&material_maps[2]),
+                    ),
                     (
                         "terrain_material_sampler",
                         crate::pipelines::sampler(&maps.sampler),
                     ),
                     ("terrain_sky", crate::pipelines::view(sky.view())),
+                    (
+                        "terrain_macro",
+                        crate::pipelines::view(sources.macro_maps.view()),
+                    ),
                     crate::buffers::entry("terrain_deformation", deformation.map().0),
                     (
                         "terrain_control_sampler",

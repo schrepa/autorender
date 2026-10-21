@@ -11,16 +11,81 @@
 //! gives the same bits on every host: integer and plain `f32` arithmetic,
 //! `libm` for powers, levels split among threads only by whole rows of
 //! blocks.
+//!
+//! Cooking runs on the engine's workers too, as the job [`COOK_JOB`]: its
+//! input an image and a family ([`cook_input`]), its output the texture's
+//! record ([`cook_job`]), which hosts keep as engines key it.
 #![deny(
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
 )]
+
+// `SOURCE`, the hash of the code cooking textures, which keys the records
+// of the jobs cooking them.
+include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
 mod astc;
 mod bc7;
 mod mips;
 
 use engine_assets::{AssetError, Texture, TextureFormat, TextureSummary};
+
+/// The job kind cooking an image for a family where the engine's workers
+/// run it ([`cook_job`]), and where hosts without workers run it in place.
+pub const COOK_JOB: &str = "texture_cook";
+
+/// Bytes before a [`COOK_JOB`]'s texels: the image's width and height, its
+/// usage and the family.
+const COOK_HEADER: usize = 10;
+
+/// The input of a [`COOK_JOB`] cooking `source` for `family`.
+pub fn cook_input(source: &Source, family: Family) -> Vec<u8> {
+    let mut input = Vec::with_capacity(COOK_HEADER + source.pixels.len());
+    input.extend_from_slice(&source.width.to_le_bytes());
+    input.extend_from_slice(&source.height.to_le_bytes());
+    input.push(match source.usage {
+        Usage::Color => 0,
+        Usage::Data => 1,
+        Usage::Normal => 2,
+    });
+    input.push(match family {
+        Family::Bc7 => 0,
+        Family::Astc => 1,
+    });
+    input.extend_from_slice(&source.pixels);
+    input
+}
+
+/// A [`COOK_JOB`]'s output from its `input` ([`cook_input`]): the record
+/// ([`record`]) of its image cooked for its family ([`cook`]).
+pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, String> {
+    let header = input
+        .get(..COOK_HEADER)
+        .ok_or("a texture job is shorter than its header")?;
+    let word = |at: usize| {
+        u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
+    };
+    let usage = match header[8] {
+        0 => Usage::Color,
+        1 => Usage::Data,
+        2 => Usage::Normal,
+        other => return Err(format!("a texture job names usage {other}")),
+    };
+    let family = match header[9] {
+        0 => Family::Bc7,
+        1 => Family::Astc,
+        other => return Err(format!("a texture job names family {other}")),
+    };
+    let source = Source {
+        width: word(0),
+        height: word(4),
+        pixels: input[COOK_HEADER..].to_vec(),
+        usage,
+    };
+    cook(&source, family)
+        .map(|texture| record(&texture))
+        .map_err(|error| error.to_string())
+}
 
 /// How a texture's texels read, which its levels average by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

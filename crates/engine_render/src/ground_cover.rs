@@ -209,7 +209,7 @@ impl GroundCoverPass {
         uniforms.clear();
         let mut most = 0.0;
         for (index, render) in terrains.terrains.iter().enumerate() {
-            let (directory, palette, [densest, blade], sky) = terrain.cover_terrain(index);
+            let (directory, palette, [densest, blade], colors) = terrain.cover_terrain(index);
             let density = densest * settings.density;
             // Surroundings grow no blades.
             if density <= 0.0 || render.patches.is_empty() || render.surroundings {
@@ -260,7 +260,12 @@ impl GroundCoverPass {
                     eye: eye.extend(outer).to_array(),
                     grid: [first[0], first[1], cells as i32, candidates as i32],
                     counts: [directory, render.pyramid.levels(), palette, 0],
-                    scale: [settings.density, tried, sky as f32, terrain.cover_tallest()],
+                    scale: [
+                        settings.density,
+                        tried,
+                        colors as f32,
+                        terrain.cover_tallest(),
+                    ],
                     tier: [inner, radius, reach, scale],
                     planes,
                     deform_grid: shading.grid,
@@ -352,7 +357,7 @@ impl GroundCoverPass {
                     crate::buffers::entry("counts", &self.counts),
                     crate::buffers::entry("args", &self.args),
                     crate::buffers::entry("deformation", sources.deformation),
-                    ("sky_maps", crate::pipelines::view(sources.sky)),
+                    ("macro_maps", crate::pipelines::view(sources.macro_maps)),
                 ],
             );
             self.grow_group.set(key, group);

@@ -4,9 +4,10 @@
 //! a normal map of rippled ground. Each cooks for every device family; an
 //! independent decoder (texture2ddecoder) reads every level back, which
 //! must lie within the image's error of the levels the cook compressed;
-//! the engine's own BC7 decoder must read the same texels, and a record
-//! must read back as the texture it holds. Observed: each family's record
-//! hash and each image's error by level.
+//! the engine's own BC7 decoder must read the same texels, a record must
+//! read back as the texture it holds, and the job cooking it on workers
+//! must make the same record. Observed: each family's record hash and each
+//! image's error by level.
 
 use std::path::Path;
 
@@ -31,7 +32,8 @@ struct Image {
 
 /// A well-mixed hash of a texel and a salt.
 fn hash(x: u32, y: u32, salt: u32) -> u32 {
-    let mut h = x.wrapping_mul(0x8da6_b343) ^ y.wrapping_mul(0xd816_3841) ^ salt.wrapping_mul(0xcb1a_b31f);
+    let mut h =
+        x.wrapping_mul(0x8da6_b343) ^ y.wrapping_mul(0xd816_3841) ^ salt.wrapping_mul(0xcb1a_b31f);
     h ^= h >> 16;
     h = h.wrapping_mul(0x7feb_352d);
     h ^= h >> 15;
@@ -76,7 +78,12 @@ fn images() -> Vec<Image> {
             [28.0, 26.0],
             texels(|x, y| {
                 let random = hash(x, y, 1);
-                [random as u8, (random >> 8) as u8 / 2 + 64, (random >> 16) as u8 / 4, 255]
+                [
+                    random as u8,
+                    (random >> 8) as u8 / 2 + 64,
+                    (random >> 16) as u8 / 4,
+                    255,
+                ]
             }),
         ),
         image(
@@ -94,7 +101,12 @@ fn images() -> Vec<Image> {
             [36.0, 34.0],
             texels(|x, y| {
                 let ripple = height(x, y);
-                [unit(1.0 - 0.3 * ripple), (128 + x) as u8, 0, unit(height(y, x))]
+                [
+                    unit(1.0 - 0.3 * ripple),
+                    (128 + x) as u8,
+                    0,
+                    unit(height(y, x)),
+                ]
             }),
         ),
         image(
@@ -164,8 +176,24 @@ pub fn run(_root: &Path, observed: &mut Observations) -> Result<(), String> {
             let back = engine_textures::decode(&record)?;
             observed.check(
                 back.levels() == texture.levels() && back.summary() == texture.summary(),
-                || format!("{} {}: its record reads back otherwise", image.name, family.name()),
+                || {
+                    format!(
+                        "{} {}: its record reads back otherwise",
+                        image.name,
+                        family.name()
+                    )
+                },
             );
+            // Cooked as workers cook it, the same record.
+            let input = engine_textures::cook_input(&image.source, family);
+            let job = engine_textures::cook_job(&input)?;
+            observed.check(job == record, || {
+                format!(
+                    "{} {}: its cooking job makes another record",
+                    image.name,
+                    family.name()
+                )
+            });
             let mut errors = Vec::new();
             for (level, expected) in levels.iter().enumerate() {
                 let decoded = reference(&texture, level)?;

@@ -5,14 +5,15 @@
 // Runtime virtual texture: the ground of each textured terrain baked into
 // pages of VT_PAGE² texels, VT_BORDER more around them so filtering never
 // reaches a neighbor. Pages lie in sheets, the layers of `terrain_vt_sheets`,
-// three a sheet: albedo (its detail and variety applied) and roughness, then
-// the cover's canopy color and the ground's vegetated share, then the normal
-// maps' turn of the terrain's normal (in `terrain_vt_frame`), occlusion and
-// the cover's leaves, linear data the sRGB layer decodes before it filters.
-// Mip m's texels span `terrain.vt_scale.x` · 2^m meters. Each terrain keeps,
-// per mip, a window of VT_WINDOW² pages around the eye in `terrain_directory`
-// from `terrain.vt_layout.x`: its first page, then a table of each page's slot
-// plus one (0 while absent), addressed by page modulo VT_WINDOW.
+// three a sheet: albedo (its detail and macro colors applied) and roughness,
+// then the cover's canopy color and the ground's vegetated share, then the
+// normal maps' turn of the terrain's normal (in `terrain_vt_frame`), occlusion
+// and the cover's leaves, linear data the sRGB layer decodes before it
+// filters. Mip m's texels span `terrain.vt_scale.x` · 2^m meters. Each terrain
+// keeps, per mip, a window of VT_WINDOW² pages around the eye in
+// `terrain_directory` from `terrain.vt_layout.x`: its first page, then a table
+// of each page's slot plus one (0 while absent), addressed by page modulo
+// VT_WINDOW.
 const VT_PAGE: f32 = 128.0;
 const VT_BORDER: f32 = 8.0;
 const VT_SLOT: f32 = 144.0;
@@ -261,14 +262,15 @@ fn fs_terrain_vt_bake(input: TerrainVtBakeOutput) -> TerrainVtTargets {
     site.toward = vec3<f32>(0.0, 1.0, 0.0);
     site.thinned = 0.0;
     let ground = terrain_ground(site, shading);
-    // The detail and variety pixels apply (`terrain_point_seen`).
+    // The detail and macro colors pixels apply (`terrain_point_seen`).
     let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, site.footprint);
     let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, site.footprint);
     let fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, site.footprint);
     let plain = (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
     let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
+    let colors = terrain_macro_texel(local, site.footprint);
     let tint = mix(plain, mapped, ground.mapped)
-        * ground_variety(terrain_sky_map(local).gb, world.xz, ground.vegetated);
+        * macro_tint(colors, ground.vegetated, macro_strength(distance));
     let frame = terrain_vt_frame(geometric);
     let vegetated = max(ground.vegetated, 1.0e-6);
     var targets: TerrainVtTargets;

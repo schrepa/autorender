@@ -44,12 +44,13 @@ pub(crate) struct PatchDraws {
 
 /// What laying out the frame's patches reads besides the terrains: the
 /// tiles' layers and fades, the tables' bases, holes and covers, the sky
-/// maps' layers, the horizon maps' cascade reach, deformation's shading
-/// and each terrain's virtual texture uniform fields.
+/// maps' and macro colors' layers, the horizon maps' cascade reach,
+/// deformation's shading and each terrain's virtual texture uniform fields.
 pub(super) struct Layout<'a> {
     pub(super) atlas: &'a TileAtlas,
     pub(super) tables: &'a TerrainTables,
     pub(super) sky: &'a SkyMaps,
+    pub(super) macro_maps: &'a MacroMaps,
     pub(super) horizons: &'a Horizons,
     pub(super) shading: crate::deformation::DeformationShading,
     pub(super) textures: &'a [([u32; 4], [f32; 4], [u32; 4])],
@@ -165,6 +166,7 @@ impl PatchDraws {
                 uniform.vt_scale = vt_scale;
                 uniform.vt_layout = vt_layout;
             }
+            uniform.macro_map = [parts.macro_maps.layer(index), 0, 0, 0];
             let at = index * SLOT as usize;
             uniforms[at..at + size_of::<TerrainUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
@@ -586,6 +588,7 @@ fn terrain_uniform(
         vt: [0; 4],
         vt_scale: [0.0; 4],
         vt_layout: [0; 4],
+        macro_map: [0; 4],
     };
     (uniform, anchors)
 }

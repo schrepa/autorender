@@ -5,20 +5,18 @@
 //! long shadows are a lookup.
 //!
 //! Its sky map is a grid over the whole terrain holding at every texel the
-//! share of the sky its ground sees about its normal (cosine-weighted), the
-//! turn of that normal toward the middle of the sky it sees (its bent
-//! normal less the normal), and the ground's large-scale variety: how far it
-//! lies below the ground a couple of texels around (hollows, where water
-//! gathers) and below or above the ground a couple of hundred meters around
-//! (ridges). Its horizon map is a grid over the terrain holding at every
-//! texel, in each of [`DIRECTIONS`] directions around, how high above its
-//! ground and how far away lies the crest of the highest ground ahead, the
-//! horizon's angle above level, and the ground's height: a surface sees the
-//! sun where the sun's ray toward it clears that crest, by as many meters as
-//! the crest's distance times the sun's rise per meter, less the crest's
-//! height above it. Heights and distances interpolate between texels as
-//! the meters the sun clears crests by would; between directions, the
-//! slopes up to the crests do.
+//! share of the sky its ground sees about its normal (cosine-weighted) and
+//! the turn of that normal toward the middle of the sky it sees (its bent
+//! normal less the normal); the ground's large-scale variety is its macro
+//! colors' ([`crate::macro_colors`]). Its horizon map is a grid over the
+//! terrain holding at every texel, in each of [`DIRECTIONS`] directions
+//! around, how high above its ground and how far away lies the crest of
+//! the highest ground ahead, the horizon's angle above level, and the
+//! ground's height: a surface sees the sun where the sun's ray toward it
+//! clears that crest, by as many meters as the crest's distance times the
+//! sun's rise per meter, less the crest's height above it. Heights and
+//! distances interpolate between texels as the meters the sun clears
+//! crests by would; between directions, the slopes up to the crests do.
 //!
 //! Horizons come from sweeps, one per direction: lines along it a step apart
 //! cross the terrain, sampled a step apart, and walking each line from its
@@ -36,18 +34,18 @@ use crate::codec::{self, Codec, CodecError, Reader, Writer};
 /// `k / DIRECTIONS` of a turn from +x toward +z.
 pub const DIRECTIONS: usize = 16;
 
-/// Planes of the sky map, a byte per texel each: the sky seen, hollows,
-/// ridges and the normal's turn toward the sky along x, y and z.
-pub const SKY_PLANES: usize = 6;
+/// Planes of the sky map, a byte per texel each: the sky seen and the
+/// normal's turn toward the sky along x, y and z.
+pub const SKY_PLANES: usize = 4;
 
 /// Planes of the horizon map, half floats: each direction's crest height
 /// above the ground, then each direction's crest distance (meters), then the
 /// ground's height above the lowest.
 pub const HORIZON_PLANES: usize = 2 * DIRECTIONS + 1;
 
-/// RGBA8 layers the sky map takes on the GPU: the sky seen, hollows and
-/// ridges; then the normal's turn.
-pub const SKY_LAYERS: usize = 2;
+/// RGBA8 layers the sky map takes on the GPU: one, the sky seen (red) and
+/// the normal's turn (green, blue and alpha: x, y and z).
+pub const SKY_LAYERS: usize = 1;
 
 /// RGBA16 float layers the horizon map takes on the GPU: per pair of
 /// directions `2l` and `2l + 1`, layer `l` holds their crests' heights above
@@ -64,12 +62,6 @@ const SLOPE_TOLERANCE: f32 = 1.0e-4;
 /// standing in for no ground ahead at all.
 const FARTHEST: f32 = 6.0e4;
 const NO_CREST: f32 = -6.0e4;
-
-/// Meters around a texel its ridges are measured against, and the meters a
-/// hollow and a ridge take to reach the ends of their ranges.
-const RIDGE_REACH: f32 = 200.0;
-const HOLLOW_SCALE: f32 = 8.0;
-const RIDGE_SCALE: f32 = 80.0;
 
 /// A terrain's lighting: its sky map, `sky_size` texels a side, as planes
 /// of bytes ([`SKY_PLANES`]), and its horizon map, `horizon_size` texels a
@@ -119,10 +111,7 @@ impl TerrainLighting {
     /// along z.
     pub fn sky_layers(&self) -> Vec<u8> {
         let plane = |index: usize| Some(plane(&self.sky, self.sky_size, index));
-        let layers = [
-            [plane(0), plane(1), plane(2), None],
-            [plane(3), plane(4), plane(5), None],
-        ];
+        let layers = [[plane(0), plane(1), plane(2), plane(3)]];
         let mut texels = Vec::with_capacity(layers.len() * 4 * self.sky.len() / SKY_PLANES);
         for channels in &layers {
             interleave(channels, 255, &mut texels, |value| [value]);
@@ -387,28 +376,12 @@ pub fn light(
     for z in 0..sky_count {
         for x in 0..sky_count {
             let (px, pz) = center(sky_step, x, z);
-            let at = z * sky_count + x;
-            let ground_height = ground.height(px, pz);
             // The ground's normal across a texel either way.
-            let normal = normalized([
+            texels[z * sky_count + x].normal = normalized([
                 ground.height(px - across, pz) - ground.height(px + across, pz),
                 2.0 * across,
                 ground.height(px, pz - across) - ground.height(px, pz + across),
             ]);
-            texels[at].normal = normal;
-            // The variety: the ground's height against rings around it, two
-            // texels and RIDGE_REACH out.
-            let wide_reach = max(RIDGE_REACH, 4.0 * across);
-            let (mut near, mut wide) = (0.0, 0.0);
-            for index in 0..8 {
-                let (sin, cos) = sin_cos((index as f32 + 0.5) * (TAU / 8.0));
-                near += ground.height(px + cos * 2.0 * across, pz + sin * 2.0 * across);
-                wide += ground.height(px + cos * wide_reach, pz + sin * wide_reach);
-            }
-            let hollow = near * 0.125 - ground_height;
-            let ridge = ground_height - wide * 0.125;
-            sky[sky_area + at] = unorm(0.5 + 0.5 * hollow / HOLLOW_SCALE);
-            sky[2 * sky_area + at] = unorm(0.5 + 0.5 * ridge / RIDGE_SCALE);
         }
     }
     let horizon_area = horizon_count * horizon_count;
@@ -446,7 +419,7 @@ pub fn light(
         sky[at] = unorm(texel.seen / max(texel.open, 1.0e-6));
         let bent = normalized(texel.bent);
         for axis in 0..3 {
-            sky[(3 + axis) * sky_area + at] = unorm(0.5 + 0.5 * (bent[axis] - texel.normal[axis]));
+            sky[(1 + axis) * sky_area + at] = unorm(0.5 + 0.5 * (bent[axis] - texel.normal[axis]));
         }
     }
     // The ground's height at each horizon texel, above the lowest.
