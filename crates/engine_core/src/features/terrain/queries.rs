@@ -95,6 +95,22 @@ impl Terrains {
             .map(|state| &state.terrain)
     }
 
+    /// The record `entity`'s bakes came from, once they are done: what the
+    /// layers [`Self::layers`] gives depend on beyond those authored, which
+    /// records made from them name in their identities.
+    pub fn bake_record(&self, entity: Entity) -> Option<RecordKey> {
+        self.entries
+            .iter()
+            .find(|state| state.entity == entity && state.around.is_none())
+            .filter(|state| {
+                state
+                    .baked
+                    .as_ref()
+                    .is_some_and(|baked| baked.unbaked().is_none())
+            })
+            .and_then(|state| state.bake.key)
+    }
+
     /// The layers `entity`'s tiles generate from: its own, with their
     /// hydrology baked once it is and its edits over them.
     pub fn layers(&self, entity: Entity) -> Option<Arc<Layers>> {
@@ -294,7 +310,7 @@ impl Terrains {
             .iter()
             .find(|state| state.entity == entity && state.around.is_none())
             .map_or_else(TerrainBakes::default, |state| TerrainBakes {
-                baking: state.bake_job.is_some(),
+                baking: state.bake.job.is_some(),
                 hydrology: state.hydrology.stats,
                 erosion: state.erosion,
             })

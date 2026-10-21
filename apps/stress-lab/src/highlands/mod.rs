@@ -28,6 +28,7 @@ use std::sync::Arc;
 use engine::prelude::*;
 use engine::terrain::*;
 
+use crate::kit::records;
 use crate::kit::{StressConfig, StressFile};
 use looks::{LOOKS, Look};
 pub(crate) use world::HighlandsWorld;
@@ -504,6 +505,7 @@ pub(crate) fn populate(
     );
     lanterns(world, &ROAD, half)?;
     hiker::hiker(world, &ROAD, half)?;
+    bodies::request(world, config)?;
     Ok((
         (
             Vec3::new(-half, -50.0, -half),
@@ -701,6 +703,24 @@ fn surface(
     files: &HashMap<String, StressFile>,
     authored: Vec<AuthoredPlacement>,
 ) -> engine::Result<TerrainSurface> {
+    // The shapes and the bark atlas are records: their handles now, their
+    // content once hosts hand it back or it is built in place. Boulders
+    // and cliffs come at one detail, their coarser levels their meshes'
+    // own; spruces at each of their details.
+    let boulders = (0..BOULDERS as u32)
+        .map(|seed| rocks::boulder_record(world, seed))
+        .collect::<engine::Result<Vec<_>>>()?;
+    let cliffs = (0..CLIFFS as u32)
+        .map(|seed| rocks::cliff_record(world, seed))
+        .collect::<engine::Result<Vec<_>>>()?;
+    let spruces = (0..SPRUCES as u32)
+        .map(|seed| {
+            (0..=trees::CONIFER_ERRORS.len())
+                .map(|detail| trees::conifer_record(world, seed, detail))
+                .collect::<engine::Result<Vec<_>>>()
+        })
+        .collect::<engine::Result<Vec<_>>>()?;
+    let atlas = trees::atlas_record(world)?;
     let materials = world.resource_scope(|world, mut records: Mut<TextureRecords>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
         let mut loaded = HashMap::default();
@@ -764,25 +784,13 @@ fn surface(
     let rock = material
         .with_grounding(SOIL)
         .and_then(|material| assets.insert_material(material))?;
-    let mut placed = Vec::with_capacity(BOULDERS + SPRUCES);
-    for seed in 0..BOULDERS as u32 {
-        let mut mesh = |detail| {
-            rocks::boulder(seed, detail).and_then(|(mesh, error)| {
-                Ok(PlacementLod {
-                    mesh: assets.insert_mesh(mesh)?,
-                    error,
-                })
-            })
-        };
-        let full = mesh(0)?.mesh;
-        let lods = (1..=rocks::COARSER)
-            .map(&mut mesh)
-            .collect::<Result<Vec<_>, _>>()?;
+    let mut placed = Vec::with_capacity(BOULDERS + SPRUCES + CLIFFS);
+    for mesh in boulders {
         // Boulders collide as spheres a little inside their faces.
         placed.push(PlacementAsset {
-            mesh: full,
+            mesh,
             material: rock,
-            lods,
+            lods: Vec::new(),
             sway: 0.0,
             collider: Some(PlacedCollider::new(
                 PlacedShape::Sphere { radius: 0.42 },
@@ -792,8 +800,6 @@ fn surface(
     }
     // Spruces of a few shapes over one bark and needle atlas, their needles
     // cut out by its alpha.
-    let atlas = Texture::from_rgba(trees::ATLAS, trees::ATLAS, trees::atlas())
-        .and_then(|texture| assets.insert_texture(texture))?;
     let needles = Material::new([1.0, 1.0, 1.0, 1.0])
         .and_then(|material| {
             material.with_surface(Surface {
@@ -804,24 +810,17 @@ fn surface(
         .and_then(|material| material.with_base_color_texture(TextureRef::new(atlas)))
         .and_then(|material| material.with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 }))
         .and_then(|material| assets.insert_material(material))?;
-    for seed in 0..SPRUCES as u32 {
-        let mut mesh = |detail| {
-            trees::conifer(seed, detail)
-                .and_then(|mesh| assets.insert_mesh(mesh).map_err(engine::Error::from))
-        };
-        let full = mesh(0)?;
-        let mut lods = Vec::with_capacity(trees::CONIFER_ERRORS.len());
-        for (detail, error) in trees::CONIFER_ERRORS.into_iter().enumerate() {
-            lods.push(PlacementLod {
-                mesh: mesh(detail + 1)?,
-                error,
-            });
-        }
+    for details in spruces {
+        let lods = details[1..]
+            .iter()
+            .zip(trees::CONIFER_ERRORS)
+            .map(|(&mesh, error)| PlacementLod { mesh, error })
+            .collect();
         // Spruces bend in the wind: a third of a meter at ten
         // meters up in full wind.
         // Their trunks collide, up to where the lowest whorls spread.
         placed.push(PlacementAsset {
-            mesh: full,
+            mesh: details[0],
             material: needles,
             lods,
             sway: 0.35,
@@ -874,24 +873,12 @@ fn surface(
         }
         (None, None) => rock,
     };
-    for seed in 0..CLIFFS as u32 {
-        let mut mesh = |detail| {
-            rocks::cliff(seed, detail).and_then(|(mesh, error)| {
-                Ok(PlacementLod {
-                    mesh: assets.insert_mesh(mesh)?,
-                    error,
-                })
-            })
-        };
-        let full = mesh(0)?.mesh;
-        cave_rocks.push(full);
-        let lods = (1..=rocks::COARSER)
-            .map(&mut mesh)
-            .collect::<Result<Vec<_>, _>>()?;
+    for mesh in cliffs {
+        cave_rocks.push(mesh);
         placed.push(PlacementAsset {
-            mesh: full,
+            mesh,
             material: cliff_rock,
-            lods,
+            lods: Vec::new(),
             sway: 0.0,
             collider: Some(PlacedCollider::new(
                 PlacedShape::Sphere { radius: 0.4 },
@@ -1259,6 +1246,10 @@ fn make_tracks(
 ///   the sky and the sun, as the cave's own walls, hiding the sky (sky
 ///   occlusion), darken it;
 /// - cliff blocks framing its mouth.
+///
+/// Its tube's mesh is a record of the ground the bakes leave
+/// ([`Terrains::bake_record`]) and the mouth: the cave spawns once it is
+/// here.
 fn open_cave(world: &mut World) {
     if world.contains_resource::<CaveOpened>() {
         return;
@@ -1269,12 +1260,16 @@ fn open_cave(world: &mut World) {
     ) else {
         return;
     };
-    let Some((terrain, layers)) = ({
+    let Some((terrain, layers, bake)) = ({
         let mut query = world.query::<(Entity, &Terrain)>();
         let terrains = world.resource::<Terrains>();
-        query
-            .iter(world)
-            .find_map(|(entity, terrain)| Some((terrain.clone(), terrains.layers(entity)?)))
+        query.iter(world).find_map(|(entity, terrain)| {
+            Some((
+                terrain.clone(),
+                terrains.layers(entity)?,
+                terrains.bake_record(entity)?,
+            ))
+        })
     }) else {
         return;
     };
@@ -1320,13 +1315,63 @@ fn open_cave(world: &mut World) {
         at(44.0, -5.0, fall * 18.0 + fall * 16.0),
         at(58.0, 0.0, fall * 18.0 + fall * 22.0),
     ];
-    let Ok(mesh) = caves::cave(&points, CAVE_RADIUS, 79) else {
-        return;
+    // Blocks over and beside the mouth, facing down the slope: one over
+    // the tube's shell where it leaves the slope, its face the mouth's
+    // overhang, and one either side.
+    let facing = Quat::from_rotation_y((-uphill.x).atan2(-uphill.y));
+    let blocks: Vec<(Transform, MeshHandle)> = [
+        (4.0, 0.0, 1.5, 8.0, 0),
+        (-1.0, 10.0, -1.5, 6.0, 1),
+        (-1.0, -10.0, -1.5, 6.0, 2),
+    ]
+    .into_iter()
+    .filter_map(
+        |(along, across, rise, scale, index): (f32, f32, f32, f32, usize)| {
+            let point = mouth + uphill * along + side * across;
+            let mesh = *rock.meshes.get(index % rock.meshes.len().max(1))?;
+            Some((
+                Transform {
+                    translation: Vec3::new(point.x, height(point) + rise, point.y),
+                    rotation: facing,
+                    scale: Vec3::splat(scale),
+                },
+                mesh,
+            ))
+        },
+    )
+    .collect();
+    let inward = Vec3::new(uphill.x, 0.0, uphill.y);
+    let mut identity = bake.0.to_vec();
+    identity.extend_from_slice(&mouth.x.to_bits().to_le_bytes());
+    identity.extend_from_slice(&mouth.y.to_bits().to_le_bytes());
+    world.insert_resource(CaveOpened);
+    let spawn = move |world: &mut World, mesh: MeshHandle, built: &Mesh| {
+        spawn_cave(world, (mesh, built), &points, inward, (&rock, blocks));
+        Ok(())
     };
-    let (low, high) = cave_interior(&mesh, &points, Vec3::new(uphill.x, 0.0, uphill.y));
-    let Ok(mesh) = world.resource_mut::<AssetLibrary>().insert_mesh(mesh) else {
-        return;
-    };
+    let made = records::mesh_then(
+        world,
+        "highlands_cave",
+        &identity,
+        move || caves::cave(&points, CAVE_RADIUS, 79),
+        spawn,
+    );
+    if let Err(error) = made {
+        eprintln!("The highlands' cave stays closed: {}", error.message);
+    }
+}
+
+/// The cave through `points` (going `inward` from the first) of `mesh`,
+/// its handle and its built mesh, hewn in `rock` and framed by `blocks`:
+/// its walls, its chamber's light, its interior and the blocks.
+fn spawn_cave(
+    world: &mut World,
+    (mesh, built): (MeshHandle, &Mesh),
+    points: &[Vec3; 5],
+    inward: Vec3,
+    (rock, blocks): (&CaveRock, Vec<(Transform, MeshHandle)>),
+) {
+    let (low, high) = cave_interior(built, points, inward);
     world.spawn((
         Transform {
             translation: points[0],
@@ -1339,7 +1384,7 @@ fn open_cave(world: &mut World) {
     ));
     // The chamber's light, warm and short, an interior lamp: it lights the
     // cave alone, not the hillside through the rock.
-    let chamber = points[4] - Vec3::new(uphill.x, 0.0, uphill.y) * 6.0 + Vec3::Y * 2.0;
+    let chamber = points[4] - inward * 6.0 + Vec3::Y * 2.0;
     world.spawn((
         Transform {
             translation: chamber,
@@ -1356,30 +1401,15 @@ fn open_cave(world: &mut World) {
             .with_blend(CAVE_MARGIN)
             .with_interior(Interior { sky: 1.0, sun: 1.0 }),
     ));
-    // Blocks over and beside the mouth, facing down the slope.
-    let facing = Quat::from_rotation_y((-uphill.x).atan2(-uphill.y));
-    let mut block = |along: f32, across: f32, rise: f32, scale: f32, index: usize| {
-        let point = mouth + uphill * along + side * across;
-        if let Some(&mesh) = rock.meshes.get(index % rock.meshes.len().max(1)) {
-            world.spawn((
-                Transform {
-                    translation: Vec3::new(point.x, height(point) + rise, point.y),
-                    rotation: facing,
-                    scale: Vec3::splat(scale),
-                },
-                Mesh3d {
-                    mesh,
-                    material: rock.material,
-                },
-            ));
-        }
-    };
-    // One over the tube's shell where it leaves the slope, its face the
-    // mouth's overhang, and one either side.
-    block(4.0, 0.0, 1.5, 8.0, 0);
-    block(-1.0, 10.0, -1.5, 6.0, 1);
-    block(-1.0, -10.0, -1.5, 6.0, 2);
-    world.insert_resource(CaveOpened);
+    for (transform, mesh) in blocks {
+        world.spawn((
+            transform,
+            Mesh3d {
+                mesh,
+                material: rock.material,
+            },
+        ));
+    }
 }
 
 /// The box of the cave `mesh`'s interior, around its walls from its first

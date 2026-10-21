@@ -48,8 +48,8 @@ pub(super) fn bake(
     if layers.unbaked().is_none() {
         return false;
     }
-    let Some(id) = state.bake_job else {
-        if state.bake_failed.is_some_and(|at| frame < at + RETRY_AFTER) {
+    let Some(id) = state.bake.job else {
+        if state.bake.failed.is_some_and(|at| frame < at + RETRY_AFTER) {
             return true;
         }
         let priority = job_priority(URGENT_JOBS, 0);
@@ -67,7 +67,8 @@ pub(super) fn bake(
         // its input's hash.
         let identity = content_hash(&input).to_le_bytes();
         let record = RecordKey::new(&engine_terrain::SOURCE, BakeJob::KIND.name(), &identity);
-        state.bake_job = Some(slots.jobs.submit_record(
+        state.bake.key = Some(record);
+        state.bake.job = Some(slots.jobs.submit_record(
             BakeJob::KIND.name(),
             input,
             priority,
@@ -78,7 +79,7 @@ pub(super) fn bake(
     let Some(output) = slots.jobs.take(id) else {
         return true;
     };
-    state.bake_job = None;
+    state.bake.job = None;
     let baked = match job_output(
         BakeJob::KIND.name(),
         output,
@@ -87,7 +88,7 @@ pub(super) fn bake(
         Ok(baked) => baked,
         Err(error) => {
             state.failures.record(frame, error);
-            state.bake_failed = Some(frame);
+            state.bake.failed = Some(frame);
             return true;
         }
     };

@@ -81,15 +81,17 @@ pub use games::*;
 
 // Lower-level names, at the root only: asset, animation and mesh details,
 // the bounds settings and components validate against, the fallback mesh
-// size `Mesh::from_virtual` takes by default, and what hosts and tools read.
+// size `Mesh::from_virtual` takes by default, what hosts and tools read,
+// and the records game code makes itself, by key.
 pub use engine_core::{
     AnimationSample, DEFAULT_FALLBACK_TRIANGLES, DetailShares, DrawnKind, EnvironmentSection,
     ErrorCode, Features, HierarchyReport, InvalidSetting, LodLevel, MAX_EMITTER_PARTICLES,
     MAX_HIERARCHY_DEPTH, MAX_KEPT_LEVELS, MAX_LIGHT_RANGE, MAX_OCEAN_WAVES, MAX_SHADOW_CASCADES,
     MAX_SPLINE_POINTS, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION,
     MAX_TRACK_DEPTH, MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MaterialShare, MeshLods, OceanPoint,
-    OceanSurface, OceanWave, OceanWaves, PixelProbe, PluginGroupBuilder, SplineChunks, SunLookup,
-    TerrainProbe, TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit, Viewport, VirtualMesh, has_feature, mesh_lods,
+    OceanSurface, OceanWave, OceanWaves, PixelProbe, PluginGroupBuilder, Records, SplineChunks,
+    SunLookup, TerrainProbe, TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit,
+    Viewport, VirtualMesh, has_feature, mesh_lods,
 };
 
 /// Terrain authoring: layer stacks, masks, stamps, bakes, placement and

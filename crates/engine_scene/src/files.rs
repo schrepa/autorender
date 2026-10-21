@@ -287,6 +287,20 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     bytes
 }
 
+/// The mesh an engine mesh buffer holds ([`encode_mesh_buffer_with`]),
+/// with its optional streams: what scenes' buffer files and the records
+/// keeping game code's meshes decode to.
+pub fn decode_mesh_buffer(bytes: &[u8]) -> Result<engine_core::Mesh, SceneError> {
+    let buffer = mesh_buffer(bytes, "$")?;
+    crate::document::with_extras(
+        engine_core::Mesh::new(buffer.vertices, buffer.indices),
+        buffer.colors,
+        buffer.uv1,
+        buffer.skin,
+        "$",
+    )
+}
+
 /// Joints and weights of skinned vertices.
 pub(crate) type SkinStreams = (Vec<[u16; 4]>, Vec<[f32; 4]>);
 

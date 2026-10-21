@@ -78,6 +78,8 @@ impl Default for AssetBudget {
 struct Slot<T> {
     generation: u64,
     value: Option<T>,
+    // Held for a value to come.
+    reserved: bool,
 }
 
 struct Storage<T> {
@@ -104,10 +106,22 @@ impl<T> Storage<T> {
     }
 
     fn insert(&mut self, library: u64, value: T) -> Id {
+        self.place(library, Some(value))
+    }
+
+    /// A slot for a value to come ([`Self::fill`]), which names none until
+    /// then.
+    fn reserve(&mut self, library: u64) -> Id {
+        self.place(library, None)
+    }
+
+    fn place(&mut self, library: u64, value: Option<T>) -> Id {
         self.count += 1;
+        let reserved = value.is_none();
         if let Some(index) = self.free.pop() {
             let slot = &mut self.slots[index];
-            slot.value = Some(value);
+            slot.value = value;
+            slot.reserved = reserved;
             Id {
                 library,
                 slot: index,
@@ -117,7 +131,8 @@ impl<T> Storage<T> {
             let slot = self.slots.len();
             self.slots.push(Slot {
                 generation: 0,
-                value: Some(value),
+                value,
+                reserved,
             });
             Id {
                 library,
@@ -125,6 +140,35 @@ impl<T> Storage<T> {
                 generation: 0,
             }
         }
+    }
+
+    /// Puts `value` in reserved slot `id`; whether `id` was reserved.
+    fn fill(&mut self, library: u64, id: Id, value: T) -> bool {
+        match self.slot_mut(library, id) {
+            Some(slot) if slot.reserved => {
+                slot.value = Some(value);
+                slot.reserved = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `id` names a value or a reserved slot.
+    fn holds(&self, library: u64, id: Id) -> bool {
+        id.library == library
+            && self.slots.get(id.slot).is_some_and(|slot| {
+                slot.generation == id.generation && (slot.value.is_some() || slot.reserved)
+            })
+    }
+
+    fn slot_mut(&mut self, library: u64, id: Id) -> Option<&mut Slot<T>> {
+        if id.library != library {
+            return None;
+        }
+        self.slots
+            .get_mut(id.slot)
+            .filter(|slot| slot.generation == id.generation)
     }
 
     fn get(&self, library: u64, id: Id) -> Option<&T> {
@@ -157,14 +201,21 @@ impl<T> Storage<T> {
         slot.value.as_mut()
     }
 
-    fn remove(&mut self, library: u64, id: Id) -> Option<T> {
-        self.get(library, id)?;
-        let slot = &mut self.slots[id.slot];
-        let value = slot.value.take()?;
-        self.count -= 1;
+    /// Frees slot `id`: its value, `None` for a reserved slot; `None` where
+    /// `id` names neither.
+    fn remove(&mut self, library: u64, id: Id) -> Option<Option<T>> {
+        let slot = self
+            .slot_mut(library, id)
+            .filter(|slot| slot.value.is_some() || slot.reserved)?;
+        let value = slot.value.take();
+        slot.reserved = false;
         // Retire an exhausted slot instead of wrapping and reviving old IDs.
-        if let Some(next) = slot.generation.checked_add(1) {
+        let next = slot.generation.checked_add(1);
+        if let Some(next) = next {
             slot.generation = next;
+        }
+        self.count -= 1;
+        if next.is_some() {
             self.free.push(id.slot);
         }
         Some(value)
@@ -172,7 +223,10 @@ impl<T> Storage<T> {
 }
 
 /// Single CPU asset owner. Insertions and removals are explicit synchronous
-/// operations; no loading states, background work, or automatic eviction exist.
+/// operations; no background work or automatic eviction exist. A mesh or
+/// texture still to come (a record its owner fetches) holds a reserved handle
+/// meanwhile, which names nothing until filled: what reads it finds it
+/// missing, as a removed one.
 #[derive(Resource)]
 pub struct AssetLibrary {
     id: u64,
@@ -238,10 +292,35 @@ impl AssetLibrary {
         Ok(MeshHandle(self.meshes.insert(self.id, Arc::new(mesh))))
     }
 
+    /// A handle for a mesh to come, which counts against the mesh capacity
+    /// and names no mesh until [`Self::fill_mesh`] gives it one.
+    pub fn reserve_mesh(&mut self) -> Result<MeshHandle, AssetError> {
+        if !self.meshes.has_capacity(self.budget.max_meshes) {
+            return Err(AssetError::MeshCapacity {
+                limit: self.budget.max_meshes,
+            });
+        }
+        self.revision = self.revision.saturating_add(1);
+        Ok(MeshHandle(self.meshes.reserve(self.id)))
+    }
+
+    /// Gives reserved `handle` its mesh, admitted as [`Self::insert_mesh`]
+    /// admits one; a handle not reserved is refused.
+    pub fn fill_mesh(&mut self, handle: MeshHandle, mesh: Mesh) -> Result<(), AssetError> {
+        if !self.meshes.holds(self.id, handle.0) || self.mesh(handle).is_some() {
+            return Err(AssetError::InvalidMeshHandle);
+        }
+        self.reserve_bytes(mesh.byte_len())?;
+        self.meshes.fill(self.id, handle.0, Arc::new(mesh));
+        Ok(())
+    }
+
+    /// Admits `material`, whose textures must be live in this library or
+    /// reserved there ([`Self::reserve_texture`]).
     pub fn insert_material(&mut self, material: Material) -> Result<MaterialHandle, AssetError> {
         if material
             .textures()
-            .any(|texture| self.texture(texture).is_none())
+            .any(|texture| !self.textures.holds(self.id, texture.0))
         {
             return Err(AssetError::InvalidTextureHandle);
         }
@@ -258,7 +337,8 @@ impl AssetLibrary {
 
     /// Replaces live material `handle` in place, keeping the handle:
     /// objects using it draw with `material` from their next
-    /// extraction. Its textures must be live in this library. This advances
+    /// extraction. Its textures must be live in this library or reserved
+    /// there. This advances
     /// [`Self::material_revision`] and the material's
     /// [`Self::material_version`], not [`Self::revision`]: renderers
     /// re-resolve only the objects using it. Prefer per-object tints
@@ -270,7 +350,7 @@ impl AssetLibrary {
     ) -> Result<(), AssetError> {
         if material
             .textures()
-            .any(|texture| self.texture(texture).is_none())
+            .any(|texture| !self.textures.holds(self.id, texture.0))
         {
             return Err(AssetError::InvalidTextureHandle);
         }
@@ -334,6 +414,35 @@ impl AssetLibrary {
         Ok(())
     }
 
+    /// A handle for a texture to come, which materials may name and which
+    /// counts against the texture capacity; it names no texture until
+    /// [`Self::fill_texture`] gives it one.
+    pub fn reserve_texture(&mut self) -> Result<TextureHandle, AssetError> {
+        if !self.textures.has_capacity(self.budget.max_textures) {
+            return Err(AssetError::TextureCapacity {
+                limit: self.budget.max_textures,
+            });
+        }
+        self.revision = self.revision.saturating_add(1);
+        Ok(TextureHandle(self.textures.reserve(self.id)))
+    }
+
+    /// Gives reserved `handle` its texture, admitted as
+    /// [`Self::insert_texture`] admits one; a handle not reserved is refused.
+    pub fn fill_texture(
+        &mut self,
+        handle: TextureHandle,
+        texture: Texture,
+    ) -> Result<(), AssetError> {
+        if !self.textures.holds(self.id, handle.0) || self.texture(handle).is_some() {
+            return Err(AssetError::InvalidTextureHandle);
+        }
+        self.reserve_bytes(texture.byte_len())?;
+        self.texture_bytes += texture.byte_len();
+        self.textures.fill(self.id, handle.0, Arc::new(texture));
+        Ok(())
+    }
+
     /// Admits an animation clip; its keys count against the byte budget.
     pub fn insert_clip(&mut self, clip: AnimationClip) -> Result<ClipHandle, AssetError> {
         self.reserve_bytes(clip.byte_len())?;
@@ -345,13 +454,12 @@ impl AssetLibrary {
     }
 
     pub fn remove_clip(&mut self, handle: ClipHandle) -> bool {
-        if let Some(clip) = self.clips.remove(self.id, handle.0) {
-            self.resident_bytes -= clip.byte_len();
-            self.revision = self.revision.saturating_add(1);
-            true
-        } else {
-            false
-        }
+        let Some(clip) = self.clips.remove(self.id, handle.0) else {
+            return false;
+        };
+        self.resident_bytes -= clip.map_or(0, |clip| clip.byte_len());
+        self.revision = self.revision.saturating_add(1);
+        true
     }
 
     pub fn mesh(&self, handle: MeshHandle) -> Option<&Arc<Mesh>> {
@@ -392,37 +500,38 @@ impl AssetLibrary {
         self.textures.get(self.id, handle.0)
     }
 
+    /// Removes mesh `handle`, or releases it while reserved; whether it
+    /// named either.
     pub fn remove_mesh(&mut self, handle: MeshHandle) -> bool {
-        if let Some(mesh) = self.meshes.remove(self.id, handle.0) {
-            self.resident_bytes -= mesh.byte_len();
-            self.revision = self.revision.saturating_add(1);
-            true
-        } else {
-            false
-        }
+        let Some(mesh) = self.meshes.remove(self.id, handle.0) else {
+            return false;
+        };
+        self.resident_bytes -= mesh.map_or(0, |mesh| mesh.byte_len());
+        self.revision = self.revision.saturating_add(1);
+        true
     }
 
     pub fn remove_material(&mut self, handle: MaterialHandle) -> bool {
-        if self.materials.remove(self.id, handle.0).is_some() {
-            self.resident_bytes -= size_of::<Material>();
-            self.revision = self.revision.saturating_add(1);
-            true
-        } else {
-            false
+        if self.materials.remove(self.id, handle.0).is_none() {
+            return false;
         }
+        self.resident_bytes -= size_of::<Material>();
+        self.revision = self.revision.saturating_add(1);
+        true
     }
 
-    /// Invalidates this handle without changing materials that refer to it.
-    /// Those weak references fail texture lookup; retained snapshots remain valid.
+    /// Invalidates this handle, or releases it while reserved, without
+    /// changing materials that refer to it. Those weak references fail
+    /// texture lookup; retained snapshots remain valid.
     pub fn remove_texture(&mut self, handle: TextureHandle) -> bool {
-        if let Some(texture) = self.textures.remove(self.id, handle.0) {
-            self.resident_bytes -= texture.byte_len();
-            self.texture_bytes -= texture.byte_len();
-            self.revision = self.revision.saturating_add(1);
-            true
-        } else {
-            false
-        }
+        let Some(texture) = self.textures.remove(self.id, handle.0) else {
+            return false;
+        };
+        let bytes = texture.map_or(0, |texture| texture.byte_len());
+        self.resident_bytes -= bytes;
+        self.texture_bytes -= bytes;
+        self.revision = self.revision.saturating_add(1);
+        true
     }
 
     pub fn mesh_count(&self) -> usize {

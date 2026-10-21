@@ -59,6 +59,8 @@ pub enum AssetError {
     },
     InvalidTextureHandle,
     InvalidMaterialHandle,
+    /// A mesh handle neither live nor reserved where one must be.
+    InvalidMeshHandle,
     /// An animation clip or channel breaking a rule.
     InvalidAnimation {
         reason: &'static str,
@@ -108,6 +110,7 @@ impl AssetError {
             Self::UnsupportedTextureAlpha { .. } => "asset.unsupported_texture_alpha",
             Self::InvalidTextureHandle => "asset.invalid_texture_handle",
             Self::InvalidMaterialHandle => "asset.invalid_material_handle",
+            Self::InvalidMeshHandle => "asset.invalid_mesh_handle",
             Self::InvalidAnimation { .. } => "asset.invalid_animation",
             Self::InvalidCompressedTexture { .. } => "asset.invalid_compressed_texture",
             Self::InvalidVirtualMesh { .. } => "asset.invalid_virtual_mesh",
@@ -193,6 +196,9 @@ impl fmt::Display for AssetError {
             }
             Self::InvalidMaterialHandle => {
                 write!(f, "material must be live in the same asset library")
+            }
+            Self::InvalidMeshHandle => {
+                write!(f, "mesh must be reserved in the same asset library")
             }
             Self::InvalidAnimation { reason } => write!(f, "animation: {reason}"),
             Self::InvalidCompressedTexture { reason } => {

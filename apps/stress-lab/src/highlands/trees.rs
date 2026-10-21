@@ -9,10 +9,34 @@
 
 use engine::prelude::*;
 
+use crate::kit::power;
 use crate::kit::random::{golden_hash, unit};
+use crate::kit::records;
+
+/// Conifer `seed` at `detail` as a record ([`records::mesh`]): its handle,
+/// reserved until the record is here.
+pub(crate) fn conifer_record(
+    world: &mut World,
+    seed: u32,
+    detail: usize,
+) -> engine::Result<MeshHandle> {
+    let mut identity = seed.to_le_bytes().to_vec();
+    identity.extend_from_slice(&(detail as u32).to_le_bytes());
+    records::mesh(world, "highlands_conifer", &identity, move || {
+        conifer(seed, detail)
+    })
+}
+
+/// The bark and needle atlas as a record ([`records::texture`]): its
+/// handle, which materials name at once.
+pub(crate) fn atlas_record(world: &mut World) -> engine::Result<TextureHandle> {
+    records::texture(world, "highlands_bark_atlas", &[], || {
+        (ATLAS, ATLAS, atlas())
+    })
+}
 
 /// The atlas's side in texels.
-pub(crate) const ATLAS: u32 = 512;
+const ATLAS: u32 = 512;
 
 /// Bark texture coordinates span this much of the atlas's width: its left
 /// half less a margin, so filtering never reaches the needles.
@@ -88,14 +112,14 @@ pub(crate) const CONIFER_ERRORS: [f32; 3] = [0.08, 0.2, 0.45];
 /// Conifer `seed` built at `detail` (0 the full tree, up to 3): 13 to 17
 /// meters tall before placement scales it, its base half a meter into the
 /// ground.
-pub(crate) fn conifer(seed: u32, detail: usize) -> engine::Result<Mesh> {
+fn conifer(seed: u32, detail: usize) -> engine::Result<Mesh> {
     let random = |index: u32| unit(golden_hash(seed.wrapping_mul(0x9e37_79b9) ^ index));
     let build = &DETAILS[detail];
     let height = 13.0 + 4.0 * random(1);
     let base_radius = 0.2 + 0.06 * random(2);
     let mut parts = Parts::default();
     // The trunk, narrowing to a point at the top.
-    let radius = |y: f32| base_radius * math::max(1.0 - y / height, 0.0).powf(0.85) + 0.012;
+    let radius = |y: f32| base_radius * power(math::max(1.0 - y / height, 0.0), 0.85) + 0.012;
     let (sides, segments) = (build.sides, build.segments);
     for segment in 0..segments {
         let [low, high] = [segment, segment + 1]
@@ -266,7 +290,7 @@ impl Parts {
 /// main twig rising from the bottom edge with side shoots, every twig
 /// fringed with needles. Uncovered texels keep the needles' mean color, so
 /// filtering never darkens their edges.
-pub(crate) fn atlas() -> Vec<u8> {
+fn atlas() -> Vec<u8> {
     let size = ATLAS as usize;
     let half = size / 2;
     let needle = [0.06, 0.13, 0.06];
@@ -400,7 +424,7 @@ fn srgb(value: f32) -> u8 {
     let encoded = if value <= 0.003_130_8 {
         value * 12.92
     } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
+        1.055 * power(value, 1.0 / 2.4) - 0.055
     };
     (encoded * 255.0).round() as u8
 }

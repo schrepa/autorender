@@ -88,8 +88,7 @@ pub(super) struct TerrainState {
     /// it last failed at, and its jobs that failed.
     pub(super) recipe: Option<SharedRecipe>,
     pub(super) dispatched: TileMap<(JobId, Generation, u32)>,
-    pub(super) bake_job: Option<JobId>,
-    pub(super) bake_failed: Option<u64>,
+    pub(super) bake: BakeRecord,
     pub(super) failures: JobFailures,
     /// Records of tiles places games name, loading into memory: each one's
     /// job and the generation it was asked for under.
@@ -104,6 +103,15 @@ pub(super) struct TerrainState {
     /// values, as without GPU materials.
     pub(super) surface: Option<(Arc<Layers>, Option<Arc<engine_terrain::gpu::SurfaceData>>)>,
     pub(super) materials: bool,
+}
+
+/// A terrain's bakes as one record: the job asked for while under way,
+/// the frame it last failed at, and the record's key once asked for.
+#[derive(Default)]
+pub(super) struct BakeRecord {
+    pub(super) job: Option<JobId>,
+    pub(super) failed: Option<u64>,
+    pub(super) key: Option<RecordKey>,
 }
 
 /// Bytes of one of a tile's arrays on the GPU, heights or control values:
@@ -142,8 +150,7 @@ impl TerrainState {
             keep: HashSet::default(),
             recipe: None,
             dispatched: TileMap::default(),
-            bake_job: None,
-            bake_failed: None,
+            bake: BakeRecord::default(),
             failures: JobFailures::default(),
             prefetched: TileMap::default(),
             cook: None,
@@ -191,7 +198,7 @@ impl TerrainState {
         retired
             .jobs
             .extend(self.dispatched.iter().map(|(_, &(id, _, _))| id));
-        retired.jobs.extend(self.bake_job);
+        retired.jobs.extend(self.bake.job);
         retired
             .jobs
             .extend(self.prefetched.iter().map(|(_, &(id, _))| id));

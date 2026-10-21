@@ -293,6 +293,15 @@ pub(crate) const MAP: &[Rule] = &[
         ],
         checks: &[Smoke("jobs"), PureWasm, Pure("terrain")],
     },
+    // The hash of the code making records, which keys every record, and
+    // the records game code makes itself.
+    Rule {
+        paths: &[
+            "crates/engine_sources/**",
+            "crates/engine_core/src/**/records*",
+        ],
+        checks: &[Pure("terrain"), Pure("caches"), Smoke("jobs")],
+    },
     Rule {
         paths: &[
             "crates/engine_core/src/**/animation*",

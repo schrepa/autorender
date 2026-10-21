@@ -34,7 +34,8 @@ profiling = ["engine/profiling", "engine_native/profiling"]
 # Schemas of the configuration and snapshot, for `cargo xtask schema`.
 schema = ["dep:schemars", "engine/schema"]
 
-# `SOURCE`, the hash of the code making the Stress Lab's records.
+# `SOURCE`, the hash of the code making the Stress Lab's records, the
+# meshes and textures its worlds generate.
 [build-dependencies]
 engine_sources.workspace = true
 
@@ -43,6 +44,8 @@ engine.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = { workspace = true, optional = true }
+# Powers as every host computes them, in the records the worlds generate.
+libm.workspace = true
 
 # The Stress Lab in a native window or offscreen (`src/main.rs`).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

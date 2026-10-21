@@ -41,6 +41,7 @@ mod particles;
 mod physics;
 pub mod presentation_bounds;
 mod probes;
+mod records;
 mod retained_render;
 mod scene;
 mod sky;
@@ -110,6 +111,7 @@ pub use lights::*;
 pub use particles::*;
 pub use physics::{Physics, PhysicsStats};
 pub use probes::*;
+pub use records::Records;
 pub use retained_render::*;
 pub use scene::*;
 pub use sky::*;
@@ -412,6 +414,7 @@ impl Engine {
             .init_resource::<WaterSources>()
             .init_resource::<Jobs>()
             .init_resource::<TextureRecords>()
+            .init_resource::<Records>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
@@ -532,6 +535,8 @@ impl Engine {
         for _ in 0..fixed_steps {
             self.run_fixed_tick();
         }
+        // Records game code asked for, which presentation may build on.
+        records::exchange(self.app.world_mut());
         {
             let _profile = engine_profile::span("ecs", "Presentation");
             self.app.world_mut().run_schedule(Presentation);
@@ -886,6 +891,7 @@ impl Engine {
     /// [`WorldSync`].
     fn sync_world(&mut self) {
         let _profile = engine_profile::span("ecs", "WorldSync");
+        records::exchange(self.app.world_mut());
         self.app.world_mut().run_schedule(WorldSync);
     }
 

@@ -6,8 +6,8 @@
 //! steps of the triangles it crosses; the faces undulate a little, as
 //! fractures do. Texture coordinates project along the axis
 //! each vertex's normal turns most toward; the highlands lay their rock
-//! maps from the world's axes instead. Each shape comes at a few details,
-//! the coarser with the most they stray from the finest. Cliffs are
+//! maps from the world's axes instead. Each shape is built at one detail;
+//! its coarser levels are its mesh's own, simplified offline. Cliffs are
 //! outcrops of the same making, many meters across once placed: their rock
 //! fluted by ridges running down it and broken into ledges along their
 //! strata, whose edges keep their crease. Every vertex's color bakes in
@@ -19,13 +19,27 @@ use std::f32::consts::PI;
 
 use engine::prelude::*;
 
+use crate::kit::power;
 use crate::kit::random::{golden_hash, noise, unit};
+use crate::kit::records;
 
-/// Icosphere subdivisions of the finest detail of boulders and cliffs.
+/// Boulder `seed`'s mesh as a record ([`records::mesh`]): its handle,
+/// reserved until the record is here.
+pub(crate) fn boulder_record(world: &mut World, seed: u32) -> engine::Result<MeshHandle> {
+    records::mesh(world, "highlands_boulder", &seed.to_le_bytes(), move || {
+        boulder(seed)
+    })
+}
+
+/// Cliff `seed`'s mesh as a record ([`records::mesh`]).
+pub(crate) fn cliff_record(world: &mut World, seed: u32) -> engine::Result<MeshHandle> {
+    records::mesh(world, "highlands_cliff", &seed.to_le_bytes(), move || {
+        cliff(seed)
+    })
+}
+
+/// Icosphere subdivisions of boulders and cliffs.
 const LEVELS: u32 = 4;
-
-/// Details coarser than the finest each shape comes at.
-pub(crate) const COARSER: u32 = 2;
 
 /// Meters one repeat of the rock maps covers on a boulder.
 const TILING: f32 = 3.0;
@@ -41,10 +55,9 @@ const ROUNDING: f32 = 0.08;
 /// (radians), about 50 degrees: its ledges keep their edges.
 const LEDGE_CREASE: f32 = 0.87;
 
-/// Boulder `seed`'s mesh at `detail` (0 the finest, up to [`COARSER`]) and
-/// the most it strays from the finest: about a meter across before its
-/// stretch, its base flattened just below its origin.
-pub(crate) fn boulder(seed: u32, detail: u32) -> engine::Result<(Mesh, f32)> {
+/// Boulder `seed`'s mesh: about a meter across before its stretch, its
+/// base flattened just below its origin.
+fn boulder(seed: u32) -> engine::Result<Mesh> {
     let random = |index: u32| unit(golden_hash(seed.wrapping_mul(0x9e37_79b9) ^ index));
     let stretch = Vec3::new(
         0.9 + 0.6 * random(1),
@@ -82,10 +95,9 @@ pub(crate) fn boulder(seed: u32, detail: u32) -> engine::Result<(Mesh, f32)> {
         point.y += beyond(floor - point.y, ROUNDING);
         point
     };
-    let (vertices, indices, colors, error) = shaped(&shape, detail, PI, TILING);
+    let (vertices, indices, colors) = shaped(&shape, PI, TILING);
     Mesh::new(vertices, indices)
         .and_then(|mesh| mesh.with_colors(colors))
-        .map(|mesh| (mesh, error))
         .map_err(|error| engine::Error::from(error).context(format!("boulder {seed}")))
 }
 
@@ -96,14 +108,13 @@ const CLIFF_CUTS: u32 = 5;
 /// about twenty meters across repeats them every four.
 const CLIFF_TILING: f32 = 0.2;
 
-/// Cliff `seed`'s mesh at `detail` (0 the finest, up to [`COARSER`]) and
-/// the most it strays from the finest: a block of stratified rock about a
-/// meter across before its stretch, its sides steep and nearly flat, as a
+/// Cliff `seed`'s mesh: a block of stratified rock about a meter across
+/// before its stretch, its sides steep and nearly flat, as a
 /// superellipsoid's are, with rounded edges; its beds stepping back in
 /// ledges where each tilted stratum ends, its faces fluted by ridges
 /// running down them and split along a few upright planes, and its bottom
 /// flattened below its origin, where it sinks into the ground.
-pub(crate) fn cliff(seed: u32, detail: u32) -> engine::Result<(Mesh, f32)> {
+fn cliff(seed: u32) -> engine::Result<Mesh> {
     let random = |index: u32| unit(golden_hash(seed.wrapping_mul(0x632b_e5ab) ^ index));
     // Wide across the slope it faces down (x), shallower into it (z).
     let stretch = Vec3::new(
@@ -133,7 +144,10 @@ pub(crate) fn cliff(seed: u32, detail: u32) -> engine::Result<(Mesh, f32)> {
     let floor = -0.3 * stretch.y;
     let shape = |direction: Vec3| {
         let a = direction.abs();
-        let block = (a.x.powf(boxy) + a.y.powf(boxy) + a.z.powf(boxy)).powf(-1.0 / boxy);
+        let block = power(
+            power(a.x, boxy) + power(a.y, boxy) + power(a.z, boxy),
+            -1.0 / boxy,
+        );
         let broad = noise(direction * 1.4 + offset);
         // Ridges running down the faces: noise drawn out along the height.
         let flutes =
@@ -161,10 +175,9 @@ pub(crate) fn cliff(seed: u32, detail: u32) -> engine::Result<(Mesh, f32)> {
         point.y += beyond(floor - point.y, 0.5 * ROUNDING);
         point
     };
-    let (vertices, indices, colors, error) = shaped(&shape, detail, LEDGE_CREASE, CLIFF_TILING);
+    let (vertices, indices, colors) = shaped(&shape, LEDGE_CREASE, CLIFF_TILING);
     Mesh::new(vertices, indices)
         .and_then(|mesh| mesh.with_colors(colors))
-        .map(|mesh| (mesh, error))
         .map_err(|error| engine::Error::from(error).context(format!("cliff {seed}")))
 }
 
@@ -177,37 +190,15 @@ fn beyond(excess: f32, width: f32) -> f32 {
 }
 
 /// The vertices, indices and colors ([`baked`]) of `shape` (each unit
-/// direction's point) over an icosphere subdivided [`LEVELS`] less
-/// `detail` times, normals creased past `crease` and texture coordinates
-/// repeating every `tiling` units; and the most it strays from the finest
-/// detail: the distance from each edge's middle to the finer shape's point
-/// there, the largest of each detail between summed.
+/// direction's point) over an icosphere subdivided [`LEVELS`] times,
+/// normals creased past `crease` and texture coordinates repeating every
+/// `tiling` units.
 fn shaped(
     shape: &impl Fn(Vec3) -> Vec3,
-    detail: u32,
     crease: f32,
     tiling: f32,
-) -> (Vec<MeshVertex>, Vec<u32>, Vec<[f32; 4]>, f32) {
-    let level = LEVELS - detail.min(COARSER);
-    let error = (level..LEVELS)
-        .map(|coarser| {
-            let (directions, triangles) = icosphere(coarser);
-            let points: Vec<Vec3> = directions
-                .iter()
-                .map(|&direction| shape(direction))
-                .collect();
-            triangles
-                .iter()
-                .flat_map(|&[a, b, c]| [(a, b), (b, c), (c, a)])
-                .map(|(a, b)| {
-                    let middle = (directions[a as usize] + directions[b as usize]).normalize();
-                    let edge = (points[a as usize] + points[b as usize]) * 0.5;
-                    shape(middle).distance(edge)
-                })
-                .fold(0.0, math::max)
-        })
-        .sum();
-    let (directions, triangles) = icosphere(level);
+) -> (Vec<MeshVertex>, Vec<u32>, Vec<[f32; 4]>) {
+    let (directions, triangles) = icosphere(LEVELS);
     let points: Vec<Vec3> = directions.into_iter().map(shape).collect();
     let baked = baked(&points, &triangles);
     let (positions, normals, indices, sources) = creased(&points, &triangles, crease);
@@ -234,7 +225,7 @@ fn shaped(
             }
         })
         .collect();
-    (vertices, indices, colors, error)
+    (vertices, indices, colors)
 }
 
 /// Each of `points`' colors over `triangles`: how little the shape around

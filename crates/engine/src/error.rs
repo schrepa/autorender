@@ -145,6 +145,7 @@ impl From<AssetError> for Error {
             | AssetError::AttributeCount { .. }
             | AssetError::InvalidAttribute { .. }
             | AssetError::IndexOutOfBounds { .. }
+            | AssetError::InvalidMeshHandle
             | AssetError::InvalidVirtualMesh { .. } => ErrorCode::InvalidMesh,
         };
         Self::new(code, "$", error.to_string())

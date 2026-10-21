@@ -8,6 +8,14 @@ pub(crate) mod model_builder;
 pub(crate) mod motion;
 pub(crate) mod plan;
 pub(crate) mod random;
+pub(crate) mod records;
+
+/// `base` to the power `exponent`, the same bits on every host (the
+/// standard library's power is the platform's own), as the records worlds
+/// generate need.
+pub(crate) fn power(base: f32, exponent: f32) -> f32 {
+    libm::powf(base, exponent)
+}
 pub(crate) mod shape_builder;
 pub(crate) mod textures;
 

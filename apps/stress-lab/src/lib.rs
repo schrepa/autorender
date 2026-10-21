@@ -19,6 +19,11 @@ mod presets;
 mod scene;
 mod world;
 
+// `SOURCE`, the hash of the Stress Lab's code and the engine it builds on,
+// which keys the records the worlds' own code makes (their generated meshes
+// and textures): hosts keep them, and the cook ships them.
+include!(concat!(env!("OUT_DIR"), "/source.rs"));
+
 pub use authored::{AuthoredScene, PlayerWalk};
 pub use catalog::{Catalog, Choice, Switch, catalog, switches};
 pub use config::{MESH_VARIETIES, StressConfig, StressScene};
@@ -32,7 +37,3 @@ pub use scene::{
     StressFile, create_workload, create_workload_with, look, set_view, stress_reflections,
     stress_shafts,
 };
-
-// The hash of the Stress Lab's code and the engine it builds on, which keys
-// the records it makes (its generated textures): `SOURCE`.
-include!(concat!(env!("OUT_DIR"), "/source.rs"));

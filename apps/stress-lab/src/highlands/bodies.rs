@@ -19,6 +19,21 @@ use crate::kit::random::Rng;
 #[derive(Resource)]
 struct Dammed;
 
+/// The boulders' mesh, a record asked for as the world populates
+/// ([`request`]).
+#[derive(Resource)]
+struct BankBoulder(MeshHandle);
+
+/// Asks for the bank's boulders' mesh where `config` has bodies, so the
+/// cook keeps it with the world's other records.
+pub(super) fn request(world: &mut World, config: &StressConfig) -> engine::Result<()> {
+    if config.bodies > 0 {
+        let mesh = rocks::boulder_record(world, config.seed ^ 0x5eed)?;
+        world.insert_resource(BankBoulder(mesh));
+    }
+    Ok(())
+}
+
 /// Meters across the ground from under the camera the dam stands within,
 /// and over which a site's pull halves.
 const FARTHEST: f32 = 2500.0;
@@ -124,6 +139,9 @@ pub(super) fn place(world: &mut World) {
     if count == 0 || world.contains_resource::<Dammed>() {
         return;
     }
+    let Some(boulder) = world.get_resource::<BankBoulder>().map(|boulder| boulder.0) else {
+        return;
+    };
     let eye = world.resource::<Camera>().position;
     let Some((site, water)) = world.get_resource::<Terrains>().and_then(|terrains| {
         let site = site(terrains, eye)?;
@@ -136,26 +154,25 @@ pub(super) fn place(world: &mut World) {
         return;
     };
     world.insert_resource(Dammed);
-    if let Err(error) = build(world, &site, water, (count, seed)) {
+    if let Err(error) = build(world, &site, water, (count, seed), boulder) {
         eprintln!("The highlands' rivers hold no bodies: {}", error.message);
     }
 }
 
-/// The dam, the logs and the boulders at `site`, its water standing at
-/// `water` (terrain-local) at the dam.
+/// The dam, the logs and the boulders (of mesh `boulder`) at `site`, its
+/// water standing at `water` (terrain-local) at the dam.
 fn build(
     world: &mut World,
     site: &Site,
     water: f32,
     (count, seed): (u32, u32),
+    boulder: MeshHandle,
 ) -> engine::Result<()> {
     let mut assets = world.resource_mut::<AssetLibrary>();
     let cube = assets.insert_mesh(Mesh::cube())?;
     let bark = assets.insert_material(Material::new([0.2, 0.13, 0.08, 1.0])?)?;
     let pale = assets.insert_material(Material::new([0.42, 0.3, 0.19, 1.0])?)?;
     let stone = assets.insert_material(Material::new([0.38, 0.37, 0.35, 1.0])?)?;
-    let (boulder, _) = rocks::boulder(seed ^ 0x5eed, 0)?;
-    let boulder = assets.insert_mesh(boulder)?;
     let origin = site.origin;
     let at = site.point;
     let world_point = |point: [f32; 2], height: f32| {

@@ -44,7 +44,7 @@ pub use environment::{AtmospherePreset, SceneAtmosphere, SceneEnvironment, Secti
 pub use error::SceneError;
 pub use files::{
     ANIMATION_BUFFER_MAGIC, MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile,
-    SceneFileKind, SceneFiles, encode_animation_buffer, encode_mesh_buffer,
+    SceneFileKind, SceneFiles, decode_mesh_buffer, encode_animation_buffer, encode_mesh_buffer,
     encode_mesh_buffer_with,
 };
 pub use instance::{ClipOrigin, MeshOrigin, SceneEntity, SceneInstance};

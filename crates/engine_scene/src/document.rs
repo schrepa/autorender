@@ -413,7 +413,7 @@ impl MeshSource {
 
 /// `mesh` with optional vertex colors, second texture coordinates, and
 /// joints and weights.
-fn with_extras(
+pub(crate) fn with_extras(
     mesh: Result<Mesh, engine_core::AssetError>,
     colors: Option<Vec<[f32; 4]>>,
     uv1: Option<Vec<[f32; 2]>>,
