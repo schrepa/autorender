@@ -9,7 +9,7 @@ use engine::terrain::SurfaceProjection;
 /// its maps' colors are multiplied by; the meters its maps repeat over; how
 /// sharply its heights win where it blends; how it lies on steep ground;
 /// the cover growing where it lies; the meters its
-/// heights sink between its stones and tufts; and the
+/// heights sink between its stones, tufts and ledges; and the
 /// meters tracks sink it at most.
 pub(super) struct Look {
     pub(super) name: &'static str,
@@ -25,7 +25,7 @@ pub(super) struct Look {
     pub(super) deform: f32,
 }
 
-pub(super) const LOOKS: [Look; 12] = [
+pub(super) const LOOKS: [Look; 9] = [
     Look {
         name: "grass",
         maps: "grass",
@@ -77,45 +77,6 @@ pub(super) const LOOKS: [Look; 12] = [
         relief: 0.05,
         deform: 0.06,
     },
-    Look {
-        name: "scree",
-        maps: "scree",
-        color: [0.2, 0.19, 0.18],
-        roughness: 0.82,
-        tint: [0.78, 0.74, 0.68],
-        tiling: 4.0,
-        height_contrast: 0.8,
-        projection: SurfaceProjection::Top,
-        cover: None,
-        relief: 0.12,
-        deform: 0.02,
-    },
-    Look {
-        name: "rock",
-        maps: "rock",
-        color: [0.25, 0.235, 0.22],
-        roughness: 0.82,
-        tint: [0.74, 0.7, 0.64],
-        tiling: 8.0,
-        height_contrast: 0.7,
-        projection: SurfaceProjection::Biplanar,
-        cover: None,
-        relief: 0.0,
-        deform: 0.0,
-    },
-    Look {
-        name: "snow",
-        maps: "snow",
-        color: [0.82, 0.84, 0.88],
-        roughness: 0.55,
-        tint: [1.0, 1.0, 1.0],
-        tiling: 6.0,
-        height_contrast: 0.4,
-        projection: SurfaceProjection::Top,
-        cover: None,
-        relief: 0.04,
-        deform: 0.3,
-    },
     // Needle litter under the spruces: the dirt's maps, darkened toward
     // olive, so forests read as dark stands from afar.
     Look {
@@ -130,6 +91,35 @@ pub(super) const LOOKS: [Look; 12] = [
         cover: None,
         relief: 0.06,
         deform: 0.05,
+    },
+    // The rock of every steep slope, laid across the slope's faces and
+    // sunk between its blocks and ledges, so steep ground reads as rock
+    // whatever stands on it.
+    Look {
+        name: "rock",
+        maps: "rock",
+        color: [0.25, 0.235, 0.22],
+        roughness: 0.82,
+        tint: [0.74, 0.7, 0.64],
+        tiling: 8.0,
+        height_contrast: 0.7,
+        projection: SurfaceProjection::Biplanar,
+        cover: None,
+        relief: 0.25,
+        deform: 0.0,
+    },
+    Look {
+        name: "snow",
+        maps: "snow",
+        color: [0.82, 0.84, 0.88],
+        roughness: 0.55,
+        tint: [1.0, 1.0, 1.0],
+        tiling: 6.0,
+        height_contrast: 0.4,
+        projection: SurfaceProjection::Top,
+        cover: None,
+        relief: 0.04,
+        deform: 0.3,
     },
     // Grass where water gathers: deeper green, taller and
     // denser, in hollows and along streams.
@@ -180,35 +170,5 @@ pub(super) const LOOKS: [Look; 12] = [
         cover: None,
         relief: 0.03,
         deform: 0.04,
-    },
-    // Rock the spray of falls and cascades keeps wet: as dark again as dry
-    // rock, and glossy (Lekner and Dorf).
-    Look {
-        name: "wet_rock",
-        maps: "rock",
-        color: [0.12, 0.115, 0.11],
-        roughness: 0.38,
-        tint: [0.4, 0.39, 0.37],
-        tiling: 8.0,
-        height_contrast: 0.7,
-        projection: SurfaceProjection::Biplanar,
-        cover: None,
-        relief: 0.0,
-        deform: 0.0,
-    },
-    // Moss on that rock, as spray zones grow it: the grass's maps, dark
-    // green and damp.
-    Look {
-        name: "moss",
-        maps: "grass",
-        color: [0.035, 0.07, 0.025],
-        roughness: 0.72,
-        tint: [0.32, 0.5, 0.22],
-        tiling: 2.0,
-        height_contrast: 0.5,
-        projection: SurfaceProjection::Biplanar,
-        cover: None,
-        relief: 0.02,
-        deform: 0.02,
     },
 ];

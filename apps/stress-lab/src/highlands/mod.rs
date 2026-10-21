@@ -3,8 +3,9 @@
 //! leveled for a hamlet, a flat valley floor and a cave mouth cut as a
 //! hole), streamed around the camera, with the scene's renderables standing
 //! on the plateau as the tower field does. Its ground is
-//! meadow, dry grass, dirt, scree, rock and snow, each textured by maps its
-//! `ground` module generates, which load as cooked texture records.
+//! meadow, dry grass, dirt, snow and, wherever it is steep, rock, each
+//! textured by maps its `ground` module generates, which load as cooked
+//! texture records.
 //! Boulders lie on its meadows, stones on its scree and outcrops on
 //! its rock, and spruce forests cover the lower slopes.
 //! Gravel roads wind from the plateau down to the crater
@@ -1525,9 +1526,10 @@ fn scanned(
 }
 
 /// Where each material lies: meadow everywhere, dry grass in broad patches
-/// with ragged edges, dirt where slopes thin the grass, scree on steep
-/// ground below the cliffs, rock on the cliffs and snow on the peaks'
-/// gentler slopes.
+/// with ragged edges, bare dirt in smaller ones, needle litter under the
+/// forests, lush grass where water gathers, beds along streams and rivers,
+/// gravel on the roads and snow on the peaks; and rock over all of them
+/// wherever the ground is steep.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
@@ -1768,16 +1770,16 @@ fn rules() -> Biomes {
                         0.72,
                     ),
                 ),
+                // Bare dirt in patches where the grass thins.
                 layer(
                     "dirt",
                     remap(
                         Mask::Add(vec![
-                            scaled(noise(60.0, 13, 2), 0.45),
-                            scaled(noise(9.0, 14, 2), 0.25),
-                            scaled(Mask::Slope([18.0, 34.0]), 0.5),
+                            scaled(noise(60.0, 13, 2), 0.6),
+                            scaled(noise(9.0, 14, 2), 0.4),
                         ]),
-                        0.66,
-                        0.8,
+                        0.6,
+                        0.74,
                     ),
                 ),
                 layer("forest_floor", remap(forest(), 0.12, 0.42)),
@@ -1794,18 +1796,6 @@ fn rules() -> Biomes {
                         0.6,
                     ),
                 ),
-                layer(
-                    "scree",
-                    remap(
-                        Mask::Add(vec![
-                            scaled(Mask::Slope([27.0, 38.0]), 0.8),
-                            scaled(noise(40.0, 15, 2), 0.4),
-                            scaled(noise(8.0, 17, 1), 0.15),
-                        ]),
-                        0.62,
-                        0.8,
-                    ),
-                ),
                 // Stream and river beds, with ragged edges.
                 layer(
                     "riverbed",
@@ -1819,65 +1809,25 @@ fn rules() -> Biomes {
                 // half and ragged where the gravel's stones win.
                 layer("road", Mask::Path([1.0, -0.5])),
                 layer(
-                    "rock",
-                    remap(
-                        Mask::Add(vec![
-                            Mask::Slope([33.0, 45.0]),
-                            scaled(noise(70.0, 1, 2), 0.3),
-                        ]),
-                        0.55,
-                        0.75,
-                    ),
-                ),
-                // Where rivers run steep, their spray keeps the rock beside
-                // them wet, and moss grows on it in patches.
-                layer(
-                    "wet_rock",
-                    remap(
-                        Mask::Add(vec![
-                            Mask::Multiply(vec![
-                                Mask::River([10.0, 2.0]),
-                                Mask::Slope([24.0, 34.0]),
-                            ]),
-                            scaled(noise(9.0, 51, 2), 0.45),
-                            Mask::Constant(-0.1),
-                        ]),
-                        0.55,
-                        0.8,
-                    ),
-                ),
-                layer(
-                    "moss",
-                    remap(
-                        Mask::Add(vec![
-                            Mask::Multiply(vec![
-                                Mask::River([7.0, 1.0]),
-                                Mask::Slope([20.0, 30.0]),
-                                Mask::Invert(Box::new(Mask::Slope([50.0, 65.0]))),
-                            ]),
-                            scaled(noise(5.0, 52, 2), 0.7),
-                            Mask::Constant(-0.45),
-                        ]),
-                        0.5,
-                        0.7,
-                    ),
-                ),
-                layer(
                     "snow",
-                    Mask::Multiply(vec![
-                        remap(
-                            Mask::Add(vec![
-                                Mask::Height([700.0, 900.0]),
-                                scaled(noise(60.0, 3, 2), 0.4),
-                                Mask::Constant(-0.2),
-                            ]),
-                            0.4,
-                            0.6,
-                        ),
-                        Mask::Invert(Box::new(Mask::Slope([35.0, 50.0]))),
-                    ]),
+                    remap(
+                        Mask::Add(vec![
+                            Mask::Height([700.0, 900.0]),
+                            scaled(noise(60.0, 3, 2), 0.4),
+                            Mask::Constant(-0.2),
+                        ]),
+                        0.4,
+                        0.6,
+                    ),
                 ),
             ],
         }],
+        // Rock over everything on slopes from 28 degrees, all of it from 35,
+        // where no soil holds: the ground's own form decides where, at every
+        // point of it.
+        steep: Some(engine::terrain::data::SteepLayer {
+            material: "rock".into(),
+            slope: [28.0, 35.0],
+        }),
     }
 }
