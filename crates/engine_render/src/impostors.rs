@@ -358,7 +358,8 @@ struct Supply {
 pub(crate) enum Supplied {
     /// Resident: its record.
     Resident(ImpostorRecord),
-    /// Coming: hosts have yet to answer for its record.
+    /// Coming: hosts have yet to answer for its record, or its bake to
+    /// read back as one.
     Coming,
     /// Left out: the budget's impostors, or as many as the device's array
     /// layers, are resident.
