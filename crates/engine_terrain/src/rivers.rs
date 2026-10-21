@@ -1,11 +1,12 @@
 //! Rivers: the channels a hydrology bake
 //! finds, as lines with water of their own. A bake traces each channel
 //! from its head or a confluence down its receivers to the next
-//! confluence, a lake or the grid's edge, rounds the grid's steps off its
-//! line and resamples it every [`RIVER_STEP`] meters, and sizes it by the
-//! area it drains. Its water then stands below the finest ground along it
-//! and its banks and never rises downstream; a river leaving a confluence
-//! starts no higher than the rivers meeting there. Terrain cuts the bed
+//! confluence, a lake or the grid's edge, as a smooth line through the
+//! grid's samples resampled every [`RIVER_STEP`] meters, and sizes its
+//! channel by the discharge the area it drains yields. Its banks and water
+//! then stand along the finest ground on its line, smoothed and never
+//! rising downstream; a river leaving a confluence starts no higher than
+//! the rivers meeting there. Terrain cuts the bed
 //! below that water at every level of detail and eases its banks up to the
 //! ground, so ground the bake never saw cannot rise through the water, and
 //! renderers draw the water as ribbons flat across each river.
@@ -86,8 +87,6 @@ pub(crate) const WATER_PAST: f32 = 1.5;
 /// little into the ground instead of a trench through every rise.
 pub(crate) const STREAM_MARGIN: f32 = 0.12;
 const STREAM_BANK_REACH: f32 = 2.5;
-/// Rounds of corner cutting that smooth a river's line off the grid.
-const SMOOTHING: usize = 3;
 /// Meters across the cells of the grid that finds the rivers near a point.
 pub(crate) const CELL: f32 = 32.0;
 /// How far past a reading's own reach rows still measure a segment:
@@ -101,60 +100,41 @@ fn slack(reach: f32) -> (f32, f32) {
     (reach, reach * reach)
 }
 
-/// One river or stream between confluences: its points
-/// (terrain-local x and z, from upstream), and at each its water's surface
-/// (terrain-local meters), half its channel's width, the water's depth at
-/// its middle, its channel's depth there below its banks as its drained
-/// area sizes it, the share of the channel's half width its water spans
-/// (its channel shaped to that, [`Rivers::cap`]), its mean speed
-/// downstream (meters a second), the discharge it carries (cubic meters a
-/// second) and how much foam rides it (0 to 1), as [`crate::hydraulics`]
-/// solves its flow in its channel. Where it leaves its bed over a
-/// drop and falls through the air its points carry no surface (`NaN`) and
-/// the stretches between them are `falls`: a [`crate::Fall`] holds its jet.
-/// The points a fall's sheet runs over are `sheeted`, and those whose
-/// stretch to the next leaps clear of a step's face `nappes`: there the
-/// water and its channel fall within the first [`NAPPE_FACE`] of the
-/// stretch, its rock standing near vertical under the water.
-/// Its channel is cut to its water's surface, and beneath its jets straight
-/// from the lip's water to where the jet lands (`cut`), so no ground stands
-/// between the pools a fall leaves and lands in.
-/// A river beginning at a head, where no channel flows in, rather than at a
-/// confluence or a lake's outlet, is `head`: its water starts there.
+/// One river or stream between confluences: its points (terrain-local x
+/// and z, from upstream, about [`RIVER_STEP`] meters apart along a smooth
+/// line), and at each the discharge it carries (cubic meters a second),
+/// half its channel's width at its banks (meters), its channel's depth
+/// at its middle below its banks (meters), its bed at its middle
+/// (terrain-local meters: the channel's lowest ground, cut straight
+/// beneath a fall's jet from the lip to where it lands), its water's
+/// surface (terrain-local meters: the level of its banks, the bed plus the
+/// depth, NaN where its water flies through the air), its water's mean
+/// speed (meters a second); whether the stretch from each point to the
+/// next is a fall's jet (`falls`, a [`crate::Fall`] holding it) and
+/// whether a fall's sheet runs over each point (`sheeted`); and whether it
+/// begins at a head, where no channel flows in, rather than at a
+/// confluence or a lake's outlet. Across the river its channel is a
+/// parabola from its bed at the middle up to its banks `half` meters either
+/// side, and along a segment its values change evenly from one point's to
+/// the next's.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub(crate) struct River {
     pub points: Vec<[f32; 2]>,
-    pub surface: Vec<f32>,
-    pub cut: Vec<f32>,
+    pub discharge: Vec<f32>,
     pub half: Vec<f32>,
     pub depth: Vec<f32>,
-    pub channel: Vec<f32>,
-    pub fill: Vec<f32>,
+    pub bed: Vec<f32>,
+    pub surface: Vec<f32>,
     pub speed: Vec<f32>,
-    pub discharge: Vec<f32>,
-    pub foam: Vec<f32>,
     pub falls: Vec<bool>,
     pub sheeted: Vec<bool>,
-    pub nappes: Vec<bool>,
     pub head: bool,
 }
 
 impl River {
-    /// Whether the stretch from point `index` to the next falls.
+    /// Whether the stretch from point `index` to the next is a fall's jet.
     pub(crate) fn falls_at(&self, index: usize) -> bool {
         self.falls.get(index).copied().unwrap_or(false)
-    }
-
-    /// How far along its segment from point `segment` its water and channel
-    /// have come `t` of the way along it: as far, but down a step's face
-    /// the water leaps clear of all of the way within its first
-    /// [`NAPPE_FACE`].
-    pub(crate) fn shaped(&self, segment: usize, t: f32) -> f32 {
-        if self.nappes.get(segment).copied().unwrap_or(false) {
-            smoothstep(t / NAPPE_FACE)
-        } else {
-            t
-        }
     }
 
     /// Whether a fall's sheet runs over the stretch from point `index` to
@@ -164,26 +144,22 @@ impl River {
             && self.sheeted.get(index + 1).copied().unwrap_or(false)
     }
 
-    /// The way the river runs (a unit vector along x and z) `t` of the way
-    /// along its segment from point `segment`: the ways it runs at the
-    /// segment's ends blended, each the mean of the segments meeting there,
-    /// so it turns smoothly through its bends and the segments on either
-    /// side of a bend agree where they meet.
+    /// The way the river runs (a unit vector along x and z) `t` (0 to 1) of
+    /// the way along its segment from point `segment`: its line's tangent,
+    /// which at each point runs from the point before it to the point after
+    /// it (along the first and last segments at the ends) and turns evenly
+    /// from one point's to the next's, so it turns smoothly from segment to
+    /// segment as the line does.
     pub(crate) fn heading(&self, segment: usize, t: f32) -> Vec2 {
-        let run = |index: usize| {
-            (Vec2::from(self.points[index + 1]) - Vec2::from(self.points[index]))
-                .normalize_or_zero()
+        let last = self.points.len().saturating_sub(1);
+        let point = |index: usize| Vec2::from(self.points[index.min(last)]);
+        let tangent = |index: usize| {
+            (point(index + 1) - point(index.saturating_sub(1))).normalize_or_zero()
         };
-        let last = self.points.len().saturating_sub(2);
-        let at_point = |point: usize| {
-            let before = run(point.saturating_sub(1).min(last));
-            let after = run(point.min(last));
-            (before + after).try_normalize().unwrap_or(after)
-        };
-        let (start, end) = (at_point(segment), at_point(segment + 1));
+        let (start, end) = (tangent(segment), tangent(segment + 1));
         (start + (end - start) * t)
             .try_normalize()
-            .unwrap_or_else(|| run(segment.min(last)))
+            .unwrap_or_else(|| (point(segment + 1) - point(segment)).normalize_or(Vec2::X))
     }
 }
 
@@ -1201,14 +1177,12 @@ fn smoothstep(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// A river's line from the bake's grid before its water is set: its
-/// points, at each half its width, its channel's depth at the middle and
-/// the area draining through it (square meters), and whether it begins at a
-/// head.
+/// A river's line from the bake's grid before its channel and water are
+/// set: its points (terrain-local x and z, from upstream, about
+/// [`RIVER_STEP`] meters apart along a smooth line), the area draining
+/// through each (square meters), and whether it begins at a head.
 pub(crate) struct RiverLine {
     pub(crate) points: Vec<Vec2>,
-    pub(crate) half: Vec<f32>,
-    pub(crate) depth: Vec<f32>,
     pub(crate) area: Vec<f32>,
     pub(crate) head: bool,
 }
@@ -1226,13 +1200,13 @@ pub(crate) struct Channels<'a> {
 /// The rivers of a grid `width` samples wide, `spacing` meters apart: each
 /// channel (samples draining `channel_area` or more outside lakes) from its
 /// head or a confluence down to the next confluence, a lake or the edge,
-/// upstream rivers first; sized as `size` says for a sample's drained area
-/// (half its width and its depth).
+/// upstream rivers first, as a smooth line ([`smooth_line`]) with the area
+/// draining through it. Where it ends in a lake or a confluence, whose
+/// sample other water reaches too, its last point carries its own water.
 pub(crate) fn trace(
     channels: &Channels<'_>,
     (width, spacing): (usize, f32),
     channel_area: f32,
-    size: impl Fn(f32) -> (f32, f32),
 ) -> Vec<RiverLine> {
     let Channels {
         area,
@@ -1265,6 +1239,7 @@ pub(crate) fn trace(
     for start in starts {
         let mut course = vec![start];
         let mut current = start;
+        let mut joins = false;
         loop {
             let receiver = receivers[current];
             if receiver == u32::MAX {
@@ -1275,6 +1250,7 @@ pub(crate) fn trace(
             // Into a lake, off its channels, or into a confluence, which
             // starts its own river.
             if lakes[next] || !channel(next) || inflows[next] >= 2 {
+                joins = true;
                 break;
             }
             current = next;
@@ -1283,195 +1259,115 @@ pub(crate) fn trace(
             continue;
         }
         let points: Vec<Vec2> = course.iter().map(|&sample| place(sample)).collect();
-        let drained: Vec<f32> = course.iter().map(|&sample| area[sample]).collect();
-        let sizes: Vec<(f32, f32)> = drained.iter().map(|&drained| size(drained)).collect();
-        let mut line = smooth_line(
-            &points,
-            [
-                &sizes.iter().map(|size| size.0).collect::<Vec<_>>(),
-                &sizes.iter().map(|size| size.1).collect::<Vec<_>>(),
-                &drained,
-            ],
-        );
+        let mut drained: Vec<f32> = course.iter().map(|&sample| area[sample]).collect();
+        if joins {
+            let last = drained.len() - 1;
+            drained[last] = drained[last - 1];
+        }
+        let mut line = smooth_line(&points, &drained);
         line.head = inflows[start] == 0;
         lines.push(line);
     }
     lines
 }
 
-/// The line through `points` with their `values` (half widths, depths
-/// and drained areas) rounded off the grid (corner cutting, its ends kept)
-/// and resampled every [`RIVER_STEP`] meters.
-fn smooth_line(points: &[Vec2], values: [&[f32]; 3]) -> RiverLine {
-    let mut line: Vec<(Vec2, [f32; 3])> = points
-        .iter()
-        .enumerate()
-        .map(|(index, &point)| (point, values.map(|value| value[index])))
-        .collect();
-    let mix = |a: (Vec2, [f32; 3]), b: (Vec2, [f32; 3]), t: f32| {
-        (
-            a.0.lerp(b.0, t),
-            [0, 1, 2].map(|value| a.1[value] + (b.1[value] - a.1[value]) * t),
-        )
+/// Places along each segment of a line's spline its length is measured at,
+/// so its resampled points lie evenly along it.
+const MEASURED: usize = 8;
+
+/// The weights of a uniform cubic B-spline's four control points `t` (0 to
+/// 1) of the way along the segment they shape.
+fn spline_weights(t: f32) -> [f32; 4] {
+    let s = 1.0 - t;
+    let (t2, t3) = (t * t, t * t * t);
+    [
+        s * s * s / 6.0,
+        (3.0 * t3 - 6.0 * t2 + 4.0) / 6.0,
+        (3.0 * (t + t2 - t3) + 1.0) / 6.0,
+        t3 / 6.0,
+    ]
+}
+
+/// The line through the grid samples `points` (a channel's course, two or
+/// more) and the areas draining through them, `drained` (square meters):
+/// the uniform cubic B-spline whose control points they are, each end
+/// mirrored about itself so the line starts and ends exactly at its end
+/// samples heading along its first and last steps, resampled every
+/// [`RIVER_STEP`] meters along its length, the same spline carrying the
+/// area along. Lines meeting at a sample start and end at the same point.
+fn smooth_line(points: &[Vec2], drained: &[f32]) -> RiverLine {
+    let last = points.len() - 1;
+    let mut control: Vec<(Vec2, f32)> = Vec::with_capacity(last + 3);
+    control.push((2.0 * points[0] - points[1], 2.0 * drained[0] - drained[1]));
+    control.extend(points.iter().copied().zip(drained.iter().copied()));
+    control.push((
+        2.0 * points[last] - points[last - 1],
+        2.0 * drained[last] - drained[last - 1],
+    ));
+    // The spline at `u` (0 at the first sample, `last` at the last): its
+    // point and the area draining through it.
+    let at = |u: f32| {
+        let segment = (u.floor() as usize).min(last - 1);
+        let (mut point, mut area) = (Vec2::ZERO, 0.0_f32);
+        for (offset, weight) in spline_weights(u - segment as f32).into_iter().enumerate() {
+            let (place, drains) = control[segment + offset];
+            point += place * weight;
+            area += drains * weight;
+        }
+        (point, area)
     };
-    for _ in 0..SMOOTHING {
-        if line.len() < 3 {
-            break;
-        }
-        let mut cut = Vec::with_capacity(line.len() * 2);
-        cut.push(line[0]);
-        for pair in line.windows(2) {
-            cut.push(mix(pair[0], pair[1], 0.25));
-            cut.push(mix(pair[0], pair[1], 0.75));
-        }
-        cut.push(line[line.len() - 1]);
-        // The first and last cuts fall within the ends' segments; the ends
-        // stay where they were.
-        cut.remove(1);
-        cut.remove(cut.len() - 2);
-        line = cut;
+    // Its length measured from its start, at each of `measured`'s places.
+    let mut measured: Vec<(f32, f32)> = Vec::with_capacity(last * MEASURED + 1);
+    measured.push((0.0, 0.0));
+    let (mut length, mut previous) = (0.0_f32, points[0]);
+    for place in 1..=last * MEASURED {
+        let u = place as f32 / MEASURED as f32;
+        let (point, _) = at(u);
+        length += point.distance(previous);
+        previous = point;
+        measured.push((u, length));
     }
-    // Resampled every RIVER_STEP meters along its length.
-    let mut along = vec![0.0_f32];
-    for pair in line.windows(2) {
-        along.push(along[along.len() - 1] + pair[0].0.distance(pair[1].0));
-    }
-    let total = along[along.len() - 1];
-    let steps = max((total / RIVER_STEP).ceil(), 1.0) as usize;
-    let mut out = RiverLine {
+    let steps = max((length / RIVER_STEP).ceil(), 1.0) as usize;
+    let mut line = RiverLine {
         points: Vec::with_capacity(steps + 1),
-        half: Vec::with_capacity(steps + 1),
-        depth: Vec::with_capacity(steps + 1),
         area: Vec::with_capacity(steps + 1),
         head: false,
     };
-    let mut segment = 0;
+    let mut interval = 0;
     for step in 0..=steps {
-        let at = total * step as f32 / steps as f32;
-        while segment + 2 < along.len() && along[segment + 1] < at {
-            segment += 1;
+        let wanted = length * step as f32 / steps as f32;
+        while interval + 2 < measured.len() && measured[interval + 1].1 < wanted {
+            interval += 1;
         }
-        let run = along[segment + 1] - along[segment];
-        let t = if run > 0.0 {
-            min(max((at - along[segment]) / run, 0.0), 1.0)
+        let ((from, before), (to, after)) = (measured[interval], measured[interval + 1]);
+        let share = if after > before {
+            min(max((wanted - before) / (after - before), 0.0), 1.0)
         } else {
             0.0
         };
-        let (point, [half, depth, area]) = mix(line[segment], line[segment + 1], t);
-        out.points.push(point);
-        out.half.push(half);
-        out.depth.push(depth);
-        out.area.push(area);
+        let (point, area) = at(from + (to - from) * share);
+        line.points.push(point);
+        line.area.push(area);
     }
-    out
-}
-
-/// Steep stretches of rivers' lines wander from side to side, as water
-/// tumbling down rock jogs along its joints instead of running straight,
-/// and widen and narrow as the rock lets them: each point moves across its
-/// line by up to WANDER of its half width (at least WANDER_LEAST meters of
-/// it), as smooth noise along the line WANDER_LENGTH half widths long says
-/// (with a finer octave WANDER_FINE as long and as strong), and its width
-/// changes by up to WIDENING of itself over WIDENING_LENGTH half widths;
-/// as far as the bed falls through WANDER_SLOPES a meter, read across
-/// WANDER_REACH points either side, and not at all at the line's ends,
-/// where rivers meet.
-const WANDER: f32 = 2.5;
-const WANDER_LEAST: f32 = 2.0;
-const WANDER_LENGTH: f32 = 12.0;
-const WANDER_FINE: f32 = 0.4;
-const WIDENING: f32 = 0.6;
-const WIDENING_LENGTH: f32 = 6.0;
-const WANDER_SLOPES: [f32; 2] = [0.12, 0.35];
-const WANDER_REACH: usize = 5;
-const WANDER_SEED: u32 = 0x77a4_d3e1;
-const WIDENING_SEED: u32 = 0x1b87_3593;
-
-/// `lines` wandering, widening and narrowing where their beds (the grid's
-/// `heights`, `width` samples a row and `spacing` meters apart) fall
-/// steeply.
-pub(crate) fn wander(lines: &mut [RiverLine], heights: &[f32], (width, spacing): (usize, f32)) {
-    let rows = heights.len() / width;
-    let height_at = |point: Vec2| {
-        let x = min(max(point.x / spacing, 0.0), (width - 1) as f32);
-        let z = min(max(point.y / spacing, 0.0), (rows - 1) as f32);
-        let (column, row) = (x.floor() as usize, z.floor() as usize);
-        let (right, below) = ((column + 1).min(width - 1), (row + 1).min(rows - 1));
-        let (fx, fz) = (x - column as f32, z - row as f32);
-        let top = heights[row * width + column]
-            + (heights[row * width + right] - heights[row * width + column]) * fx;
-        let bottom = heights[below * width + column]
-            + (heights[below * width + right] - heights[below * width + column]) * fx;
-        top + (bottom - top) * fz
-    };
-    for line in lines.iter_mut() {
-        let count = line.points.len();
-        if count < 4 {
-            continue;
-        }
-        let along = crate::hydraulics::distances(&line.points);
-        let total = along[count - 1];
-        let original = line.points.clone();
-        let shift = (original[0].x.to_bits() ^ original[0].y.to_bits().rotate_left(13)) % 977;
-        for index in 1..count - 1 {
-            let (a, b) = (
-                index.saturating_sub(WANDER_REACH),
-                (index + WANDER_REACH).min(count - 1),
-            );
-            let falls = max(height_at(original[a]) - height_at(original[b]), 0.0)
-                / max(along[b] - along[a], 1.0e-3);
-            let steep =
-                smoothstep((falls - WANDER_SLOPES[0]) / (WANDER_SLOPES[1] - WANDER_SLOPES[0]));
-            if steep <= 0.0 {
-                continue;
-            }
-            let half = max(line.half[index], WANDER_LEAST);
-            let length = WANDER_LENGTH * half;
-            let ends = smoothstep(min(along[index], total - along[index]) / length);
-            let row = shift as f32 * 0.37;
-            let bend = gradient_value(along[index] / length, row, WANDER_SEED)
-                + WANDER_FINE
-                    * gradient_value(
-                        along[index] / (WANDER_FINE * length),
-                        row + 5.3,
-                        WANDER_SEED,
-                    );
-            let widening =
-                gradient_value(along[index] / (WIDENING_LENGTH * half), row, WIDENING_SEED);
-            let shaped = steep * ends;
-            line.points[index] =
-                original[index] + across(&original, index) * (WANDER * half * bend * shaped);
-            line.half[index] *= 1.0 + WIDENING * widening * shaped;
-        }
-    }
-}
-
-/// The way across a river's line at point `index` (a unit vector, left of
-/// the way it runs).
-pub(crate) fn across(points: &[Vec2], index: usize) -> Vec2 {
-    let last = points.len() - 1;
-    let (a, b) = (
-        points[index.saturating_sub(1)],
-        points[(index + 1).min(last)],
-    );
-    let run = (b - a).normalize_or(Vec2::X);
-    Vec2::new(-run.y, run.x)
+    // Its ends exactly at its end samples, where the rivers meeting there
+    // start and end too.
+    line.points[0] = points[0];
+    line.area[0] = drained[0];
+    line.points[steps] = points[last];
+    line.area[steps] = drained[last];
+    line
 }
 
 crate::codec::record!(River {
     points,
-    surface,
-    cut,
+    discharge,
     half,
     depth,
-    channel,
-    fill,
+    bed,
+    surface,
     speed,
-    discharge,
-    foam,
     falls,
     sheeted,
-    nappes,
     head,
 });
 // Rivers travel without the grid that finds them, which readers build

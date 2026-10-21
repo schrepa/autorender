@@ -866,11 +866,7 @@
           {
             "hydrology": {
               "level": 1,
-              "channel_area": 20000,
-              "depth": 1,
-              "width": 4,
-              "max_depth": 3,
-              "max_width": 20
+              "channel_area": 20000
             }
           },
           {

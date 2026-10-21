@@ -8,17 +8,17 @@
 //! only what leaves the pool, and once the solid is gone the pool drains
 //! back into it, the river below running higher until it has. Upstream of a
 //! pool the water stands held back against friction until the river's own
-//! flow stands higher, into the rivers flowing into it too, and widens up
-//! its banks as it rises. Rivers nothing holds back keep their bake's water
-//! bit for bit.
+//! flow stands higher, into the rivers flowing into it too, spreading as
+//! it rises as its channel's parabola, carried on up past its banks, holds
+//! it. Rivers nothing holds back keep their bake's water bit for bit.
 
 use std::sync::Arc;
 
 use engine_math::{max, min};
 use glam::{Mat3, Vec2, Vec3};
 
-use crate::hydraulics::{SHALLOWEST, TRICKLE, distances, foam_along, friction_slope};
-use crate::rivers::{BANK_REACH, BANK_SLOPE, RIVER_STEP, River, Rivers};
+use crate::hydraulics::{SHALLOWEST, TRICKLE, distances, friction_slope};
+use crate::rivers::{RIVER_STEP, River, Rivers};
 
 /// The discharge coefficient of water pouring over a broad-crested weir
 /// (meters^0.5 a second).
@@ -39,8 +39,6 @@ const HELD_ROUNDS: usize = 6;
 const DRAINED: f32 = 1.0e-3;
 /// The most meters above its bed a pool may rise.
 const DEEPEST: f32 = 40.0;
-/// Foam pouring over a solid whitens the water this many points below it.
-const SPILL: usize = 3;
 
 /// A solid in a river's water: its river and point, the meters across the
 /// river it spans (from and to, from the middle line, positive to the
@@ -136,10 +134,26 @@ impl Network {
     }
 }
 
-/// Half a river's width where its water stands `rise` meters above its
-/// bake's, up its banks.
-fn widened(half: f32, rise: f32) -> f32 {
-    half + min(max(rise / BANK_SLOPE, 0.0), BANK_REACH)
+/// Half the width of river `line`'s water at point `point` standing at
+/// `level`: its bake's where it stands as baked, otherwise as wide as its
+/// channel's parabola holds it, from the bed up to its banks and carried
+/// on up past them.
+fn spread(line: &River, point: usize, level: f32) -> f32 {
+    if level == line.surface[point] {
+        return line.half[point];
+    }
+    let depth = max(line.depth[point], SHALLOWEST);
+    line.half[point] * (max(level - line.bed[point], 0.0) / depth).sqrt()
+}
+
+/// How deep river `line`'s own flow stands at the middle of point `point`
+/// carrying `discharge`: its bake's water there, deeper or shallower as
+/// Manning's formula has it in a channel as wide.
+fn own_depth(line: &River, point: usize, discharge: f32) -> f32 {
+    max(
+        line.depth[point] * libm::powf(discharge / max(line.discharge[point], TRICKLE), 0.6),
+        SHALLOWEST,
+    )
 }
 
 /// A terrain's rivers' flow at runtime: the bake's rivers, the water as
@@ -149,7 +163,6 @@ pub struct RiverFlow {
     base: Arc<Rivers>,
     current: Arc<Rivers>,
     network: Network,
-    beds: Vec<Vec<f32>>,
     along: Vec<Vec<f32>>,
     roughness: f32,
     blocks: Vec<Block>,
@@ -189,17 +202,6 @@ impl RiverFlow {
         let rivers = base.rivers();
         Self {
             network: Network::new(rivers),
-            beds: rivers
-                .iter()
-                .map(|river| {
-                    river
-                        .surface
-                        .iter()
-                        .zip(&river.depth)
-                        .map(|(surface, depth)| surface - depth)
-                        .collect()
-                })
-                .collect(),
             along: rivers
                 .iter()
                 .map(|river| {
@@ -271,10 +273,7 @@ impl RiverFlow {
         let station = self.base.station(center.x, center.z)?;
         let (river, point) = (station.river as usize, station.point as usize);
         let line = &self.base.rivers()[river];
-        let bed = self.beds[river][point];
-        if !bed.is_finite() {
-            return None;
-        }
+        let bed = line.bed[point];
         let columns = [axes.x_axis, axes.y_axis, axes.z_axis];
         let side = Vec3::new(-station.direction[1], 0.0, station.direction[0]);
         let (rise, reach) = if round {
@@ -294,6 +293,7 @@ impl RiverFlow {
             )
         };
         let (bottom, top) = (center.y - rise, center.y + rise);
+        // None where its water flies: there it has no surface.
         let surface = self.current.rivers()[river].surface[point];
         if !(bottom < surface && top > bed) {
             return None;
@@ -401,20 +401,13 @@ impl RiverFlow {
     /// in the pool below, which holds its water.
     fn backed(&self, river: usize, point: usize) -> bool {
         let tail = self.tail(river, point);
-        let (river, point) = self.next(river, point);
-        let line = &self.base.rivers()[river];
-        let bed = self.beds[river][point];
-        if !(tail.is_finite() && bed.is_finite()) {
+        if !tail.is_finite() {
             return false;
         }
+        let (river, point) = self.next(river, point);
+        let line = &self.base.rivers()[river];
         let discharge = carried(&self.flows, river, line, point);
-        let own = bed
-            + max(
-                line.depth[point]
-                    * libm::powf(discharge / max(line.discharge[point], TRICKLE), 0.6),
-                SHALLOWEST,
-            );
-        tail > own + DROWNED
+        tail > line.bed[point] + own_depth(line, point, discharge) + DROWNED
     }
 
     /// Whether solids at river `river`'s point `point` block enough of it to
@@ -438,7 +431,7 @@ impl RiverFlow {
             .collect();
         let line = &self.base.rivers()[river as usize];
         let at = point as usize;
-        let resting = self.beds[river as usize][at] + RESTING * max(line.depth[at], SHALLOWEST);
+        let resting = line.bed[at] + RESTING * max(line.depth[at], SHALLOWEST);
         let mut spans: Vec<(f32, f32, f32)> = Vec::new();
         for block in here.iter().filter(|block| block.bottom <= resting) {
             let mut crest = block.crest;
@@ -483,12 +476,9 @@ impl RiverFlow {
     fn outflow(&self, (river, point): (u32, u32), level: f32, inflow: f32) -> f32 {
         let line = &self.base.rivers()[river as usize];
         let at = point as usize;
-        let bed = self.beds[river as usize][at];
+        let bed = line.bed[at];
         let width = max(2.0 * line.half[at], 0.2);
-        let own = max(
-            line.depth[at] * libm::powf(inflow / max(line.discharge[at], TRICKLE), 0.6),
-            SHALLOWEST,
-        );
+        let own = own_depth(line, at, inflow);
         let spans = self.spans(river, point);
         let blocked: f32 = spans.iter().map(|(span, _)| span).sum();
         let open = max(width - blocked, 0.0);
@@ -577,7 +567,7 @@ impl RiverFlow {
                 } else {
                     RIVER_STEP
                 };
-                total += 2.0 * widened(line.half[point], level - own) * run;
+                total += 2.0 * spread(line, point, level) * run;
                 if point == 0 {
                     for &source in &self.network.sources[river] {
                         let last = rivers[source].points.len().saturating_sub(1);
@@ -609,13 +599,8 @@ impl RiverFlow {
             let key = (pool.river, pool.point);
             let line = &self.base.rivers()[pool.river as usize];
             let at = pool.point as usize;
-            let bed = self.beds[pool.river as usize][at];
-            let own = bed
-                + max(
-                    line.depth[at]
-                        * libm::powf(pool.inflow / max(line.discharge[at], TRICKLE), 0.6),
-                    SHALLOWEST,
-                );
+            let bed = line.bed[at];
+            let own = bed + own_depth(line, at, pool.inflow);
             let blocked = self.jammed(pool.river, pool.point);
             if drowned {
                 pool.level = max(own, self.tail(pool.river as usize, at));
@@ -654,8 +639,6 @@ impl RiverFlow {
         let rivers = self.base.rivers();
         let mut out: Vec<Option<River>> = vec![None; rivers.len()];
         for &river in self.network.order.iter().rev() {
-            let line = &rivers[river];
-            let count = line.points.len();
             let outlet = self.network.into[river].and_then(|next| {
                 let below = out[next].as_ref()?;
                 let level = below.surface[0];
@@ -665,125 +648,99 @@ impl RiverFlow {
             if outlet.is_none() && !pooled && flows[river].is_none() {
                 continue;
             }
-            let mut level = vec![f32::NAN; count];
-            let mut held = outlet;
-            for point in (0..count).rev() {
-                let bed = self.beds[river][point];
-                if !bed.is_finite() {
-                    held = None;
-                    continue;
-                }
-                let discharge = carried(flows, river, line, point);
-                let own = if discharge == line.discharge[point] {
-                    line.surface[point]
-                } else {
-                    bed + max(
-                        line.depth[point]
-                            * libm::powf(discharge / max(line.discharge[point], TRICKLE), 0.6),
-                        SHALLOWEST,
-                    )
-                };
-                let mut here = own;
-                if let Some(held) = held
-                    && held > here
-                {
-                    here = held;
-                }
-                for pool in self
-                    .pools
-                    .iter()
-                    .filter(|pool| pool.river as usize == river && pool.point as usize == point)
-                {
-                    here = max(here, pool.level);
-                }
-                level[point] = here;
-                // Held water reaches the point above while it stands over
-                // that point's bed: there it stands higher by the friction
-                // it meets on the way, at the depth it stands there (a few
-                // rounds settle it).
-                held = (here > own + 1.0e-4
-                    && point > 0
-                    && here > self.beds[river][point - 1] + SHALLOWEST)
-                    .then(|| {
-                        let above = point - 1;
-                        let bed = self.beds[river][above];
-                        let run = self.along[river][point] - self.along[river][above];
-                        let discharge = carried(flows, river, line, above);
-                        let mut level = here;
-                        for _ in 0..HELD_ROUNDS {
-                            let width =
-                                2.0 * widened(line.half[above], level - line.surface[above]);
-                            let depth = max(0.5 * (here + level) - bed, SHALLOWEST);
-                            let loss =
-                                friction_slope(discharge, width, depth, self.roughness) * run;
-                            level = 0.5 * (level + here + loss);
-                        }
-                        level
-                    });
-            }
-            let half: Vec<f32> = (0..count)
-                .map(|point| {
-                    if level[point].is_finite() {
-                        widened(line.half[point], level[point] - line.surface[point])
-                    } else {
-                        line.half[point]
-                    }
-                })
-                .collect();
-            let depth: Vec<f32> = (0..count)
-                .map(|point| {
-                    if level[point].is_finite() {
-                        max(level[point] - self.beds[river][point], SHALLOWEST)
-                    } else {
-                        line.depth[point]
-                    }
-                })
-                .collect();
-            let speed: Vec<f32> = (0..count)
-                .map(|point| {
-                    carried(flows, river, line, point)
-                        / (2.0 * max(half[point], 0.1) * depth[point])
-                })
-                .collect();
-            let mut foam = foam_along(&depth, &speed, (&self.along[river], &line.cut), &line.falls);
-            self.whiten_spills(river, &mut foam);
-            out[river] = Some(River {
-                points: line.points.clone(),
-                cut: cut_to(&level, &line.cut),
-                surface: level,
-                half,
-                depth,
-                channel: line.channel.clone(),
-                fill: line.fill.clone(),
-                speed,
-                discharge: flows[river]
-                    .clone()
-                    .unwrap_or_else(|| line.discharge.clone()),
-                foam,
-                falls: line.falls.clone(),
-                sheeted: line.sheeted.clone(),
-                nappes: line.nappes.clone(),
-                head: line.head,
-            });
+            let level = self.held(river, outlet, flows);
+            out[river] = Some(self.standing(river, level, flows));
         }
         out
     }
 
-    /// Whitens river `river`'s `foam` below its pools pouring over the solids
-    /// holding them.
-    fn whiten_spills(&self, river: usize, foam: &mut [f32]) {
-        for pool in self
-            .pools
-            .iter()
-            .filter(|pool| pool.river as usize == river)
-        {
-            let spans = self.spans(pool.river, pool.point);
-            if spans.iter().any(|&(_, crest)| pool.level > crest) {
-                let first = pool.point as usize + 1;
-                for value in foam.iter_mut().skip(first).take(SPILL) {
-                    *value = max(*value, 0.9);
-                }
+    /// River `river`'s water at each of its points with `flows` running,
+    /// held back to `outlet` by the river it joins and by its pools; NaN
+    /// where its water flies. Held water reaches the point above while it
+    /// stands over that point's bed: there it stands higher by the friction
+    /// it meets on the way, at the depth it stands there (a few rounds
+    /// settle it).
+    fn held(&self, river: usize, outlet: Option<f32>, flows: &Discharges) -> Vec<f32> {
+        let line = &self.base.rivers()[river];
+        let count = line.points.len();
+        let mut level = vec![f32::NAN; count];
+        let mut held = outlet;
+        for point in (0..count).rev() {
+            if !line.surface[point].is_finite() {
+                held = None;
+                continue;
             }
+            let discharge = carried(flows, river, line, point);
+            let own = if discharge == line.discharge[point] {
+                line.surface[point]
+            } else {
+                line.bed[point] + own_depth(line, point, discharge)
+            };
+            let mut here = own;
+            if let Some(held) = held
+                && held > here
+            {
+                here = held;
+            }
+            for pool in self
+                .pools
+                .iter()
+                .filter(|pool| pool.river as usize == river && pool.point as usize == point)
+            {
+                here = max(here, pool.level);
+            }
+            level[point] = here;
+            held = (here > own + 1.0e-4 && point > 0 && here > line.bed[point - 1] + SHALLOWEST)
+                .then(|| {
+                    let above = point - 1;
+                    let bed = line.bed[above];
+                    let run = self.along[river][point] - self.along[river][above];
+                    let discharge = carried(flows, river, line, above);
+                    let mut level = here;
+                    for _ in 0..HELD_ROUNDS {
+                        let width = 2.0 * spread(line, above, level);
+                        let depth = max(0.5 * (here + level) - bed, SHALLOWEST);
+                        let loss = friction_slope(discharge, width, depth, self.roughness) * run;
+                        level = 0.5 * (level + here + loss);
+                    }
+                    level
+                });
+        }
+        level
+    }
+
+    /// River `river` with its water standing at `level` and `flows`
+    /// running: as baked where it stands and runs as baked or flies;
+    /// elsewhere as wide as its channel's parabola holds it, as deep over
+    /// its bed as it stands, and as fast as what it carries through that
+    /// parabola's section.
+    fn standing(&self, river: usize, level: Vec<f32>, flows: &Discharges) -> River {
+        let line = &self.base.rivers()[river];
+        let (mut half, mut depth, mut speed) =
+            (line.half.clone(), line.depth.clone(), line.speed.clone());
+        for point in 0..line.points.len() {
+            let discharge = carried(flows, river, line, point);
+            let baked = level[point] == line.surface[point] && discharge == line.discharge[point];
+            if baked || !level[point].is_finite() {
+                continue;
+            }
+            half[point] = spread(line, point, level[point]);
+            depth[point] = max(level[point] - line.bed[point], SHALLOWEST);
+            speed[point] = discharge / (4.0 / 3.0 * max(half[point], 0.1) * depth[point]);
+        }
+        River {
+            points: line.points.clone(),
+            discharge: flows[river]
+                .clone()
+                .unwrap_or_else(|| line.discharge.clone()),
+            half,
+            depth,
+            bed: line.bed.clone(),
+            surface: level,
+            speed,
+            falls: line.falls.clone(),
+            sheeted: line.sheeted.clone(),
+            head: line.head,
         }
     }
 
@@ -815,15 +772,4 @@ impl RiverFlow {
         self.current = Arc::new(self.base.with_rivers(whole));
         true
     }
-}
-
-/// The levels a river's channel is cut to where its water stands at
-/// `level`: that water, and beneath its jets (no water) as the bake cut it
-/// (`baked`).
-fn cut_to(level: &[f32], baked: &[f32]) -> Vec<f32> {
-    level
-        .iter()
-        .zip(baked)
-        .map(|(&level, &baked)| if level.is_finite() { level } else { baked })
-        .collect()
 }

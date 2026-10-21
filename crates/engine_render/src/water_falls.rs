@@ -17,15 +17,13 @@
 //! it turns white once its turbulence reaches its surface (Chanson's
 //! inception point) as far as the rock is steep enough to keep air in it,
 //! and lets its air go down gentler rock, its foam lingering in patches.
-//! Off a step's face high enough it leaps clear as a nappe, leaving the lip
-//! level and falling as it goes, flying as a jet does.
 //! Where a jet lands, the water boils: a disc of white
 //! water on the pool, flowing out from where it lands and thinning to
 //! nothing at its rim.
 
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::math::{clamp, max, min};
-use engine_core::terrain_data::{Fall, NAPPE_FACE};
+use engine_core::terrain_data::Fall;
 
 use crate::gpu_layouts::water::FallVertex;
 
@@ -76,10 +74,8 @@ const OVERHANG: f32 = 1.15;
 /// How much faster a jet's middle leaves its lip than its edges (a share
 /// of its speed): its curtain bows out in the middle as it falls.
 const BOW: f32 = 0.12;
-/// The slowest the sheet's water runs (meters a second), and the gravity a
-/// nappe falls under (meters a second squared).
+/// The slowest the sheet's water runs (meters a second).
 const SLOWEST: f32 = 0.3;
-const GRAVITY: f32 = 9.81;
 /// What the seconds since landing read before the water has landed.
 const UNLANDED: f32 = 1.0e3;
 /// A boil's radius, a share of the fall's width between the least and the
@@ -114,24 +110,16 @@ pub(crate) fn sheets<'a>(
 }
 
 /// A point of a fall's path: where it stands (terrain-local), the seconds
-/// after leaving the lip its water passes it, whether it flies from there
-/// to the next point, through the air or clear of a step's face (a nappe),
-/// half the meters across its water there and how much of the sky it sees.
+/// after leaving the lip its water passes it, whether it flies through the
+/// air from there to the next point, half the meters across its water
+/// there and how much of the sky it sees.
 #[derive(Clone, Copy)]
 struct Passing {
     at: Vec3,
     time: f32,
     aloft: bool,
-    nappe: bool,
     half: f32,
     sky: f32,
-}
-
-impl Passing {
-    /// Whether its water flies from here to the next point.
-    fn flies(&self) -> bool {
-        self.aloft || self.nappe
-    }
 }
 
 /// Fall `fall`'s path, reaching UPSTREAM up the river over its lip at the
@@ -142,7 +130,6 @@ fn passings(fall: &Fall) -> Option<(Vec<Passing>, f32)> {
     if count < 2
         || fall.times.len() != count
         || fall.aloft.len() != count
-        || fall.nappes.len() != count
         || fall.widths.len() != count
         || fall.sky.len() != count
     {
@@ -153,7 +140,6 @@ fn passings(fall: &Fall) -> Option<(Vec<Passing>, f32)> {
             at: Vec3::from_array(fall.path[index]),
             time: fall.times[index],
             aloft: fall.aloft[index],
-            nappe: fall.nappes[index],
             half: 0.5 * fall.widths[index],
             sky: fall.sky[index],
         })
@@ -171,7 +157,6 @@ fn passings(fall: &Fall) -> Option<(Vec<Passing>, f32)> {
             at: first.at - upstream * UPSTREAM,
             time: -UPSTREAM / lip_speed,
             aloft: false,
-            nappe: false,
             half: first.half,
             sky: first.sky,
         },
@@ -186,50 +171,10 @@ fn passings(fall: &Fall) -> Option<(Vec<Passing>, f32)> {
         at: last.at + landing.normalize_or(Vec3::NEG_Y) * PLUNGE,
         time: last.time + PLUNGE / landing_speed,
         aloft: false,
-        nappe: false,
         half: last.half,
         sky: last.sky,
     });
-    Some((
-        landed_nappes(&path, fall.discharge / max(fall.width, 0.1)),
-        lip_speed,
-    ))
-}
-
-/// `path` with each nappe landing where it carries its water, carrying
-/// `carried` cubic meters a second each meter of its width: leaving its lip
-/// level at least as fast as its waves run, as far out as it falls in the
-/// time it takes to fall its step's height, no nearer than the face's foot
-/// ([`NAPPE_FACE`] of the stretch) nor past the stretch; on from there down
-/// the rock below.
-fn landed_nappes(path: &[Passing], carried: f32) -> Vec<Passing> {
-    let critical = libm::cbrtf(carried * carried / GRAVITY);
-    let mut out = Vec::with_capacity(path.len() + 4);
-    for (index, &a) in path.iter().enumerate() {
-        out.push(a);
-        let Some(&b) = path.get(index + 1).filter(|_| a.nappe) else {
-            continue;
-        };
-        let run = Vec2::new(b.at.x - a.at.x, b.at.z - a.at.z).length();
-        let (drop, seconds) = (a.at.y - b.at.y, b.time - a.time);
-        if run <= 0.0 || drop <= 0.0 || seconds <= 0.0 {
-            continue;
-        }
-        let speed = max(run / seconds, (GRAVITY * critical).sqrt());
-        let share = clamp(speed * (2.0 * drop / GRAVITY).sqrt() / run, NAPPE_FACE, 1.0);
-        if share < 0.99 {
-            let at = a.at + (b.at - a.at) * share;
-            out.push(Passing {
-                at: Vec3::new(at.x, b.at.y, at.z),
-                time: a.time + seconds * share,
-                aloft: false,
-                nappe: false,
-                half: a.half + (b.half - a.half) * share,
-                sky: a.sky + (b.sky - a.sky) * share,
-            });
-        }
-    }
-    out
+    Some((path, lip_speed))
 }
 
 /// A row of a sheet: its middle (terrain-local), the seconds after leaving
@@ -255,25 +200,12 @@ struct Row {
 }
 
 /// Where the water passing `share` of the way from `a` to `b` is, the way it
-/// runs there and how fast: straight along the way between them, or clear
-/// of a step's face on the curve of water leaving the lip level and falling
-/// as it goes.
+/// runs there and how fast: straight along the way between them.
 fn on_segment(a: &Passing, b: &Passing, share: f32) -> (Vec3, Vec3, f32) {
     let run = b.at - a.at;
     let seconds = max(b.time - a.time, 1.0e-3);
-    if !a.nappe {
-        let speed = max(run.length() / seconds, SLOWEST);
-        return (a.at + run * share, run.normalize_or(Vec3::NEG_Y), speed);
-    }
-    let drop = a.at.y - b.at.y;
-    let level = Vec3::new(run.x, 0.0, run.z);
-    let center = a.at + level * share - Vec3::Y * (drop * share * share);
-    let velocity = (level - Vec3::Y * (2.0 * drop * share)) / seconds;
-    (
-        center,
-        velocity.normalize_or(Vec3::NEG_Y),
-        max(velocity.length(), SLOWEST),
-    )
+    let speed = max(run.length() / seconds, SLOWEST);
+    (a.at + run * share, run.normalize_or(Vec3::NEG_Y), speed)
 }
 
 /// The sine of the angle `path` falls at each of its points, read across
@@ -323,14 +255,14 @@ fn rows(path: &[Passing], carried: f32) -> Vec<Row> {
     let mut before = path[0].time;
     for index in 0..path.len() - 1 {
         let (a, b) = (path[index], path[index + 1]);
-        let flew = index > 0 && path[index - 1].flies();
-        if a.flies() && !flew {
+        let flew = index > 0 && path[index - 1].aloft;
+        if a.aloft && !flew {
             took_off = a.time;
             height = a.at.y;
             airborne_white = white;
             lifted = lift;
         }
-        if !a.flies() && flew {
+        if !a.aloft && flew {
             landed = a.time;
             white = 1.0;
         }
@@ -341,7 +273,7 @@ fn rows(path: &[Passing], carried: f32) -> Vec<Row> {
             let time = a.time + (b.time - a.time) * share;
             let (center, tangent, speed) = on_segment(&a, &b, share);
             let (broken, spread);
-            if a.flies() {
+            if a.aloft {
                 let fallen = max(height - center.y, 0.0);
                 let flying = time - took_off;
                 white = max(airborne_white, 1.0 - libm::expf(-flying / AIRING));
@@ -377,12 +309,12 @@ fn rows(path: &[Passing], carried: f32) -> Vec<Row> {
                 time,
                 tangent,
                 speed,
-                flying: if a.flies() {
+                flying: if a.aloft {
                     time - took_off
                 } else {
                     landed - time
                 },
-                aloft: a.flies(),
+                aloft: a.aloft,
                 white,
                 broken,
                 spread,

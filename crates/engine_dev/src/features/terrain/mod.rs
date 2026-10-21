@@ -355,7 +355,6 @@ fn sights(
             half: sight.half,
             speed: sight.speed,
             discharge: sight.discharge,
-            foam: sight.foam,
         })
         .collect()
 }
@@ -370,7 +369,6 @@ fn river_flow(found: &engine_core::terrain_data::Hydrology) -> crate::views::Riv
         max_discharge: flow.max_discharge,
         fastest: flow.fastest,
         rapid_share: flow.rapid_share,
-        foam_share: flow.foam_share,
     }
 }
 

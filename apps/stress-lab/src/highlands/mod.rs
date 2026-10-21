@@ -415,19 +415,17 @@ pub(crate) fn populate(
             op: StampOp::Flatten(60.0),
         }),
         plateau_stamp,
-        // Streams and rivers carved where water gathers off
-        // the mountains, baked over the sixteen-meter tiles erosion shaped;
-        // streams a meter or so wide run down to them from a sixth of a
-        // river's head.
+        // Streams and rivers carved where water gathers off the mountains,
+        // baked over the eight-meter tiles erosion shaped. Channels begin
+        // where two and a half hectares drain, a meter or so wide, and each
+        // runs as wide and deep as it must to carry what it drains: an
+        // alpine 3.2 cubic meters a second a square kilometer when full,
+        // which makes the largest river some forty-five meters across.
         Layer::Hydrology(HydrologyStage {
             layer: HydrologyLayer {
-                level: 4,
-                channel_area: 150_000.0,
-                depth: 1.2,
-                width: 7.0,
-                max_depth: 7.0,
-                max_width: 70.0,
-                stream_area: 25_000.0,
+                level: 3,
+                channel_area: 25_000.0,
+                discharge: 3.2,
                 ..HydrologyLayer::default()
             },
             baked: None,

@@ -27,8 +27,8 @@ pub struct LakeSight {
 /// A river point worth looking at: what makes it one (`largest`, `rapids`
 /// or `confluence`), the point (terrain-local x, surface and z), the way
 /// the river runs there (a unit vector along x and z), half its channel's
-/// width, its speed (meters a second), its discharge (cubic meters a
-/// second) and the foam riding it (0 to 1).
+/// width, its speed (meters a second) and its discharge (cubic meters a
+/// second).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RiverSight {
     pub kind: &'static str,
@@ -37,13 +37,12 @@ pub struct RiverSight {
     pub half: f32,
     pub speed: f32,
     pub discharge: f32,
-    pub foam: f32,
 }
 
 /// How a bake's rivers and lakes flow: how many there are, the river
 /// points holding water, the most any carries (cubic meters a second), the
-/// fastest any runs (meters a second), and the shares of those points
-/// running faster than their waves and carrying foam.
+/// fastest any runs (meters a second), and the share of those points
+/// running faster than their waves.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FlowSummary {
     pub rivers: usize,
@@ -52,7 +51,6 @@ pub struct FlowSummary {
     pub max_discharge: f32,
     pub fastest: f32,
     pub rapid_share: f32,
-    pub foam_share: f32,
 }
 
 /// A river's course as worlds placing things in rivers read it: its points
@@ -74,13 +72,14 @@ impl RiverCourse<'_> {
         self.river.half[point]
     }
 
-    /// Its bed at `point`: NaN where its water falls clear of it.
+    /// Its bed at `point` (terrain-local meters): beneath a fall's jet, the
+    /// line from the lip's bed to where it lands.
     pub fn bed(&self, point: usize) -> f32 {
-        self.river.surface[point] - self.river.depth[point]
+        self.river.bed[point]
     }
 
     pub fn channel(&self, point: usize) -> f32 {
-        self.river.channel[point]
+        self.river.depth[point]
     }
 
     pub fn discharge(&self, point: usize) -> f32 {
@@ -92,11 +91,19 @@ impl RiverCourse<'_> {
         self.river.falls_at(point) || !self.river.surface[point].is_finite()
     }
 
-    /// Whether its water starts where it starts, at a head or a lake's
-    /// outlet, rather than at a confluence, whose rivers bring it.
+    /// Whether its water starts where it starts, at a head, rather than at
+    /// a confluence or a lake's outlet, whose rivers or lake bring it.
     pub fn head(&self) -> bool {
         self.river.head
     }
+}
+
+/// River `river`'s Froude number at point `index`: its speed over that of
+/// waves on water as deep as its section's mean depth, two thirds of its
+/// depth at its middle.
+fn froude(river: &River, index: usize) -> f32 {
+    let mean = 2.0 / 3.0 * max(river.depth[index], 1.0e-3);
+    river.speed[index] / (GRAVITY * mean).sqrt()
 }
 
 impl Rivers {
@@ -179,12 +186,10 @@ impl Hydrology {
                 if !river.surface[index].is_finite() {
                     continue;
                 }
-                let depth = max(river.depth[index], 1.0e-3);
-                let froude = river.speed[index] / (GRAVITY * depth).sqrt();
                 better(&mut largest, river.discharge[index], number, index);
                 better(
                     &mut rapids,
-                    froude * river.discharge[index].sqrt(),
+                    froude(river, index) * river.discharge[index].sqrt(),
                     number,
                     index,
                 );
@@ -216,7 +221,6 @@ impl Hydrology {
                 half: river.half[index],
                 speed: river.speed[index],
                 discharge: river.discharge[index],
-                foam: river.foam[index],
             })
         })
         .collect()
@@ -225,7 +229,7 @@ impl Hydrology {
     /// How its rivers and lakes flow.
     pub fn flow_summary(&self) -> FlowSummary {
         let rivers = self.rivers.rivers();
-        let (mut points, mut rapid, mut foamy) = (0_usize, 0_usize, 0_usize);
+        let (mut points, mut rapid) = (0_usize, 0_usize);
         let (mut max_discharge, mut fastest) = (0.0_f32, 0.0_f32);
         for river in rivers {
             for index in 0..river.points.len() {
@@ -233,23 +237,18 @@ impl Hydrology {
                     continue;
                 }
                 points += 1;
-                let speed = river.speed[index];
-                let depth = max(river.depth[index], 1.0e-3);
-                rapid += usize::from(speed > (GRAVITY * depth).sqrt());
-                foamy += usize::from(river.foam[index] > 0.1);
+                rapid += usize::from(froude(river, index) > 1.0);
                 max_discharge = max(max_discharge, river.discharge[index]);
-                fastest = max(fastest, speed);
+                fastest = max(fastest, river.speed[index]);
             }
         }
-        let share = |count: usize| count as f32 / max(points as f32, 1.0);
         FlowSummary {
             rivers: rivers.len(),
             lakes: self.water.levels.len(),
             points,
             max_discharge,
             fastest,
-            rapid_share: share(rapid),
-            foam_share: share(foamy),
+            rapid_share: rapid as f32 / max(points as f32, 1.0),
         }
     }
 }

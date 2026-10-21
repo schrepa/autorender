@@ -160,7 +160,7 @@ pub struct LakeView {
 
 /// A point of a river worth looking at (`largest`, `rapids` or
 /// `confluence`): where its water stands (world space), the way it runs,
-/// half its width, its speed, discharge and foam.
+/// half its width, its speed and discharge.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct RiverSight {
@@ -170,14 +170,12 @@ pub struct RiverSight {
     pub half: f32,
     pub speed: f32,
     pub discharge: f32,
-    pub foam: f32,
 }
 
-/// How a terrain's rivers flow, as its bake solved them: rivers, lakes,
-/// river points, the largest discharge (cubic meters a second), the fastest
-/// mean speed (meters a second), the share of points running faster than
-/// their waves (Froude number over one) and of points carrying foam (over a
-/// tenth).
+/// How a terrain's rivers flow, as its bake set them: rivers, lakes, river
+/// points, the largest discharge (cubic meters a second), the fastest mean
+/// speed (meters a second) and the share of points running faster than
+/// their waves (Froude number over one).
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct RiverFlowView {
@@ -187,7 +185,6 @@ pub struct RiverFlowView {
     pub max_discharge: f32,
     pub fastest: f32,
     pub rapid_share: f32,
-    pub foam_share: f32,
 }
 
 /// A waterfall, terrain-local: its lip's water and where its jet lands, the

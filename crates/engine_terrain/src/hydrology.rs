@@ -34,7 +34,7 @@ use glam::Vec2;
 
 use crate::layers::HeightImage;
 use crate::noise::hash;
-use crate::rivers::{Channels, MIN_DEPTH, RiverLine, Rivers, trace, wander};
+use crate::rivers::{Channels, RiverLine, Rivers, trace};
 
 settings! {
     /// A layer that bakes where water runs over the layers below it and cuts
@@ -43,42 +43,21 @@ settings! {
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct HydrologyLayer {
-        /// The pyramid level whose samples the bake reads: finer levels carve
-        /// narrower channels and take longer.
+        /// The pyramid level whose samples the bake reads: finer levels trace
+        /// channels more closely and take longer.
         pub level: u32 = 3 => range(0, MAX_LEVEL),
         /// Square meters of upstream area where channels begin.
         pub channel_area: f32 = 200_000.0 => range(100.0, 1.0e10),
-        /// Meters deep channels are where they begin; downstream their depth
-        /// grows with the fourth root of the area they drain, up to `max_depth`.
-        pub depth: f32 = 1.0 => range(0.0, 100.0),
-        /// Meters wide channels are where they begin; downstream their width
-        /// grows with the square root of the area they drain, up to `max_width`.
-        pub width: f32 = 6.0 => range(0.1, 1000.0),
-        /// The deepest channels grow, meters.
-        pub max_depth: f32 = 6.0 => range(0.0, 100.0),
-        /// The widest channels grow, meters.
-        pub max_width: f32 = 60.0 => range(0.1, 1000.0),
-        /// Square meters of upstream area where streams begin: channels
-        /// draining less than `channel_area` run as streams down to the rivers
-        /// they join, their width falling with the area they drain below a
-        /// river's at its head and their depth with its square root, cut a little
-        /// into the ground. 0, the default, has none, as has `channel_area` or
-        /// more.
-        #[serde(skip_serializing_if = "is_zero")]
-        pub stream_area: f32 = 0.0 => range(0.0, 1.0e10),
-        /// Cubic meters a second each square kilometer drained yields to the
-        /// rivers: with their channels' width and slope and the roughness of
-        /// their beds it sets how deep and fast they run. 0, the default,
-        /// yields what runs rivers `fill` of the way up their channels where
-        /// their channels' slope is typical.
-        #[serde(skip_serializing_if = "is_zero")]
-        pub discharge: f32 = 0.0 => range(0.0, 1000.0),
-        /// The share of their channels' depth rivers run at where their
-        /// channels' slope is typical, while `discharge` leaves their yield
-        /// to their channels: fuller where they level out, shallower where
-        /// they steepen.
-        #[serde(skip_serializing_if = "is_default_fill")]
-        pub fill: f32 = FILL => range(0.05, 1.0),
+        /// Cubic meters a second each square kilometer drained brings the
+        /// channels full to their banks: every channel carries this times the
+        /// area draining through it, which sets its width, and with its slope
+        /// and the roughness of its bed, its depth.
+        pub discharge: f32 = DISCHARGE => range(0.001, 1000.0),
+        /// Meters wide a channel carrying a cubic meter a second stands at
+        /// its banks: channels widen with the square root of what they carry,
+        /// as channels full to their banks do (about 4.6 meters at 0.63 cubic
+        /// meters a second, and 21 at 21).
+        pub width: f32 = WIDTH => range(0.1, 100.0),
         /// Manning's roughness of riverbeds (seconds over the cube root of a
         /// meter): rougher beds hold water deeper and slower.
         #[serde(skip_serializing_if = "is_default_roughness")]
@@ -86,19 +65,13 @@ settings! {
     }
 }
 
-/// The default [`HydrologyLayer::fill`] and [`HydrologyLayer::roughness`]:
-/// rivers three quarters of the way up their channels, over a natural
-/// gravel bed.
-pub const FILL: f32 = 0.75;
+/// The default [`HydrologyLayer::discharge`] and [`HydrologyLayer::width`]:
+/// a cubic meter a second each square kilometer brings, and five meters
+/// across where a channel carries a cubic meter a second.
+const DISCHARGE: f32 = 1.0;
+const WIDTH: f32 = 5.0;
+/// The default [`HydrologyLayer::roughness`]: a natural gravel bed.
 pub const ROUGHNESS: f32 = 0.035;
-
-fn is_zero(value: &f32) -> bool {
-    *value == 0.0
-}
-
-fn is_default_fill(value: &f32) -> bool {
-    *value == FILL
-}
 
 fn is_default_roughness(value: &f32) -> bool {
     *value == ROUGHNESS
@@ -121,13 +94,12 @@ pub struct HydrologyStats {
 /// one to the other: through the air on each jet and down the chutes
 /// between where one jet lands in the chute the next leaves (a cascade),
 /// the seconds after leaving the lip its water passes each point of it,
-/// whether it flies through the air from each point to the next, whether it
-/// leaps clear of a step's face there as a nappe, the meters across its
-/// water there and how much of the sky it sees there (0 to 1, the ground
-/// around hiding the rest); the meters across the river at its lip,
-/// the area draining over it (square
-/// meters), the water's speed as it lands at last (meters a second) and the
-/// discharge it carries (cubic meters a second).
+/// whether it flies through the air from each point to the next, the
+/// meters across its water there and how much of the sky it sees there (0
+/// to 1, the ground around hiding the rest); the meters across the river at
+/// its lip, the area draining over it (square meters), the water's speed as
+/// it lands at last (meters a second) and the discharge it carries (cubic
+/// meters a second).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Fall {
     pub top: [f32; 3],
@@ -135,7 +107,6 @@ pub struct Fall {
     pub path: Vec<[f32; 3]>,
     pub times: Vec<f32>,
     pub aloft: Vec<bool>,
-    pub nappes: Vec<bool>,
     pub widths: Vec<f32>,
     pub sky: Vec<f32>,
     pub width: f32,
@@ -143,10 +114,6 @@ pub struct Fall {
     pub speed: f32,
     pub discharge: f32,
 }
-
-/// The meters a steep stretch of river must fall to fall as a cascade
-/// ([`Fall`]); stretches leaping off a ledge fall as one however low.
-pub const FALL_HEIGHT: f32 = 6.0;
 
 /// The ranges the baked images encode, from 0 to 65535: base-10 logarithms
 /// of upstream area (square meters), wetness indexes and lake depths
@@ -607,7 +574,7 @@ pub(crate) fn bake(
     for (position, &sample) in order.iter().enumerate() {
         rank[sample as usize] = position as u32;
     }
-    let mut lines = trace(
+    let lines = trace(
         &Channels {
             area: &area,
             receivers: &receivers,
@@ -615,26 +582,8 @@ pub(crate) fn bake(
             rank: &rank,
         },
         (width, spacing),
-        if layer.stream_area > 0.0 {
-            min(layer.stream_area, layer.channel_area)
-        } else {
-            layer.channel_area
-        },
-        |drained| {
-            let ratio = drained / layer.channel_area;
-            if ratio < 1.0 {
-                // Streams narrow with the area they drain
-                // and grow shallow with its square root, meeting a river's
-                // size at its head.
-                return (0.5 * layer.width * ratio, MIN_DEPTH * ratio.sqrt());
-            }
-            let half = 0.5 * min(layer.width * ratio.sqrt(), layer.max_width);
-            let depth = min(layer.depth * ratio.sqrt().sqrt(), layer.max_depth);
-            (half, max(depth, MIN_DEPTH))
-        },
+        layer.channel_area,
     );
-    // Steep stretches wander from side to side, widening and narrowing.
-    wander(&mut lines, heights, (width, spacing));
     let mut lake_samples = 0;
     let mut max_area = 0.0_f32;
     let mut flow = Vec::with_capacity(count);
@@ -1004,13 +953,8 @@ pub(crate) fn image_level(image_spacing: f32, levels: usize, spacing: f32) -> us
 crate::codec::record!(HydrologyLayer {
     level,
     channel_area,
-    depth,
-    width,
-    max_depth,
-    max_width,
-    stream_area,
     discharge,
-    fill,
+    width,
     roughness,
 });
 crate::codec::record!(HydrologyStats {
@@ -1026,7 +970,6 @@ crate::codec::record!(Fall {
     path,
     times,
     aloft,
-    nappes,
     widths,
     sky,
     width,

@@ -56,8 +56,8 @@ pub use bake::{Bake, BakeKind, Baked, ErosionBake, HydrologyBake, PathBake, Stag
 pub use erosion::{Erosion, ErosionLayer, ErosionStats};
 pub use flow::{Block, Pool, RiverFlow, WEIR};
 pub use hydrology::{
-    FALL_HEIGHT, FILL, FLOW_RANGE, Fall, Hydrology, HydrologyLayer, HydrologySample,
-    HydrologyStats, LAKE_RANGE, RIVER_FAR, ROUGHNESS, WETNESS_RANGE,
+    FLOW_RANGE, Fall, Hydrology, HydrologyLayer, HydrologySample, HydrologyStats, LAKE_RANGE,
+    RIVER_FAR, ROUGHNESS, WETNESS_RANGE,
 };
 pub use layers::{
     Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers,
