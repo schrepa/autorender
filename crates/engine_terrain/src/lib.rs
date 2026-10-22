@@ -27,6 +27,7 @@
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
 mod bake;
+mod bed;
 pub mod bounce;
 pub mod codec;
 mod erosion;
@@ -53,11 +54,12 @@ mod tile;
 mod tile_water;
 
 pub use bake::{Bake, BakeKind, Baked, ErosionBake, HydrologyBake, PathBake, Stage, TerrainBake};
+pub use bed::{Bed, Reach};
 pub use erosion::{Erosion, ErosionLayer, ErosionStats};
 pub use flow::{Block, Pool, RiverFlow, WEIR};
 pub use hydrology::{
     FLOW_RANGE, Fall, Hydrology, HydrologyLayer, HydrologySample, HydrologyStats, LAKE_RANGE,
-    RIVER_FAR, ROUGHNESS, WETNESS_RANGE,
+    RIVER_FAR, WETNESS_RANGE,
 };
 pub use layers::{
     Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers,

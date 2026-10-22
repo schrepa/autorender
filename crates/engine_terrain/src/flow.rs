@@ -164,7 +164,6 @@ pub struct RiverFlow {
     current: Arc<Rivers>,
     network: Network,
     along: Vec<Vec<f32>>,
-    roughness: f32,
     blocks: Vec<Block>,
     pools: Vec<Pool>,
     // The water's level at each point of each river as the last step left
@@ -196,9 +195,8 @@ const DROWNED: f32 = 1.0e-3;
 const JAM: f32 = 0.3;
 
 impl RiverFlow {
-    /// The flow of `base`, a bake's rivers with beds of Manning's
-    /// `roughness`, as nothing holds it back.
-    pub fn new(base: Arc<Rivers>, roughness: f32) -> Self {
+    /// The flow of `base`, a bake's rivers, as nothing holds it back.
+    pub fn new(base: Arc<Rivers>) -> Self {
         let rivers = base.rivers();
         Self {
             network: Network::new(rivers),
@@ -213,7 +211,6 @@ impl RiverFlow {
                     distances(&points)
                 })
                 .collect(),
-            roughness,
             blocks: Vec::new(),
             pools: Vec::new(),
             last: Vec::new(),
@@ -658,8 +655,8 @@ impl RiverFlow {
     /// held back to `outlet` by the river it joins and by its pools; NaN
     /// where its water flies. Held water reaches the point above while it
     /// stands over that point's bed: there it stands higher by the friction
-    /// it meets on the way, at the depth it stands there (a few rounds
-    /// settle it).
+    /// its bed's grains give it on the way, at the depth it stands there (a
+    /// few rounds settle it).
     fn held(&self, river: usize, outlet: Option<f32>, flows: &Discharges) -> Vec<f32> {
         let line = &self.base.rivers()[river];
         let count = line.points.len();
@@ -700,7 +697,7 @@ impl RiverFlow {
                     for _ in 0..HELD_ROUNDS {
                         let width = 2.0 * spread(line, above, level);
                         let depth = max(0.5 * (here + level) - bed, SHALLOWEST);
-                        let loss = friction_slope(discharge, width, depth, self.roughness) * run;
+                        let loss = friction_slope(discharge, width, depth, line.d84[above]) * run;
                         level = 0.5 * (level + here + loss);
                     }
                     level
@@ -740,6 +737,14 @@ impl RiverFlow {
             speed,
             falls: line.falls.clone(),
             sheeted: line.sheeted.clone(),
+            reach: line.reach.clone(),
+            d50: line.d50.clone(),
+            d84: line.d84.clone(),
+            power: line.power.clone(),
+            flood: line.flood.clone(),
+            carved: line.carved.clone(),
+            crest: line.crest.clone(),
+            knobs: line.knobs.clone(),
             head: line.head,
         }
     }

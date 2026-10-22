@@ -32,6 +32,7 @@ use std::sync::Arc;
 
 use glam::Vec2;
 
+use crate::bed::{bankfull_flood, bankfull_width};
 use crate::layers::HeightImage;
 use crate::noise::hash;
 use crate::rivers::{Channels, RiverLine, Rivers, trace};
@@ -52,36 +53,22 @@ settings! {
         pub level: u32 = 0 => range(0, MAX_LEVEL),
         /// Cubic meters a second each square kilometer drained brings the
         /// channels full to their banks: every channel carries this times the
-        /// area draining through it, which sets its width, and with its slope
-        /// and the roughness of its bed, its depth.
+        /// area draining through it, which sets how wide and deep its channel
+        /// stands, as channels full to their banks widen and deepen
+        /// downstream, shaped by the slope of its reach.
         pub discharge: f32 = DISCHARGE => range(0.001, 1000.0),
-        /// Meters wide a channel carrying a cubic meter a second stands at
-        /// its banks: channels widen with the square root of what they carry,
-        /// as channels full to their banks do (about 4.6 meters at 0.63 cubic
-        /// meters a second, and 21 at 21).
-        pub width: f32 = WIDTH => range(0.1, 100.0),
-        /// Manning's roughness of riverbeds (seconds over the cube root of a
-        /// meter): rougher beds hold water deeper and slower.
-        #[serde(skip_serializing_if = "is_default_roughness")]
-        pub roughness: f32 = ROUGHNESS => range(0.01, 0.3),
     }
 }
 
-/// The default [`HydrologyLayer::discharge`] and [`HydrologyLayer::width`]:
-/// a cubic meter a second each square kilometer brings, and five meters
-/// across where a channel carries a cubic meter a second.
+/// The default [`HydrologyLayer::discharge`]: a cubic meter a second each
+/// square kilometer brings.
 const DISCHARGE: f32 = 1.0;
-const WIDTH: f32 = 5.0;
-/// The default [`HydrologyLayer::roughness`]: a natural gravel bed.
-pub const ROUGHNESS: f32 = 0.035;
-
-fn is_default_roughness(value: &f32) -> bool {
-    *value == ROUGHNESS
-}
 
 /// What a bake found: samples read, samples channels run through, samples
-/// of filled pits, the largest upstream area (square meters), and the
-/// waterfalls rivers drop over.
+/// of filled pits, the largest upstream area (square meters), the
+/// waterfalls rivers drop over, the river points in each reach (Pool to
+/// Falls, as [`crate::Reach`] numbers them), and the steps and knobs carved
+/// into rivers' beds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct HydrologyStats {
     pub samples: usize,
@@ -89,6 +76,9 @@ pub struct HydrologyStats {
     pub lake_samples: usize,
     pub max_area: f32,
     pub falls: usize,
+    pub reaches: [usize; 5],
+    pub steps: usize,
+    pub knobs: usize,
 }
 
 /// A waterfall: where a river leaves its bed over a drop, the lip's water
@@ -613,8 +603,7 @@ pub(crate) fn bake(
     // Channels begin where they span two of the grid's samples from bank
     // to bank: the narrowest the water settling over it holds.
     let runoff = layer.discharge * 1.0e-6;
-    let narrowest = 2.0 * spacing / layer.width;
-    let channel_area = narrowest * narrowest / runoff;
+    let channel_area = bankfull_flood(2.0 * spacing) / runoff;
     let channel_samples = area
         .iter()
         .zip(&in_lake)
@@ -630,7 +619,7 @@ pub(crate) fn bake(
         },
         (width, spacing),
         channel_area,
-        |drained| layer.width * (drained * runoff).sqrt(),
+        |drained| bankfull_width(drained * runoff),
     );
     let hydrology = Hydrology {
         spacing: apart,
@@ -644,7 +633,7 @@ pub(crate) fn bake(
             channel_samples,
             lake_samples,
             max_area,
-            falls: 0,
+            ..HydrologyStats::default()
         },
         falls: Arc::from(Vec::new()),
     };
@@ -961,8 +950,6 @@ pub(crate) fn image_level(image_spacing: f32, levels: usize, spacing: f32) -> us
 crate::codec::record!(HydrologyLayer {
     level,
     discharge,
-    width,
-    roughness,
 });
 crate::codec::record!(HydrologyStats {
     samples,
@@ -970,6 +957,9 @@ crate::codec::record!(HydrologyStats {
     lake_samples,
     max_area,
     falls,
+    reaches,
+    steps,
+    knobs,
 });
 crate::codec::record!(Fall {
     top,

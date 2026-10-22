@@ -11,7 +11,7 @@ use glam::Vec2;
 
 use crate::hydraulics::GRAVITY;
 use crate::rivers::River;
-use crate::{Hydrology, Pool, RiverFlow, Rivers};
+use crate::{Bed, Hydrology, Pool, RiverFlow, Rivers};
 
 /// A lake: its level (terrain-local meters), the area its water covers
 /// (square meters), and its middle and a sample of its shore (terrain-local
@@ -56,7 +56,8 @@ pub struct FlowSummary {
 /// A river's course as worlds placing things in rivers read it: its points
 /// (terrain-local x and z, from upstream) and at each half its channel's
 /// width, its bed and its channel's depth below its banks (meters), the
-/// discharge it carries (cubic meters a second), and where it falls. Its
+/// discharge it carries (cubic meters a second), its bed's reach, grains,
+/// power and flood, where steps' crests stand, and where it falls. Its
 /// water is the tiles' to say.
 #[derive(Clone, Copy, Debug)]
 pub struct RiverCourse<'a> {
@@ -84,6 +85,26 @@ impl RiverCourse<'_> {
 
     pub fn discharge(&self, point: usize) -> f32 {
         self.river.discharge[point]
+    }
+
+    /// Its bed at `point`: its reach, grains and power, its bankfull
+    /// flood's level, and whether steps or knobs are carved there.
+    pub fn bed_at(&self, point: usize) -> Bed {
+        let river = self.river;
+        Bed {
+            reach: river.reach[point],
+            d50: river.d50[point],
+            d84: river.d84[point],
+            power: river.power[point],
+            flood: river.flood[point],
+            carved: river.carved[point],
+        }
+    }
+
+    /// The share of the way from `point` to the next a step's crest stands
+    /// at, where one stands between them.
+    pub fn crest(&self, point: usize) -> Option<f32> {
+        self.river.crest[point].map(|crest| crest.share)
     }
 
     /// Whether its water falls at `point`.

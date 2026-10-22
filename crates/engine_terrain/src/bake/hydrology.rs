@@ -1,8 +1,8 @@
 //! The hydrology bake: the level's grid gathered and a grid of the
 //! landscape [`MAP_LEVELS`] levels coarser, then at once where water runs
 //! and pools over each, the rivers traced along the level's own grid, and
-//! each river's channel and water set from the ground along its line,
-//! upstream rivers first.
+//! each river's channel, bed and water set from the ground along its line
+//! and beside it, upstream rivers first.
 
 use engine_math::collections::HashMap;
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use glam::Vec2;
 
 use super::{Bake, Gather};
 use crate::Pyramid;
-use crate::hydraulics::{Flow, Reach, river};
+use crate::hydraulics::{Course, Flow, river};
 use crate::hydrology::{Hydrology, HydrologyLayer, MAP_LEVELS, bake};
 use crate::layers::Layers;
 use crate::rivers::Rivers;
@@ -76,8 +76,7 @@ impl Bake for HydrologyBake {
             // Cubic meters a second a square kilometer, a square meter at
             // a time.
             runoff: layer.discharge * 1.0e-6,
-            width: layer.width,
-            roughness: layer.roughness,
+            finest: pyramid.spacing(0),
         };
         let water = &hydrology.water;
         // The lowest banks of the rivers ending at each place, by its bits.
@@ -87,6 +86,11 @@ impl Bake for HydrologyBake {
         let mut ends: HashMap<[u32; 2], f32> = HashMap::default();
         let mut rivers = Vec::with_capacity(lines.len());
         let mut falls = Vec::new();
+        // Its ground: the grid's, along its line the ground it is cut into,
+        // through the rims of hollows shallower than a lake as rivers cut
+        // through them, not over them, and beside it the ground its banks
+        // must hold its flood below.
+        let ground = |point: Vec2| grid.height(point.x, point.y);
         for line in &lines {
             let first = line.points[0];
             let start = if line.head {
@@ -94,16 +98,8 @@ impl Bake for HydrologyBake {
             } else {
                 ends.get(&key(first)).copied()
             };
-            // Its ground: the grid's along its line, the ground it is cut
-            // into, through the rims of hollows shallower than a lake as
-            // rivers cut through them, not over them.
-            let ground: Vec<f32> = line
-                .points
-                .iter()
-                .map(|point| grid.height(point.x, point.y))
-                .collect();
             let (solved, found) = river(
-                &Reach {
+                &Course {
                     line,
                     ground: &ground,
                     start,
@@ -111,7 +107,7 @@ impl Bake for HydrologyBake {
                 &flow,
             );
             let end = line.points.len() - 1;
-            let level = solved.bed[end] + solved.depth[end];
+            let level = solved.flood[end];
             let end = line.points[end];
             if level.is_finite() {
                 ends.entry(key(end))
@@ -124,8 +120,16 @@ impl Bake for HydrologyBake {
         for fall in &mut falls {
             fall.sky = fall.path.iter().map(|&point| grid.sky(point)).collect();
         }
+        let stats = &mut hydrology.stats;
+        for river in &rivers {
+            for &reach in &river.reach {
+                stats.reaches[reach as usize] += 1;
+            }
+            stats.steps += river.crest.iter().flatten().count();
+            stats.knobs += river.knobs.len();
+        }
+        stats.falls = falls.len();
         hydrology.rivers = Arc::new(Rivers::new(rivers));
-        hydrology.stats.falls = falls.len();
         hydrology.falls = falls.into();
         Some(hydrology)
     }

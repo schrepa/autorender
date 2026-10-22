@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::{DetectChangesMut, Res, ResMut};
-use engine_terrain::{Block, Layer, RiverFlow};
+use engine_terrain::{Block, RiverFlow};
 use glam::Vec2;
 
 use super::Terrains;
@@ -80,23 +80,10 @@ pub(crate) fn step(
         if near.is_empty() && state.hydrology.flow.as_ref().is_none_or(RiverFlow::still) {
             continue;
         }
-        let roughness = state
-            .baked
-            .as_deref()
-            .and_then(|layers| {
-                layers.layers().iter().find_map(|layer| {
-                    if let Layer::Hydrology(stage) = layer {
-                        Some(stage.layer.roughness)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .unwrap_or(engine_terrain::ROUGHNESS);
         let flow = state
             .hydrology
             .flow
-            .get_or_insert_with(|| RiverFlow::new(Arc::clone(hydrology.rivers()), roughness));
+            .get_or_insert_with(|| RiverFlow::new(Arc::clone(hydrology.rivers())));
         let blocks: Vec<Block> = near
             .iter()
             .filter_map(|obstacle| {

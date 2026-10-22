@@ -11,25 +11,33 @@
 //! Terrain cuts every channel with one cross-section: a parabola from the
 //! bed up to the banks' top at the channel's edges, its deepest point
 //! leaning toward the outer bank of a bend, then banks rising at soil's
-//! angle of repose into ground that stands higher; ground lower than the
-//! section stays, and where channels meet the lowest section holds. A tile
-//! rasterizes the rivers near it once ([`RiverRaster`]): each segment
-//! stamps the samples within its banks' reach, a coarse level's sample
-//! taking the section's lowest over its square, and the tile's heights,
-//! water and surface masks read that raster. Heights asked for at a point,
-//! and bakes running before there are tiles, read the same section a point
-//! at a time, to the same bits.
+//! angle of repose into ground that stands higher; its bed drops across a
+//! short riser at a step's crest, and boulders raise rounded knobs on it.
+//! Ground lower than the section stays, and where channels meet the lowest
+//! section holds. A tile rasterizes the rivers near it once
+//! ([`RiverRaster`]): each segment stamps the samples within its banks'
+//! reach, a coarse level's sample taking the section's lowest over its
+//! square, and the tile's heights, water, beds and surface masks read that
+//! raster. Heights asked for at a point, and bakes running before there are
+//! tiles, read the same section a point at a time, to the same bits.
 
 use std::ops::RangeInclusive;
 
-use engine_math::{max, min};
+use engine_math::{clamp, max, min};
 use glam::Vec2;
 
+use crate::bed::{Bed, Crest, Knob, Reach};
 use crate::hydrology::RIVER_FAR;
 use serde::Serialize;
 
 /// Meters between a river's points.
 pub const RIVER_STEP: f32 = 3.0;
+/// Meters along a river over which its bed drops at a step's crest: a
+/// riser about half a meter long, its lip and foot rounded.
+const RISER: f32 = 0.5;
+/// Meters past a river's bankfull edge its bed reaches, as readers of beds
+/// see it.
+const BED_REACH: f32 = 1.0;
 /// Segments of a river whose water [`Rivers::differs_from`] bounds at a
 /// time.
 const STRETCH: usize = 16;
@@ -59,16 +67,21 @@ const CELL: f32 = 32.0;
 /// at its middle below its banks (meters), its bed at its middle
 /// (terrain-local meters: the channel's lowest ground, cut straight
 /// beneath a fall's jet from the lip to where it lands), its water's
-/// surface (terrain-local meters: the level of its banks, the bed plus the
-/// depth, NaN where its water flies through the air), its water's mean
-/// speed (meters a second); whether the stretch from each point to the
-/// next is a fall's jet (`falls`, a [`crate::Fall`] holding it) and
-/// whether a fall's sheet runs over each point (`sheeted`); and whether it
-/// begins at a head, where no channel flows in, rather than at a
-/// confluence or a lake's outlet. Across the river its channel is a
-/// parabola from its bed at the middle up to its banks `half` meters either
-/// side, and along a segment its values change evenly from one point's to
-/// the next's.
+/// surface (terrain-local meters, NaN where its water flies through the
+/// air), its water's mean speed (meters a second); whether the stretch
+/// from each point to the next is a fall's jet (`falls`, a [`crate::Fall`]
+/// holding it) and whether a fall's sheet runs over each point
+/// (`sheeted`); its bed's reach, median grain and D84 (meters), the power
+/// of its bankfull flood (watts a square meter of bed), that flood's level
+/// (terrain-local meters: its banks') and whether steps or knobs are
+/// carved there; the crest of a step on the stretch from each point to the
+/// next, if one stands there; the knobs boulders raise on its bed, segment
+/// by segment; and whether it begins at a head, where no channel flows in,
+/// rather than at a confluence or a lake's outlet. Across the river its
+/// channel is a parabola from its bed at the middle up to its banks `half`
+/// meters either side, and along a segment its values change evenly from
+/// one point's to the next's, but for its bed and water, which drop across
+/// a step's riser at its crest.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub(crate) struct River {
     pub points: Vec<[f32; 2]>,
@@ -80,6 +93,14 @@ pub(crate) struct River {
     pub speed: Vec<f32>,
     pub falls: Vec<bool>,
     pub sheeted: Vec<bool>,
+    pub reach: Vec<Reach>,
+    pub d50: Vec<f32>,
+    pub d84: Vec<f32>,
+    pub power: Vec<f32>,
+    pub flood: Vec<f32>,
+    pub carved: Vec<bool>,
+    pub crest: Vec<Option<Crest>>,
+    pub knobs: Vec<Knob>,
     pub head: bool,
 }
 
@@ -411,6 +432,19 @@ impl Rivers {
         );
         let run = b - a;
         let length = run.dot(run);
+        // Its crest's riser, RISER meters long, lies wholly on it.
+        let (crest, riser, drop) = line.crest[index].map_or((0.5, 1.0, 0.0), |crest| {
+            let riser = min(RISER / length.sqrt(), 1.0);
+            (
+                clamp(crest.share, 0.5 * riser, 1.0 - 0.5 * riser),
+                riser,
+                crest.drop,
+            )
+        });
+        // Its knobs and those of the segments beside it, listed segment by
+        // segment.
+        let first = line.knobs.partition_point(|knob| knob.segment + 1 < segment);
+        let end = line.knobs.partition_point(|knob| knob.segment <= segment + 1);
         Segment {
             line,
             shifts: &self.shifts[river as usize],
@@ -428,6 +462,10 @@ impl Rivers {
                 .points
                 .get(index + 2)
                 .map(|&next| Vec2::from(next) - b),
+            crest,
+            riser,
+            drop,
+            knobs: &line.knobs[first..end],
         }
     }
 
@@ -458,7 +496,8 @@ impl Rivers {
     /// `point` takes (`taken`, standing for the square `spacing` meters a
     /// side about it), and that section: `None` where the square lies past
     /// that river's edge, its water flies through the air there or no river
-    /// reaches it.
+    /// reaches it. Its surface drops across a step's riser where the bed
+    /// does.
     fn water(&self, taken: &Taken, point: Vec2, spacing: f32) -> Option<(RiverWater, f32)> {
         if taken.holder[0] == u32::MAX || taken.edge > 0.0 {
             return None;
@@ -469,20 +508,57 @@ impl Rivers {
         if reading.edge > 0.0 || line.falls_at(index) {
             return None;
         }
-        let at =
-            |values: &[f32]| values[index] + (values[index + 1] - values[index]) * reading.along;
-        let surface = at(&line.surface);
+        let at = |values: &[f32], along: f32| {
+            values[index] + (values[index + 1] - values[index]) * along
+        };
+        let surface = at(&line.surface, reading.stepped);
         surface.is_finite().then(|| {
             (
                 RiverWater {
                     surface,
-                    flow: line.heading(index, reading.along) * at(&line.speed),
+                    flow: line.heading(index, reading.along) * at(&line.speed, reading.along),
                     sheeted: line.sheeted_at(index),
-                    half: at(&line.half),
+                    half: at(&line.half, reading.along),
                 },
                 reading.section,
             )
         })
+    }
+
+    /// The bed of the river whose section a sample at terrain-local `point`
+    /// takes (`taken`, standing for the square `spacing` meters a side
+    /// about it): its values between its segment's points as its water's
+    /// are, and its reach and whether steps or knobs are carved there the
+    /// nearer point's; `None` where the square lies more than [`BED_REACH`]
+    /// past that river's bankfull edge or no river reaches it.
+    fn bed(&self, taken: &Taken, point: Vec2, spacing: f32) -> Option<Bed> {
+        if taken.holder[0] == u32::MAX || taken.edge > BED_REACH {
+            return None;
+        }
+        let segment = self.segment(taken.holder);
+        let reading = segment.read(point, spacing)?;
+        if reading.edge > BED_REACH {
+            return None;
+        }
+        let (line, index) = (segment.line, segment.index);
+        let at =
+            |values: &[f32]| values[index] + (values[index + 1] - values[index]) * reading.along;
+        let nearer = if reading.along < 0.5 { index } else { index + 1 };
+        Some(Bed {
+            reach: line.reach[nearer],
+            d50: at(&line.d50),
+            d84: at(&line.d84),
+            power: at(&line.power),
+            flood: at(&line.flood),
+            carved: line.carved[nearer],
+        })
+    }
+
+    /// The bed of the river holding terrain-local point (x, z): `None`
+    /// beyond its banks (its bankfull edge plus a meter).
+    pub fn bed_at(&self, x: f32, z: f32) -> Option<Bed> {
+        let point = Vec2::new(x, z);
+        self.bed(&self.take(point, 0.0), point, 0.0)
     }
 
     /// Meters from the nearest river's edge to the square `spacing` meters
@@ -593,7 +669,11 @@ fn listing(
 /// A segment as samples read it: its river, the shifts of its channel's
 /// deepest point and its index, its ends, run and length squared, the unit
 /// way across it (to the river's right, looking downstream), and the run
-/// of the river's next segment, none past its last.
+/// of the river's next segment, none past its last; the share of the way
+/// along it the middle of a step's riser stands, the share of its length
+/// the riser takes and how far the bed drops across it (none where no
+/// crest stands on it); and the knobs boulders raise on it and on the
+/// segments beside it, the only ones reaching it.
 #[derive(Clone, Copy)]
 struct Segment<'a> {
     line: &'a River,
@@ -605,20 +685,51 @@ struct Segment<'a> {
     length: f32,
     normal: Vec2,
     next: Option<Vec2>,
+    crest: f32,
+    riser: f32,
+    drop: f32,
+    knobs: &'a [Knob],
 }
 
 /// A segment as a sample reads it: how far along it the sample's nearest
-/// point of it lies (0 to 1), meters from the sample's square to the
-/// river's edge there (negative within its channel), and the section's
+/// point of it lies (0 to 1) and how far values dropping at its crest have
+/// changed there ([`Segment::stepped`]), meters from the sample's square to
+/// the river's edge there (negative within its channel), and the section's
 /// lowest over the square (terrain-local meters).
 #[derive(Clone, Copy, Debug)]
 struct Reading {
     along: f32,
+    stepped: f32,
     edge: f32,
     section: f32,
 }
 
 impl Segment<'_> {
+    /// The share of the way from its first point's value to the next's the
+    /// values dropping at its crest stand `along` of the way along it: the
+    /// whole change across the riser, smoothly, and none of it either side;
+    /// `along` itself where no crest stands on it.
+    #[inline]
+    fn stepped(&self, along: f32) -> f32 {
+        if self.drop == 0.0 {
+            return along;
+        }
+        let x = clamp((along - self.crest) / self.riser + 0.5, 0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    }
+
+    /// How high the knobs reaching terrain-local `point` raise the bed
+    /// there, for a sample standing for the square `spacing` meters a side
+    /// about it (0 for the point alone): the highest of the knobs at least
+    /// as wide as its samples lie apart, those its samples show.
+    #[inline]
+    fn knobs_at(&self, point: Vec2, spacing: f32) -> f32 {
+        self.knobs
+            .iter()
+            .filter(|knob| 2.0 * knob.radius >= spacing)
+            .fold(0.0, |highest, knob| max(highest, knob.rise(point)))
+    }
+
     /// The segment as a sample at terrain-local `point` reads it, standing
     /// for the square `spacing` meters a side about it (0 for the point
     /// alone): `None` beyond its banks' reach, and past its ends but for the
@@ -628,7 +739,10 @@ impl Segment<'_> {
     /// ([`shifts`]) up to the banks' top (the bed plus the depth) at either
     /// edge, so a bend's outer bank stands steeper than its inner one, then
     /// banks rising at [`BANK_SLOPE`]; the square takes its lowest, at its
-    /// point nearest the deepest. Values run linearly along the segment.
+    /// point nearest the deepest. Values run linearly along the segment, but
+    /// for the bed, which drops across the riser where a step's crest stands
+    /// on it while its banks' top runs on evenly ([`Self::stepped`]); and
+    /// knobs raise the bed where they stand ([`Self::knobs_at`]).
     #[inline]
     fn read(&self, point: Vec2, spacing: f32) -> Option<Reading> {
         let projected = if self.length > 0.0 {
@@ -671,7 +785,11 @@ impl Segment<'_> {
         } else {
             (nearest - shift, half - shift)
         };
-        let (bed, depth) = (at(&self.line.bed), at(&self.line.depth));
+        // The bed between the points runs on along the treads either side
+        // of a crest and drops across its riser.
+        let stepped = self.stepped(along);
+        let lift = self.drop * (along - stepped);
+        let (bed, depth) = (at(&self.line.bed) + lift, at(&self.line.depth) - lift);
         let section = if from <= width {
             let share = from / max(width, 1.0e-3);
             bed + depth * share * share
@@ -680,8 +798,9 @@ impl Segment<'_> {
         };
         Some(Reading {
             along,
+            stepped,
             edge,
-            section,
+            section: section + self.knobs_at(point, spacing),
         })
     }
 }
@@ -848,6 +967,12 @@ impl RiverRaster {
         rivers
             .water(&self.taken[row * self.xs.len() + column], point, self.spacing)
             .map(|(water, _)| water)
+    }
+
+    /// The bed at the raster's sample (row, column), as `water` reads its water.
+    pub(crate) fn bed(&self, rivers: &Rivers, row: usize, column: usize) -> Option<Bed> {
+        let point = Vec2::new(self.xs[column], self.zs[row]);
+        rivers.bed(&self.taken[row * self.xs.len() + column], point, self.spacing)
     }
 
     /// Every sample's meters to the nearest river's edge as a tile holds
@@ -1078,6 +1203,14 @@ crate::codec::record!(River {
     speed,
     falls,
     sheeted,
+    reach,
+    d50,
+    d84,
+    power,
+    flood,
+    carved,
+    crest,
+    knobs,
     head,
 });
 // Rivers travel without the grid that finds them, which readers build
