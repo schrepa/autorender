@@ -157,8 +157,10 @@ pub(crate) struct WaterPass {
     fall_vertices: Vec<FallVertex>,
     fall_indices: Vec<u32>,
     sim_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
-    // The scene features the pipelines are specialized for.
+    // The scene features the pipelines are specialized for, and whether
+    // those drawing into the debug targets draw for the water's views.
     shading: SceneShading,
+    water_views: bool,
 }
 
 impl WaterPass {
@@ -184,18 +186,27 @@ impl WaterPass {
             fall_indices: Vec::new(),
             sim_pipelines: HashMap::default(),
             shading: SceneShading::ALL,
+            water_views: false,
         }
     }
 
-    /// Specializes the pipelines for `shading`'s scene features: those
-    /// made for others are dropped, to be created anew.
-    pub(crate) fn specialize(&mut self, shading: SceneShading) {
+    /// Specializes the pipelines for `shading`'s scene features, and those
+    /// drawing tiles' and simulated water into the debug targets for
+    /// whether frames show the water's views (`water_views`,
+    /// `crate::debug_view::shows_water`): those made for others are
+    /// dropped, to be created anew.
+    pub(crate) fn specialize(&mut self, shading: SceneShading, water_views: bool) {
         if self.shading != shading {
             self.shading = shading;
             self.pipelines.clear();
             self.ocean_pipelines.clear();
             self.fall_pipelines.clear();
             self.sim_pipelines.clear();
+        }
+        if self.water_views != water_views {
+            self.water_views = water_views;
+            self.pipelines.remove(&Targets::Debug);
+            self.sim_pipelines.remove(&Targets::Debug);
         }
     }
 
@@ -681,6 +692,14 @@ impl WaterPass {
         }
         let patches = [Some(water_patch_layout())];
         let sheets = [Some(fall_layout())];
+        // Tiles' and simulated water draw into the debug targets as the
+        // view shown asks.
+        let constants = match (targets, surface) {
+            (Targets::Debug, Surface::Tiles | Surface::Sim) => self
+                .shading
+                .with(&crate::debug_view::water_constants(self.water_views)),
+            _ => self.shading.constants().to_vec(),
+        };
         crate::pipelines::geometry(
             device,
             &crate::pipelines::Geometry {
@@ -716,7 +735,7 @@ impl WaterPass {
                 }),
                 fragment: Some(crate::pipelines::Fragment {
                     entry: fragment,
-                    constants: &self.shading.constants(),
+                    constants: &constants,
                     targets: &color_targets,
                 }),
             },

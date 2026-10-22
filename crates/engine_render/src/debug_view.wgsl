@@ -13,7 +13,8 @@ struct DebugViewUniform {
 @group(0) @binding(0) var<uniform> debug_view: DebugViewUniform;
 @group(0) @binding(1) var debug_ids: texture_2d<u32>;
 @group(0) @binding(2) var debug_count: texture_2d<f32>;
-// Terrain's tiles and materials (`meshes/terrain_debug.wgsl`).
+// Terrain's tiles and materials (`meshes/terrain_debug.wgsl`), and water's
+// numbers (`meshes/debug.wgsl`).
 @group(0) @binding(3) var debug_terrain: texture_2d<u32>;
 
 const DEBUG_VIEW_KINDS: u32 = 1u;
@@ -27,6 +28,12 @@ const DEBUG_VIEW_TILES: u32 = 8u;
 const DEBUG_VIEW_MATERIALS: u32 = 9u;
 const DEBUG_VIEW_SKY: u32 = 10u;
 const DEBUG_VIEW_DETAIL: u32 = 11u;
+const DEBUG_VIEW_WATER_DEPTH: u32 = 12u;
+const DEBUG_VIEW_WATER_SPEED: u32 = 13u;
+const DEBUG_VIEW_WATER_FROUDE: u32 = 14u;
+const DEBUG_VIEW_WATER_TURBULENCE: u32 = 15u;
+const DEBUG_VIEW_WATER_WHITE: u32 = 16u;
+const DEBUG_VIEW_WATER_REACH: u32 = 17u;
 
 // What drew a pixel (`meshes/debug.wgsl`): its kind, level and flags, and
 // the sun's lookup above DEBUG_SOURCE_SHIFT.
@@ -83,6 +90,37 @@ const DEBUG_HEAT = array<vec3<f32>, 11>(
     vec3<f32>(0.1, 0.55, 0.75), vec3<f32>(0.15, 0.75, 0.35), vec3<f32>(0.6, 0.85, 0.15),
     vec3<f32>(0.95, 0.8, 0.1), vec3<f32>(0.95, 0.45, 0.1), vec3<f32>(0.85, 0.15, 0.15),
     vec3<f32>(0.8, 0.3, 0.7), vec3<f32>(1.0, 1.0, 1.0),
+);
+
+// The water's views: the meters of depth, the meters a second and the
+// Froude number at the tops of their ramps, past which they keep their top
+// colors; and how far either side of 1 the Froude view marks water running
+// at its waves' speed.
+const DEBUG_WATER_DEEPEST: f32 = 2.0;
+const DEBUG_WATER_FASTEST: f32 = 6.0;
+const DEBUG_WATER_FROUDE_TOP: f32 = 3.0;
+const DEBUG_WATER_CRITICAL: f32 = 0.04;
+// Depth, by its square root so centimeters read apart: pale, blue (half a
+// meter), navy.
+const DEBUG_WATER_DEPTHS = array<vec3<f32>, 3>(
+    vec3<f32>(0.88, 0.96, 0.88), vec3<f32>(0.2, 0.62, 0.88), vec3<f32>(0.04, 0.09, 0.4),
+);
+// Speed: dark violet, crimson, yellow.
+const DEBUG_WATER_SPEEDS = array<vec3<f32>, 3>(
+    vec3<f32>(0.08, 0.03, 0.25), vec3<f32>(0.8, 0.15, 0.3), vec3<f32>(1.0, 0.92, 0.35),
+);
+// Turbulence: dark teal, green, lime.
+const DEBUG_WATER_TURBULENCE = array<vec3<f32>, 3>(
+    vec3<f32>(0.02, 0.2, 0.22), vec3<f32>(0.1, 0.6, 0.45), vec3<f32>(0.85, 1.0, 0.4),
+);
+// Water without white water, which turns white as white water is born:
+// its red is the white water's share.
+const DEBUG_WATER_CLEAR = vec3<f32>(0.0, 0.12, 0.35);
+// Reaches, by one more than `engine_terrain::Reach`: none violet, pools
+// blue, plane beds cyan, steps and pools green, cascades orange, falls red.
+const DEBUG_REACHES = array<vec3<f32>, 6>(
+    vec3<f32>(0.5, 0.35, 0.65), vec3<f32>(0.15, 0.35, 0.95), vec3<f32>(0.1, 0.8, 0.85),
+    vec3<f32>(0.45, 0.85, 0.2), vec3<f32>(0.98, 0.6, 0.1), vec3<f32>(0.9, 0.12, 0.2),
 );
 
 // The unit normal packed as two signed fractions of its octahedral
@@ -283,6 +321,59 @@ fn debug_caster_color(record: u32) -> vec3<f32> {
     }
 }
 
+// The ramp through `stops` at `t`, 0 to 1 (clamped), its middle stop at a
+// half.
+fn debug_ramp(stops: array<vec3<f32>, 3>, t: f32) -> vec3<f32> {
+    let along = saturate(t) * 2.0;
+    if along < 1.0 {
+        return mix(stops[0], stops[1], along);
+    }
+    return mix(stops[1], stops[2], along - 1.0);
+}
+
+// Water at Froude number `froude`: calm water from deep blue (0) to pale
+// cyan, shooting water from yellow to red (DEBUG_WATER_FROUDE_TOP), water
+// running at its waves' speed black.
+fn debug_froude_color(froude: f32) -> vec3<f32> {
+    if abs(froude - 1.0) < DEBUG_WATER_CRITICAL {
+        return vec3<f32>(0.0);
+    }
+    if froude < 1.0 {
+        return mix(vec3<f32>(0.08, 0.2, 0.7), vec3<f32>(0.65, 0.92, 1.0), saturate(froude));
+    }
+    return mix(vec3<f32>(1.0, 0.9, 0.3), vec3<f32>(0.8, 0.08, 0.08),
+        saturate((froude - 1.0) / (DEBUG_WATER_FROUDE_TOP - 1.0)));
+}
+
+// Water's numbers (`meshes/debug.wgsl`'s `debug_water`) as the water's view
+// `view` shows them: its depth and speed (`ids`' object and detail words)
+// and its Froude number (`numbers.x`), as floats' bits; its turbulence and
+// white water, a byte each, and its reach in the top byte (`numbers.y`).
+fn debug_water_color(view: u32, ids: vec4<u32>, numbers: vec2<u32>) -> vec3<f32> {
+    let state = unpack4x8unorm(numbers.y);
+    switch view {
+        case DEBUG_VIEW_WATER_DEPTH: {
+            return debug_ramp(DEBUG_WATER_DEPTHS,
+                sqrt(max(bitcast<f32>(ids.y), 0.0) / DEBUG_WATER_DEEPEST));
+        }
+        case DEBUG_VIEW_WATER_SPEED: {
+            return debug_ramp(DEBUG_WATER_SPEEDS, bitcast<f32>(ids.z) / DEBUG_WATER_FASTEST);
+        }
+        case DEBUG_VIEW_WATER_FROUDE: {
+            return debug_froude_color(bitcast<f32>(numbers.x));
+        }
+        case DEBUG_VIEW_WATER_TURBULENCE: {
+            return debug_ramp(DEBUG_WATER_TURBULENCE, state.x);
+        }
+        case DEBUG_VIEW_WATER_WHITE: {
+            return mix(DEBUG_WATER_CLEAR, vec3<f32>(1.0), state.y);
+        }
+        default: {
+            return DEBUG_REACHES[min(numbers.y >> 24u, 5u)];
+        }
+    }
+}
+
 @fragment
 fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(position.xy);
@@ -315,6 +406,17 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
         }
         case DEBUG_VIEW_NORMALS: {
             color = select(debug_normal(ids.w) * 0.5 + 0.5, DEBUG_SKY, !surface);
+            surface = false;
+        }
+        case DEBUG_VIEW_WATER_DEPTH, DEBUG_VIEW_WATER_SPEED, DEBUG_VIEW_WATER_FROUDE,
+            DEBUG_VIEW_WATER_TURBULENCE, DEBUG_VIEW_WATER_WHITE, DEBUG_VIEW_WATER_REACH: {
+            // The water's views: tiles' and simulated water against
+            // everything else, unlit.
+            color = select(DEBUG_OTHER, DEBUG_SKY, kind == DEBUG_KIND_SKY);
+            if kind == DEBUG_KIND_WATER {
+                color = debug_water_color(debug_view.view.x, ids,
+                    textureLoad(debug_terrain, pixel, 0).xy);
+            }
             surface = false;
         }
         default: {

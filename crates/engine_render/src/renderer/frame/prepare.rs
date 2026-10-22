@@ -180,7 +180,8 @@ impl Renderer {
     }
 
     /// Specializes the pipelines shading the scene for the features
-    /// `snapshot`'s frame can hold: when those change, the pipelines made
+    /// `snapshot`'s frame can hold, and water's into the debug targets for
+    /// the view its settings show: when those change, the pipelines made
     /// for others are dropped, and created anew with their next draws.
     /// Decals specialize as they prepare.
     pub(super) fn specialize_shading(&mut self, snapshot: &RenderSnapshot) {
@@ -196,7 +197,8 @@ impl Renderer {
         }
         self.terrain.pipelines.specialize(shading);
         self.features.ground_cover.get_mut().specialize(shading);
-        self.features.water.get_mut().specialize(shading);
+        let water_views = crate::debug_view::shows_water(snapshot.environment.debug_view.view);
+        self.features.water.get_mut().specialize(shading, water_views);
     }
 
     /// Uploads the frame's new meshes (with their levels of detail and

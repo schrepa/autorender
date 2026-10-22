@@ -5,8 +5,8 @@
 // with the sun's lookup at its point above DEBUG_SOURCE_SHIFT, the object
 // drawn, a detail of it (a cluster, an impostor's record) and its normal;
 // adds one to the fragments that passed the depth test there; and writes
-// terrain's numbers into the third target, zeros elsewhere
-// (`meshes/terrain_debug.wgsl`). Meshes,
+// terrain's and water's numbers into the third target, zeros elsewhere
+// (`meshes/terrain_debug.wgsl`, `debug_water`). Meshes,
 // impostors and virtual geometry read their draw's record from a vertex
 // stream of one element (`@location(14)`); the others know their kind.
 
@@ -40,6 +40,15 @@ const DEBUG_TILE_EDGE: u32 = 0x800u;
 const DEBUG_PATCH_EDGE: u32 = 0x1000u;
 const DEBUG_PATCH_SHIFT: u32 = 24u;
 const DEBUG_NO_MATERIAL: u32 = 0xffu;
+// Gravity, and the meters of water under which it lies dry, by which water's
+// Froude number is reckoned (`engine_terrain`'s hydraulics and
+// shallow-water scheme).
+const DEBUG_GRAVITY: f32 = 9.81;
+const DEBUG_DRY: f32 = 1.0e-4;
+// Whether the frame shows one of the water's views (DEBUG_VIEW_WATER_* of
+// `debug_view.wgsl`), which draw tiles' and simulated water wherever it
+// lies; the other views draw it where it covers at least half the pixel.
+override DEBUG_WATER_VIEWS: bool = false;
 
 struct DebugTargets {
     @location(0) ids: vec4<u32>,
@@ -307,16 +316,27 @@ fn fs_debug_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> Deb
     return debug_targets(DEBUG_KIND_COVER, 0u, 0u, cover_surface(input, front));
 }
 
-// Water where its shading covers at least half the pixel: the tiles',
-// which gives way where water is simulated, or the simulated water's
-// (`simulated`).
+// Water where its shading covers at least half the pixel, or in the
+// water's views wherever it lies: the tiles', which gives way where water
+// is simulated, or the simulated water's (`simulated`). Its object word
+// holds its depth (meters) and its detail word its speed (meters a second),
+// as floats' bits; the third target its Froude number, as a float's bits,
+// then its turbulence and white water (a byte each, 0 to 1) with its reach
+// in the top byte (0 for none, else one more than `engine_terrain::Reach`).
 fn debug_water(input: WaterOutput, simulated: bool) -> DebugTargets {
     let shade = shade_water(input, false, simulated);
-    if shade.coverage < 0.5 {
+    if shade.coverage < 0.5 && !DEBUG_WATER_VIEWS {
         discard;
     }
     let point = debug_point(input.relative + camera.position.xyz, shade.shaded.normal);
-    return debug_targets(DEBUG_KIND_WATER, 0u, 0u, point);
+    let depth = input.water.x;
+    let speed = length(input.water.yz);
+    let froude = speed / sqrt(DEBUG_GRAVITY * max(depth, DEBUG_DRY));
+    var targets = debug_targets(DEBUG_KIND_WATER, bitcast<u32>(depth), bitcast<u32>(speed),
+        point);
+    targets.terrain = vec2<u32>(bitcast<u32>(froude),
+        pack4x8unorm(vec4<f32>(input.state.xy, 0.0, 0.0)) | (min(input.reach, 0xffu) << 24u));
+    return targets;
 }
 
 @fragment

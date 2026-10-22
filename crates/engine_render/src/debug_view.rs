@@ -1,7 +1,9 @@
 //! Debug views (`engine_core::DebugView`): frames whose main passes draw,
 //! with pipelines of their own (`Targets::Debug`, `meshes/debug.wgsl`),
 //! what drew each pixel into the debug targets, which this feature's pass
-//! then shows in the canvas as the view says (`debug_view.wgsl`). A feature
+//! then shows in the canvas as the view says (`debug_view.wgsl`). The
+//! water's views alone change what those pipelines draw: water wherever it
+//! lies ([`shows_water`]). A feature
 //! of the renderer (`crate::render_features`) created with the first frame
 //! showing a view; frames without one create and draw nothing of it.
 
@@ -19,7 +21,9 @@ use crate::gpu_layouts::constants::{
     DEBUG_KIND_PLACED_CARD, DEBUG_KIND_VIRTUAL, DEBUG_LEVEL_SHIFT, DEBUG_VIEW_CARDS,
     DEBUG_VIEW_CASTERS, DEBUG_VIEW_DETAIL, DEBUG_VIEW_KINDS, DEBUG_VIEW_LEVELS,
     DEBUG_VIEW_MATERIALS, DEBUG_VIEW_NORMALS, DEBUG_VIEW_OVERDRAW, DEBUG_VIEW_SHADOWS,
-    DEBUG_VIEW_SKY, DEBUG_VIEW_TILES,
+    DEBUG_VIEW_SKY, DEBUG_VIEW_TILES, DEBUG_VIEW_WATER_DEPTH, DEBUG_VIEW_WATER_FROUDE,
+    DEBUG_VIEW_WATER_REACH, DEBUG_VIEW_WATER_SPEED, DEBUG_VIEW_WATER_TURBULENCE,
+    DEBUG_VIEW_WATER_WHITE,
 };
 use crate::gpu_layouts::debug_view::DebugViewUniform;
 use crate::render_features::{Encode, FeaturePass, RenderFeature};
@@ -33,12 +37,13 @@ pub(crate) const IDS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Ui
 /// The fragments that passed the depth test at each pixel, added.
 pub(crate) const COUNT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 /// Terrain's tile and surface materials at each terrain pixel
-/// (`meshes/terrain_debug.wgsl`).
+/// (`meshes/terrain_debug.wgsl`), and water's Froude number, turbulence,
+/// white water and reach at each water pixel (`meshes/debug.wgsl`).
 pub(crate) const TERRAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
 
 /// The debug targets' states in pipeline order: what drew each pixel,
-/// written over; one more fragment, added; and terrain's numbers, written
-/// over.
+/// written over; one more fragment, added; and terrain's and water's
+/// numbers, written over.
 pub(crate) fn color_targets() -> Vec<Option<wgpu::ColorTargetState>> {
     let add = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
@@ -199,7 +204,36 @@ fn view_value(view: DebugViewMode) -> u32 {
         DebugViewMode::Materials => DEBUG_VIEW_MATERIALS,
         DebugViewMode::Sky => DEBUG_VIEW_SKY,
         DebugViewMode::Detail => DEBUG_VIEW_DETAIL,
+        DebugViewMode::WaterDepth => DEBUG_VIEW_WATER_DEPTH,
+        DebugViewMode::WaterSpeed => DEBUG_VIEW_WATER_SPEED,
+        DebugViewMode::WaterFroude => DEBUG_VIEW_WATER_FROUDE,
+        DebugViewMode::WaterTurbulence => DEBUG_VIEW_WATER_TURBULENCE,
+        DebugViewMode::WaterWhite => DEBUG_VIEW_WATER_WHITE,
+        DebugViewMode::WaterReach => DEBUG_VIEW_WATER_REACH,
     }
+}
+
+/// Whether `view` shows the water's state: frames showing it draw tiles'
+/// and simulated water wherever it lies, however little of each pixel it
+/// covers, where the other views draw it as the shaded image mostly shows
+/// it, covering at least half the pixel.
+pub(crate) fn shows_water(view: DebugViewMode) -> bool {
+    matches!(
+        view,
+        DebugViewMode::WaterDepth
+            | DebugViewMode::WaterSpeed
+            | DebugViewMode::WaterFroude
+            | DebugViewMode::WaterTurbulence
+            | DebugViewMode::WaterWhite
+            | DebugViewMode::WaterReach
+    )
+}
+
+/// The pipeline constants of tiles' and simulated water drawn into the
+/// debug targets: whether frames show the water's state
+/// (`meshes/debug.wgsl`'s `DEBUG_WATER_VIEWS`, [`shows_water`]).
+pub(crate) fn water_constants(water_views: bool) -> [(&'static str, f64); 1] {
+    [("DEBUG_WATER_VIEWS", if water_views { 1.0 } else { 0.0 })]
 }
 
 /// The debug targets at the frame's size, and the group the pass binds.
@@ -367,8 +401,8 @@ impl DebugViewPass {
         );
     }
 
-    /// The targets: what drew each pixel, its fragments and terrain's
-    /// numbers.
+    /// The targets: what drew each pixel, its fragments and terrain's and
+    /// water's numbers.
     #[cfg(feature = "dev")]
     pub(crate) fn textures(&self) -> [&wgpu::Texture; 3] {
         let targets = self.targets.get().expect("sized in prepare");
@@ -376,7 +410,7 @@ impl DebugViewPass {
     }
 
     /// The views of the targets: what drew each pixel, its fragments and
-    /// terrain's numbers.
+    /// terrain's and water's numbers.
     pub(crate) fn views(&self) -> [&wgpu::TextureView; 3] {
         let targets = self.targets.get().expect("sized in prepare");
         [&targets.ids, &targets.count, &targets.terrain]

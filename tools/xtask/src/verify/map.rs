@@ -236,6 +236,16 @@ pub(crate) const MAP: &[Rule] = &[
             ]),
         ],
     },
+    // Water's state, cooked and drawn, as the water's views show it on the
+    // Highlands' streams.
+    Rule {
+        paths: &[
+            "crates/engine_core/src/**/*water*",
+            "crates/engine_render/src/**/*water*",
+            "crates/engine_terrain/src/**/*water*",
+        ],
+        checks: &[Smoke("torrent")],
+    },
     Rule {
         paths: &[
             "crates/engine_core/src/**/culling*",

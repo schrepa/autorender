@@ -1,9 +1,11 @@
 //! Debug views: frames that show, instead of the shaded image, what drew
 //! each pixel and how: its kind of geometry, its level of detail, whether it
 //! is an impostor card, which sun shadow map decided its shadow, how it
-//! casts sun shadows, how many fragments covered it, its normal, or what
+//! casts sun shadows, how many fragments covered it, its normal, what
 //! terrain's ground is made of: its tiles and patches, surface materials,
-//! the sky it sees and how much detail it shows. Renderers draw them
+//! the sky it sees and how much detail it shows; or what terrains' water is
+//! doing: its depth, speed, Froude number, turbulence, white water and the
+//! reach it runs in. Renderers draw them
 //! with pipelines of their own, created the first time a view shows, into
 //! targets of their own; the shaded frame's pipelines, targets and passes
 //! stay as they are, and a world without the settings draws no view.
@@ -95,6 +97,28 @@ modes! {
     /// materials' maps show, yellow where their color alone does, red where
     /// their means stand in, blue where it shows as its cover's canopy.
     Detail = "detail",
+    /// How deep terrains' water stands, tiles' and simulated alike, from
+    /// pale (none) through blue (half a meter) to navy (two meters or
+    /// more), on a square-root scale. The water's views draw water wherever
+    /// it lies, however little of the pixel it covers, and show the sea,
+    /// falls' sheets and everything else gray, the sky dark, all unlit.
+    WaterDepth = "water_depth",
+    /// How fast the water runs, from dark violet (still) through crimson to
+    /// yellow (six meters a second or more).
+    WaterSpeed = "water_speed",
+    /// Its Froude number, its speed over its shallow waves' (√(g·depth)):
+    /// calm water from deep blue (0) to pale cyan, shooting water from
+    /// yellow to red (3 or more), water running at its waves' speed (1)
+    /// black.
+    WaterFroude = "water_froude",
+    /// How turbulent it runs, from dark teal (0) through green to lime (1).
+    WaterTurbulence = "water_turbulence",
+    /// Where white water is born, from dark blue (none) to white (1).
+    WaterWhite = "water_white",
+    /// The reach of the stream it runs in, by the stream's slope: pools
+    /// blue, plane beds cyan, steps and pools green, cascades orange, falls
+    /// red; water no stream holds (lakes) violet.
+    WaterReach = "water_reach",
 }
 
 impl Setting for DebugViewMode {}
@@ -233,6 +257,57 @@ pub struct TerrainProbe {
     pub detail: DetailShares,
 }
 
+/// The kind of reach a stream runs in where a pixel's water lies, by the
+/// stream's slope (`engine_terrain::Reach`), as the pixel probe reads it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum WaterReach {
+    /// Pools and riffles.
+    Pool,
+    /// A plane bed.
+    Plane,
+    /// Steps and pools.
+    Steps,
+    /// A cascade.
+    Cascade,
+    /// Falls.
+    Falls,
+}
+
+impl From<engine_terrain::Reach> for WaterReach {
+    fn from(reach: engine_terrain::Reach) -> Self {
+        match reach {
+            engine_terrain::Reach::Pool => Self::Pool,
+            engine_terrain::Reach::Plane => Self::Plane,
+            engine_terrain::Reach::Steps => Self::Steps,
+            engine_terrain::Reach::Cascade => Self::Cascade,
+            engine_terrain::Reach::Falls => Self::Falls,
+        }
+    }
+}
+
+/// What a terrain's water is doing at a pixel, tiles' or simulated, as the
+/// water's debug views show it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct WaterProbe {
+    /// Meters of water over the ground.
+    pub depth: f32,
+    /// Meters a second it runs.
+    pub speed: f32,
+    /// Its speed over its shallow waves' (√(g·depth)): under 1 it runs
+    /// calm, over 1 it shoots.
+    pub froude: f32,
+    /// How turbulent it runs, 0 to 1, to 1/255.
+    pub turbulence: f32,
+    /// How much white water is born there, 0 to 1, to 1/255.
+    pub white: f32,
+    /// The reach of the stream it runs in; `None` where no stream holds it
+    /// (lakes).
+    pub reach: Option<WaterReach>,
+}
+
 /// What drew one pixel and how it looks: the pixel probe's answer.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -279,4 +354,8 @@ pub struct PixelProbe {
     pub displayed: Option<[u8; 3]>,
     /// What terrain's ground is made of there; `None` off terrain.
     pub terrain: Option<TerrainProbe>,
+    /// What terrains' water is doing there; `None` off their water. Water
+    /// covering under half the pixel reads as what lies under it, unless
+    /// the settings show one of the water's views.
+    pub water: Option<WaterProbe>,
 }

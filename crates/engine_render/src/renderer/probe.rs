@@ -1,7 +1,9 @@
 //! The pixel probe of development sessions: what drew one pixel and how it
 //! looks, read back from the next two frames once armed. The first draws
 //! into the debug views' targets whatever the settings show, and keeps what
-//! drew the pixel, the fragments that covered it and its depth; the second
+//! drew the pixel, the fragments that covered it and its depth (water as
+//! the view shown draws it: wherever it lies in the water's views, where it
+//! covers at least half the pixel in the others); the second
 //! is shaded whatever they show, and keeps its color before screen effects
 //! and as displayed. Frames without an armed probe copy nothing.
 
@@ -16,7 +18,11 @@ use crate::gpu_layouts::constants::{
 };
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::max;
-use engine_core::{DetailShares, DrawnKind, MaterialShare, PixelProbe, SunLookup, TerrainProbe};
+use engine_core::terrain_data::Reach;
+use engine_core::{
+    DetailShares, DrawnKind, MaterialShare, PixelProbe, SunLookup, TerrainProbe, WaterProbe,
+    WaterReach,
+};
 use std::{cell::RefCell, rc::Rc};
 
 /// Where each texel lands in the read-back: copies start at multiples of
@@ -405,6 +411,38 @@ fn terrain_probe((record, object, detail): (u32, u32, u32), bytes: &[u8]) -> Ter
     }
 }
 
+/// The reach a water pixel's top byte names: none for 0, else one more
+/// than the reach's value.
+fn water_reach(code: u32) -> Option<WaterReach> {
+    [
+        Reach::Pool,
+        Reach::Plane,
+        Reach::Steps,
+        Reach::Cascade,
+        Reach::Falls,
+    ]
+    .into_iter()
+    .find(|&reach| u32::from(reach as u8) + 1 == code)
+    .map(WaterReach::from)
+}
+
+/// A water pixel's numbers (`meshes/debug.wgsl`'s `debug_water`): its
+/// draw's `object` and `detail` words (its depth and speed), then the
+/// terrain target's texel in `bytes` (its Froude number; its turbulence,
+/// white water and reach).
+fn water_probe((object, detail): (u32, u32), bytes: &[u8]) -> WaterProbe {
+    let (froude, state) = (word(bytes, TERRAIN), word(bytes, TERRAIN + 4));
+    let share = |byte: u32| f32::from(((state >> (byte * 8)) & 0xff) as u8) / 255.0;
+    WaterProbe {
+        depth: f32::from_bits(object),
+        speed: f32::from_bits(detail),
+        froude: f32::from_bits(froude),
+        turbulence: share(0),
+        white: share(1),
+        reach: water_reach(state >> 24),
+    }
+}
+
 impl Armed {
     /// What the read-back `bytes` hold of the pixel.
     fn result(&self, bytes: &[u8]) -> PixelProbe {
@@ -473,6 +511,8 @@ impl Armed {
             displayed: self.canvas.map(|blue_first| color(CANVAS, blue_first)),
             terrain: (kind == Some(DrawnKind::Ground))
                 .then(|| terrain_probe((record, object, detail), bytes)),
+            water: (kind == Some(DrawnKind::Lakes))
+                .then(|| water_probe((object, detail), bytes)),
         }
     }
 }

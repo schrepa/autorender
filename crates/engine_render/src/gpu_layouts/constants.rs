@@ -349,6 +349,17 @@ gpu_consts! {
     pub(crate) const DEBUG_VIEW_MATERIALS: u32 = 9 => ["DEBUG_VIEW_MATERIALS" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_SKY: u32 = 10 => ["DEBUG_VIEW_SKY" in DEBUG_VIEW_SHADER];
     pub(crate) const DEBUG_VIEW_DETAIL: u32 = 11 => ["DEBUG_VIEW_DETAIL" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_WATER_DEPTH: u32 = 12 => ["DEBUG_VIEW_WATER_DEPTH" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_WATER_SPEED: u32 = 13 => ["DEBUG_VIEW_WATER_SPEED" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_WATER_FROUDE: u32 = 14 => ["DEBUG_VIEW_WATER_FROUDE" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_WATER_TURBULENCE: u32 = 15 => ["DEBUG_VIEW_WATER_TURBULENCE" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_WATER_WHITE: u32 = 16 => ["DEBUG_VIEW_WATER_WHITE" in DEBUG_VIEW_SHADER];
+    pub(crate) const DEBUG_VIEW_WATER_REACH: u32 = 17 => ["DEBUG_VIEW_WATER_REACH" in DEBUG_VIEW_SHADER];
+    /// Gravity, and the meters of water under which it lies dry, by which
+    /// debug views reckon water's Froude number (`meshes/debug.wgsl`): the
+    /// shallow-water scheme's.
+    pub(crate) const DEBUG_GRAVITY: f32 = engine_core::terrain_data::hydraulics::GRAVITY => ["DEBUG_GRAVITY" in SHADER];
+    pub(crate) const DEBUG_DRY: f32 = engine_core::terrain_data::shallow_water::DRY => ["DEBUG_DRY" in SHADER];
     /// What drew a pixel of the debug targets (`meshes/debug.wgsl`): its
     /// kind in the low four bits of its draw's record, its level of detail
     /// in the four above, then flags; the sun's lookup above

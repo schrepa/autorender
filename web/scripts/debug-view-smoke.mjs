@@ -1,6 +1,6 @@
 /** Debug views and the pixel probe in the Stress Lab's metro, and terrain's
- * views and numbers on the terrain fixture (terrain-fixture.mjs), in real
- * Chrome. */
+ * views and numbers and the water's views on the terrain fixture
+ * (terrain-fixture.mjs), in real Chrome. */
 // @ts-check
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
@@ -71,6 +71,9 @@ async function shownView() {
 const views = ["kinds", "levels", "cards", "shadows", "casters", "overdraw", "normals"];
 // Terrain's own views, which show the terrain fixture's ground.
 const terrainViews = ["levels", "tiles", "materials", "sky", "detail"];
+// The water's views, which show the fixture's lakes and rivers wherever
+// they lie against everything else gray, unlit.
+const waterViews = ["water_depth", "water_speed", "water_froude", "water_turbulence", "water_white", "water_reach"];
 const report = {};
 // What each drawn pixel's probe may name, and those an entity's slot draws.
 const kinds = ["mesh", "placed", "card", "placed_card", "virtual", "terrain", "cover", "water", "sea", "falls", "sky"];
@@ -174,17 +177,18 @@ try {
   await browser.close();
 }
 
-// Terrain's views: each shows the fixture's ground otherwise than shaded,
-// and the probe reads its tile, level, materials, sky and detail.
+// The water's views and terrain's: each shows the fixture otherwise than
+// shaded, and the probe reads the ground's tile, level, materials, sky and
+// detail, and no water there.
 const terrain = await openTerrain("debug-view-terrain");
 try {
   const shaded = await terrain.capture("terrain-shaded");
   report.terrain_views = {};
-  for (const view of terrainViews) {
+  for (const view of [...waterViews, ...terrainViews]) {
     await terrain.command("environment", { debug_view: { view } });
     const png = await terrain.capture(`terrain-${view}`);
     const pixels = await differentPixels(terrain.page, [shaded, png], { tolerance: 8 });
-    assert.ok(pixels.changed > pixels.total / 4, `${view} shows the ground otherwise: ${JSON.stringify(pixels)}`);
+    assert.ok(pixels.changed > pixels.total / 4, `${view} shows the fixture otherwise: ${JSON.stringify(pixels)}`);
     report.terrain_views[view] = pixels.changed;
   }
   // The ground somewhere below the view's middle, where the probe finds it.
@@ -206,9 +210,11 @@ try {
   assert.ok(Math.abs(total - 1) < 0.05, `the materials' shares make the whole: ${JSON.stringify(made.materials)}`);
   assert.ok(made.sky >= 0 && made.sky <= 1, JSON.stringify(made));
   assert.ok(made.detail.colored >= made.detail.full - 0.01, JSON.stringify(made.detail));
-  // Off pixels, and pixels not terrain's, read no ground.
+  assert.equal(ground.water, null, JSON.stringify(ground));
+  // Off pixels, and pixels not terrain's, read no ground, nor water.
   const above = (await terrain.command("probe", { x: Math.floor(width / 2), y: 1 })).result;
   assert.equal(above.terrain, null, JSON.stringify(above));
+  assert.equal(above.water, null, JSON.stringify(above));
   await terrain.command("environment", { debug_view: { view: "off" } });
   assert.deepEqual(terrain.errors, []);
   report.ground = ground;
@@ -220,5 +226,5 @@ console.log(JSON.stringify({
   ok: true, url: url.href, artifact: output, ...report,
   checks: ["setting_discoverable", "views_draw", "views_create_pipelines_when_shown", "off_is_exact", "unknown_view_refused",
     "probe_answers", "probe_refuses_outside", "probe_keeps_image", "host_switch", "clean_browser_diagnostics",
-    "terrain_views_draw", "terrain_probe"],
+    "water_views_draw", "terrain_views_draw", "terrain_probe"],
 }));
