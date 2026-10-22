@@ -3326,7 +3326,7 @@
           "minimum": 0.0
         },
         "impostor_pixels": {
-          "description": "The size below which placed objects draw their impostor cards:\nthe pixels of the viewport height their bounding spheres span.\nLarger shows cards nearer; cards fade in over `fade_seconds`.",
+          "description": "The size below which placed objects draw their impostor cards:\nthe pixels of the viewport height their bounding spheres span.\nTheir frames hold as many texels across, rounded up to a power\nof two, so cards are not magnified where they take over, and\ntheir atlas's memory grows with its square. Larger shows cards\nnearer; cards fade in over `fade_seconds`.",
           "type": "number",
           "format": "float",
           "default": 128.0,
@@ -5310,7 +5310,7 @@
       ]
     },
     "SceneTerrainAsset": {
-      "description": "An object placement layers stand on a terrain: a `mesh`\nand a `material` of this document, by ID, up to four coarser meshes it\ndraws at a distance, finest first (otherwise the mesh's automatic levels\nof detail), up to two parts drawn with materials of their own, and how\nfar it sways in the wind: meters at\nten meters up in full wind, 0 (rigid, the default) to 10. Shadow maps\ncast its coarsest mesh alone.",
+      "description": "An object placement layers stand on a terrain: a `mesh`\nand a `material` of this document, by ID, up to four coarser meshes it\ndraws at a distance, finest first (otherwise the mesh's automatic levels\nof detail), up to two parts drawn with materials of their own, and how\nfar it sways in the wind: meters at\nten meters up in full wind, 0 (rigid, the default) to 10.",
       "type": "object",
       "properties": {
         "collider": {
@@ -5344,6 +5344,13 @@
           "items": {
             "$ref": "#/$defs/SceneTerrainPart"
           }
+        },
+        "shadow": {
+          "description": "ID of a simpler mesh of this document its objects draw in place of\nits levels into shadow maps, opaque and depth only; without one they\ncast their own levels.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "sway": {
           "type": "number",
@@ -5612,7 +5619,7 @@
       "additionalProperties": false
     },
     "SceneTerrainPart": {
-      "description": "A part of a placement asset its objects draw with a `material` of its\nown, such as a tree's masked needle cards over its opaque crown: its\nmeshes by ID, at the asset's mesh and then at each of its coarser\nmeshes, as far as it reaches; coarser levels draw without it. It takes\nthe asset's color, sway and impostor, and casts no shadow.",
+      "description": "A part of a placement asset its objects draw with a `material` of its\nown, such as a tree's masked needle cards over its opaque crown: its\nmeshes by ID, at the asset's mesh and then at each of its coarser\nmeshes, as far as it reaches; coarser levels draw without it. It takes\nthe asset's color, sway and impostor, and casts no shadow: the asset's\n`shadow`, where it has one, is the whole object's.",
       "type": "object",
       "properties": {
         "material": {
