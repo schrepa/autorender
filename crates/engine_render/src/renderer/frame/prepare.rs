@@ -518,8 +518,8 @@ impl Renderer {
         (lighting.cloud_shadow, lighting.cloud_layer) =
             crate::clouds::shadow_lighting(&snapshot.environment.clouds, snapshot.camera_position);
         // What placed objects cover around the camera: the
-        // map shading reads, drawn this frame when it no longer holds the
-        // camera's surroundings or the objects changed.
+        // maps shading reads, whose windows follow the camera and redraw
+        // the cells they uncover and those whose objects changed.
         if let Some((area, far, strength)) = self.features.occupancy.get_mut().prepare(
             &self.device,
             &self.queue,
@@ -528,7 +528,6 @@ impl Renderer {
             (
                 self.scatter_draws.covers(),
                 self.features.scatter.get().objects(),
-                self.features.scatter.get().version(),
             ),
         ) {
             lighting.occupancy = [area.center[0], area.center[1], 1.0 / area.size, strength];

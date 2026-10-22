@@ -201,22 +201,41 @@ override PROBES: bool = true;
 override WINDOWS: bool = true;
 override BOUNCE: bool = true;
 
-// How much the covers in occupancy layer `layer` (centered at `center`,
-// `inverse` over its side, heights above `reference`) hide the sky from
-// `world`: their cover there, the more the deeper below their top; none
-// above them or outside the map.
+// How much the covers in occupancy layer `layer` (its window centered at
+// `center`, `inverse` over its side, heights above `reference`) hide the
+// sky from `world`: their cover there, the more the deeper below their
+// top; none above them or outside the window. The map wraps: a point's
+// texels are where it falls in its map-wide page, those past one edge of
+// the map at the other.
 fn occupancy_cover(world: vec3<f32>, layer: u32, center: vec2<f32>, inverse: f32,
         reference: f32) -> f32 {
-    let uv = (world.xz - center) * inverse + 0.5;
-    if any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
-        return 0.0;
-    }
-    let coverage = min(textureSampleLevel(occupancy_coverage, terrain_horizon_sampler, uv,
-        layer, 0.0).r, 1.0);
-    if coverage <= 0.0 {
+    let local = (world.xz - center) * inverse + 0.5;
+    if any(local <= vec2<f32>(0.0)) || any(local >= vec2<f32>(1.0)) {
         return 0.0;
     }
     let size = lighting.occupancy_heights.y;
+    let uv = fract(world.xz * inverse);
+    let at = uv * size - vec2<f32>(0.5);
+    let corner = floor(at);
+    var coverage: f32;
+    if all(corner >= vec2<f32>(0.0)) && all(corner < vec2<f32>(size - 1.0)) {
+        coverage = textureSampleLevel(occupancy_coverage, terrain_horizon_sampler, uv, layer,
+            0.0).r;
+    } else {
+        let texels = vec2<i32>(i32(size));
+        let low = (vec2<i32>(corner) + texels) % texels;
+        let high = (vec2<i32>(corner) + vec2<i32>(1) + texels) % texels;
+        let share = at - corner;
+        let below = mix(textureLoad(occupancy_coverage, low, layer, 0).r,
+            textureLoad(occupancy_coverage, vec2<i32>(high.x, low.y), layer, 0).r, share.x);
+        let above = mix(textureLoad(occupancy_coverage, vec2<i32>(low.x, high.y), layer, 0).r,
+            textureLoad(occupancy_coverage, high, layer, 0).r, share.x);
+        coverage = mix(below, above, share.y);
+    }
+    coverage = min(coverage, 1.0);
+    if coverage <= 0.0 {
+        return 0.0;
+    }
     let texel = min(vec2<u32>(uv * size), vec2<u32>(u32(size) - 1u));
     let heights = textureLoad(occupancy_heights, texel, layer, 0).rg;
     let height = world.y - reference;

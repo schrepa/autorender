@@ -235,6 +235,9 @@ const C: Stages = Stages::COMPUTE;
 const F: Stages = Stages::FRAGMENT;
 const V: Stages = Stages::VERTEX;
 const VF: Stages = Stages::VERTEX_FRAGMENT;
+// Tables a family's compute and render passes share.
+const VC: Stages = Stages(V.0 | C.0);
+const VFC: Stages = Stages(VF.0 | C.0);
 // Bytes of a pose, a slot color, a placed object's ground,
 // and of virtual geometry's mesh, cluster and page pool word.
 const POSE: usize = size_of::<PoseData>();
@@ -1169,19 +1172,24 @@ tables! {
         ],
     };
 
-    /// Occupancy (`occupancy.wgsl`): the map's area and counts,
-    /// and the placed objects' records, poses and draw groups' covers, and how
-    /// their layers thin, which the far map weighs far objects
-    /// by.
+    /// Occupancy (`occupancy.wgsl`), one table for its selection and its
+    /// draws, whose groups fill what each leaves alone: the map's window,
+    /// cells redrawn and counts, the placed objects' records, poses and
+    /// draw groups' covers, and how their layers thin, which the far map
+    /// weighs far objects by; and the footprints listed, which the
+    /// selection writes with their draw's arguments and the draws read.
     const OCCUPANCY: Table = Table {
         label: "engine/occupancy-layout",
         serves: [OCCUPANCY_SHADER @ 0],
         bindings: &[
-            uniform_of(0, "splat", size_of::<occupancy::SplatUniform>(), V),
-            read(1, "records", V),
-            read(2, "poses", V),
-            read(3, "covers", V),
+            uniform_of(0, "splat", size_of::<occupancy::SplatUniform>(), VFC),
+            read(1, "records", VC),
+            read(2, "poses", VC),
+            read(3, "covers", VC),
             read(4, "thins", V),
+            read(5, "listed", V),
+            write(6, "listing", C),
+            write(7, "listed_draw", C),
         ],
     };
 

@@ -8,6 +8,8 @@ gpu_structs! {
     pub(crate) struct SplatUniform as ["Splat"] {
         pub area: [f32; 4],
         pub counts: [u32; 4],
+        pub place: [u32; 4],
+        pub dirty: [[u32; 4]; 2],
     }
 
     /// WGSL `Cover`: a draw group's footprint radius, the bottom and top of
@@ -18,5 +20,15 @@ gpu_structs! {
         pub bottom: f32,
         pub top: f32,
         pub density: f32,
+    }
+
+    /// WGSL `ListedDraw`: the arguments of the draw of the footprints a
+    /// frame lists, whose instances the selection counts from none.
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub(crate) struct ListedDraw as ["ListedDraw" in OCCUPANCY_SHADER] {
+        pub vertices: u32,
+        pub instances: u32,
+        pub first_vertex: u32,
+        pub first_instance: u32,
     }
 }

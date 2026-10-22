@@ -25,7 +25,9 @@ settings! {
         /// Meters around the camera within which covers darken, less over the
         /// outer two fifths.
         pub radius: f32 = 512.0 => range(64.0, 4096.0),
-        /// The map's texels a side.
+        /// The map's texels a side, rounded up to a multiple of 16: the
+        /// cells its window follows the camera by, sixteen a side, span
+        /// whole texels.
         pub resolution: u32 = 1024 => range(128, 4096),
         /// How much of the sky light full cover takes away.
         pub strength: f32 = 0.75 => range(0.0, 1.0),

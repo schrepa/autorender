@@ -377,8 +377,16 @@ gpu_consts! {
     pub(crate) const DEBUG_PATCH_SHIFT: u32 = 24 => ["DEBUG_PATCH_SHIFT"];
     pub(crate) const DEBUG_NO_MATERIAL: u32 = 0xff => ["DEBUG_NO_MATERIAL"];
 
+    // crate::occupancy
+    /// Cells along a side of an occupancy map, which its window follows the
+    /// camera by and frames redraw, a bit each, sixteen a row.
+    pub(crate) const OCCUPANCY_CELLS: u32 = 16 => ["CELLS" in OCCUPANCY_SHADER];
+    /// Vertices of a footprint's or a cell's quad: two triangles.
+    pub(crate) const OCCUPANCY_QUAD: u32 = 6 => ["QUAD" in OCCUPANCY_SHADER];
+
     // Workgroup sides that dispatches divide by.
     pub(crate) const SCATTER_GROUP: u32 = 64 => ["@snap_scatter" in SCATTER_SNAP_SHADER, "@cull_scatter" in SCATTER_CULL_SHADER];
+    pub(crate) const OCCUPANCY_GROUP: u32 = 64 => ["@select_covers" in OCCUPANCY_SHADER];
     pub(crate) const DEFORMATION_GROUP: u32 = 8 => ["@press" in DEFORMATION_SHADER, "@slopes" in DEFORMATION_SHADER, "@scroll" in DEFORMATION_SHADER, "@wipe" in DEFORMATION_SHADER, "@rebase" in DEFORMATION_SHADER];
     pub(crate) const CLOUD_GROUP: u32 = 8 => ["@march_view" in CLOUDS_SHADER, "@march_clouds" in CLOUDS_SHADER, "@shadow_clouds" in CLOUDS_SHADER, "@light_clouds" in CLOUDS_SHADER];
     pub(crate) const SKY_TABLE_GROUP: u32 = 8 => ["@build_sky_view" in SKY_SHADER];

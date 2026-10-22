@@ -343,8 +343,9 @@ entry_points! {
         compute: [snap_scatter],
     }
     occupancy = OCCUPANCY_SHADER {
-        vertex: [vs_splat],
-        fragment: [fs_splat],
+        vertex: [vs_splat, vs_clear],
+        fragment: [fs_splat, fs_clear],
+        compute: [select_covers],
     }
     terrain_shadow = TERRAIN_SHADOW_SHADER {
         vertex: [vs_terrain_shadow],

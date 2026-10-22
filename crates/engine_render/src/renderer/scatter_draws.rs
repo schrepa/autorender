@@ -199,9 +199,11 @@ impl Renderer {
             .set_thinning(&self.device, &self.queue, &thins);
         let draws = &mut self.scatter_draws;
         let (dirty, counts_changed) = draws.pool.take_changes();
-        // The kept shadow map redraws where objects came or went.
+        // The kept shadow map and the occupancy maps redraw where objects
+        // came or went.
         for (min, max) in draws.pool.take_moved() {
             self.shadows.dirty_kept(min, max);
+            self.features.occupancy.get_mut().dirty_box(min, max);
         }
         let written = self.features.scatter.get_mut().write_slots(
             &self.device,
