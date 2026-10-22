@@ -21,13 +21,20 @@
 
 // Tiles' water, a block of samples for each patch holding any
 // (`terrain/water_blocks.rs`): their surfaces (terrain-local meters,
-// NO_WATER_SURFACE where none reaches), and their flow along x and z as
-// shares of WATER_FLOW_RANGE either way, the foam they carry as a share of
-// WATER_FOAM_MOST (negative where a fall's sheet runs over them), and 1
-// where a lake holds them, else the half width of the river's water as
-// 126ths of WATER_WIDTH_RANGE in 127ths (rgba, signed shares).
+// NO_WATER_SURFACE where none reaches), and their words
+// (`engine_terrain::TileWater::info`), a texel's channels: their flow along
+// x and z as shares of WATER_FLOW_RANGE either way, the foam they carry as
+// a share of WATER_FOAM_MOST (negative where a fall's sheet runs over
+// them), and 1 where a lake holds them, else the half width of the river's
+// water as 126ths of WATER_WIDTH_RANGE in 127ths (x, four signed bytes);
+// how turbulent they run, how strongly they break white and their shear
+// as a share of WATER_SHEAR_RANGE, in 255ths, and 0 for no reach, else
+// their reach plus one (y, four bytes); the offset to their nearest
+// obstacle's middle along x and z in signed steps of WATER_OBSTACLE_STEP,
+// its radius in steps of WATER_RADIUS_STEP (0 for none) and how strongly a
+// drop or a jump lies just upstream, in 255ths (z, four bytes); and 0 (w).
 @group(1) @binding(50) var water_surface: texture_2d_array<f32>;
-@group(1) @binding(51) var water_info: texture_2d_array<f32>;
+@group(1) @binding(51) var water_info: texture_2d_array<u32>;
 
 // Water, or the sea: the camera's view and projection without its
 // translation (the sea's; terrains' water draws through the terrain's
@@ -115,11 +122,17 @@ const WATER_BLOCK: u32 = 17u;
 const WATER_BLOCKS_SIDE: u32 = 16u;
 const NO_WATER_BLOCK: u32 = 0xffffffffu;
 const NO_WATER_SURFACE: f32 = -1.0e30;
-// Meters a second either way the packed flow spans, and the meters of half
-// width the packed width of a river's water does
-// (`engine_terrain::WATER_FLOW_RANGE`, `WATER_WIDTH_RANGE`).
+// Meters a second either way the packed flow spans, the meters of half
+// width the packed width of a river's water does, the shear (per second)
+// the packed shear does, and the meters a step of the packed offset to an
+// obstacle and of its packed radius span (`engine_terrain::WATER_FLOW_RANGE`,
+// `WATER_WIDTH_RANGE`, `WATER_SHEAR_RANGE`, `WATER_OBSTACLE_STEP`,
+// `WATER_RADIUS_STEP`).
 const WATER_FLOW_RANGE: f32 = 8.0;
 const WATER_WIDTH_RANGE: f32 = 63.0;
+const WATER_SHEAR_RANGE: f32 = 8.0;
+const WATER_OBSTACLE_STEP: f32 = 0.125;
+const WATER_RADIUS_STEP: f32 = 0.0625;
 // How much darker the ground under water looks: of the light it scatters
 // back, the surface turns part back down. Water a few centimeters deep
 // darkens it as much.
@@ -190,6 +203,18 @@ struct WaterOutput {
     @location(4) slope: vec2<f32>,
     // The foam its water carries (0 none, WATER_FOAM_MOST the most).
     @location(5) churned: f32,
+    // How turbulent it runs (0 calm to 1), how strongly it breaks white (0
+    // to 1: where short-lived white water is born), its shear (the
+    // magnitude of its velocity's gradient, per second), and 0.
+    @location(6) state: vec4<f32>,
+    // The offset from it to the middle of its nearest obstacle within 16
+    // meters, rock breaking its surface or a boulder under it (meters along
+    // x and z; 0 for none), the obstacle's radius (meters; 0 for none), and
+    // how strongly a drop or a jump lies just upstream (0 to 1).
+    @location(7) obstacle: vec4<f32>,
+    // The reach of the stream it runs in: 0 for none, else 1 plus
+    // `engine_terrain::Reach` (pool, plane bed, steps, cascade, falls).
+    @location(8) @interpolate(flat) reach: u32,
 }
 
 struct WaterTemporalOutput {
@@ -200,7 +225,10 @@ struct WaterTemporalOutput {
     @location(3) shore: vec2<f32>,
     @location(4) slope: vec2<f32>,
     @location(5) churned: f32,
-    @location(6) previous: vec3<f32>,
+    @location(6) state: vec4<f32>,
+    @location(7) obstacle: vec4<f32>,
+    @location(8) @interpolate(flat) reach: u32,
+    @location(9) previous: vec3<f32>,
 }
 
 // The texel of block `block` holding its sample `sample` (x and y), and its
@@ -341,7 +369,8 @@ fn water_output(input: WaterPatchInput) -> WaterOutput {
     let water = fine * (1.0 - ground.morph) + coarse * ground.morph;
     let surface = water.x;
     let texel = water_texel(input.water.x, ground.grid);
-    let info = textureLoad(water_info, texel.xy, texel.z, 0);
+    let words = textureLoad(water_info, texel.xy, texel.z, 0);
+    let info = unpack4x8snorm(words.x);
     let relative = vec3<f32>(ground.vertex.relative.x, surface + terrain.anchor.y,
         ground.vertex.relative.z) + terrain_view.eye_offset.xyz;
     var output: WaterOutput;
@@ -356,6 +385,17 @@ fn water_output(input: WaterPatchInput) -> WaterOutput {
     output.shore = fine_shoaling * (1.0 - ground.morph) + coarse_shoaling * ground.morph;
     output.slope = fine_slope * (1.0 - ground.morph) + coarse_slope * ground.morph;
     output.churned = foam;
+    // Its state, and its nearest obstacle, offset from where the vertex
+    // stands: morphing slides it off its sample toward its even neighbor.
+    let state = unpack4x8unorm(words.y);
+    output.state = vec4<f32>(state.xy, state.z * WATER_SHEAR_RANGE, 0.0);
+    let radius = f32(extractBits(words.z, 16u, 8u)) * WATER_RADIUS_STEP;
+    let toward = vec2<f32>(f32(extractBits(bitcast<i32>(words.z), 0u, 8u)),
+        f32(extractBits(bitcast<i32>(words.z), 8u, 8u))) * WATER_OBSTACLE_STEP
+        + vec2<f32>(ground.odd) * (ground.morph * spacing);
+    output.obstacle = vec4<f32>(select(vec2<f32>(0.0), toward, radius > 0.0), radius,
+        f32(words.z >> 24u) / 255.0);
+    output.reach = words.y >> 24u;
     return output;
 }
 
@@ -364,10 +404,10 @@ fn vs_water(input: WaterPatchInput) -> WaterOutput {
     return water_output(input);
 }
 
-// Water's motion is the camera's: its ripples move within its surface.
-@vertex
-fn vs_water_temporal(input: WaterPatchInput) -> WaterTemporalOutput {
-    let output = water_output(input);
+// The temporal pipelines' outputs of water `output`, `previous` where its
+// point stood in the previous frame's view (x, y and w of its clip
+// position).
+fn water_temporal(output: WaterOutput, previous: vec3<f32>) -> WaterTemporalOutput {
     var temporal: WaterTemporalOutput;
     temporal.clip_position = output.clip_position;
     temporal.relative = output.relative;
@@ -376,9 +416,19 @@ fn vs_water_temporal(input: WaterPatchInput) -> WaterTemporalOutput {
     temporal.shore = output.shore;
     temporal.slope = output.slope;
     temporal.churned = output.churned;
-    temporal.previous = (camera.previous_view_projection
-        * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw;
+    temporal.state = output.state;
+    temporal.obstacle = output.obstacle;
+    temporal.reach = output.reach;
+    temporal.previous = previous;
     return temporal;
+}
+
+// Water's motion is the camera's: its ripples move within its surface.
+@vertex
+fn vs_water_temporal(input: WaterPatchInput) -> WaterTemporalOutput {
+    let output = water_output(input);
+    return water_temporal(output, (camera.previous_view_projection
+        * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw);
 }
 
 // Value noise at `p` and its gradient (x: value, yz: d/dx and d/dz), from
@@ -1176,6 +1226,9 @@ fn water_temporal_output(input: WaterTemporalOutput) -> WaterOutput {
     output.shore = input.shore;
     output.slope = input.slope;
     output.churned = input.churned;
+    output.state = input.state;
+    output.obstacle = input.obstacle;
+    output.reach = input.reach;
     return output;
 }
 
@@ -1208,8 +1261,11 @@ fn fs_water_temporal(input: WaterTemporalOutput) -> TemporalTargets {
 
 // Simulated water (`water_sim.rs`): a vertex at each cell's middle, its
 // water's surface, depth and flow, the slopes of its surface and depth
-// read across its neighbors, and the foam the water carries, as tiles'
-// water holds them; shaded as tiles' water is.
+// read across its neighbors, the foam the water carries, and how turbulent
+// it runs and its shear, read from the velocities around it, as tiles'
+// water holds them; shaded as tiles' water is. Its heights stand over the
+// live window's datum (`water.sim_datum.x` meters), which drawing adds
+// back.
 //
 // Meters of water under which a cell is dry; the half width its shores'
 // foam reads it as (a river's); and the depth over which its velocity is
@@ -1217,6 +1273,11 @@ fn fs_water_temporal(input: WaterTemporalOutput) -> TemporalTargets {
 const SIM_WET: f32 = 0.01;
 const SIM_HALF_WIDTH: f32 = 8.0;
 const SIM_THIN_WATER: f32 = 0.05;
+// The least speed turbulence measures water's swings of speed against, and
+// the swings of its vorticity (per second) at which it runs wholly
+// turbulent (`engine_terrain::TURBULENT_SPEED`, `TURBULENT_SWIRL`).
+const WATER_TURBULENT_SPEED: f32 = 0.5;
+const WATER_TURBULENT_SWIRL: f32 = 4.0;
 // How upright (the up part of its triangles' normal) the simulated water's
 // surface stands where it gives way, from the first to the second: down a
 // cliff, between cells far apart in height, the falls' sheets show it; and
@@ -1290,9 +1351,9 @@ fn sim_water_level(i: i32, j: i32) -> vec2<f32> {
     return vec2<f32>(ground, -shallowest);
 }
 
-// The lowest the simulated water stands about `point` (x and z): over the
-// cells around the one holding it, each wet one's surface or each dry
-// one's ground.
+// The lowest the simulated water stands about `point` (x and z), in world
+// meters: over the cells around the one holding it, each wet one's surface
+// or each dry one's ground.
 fn sim_water_lowest_at(point: vec2<f32>) -> f32 {
     let at = vec2<i32>(floor((point - water.sim.xy) / water.sim.z));
     var lowest = 1.0e9;
@@ -1303,7 +1364,28 @@ fn sim_water_lowest_at(point: vec2<f32>) -> f32 {
             lowest = min(lowest, select(ground, surface, surface - ground > SIM_WET));
         }
     }
-    return lowest;
+    return lowest + water.sim_datum.x;
+}
+
+// Cell (i, j)'s water's velocity (xy), its flow over its depth,
+// desingularized as the drawn water's, and none where it is dry; and 1
+// where it holds water, else 0 (z).
+fn sim_water_moving(i: i32, j: i32) -> vec3<f32> {
+    let cell = sim_water_cell(i, j);
+    let depth = cell.x - sim_water_ground(i, j);
+    let wet = depth > SIM_WET;
+    return vec3<f32>(select(vec2<f32>(0.0), cell.yz / max(depth, SIM_THIN_WATER), wet),
+        select(0.0, 1.0, wet));
+}
+
+// How fast the velocity `here` of a cell changes a meter between the cells
+// either side of it, `before` and `after` (`sim_water_moving`'s): between
+// the two where both hold water, between it and the one that does where
+// one does, and not at all where neither does.
+fn sim_water_change(before: vec3<f32>, here: vec2<f32>, after: vec3<f32>) -> vec2<f32> {
+    let low = select(here, before.xy, before.z > 0.5);
+    let high = select(here, after.xy, after.z > 0.5);
+    return (high - low) / (water.sim.z * max(before.z + after.z, 1.0));
 }
 
 // The surface beside a cell standing at `here`, from its neighbor at
@@ -1326,7 +1408,7 @@ fn sim_water_output(index: u32) -> WaterOutput {
     let west = sim_water_level(i - 1, j);
     let north = sim_water_level(i, j + 1);
     let south = sim_water_level(i, j - 1);
-    let world = vec3<f32>(water.sim.x + (f32(i) + 0.5) * cell, here.x,
+    let world = vec3<f32>(water.sim.x + (f32(i) + 0.5) * cell, here.x + water.sim_datum.x,
         water.sim.y + (f32(j) + 0.5) * cell);
     var output: WaterOutput;
     output.relative = world - camera.position.xyz;
@@ -1340,6 +1422,28 @@ fn sim_water_output(index: u32) -> WaterOutput {
     let foam = sim_water_cell(i, j).w;
     output.foam = vec3<f32>(min(foam, 1.0) * WATER_FOAM_STREAKED, SIM_HALF_WIDTH, 0.0);
     output.churned = foam;
+    // How turbulent it runs, from the velocities around it as the cook's
+    // turbulence reads its water's swings (`engine_terrain`'s
+    // `turbulence`): how far its velocity strays from the mean of its
+    // neighbors holding water, against its speed, and how fast the water
+    // turns there; and its shear. It has no white water, obstacle or reach.
+    let to_east = sim_water_moving(i + 1, j);
+    let to_west = sim_water_moving(i - 1, j);
+    let to_north = sim_water_moving(i, j + 1);
+    let to_south = sim_water_moving(i, j - 1);
+    let along_x = sim_water_change(to_west, velocity, to_east);
+    let along_z = sim_water_change(to_south, velocity, to_north);
+    let holding = to_east.z + to_west.z + to_north.z + to_south.z;
+    let mean = (to_east.xy + to_west.xy + to_north.xy + to_south.xy) / max(holding, 1.0);
+    let strays = select(0.0, length(velocity - mean), holding > 0.5);
+    let swirl = abs(along_x.y - along_z.x);
+    let turbulence = saturate(strays / max(length(velocity), WATER_TURBULENT_SPEED)
+        + swirl / WATER_TURBULENT_SWIRL);
+    let shear = sqrt(dot(along_x, along_x) + dot(along_z, along_z));
+    let wet = depth > SIM_WET;
+    output.state = vec4<f32>(select(0.0, turbulence, wet), 0.0, select(0.0, shear, wet), 0.0);
+    output.obstacle = vec4<f32>(0.0);
+    output.reach = 0u;
     return output;
 }
 
@@ -1351,17 +1455,8 @@ fn vs_sim_water(@builtin(vertex_index) index: u32) -> WaterOutput {
 @vertex
 fn vs_sim_water_temporal(@builtin(vertex_index) index: u32) -> WaterTemporalOutput {
     let output = sim_water_output(index);
-    var temporal: WaterTemporalOutput;
-    temporal.clip_position = output.clip_position;
-    temporal.relative = output.relative;
-    temporal.water = output.water;
-    temporal.foam = output.foam;
-    temporal.shore = output.shore;
-    temporal.slope = output.slope;
-    temporal.churned = output.churned;
-    temporal.previous = (camera.previous_view_projection
-        * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw;
-    return temporal;
+    return water_temporal(output, (camera.previous_view_projection
+        * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw);
 }
 
 @fragment

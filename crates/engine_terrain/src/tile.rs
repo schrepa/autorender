@@ -12,7 +12,7 @@ use crate::hydrology::RIVER_FAR;
 use crate::layers::{Layer, Layers, state_len};
 use crate::rivers::RiverRaster;
 use crate::surface::{BiomeRules, Control, RowInputs, RowScratch, SampleShape, smooth_gradient};
-use crate::tile_water::{TileWater, WaterPoint};
+use crate::tile_water::{TileWater, WaterPoint, WaterState};
 use crate::{
     HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placing, Pyramid, TILE_QUADS,
     TILE_SAMPLES, TILE_STRIDE, TileKey,
@@ -289,12 +289,12 @@ impl Tile {
         self.river_edges.as_deref()
     }
 
-    /// The tile with the water its samples' `surface` and packed `info`
-    /// ([`crate::tile_water::pack`]) stand at: none where no sample's
-    /// surface stands over its ground or the sizes do not match.
+    /// The tile with the water its samples' `surface` and words `info`
+    /// ([`TileWater::info`]) stand at: none where no sample's surface
+    /// stands over its ground or the sizes do not match.
     #[must_use]
-    pub(crate) fn with_water(mut self, surface: Box<[f32]>, info: Box<[u32]>) -> Self {
-        self.water = TileWater::new(surface, info, &self.heights);
+    pub(crate) fn with_water(mut self, surface: Box<[f32]>, info: Box<[[u32; 3]]>) -> Self {
+        self.water = TileWater::new(surface, info, &self.heights, self.spacing);
         self
     }
 
@@ -532,9 +532,9 @@ impl Tile {
 
     /// The water at `local`, meters from the tile's first corner, on the
     /// triangles [`Self::sample`] reads the ground on: its surface, its
-    /// depth over that ground, its flow, whitewater and kind; `None` where
-    /// no water reaches the triangle's corners or its surface stands at or
-    /// below the ground.
+    /// depth over that ground, its flow, whitewater, kind and state (its
+    /// reach the first corner's); `None` where no water reaches the
+    /// triangle's corners or its surface stands at or below the ground.
     pub fn water_at(&self, local: Vec2) -> Option<WaterPoint> {
         let water = self.water.as_ref()?;
         let (i, j, fu, fv) = self.cell(local)?;
@@ -551,6 +551,7 @@ impl Tile {
             return None;
         }
         let info = at.map(|(x, z)| water.sample_info(x, z));
+        let states = at.map(|(x, z)| water.sample_state(x, z));
         Some(WaterPoint {
             surface,
             depth,
@@ -560,6 +561,12 @@ impl Tile {
             ),
             white: on_triangle(info.map(|(_, white, _, _)| white), fu, fv),
             lake: info[corners[0]].2,
+            state: WaterState {
+                turbulence: on_triangle(states.map(|state| state.turbulence), fu, fv),
+                breaking: on_triangle(states.map(|state| state.breaking), fu, fv),
+                shear: on_triangle(states.map(|state| state.shear), fu, fv),
+                reach: states[corners[0]].reach,
+            },
         })
     }
 }
@@ -1107,15 +1114,15 @@ impl Generator {
     /// The water of every stored row (0 to 258) as the stack's hydrology
     /// bake holds its lakes and rivers over them
     /// ([`crate::tile_water::water_rows`]), its rivers' from their raster,
-    /// which it then lets go: their samples' surfaces and packed info, row
-    /// by row; `None` without the bake.
-    fn water_rows(&mut self, budget: &mut u64) -> Option<(Vec<f32>, Vec<u32>)> {
+    /// which it then lets go: their samples' surfaces and words, row by
+    /// row; `None` without the bake.
+    fn water_rows(&mut self, budget: &mut u64) -> Option<(Vec<f32>, Vec<[u32; 3]>)> {
         let stride = TILE_STRIDE as usize;
         let rasters = std::mem::take(&mut self.rasters);
         let (index, hydrology) = self.layers.hydrology_layer()?;
         let raster = rasters.get(index).and_then(Option::as_ref);
         let count = stride * stride;
-        let (mut surface, mut info) = (vec![f32::NAN; count], vec![0_u32; count]);
+        let (mut surface, mut info) = (vec![f32::NAN; count], vec![[0_u32; 3]; count]);
         crate::tile_water::water_rows(
             &hydrology.water,
             &|row, column| raster?.water(&hydrology.rivers, row, column),
@@ -1301,8 +1308,8 @@ impl Layers {
 
 /// A tile's key, spacing, samples, holes, control values, meters to
 /// rivers' edges and their beds, placed objects and which of them, and its
-/// water's surfaces and packed info; reading rebuilds its bounds and wet
-/// patches as [`Tile::new`] and `Tile::with_water` do.
+/// water as its own record holds it ([`TileWater`]'s); reading rebuilds its
+/// bounds as [`Tile::new`] does.
 /// Tiles travel with their heights and water surfaces at their nearest
 /// steps of the height grid ([`crate::codec::HEIGHT_STEP`]): a tile read
 /// back is the record every host shows.
@@ -1325,17 +1332,7 @@ impl crate::codec::Codec for Tile {
                 }
             };
         }
-        out.put(&self.placed).put(&self.placing);
-        match &self.water {
-            Some(water) => {
-                out.put(&true);
-                crate::codec::put_grid(out, water.surfaces(), stride);
-                out.put(&water.info().to_vec());
-            }
-            None => {
-                out.put(&false);
-            }
-        };
+        out.put(&self.placed).put(&self.placing).put(&self.water);
     }
 
     fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
@@ -1358,7 +1355,7 @@ impl crate::codec::Codec for Tile {
         let [river_edges, river_beds] = rivers;
         let placed: Option<Arc<[crate::Placed]>> = input.get()?;
         let placing = input.get()?;
-        let watered: bool = input.get()?;
+        let water: Option<TileWater> = input.get()?;
         let mut tile = Self::shaped(key, spacing, heights, holes).ok_or(invalid)?;
         if culling.len() != tile.patch_bounds.len() {
             return Err(invalid);
@@ -1368,11 +1365,7 @@ impl crate::codec::Codec for Tile {
             tile = tile.with_control(control).ok_or(invalid)?;
         }
         tile = tile.with_rivers(river_edges, river_beds).ok_or(invalid)?;
-        if watered {
-            let surface = crate::codec::get_grid(input, stride)?;
-            let info: Box<[u32]> = input.get()?;
-            tile = tile.with_water(surface, info);
-        }
+        tile.water = water;
         tile.placed = placed;
         tile.placing = placing;
         Ok(tile)

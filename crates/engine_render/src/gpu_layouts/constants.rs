@@ -223,6 +223,12 @@ gpu_consts! {
     pub(crate) const WATER_FLOW_RANGE: f32 = engine_core::terrain_data::WATER_FLOW_RANGE => ["WATER_FLOW_RANGE"];
     /// Meters of half width a block's packed width of a river's water spans.
     pub(crate) const WATER_WIDTH_RANGE: f32 = engine_core::terrain_data::WATER_WIDTH_RANGE => ["WATER_WIDTH_RANGE"];
+    /// Per second of shear a block's packed shear spans.
+    pub(crate) const WATER_SHEAR_RANGE: f32 = engine_core::terrain_data::WATER_SHEAR_RANGE => ["WATER_SHEAR_RANGE"];
+    /// Meters a step of a block's packed offsets to obstacles spans, and of
+    /// their packed radius.
+    pub(crate) const WATER_OBSTACLE_STEP: f32 = engine_core::terrain_data::WATER_OBSTACLE_STEP => ["WATER_OBSTACLE_STEP"];
+    pub(crate) const WATER_RADIUS_STEP: f32 = engine_core::terrain_data::WATER_RADIUS_STEP => ["WATER_RADIUS_STEP"];
 
     // crate::water_waves
     /// Texels along a side of a tile of water's waves: wave numbers of its
@@ -479,6 +485,8 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::COURANT => ["SIM_COURANT" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::LOCAL_SHARE => ["SIM_LOCAL_SHARE" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SLOWEST => ["SIM_SLOWEST" in WATER_SIM_SHADER];
+    engine_core::terrain_data::TURBULENT_SPEED => ["WATER_TURBULENT_SPEED"];
+    engine_core::terrain_data::TURBULENT_SWIRL => ["WATER_TURBULENT_SWIRL"];
     engine_core::PAGE_WORDS => ["PAGE_WORDS" in VIRTUAL_SHADER, "VIRTUAL_PAGE_WORDS" in SHADER];
     engine_core::NO_PARENT => ["NO_PARENT" in PRESENTATION_SHADER];
     engine_core::NODE_VALID => ["NODE_VALID" in PRESENTATION_SHADER];

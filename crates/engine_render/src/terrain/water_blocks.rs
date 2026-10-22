@@ -1,7 +1,8 @@
 //! Tiles' water on the GPU: each resident tile's water where it stands over
 //! the ground, a patch at a time, in two texture arrays of blocks as many
-//! samples wide as a patch's grid: their surfaces, and their packed flow,
-//! whitewater and kind (`engine_core::terrain_data::TileWater`). A tile's
+//! samples wide as a patch's grid: their surfaces, and their words, their
+//! packed flow, whitewater and kind, their state and their nearest obstacle
+//! (`engine_core::terrain_data::TileWater::info`), and a fourth, 0. A tile's
 //! blocks upload as it arrives and free as it leaves or changes, following
 //! the tiles the atlas held anew; the camera's patches holding water lay
 //! out each frame as instances water's pass draws on terrain's grid, with
@@ -24,10 +25,12 @@ use engine_core::terrain_data::{PATCHES_PER_TILE, Tile};
 /// Blocks a layer holds, and its texels along a side.
 const PER_LAYER: u32 = SIDE * SIDE;
 const LAYER_TEXELS: u32 = BLOCK * SIDE;
-/// The surface and packed info arrays' formats: info's bytes read as the
-/// signed shares they pack.
+/// The surface and info arrays' formats, and the bytes of each one's
+/// texels: shaders unpack the info's words themselves.
 const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
-const INFO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Snorm;
+const INFO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
+const SURFACE_BYTES: u32 = 4;
+const INFO_BYTES: u32 = 16;
 /// Indices of the grid's triangles before its skirts': water hangs none.
 pub(crate) const GRID_INDICES: u32 = (GRID - 1) * (GRID - 1) * 6;
 
@@ -102,7 +105,9 @@ impl WaterBlocks {
     /// Bytes of the arrays.
     pub(super) fn capacity_bytes(&self) -> u64 {
         self.arrays.as_ref().map_or(0, |arrays| {
-            u64::from(arrays.layers) * u64::from(LAYER_TEXELS * LAYER_TEXELS) * 8
+            u64::from(arrays.layers)
+                * u64::from(LAYER_TEXELS * LAYER_TEXELS)
+                * u64::from(SURFACE_BYTES + INFO_BYTES)
         })
     }
 
@@ -197,7 +202,7 @@ impl WaterBlocks {
             })
         };
         let mut surface_texels = vec![0.0_f32; side * side];
-        let mut info_texels = vec![0_u32; side * side];
+        let mut info_texels = vec![[0_u32; 4]; side * side];
         for pz in 0..patches {
             for px in 0..patches {
                 let index = pz * patches + px;
@@ -244,7 +249,8 @@ impl WaterBlocks {
                     } else {
                         NO_WATER_SURFACE
                     };
-                    info_texels[texel] = water.info()[at];
+                    let [packed, state, obstacle] = water.info()[at];
+                    info_texels[texel] = [packed, state, obstacle, 0];
                 }
                 self.write(queue, block, &surface_texels, &info_texels);
                 blocks[index] = block;
@@ -339,7 +345,7 @@ impl WaterBlocks {
     }
 
     /// Writes block `block`'s texels.
-    fn write(&self, queue: &Queue, block: u32, surfaces: &[f32], info: &[u32]) {
+    fn write(&self, queue: &Queue, block: u32, surfaces: &[f32], info: &[[u32; 4]]) {
         let arrays = self.arrays.as_ref().expect("a block allocates its arrays");
         let index = block % PER_LAYER;
         let origin = wgpu::Origin3d {
@@ -352,14 +358,9 @@ impl WaterBlocks {
             height: BLOCK,
             depth_or_array_layers: 1,
         };
-        let layout = wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(BLOCK * 4),
-            rows_per_image: Some(BLOCK),
-        };
-        for (texture, bytes) in [
-            (&arrays.surface, bytemuck::cast_slice(surfaces)),
-            (&arrays.info, bytemuck::cast_slice(info)),
+        for (texture, bytes, texel) in [
+            (&arrays.surface, bytemuck::cast_slice(surfaces), SURFACE_BYTES),
+            (&arrays.info, bytemuck::cast_slice(info), INFO_BYTES),
         ] {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -369,7 +370,11 @@ impl WaterBlocks {
                     aspect: wgpu::TextureAspect::All,
                 },
                 bytes,
-                layout,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(BLOCK * texel),
+                    rows_per_image: Some(BLOCK),
+                },
                 extent,
             );
         }

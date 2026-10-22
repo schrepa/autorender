@@ -990,7 +990,7 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
         surfaces: array("engine/water-placeholder", wgpu::TextureFormat::R32Float),
         info: array(
             "engine/water-placeholder-info",
-            wgpu::TextureFormat::Rgba8Snorm,
+            wgpu::TextureFormat::Rgba32Uint,
         ),
         views: crate::buffers::uniform(
             device,

@@ -1042,7 +1042,8 @@ tables! {
     /// Group 1 of water's pipelines (`meshes/water.wgsl`): terrain's height
     /// array and the views' and terrains' uniforms at dynamic offsets, as
     /// terrain's patches draw on them; tiles' water blocks, their surfaces
-    /// and packed flow, whitewater and kind; water's uniform; and the
+    /// and words (packed flow, whitewater and kind, state and nearest
+    /// obstacle); water's uniform; and the
     /// waves' moments with their levels (`water_waves.rs`) and the sampler
     /// repeating them. The sea's group has placeholders for what only
     /// tiles' water reads.
@@ -1059,7 +1060,7 @@ tables! {
                 VF,
             ),
             texture(50, "water_surface", Unfilterable, D2Array, V),
-            texture(51, "water_info", Unfilterable, D2Array, V),
+            texture(51, "water_info", Uint, D2Array, V),
             uniform_of(52, "water", size_of::<water::WaterUniform>(), VF),
             texture(53, "water_waves", Float, D2Array, F),
             sampler(54, "water_wave_sampler", Filtering, F),
