@@ -46,7 +46,7 @@ fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
     let sway = slot_sway(slot.flags);
     if sway > 0.0 {
         let world = output.world_v.xyz
-            + slot_wind(model, output.world_v.xyz, sway, camera.position.w);
+            + vertex_wind(model, input.position, output.world_v.xyz, sway, camera.position.w);
         output.world_v = vec4<f32>(world, output.world_v.w);
         output.clip_position = camera.view_projection * vec4<f32>(world, 1.0);
     }
@@ -64,11 +64,22 @@ fn placed_material(material: vec4<u32>, slot: u32) -> vec4<u32> {
     return vec4<u32>(pack4x8unorm(output_color(material)), slot, material.zw);
 }
 
-// The offset the wind gives the vertex at `world` of a slot posed by
-// `model` that sways `sway`, at time `time`.
+// The offset the wind gives the vertex at mesh point `position`, placed at
+// `world`, of a slot posed by `model` that sways `sway`, at time `time`, as
+// the camera sees it: every layer of `wind_sway`, which shadow casters and
+// depth passes displace their vertices by alike.
+fn vertex_wind(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, sway: f32,
+        time: f32) -> vec3<f32> {
+    return wind_sway(vec4<f32>(camera.wind.xyz, time), vec4<f32>(camera.position.xyz, 1.0),
+        model[3].xyz, world.y - model[3].y, position, sway);
+}
+
+// The offset the wind gives the point at `world` of a slot posed by
+// `model` that sways `sway`, at time `time`, as one piece: its trunk's bend
+// alone, as on the slot's vertical axis, which impostor cards sway by, as
+// they have no branches.
 fn slot_wind(model: mat4x4<f32>, world: vec3<f32>, sway: f32, time: f32) -> vec3<f32> {
-    return wind_sway(camera.wind.xy, camera.wind.z, model[3].xyz, world.y - model[3].y, sway,
-        time);
+    return vertex_wind(model, vec3<f32>(0.0), world, sway, time);
 }
 
 // A selected cluster of a slot: 384 vertices, three per
@@ -352,10 +363,11 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     let sway = slot_sway(material.flags);
     if sway > 0.0 {
         let current = vertex.world_v.xyz
-            + slot_wind(model, vertex.world_v.xyz, sway, camera.position.w);
+            + vertex_wind(model, input.position, vertex.world_v.xyz, sway, camera.position.w);
         vertex.world_v = vec4<f32>(current, vertex.world_v.w);
         vertex.clip_position = camera.view_projection * vec4<f32>(current, 1.0);
-        world = vec4<f32>(world.xyz + slot_wind(model, world.xyz, sway, camera.wind.w), 1.0);
+        world = vec4<f32>(world.xyz
+            + vertex_wind(model, input.position, world.xyz, sway, camera.wind.w), 1.0);
     }
     if GROUNDING {
         vertex.material = placed_material(vertex.material, slot);

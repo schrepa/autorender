@@ -1193,11 +1193,12 @@ tables! {
         ],
     };
 
-    /// Group 0 of depth passes: each map's view matrix at a dynamic offset.
+    /// Group 0 of depth passes: each map's view matrix at a dynamic offset,
+    /// with the wind and the eye placed objects sway by.
     const SHADOW_VIEW: Table = Table {
         label: "engine/shadow-view-layout",
         serves: [SHADOW_SHADER @ 0, TERRAIN_SHADOW_SHADER @ 0],
-        bindings: &[dynamic_uniform(9, "view", 80, V)],
+        bindings: &[dynamic_uniform(9, "view", 96, V)],
     };
 
     /// Group 1 of retained depth passes: slot poses, and slot colors and joint

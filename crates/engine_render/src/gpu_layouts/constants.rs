@@ -396,6 +396,34 @@ gpu_consts! {
     /// pixel of, a different one each frame.
     pub(crate) const VT_FEEDBACK_BLOCK: u32 = 8 => ["VT_FEEDBACK_BLOCK" in SHADER];
 
+    // The wind's layers (`wind.wgsl`), which meshes, depth passes and shadow
+    // casters sway placed objects by alike: each a share of the object's
+    // one sway (`PlacementAsset::sway`), the trunk's.
+    /// The wind speed in which placed objects sway fully, meters a second,
+    /// and the meters up a trunk, and out from its axis, at which they sway
+    /// their sway.
+    pub(crate) const WIND_FULL_SPEED: f32 = 12.0 => ["WIND_FULL_SPEED"];
+    pub(crate) const WIND_SPAN: f32 = 10.0 => ["WIND_SPAN"];
+    /// Branches' bob, as far up as along the wind: its share of the sway,
+    /// growing with the square of a vertex's reach from the object's
+    /// vertical axis; its wave's rate (radians a second), and how far the
+    /// wave's phase turns a meter up the object (radians), besides three
+    /// turns around it.
+    pub(crate) const WIND_BRANCH: f32 = 4.0 => ["WIND_BRANCH"];
+    pub(crate) const WIND_BRANCH_RATE: f32 = 3.1 => ["WIND_BRANCH_RATE"];
+    pub(crate) const WIND_BRANCH_RISE: f32 = 2.1 => ["WIND_BRANCH_RISE"];
+    /// Needles' and leaves' flutter, up and across the wind: its share of
+    /// the sway, growing with a vertex's reach, and its rate (radians a
+    /// second).
+    pub(crate) const WIND_FLUTTER: f32 = 0.2 => ["WIND_FLUTTER"];
+    pub(crate) const WIND_FLUTTER_RATE: f32 = 13.0 => ["WIND_FLUTTER_RATE"];
+    /// The eye's distances, in meters, over which branches and needles fade
+    /// out, then the trunk: objects farther away stand still.
+    pub(crate) const WIND_DETAIL_NEAR: f32 = 30.0 => ["WIND_DETAIL_NEAR"];
+    pub(crate) const WIND_DETAIL_FAR: f32 = 70.0 => ["WIND_DETAIL_FAR"];
+    pub(crate) const WIND_TRUNK_NEAR: f32 = 250.0 => ["WIND_TRUNK_NEAR"];
+    pub(crate) const WIND_TRUNK_FAR: f32 = 500.0 => ["WIND_TRUNK_FAR"];
+
     // Values only shaders hold, in several modules under several names.
     /// A card word's flag of fading, and of fading out.
     pub(crate) const CARD_FADING: u32 = 1 << 31 => ["FADING" in SCATTER_CULL_SHADER, "IMPOSTOR_FADING", "CARD_FADING" in PRESENTATION_SHADER];

@@ -272,7 +272,7 @@ impl ShadowPipelines {
                 wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: &view_buffer,
                     offset: 0,
-                    size: wgpu::BufferSize::new(80),
+                    size: wgpu::BufferSize::new(96),
                 }),
             )],
         );

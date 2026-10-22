@@ -764,7 +764,7 @@ impl ShadowPass {
         let pipelines = self.pipelines.as_ref().expect("created above");
         let mut views = regions.view_matrices();
         // After each map's matrix, the wind placed objects sway in
-        // at this frame's time.
+        // at this frame's time, then the eye whose distance fades its layers.
         let wind = snapshot.environment.wind;
         let wind = [
             wind.velocity[0],
@@ -772,8 +772,10 @@ impl ShadowPass {
             wind.gusts,
             snapshot.elapsed_seconds,
         ];
+        let viewer = eye.extend(1.0).to_array();
         for slot in views.as_chunks_mut::<{ VIEW_STRIDE as usize / 4 }>().0 {
             slot[16..20].copy_from_slice(&wind);
+            slot[20..24].copy_from_slice(&viewer);
         }
         if self.written_views.as_deref() != Some(&views[..]) {
             queue.write_buffer(&pipelines.view_buffer, 0, bytemuck::cast_slice(&views));

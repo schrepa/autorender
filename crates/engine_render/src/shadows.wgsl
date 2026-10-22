@@ -498,6 +498,11 @@ struct View {
     // presentation time, which placed objects sway in as `wind.wgsl`'s
     // `wind_sway` has them.
     wind: vec4<f32>,
+    // The camera's eye (w 1), whose distance fades the wind's layers as the
+    // camera sees them. Views without one (w 0), the near caches', cast
+    // placed objects by their trunks' bend alone: the mean bend, in their
+    // wind without gusts at time zero.
+    eye: vec4<f32>,
 }
 
 // Its own binding: the selection pass above owns binding 0.
@@ -516,7 +521,7 @@ fn project(world: vec3<f32>) -> vec4<f32> {
 
 // Slot `slot`'s world position of mesh point `position`, swayed by the
 // wind where its flags carry a sway (skinned slots' palette
-// offsets read as none).
+// offsets read as none), as the meshes' vertices sway.
 fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
     let pose = slot_poses[slot];
     let point = vec4<f32>(position, 1.0);
@@ -526,7 +531,7 @@ fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
         return world;
     }
     let root = vec3<f32>(pose.r0.w, pose.r1.w, pose.r2.w);
-    return world + wind_sway(view.wind.xy, view.wind.z, root, world.y - root.y, sway, view.wind.w);
+    return world + wind_sway(view.wind, view.eye, root, world.y - root.y, position, sway);
 }
 
 @vertex
