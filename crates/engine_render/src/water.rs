@@ -338,7 +338,19 @@ impl WaterPass {
             .find_map(|terrain| terrain.water_window.as_ref())
             .filter(|_| settings.enabled);
         self.sim.prepare(device, queue, window, seconds);
-        let sim_generation = self.sim.drawn().1;
+        let (simulated, sim_generation) = self.sim.drawn();
+        // The square of the window that runs: its first corner, the meters
+        // across a cell and its cells along a side, and its datum.
+        let simulated = simulated.map(|drawn| {
+            let window = drawn.window;
+            let square = [
+                window.origin[0],
+                window.origin[1],
+                window.cell,
+                window.cells as f32,
+            ];
+            (square, [window.datum, 0.0, 0.0, 0.0])
+        });
         if let Some(tiles) = tiles {
             if let (Some(waves), Some(map)) = (&self.waves, &self.fall_map)
                 && self
@@ -368,14 +380,8 @@ impl WaterPass {
                 absorption: absorption(settings.color, settings.clarity),
                 waves: repeats,
                 ocean: sea,
-                sim: window.map_or([0.0; 4], |window| {
-                    [
-                        window.origin[0],
-                        window.origin[1],
-                        window.cell,
-                        window.cells as f32,
-                    ]
-                }),
+                sim: simulated.map_or([0.0; 4], |(square, _)| square),
+                sim_datum: simulated.map_or([0.0; 4], |(_, datum)| datum),
                 ..WaterUniform::zeroed()
             };
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
@@ -608,6 +614,7 @@ impl WaterPass {
             ocean_waves,
             ocean_reach,
             sim: [0.0; 4],
+            sim_datum: [0.0; 4],
         };
         queue.write_buffer(&draw.uniform, 0, bytemuck::bytes_of(&uniform));
         !draw.runs.is_empty()
@@ -879,18 +886,23 @@ impl RenderFeature for WaterPass {
                 .map_or(0, |_| FallMap::capacity_bytes())
     }
 
-    /// Tiles' patches holding water drawn, and the sea's sectors drawn and
-    /// their triangles.
+    /// Tiles' patches holding water drawn, the cells along a side of the
+    /// simulated square, and the sea's sectors drawn and their triangles.
     fn stats(
-        _this: Option<&Self>,
+        this: Option<&Self>,
         frame: Option<&WaterFrame>,
         _snapshot: &RenderSnapshot,
     ) -> (WaterStats, OceanStats) {
+        let simulated = frame
+            .and(this)
+            .and_then(|this| this.sim.drawn().0)
+            .map_or(0, |drawn| drawn.window.cells);
         (
             WaterStats {
                 patches: frame.map_or(0, |frame| frame.patches),
                 blocks: frame.map_or(0, |frame| frame.blocks[0]),
                 dropped_blocks: frame.map_or(0, |frame| frame.blocks[1]),
+                simulated_cells: simulated,
             },
             OceanStats {
                 sectors: frame.map_or(0, |frame| frame.sectors),

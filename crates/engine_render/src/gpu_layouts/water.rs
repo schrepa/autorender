@@ -22,6 +22,7 @@ gpu_structs! {
         pub ocean_waves: [[f32; 4]; MAX_OCEAN_WAVES],
         pub ocean_reach: [[f32; 4]; MAX_OCEAN_WAVES / 4],
         pub sim: [f32; 4],
+        pub sim_datum: [f32; 4],
     }
 
     /// WGSL `SimFrame` of `water_sim.wgsl`: the stage, the slots the

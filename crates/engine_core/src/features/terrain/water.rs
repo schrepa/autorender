@@ -38,14 +38,18 @@ settings! {
         /// The meters of water shallower than which shores foam.
         pub foam_width: f32 = 0.6 => range(0.05, 10.0),
         /// The meters across the square around the camera over which
-        /// rivers run live as the shallow-water equations say, starting
-        /// from their water as it settled there and taking the settled
-        /// water's past its edges; 0 none, the settled water standing
-        /// everywhere.
+        /// rivers run live as the shallow-water equations say, in cells
+        /// `live_cell` across, starting from their water as it settled
+        /// there and taking the settled water's past its edges; 0 none, the
+        /// settled water standing everywhere.
         pub simulated: f32 = 0.0 => range(0.0, 1024.0),
-        /// The meters across the cells water settles and is simulated in:
-        /// the cook makes the settled water's records at this size.
+        /// The meters across the cells water settles in: the cook makes the
+        /// settled water's records at this size.
         pub simulation_cell: f32 = 1.0 => range(0.25, 8.0),
+        /// The meters across the live window's cells: the square
+        /// `simulated` asks for runs in cells this size, each starting from
+        /// the settled water's cells around it.
+        pub live_cell: f32 = 0.5 => range(0.25, 8.0),
     }
 }
 

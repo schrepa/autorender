@@ -558,6 +558,10 @@ pub struct WaterStats {
     /// Blocks this frame dropped for want of the device's texture array
     /// layers, whose water does not draw.
     pub dropped_blocks: u32,
+    /// Cells along a side of the square around the camera over which
+    /// rivers run live: 0 while none do, fewer than the water settings ask
+    /// where the device's storage bindings cannot hold its buffers.
+    pub simulated_cells: u32,
 }
 
 /// The sea.

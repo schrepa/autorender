@@ -1961,6 +1961,17 @@
       "direction": null
     },
     {
+      "name": "water.simulated_cells",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "world_streaming.cells",
       "kind": "work",
       "rule": "shown",

@@ -58,7 +58,8 @@
 // `ocean` holds the sea's level less the eye and whether it is on, below
 // which their water gives way to it. Where water is simulated around the
 // camera (`water_sim.rs`), `sim` holds its square's first corner along x
-// and z, the meters across a cell and the cells along a side (none, zero).
+// and z, the meters across a cell and the cells along a side (none, zero),
+// and `sim_datum` the height its heights stand above (x, world meters).
 struct WaterUniform {
     relative_view_projection: mat4x4<f32>,
     origin: vec4<f32>,
@@ -72,6 +73,7 @@ struct WaterUniform {
     ocean_waves: array<vec4<f32>, 16>,
     ocean_reach: array<vec4<f32>, 4>,
     sim: vec4<f32>,
+    sim_datum: vec4<f32>,
 }
 @group(1) @binding(52) var<uniform> water: WaterUniform;
 // The waves' moments, a layer a tile, with their levels
