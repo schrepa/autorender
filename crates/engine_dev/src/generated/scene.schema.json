@@ -6500,6 +6500,31 @@
           "maximum": 1.0,
           "minimum": 0.0
         },
+        "sediment": {
+          "description": "How strongly the fine sediment water carries scatters light, per\nmeter: light passing through fades by it as well as by what the\nwater's clarity takes, and the water's body scatters back\n`sediment_color` by the sediment's share of the two; 0 none.",
+          "type": "number",
+          "format": "float",
+          "default": 0.15000000596046448,
+          "maximum": 50.0,
+          "minimum": 0.0
+        },
+        "sediment_color": {
+          "description": "The color the water's sediment scatters back, linear.",
+          "type": "array",
+          "default": [
+            0.05000000074505806,
+            0.06499999761581421,
+            0.029999999329447746
+          ],
+          "items": {
+            "type": "number",
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
         "simulated": {
           "description": "The meters across the square around the camera over which\nrivers run live as the shallow-water equations say, in cells\n`live_cell` across, starting from their water as it settled\nthere and taking the settled water's past its edges; 0 none, the\nsettled water standing everywhere.",
           "type": "number",
