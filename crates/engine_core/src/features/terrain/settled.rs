@@ -248,7 +248,8 @@ impl Terrains {
 /// given their water, as given and with its key; the keys it shares with
 /// workers; how often what its tiles' water reads changed, and what it last
 /// asked for their water at, whether it waits to ask again, and how many
-/// tiles' water its cooking session has left; and whether its session
+/// tiles' water waits, for what it reads or for a job's slot, as it last
+/// asked (those whose jobs run count as they run); and whether its session
 /// cooks, which makes every watered tile's records over the cook's regions
 /// and every tile's water over them.
 #[derive(Default)]
@@ -275,7 +276,7 @@ pub(super) struct Settled {
     revision: u64,
     seen: Option<(u64, u64, Generation, bool)>,
     deferred: bool,
-    waters_left: u64,
+    waters_waiting: u64,
     pub(super) cooking: bool,
 }
 
@@ -304,8 +305,8 @@ impl Settled {
 
     /// Watered tiles whose record over their region of the cook's under
     /// the edits the ground has now has not arrived and did not fail, and
-    /// the tiles whose water its cooking session has still to make: what a
-    /// cook has left.
+    /// the tiles whose water its cooking session has still to make, those
+    /// waiting and those whose jobs run now: what a cook has left.
     pub(super) fn left(&self) -> u64 {
         let Some((_, watered)) = &self.watered else {
             return 0;
@@ -317,7 +318,8 @@ impl Settled {
                 self.summaries.get(&key).copied() != region && !self.failed.contains_key(&key)
             })
             .count() as u64;
-        records + self.waters_left
+        let running = self.waters.iter().filter(|(_, watering)| watering.job.is_some());
+        records + self.waters_waiting + running.count() as u64
     }
 
     /// The meters across its records' cells.
@@ -1308,6 +1310,7 @@ fn take_waters(state: &mut TerrainState, slots: &mut JobBudget<'_>, work: &Work,
             Err(error) => {
                 state.settled.waters.remove(&key);
                 state.settled.waters_failed.insert(key, frame);
+                state.settled.deferred = true;
                 state.failures.record(frame, error);
             }
         }
@@ -1457,8 +1460,8 @@ fn water_record(reads: &Reads, cell: f32) -> RecordKey {
 /// ([`wants`]), nearest `eye` (terrain-local) first: a tile whose reads
 /// changed no longer waits for what it asked for before. The water of
 /// tiles it gives water no more stops, and that of tiles whose jobs failed
-/// waits a while from the frame they did, `frame` now. Counts the tiles'
-/// water its cooking session has left.
+/// waits a while from the frame they did, `frame` now. Counts the tiles
+/// whose water waits, for what it reads or for a job's slot.
 fn ask_waters(
     state: &mut TerrainState,
     slots: &mut JobBudget<'_>,
@@ -1492,7 +1495,7 @@ fn ask_waters(
         .collect();
     wanted.sort_unstable();
     let cell = settled.cell;
-    let mut left = 0;
+    let mut waiting = 0;
     for (place, key) in wanted {
         let (job, tile) = state.settled_tile(recipe, key);
         let reads = match wants(
@@ -1503,7 +1506,7 @@ fn ask_waters(
         ) {
             Wants::Here(reads) => reads,
             Wants::Coming => {
-                left += 1;
+                waiting += 1;
                 continue;
             }
             Wants::Nothing => continue,
@@ -1512,7 +1515,6 @@ fn ask_waters(
         if let Some(watering) = settled.waters.get(&key)
             && watering.reads == reads
         {
-            left += u64::from(watering.job.is_some());
             continue;
         }
         // What it read before is not what it reads now.
@@ -1520,10 +1522,10 @@ fn ask_waters(
             slots.jobs.cancel(id);
             slots.release();
         }
-        left += 1;
         let priority = job_priority(VIEW_JOBS, place);
         if !slots.take(priority) {
             settled.deferred = true;
+            waiting += 1;
             continue;
         }
         let record = water_record(&reads, cell);
@@ -1550,7 +1552,7 @@ fn ask_waters(
             },
         );
     }
-    state.settled.waters_left = left;
+    state.settled.waters_waiting = waiting;
 }
 
 /// Swaps the water `state`'s tiles' jobs made into the resident tiles not
