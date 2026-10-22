@@ -26,8 +26,11 @@ use std::ops::Range;
 
 use glam::Vec2;
 
+use crate::hydraulics::GRAVITY;
 use crate::hydrology::WaterGrid;
+use crate::noise::smooth;
 use crate::rivers::{RiverRaster, RiverWater, Rivers};
+use crate::shallow_water::DENSITY;
 use crate::{
     Layers, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, Reach, TILE_SAMPLES, TILE_STRIDE, Tile,
 };
@@ -52,10 +55,20 @@ pub const TURBULENT_SPEED: f32 = 0.5;
 /// turbulent: eddies half a meter across turning their rims at a meter a
 /// second.
 pub const TURBULENT_SWIRL: f32 = 4.0;
-/// Watts a square meter of bed the water loses at which it breaks white all
-/// over: about the power a step-pool stream spends on its bed (ρ·g·q·S,
-/// half a square meter a second down a slope of 0.06).
-pub const WHITE_POWER: f32 = 300.0;
+/// The turbulent Froude number of running water (the speed of eddies as
+/// large as it is deep over √(g·h), the speed gravity smooths its surface
+/// at) from which its turbulence breaks its surface white (Brocchini and
+/// Peregrine 2001), and from which it breaks white all over. In uniform flow
+/// its cube is the slope times the Froude number: a 3% riffle at Froude 0.8
+/// gives 0.29 and stays clear; a 10% run at Froude 1.5 gives 0.53 and shows
+/// flecks; a 20% chute at Froude 2.9, or water landing below a 30 cm step,
+/// gives about 0.84 and breaks white.
+pub const BREAK_ONSET: f32 = 0.45;
+pub const BREAK_FULL: f32 = 0.85;
+/// The meters deep thinner water breaks as, so films divide by nothing:
+/// about where surface tension, not gravity, holds a surface flat against
+/// eddies (waves shorter than 1.7 cm are capillary).
+pub const BREAK_THINNEST: f32 = 0.02;
 /// The share of the time the water leaves the bed (its lip) at which a cell
 /// counts wholly as a lip water plunges from: most of the time.
 const LIP_HIGH: f32 = 0.5;
@@ -471,11 +484,20 @@ pub(crate) fn turbulence(rush: f32, speed: f32, swirl: f32) -> f32 {
     )
 }
 
-/// How strongly water breaks white (0 to 1), born where it loses `energy`
-/// watts a square meter of bed, as a share of [`WHITE_POWER`], and where it
-/// leaves the bed (`lip`, the share of the time it does).
-pub(crate) fn breaking(energy: f32, lip: f32) -> f32 {
-    engine_math::clamp(energy / WHITE_POWER + lip, 0.0, 1.0)
+/// How strongly water `depth` meters deep (at least [`BREAK_THINNEST`])
+/// that loses `energy` watts a square meter of bed breaks white (0 to 1:
+/// where short-lived white water is born): where the turbulence its losses
+/// stir breaks its surface against gravity, eddies as large as it is deep
+/// turning at (ε·h)^(1/3) (Kolmogorov; ε the watts it loses a kilogram)
+/// from [`BREAK_ONSET`] to [`BREAK_FULL`] of √(g·h), smoothly; and where it
+/// leaves the bed (`lip`, the share of the time it does), plunging.
+pub(crate) fn breaking(energy: f32, depth: f32, lip: f32) -> f32 {
+    let depth = engine_math::max(depth, BREAK_THINNEST);
+    let losing = energy / (DENSITY * depth);
+    let eddies = libm::cbrtf(losing * depth);
+    let breaks = eddies / (GRAVITY * depth).sqrt();
+    let born = smooth((breaks - BREAK_ONSET) / (BREAK_FULL - BREAK_ONSET));
+    engine_math::clamp(born + lip, 0.0, 1.0)
 }
 
 /// How strongly a drop lies where water leaves the bed `lip` of the time (0

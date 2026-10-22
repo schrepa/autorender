@@ -1785,11 +1785,13 @@ const SIM_THIN_WATER: f32 = 0.05;
 // turbulent (`engine_terrain::TURBULENT_SPEED`, `TURBULENT_SWIRL`).
 const WATER_TURBULENT_SPEED: f32 = 0.5;
 const WATER_TURBULENT_SWIRL: f32 = 4.0;
-// Kilograms a cubic meter of water, and the watts a square meter of bed the
-// water loses at which it breaks white all over
-// (`engine_terrain::shallow_water::DENSITY`, `WHITE_POWER`).
-const WATER_DENSITY: f32 = 1000.0;
-const WATER_WHITE_POWER: f32 = 300.0;
+// The turbulent Froude number of running water (the speed of eddies as
+// large as it is deep over √(g·h)) from which it breaks white, and from
+// which it breaks white all over; and the meters deep thinner water breaks
+// as (`engine_terrain::BREAK_ONSET`, `BREAK_FULL`, `BREAK_THINNEST`).
+const WATER_BREAK_ONSET: f32 = 0.45;
+const WATER_BREAK_FULL: f32 = 0.85;
+const WATER_BREAK_THINNEST: f32 = 0.02;
 // How upright (the up part of its triangles' normal) the simulated water's
 // surface stands where it gives way, from the first to the second: down a
 // cliff, between cells far apart in height, the falls' sheets show it; and
@@ -1938,11 +1940,13 @@ fn sim_water_output(index: u32) -> WaterOutput {
     // turbulence reads its water's swings (`engine_terrain`'s
     // `turbulence`): how far its velocity strays from the mean of its
     // neighbors holding water, against its speed, and how fast the water
-    // turns there; where white water is born in it, where it loses its
-    // energy as the cook finds its settled water does (`engine_terrain`'s
-    // `breaking`), the power it spends running down its surface, ρ·g·|q|
-    // times the surface's slope, as a share of WATER_WHITE_POWER; and its
-    // shear. Its reach and nearest obstacle are its bed's.
+    // turns there; where white water is born in it, by the rule the cook
+    // breaks its settled water white by (`engine_terrain`'s `breaking`):
+    // running down its surface, it loses g·|q| times the surface's slope
+    // over its depth h a kilogram (ε, at least WATER_BREAK_THINNEST deep),
+    // which stirs eddies as large as it is deep turning at (ε·h)^(1/3), and
+    // those break its surface from WATER_BREAK_ONSET to WATER_BREAK_FULL of
+    // √(g·h); and its shear. Its reach and nearest obstacle are its bed's.
     let to_east = sim_water_moving(i + 1, j);
     let to_west = sim_water_moving(i - 1, j);
     let to_north = sim_water_moving(i, j + 1);
@@ -1956,8 +1960,10 @@ fn sim_water_output(index: u32) -> WaterOutput {
     let turbulence = saturate(strays / max(length(velocity), WATER_TURBULENT_SPEED)
         + swirl / WATER_TURBULENT_SWIRL);
     let shear = sqrt(dot(along_x, along_x) + dot(along_z, along_z));
-    let spent = WATER_DENSITY * WATER_GRAVITY * length(flow) * length(output.slope);
-    let born = saturate(spent / WATER_WHITE_POWER);
+    let deep = max(depth, WATER_BREAK_THINNEST);
+    let losing = WATER_GRAVITY * length(flow) * length(output.slope) / deep;
+    let breaks = pow(losing * deep, 1.0 / 3.0) / sqrt(WATER_GRAVITY * deep);
+    let born = smoothstep(WATER_BREAK_ONSET, WATER_BREAK_FULL, breaks);
     let wet = depth > SIM_WET;
     output.state = vec4<f32>(select(vec3<f32>(0.0), vec3<f32>(turbulence, born, shear), wet), 0.0);
     let bed = water_sim_beds[sim_water_at(i, j)];

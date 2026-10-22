@@ -589,7 +589,7 @@ impl Tile {
 /// `[v00, v10, v01, v11]`, on the triangle holding it: the cell's diagonal
 /// runs from its (x, z+1) corner to its (x+1, z) corner.
 #[inline]
-fn on_triangle([v00, v10, v01, v11]: [f32; 4], fu: f32, fv: f32) -> f32 {
+pub(crate) fn on_triangle([v00, v10, v01, v11]: [f32; 4], fu: f32, fv: f32) -> f32 {
     if fu + fv <= 1.0 {
         v00 + fu * (v10 - v00) + fv * (v01 - v00)
     } else {

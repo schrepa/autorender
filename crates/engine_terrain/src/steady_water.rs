@@ -42,11 +42,12 @@ use std::sync::Arc;
 use glam::{IVec2, Vec2};
 
 use engine_math::collections::HashMap;
-use engine_math::{max, min};
+use engine_math::{clamp, max, min};
 
 use crate::codec::{self, Reader, Writer, record};
 use crate::hydraulics::GRAVITY;
 use crate::shallow_water::{self, CELL_MEANS, DRY, UNHELD, WET_MOST, resistance, velocity};
+use crate::tile::on_triangle;
 use crate::tile_water::{
     TileWater, WATER_WIDTH_RANGE, WaterState, breaking, lipped, pack, pack_obstacle, pack_state,
     plunges, shears, turbulence, unpack,
@@ -1389,7 +1390,8 @@ impl SettleStart {
     /// its lakes' levels where they hold them and its water's where it
     /// flows, with how far it varied about its means, dry elsewhere and
     /// where its blocks are not stored; the water its rivers bring to them,
-    /// cells in order; its summary; and how its water settled.
+    /// cells in order; its summary, each flowing cell breaking white as its
+    /// water does at its depth over its bed; and how its water settled.
     pub fn finish(&self, means: &[[f32; 4]], steps: u32, settled: bool) -> Vec<SteadyWater> {
         let area = f64::from(self.cell * self.cell);
         let mut made = Vec::with_capacity(self.kept.len());
@@ -1406,6 +1408,7 @@ impl SettleStart {
             let mut rush = unknown();
             let mut wet = vec![0.0; count];
             let mut lip = unknown();
+            let mut white = unknown();
             let (mut flowing, mut clamped) = (0, 0);
             let mut volume = 0.0_f64;
             // Each reach's channel cells flowing: their Manning's n summed,
@@ -1447,6 +1450,7 @@ impl SettleStart {
                     swirl[out] = max(motion[2], 0.0).sqrt();
                     rush[out] = max(motion[3], 0.0).sqrt();
                     lip[out] = shares[1];
+                    white[out] = breaking(motion[0], depth, shares[1]);
                     flowing += 1;
                     clamped += u32::from(shares[2] > 0.0);
                     volume += f64::from(depth);
@@ -1478,7 +1482,7 @@ impl SettleStart {
                 .collect();
             sources.sort_by_key(|source| source.cell);
             let cells = [columns, rows];
-            let summary = SteadySummary::of(cells, (&velocities, &foam), (&energy, &swirl));
+            let summary = SteadySummary::of(cells, (&velocities, &foam), (&white, &swirl));
             let mean = |total: f64, count: u32| {
                 if count > 0 {
                     (total / f64::from(count)) as f32
@@ -1581,35 +1585,36 @@ pub const SUMMARY_SIDE: u32 = 32;
 /// A level-0 tile's settled water seen from afar ([`SteadyWater::summary`]):
 /// over [`SUMMARY_SIDE`] squares along each side of the tile, row by row,
 /// each square's flowing cells' mean velocity along x and z (meters a
-/// second), mean energy lost (watts a square meter) and mean swirl (a
-/// second), NaN where none flows; and its wet cells' mean foam (NaN where
-/// none is wet).
+/// second), the mean of how strongly they break white (0 to 1, each as its
+/// water does at its own depth) and mean swirl (a second), NaN where none
+/// flows; and its wet cells' mean foam (NaN where none is wet).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SteadySummary {
     velocity: [Box<[f32]>; 2],
     foam: Box<[f32]>,
-    energy: Box<[f32]>,
+    white: Box<[f32]>,
     swirl: Box<[f32]>,
 }
 
 /// A square of a [`SteadySummary`]: where water flows in it, its mean
-/// velocity, energy lost and swirl; and its mean foam where water is wet in
+/// velocity, white water and swirl; and its mean foam where water is wet in
 /// it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SteadySquare {
     pub velocity: Option<[f32; 2]>,
     pub foam: Option<f32>,
-    pub energy: Option<f32>,
+    pub white: Option<f32>,
     pub swirl: Option<f32>,
 }
 
 impl SteadySummary {
-    /// The summary of a tile's `cells` (along x and z) holding `velocity`
-    /// and `foam`, `energy` and `swirl` ([`SteadyWater`]'s, row by row).
+    /// The summary of a tile's `cells` (along x and z) holding `velocity`,
+    /// `foam` and `swirl` ([`SteadyWater`]'s, row by row) and `white`, how
+    /// strongly each of its flowing cells breaks white.
     fn of(
         cells: [u32; 2],
         (velocity, foam): (&[Vec<f32>; 2], &[f32]),
-        (energy, swirl): (&[f32], &[f32]),
+        (white, swirl): (&[f32], &[f32]),
     ) -> Self {
         let side = SUMMARY_SIDE as usize;
         let mut sums = vec![[0.0_f32; 7]; side * side];
@@ -1627,7 +1632,7 @@ impl SteadySummary {
                     sum[0] += velocity[0][at];
                     sum[1] += velocity[1][at];
                     sum[2] += 1.0;
-                    sum[5] += energy[at];
+                    sum[5] += white[at];
                     sum[6] += swirl[at];
                 }
             }
@@ -1641,7 +1646,7 @@ impl SteadySummary {
                 sums.iter().map(|sum| mean(sum[1], sum[2])).collect(),
             ],
             foam: sums.iter().map(|sum| mean(sum[3], sum[4])).collect(),
-            energy: sums.iter().map(|sum| mean(sum[5], sum[2])).collect(),
+            white: sums.iter().map(|sum| mean(sum[5], sum[2])).collect(),
             swirl: sums.iter().map(|sum| mean(sum[6], sum[2])).collect(),
         }
     }
@@ -1657,7 +1662,7 @@ impl SteadySummary {
         Some(SteadySquare {
             velocity: flowing.then_some(velocity),
             foam: (!self.foam[at].is_nan()).then_some(self.foam[at]),
-            energy: flowing.then_some(self.energy[at]),
+            white: flowing.then_some(self.white[at]),
             swirl: flowing.then_some(self.swirl[at]),
         })
     }
@@ -1670,7 +1675,7 @@ impl codec::Codec for SteadySummary {
             &self.velocity[0],
             &self.velocity[1],
             &self.foam,
-            &self.energy,
+            &self.white,
             &self.swirl,
         ] {
             codec::put_grid(out, values, stride);
@@ -1682,15 +1687,15 @@ impl codec::Codec for SteadySummary {
         let x = codec::get_grid(input, stride)?;
         let z = codec::get_grid(input, stride)?;
         let foam = codec::get_grid(input, stride)?;
-        let energy = codec::get_grid(input, stride)?;
+        let white = codec::get_grid(input, stride)?;
         let swirl = codec::get_grid(input, stride)?;
-        if [x.len(), z.len(), foam.len(), energy.len(), swirl.len()] != [stride * stride; 5] {
+        if [x.len(), z.len(), foam.len(), white.len(), swirl.len()] != [stride * stride; 5] {
             return Err(codec::CodecError("invalid settled water summary"));
         }
         Ok(Self {
             velocity: [x, z],
             foam,
-            energy,
+            white,
             swirl,
         })
     }
@@ -1776,8 +1781,10 @@ fn minmod(a: f32, b: f32, c: f32) -> f32 {
 /// of its neighbors holding water limited by the generalized minmod so no
 /// plane rises past them where the water falls away, one-sided where one
 /// of them holds water, and flat where neither does); and its water's
-/// velocity, foam, turbulence and white water ([`turbulence`],
-/// [`breaking`]), and the share of the time it leaves the bed (its lip).
+/// velocity, foam, turbulence and white water ([`turbulence`], and
+/// [`breaking`] at its depth over its bed, the mean of the ground at its
+/// corners as its region's cells stand on it), and the share of the time it
+/// leaves the bed (its lip).
 #[derive(Clone, Copy, Default)]
 struct Plane {
     known: bool,
@@ -1806,12 +1813,14 @@ impl Planes {
     /// The planes of the cells `cell` meters across around the samples
     /// from `low` to `high` (terrain-local), each from the settled cell
     /// `cells` gives (by its place on the terrain's lattice of cells; `None`
-    /// where no record holds it).
+    /// where no record holds it), over the ground `ground` gives at each
+    /// terrain-local point.
     fn of(
         low: Vec2,
         high: Vec2,
         cell: f32,
         cells: &dyn Fn(i64, i64) -> Option<SteadyCell>,
+        ground: &dyn Fn(Vec2) -> f32,
     ) -> Self {
         let [(i0, j0, _), ..] = around(low, cell);
         let [.., (i1, j1, _)] = around(high, cell);
@@ -1879,6 +1888,14 @@ impl Planes {
                         ..
                     }) => {
                         let velocity = Vec2::from(velocity);
+                        // Its bed, as its region's cells stand on the
+                        // ground: the mean of the ground at its corners.
+                        let (i, j) = (first[0] + x, first[1] + z);
+                        let corner = |di: i64, dj: i64| {
+                            ground(Vec2::new((i + di) as f32, (j + dj) as f32) * cell)
+                        };
+                        let bed =
+                            0.25 * (corner(0, 0) + corner(1, 0) + corner(0, 1) + corner(1, 1));
                         Plane {
                             known: true,
                             wet: true,
@@ -1891,7 +1908,7 @@ impl Planes {
                             velocity,
                             foam,
                             turbulence: turbulence(rush, velocity.length(), swirl),
-                            white: breaking(energy, lip),
+                            white: breaking(energy, surface - bed, lip),
                             lip,
                         }
                     }
@@ -1929,13 +1946,14 @@ impl Tile {
     /// slope times the way from its middle to the sample, by their
     /// nearness. Dry cells add nothing, and a sample whose blended surface
     /// stands under its ground is dry. Its velocity, foam, turbulence,
-    /// white water and lips blend alike, held still where most are lakes',
-    /// and it takes its shear, where it plunges and the reach of its bed
-    /// ([`Tile::bed`]); dry where none holds any, and as its own water stood
-    /// where no record holds the cells around it. The width its water packs
-    /// as and whether a fall's sheet runs over it stay its own. Surfaces
-    /// stand at their steps of the height grid, as records hold them;
-    /// `None` where no water stands on it.
+    /// white water (each cell's breaking as deep as it stands over the
+    /// tile's ground at its corners) and lips blend alike, held still where
+    /// most are lakes', and it takes its shear, where it plunges and the
+    /// reach of its bed ([`Tile::bed`]); dry where none holds any, and as its
+    /// own water stood where no record holds the cells around it. The width
+    /// its water packs as and whether a fall's sheet runs over it stay its
+    /// own. Surfaces stand at their steps of the height grid, as records
+    /// hold them; `None` where no water stands on it.
     #[must_use]
     pub fn steadied(
         &self,
@@ -1949,7 +1967,8 @@ impl Tile {
         let own = self.water();
         let place =
             |x: usize, z: usize| origin + Vec2::new(x as f32 - 1.0, z as f32 - 1.0) * spacing;
-        let planes = Planes::of(place(0, 0), place(stride - 1, stride - 1), cell, cells);
+        let ground = |point: Vec2| self.ground_at(point - origin);
+        let planes = Planes::of(place(0, 0), place(stride - 1, stride - 1), cell, cells, &ground);
         let count = stride * stride;
         let mut surface = vec![f32::NAN; count];
         let mut info = vec![[0_u32; 3]; count];
@@ -2031,7 +2050,7 @@ impl Tile {
     /// The water of this tile of `pyramid`, of a coarser level than 0,
     /// running, foaming, churning and breaking as settled water's summaries
     /// say ([`SteadySummary`]): each sample its own water reaches takes the
-    /// mean velocity, foam, swirl and energy of the summaries' squares
+    /// mean velocity, foam, swirl and white water of the summaries' squares
     /// around it, `squares` giving each by its place on the terrain's
     /// lattice of squares (`None` where no summary holds it), blended by
     /// their nearness, and its shear, where it plunges and the reach of its
@@ -2071,14 +2090,15 @@ impl Tile {
                         blend.weight += share;
                         blend.foam += foam * share;
                     }
-                    // Summaries hold no swings of speed, nor lips.
+                    // Summaries hold no swings of speed, nor lips: their
+                    // white water holds what their cells' lips throw.
                     if let Some(velocity) = found.velocity {
                         let velocity = Vec2::from(velocity);
                         let swirl = found.swirl.unwrap_or(0.0);
                         blend.moving += share;
                         blend.flow += velocity * share;
                         blend.turbulence += turbulence(0.0, velocity.length(), swirl) * share;
-                        blend.white += breaking(found.energy.unwrap_or(0.0), 0.0) * share;
+                        blend.white += found.white.unwrap_or(0.0) * share;
                     }
                 }
                 if !blend.known {
@@ -2141,6 +2161,25 @@ impl Tile {
             });
             info[at][2] = pack_obstacle(Vec2::ZERO, 0.0, if plunges[at] { 1.0 } else { lip });
         }
+    }
+
+    /// The ground at `local`, meters from the tile's first corner, on the
+    /// triangles every consumer splits cells into, over its samples and
+    /// their border, and at the border's nearest point past it: what the
+    /// corners of the settled cells its samples blend stand on.
+    fn ground_at(&self, local: Vec2) -> f32 {
+        let last = (TILE_STRIDE - 2) as f32;
+        let u = clamp(local.x / self.spacing(), -1.0, last);
+        let v = clamp(local.y / self.spacing(), -1.0, last);
+        let (i, j) = (min(u.floor(), last - 1.0), min(v.floor(), last - 1.0));
+        let (x, z) = (i as i32, j as i32);
+        let corners = [
+            self.height(x, z),
+            self.height(x + 1, z),
+            self.height(x, z + 1),
+            self.height(x + 1, z + 1),
+        ];
+        on_triangle(corners, u - i, v - j)
     }
 }
 

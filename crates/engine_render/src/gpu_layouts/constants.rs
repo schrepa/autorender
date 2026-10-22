@@ -475,7 +475,7 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::FASTEST => ["SIM_FASTEST" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SOURCE_SPEED => ["SIM_SOURCE_SPEED" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::UNHELD => ["SIM_UNHELD" in WATER_SIM_SHADER];
-    engine_core::terrain_data::shallow_water::DENSITY => ["SIM_DENSITY" in WATER_SIM_SHADER, "WATER_DENSITY"];
+    engine_core::terrain_data::shallow_water::DENSITY => ["SIM_DENSITY" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FERGUSON_A1 => ["SIM_FERGUSON_A1" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FERGUSON_A2 => ["SIM_FERGUSON_A2" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SHALLOWEST => ["SIM_SHALLOWEST" in WATER_SIM_SHADER];
@@ -499,7 +499,9 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::SLOWEST => ["SIM_SLOWEST" in WATER_SIM_SHADER];
     engine_core::terrain_data::TURBULENT_SPEED => ["WATER_TURBULENT_SPEED"];
     engine_core::terrain_data::TURBULENT_SWIRL => ["WATER_TURBULENT_SWIRL"];
-    engine_core::terrain_data::WHITE_POWER => ["WATER_WHITE_POWER"];
+    engine_core::terrain_data::BREAK_ONSET => ["WATER_BREAK_ONSET"];
+    engine_core::terrain_data::BREAK_FULL => ["WATER_BREAK_FULL"];
+    engine_core::terrain_data::BREAK_THINNEST => ["WATER_BREAK_THINNEST"];
     engine_core::PAGE_WORDS => ["PAGE_WORDS" in VIRTUAL_SHADER, "VIRTUAL_PAGE_WORDS" in SHADER];
     engine_core::NO_PARENT => ["NO_PARENT" in PRESENTATION_SHADER];
     engine_core::NODE_VALID => ["NODE_VALID" in PRESENTATION_SHADER];
