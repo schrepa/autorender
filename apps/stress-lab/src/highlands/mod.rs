@@ -687,37 +687,30 @@ fn plateau_ring(center: [f32; 2], radius: f32, roads: &[Vec<[f32; 2]>]) -> Vec<A
 
 /// The highlands' surface: its rules over [`LOOKS`], each material textured
 /// by its ground material's maps, and the objects authors stand on it.
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
 fn surface(
     world: &mut World,
     files: &HashMap<String, StressFile>,
     authored: Vec<AuthoredPlacement>,
 ) -> engine::Result<TerrainSurface> {
-    // The shapes and the conifers' atlas are records: their handles now,
-    // their content once hosts hand it back or it is built in place.
-    // Boulders come at one detail, their coarser levels their meshes' own;
-    // spruces, the engine's conifers, at each of their levels.
+    // The shapes and the bark atlas are records: their handles now, their
+    // content once hosts hand it back or it is built in place. Boulders
+    // come at one detail, their coarser levels their meshes' own; spruces
+    // at each of their levels, and as the solid crowns shadow maps draw in
+    // their place.
     let boulders = (0..BOULDERS as u32)
         .map(|seed| rocks::boulder_record(world, seed))
         .collect::<engine::Result<Vec<_>>>()?;
-    // Their opaque trunks and crowns, the trunks blending into the forest
-    // floor, under a fringe of needle cards cut out by the atlas's alpha.
+    // Spruces of a few shapes over one bark and needle atlas, their needles
+    // cut out by its alpha and their trunks blending into the forest
+    // floor.
     let atlas = trees::atlas_record(world)?;
-    let (crown, fringe) = Conifer::materials(atlas)?;
-    let crown = crown.with_grounding(ROOTS)?;
     let needles = {
+        let material = trees::material(atlas)?.with_grounding(ROOTS)?;
         let mut assets = world.resource_mut::<AssetLibrary>();
-        (assets.insert_material(crown)?, assets.insert_material(fringe)?)
+        assets.insert_material(material)?
     };
     let spruces = (0..SPRUCES as u32)
-        .map(|seed| {
-            Conifer { seed }.asset(needles, |conifer, level, part| {
-                trees::conifer_record(world, conifer, level, part)
-            })
-        })
+        .map(|seed| trees::spruce(world, seed, needles))
         .collect::<engine::Result<Vec<_>>>()?;
     let materials = world.resource_scope(|world, mut records: Mut<Records>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
@@ -778,6 +771,7 @@ fn surface(
                 PlacedShape::Sphere { radius: 0.42 },
                 [0.0; 3],
             )),
+            shadow: None,
         });
     }
     for spruce in spruces {

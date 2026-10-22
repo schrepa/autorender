@@ -95,23 +95,23 @@ pub use engine_core::{
 };
 
 /// Terrain authoring: layer stacks, masks, stamps, bakes, placement and
-/// surfaces, which a [`Terrain`] component describes, the tile data they
-/// make, and conifers to place.
+/// surfaces, which a [`Terrain`] component describes, and the tile data
+/// they make.
 pub mod terrain {
     /// Heightfield terrain data: tile pyramids, layer stacks, tiles,
     /// patches and the jobs that make tiles and bakes.
     pub use engine_core::terrain_data as data;
     pub use engine_core::{
         AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes,
-        Blend, Conifer, ConiferPart, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion,
-        ErosionLayer, ErosionStage, FarPlacement, HeightImage, HeightmapLayer, Hydrology,
-        HydrologyLayer, HydrologySample, HydrologyStage, Layer, LayerError, Layers,
-        MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS, MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, Mask,
-        MotionDetail, NoiseLayer, NoiseMask, Patch, PathLayer, PathProfile, PathStage, Placed,
-        PlacedCollider, PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod,
-        PlacementPart, Pyramid, PyramidError, Remap, Route, RouteOptions, Stamp, StampOp,
-        SurfaceMaterial, SurfaceProjection, Surroundings, SurroundingsStatus, TerrainBakes,
-        TerrainEdit, TerrainPrefetch, TerrainSurface, Tile, TileKey,
+        Blend, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion, ErosionLayer, ErosionStage,
+        FarPlacement, HeightImage, HeightmapLayer, Hydrology, HydrologyLayer, HydrologySample,
+        HydrologyStage, Layer, LayerError, Layers, MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS,
+        MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, Mask, MotionDetail, NoiseLayer, NoiseMask, Patch,
+        PathLayer, PathProfile, PathStage, Placed, PlacedCollider, PlacedShape, PlacementAsset,
+        PlacementChoice, PlacementLayer, PlacementLod, PlacementPart, Pyramid, PyramidError, Remap,
+        Route, RouteOptions, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Surroundings,
+        SurroundingsStatus, TerrainBakes, TerrainEdit, TerrainPrefetch, TerrainSurface, Tile,
+        TileKey,
     };
 }
 
