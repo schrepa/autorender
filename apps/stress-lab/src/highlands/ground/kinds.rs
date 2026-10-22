@@ -1,7 +1,8 @@
 //! The ground materials themselves: grass of tapering blades in tufts
 //! (fresh, or dry over a mat of dead blades with heather), talus of
-//! stones over gravel, bare soil, a weathered rock face and wind-packed
-//! snow, each at `size` texels along each side.
+//! stones over gravel, bare soil, a weathered rock face, wind-packed
+//! snow, and streams' rippled sand, gravel and cobbles, each at `size`
+//! texels along each side.
 
 use std::f32::consts::TAU;
 
@@ -214,12 +215,15 @@ fn heather(texels: &mut [Texel], size: usize, seed: u32) {
 
 /// A layer of stones on cellular noise: a share of the cells each hold a
 /// stone shrunk from the cell's edges by a gap from a range (in cells),
-/// rounded or angular by its own measure, standing from `base` up to `rise`
-/// higher, tilted and folded along a crest of its own.
+/// rounded or angular by its own measure within a range, standing from
+/// `base` up to `rise` higher, tilted and folded along a crest of its own.
 struct Stones {
     cells: Cells,
     share: f32,
     gap: [f32; 2],
+    /// How rounded its stones are, from the first to the second: 0
+    /// angular, 1 rounded.
+    round: [f32; 2],
     base: f32,
     rise: f32,
     /// Rise per cell of each stone's tilt, at most, and of an angular
@@ -252,7 +256,7 @@ impl Stones {
         }
         // Rounded stones have wide shoulders and domes; angular ones narrow
         // shoulders, a crest and flat faces.
-        let round = random(16);
+        let round = lerp(self.round[0], self.round[1], random(16));
         let shoulder = lerp(0.07, 0.3, round);
         let profile = saturate(inside / shoulder);
         let rise = lerp(profile, profile.sqrt(), round);
@@ -277,6 +281,15 @@ impl Stones {
         let warmth = (unit(hash(id, 15, self.seed)) - 0.5) * 0.12;
         [value * (1.0 + warmth), value, value * (1.0 - warmth)]
     }
+
+    /// A water-worn stone `id`'s color: its gray ([`Self::color`]) tinted as
+    /// one of the rocks streams carry ([`RIVER_ROCKS`]).
+    fn worn(&self, id: u32, dark: f32, light: f32) -> Rgb {
+        let pick = (unit(hash(id, 17, self.seed)) * RIVER_ROCKS.len() as f32) as usize;
+        let rock = RIVER_ROCKS[pick.min(RIVER_ROCKS.len() - 1)];
+        let gray = self.color(id, dark, light);
+        [gray[0] * rock[0], gray[1] * rock[1], gray[2] * rock[2]]
+    }
 }
 
 const GRIT: Rgb = [0.058, 0.054, 0.050];
@@ -296,6 +309,7 @@ pub(super) fn scree(size: usize) -> Maps {
         cells: Cells::new(count, 0.9, seed + salt),
         share,
         gap,
+        round: [0.0, 1.0],
         base,
         rise,
         tilt: 0.6,
@@ -366,6 +380,7 @@ pub(super) fn dirt(size: usize) -> Maps {
         cells: Cells::new(count, 0.8, seed + salt),
         share,
         gap,
+        round: [0.0, 1.0],
         base: 0.3,
         rise,
         tilt: 0.4,
@@ -546,5 +561,231 @@ pub(super) fn snow(size: usize) -> Maps {
         *albedo = mix(*albedo, SNOW_SHADE, 0.75 * hollow);
     }
     maps
+}
+
+// Stream beds.
+
+/// The rocks streams carry down, as tints of a stone's gray: granite and
+/// gneiss most, then sandstone, dark basalt and greywacke, pale quartzite
+/// and green schist.
+const RIVER_ROCKS: [Rgb; 8] = [
+    [1.0, 1.0, 1.0],
+    [1.0, 1.0, 1.0],
+    [1.04, 1.0, 0.95],
+    [1.14, 1.02, 0.84],
+    [0.62, 0.63, 0.66],
+    [0.7, 0.7, 0.72],
+    [1.38, 1.36, 1.3],
+    [0.88, 0.98, 0.9],
+];
+
+const SAND: Rgb = [0.25, 0.226, 0.188];
+const SAND_PALE: Rgb = [0.36, 0.34, 0.3];
+const SAND_DARK: Rgb = [0.11, 0.104, 0.096];
+
+/// Ripples across the sand's texture: at two meters a repeat, crests 13
+/// centimeters apart, about a thousand of its fine grains, as current
+/// ripples stand (Yalin 1964).
+const RIPPLES: f32 = 15.0;
+
+/// Streams' sand at two meters a repeat: fine pale grains with dark and
+/// paler ones among them, rippled by the water into sinuous crests
+/// ([`RIPPLES`]), each a gentle rise to a sharp crest and a steep lee,
+/// fading out in patches, the dark grains gathered in the troughs; a few
+/// pebbles lie on it.
+pub(super) fn sand(size: usize) -> Maps {
+    let seed = 900;
+    let warp = Noise::new(3, 3, 0.5, seed);
+    let fade = Noise::new(6, 2, 0.5, seed + 1);
+    let swell = Noise::new(8, 2, 0.5, seed + 2);
+    let tone = Noise::new(20, 2, 0.5, seed + 3);
+    let pebbles = Stones {
+        cells: Cells::new(40, 0.9, seed + 4),
+        share: 0.05,
+        gap: [0.15, 0.35],
+        round: [0.5, 1.0],
+        base: 0.55,
+        rise: 0.5,
+        tilt: 0.4,
+        crest: 0.3,
+        outline: Noise::new(120, 2, 0.5, seed + 54),
+        seed: seed + 4,
+    };
+    let texels = texture(size, |u, v| {
+        // Crests along u, bent where the warp shifts them.
+        let phase = (v + 0.05 * warp.fbm(u, v)) * RIPPLES;
+        let along = phase - phase.floor();
+        // A gentle rise over seven tenths of each ripple, then its lee:
+        // sharp at the crest, rounded in the trough.
+        let rise = if along < 0.7 {
+            along / 0.7
+        } else {
+            (1.0 - along) / 0.3
+        };
+        let strength = smoothstep(0.3, 0.65, fade.unit(u, v));
+        let (x, y) = ((u * size as f32) as u32, (v * size as f32) as u32);
+        let grain = unit(hash(x, y, seed));
+        let speck = if grain < 0.05 {
+            0.55
+        } else if grain > 0.93 {
+            1.3
+        } else {
+            0.94 + 0.12 * unit(hash(x, y, seed + 1))
+        };
+        let base = mix(SAND, SAND_PALE, 0.4 * tone.unit(u, v));
+        let mut texel = Texel {
+            albedo: scale(mix(base, SAND_DARK, 0.4 * (1.0 - rise) * strength), speck),
+            height: 0.5 * rise * rise * strength + 0.2 * swell.unit(u, v) + 0.02 * grain,
+            // Flakes of mica glint among the grains.
+            roughness: if grain > 0.985 { 0.4 } else { 0.84 },
+        };
+        if let Some(stone) = pebbles
+            .sample(u, v)
+            .filter(|stone| stone.height > texel.height)
+        {
+            texel = Texel {
+                albedo: scale(pebbles.worn(stone.id, 0.1, 0.22), 0.8 + 0.2 * stone.profile),
+                height: stone.height,
+                roughness: 0.68,
+            };
+        }
+        texel
+    });
+    Maps::new(size, texels, 0.8)
+}
+
+const GRAVEL_GRIT: Rgb = [0.07, 0.065, 0.058];
+const GRAVEL_SAND: Rgb = [0.13, 0.118, 0.1];
+
+/// Streams' gravel at a meter and a half a repeat: dense water-worn stones
+/// from 2 to 6 centimeters, subrounded to rounded and of the rocks streams
+/// carry, the larger lying on the smaller, coarse sand between them.
+pub(super) fn gravel(size: usize) -> Maps {
+    let seed = 700;
+    let grit = Noise::new(200, 2, 0.5, seed);
+    let mottle = Noise::new(96, 3, 0.5, seed + 1);
+    let matrix = Noise::new(8, 3, 0.5, seed + 2);
+    // Cells across the texture, the share holding stones, their gaps, feet
+    // and rise: stones from about 2 cm up to 6 cm.
+    let layer = |count: usize, share: f32, gap: [f32; 2], base: f32, rise: f32, salt: u32| Stones {
+        cells: Cells::new(count, 0.9, seed + salt),
+        share,
+        gap,
+        round: [0.45, 1.0],
+        base,
+        rise,
+        tilt: 0.4,
+        crest: 0.3,
+        outline: Noise::new(count * 3, 3, 0.5, seed + salt + 50),
+        seed: seed + salt,
+    };
+    let layers = [
+        layer(56, 0.95, [0.06, 0.22], 0.04, 0.14, 3),
+        layer(40, 0.85, [0.06, 0.24], 0.09, 0.2, 4),
+        layer(28, 0.7, [0.05, 0.26], 0.15, 0.26, 5),
+        layer(19, 0.5, [0.05, 0.28], 0.22, 0.32, 6),
+    ];
+    let texels = texture(size, |u, v| {
+        let fine = grit.unit(u, v);
+        let mut texel = Texel {
+            albedo: scale(
+                mix(GRAVEL_GRIT, GRAVEL_SAND, matrix.unit(u, v)),
+                0.75 + 0.5 * fine,
+            ),
+            height: 0.04 * fine,
+            roughness: 0.9,
+        };
+        for layer in &layers {
+            let Some(stone) = layer.sample(u, v) else {
+                continue;
+            };
+            if stone.height <= texel.height {
+                continue;
+            }
+            let speckle = mottle.unit(u, v);
+            texel = Texel {
+                albedo: scale(
+                    layer.worn(stone.id, 0.1, 0.22),
+                    (0.86 + 0.28 * speckle) * (0.78 + 0.22 * stone.profile),
+                ),
+                height: stone.height + 0.01 * speckle,
+                roughness: 0.6 + 0.14 * speckle,
+            };
+        }
+        texel
+    });
+    Maps::new(size, texels, 3.0)
+}
+
+const COBBLE_GAP: Rgb = [0.016, 0.015, 0.013];
+const COBBLE_SILT: Rgb = [0.05, 0.045, 0.038];
+/// The brown-olive film of algae and silt on stones lying in running
+/// water.
+const BIOFILM: Rgb = [0.07, 0.066, 0.032];
+
+/// Streams' cobbles at four meters a repeat: rounded water-worn stones
+/// from 6 to 25 centimeters packed against each other, the larger lying on
+/// the smaller, with dark gaps between them holding silt and pebbles; the
+/// stones of the rocks streams carry, some filmed brown-olive on top.
+pub(super) fn cobble(size: usize) -> Maps {
+    let seed = 800;
+    let silt = Noise::new(10, 3, 0.5, seed);
+    let grit = Noise::new(160, 2, 0.5, seed + 1);
+    let mottle = Noise::new(48, 3, 0.5, seed + 2);
+    let film = Noise::new(12, 3, 0.5, seed + 3);
+    // Cells across the texture, the share holding stones, their gaps, feet
+    // and rise: pebbles of about 6 cm down in the gaps, cobbles of about
+    // 10, 16 and 25 cm over them.
+    let layer = |count: usize, share: f32, gap: [f32; 2], base: f32, rise: f32, salt: u32| Stones {
+        cells: Cells::new(count, 0.85, seed + salt),
+        share,
+        gap,
+        round: [0.75, 1.0],
+        base,
+        rise,
+        tilt: 0.25,
+        crest: 0.0,
+        outline: Noise::new(count * 3, 3, 0.5, seed + salt + 50),
+        seed: seed + salt,
+    };
+    let layers = [
+        layer(52, 0.45, [0.1, 0.25], 0.02, 0.1, 4),
+        layer(30, 0.8, [0.06, 0.16], 0.08, 0.28, 5),
+        layer(20, 0.8, [0.05, 0.14], 0.14, 0.38, 6),
+        layer(13, 0.85, [0.04, 0.12], 0.2, 0.5, 7),
+    ];
+    let texels = texture(size, |u, v| {
+        let fine = grit.unit(u, v);
+        let mut texel = Texel {
+            albedo: scale(
+                mix(COBBLE_GAP, COBBLE_SILT, smoothstep(0.4, 0.7, silt.unit(u, v))),
+                0.8 + 0.4 * fine,
+            ),
+            height: 0.02 * fine,
+            roughness: 0.95,
+        };
+        for layer in &layers {
+            let Some(stone) = layer.sample(u, v) else {
+                continue;
+            };
+            if stone.height <= texel.height {
+                continue;
+            }
+            let speckle = mottle.unit(u, v);
+            // The film settles on the stone's top, clear of its rim.
+            let filmed = 0.45 * smoothstep(0.5, 0.75, film.unit(u, v)) * stone.profile;
+            let worn = scale(
+                layer.worn(stone.id, 0.11, 0.25),
+                (0.88 + 0.24 * speckle) * (0.62 + 0.38 * stone.profile),
+            );
+            texel = Texel {
+                albedo: mix(worn, BIOFILM, filmed),
+                height: stone.height + 0.008 * speckle,
+                roughness: 0.56 + 0.14 * speckle - 0.08 * filmed,
+            };
+        }
+        texel
+    });
+    Maps::new(size, texels, 3.5)
 }
 

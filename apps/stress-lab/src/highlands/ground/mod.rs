@@ -1,5 +1,6 @@
 //! The highlands' ground materials: tileable procedural grass, dry grass,
-//! dirt, scree, rock and snow, each three maps ([`sources`]): sRGB base
+//! dirt, scree, rock and snow, and streams' beds of sand, gravel and
+//! cobbles, each three maps ([`sources`]): sRGB base
 //! color; tangent-space normals in OpenGL's convention (+X the image's
 //! right, +Y its up, world -z, +Z out of the ground); and ambient occlusion
 //! in red, roughness in green, metalness in blue and height in alpha (0 to
@@ -29,8 +30,9 @@ pub(super) const SIZE: usize = 1024;
 const SUPERSAMPLE: usize = 2;
 
 /// The maps of ground material `name` (`grass`, `dry_grass`, `dirt`,
-/// `scree`, `rock` or `snow`) as sources the cook compresses: base color,
-/// normal, and occlusion, roughness, metalness and height.
+/// `scree`, `rock`, `snow`, `sand`, `gravel` or `cobble`) as sources the
+/// cook compresses: base color, normal, and occlusion, roughness,
+/// metalness and height.
 pub(super) fn sources(name: &str) -> Result<Vec<TextureSource>, String> {
     let kind = Kind::named(name).ok_or_else(|| format!("no ground material is named {name}"))?;
     let mut maps = kind.generate(SIZE * SUPERSAMPLE).downsample();
@@ -58,6 +60,9 @@ enum Kind {
     Scree,
     Rock,
     Snow,
+    Sand,
+    Gravel,
+    Cobble,
 }
 
 impl Kind {
@@ -69,6 +74,9 @@ impl Kind {
             "scree" => Self::Scree,
             "rock" => Self::Rock,
             "snow" => Self::Snow,
+            "sand" => Self::Sand,
+            "gravel" => Self::Gravel,
+            "cobble" => Self::Cobble,
             _ => return None,
         })
     }
@@ -83,6 +91,9 @@ impl Kind {
             Self::Scree => 5.0,
             Self::Rock => 22.0,
             Self::Snow => 2.5,
+            Self::Sand => 2.5,
+            Self::Gravel => 6.0,
+            Self::Cobble => 9.0,
         }
     }
 
@@ -95,6 +106,9 @@ impl Kind {
             Self::Scree => kinds::scree(size),
             Self::Rock => kinds::rock(size),
             Self::Snow => kinds::snow(size),
+            Self::Sand => kinds::sand(size),
+            Self::Gravel => kinds::gravel(size),
+            Self::Cobble => kinds::cobble(size),
         }
     }
 }

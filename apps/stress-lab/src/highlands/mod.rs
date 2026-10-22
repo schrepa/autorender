@@ -3,11 +3,14 @@
 //! leveled for a hamlet, a flat valley floor and a cave mouth cut as a
 //! hole), streamed around the camera, with the scene's renderables standing
 //! on the plateau as the tower field does. Its ground is
-//! meadow, dry grass, dirt, snow and, wherever it is steep, rock, each
-//! textured by maps its `ground` module generates, which load as cooked
-//! texture records.
-//! Boulders lie on its meadows, stones on its scree and outcrops on
-//! its rock, and spruce forests cover the lower slopes.
+//! meadow, dry grass, dirt, snow and, wherever it is steep, rock, its
+//! streams' beds sand, gravel, cobbles or boulders as coarse as their
+//! floods leave them, each textured by maps its `ground` module generates,
+//! which load as cooked texture records; its streams wet their banks up
+//! to their floods' line, and higher where they spray.
+//! Boulders lie on its meadows and in its steep streams, stones on its
+//! scree and its cobble beds, outcrops on its rock, and spruce forests
+//! cover the lower slopes.
 //! Gravel roads wind from the plateau down to the crater
 //! lake, west over a river on a stone bridge and east
 //! through a ridge in a tunnel. Lanterns line the road to
@@ -422,7 +425,7 @@ pub(crate) fn populate(
         // begin where they span two meters, and each runs as wide and deep
         // as its floods must to carry what it drains: an alpine 3.2 cubic
         // meters a second a square kilometer, which makes the largest river
-        // some forty-five meters across.
+        // some twenty meters across.
         Layer::Hydrology(HydrologyStage {
             layer: HydrologyLayer {
                 level: 0,
@@ -1477,38 +1480,16 @@ fn in_terrain_rock(
 
 /// Where each material lies: meadow everywhere, dry grass in broad patches
 /// with ragged edges, bare dirt in smaller ones, needle litter under the
-/// forests, lush grass where water gathers, beds along streams and rivers,
-/// gravel on the roads and snow on the peaks; rock over all of them
-/// wherever the ground is steep; and the boulders and spruces placed over
-/// them.
+/// forests, lush grass where water gathers, beds along streams and rivers
+/// of the grains their floods leave ([`stream_beds`]), gravel on the roads
+/// and snow on the peaks; rock over all of them wherever the ground is
+/// steep; the ground wet along the streams ([`wetness`]); and the
+/// boulders, stones and spruces placed over them.
 #[expect(
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
 fn rules() -> Biomes {
-    let noise = |wavelength: f32, seed: u32, octaves: u32| {
-        Mask::Noise(NoiseMask {
-            wavelength,
-            seed,
-            octaves,
-        })
-    };
-    let scaled = |mask: Mask, by: f32| Mask::Multiply(vec![mask, Mask::Constant(by)]);
-    let remap = |mask: Mask, from: f32, to: f32| {
-        Mask::Remap(Remap {
-            mask: Box::new(mask),
-            from,
-            to,
-        })
-    };
-    let layer = |material: &str, mask: Mask| BiomeLayer {
-        material: material.into(),
-        mask,
-        opacity: 1.0,
-    };
-    // Rivers' and streams' beds and a meter and a half of their banks,
-    // along their lines.
-    let channels = || Mask::River([1.5, 0.0]);
     // Where spruces stand in broad stands below the tree line on gentle
     // ground, thinning at their edges and kept out of stream beds; their
     // needles litter the ground there.
@@ -1531,14 +1512,6 @@ fn rules() -> Biomes {
             Mask::Invert(Box::new(Mask::Path([10.0, 4.0]))),
         ])
     };
-    let boulders = || {
-        (0..BOULDERS)
-            .map(|index| PlacementChoice {
-                asset: format!("boulder{index}"),
-                weight: 1.0,
-            })
-            .collect::<Vec<_>>()
-    };
     Biomes {
         assets: (0..BOULDERS)
             .map(|index| format!("boulder{index}"))
@@ -1548,9 +1521,10 @@ fn rules() -> Biomes {
         // under them, stones strewn on scree, outcrops on
         // rock, and spruce forests in broad stands below the tree line on
         // gentle ground, thinning at their edges: placed on two-kilometer
-        // tiles, which stay resident farther away.
+        // tiles, which stay resident farther away; and boulders and stones
+        // in the streams ([`stream_rocks`]).
         placed: Vec::new(),
-        placements: vec![
+        placements: [
             PlacementLayer {
                 id: "spruces".into(),
                 assets: (0..SPRUCES)
@@ -1584,7 +1558,7 @@ fn rules() -> Biomes {
             },
             PlacementLayer {
                 id: "boulders".into(),
-                assets: boulders(),
+                assets: boulder_choices(),
                 density: 18.0,
                 footprint: 7.0,
                 materials: vec!["grass".into(), "dry_grass".into(), "dirt".into()],
@@ -1607,7 +1581,7 @@ fn rules() -> Biomes {
             },
             PlacementLayer {
                 id: "stones".into(),
-                assets: boulders(),
+                assets: boulder_choices(),
                 density: 450.0,
                 footprint: 1.5,
                 materials: vec!["rock".into()],
@@ -1619,30 +1593,9 @@ fn rules() -> Biomes {
                 level: 0,
                 far: None,
             },
-            // Boulders in steep channels, breaking the white water running
-            // down them, as cascades' beds hold them (Montgomery and
-            // Buffington).
-            PlacementLayer {
-                id: "channel_boulders".into(),
-                assets: boulders(),
-                density: 300.0,
-                footprint: 3.0,
-                materials: vec!["riverbed".into(), "rock".into()],
-                mask: Mask::Multiply(vec![
-                    Mask::River([-0.5, -2.0]),
-                    Mask::Slope([14.0, 24.0]),
-                    remap(noise(14.0, 61, 2), 0.35, 0.7),
-                ]),
-                scale: [0.6, 1.6],
-                align: 0.7,
-                sink: 0.3,
-                bed: 0.3,
-                level: 0,
-                far: None,
-            },
             PlacementLayer {
                 id: "outcrops".into(),
-                assets: boulders(),
+                assets: boulder_choices(),
                 density: 25.0,
                 footprint: 8.0,
                 materials: vec!["rock".into()],
@@ -1657,12 +1610,15 @@ fn rules() -> Biomes {
                     share: 0.5,
                 }),
             },
-        ],
+        ]
+        .into_iter()
+        .chain(stream_rocks())
+        .collect(),
         materials: LOOKS.iter().map(|look| look.name.to_owned()).collect(),
         biomes: vec![Biome {
             id: "highlands".into(),
             fitness: Mask::one(),
-            layers: vec![
+            layers: [
                 layer("grass", Mask::one()),
                 layer(
                     "dry_grass",
@@ -1702,15 +1658,10 @@ fn rules() -> Biomes {
                         0.6,
                     ),
                 ),
-                // Stream and river beds, with ragged edges.
-                layer(
-                    "riverbed",
-                    remap(
-                        Mask::Add(vec![channels(), scaled(noise(12.0, 42, 2), 0.3)]),
-                        0.55,
-                        0.75,
-                    ),
-                ),
+            ]
+            .into_iter()
+            .chain(stream_beds())
+            .chain([
                 // Roads, their edges soft over a meter and a
                 // half and ragged where the gravel's stones win.
                 layer("road", Mask::Path([1.0, -0.5])),
@@ -1726,7 +1677,9 @@ fn rules() -> Biomes {
                         0.6,
                     ),
                 ),
-            ],
+            ])
+            .collect(),
+            wetness: Some(wetness()),
         }],
         // Rock over everything steeper than soil rests at, 35 degrees, all
         // of it from 40: the ground's own form decides where, at every
@@ -1735,5 +1688,181 @@ fn rules() -> Biomes {
             material: "rock".into(),
             slope: [35.0, 40.0],
         }),
+    }
+}
+
+/// The median grains (meters) at which a bed's gravel, cobbles and
+/// boulders begin, finer beds being sand (Wentworth 1922).
+const GRAINS: [f32; 3] = [0.002, 0.064, 0.256];
+/// The share of each of [`GRAINS`] either side of it over which beds blend
+/// from one grain to the next, as the bake blends its reaches' beds.
+const GRAIN_BLEND: f32 = 0.2;
+/// The stream power (watts a square meter of bed in flood) over which beds
+/// begin to hold boulders and hold them fully, as step-pools and cascades
+/// do (Montgomery and Buffington 1997).
+const BOULDER_POWER: [f32; 2] = [150.0, 400.0];
+/// The stream power over which a stream's spray wets its banks higher,
+/// from not at all to as high as its bed reaches.
+const SPRAY_POWER: [f32; 2] = [200.0, 2000.0];
+
+/// Streams' and rivers' beds, with a meter and a half of their banks and
+/// ragged edges, of the grains their floods leave ([`GRAINS`]): sand,
+/// gravel, cobbles, and boulders, which wear the rock. Each grain paints
+/// over the finer one before it as the bed's median grain passes their
+/// boundary, and the finer one stops once the coarser covers the bed, so
+/// a bed meets its banks in one grain.
+fn stream_beds() -> [BiomeLayer; 4] {
+    let bed = || {
+        remap(
+            Mask::Add(vec![
+                Mask::River([1.5, 0.0]),
+                scaled(noise(12.0, 42, 2), 0.3),
+            ]),
+            0.55,
+            0.75,
+        )
+    };
+    // 1 until the bed's median grain passes `grain` by the blend toward it,
+    // where the coarser grain covers the bed, then 0 within as much again.
+    let short_of = |grain: f32| {
+        Mask::Invert(Box::new(Mask::Grain([
+            grain * (1.0 + GRAIN_BLEND),
+            grain * (1.0 + 2.0 * GRAIN_BLEND),
+        ])))
+    };
+    let [gravel, cobbles, boulders] = GRAINS;
+    [
+        layer("sand", Mask::Multiply(vec![bed(), short_of(gravel)])),
+        layer(
+            "gravel",
+            Mask::Multiply(vec![bed(), coarser_than(gravel), short_of(cobbles)]),
+        ),
+        layer(
+            "cobble",
+            Mask::Multiply(vec![bed(), coarser_than(cobbles), short_of(boulders)]),
+        ),
+        layer("rock", Mask::Multiply(vec![bed(), coarser_than(boulders)])),
+    ]
+}
+
+/// Where a bed's median grain is coarser than `grain` meters, blending
+/// over [`GRAIN_BLEND`] of it either side; 0 beyond the streams' beds.
+fn coarser_than(grain: f32) -> Mask {
+    Mask::Grain([grain * (1.0 - GRAIN_BLEND), grain * (1.0 + GRAIN_BLEND)])
+}
+
+/// How wet the ground stands, 0 to 1: soaked up to the flood line of the
+/// stream holding it and a little above, ragged, and higher up the banks
+/// of streams spending more power ([`SPRAY_POWER`]), whose spray wets them.
+fn wetness() -> Mask {
+    Mask::Max(vec![
+        remap(
+            Mask::Add(vec![
+                Mask::Flood([0.3, 0.0]),
+                scaled(noise(4.0, 71, 2), 0.5),
+                Mask::Constant(-0.25),
+            ]),
+            0.3,
+            0.7,
+        ),
+        remap(
+            Mask::Add(vec![
+                Mask::Power(SPRAY_POWER),
+                Mask::Flood([1.0, 0.0]),
+                scaled(noise(6.0, 72, 2), 0.4),
+                Mask::Constant(-0.2),
+            ]),
+            1.1,
+            1.4,
+        ),
+    ])
+}
+
+/// Boulders and stones in streams: boulders where floods spend the power
+/// of beds that hold them ([`BOULDER_POWER`]), breaking the white water
+/// running down them; and stones from a third of a meter to a meter across
+/// over cobble and boulder beds, so shallow water has something to break
+/// over.
+fn stream_rocks() -> [PlacementLayer; 2] {
+    [
+        PlacementLayer {
+            id: "channel_boulders".into(),
+            assets: boulder_choices(),
+            density: 300.0,
+            footprint: 3.0,
+            materials: vec!["gravel".into(), "cobble".into(), "rock".into()],
+            mask: Mask::Multiply(vec![
+                Mask::River([-0.5, -2.0]),
+                Mask::Power(BOULDER_POWER),
+                remap(noise(14.0, 61, 2), 0.35, 0.7),
+            ]),
+            scale: [0.6, 1.6],
+            align: 0.7,
+            sink: 0.3,
+            bed: 0.3,
+            level: 0,
+            far: None,
+        },
+        PlacementLayer {
+            id: "channel_stones".into(),
+            assets: boulder_choices(),
+            density: 1200.0,
+            footprint: 1.5,
+            materials: vec!["cobble".into(), "rock".into()],
+            mask: Mask::Multiply(vec![
+                Mask::River([0.0, -0.75]),
+                coarser_than(GRAINS[1]),
+                remap(noise(8.0, 63, 2), 0.3, 0.65),
+            ]),
+            scale: [0.3, 1.0],
+            align: 0.7,
+            sink: 0.1,
+            bed: 0.3,
+            level: 0,
+            far: None,
+        },
+    ]
+}
+
+/// Each of the boulder shapes as a placement layer's choice, all as likely.
+fn boulder_choices() -> Vec<PlacementChoice> {
+    (0..BOULDERS)
+        .map(|index| PlacementChoice {
+            asset: format!("boulder{index}"),
+            weight: 1.0,
+        })
+        .collect()
+}
+
+/// Gradient noise from 0 to 1 of `octaves` from `wavelength` meters, its
+/// pattern picked by `seed`.
+fn noise(wavelength: f32, seed: u32, octaves: u32) -> Mask {
+    Mask::Noise(NoiseMask {
+        wavelength,
+        seed,
+        octaves,
+    })
+}
+
+/// `mask` times `by`.
+fn scaled(mask: Mask, by: f32) -> Mask {
+    Mask::Multiply(vec![mask, Mask::Constant(by)])
+}
+
+/// `mask` remapped: 0 up to `from`, 1 from `to`.
+fn remap(mask: Mask, from: f32, to: f32) -> Mask {
+    Mask::Remap(Remap {
+        mask: Box::new(mask),
+        from,
+        to,
+    })
+}
+
+/// A biome layer painting `material` wholly wherever `mask` says.
+fn layer(material: &str, mask: Mask) -> BiomeLayer {
+    BiomeLayer {
+        material: material.into(),
+        mask,
+        opacity: 1.0,
     }
 }

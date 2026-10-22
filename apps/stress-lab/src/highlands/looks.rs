@@ -25,7 +25,7 @@ pub(super) struct Look {
     pub(super) deform: f32,
 }
 
-pub(super) const LOOKS: [Look; 9] = [
+pub(super) const LOOKS: [Look; 11] = [
     Look {
         name: "grass",
         maps: "grass",
@@ -142,19 +142,49 @@ pub(super) const LOOKS: [Look; 9] = [
         relief: 0.03,
         deform: 0.07,
     },
-    // Stream and river beds: the scree's stones, washed darker and wetter.
+    // Stream and river beds of the grains their floods leave, dry as their
+    // maps make them, the ground's wetness darkening them where water runs.
+    // Sand where the water runs slowest, rippled by it.
     Look {
-        name: "riverbed",
-        maps: "scree",
-        color: [0.13, 0.13, 0.12],
-        roughness: 0.55,
-        tint: [0.55, 0.56, 0.54],
-        tiling: 3.0,
+        name: "sand",
+        maps: "sand",
+        color: [0.22, 0.2, 0.17],
+        roughness: 0.84,
+        tint: [1.0, 1.0, 1.0],
+        tiling: 2.0,
+        height_contrast: 0.3,
+        projection: SurfaceProjection::Top,
+        cover: None,
+        relief: 0.012,
+        deform: 0.05,
+    },
+    // Gravel: small water-worn stones of every rock the water brings down.
+    Look {
+        name: "gravel",
+        maps: "gravel",
+        color: [0.14, 0.133, 0.122],
+        roughness: 0.72,
+        tint: [1.0, 1.0, 1.0],
+        tiling: 1.5,
+        height_contrast: 0.75,
+        projection: SurfaceProjection::Top,
+        cover: None,
+        relief: 0.035,
+        deform: 0.02,
+    },
+    // Cobbles on steep beds: rounded stones packed with dark gaps between.
+    Look {
+        name: "cobble",
+        maps: "cobble",
+        color: [0.13, 0.125, 0.112],
+        roughness: 0.66,
+        tint: [1.0, 1.0, 1.0],
+        tiling: 4.0,
         height_contrast: 0.9,
         projection: SurfaceProjection::Top,
         cover: None,
-        relief: 0.1,
-        deform: 0.03,
+        relief: 0.12,
+        deform: 0.0,
     },
     // Roads: packed gravel, the scree's stones finer and
     // warmer, where no grass grows.

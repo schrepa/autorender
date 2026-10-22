@@ -1,6 +1,6 @@
 //! The highlands as a Stress Lab world: the tower field on a plateau of a
 //! streamed terrain under golden hour, wind and clouds, framed from where
-//! the valleys open out.
+//! the valleys open out, and views down onto its running water.
 
 use engine::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
@@ -66,12 +66,14 @@ impl StressWorld for HighlandsWorld {
         });
         // The eye adapts: the cave brightens by day, the night keeps dark.
         world.insert_resource(AutoExposure::default());
-        // Rivers settle and run in meter cells, the ground's own samples,
-        // which its rivers are traced along: the cook settles every watered
-        // tile at that size, and the window simulated around the camera
-        // steps it.
+        // Rivers settle in meter cells, the ground's own samples, which its
+        // rivers are traced along: the cook settles every watered tile at
+        // that size. Over 256 meters around the camera they run live in
+        // half-meter cells, starting from the settled water.
         world.insert_resource(Water {
             simulation_cell: 1.0,
+            simulated: 256.0,
+            live_cell: 0.5,
             ..Water::default()
         });
     }
@@ -140,7 +142,10 @@ impl StressWorld for HighlandsWorld {
                     ..Camera::default()
                 })
             }
-            _ => None,
+            _ => WATER_VIEWS
+                .iter()
+                .find(|(name, ..)| *name == view)
+                .map(|&(_, position, yaw, pitch)| water_view(position, yaw, pitch)),
         }
     }
 
@@ -269,6 +274,31 @@ fn close_view(world: &World, config: &StressConfig) -> (Vec3, Vec3) {
         Vec3::new(edge.x, ground(world, edge.x, edge.y) + 10.0, edge.y),
         Vec3::new(far.x, ground(world, far.x, far.y) + 60.0, far.y),
     )
+}
+
+/// The views down onto running water: each one's name, the camera's world
+/// position, and the yaw (degrees from -z toward +x) and pitch (degrees
+/// from level, negative down) it looks along.
+const WATER_VIEWS: [(&str, [f32; 3], f32, f32); 3] = [
+    ("torrent", [-1584.0, 675.0, -2973.0], 0.0, -34.0),
+    ("rapids", [-3008.0, 228.0, -168.0], 0.0, -30.0),
+    ("meadow_river", [-266.0, 671.0, -2986.0], 0.0, -32.0),
+];
+
+/// A camera at world `position` looking along `yaw` and `pitch` (degrees,
+/// as [`WATER_VIEWS`] gives them), its near plane a fifth of a meter out and
+/// its field of view 60 degrees high.
+fn water_view(position: [f32; 3], yaw: f32, pitch: f32) -> Camera {
+    let (yaw_sin, yaw_cos) = math::sin_cos(yaw.to_radians());
+    let (pitch_sin, pitch_cos) = math::sin_cos(pitch.to_radians());
+    let position = Vec3::from(position);
+    Camera {
+        position,
+        target: position + Vec3::new(yaw_sin * pitch_cos, pitch_sin, -yaw_cos * pitch_cos),
+        near: 0.2,
+        far: 20_000.0,
+        vertical_fov_radians: 60.0_f32.to_radians(),
+    }
 }
 
 /// From high above the plateau across the whole terrain to the north.
