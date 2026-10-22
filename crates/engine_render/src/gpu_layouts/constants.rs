@@ -238,10 +238,18 @@ gpu_consts! {
     // crate::water_sim
     /// Workgroup side of the simulation's passes over cells and faces: a
     /// block of cells, as its slots store them and water draws them.
-    pub(crate) const WATER_SIM_GROUP: u32 = engine_core::terrain_data::BLOCK_SIDE => ["WATER_SIM_GROUP" in WATER_SIM_SHADER, "SIM_WATER_BLOCK" in SHADER, "@sim_exchange" in WATER_SIM_SHADER, "@sim_waves" in WATER_SIM_SHADER, "@sim_seconds" in WATER_SIM_SHADER, "@sim_update" in WATER_SIM_SHADER, "@sim_carry" in WATER_SIM_SHADER, "@sim_restart" in WATER_SIM_SHADER, "@sim_churn" in WATER_SIM_SHADER, "@sim_churned" in WATER_SIM_SHADER, "@sim_activity" in WATER_SIM_SHADER, "@sim_look" in WATER_SIM_SHADER];
+    pub(crate) const WATER_SIM_GROUP: u32 = engine_core::terrain_data::BLOCK_SIDE => ["WATER_SIM_GROUP" in WATER_SIM_SHADER, "SIM_WATER_BLOCK" in SHADER, "@sim_exchange" in WATER_SIM_SHADER, "@sim_waves" in WATER_SIM_SHADER, "@sim_seconds" in WATER_SIM_SHADER, "@sim_drain" in WATER_SIM_SHADER, "@sim_update" in WATER_SIM_SHADER, "@sim_carry" in WATER_SIM_SHADER, "@sim_restart" in WATER_SIM_SHADER, "@sim_churn" in WATER_SIM_SHADER, "@sim_churned" in WATER_SIM_SHADER, "@sim_tally" in WATER_SIM_SHADER, "@sim_activity" in WATER_SIM_SHADER, "@sim_look" in WATER_SIM_SHADER];
     /// The most rectangles a dispatch of the simulation runs, each a slot
     /// of its buffers.
     pub(crate) const SIM_SLOTS: usize = 64 => ["SIM_SLOTS" in WATER_SIM_SHADER];
+    /// Entries of four floats a settling cell's sums take (its water, what
+    /// it loses and how it varies, how it moves, and the seconds it ran at
+    /// the fastest water runs and the seconds summed), and a block's sums at
+    /// a look take (the water its flowing cells hold, their speeds and
+    /// counts; their energy, heave, swirl and those held back; and the water
+    /// standing against the blocks the slot does not store).
+    pub(crate) const SIM_CELL_SUMS: u64 = 4 => ["SIM_CELL_SUMS" in WATER_SIM_SHADER];
+    pub(crate) const SIM_BLOCK_LOOKS: u64 = 3 => ["SIM_BLOCK_LOOKS" in WATER_SIM_SHADER];
     /// A rectangle's flags: it steps; each cell by its own seconds; water
     /// leaves over its edges freely and none comes in; it sums each cell's
     /// water over its steps; the dispatch looks at its sums; and only its
@@ -450,7 +458,15 @@ gpu_mirrors! {
     engine_core::terrain_data::shallow_water::FASTEST => ["SIM_FASTEST" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::SOURCE_SPEED => ["SIM_SOURCE_SPEED" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::UNHELD => ["SIM_UNHELD" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::DENSITY => ["SIM_DENSITY" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::FERGUSON_A1 => ["SIM_FERGUSON_A1" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::FERGUSON_A2 => ["SIM_FERGUSON_A2" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::SHALLOWEST => ["SIM_SHALLOWEST" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::DEEPEST => ["SIM_DEEPEST" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::STRICKLER => ["SIM_STRICKLER" in WATER_SIM_SHADER];
+    engine_core::terrain_data::shallow_water::CELL_MEANS => ["SIM_CELL_MEANS" in WATER_SIM_SHADER];
     engine_core::terrain_data::NO_BLOCK => ["SIM_NO_BLOCK" in WATER_SIM_SHADER];
+    engine_core::terrain_data::BLOCK_GROUND => ["SIM_BLOCK_GROUND" in WATER_SIM_SHADER, "SIM_BLOCK_GROUND" in SHADER];
     engine_core::terrain_data::shallow_water::FOAM_FROUDE => ["SIM_FOAM_FROUDE" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_RAPIDS => ["SIM_FOAM_RAPIDS" in WATER_SIM_SHADER];
     engine_core::terrain_data::shallow_water::FOAM_PILING => ["SIM_FOAM_PILING" in WATER_SIM_SHADER];

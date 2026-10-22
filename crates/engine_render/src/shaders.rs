@@ -327,8 +327,8 @@ entry_points! {
     }
     water_sim = WATER_SIM_SHADER {
         compute: [
-            sim_exchange, sim_waves, sim_seconds, sim_update, sim_source, sim_carry, sim_restart,
-            sim_churn, sim_churned, sim_activity, sim_look
+            sim_exchange, sim_waves, sim_seconds, sim_drain, sim_update, sim_source, sim_carry,
+            sim_restart, sim_churn, sim_churned, sim_tally, sim_activity, sim_look
         ],
     }
     clouds = CLOUDS_SHADER {

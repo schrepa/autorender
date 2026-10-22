@@ -38,9 +38,8 @@ gpu_structs! {
 
     /// WGSL `SimSlot` of `water_sim.wgsl`: a slot's rectangle, its cells
     /// along x and z, flags and cells rivers bring water to; the meters
-    /// across a cell, the seconds of a step alike for every cell, Manning's
-    /// roughness and the steps its sums hold at a look; and its blocks
-    /// along x and z and those its pool stores.
+    /// across a cell and the seconds of a step alike for every cell, then
+    /// nothing; and its blocks along x and z and those its pool stores.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SimSlot as ["SimSlot" in WATER_SIM_SHADER] {
         pub shape: [u32; 4],

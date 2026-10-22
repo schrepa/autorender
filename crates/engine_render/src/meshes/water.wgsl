@@ -77,11 +77,13 @@ struct WaterUniform {
 // block of the window's square in order, SIM_WATER_BLOCK cells along each
 // side): each cell's surface (world meters), its flow along x and z (square
 // meters a second) and the foam it carries, a block's row by row; and each
-// block's ground at its cells' corners (a row of its cells and one more at
-// a time), then the levels lakes hold its cells at.
+// block's ground, SIM_BLOCK_GROUND entries of it: at its cells' corners (a
+// row of its cells and one more at a time), then the levels lakes hold its
+// cells at and its cells' beds' roughness.
 @group(1) @binding(56) var<storage, read> water_sim_cells: array<vec4<f32>>;
 @group(1) @binding(57) var<storage, read> water_sim_ground: array<f32>;
 const SIM_WATER_BLOCK: u32 = 8u;
+const SIM_BLOCK_GROUND: u32 = 209u;
 // The most foam water carries, as its flow churns it up
 // (`engine_terrain::shallow_water::FOAM_MOST`); the foam over which it
 // shows as lace, from the first to the second; how much of the lace its
@@ -1247,7 +1249,7 @@ fn sim_water_ground(i: i32, j: i32) -> f32 {
     let cells = SIM_WATER_BLOCK * SIM_WATER_BLOCK;
     let row = SIM_WATER_BLOCK + 1u;
     let local = at % cells;
-    let corner = (at / cells) * (row * row + cells) + (local / SIM_WATER_BLOCK) * row
+    let corner = (at / cells) * SIM_BLOCK_GROUND + (local / SIM_WATER_BLOCK) * row
         + local % SIM_WATER_BLOCK;
     return 0.25 * (water_sim_ground[corner] + water_sim_ground[corner + 1u]
         + water_sim_ground[corner + row] + water_sim_ground[corner + row + 1u]);

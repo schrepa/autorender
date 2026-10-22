@@ -1,17 +1,20 @@
 //! The shallow-water scheme's passes (`water_sim.wgsl`) and the buffers
 //! they run over: slots side by side, each a pool of blocks of cells
 //! ([`StoredBlocks`]) with its table, and the blocks' ground, cells, faces'
-//! depths, fluxes, sources, waves, seconds and sums. The square simulated
-//! around the camera (`water_sim.rs`) is one slot storing every block of
-//! it, with a ring past its edges; regions settling for their tiles'
-//! records (`water_settle.rs`) fill as many as fit, each storing the blocks
-//! its water can reach. One scheme runs both: what sets them apart is each
-//! slot's flags ([`SimSlot`]).
+//! depths, fluxes, sources, waves, outflow's shares, seconds and sums. The
+//! square simulated around the camera (`water_sim.rs`) is one slot storing
+//! every block of it, with a ring past its edges; regions settling for
+//! their tiles' records (`water_settle.rs`) fill as many as fit, each
+//! storing the blocks its water can reach. One scheme runs both: what sets
+//! them apart is each slot's flags ([`SimSlot`]).
 
+use engine_core::terrain_data::shallow_water::CELL_MEANS;
 use engine_core::terrain_data::{BLOCK_CELLS, BLOCK_GROUND, StoredBlocks};
 
 use crate::bindings::WATER_SIM;
-use crate::gpu_layouts::constants::{SIM_SLOTS, WATER_SIM_SOURCE_GROUP};
+use crate::gpu_layouts::constants::{
+    SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_SLOTS, WATER_SIM_SOURCE_GROUP,
+};
 use crate::gpu_layouts::water::{SimFrame, SimSlot, SimSlots};
 use crate::shaders::entry::water_sim;
 
@@ -31,12 +34,14 @@ pub(crate) struct Pipelines {
     exchange: wgpu::ComputePipeline,
     waves: wgpu::ComputePipeline,
     seconds: wgpu::ComputePipeline,
+    drain: wgpu::ComputePipeline,
     update: wgpu::ComputePipeline,
     source: wgpu::ComputePipeline,
     pub(crate) carry: wgpu::ComputePipeline,
     pub(crate) restart: wgpu::ComputePipeline,
     churn: wgpu::ComputePipeline,
     churned: wgpu::ComputePipeline,
+    tally: wgpu::ComputePipeline,
     activity: wgpu::ComputePipeline,
     look: wgpu::ComputePipeline,
 }
@@ -68,12 +73,14 @@ impl Kernels {
                 exchange: entry(water_sim::sim_exchange),
                 waves: entry(water_sim::sim_waves),
                 seconds: entry(water_sim::sim_seconds),
+                drain: entry(water_sim::sim_drain),
                 update: entry(water_sim::sim_update),
                 source: entry(water_sim::sim_source),
                 carry: entry(water_sim::sim_carry),
                 restart: entry(water_sim::sim_restart),
                 churn: entry(water_sim::sim_churn),
                 churned: entry(water_sim::sim_churned),
+                tally: entry(water_sim::sim_tally),
                 activity: entry(water_sim::sim_activity),
                 look: entry(water_sim::sim_look),
             }
@@ -153,13 +160,13 @@ fn entries(capacity: Capacity) -> Entries {
         faces: 2 * cells + u64::from(capacity.edges),
         table: u64::from(capacity.mapped) + blocks,
         steps: cells + 2 * blocks,
-        averages: 2 * cells + 2 * blocks,
+        averages: (SIM_CELL_SUMS + CELL_MEANS as u64) * cells + SIM_BLOCK_LOOKS * blocks,
         ring: 4 * u64::from(capacity.edges),
     }
 }
 
 /// Bytes a slot of `capacity` takes in every buffer but the ring's: about
-/// 122 a cell its pool holds, and 4 for each block its table maps.
+/// 206 a cell its pool holds, and 4 for each block its table maps.
 pub(crate) fn slot_bytes(capacity: Capacity) -> u64 {
     let entries = entries(capacity);
     entries.ground * 4
@@ -173,7 +180,7 @@ pub(crate) fn slot_bytes(capacity: Capacity) -> u64 {
 }
 
 /// The most bytes a slot of `capacity` takes in one buffer: its cells' two
-/// states', its fluxes', its sums' (about 33 a cell its pool holds), its
+/// states', its fluxes', its sums' (about 113 a cell its pool holds), its
 /// table's, its ground's or its sources'.
 pub(crate) fn slot_largest_bytes(capacity: Capacity) -> u64 {
     let entries = entries(capacity);
@@ -392,9 +399,11 @@ impl SlotBuffers {
 /// `pipelines`, over the `blocks` the pool of the slot stepping storing the
 /// most holds, whose rivers bring water to up to `sourced` cells a slot:
 /// each step's blocks that step (where `sparse` slots run), its two stages
-/// (each finding the faces' fluxes and updating the cells, each slot
-/// stepping locally finding its cells' seconds from the first's waves), what
-/// rivers bring, and the foam.
+/// (each finding the faces' fluxes, the share of its outflow each cell can
+/// give and updating the cells, each slot stepping locally finding its
+/// cells' seconds from the first's waves), what rivers bring, and the foam;
+/// and, where slots step locally (settling, which sums its water), each
+/// cell's water into its sums.
 pub(crate) fn encode_steps(
     pass: &mut wgpu::ComputePass<'_>,
     pipelines: &Pipelines,
@@ -421,6 +430,8 @@ pub(crate) fn encode_steps(
                 pass.set_pipeline(&pipelines.seconds);
                 pass.dispatch_workgroups(cells_x, cells_z, slots);
             }
+            pass.set_pipeline(&pipelines.drain);
+            pass.dispatch_workgroups(cells_x, cells_z, slots);
             pass.set_pipeline(&pipelines.update);
             pass.dispatch_workgroups(cells_x, cells_z, slots);
         }
@@ -432,6 +443,10 @@ pub(crate) fn encode_steps(
         pass.dispatch_workgroups(cells_x, cells_z, slots);
         pass.set_pipeline(&pipelines.churned);
         pass.dispatch_workgroups(cells_x, cells_z, slots);
+        if local {
+            pass.set_pipeline(&pipelines.tally);
+            pass.dispatch_workgroups(cells_x, cells_z, slots);
+        }
     }
 }
 

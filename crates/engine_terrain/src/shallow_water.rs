@@ -4,12 +4,17 @@
 //! ([`crate::SettleStart`]): Kurganov and Petrova's well-balanced,
 //! positivity-preserving central-upwind scheme (2007), second order in space
 //! (each cell's water reconstructed linearly, its slopes limited by a
-//! generalized minmod and kept from dipping below the ground at its faces)
-//! and in time (Heun's two stages), with Manning's friction and velocities
-//! desingularized where the water thins out. Each cell holds its water's
-//! surface, its flow along x and z (square meters a second) and the level a
-//! lake holds it at, if one does: lakes stand still, taking the water that
-//! runs into them and giving none. The ground stands at the cells' corners.
+//! generalized minmod and kept from dipping below the ground at its faces,
+//! a partially wet cell's lying flat against its waterline as Bollermann et
+//! al. reconstruct it, 2013) and in time (Heun's two stages), with Kurganov
+//! and Lin's anti-diffusion (2007) keeping shear from smearing, friction
+//! from each cell's bed ([`resistance`]), gravity along the bed's slope,
+//! each cell's outflow kept to the water it holds within a step, and
+//! velocities desingularized where the water thins out. Each cell holds its
+//! water's surface, its flow along x and z (square meters a second) and the
+//! level a lake holds it at, if one does: lakes stand still, taking the
+//! water that runs into them and giving none. The ground stands at the
+//! cells' corners, with each cell's bed's roughness ([`roughness`]).
 //! Rivers bring their water at the cells their sources name. The water
 //! carries foam, churned up where it runs faster than its waves and where
 //! it slams into slower water, carried off by the current and fading as its
@@ -20,7 +25,12 @@
 //! fastest waves allow ([`LOCAL_SHARE`]): water settling toward its steady
 //! state gets there in far fewer steps, and the state it settles to is the
 //! same, as each cell's water stops changing when what flows in and out of
-//! it balances, whatever its steps.
+//! it balances, whatever its steps. Settling sums each cell's water over
+//! its steps, each weighted by its seconds, for the means and spreads its
+//! record keeps ([`CELL_MEANS`]).
+
+use crate::Bed;
+use crate::hydraulics::GRAVITY;
 
 /// The generalized minmod's theta.
 pub const THETA: f32 = 1.3;
@@ -28,16 +38,38 @@ pub const THETA: f32 = 1.3;
 pub const THIN: f32 = 0.01;
 /// Meters of water under which a cell is dry.
 pub const DRY: f32 = 1.0e-4;
-/// Meters a second the fastest water runs.
+/// Meters a second the fastest water runs: a safety net the cook counts
+/// the cells of where water reaches it.
 pub const FASTEST: f32 = 20.0;
 /// The level a cell no lake holds holds as its lake's.
 pub const UNHELD: f32 = -1.0e30;
-/// Manning's roughness of the ground the water runs over: a clean mountain
-/// channel's.
-pub const ROUGHNESS: f32 = 0.03;
+/// Kilograms a cubic meter of water, which the energy water loses weighs.
+pub const DENSITY: f32 = 1000.0;
+/// Ferguson's variable-power resistance law (2007) for a bed whose grains
+/// 84 in 100 are finer than D84: U/u* = a1·a2·(h/D84) / √(a1² + a2²·
+/// (h/D84)^(5/3)), so Darcy and Weisbach's friction factor is
+/// f = 8/a2²·(D84/h)² + 8/a1²·(D84/h)^(1/3); its a1 and a2.
+pub const FERGUSON_A1: f32 = 6.5;
+pub const FERGUSON_A2: f32 = 2.5;
+/// The least and the most a water's depth over its bed's D84 counts as,
+/// water shallower over coarser grains rubbing as water this shallow does
+/// and deeper water over finer ones as water this deep does: the span of
+/// relative depths steep streams run at, where Ferguson's law holds.
+pub const SHALLOWEST: f32 = 0.1;
+pub const DEEPEST: f32 = 30.0;
+/// Manning's n of a bed's grains alone, where steps or knobs carved into
+/// it take up the rest of its resistance, is its D84 (meters) to the power
+/// 1/6 over this (Strickler's grain roughness).
+pub const STRICKLER: f32 = 20.4;
+/// The D84 (meters) of ground no channel runs over: hillsides' soil, grass
+/// and stones under sheets of water.
+pub const GROUND_D84: f32 = 0.05;
 /// The share of a cell the fastest water and waves may cross in a step:
 /// Kurganov and Petrova keep the water's depth positive within a quarter,
-/// in two dimensions.
+/// in two dimensions, which keeps the steps stable; the depth stays
+/// positive whatever the reconstruction and the anti-diffusion, as each
+/// cell's outflow is kept to the water it holds (Bollermann et al.'s
+/// draining time step, 2013).
 pub const COURANT: f32 = 0.24;
 /// Meters a second the fastest water and waves run as the live steps'
 /// length counts them: the fastest water and the waves of water five meters
@@ -60,6 +92,14 @@ pub const FOAM_MOST: f32 = 1.5;
 pub const FOAM_WET: f32 = 0.005;
 /// Meters a second the water rivers bring runs along them as it comes.
 pub const SOURCE_SPEED: f32 = 1.5;
+/// Entries of four floats a settling cell's means take, as settling reads
+/// them back at its region's last look ([`crate::SettleStart::finish`]):
+/// its surface, flow along x and z and foam; the energy it loses (watts a
+/// square meter), the variance of its depth, the mean square of its
+/// vorticity and the variance of its velocity; and the shares of the time
+/// it was wet, its water left its bed and it ran at the fastest water runs
+/// ([`FASTEST`]), then nothing.
+pub const CELL_MEANS: usize = 3;
 
 /// The seconds of a live step over cells `cell` meters across: the longest
 /// in which the fastest water and waves cross [`COURANT`] of a cell.
@@ -75,4 +115,35 @@ pub fn velocity(depth: f32, flow: f32) -> f32 {
     let thin = THIN * THIN * THIN * THIN;
     let floor = if h4 > thin { h4 } else { thin };
     std::f32::consts::SQRT_2 * depth * flow / (h4 + floor).sqrt()
+}
+
+/// The roughness the scheme reads of a cell over `bed` (`None` outside
+/// channels): the bed's D84 in meters, where friction follows Ferguson's
+/// law; the same negated where steps or knobs are carved into it, where
+/// friction counts its grains alone; and [`GROUND_D84`] outside channels.
+pub fn roughness(bed: Option<&Bed>) -> f32 {
+    match bed {
+        Some(bed) if bed.carved => -bed.d84,
+        Some(bed) => bed.d84,
+        None => GROUND_D84,
+    }
+}
+
+/// How hard a bed of `roughness` ([`roughness`]'s) holds back water `depth`
+/// meters deep running over flat ground, as the scheme takes it: k of
+/// dq/dt = −k·|q|·q (per square meter), Darcy and Weisbach's f/(8h²) of
+/// Ferguson's f, or g·n²/h^(7/3) of the grains' Manning's n, the depth over
+/// the D84 counting within [`SHALLOWEST`] and [`DEEPEST`]. Water running
+/// down sloping ground is held back φ² = 1 + |∇b|² times as hard.
+pub fn resistance(depth: f32, roughness: f32) -> f32 {
+    let grain = roughness.abs().max(depth / DEEPEST);
+    let relative = (depth / grain).clamp(SHALLOWEST, DEEPEST);
+    if roughness >= 0.0 {
+        let eighth = 1.0 / (FERGUSON_A2 * FERGUSON_A2 * relative * relative)
+            + 1.0 / (FERGUSON_A1 * FERGUSON_A1 * relative.cbrt());
+        eighth / (depth * depth)
+    } else {
+        let n = (depth / relative).powf(1.0 / 6.0) / STRICKLER;
+        GRAVITY * n * n / (depth * depth * depth.cbrt())
+    }
 }

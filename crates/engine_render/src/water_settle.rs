@@ -6,13 +6,14 @@
 //! reach and stepping its cells by their own seconds with open edges, only
 //! the blocks water can reach this step stepping, until its water settles
 //! (or its steps run out), looked at every [`LOOK_EVERY`] steps (its cells'
-//! water averaged over the steps since the look before, summed block by
-//! block and read back); its averaged water then makes the records of the
-//! tiles the region keeps ([`SettleStart::finish`]), which the renderer
-//! hands its host to keep and to the terrain that asked. While a session
-//! cooks it takes more memory and more steps a frame, and says how its
-//! regions settle and how much water stands against the edges of the
-//! blocks they store.
+//! water averaged over the seconds since the look before, with how much it
+//! varied, summed block by block and read back); its averaged water then
+//! makes the records of the tiles the region keeps
+//! ([`SettleStart::finish`]), which the renderer hands its host to keep and
+//! to the terrain that asked. While a session cooks it takes more memory and
+//! more steps a frame, and says how its regions settle, how much water
+//! stands against the edges of the blocks they store, and what their
+//! records came to.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -20,11 +21,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_core::RecordKey;
-use engine_core::terrain_data::shallow_water::{DRY, ROUGHNESS};
-use engine_core::terrain_data::{BLOCK_CELLS, SettleStart, codec};
+use engine_core::terrain_data::shallow_water::{CELL_MEANS, DRY};
+use engine_core::terrain_data::{BLOCK_CELLS, SettleStart, SteadyWater, codec};
 
 use crate::gpu_layouts::constants::{
-    SIM_LOCAL, SIM_LOOKING, SIM_OPEN, SIM_SLOTS, SIM_SPARSE, SIM_STEPPING, SIM_SUMMING,
+    SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_LOCAL, SIM_LOOKING, SIM_OPEN, SIM_SLOTS, SIM_SPARSE,
+    SIM_STEPPING, SIM_SUMMING,
 };
 use crate::gpu_layouts::water::SimSlot;
 use crate::water_kernels::{
@@ -37,17 +39,15 @@ pub(crate) const LOOK_EVERY: u32 = 256;
 /// The steps a region runs at least and at most, and its looks at most.
 const SETTLE_STEPS: [u32; 2] = [1024, 16_384];
 const SETTLE_LOOKS: u64 = (SETTLE_STEPS[1] / LOOK_EVERY) as u64;
-/// A region settled once, over [`STILL_LOOKS`] looks in a row, the water
-/// its region holds changed by no more than [`SETTLED_VOLUME`] of it a
-/// look, and its flowing cells' averaged velocities moved by
-/// [`SETTLED_SPEED`] meters a second or less on average, or by no less
-/// than [`STILL_SHARE`] of what they moved [`STILL_LOOKS`] looks before:
-/// water running unsteadily (down rough steep rock) keeps varying, and its
-/// averages stop settling further.
+/// A region settled once its means are stationary: over [`STILL_LOOKS`]
+/// looks in a row, the water it holds and its flowing cells' mean speed,
+/// energy lost, heave and swirl each changed from the look before by under
+/// [`STILL_CHANGE`] of itself, or by no more than the step records keep
+/// them at (`codec::HEIGHT_STEP` of their unit), which records cannot tell.
+/// Water running unsteadily (down rough steep rock) keeps varying, and its
+/// means and spreads settle.
 const STILL_LOOKS: usize = 3;
-const SETTLED_VOLUME: f64 = 1.0e-3;
-const SETTLED_SPEED: f64 = 0.01;
-const STILL_SHARE: f64 = 0.75;
+const STILL_CHANGE: f64 = 0.01;
 /// Bytes of the GPU's memory settling takes at most, while a session cooks
 /// and else: a region larger takes a slot of its own regardless.
 const COOK_BYTES: u64 = 1 << 30;
@@ -110,17 +110,41 @@ enum Phase {
 }
 
 /// What a look found: the water its region held (meters of depth summed
-/// over its cells), the mean of how far its flowing cells' averaged
-/// velocities moved since the look before, whether its water held still
-/// since then, and the water held by its cells beside blocks it does not
-/// store (meters of depth summed over them) and those cells.
+/// over its cells); its flowing cells' mean speed (meters a second), energy
+/// lost (watts a square meter), heave (meters) and swirl (a second); those
+/// whose water ran at the fastest water runs; whether its means held still
+/// since the look before; and the water held by its cells beside blocks it
+/// does not store (meters of depth summed over them) and those cells.
 #[derive(Clone, Copy)]
 struct Look {
     volume: f64,
-    moved: f64,
+    speed: f64,
+    energy: f64,
+    heave: f64,
+    swirl: f64,
+    clamped: f64,
     still: bool,
     against: f64,
     against_cells: f64,
+}
+
+impl Look {
+    /// Whether its means changed from those of look `before` by under
+    /// [`STILL_CHANGE`] of themselves, or by no more than records keep.
+    fn holds_to(&self, before: &Look) -> bool {
+        let floor = f64::from(codec::HEIGHT_STEP);
+        let pairs = [
+            (self.volume, before.volume),
+            (self.speed, before.speed),
+            (self.energy, before.energy),
+            (self.heave, before.heave),
+            (self.swirl, before.swirl),
+        ];
+        pairs.iter().all(|&(now, then)| {
+            let change = (now - then).abs();
+            change < STILL_CHANGE * then.abs() || change <= floor
+        })
+    }
 }
 
 /// A range of a buffer this frame clears before it steps: of the averages
@@ -349,7 +373,6 @@ impl WaterSettle {
             let start = &square.start;
             let stored = &start.stored;
             let mut flags = SIM_LOCAL | SIM_OPEN | SIM_SUMMING | SIM_SPARSE;
-            let mut summed = 0.0;
             if square.phase == Phase::Stepping && steps > 0 {
                 flags |= SIM_STEPPING;
                 square.steps += steps;
@@ -357,7 +380,6 @@ impl WaterSettle {
                 self.sourced = self.sourced.max(start.sources.len() as u32);
                 if square.since_look >= LOOK_EVERY {
                     flags |= SIM_LOOKING;
-                    summed = square.since_look as f32;
                     square.since_look = 0;
                     looks.push(slot);
                 }
@@ -366,7 +388,7 @@ impl WaterSettle {
             let [x, z] = stored.cells;
             squares[slot] = SimSlot {
                 shape: [x, z, flags, start.sources.len() as u32],
-                step: [start.cell, 0.0, ROUGHNESS, summed],
+                step: [start.cell, 0.0, 0.0, 0.0],
                 blocks: [stored.blocks[0], stored.blocks[1], stored.stored() as u32, 0],
             };
         }
@@ -389,22 +411,23 @@ impl WaterSettle {
             return;
         };
         let held = buffers.held();
+        let means = CELL_MEANS as u64;
         let mut copies = Vec::new();
         for slot in looks {
             let Some(square) = self.squares[slot].as_ref() else {
                 continue;
             };
             let blocks = square.start.stored.stored() as u64;
-            let offset = (buffers.averages_at(slot as u32) + 2 * held) * 16;
-            copies.push(((slot, square.load, false), (offset, 2 * blocks * 16)));
+            let offset = (buffers.averages_at(slot as u32) + (SIM_CELL_SUMS + means) * held) * 16;
+            copies.push(((slot, square.load, false), (offset, SIM_BLOCK_LOOKS * blocks * 16)));
         }
         for slot in wanted {
             let Some(square) = self.squares[slot].as_ref() else {
                 continue;
             };
             let cells = square.start.water.len() as u64;
-            let offset = (buffers.averages_at(slot as u32) + held) * 16;
-            copies.push(((slot, square.load, true), (offset, cells * 16)));
+            let offset = (buffers.averages_at(slot as u32) + SIM_CELL_SUMS * held) * 16;
+            copies.push(((slot, square.load, true), (offset, means * cells * 16)));
         }
         for (read, range) in copies {
             self.read_back(device, read, range);
@@ -559,16 +582,20 @@ impl WaterSettle {
         wanted
     }
 
-    /// Slot `slot`'s region settled to `means` (each stored cell's surface,
-    /// flow along x and z and foam, averaged over its last steps, in its
-    /// slots' order), which make its records, the slot then free.
+    /// Slot `slot`'s region settled to `means` (each stored cell's
+    /// [`CELL_MEANS`] entries of its means over its last steps, in its
+    /// slots' order), which make its records, the slot then free; a cook
+    /// says what they came to.
     fn finish(&mut self, slot: usize, means: &[[f32; 4]]) {
         let Some(square) = self.squares[slot].as_mut() else {
             return;
         };
-        let means = &means[..means.len().min(square.start.water.len())];
+        let means = &means[..means.len().min(square.start.water.len() * CELL_MEANS)];
         let settled = square.steps < SETTLE_STEPS[1];
         let made = square.start.finish(means, square.steps, settled);
+        if self.cooking {
+            say_made(square, &made);
+        }
         for (record, water) in square.records.iter().zip(&made) {
             self.made.push((*record, Ok(codec::encode(water))));
         }
@@ -643,11 +670,11 @@ impl WaterSettle {
 }
 
 /// Writes `square`'s start into slot `slot` of `buffers`: its table, its
-/// blocks' ground, their cells' water to start from (into both states) and
-/// the means its looks start from, its rivers' sources, and its blocks as
-/// they start (each marked where a cell of it holds water no lake holds or
-/// rivers bring water to one), its cells' stepping counted; the ranges to
-/// clear before it steps: its sums, and its cells' waves and seconds.
+/// blocks' ground, their cells' water to start from (into both states),
+/// its rivers' sources, and its blocks as they start (each marked where a
+/// cell of it holds water no lake holds or rivers bring water to one), its
+/// cells' stepping counted; the ranges to clear before it steps: its sums,
+/// and its cells' waves, outflow's shares and seconds.
 fn load(
     queue: &wgpu::Queue,
     buffers: &SlotBuffers,
@@ -685,13 +712,7 @@ fn load(
             bytemuck::cast_slice(&sources),
         );
     }
-    // The means before the first look are where the water starts.
     let averages = buffers.averages_at(slot);
-    queue.write_buffer(
-        &buffers.averages,
-        (averages + buffers.held()) * 16,
-        cells,
-    );
     let (blocks, stepping) = blocks(start);
     let steps = buffers.steps_at(slot);
     queue.write_buffer(
@@ -704,7 +725,7 @@ fn load(
         Clear {
             averages: true,
             offset: averages * 16,
-            bytes: n * 16,
+            bytes: SIM_CELL_SUMS * n * 16,
         },
         Clear {
             averages: false,
@@ -754,52 +775,61 @@ fn blocks(start: &SettleStart) -> (Vec<[f32; 2]>, u64) {
     (entries, (stepping * BLOCK_CELLS) as u64)
 }
 
-/// Takes look `sums` (each stored block's two: the water its cells held,
-/// how far their averaged velocities moved, its cells flowing and stepping;
-/// and the water its cells beside blocks the slot does not store held, and
-/// those cells) into `square`'s looks: whether it is done, settled or out
-/// of steps.
+/// Takes look `sums` (each stored block's [`SIM_BLOCK_LOOKS`]: over its
+/// cells flowing, the water they held, their speeds and their count, and
+/// its cells stepping; the energy they lose, their heave, their swirl and
+/// those that ran at the fastest water runs; and the water its cells beside
+/// blocks the slot does not store held, and those cells) into `square`'s
+/// looks: whether it is done, settled (its means stationary) or out of
+/// steps.
 fn looked(square: &mut Square, sums: &[[f32; 4]]) -> bool {
-    let (mut volume, mut moved, mut flowing, mut stepping) = (0.0_f64, 0.0_f64, 0.0_f64, 0.0);
+    let (mut volume, mut speed, mut flowing, mut stepping) = (0.0_f64, 0.0_f64, 0.0_f64, 0.0);
+    let (mut energy, mut heave, mut swirl, mut clamped) = (0.0_f64, 0.0_f64, 0.0_f64, 0.0);
     let (mut against, mut against_cells) = (0.0_f64, 0.0_f64);
     let blocks = square.start.stored.stored();
-    for block in sums.chunks_exact(2).take(blocks) {
-        let [sum, edge] = [block[0], block[1]];
-        volume += f64::from(sum[0]);
-        moved += f64::from(sum[1]);
-        flowing += f64::from(sum[2]);
-        stepping += f64::from(sum[3]);
+    for block in sums.chunks_exact(SIM_BLOCK_LOOKS as usize).take(blocks) {
+        let [water, motion, edge] = [block[0], block[1], block[2]];
+        volume += f64::from(water[0]);
+        speed += f64::from(water[1]);
+        flowing += f64::from(water[2]);
+        stepping += f64::from(water[3]);
+        energy += f64::from(motion[0]);
+        heave += f64::from(motion[1]);
+        swirl += f64::from(motion[2]);
+        clamped += f64::from(motion[3]);
         against += f64::from(edge[0]);
         against_cells += f64::from(edge[1]);
     }
     square.stepping = stepping as u64;
     square.flowing = flowing as u64;
-    let moved = moved / at_least_one(flowing);
-    let still = square
-        .looks
-        .last()
-        .is_some_and(|last| (volume - last.volume).abs() <= SETTLED_VOLUME * at_least_one(volume));
-    square.looks.push(Look {
+    let cells = at_least_one(flowing);
+    let mut look = Look {
         volume,
-        moved,
-        still,
+        speed: speed / cells,
+        energy: energy / cells,
+        heave: heave / cells,
+        swirl: swirl / cells,
+        clamped,
+        still: false,
         against,
         against_cells,
-    });
+    };
+    look.still = square.looks.last().is_some_and(|last| look.holds_to(last));
+    square.looks.push(look);
     let looks = &square.looks;
     let count = looks.len();
     let settled = square.steps >= SETTLE_STEPS[0]
         && count > STILL_LOOKS
-        && looks[count - STILL_LOOKS..].iter().all(|look| look.still)
-        && (moved <= SETTLED_SPEED || moved >= STILL_SHARE * looks[count - 1 - STILL_LOOKS].moved);
+        && looks[count - STILL_LOOKS..].iter().all(|look| look.still);
     settled || square.steps >= SETTLE_STEPS[1]
 }
 
 /// Prints how `square` settles at its last look, a frame running `steps`
 /// steps: its cells, the blocks of them it stores and its rivers' water,
-/// those stepping and flowing, the water it holds and how far its
-/// velocities moved, the water standing against the edges of what it
-/// stores, and whether it is `done`, settled or out of steps.
+/// those stepping and flowing, the water it holds, its flowing cells' mean
+/// speed, energy lost, heave and swirl and those that ran at the fastest
+/// water runs, the water standing against the edges of what it stores, and
+/// whether it is `done`, settled or out of steps.
 fn say(square: &Square, steps: u32, done: bool) {
     let start = &square.start;
     let [x, z] = start.stored.cells;
@@ -814,8 +844,9 @@ fn say(square: &Square, steps: u32, done: bool) {
     eprintln!(
         "Water settling {x} by {z} cells of {} m, {} blocks of them stored ({} tiles kept, \
          rivers bringing {sources:.0} m3/s): {state} after {} steps, {steps} a frame; {} cells \
-         stepping, {} flowing; {:.0} m3 held, velocities moved {:.4} m/s; {:.0} m3 against the \
-         edges of the blocks stored, over {} cells",
+         stepping, {} flowing; {:.0} m3 held, flowing at {:.3} m/s, losing {:.1} W/m2, heaving \
+         {:.4} m and swirling {:.3}/s on average, {} cells at the fastest water runs; {:.0} m3 \
+         against the edges of the blocks stored, over {} cells",
         start.cell,
         start.stored.stored(),
         square.records.len(),
@@ -823,9 +854,59 @@ fn say(square: &Square, steps: u32, done: bool) {
         square.stepping,
         square.flowing,
         look.map_or(0.0, |look| look.volume * area),
-        look.map_or(0.0, |look| look.moved),
+        look.map_or(0.0, |look| look.speed),
+        look.map_or(0.0, |look| look.energy),
+        look.map_or(0.0, |look| look.heave),
+        look.map_or(0.0, |look| look.swirl),
+        look.map_or(0.0, |look| look.clamped),
         look.map_or(0.0, |look| look.against * area),
         look.map_or(0.0, |look| look.against_cells),
+    );
+}
+
+/// The reaches channels run in, as records' stats count them
+/// (`engine_terrain::Reach`'s order).
+const REACH_NAMES: [&str; 5] = ["pools", "plane beds", "steps", "cascades", "falls"];
+
+/// Prints what `square`'s records `made` came to, their stats summed over
+/// its tiles: its cells whose water ran at the fastest water runs, and of
+/// its flowing cells in channels, by reach, their mean effective Manning's
+/// n, the share of them running faster than their waves and how many there
+/// are.
+fn say_made(square: &Square, made: &[SteadyWater]) {
+    let [x, z] = square.start.stored.cells;
+    let mut clamped = 0_u64;
+    let mut reaches = REACH_NAMES.map(|_| (0.0_f64, 0.0_f64, 0_u64));
+    for water in made {
+        let stats = &water.stats;
+        clamped += u64::from(stats.clamped);
+        let counted = stats.friction.iter().zip(&stats.fast).zip(&stats.reaches);
+        for (reach, ((&friction, &fast), &cells)) in reaches.iter_mut().zip(counted) {
+            reach.0 += f64::from(friction) * f64::from(cells);
+            reach.1 += f64::from(fast) * f64::from(cells);
+            reach.2 += u64::from(cells);
+        }
+    }
+    let channels: Vec<String> = REACH_NAMES
+        .iter()
+        .zip(reaches)
+        .map(|(name, (friction, fast, cells))| {
+            if cells == 0 {
+                return format!("{name} none");
+            }
+            let count = cells as f64;
+            format!(
+                "{name} Manning's n {:.3}, {:.0}% above Froude 1, over {cells} cells",
+                friction / count,
+                100.0 * fast / count
+            )
+        })
+        .collect();
+    eprintln!(
+        "Water settled over {x} by {z} cells for {} tiles: {clamped} cells at the fastest water \
+         runs; in channels, {}",
+        made.len(),
+        channels.join("; ")
     );
 }
 
