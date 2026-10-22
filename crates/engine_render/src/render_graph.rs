@@ -241,7 +241,9 @@ pub(crate) enum Pass {
     /// Terrains' ground lit by the sun, its shadows and the sky as they
     /// stand, and the probes around the camera gathering its light.
     Bounce,
-    /// The opaque pass of `phase`.
+    /// The opaque pass of `phase`, masked surfaces' depth pre-pass first:
+    /// the phase's masked meshes and, in the first, masked placed objects,
+    /// whose colors then draw where it left their depths.
     Opaque {
         phase: Phase,
     },
@@ -846,14 +848,15 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
                 .write_if(shape.clusters, Clusters);
         }
         // Terrain, its cover and placed objects draw in the first phase,
-        // after the meshes where terrain shades deferred.
+        // after the meshes where terrain shades deferred; masked placed
+        // objects' depth pre-pass draws first in it either way.
         let first = phase == Phase::One;
         let forward = first && !shape.deferred;
         let mut opaque = graph
             .add(Pass::Opaque { phase })
             .read(Poses)
             .read_if(gpu, Visible)
-            .read_if(shape.scatter && forward, Placed)
+            .read_if(shape.scatter && first, Placed)
             .read(Occupancy)
             .read_if(shape.shadows, ShadowMaps)
             .read_if(shape.lights, Lights)
@@ -905,10 +908,10 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
 }
 
 /// Declares terrain shaded deferred after the first phase's meshes, drawing
-/// into the frame's `targets`: its visibility over their depth, each
-/// terrain's resolve of the pixels it holds, its cover, placed objects and
-/// the sky over them, and the pages its resolves wanted of the virtual
-/// texture.
+/// into the frame's `targets`: its visibility over their depths and those
+/// masked placed objects' pre-pass left, each terrain's resolve of the
+/// pixels it holds, its cover, placed objects and the sky over them, and
+/// the pages its resolves wanted of the virtual texture.
 fn deferred_terrain(graph: &mut RenderGraph, shape: &FrameShape, targets: &[(Resource, Clear)]) {
     use Resource::*;
     graph

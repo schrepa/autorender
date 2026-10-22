@@ -212,9 +212,10 @@ fn vs_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
 }
 
 // Meshes with vertex colors or second texture coordinates
-// read them from a second vertex stream, and their outputs carry both.
+// read them from a second vertex stream, and their outputs carry both, at
+// invariant positions as `VertexOutput`'s.
 struct ExtendedOutput {
-    @builtin(position) clip_position: vec4<f32>,
+    @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,
@@ -224,7 +225,7 @@ struct ExtendedOutput {
 }
 
 struct ExtendedTemporalOutput {
-    @builtin(position) clip_position: vec4<f32>,
+    @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,

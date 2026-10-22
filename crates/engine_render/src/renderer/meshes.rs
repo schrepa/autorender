@@ -1,5 +1,6 @@
 //! Mesh pipelines: the vertex streams of meshes and slots, each pass kind's
-//! material variants over their layouts, the sky, and the
+//! material variants over their layouts (masked surfaces' depth pre-pass
+//! and their colors after it among the opaque passes'), the sky, and the
 //! opaque drawing order.
 
 #![expect(
@@ -15,7 +16,9 @@ use crate::pipelines::vertex_attributes;
 /// Mesh pipelines: their layouts, unlit and lit, created with
 /// the first variant needing each (temporal frames' come with the temporal
 /// pass); every pass kind's material variants, whose BASIC entries are the
-/// base pipelines; the sky by its targets, built when a pass first draws it;
+/// base pipelines, masked surfaces' depth pre-pass among the opaque passes'
+/// (keyed by their unlit kind, as it reads no lights); the sky by its
+/// targets, built when a pass first draws it;
 /// the empty group pipelines skipping a group bind (the visibility pass,
 /// impostor bakes); the scene features every pipeline shading the scene
 /// is specialized for; and whether the session cooks its pipeline list,
@@ -87,11 +90,13 @@ pub(super) fn relit(kind: PassKind) -> PassKind {
     }
 }
 
-/// The plan's opaque batches in drawing order, and the sort
-/// keys ordering them.
+/// The plan's opaque batches in drawing order, the masked ones among them
+/// in the same order (which masked surfaces' depth pre-pass draws), and
+/// the sort keys ordering them.
 #[derive(Default)]
 pub(super) struct DrawOrder {
     pub(super) order: Vec<u32>,
+    pub(super) masked: Vec<u32>,
     pub(super) keys: Vec<(u8, Variant, Option<MaterialHandle>, u8, u32)>,
 }
 
@@ -176,9 +181,10 @@ impl Renderer {
     }
 
     /// Binds what `batch` draws in a pass of `kind`: its variant's pipeline
-    /// (the uber variant with `uber`), switched only when the
-    /// variant changes, its material group and its mesh's streams. Returns
-    /// the mesh and its draw.
+    /// (the uber variant with `uber`; in opaque passes the one drawing its
+    /// colors, [`Variant::opaque`]), switched only when the variant changes,
+    /// its material group and its mesh's streams. Returns the mesh and its
+    /// draw.
     pub(super) fn bind_batch(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -189,10 +195,44 @@ impl Renderer {
         // Every planned source was validated and uploaded above.
         let mesh = &self.meshes[&batch.mesh];
         let (group, variant) = self.batch_binding(batch, Some(mesh));
-        let variant = if uber { variant.uber() } else { variant };
-        if binds.variant != Some(variant) {
-            pass.set_pipeline(&self.mesh_pipelines.variants[&(kind, variant)]);
-            binds.variant = Some(variant);
+        let variant = if uber {
+            variant.uber()
+        } else if kind.targets().is_some() {
+            variant.opaque()
+        } else {
+            variant
+        };
+        (mesh, self.bind_mesh(pass, binds, (kind, variant), (group, mesh)))
+    }
+
+    /// Binds what `batch` draws in masked surfaces' depth pre-pass of an
+    /// opaque pass of `kind`, as [`Self::bind_batch`] binds its colors:
+    /// `None`, binding nothing, unless its material is masked.
+    pub(super) fn bind_prepass(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        binds: &mut BatchBinds,
+        kind: PassKind,
+        batch: &DrawBatch,
+    ) -> Option<(&GpuMesh, MeshDraw<'_>)> {
+        let mesh = &self.meshes[&batch.mesh];
+        let (group, variant) = self.batch_binding(batch, Some(mesh));
+        let key = prepass_key(kind, variant)?;
+        Some((mesh, self.bind_mesh(pass, binds, key, (group, mesh))))
+    }
+
+    /// Binds the pipeline of `key`, switched only when its variant changes,
+    /// material group `group` and `mesh`'s streams; returns the mesh's draw.
+    fn bind_mesh<'m>(
+        &'m self,
+        pass: &mut wgpu::RenderPass<'_>,
+        binds: &mut BatchBinds,
+        key: (PassKind, Variant),
+        (group, mesh): (&wgpu::BindGroup, &'m GpuMesh),
+    ) -> MeshDraw<'m> {
+        if binds.variant != Some(key.1) {
+            pass.set_pipeline(&self.mesh_pipelines.variants[&key]);
+            binds.variant = Some(key.1);
         }
         let bindings = &mut binds.bindings;
         bindings.group(pass, 1, group);
@@ -205,7 +245,46 @@ impl Renderer {
             bindings.vertex(pass, 3, skin);
         }
         bindings.index(pass, draw.indices);
-        (mesh, draw)
+        draw
+    }
+
+    /// The pipeline the opaque passes of `kind` draw surfaces of `variant`
+    /// with, once created: their colors, or with `prepass` masked ones'
+    /// depth pre-pass (`None` for others).
+    pub(super) fn opaque_pipeline(
+        &self,
+        kind: PassKind,
+        variant: Variant,
+        prepass: bool,
+    ) -> Option<&wgpu::RenderPipeline> {
+        let key = if prepass {
+            prepass_key(kind, variant)?
+        } else {
+            (kind, variant.opaque())
+        };
+        self.mesh_pipelines.variants.get(&key)
+    }
+
+    /// Creates the pipelines the opaque passes of `kind` draw surfaces of
+    /// `variant` with, unless created: their colors, and masked ones' depth
+    /// pre-pass.
+    pub(super) fn ensure_opaque_variant(&mut self, kind: PassKind, variant: Variant) {
+        for key in opaque_keys(kind, variant).into_iter().flatten() {
+            self.ensure_variant(key);
+        }
+    }
+
+    /// Creates the pipeline of `kind` shading materials of `variant` unless
+    /// created.
+    fn ensure_variant(&mut self, (kind, variant): (PassKind, Variant)) {
+        if self.mesh_pipelines.variants.contains_key(&(kind, variant)) {
+            return;
+        }
+        self.ensure_mesh_layout(kind);
+        let pipeline = self.create_variant(kind, variant);
+        self.mesh_pipelines
+            .variants
+            .insert((kind, variant), pipeline);
     }
 
     /// Creates the pipelines of the plan's material variants for this frame's
@@ -230,7 +309,8 @@ impl Renderer {
     }
 
     /// Creates the pipelines of the plan's material variants for `opaque`
-    /// and `transparent` passes unless created.
+    /// and `transparent` passes unless created: the opaque passes' masked
+    /// surfaces' depth pre-pass too.
     fn create_variants(&mut self, opaque: PassKind, transparent: PassKind) {
         let key = (self.structure_key(), opaque, transparent);
         if self.structure_keys.variants != Some(key) {
@@ -241,24 +321,22 @@ impl Renderer {
                 if batch.transparent && debug {
                     continue;
                 }
-                let kind = if batch.transparent {
-                    transparent
-                } else {
-                    opaque
-                };
                 let (_, variant) = self.batch_binding(batch, self.meshes.get(&batch.mesh));
-                if !self.mesh_pipelines.variants.contains_key(&(kind, variant))
-                    && !missing.contains(&(kind, variant))
-                {
-                    missing.push((kind, variant));
+                let drawn = if batch.transparent {
+                    [Some((transparent, variant)), None]
+                } else {
+                    opaque_keys(opaque, variant)
+                };
+                for pipeline in drawn.into_iter().flatten() {
+                    if !self.mesh_pipelines.variants.contains_key(&pipeline)
+                        && !missing.contains(&pipeline)
+                    {
+                        missing.push(pipeline);
+                    }
                 }
             }
-            for (kind, variant) in missing {
-                self.ensure_mesh_layout(kind);
-                let pipeline = self.create_variant(kind, variant);
-                self.mesh_pipelines
-                    .variants
-                    .insert((kind, variant), pipeline);
+            for pipeline in missing {
+                self.ensure_variant(pipeline);
             }
             self.structure_keys.variants = Some(key);
         }
@@ -328,7 +406,11 @@ impl Renderer {
         });
     }
 
-    /// The pipeline of `kind` shading materials of `variant`.
+    /// The pipeline of `kind` shading materials of `variant`; in opaque
+    /// passes, for [`Variant::depth_only`] variants, masked surfaces' depth
+    /// pre-pass, which writes depth and no color, and for
+    /// [`Variant::pretested`] ones their colors after it, drawn where its
+    /// depths equal theirs.
     pub(super) fn create_variant(&self, kind: PassKind, variant: Variant) -> wgpu::RenderPipeline {
         let canvas = self.display.format();
         let layout = if kind.slots() == Slots::Temporal {
@@ -344,18 +426,30 @@ impl Renderer {
                 .expect("created with the variant")
         };
         let fragment = match kind.pass {
+            // The depth pre-pass draws in its pass's targets, writing none.
             MeshPass::Opaque(targets) => MeshFragment {
-                targets: targets.color_targets(canvas),
-                depth_write: true,
+                targets: if variant.depth_only() {
+                    unwritten(targets.color_targets(canvas))
+                } else {
+                    targets.color_targets(canvas)
+                },
+                depth_compare: if variant.pretested() {
+                    wgpu::CompareFunction::Equal
+                } else {
+                    wgpu::CompareFunction::Greater
+                },
+                depth_write: !variant.pretested(),
                 mirrored: false,
             },
             MeshPass::Transparent => MeshFragment {
                 targets: accumulation_targets().to_vec(),
+                depth_compare: wgpu::CompareFunction::Greater,
                 depth_write: false,
                 mirrored: false,
             },
             MeshPass::Probe => MeshFragment {
                 targets: vec![Some(ENVIRONMENT_FORMAT.into())],
+                depth_compare: wgpu::CompareFunction::Greater,
                 depth_write: true,
                 mirrored: true,
             },
@@ -374,7 +468,8 @@ impl Renderer {
     /// depth testing leaves it only the pixels nothing standing on it covers;
     /// then by pipeline variant, material and vertex buffers. Meshes share
     /// the arena's buffers, so passes then switch pipelines and bind groups
-    /// once per run rather than per batch.
+    /// once per run rather than per batch. The masked ones keep that order
+    /// in their depth pre-pass's list.
     pub(super) fn order_draws(&mut self, snapshot: &engine_core::RenderSnapshot) {
         let key = self.structure_key();
         if self.structure_keys.order == Some(key) {
@@ -412,6 +507,14 @@ impl Renderer {
         self.draw_order
             .order
             .extend(self.draw_order.keys.iter().map(|&(.., index)| index));
+        self.draw_order.masked.clear();
+        self.draw_order.masked.extend(
+            self.draw_order
+                .keys
+                .iter()
+                .filter(|key| key.1.alpha_mask())
+                .map(|&(.., index)| index),
+        );
     }
 }
 
@@ -480,14 +583,46 @@ fn sky_pipeline(
     )
 }
 
-/// Fragment stage of a mesh pipeline: color targets and pipeline
-/// constants, and whether it writes depth (transparent surfaces do not).
+/// Fragment stage of a mesh pipeline: color targets, how it tests depth
+/// and whether it writes it (transparent surfaces and masked ones' colors
+/// after their depth pre-pass do not).
 struct MeshFragment {
     targets: Vec<Option<wgpu::ColorTargetState>>,
+    depth_compare: wgpu::CompareFunction,
     depth_write: bool,
     // Drawn through a mirroring view (reflection probe faces): triangles
     // wind the other way.
     mirrored: bool,
+}
+
+/// `targets` with nothing written to them: masked surfaces' depth pre-pass
+/// draws in its opaque pass's targets, and its fragments write no color.
+fn unwritten(targets: Vec<Option<wgpu::ColorTargetState>>) -> Vec<Option<wgpu::ColorTargetState>> {
+    targets
+        .into_iter()
+        .map(|target| {
+            target.map(|target| wgpu::ColorTargetState {
+                blend: None,
+                write_mask: wgpu::ColorWrites::empty(),
+                ..target
+            })
+        })
+        .collect()
+}
+
+/// The pipelines the opaque passes of `kind` draw surfaces of `variant`
+/// with: their colors, and masked ones' depth pre-pass before them.
+fn opaque_keys(kind: PassKind, variant: Variant) -> [Option<(PassKind, Variant)>; 2] {
+    [Some((kind, variant.opaque())), prepass_key(kind, variant)]
+}
+
+/// The pipeline of masked surfaces of `variant`'s depth pre-pass in the
+/// opaque passes of `kind`, which reads no lights, so lit and unlit frames
+/// share it; `None` for surfaces that are not masked.
+fn prepass_key(kind: PassKind, variant: Variant) -> Option<(PassKind, Variant)> {
+    variant
+        .alpha_mask()
+        .then_some((PassKind { lit: false, ..kind }, variant.prepass()))
 }
 
 /// A mesh pipeline of `kind` over `layout`, shading materials of `variant`
@@ -512,8 +647,15 @@ fn mesh_pipeline(
     } else {
         Streams::Basic
     };
+    // Masked surfaces' depth pre-pass draws the vertex stages of their
+    // colors, so their depths are the same, with a fragment stage of its
+    // own testing their alpha alone.
     let vertex_entry = kind.vertex_entry(streams);
-    let fragment_entry = kind.fragment_entry(extended);
+    let fragment_entry = if variant.depth_only() {
+        kind.prepass_entry(extended)
+    } else {
+        kind.fragment_entry(extended)
+    };
     let [mesh, slot_ids] = slot_layouts();
     let layouts = [mesh, slot_ids, extra_layout(), skin_layout()];
     let buffers = match streams {
@@ -556,7 +698,7 @@ fn mesh_pipeline(
             depth: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(fragment.depth_write),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
+                depth_compare: Some(fragment.depth_compare),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),

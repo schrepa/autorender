@@ -248,8 +248,8 @@ impl Renderer {
             sources,
             snapshot.camera_position,
         );
-        // Each group's pipeline variant, and the one its fading objects draw
-        // with.
+        // Each group's pipelines, and those its fading objects draw with:
+        // masked groups' depth pre-pass too.
         let variants: Vec<Variant> = self
             .scatter_draws
             .groups
@@ -260,13 +260,7 @@ impl Renderer {
             })
             .collect();
         for variant in variants {
-            if !self.mesh_pipelines.variants.contains_key(&(kind, variant)) {
-                self.ensure_mesh_layout(kind);
-                let pipeline = self.create_variant(kind, variant);
-                self.mesh_pipelines
-                    .variants
-                    .insert((kind, variant), pipeline);
-            }
+            self.ensure_opaque_variant(kind, variant);
         }
         let level_of_detail = snapshot.environment.level_of_detail;
         let pixel_error = level_of_detail
@@ -723,12 +717,17 @@ impl Renderer {
         (group, variant)
     }
 
-    /// Draws this frame's placed objects into the first opaque phase; the
-    /// camera and lights are bound. Returns the draws.
+    /// Draws this frame's placed objects into the first opaque phase: their
+    /// colors, masked groups' where their depth pre-pass left their depths,
+    /// and their impostors' cards; or with `prepass` the masked groups' depth
+    /// pre-pass, first in the phase's opaque pass, from the same lists, at
+    /// the same levels and with the same fades as their colors. Returns the
+    /// draws.
     pub(super) fn draw_scatter(
         &self,
         state: &FrameState<'_>,
         pass: &mut wgpu::RenderPass<'_>,
+        prepass: bool,
     ) -> u32 {
         if !state.scatter {
             return 0;
@@ -740,7 +739,9 @@ impl Renderer {
         let temporal =
             state.packing.temporal_frame.is_some() && self.features.temporal.get().is_some();
         pass.set_bind_group(0, self.camera.group(), &[]);
+        // The pre-pass reads no lights.
         if kind.lit
+            && !prepass
             && let Some(lights) = self.features.lights.get()
         {
             pass.set_bind_group(3, lights.fragment_group(), &[]);
@@ -752,36 +753,27 @@ impl Renderer {
             .debug_records(state)
             .map(|records| (records, state.shape.shadows, self.shadows.keeps_still()));
         let mut draws = 0;
-        for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
-            if draw.count == 0 {
-                continue;
-            }
-            let (group, variant) = self.scatter_binding(draw);
-            let Some(pipeline) = self.mesh_pipelines.variants.get(&(kind, variant)) else {
-                continue;
-            };
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(1, group, &[]);
-            draws += self.draw_scatter_levels(pass, (index, draw), 0, debug);
-        }
-        // Objects fading between how the camera shows them,
-        // at the levels the camera draws.
+        // The camera's lists, then those of objects fading between how the
+        // camera shows them, at the levels the camera draws.
         let fading = self.features.scatter.get().fading_view();
-        for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
-            if draw.count == 0 {
-                continue;
+        for (view, fades) in [(0, false), (fading, true)] {
+            for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
+                if draw.count == 0 {
+                    continue;
+                }
+                let (group, variant) = self.scatter_binding(draw);
+                let Some(pipeline) =
+                    self.opaque_pipeline(kind, variant.with_fading(fades), prepass)
+                else {
+                    continue;
+                };
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(1, group, &[]);
+                draws += self.draw_scatter_levels(pass, (index, draw), view, debug);
             }
-            let (group, variant) = self.scatter_binding(draw);
-            let Some(pipeline) = self
-                .mesh_pipelines
-                .variants
-                .get(&(kind, variant.with_fading(true)))
-            else {
-                continue;
-            };
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(1, group, &[]);
-            draws += self.draw_scatter_levels(pass, (index, draw), fading, debug);
+        }
+        if prepass {
+            return draws;
         }
         // Impostors: every group's cards in one draw, over
         // the poses and lights the meshes bound.

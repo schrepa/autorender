@@ -143,6 +143,12 @@ fn alpha_cutoff(cutoff: f32) -> f32 {
     return max(fade_noise(fragment_pixel), 1.0 / 255.0);
 }
 
+// Whether a masked fragment of `opacity` leaves its pixel: under the
+// material's cutoff once its texels' `coverage` scales it.
+fn masked_out(opacity: f32, coverage: f32) -> bool {
+    return opacity * coverage < alpha_cutoff(material_maps.params.z);
+}
+
 // Texture coordinates of map `index` (base color, metallic-roughness,
 // normal, occlusion, emissive) through its transform, from the first or
 // second set as the map reads.
@@ -529,14 +535,13 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     let surface = unpack4x8unorm(packed);
     var point: SurfacePoint;
     point.albedo = texels.base.rgb * color.rgb;
-    point.opacity = color.a;
+    point.opacity = surface_opacity(color, texels);
     point.emission = surface.z * 16.0 * texels.base.a;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = 1.0;
     var roughness = surface.x;
     var metalness = surface.y;
     if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
-        point.opacity *= texels.base.a;
         roughness *= texels.factors.x;
         metalness *= texels.factors.y;
         point.occlusion = 1.0 + material_maps.params.y * (texels.occlusion - 1.0);
@@ -615,14 +620,13 @@ fn widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> Surfa
     return result;
 }
 
-// Sampling uses implicit derivatives, so callers build the point in uniform
-// control flow; what follows may not be. `color` is linear color and
-// opacity; `front` whether the surface faces the camera.
-fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
-        uv: vec2<f32>, uv1: vec2<f32>, packed: u32, front: bool) -> SurfacePoint {
-    let world_dx = dpdx(world);
-    let world_dy = dpdy(world);
-    // Maps sample as finely as the display shows them.
+// The texels of a surface point at `world`, which changes by `world_dx`
+// across and `world_dy` down a pixel, of interpolated normal
+// `surface_normal` and texture coordinates `uv` and `uv1`: world-mapped
+// materials' over the projections it faces, the others' at its
+// coordinates, as finely as the display shows them.
+fn surface_texels(surface_normal: vec3<f32>, world: vec3<f32>, world_dx: vec3<f32>,
+        world_dy: vec3<f32>, uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
     var texels: MaterialTexels;
     if material_flag(VARIANT_WORLD_MAPPING, WORLD_MAPPING) {
         let detail = material_detail();
@@ -631,13 +635,36 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     } else {
         texels = material_texels(uv, uv1, material_bias());
     }
+    return texels;
+}
+
+// The coverage of a surface of linear color and opacity `color` sampling
+// `texels`: its opacity, times its base color texel's alpha with maps.
+fn surface_opacity(color: vec4<f32>, texels: MaterialTexels) -> f32 {
+    if material_flag(VARIANT_MAPS, MATERIAL_MAPS) {
+        return color.a * texels.base.a;
+    }
+    return color.a;
+}
+
+// Sampling uses implicit derivatives, so callers build the point in uniform
+// control flow; what follows may not be. `color` is linear color and
+// opacity; `front` whether the surface faces the camera. Masked surfaces
+// leave the pixels their alpha test fails; their colors after the depth
+// pre-pass (`PRETESTED`), which draw only where its test passed, test
+// nothing.
+fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
+        uv: vec2<f32>, uv1: vec2<f32>, packed: u32, front: bool) -> SurfacePoint {
+    let world_dx = dpdx(world);
+    let world_dy = dpdy(world);
+    let texels = surface_texels(surface_normal, world, world_dx, world_dy, uv, uv1);
     var point = textured_point(color, surface_normal, world, world_dx, world_dy, texels, packed,
         front);
     if GROUNDING {
         point = grounded(point);
     }
     let result = widened(point, dpdx(point.normal), dpdy(point.normal));
-    if ALPHA_MASK && result.opacity * texels.coverage < alpha_cutoff(material_maps.params.z) {
+    if ALPHA_MASK && !PRETESTED && masked_out(result.opacity, texels.coverage) {
         discard;
     }
     return result;
@@ -1025,6 +1052,19 @@ fn extended_fragment(input: ExtendedOutput) -> Fragment {
     values.pixel = input.clip_position.xy;
     values.origin = input.material.w >> 16u;
     return values;
+}
+
+// Masked surfaces' depth pre-pass in the opaque passes: a fragment's fade
+// (`fragment` takes it) and alpha test alone, its texels and coverage as
+// `surface_point` reads them, so the depth it leaves is the one its color
+// then draws at (`PRETESTED`). Of its texels only the base color's alpha is
+// read.
+fn masked_depth(input: Fragment) {
+    let texels = surface_texels(input.normal, input.world, dpdx(input.world),
+        dpdy(input.world), input.uv, input.uv1);
+    if masked_out(surface_opacity(input.color, texels), texels.coverage) {
+        discard;
+    }
 }
 
 // How much of their color the windows of unlit rooms keep: the rooms behind

@@ -158,9 +158,11 @@ fn debug_sun(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
 
 // Meshes' and virtual geometry's vertex outputs with the second stream's
 // (white and the first coordinates for meshes without one), and the
-// object: the draw's record, the slot and the cluster.
+// object: the draw's record, the slot and the cluster. Positions are
+// invariant, as `VertexOutput`'s, and masked meshes' depth pre-pass reads
+// these outputs as `ExtendedOutput`'s.
 struct DebugOutput {
-    @builtin(position) clip_position: vec4<f32>,
+    @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,

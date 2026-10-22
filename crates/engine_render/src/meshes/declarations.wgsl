@@ -74,6 +74,10 @@ override UBER_MATERIALS: bool = false;
 // Foliage shading on a material that is not masked: masked ones shade
 // as foliage anyway.
 override FOLIAGE: bool = false;
+// Masked surfaces' colors after their depth pre-pass (`masked_depth`),
+// which tested their alpha: they draw only where its depth is theirs, so
+// they test none themselves and early depth testing rejects the rest.
+override PRETESTED: bool = false;
 
 // Bits of a material's variant (`gpu_data::Variant`) in the uniform.
 const VARIANT_MAPS: u32 = 1u;
@@ -275,8 +279,11 @@ struct AffineVertexInput {
 
 // Four output slots: vertex outputs bound geometry throughput, so texture
 // coordinates ride in the w lanes and the material stays packed and flat.
+// Positions are invariant: masked surfaces' depth pre-pass and their colors
+// after it draw the same vertex stages in different pipelines, and their
+// colors test its depths for equality.
 struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
+    @invariant @builtin(position) clip_position: vec4<f32>,
     // World normal and texture u.
     @location(0) normal_u: vec4<f32>,
     // World position and texture v.
@@ -288,7 +295,7 @@ struct VertexOutput {
 
 // `VertexOutput` and the unjittered previous clip position: x, y and w.
 struct TemporalOutput {
-    @builtin(position) clip_position: vec4<f32>,
+    @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,

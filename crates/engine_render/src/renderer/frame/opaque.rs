@@ -1,7 +1,8 @@
-//! The opaque passes: meshes, impostors' cards, virtual geometry, terrain
-//! (shaded deferred where it can be), placed objects and the sky, in one
-//! phase or two around occlusion culling's test, and the visibility
-//! buffer's triangle IDs, tiles and resolves.
+//! The opaque passes: masked surfaces' depth pre-pass, then meshes,
+//! impostors' cards, virtual geometry, terrain (shaded deferred where it
+//! can be), placed objects and the sky, in one phase or two around
+//! occlusion culling's test, and the visibility buffer's triangle IDs,
+//! tiles and resolves.
 
 #![expect(
     clippy::expect_used,
@@ -14,6 +15,9 @@ use crate::debug_view::{DrawKind, DrawRecord, bind_record};
 /// What the opaque passes draw.
 #[derive(Clone, Copy)]
 enum Opaque {
+    /// Masked surfaces' depth pre-pass: the phase's masked meshes and, in
+    /// the first phase, masked placed objects, their alpha tests alone.
+    Prepass,
     /// The meshes of the phase, impostors' cards and virtual geometry's
     /// forward bins.
     Meshes,
@@ -44,8 +48,11 @@ enum Slot {
 }
 
 /// The opaque passes' contributors in drawing order, each in its slot: one
-/// order for forward and deferred terrain alike.
-const OPAQUE: [(Opaque, Slot); 5] = [
+/// order for forward and deferred terrain alike. Masked surfaces' depth
+/// pre-pass comes before every color, placed objects' too where the late
+/// pass draws them after deferred terrain.
+const OPAQUE: [(Opaque, Slot); 6] = [
+    (Opaque::Prepass, Slot::Early),
     (Opaque::Meshes, Slot::Early),
     (Opaque::Terrain, Slot::Terrain),
     (Opaque::Cover, Slot::Late),
@@ -76,10 +83,11 @@ impl Renderer {
         }
     }
 
-    /// The opaque pass of `phase` (two around the occlusion test), with the sky
-    /// after the last one unless the visibility buffer resolves it; returns its
-    /// draws, the sky's aside. Where terrain shades deferred, the first
-    /// phase draws the meshes alone and the deferred terrain's passes the
+    /// The opaque pass of `phase` (two around the occlusion test), masked
+    /// surfaces' depth pre-pass first, with the sky after the last one
+    /// unless the visibility buffer resolves it; returns its draws, the
+    /// sky's aside. Where terrain shades deferred, the first phase draws the
+    /// pre-pass and the meshes alone and the deferred terrain's passes the
     /// rest.
     pub(super) fn encode_opaque(
         &self,
@@ -145,13 +153,14 @@ impl Renderer {
                 continue;
             }
             draws += match contributor {
+                Opaque::Prepass => self.draw_prepass(state, pass, phase),
                 Opaque::Meshes if state.kind.instance_count > 0 => {
                     self.draw_opaque(state, pass, phase, virtual_first)
                 }
                 Opaque::Meshes => 0,
                 Opaque::Terrain => self.draw_terrain_patches(state, pass),
                 Opaque::Cover => self.draw_terrain_cover(state, pass),
-                Opaque::Scatter => self.draw_scatter(state, pass),
+                Opaque::Scatter => self.draw_scatter(state, pass, false),
                 Opaque::Sky => {
                     self.draw_sky(state, pass);
                     0
@@ -161,8 +170,9 @@ impl Renderer {
         draws
     }
 
-    /// Deferred terrain's visibility over the first phase's meshes, writing
-    /// each pixel's terrain and depth; returns the draws.
+    /// Deferred terrain's visibility over the first phase's meshes and its
+    /// masked placed objects' pre-pass, writing each pixel's terrain and
+    /// depth; returns the draws.
     pub(super) fn encode_terrain_ids(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -266,8 +276,33 @@ impl Renderer {
         }
     }
 
-    /// The opaque meshes of `phase` (GPU-presented frames draw each level of
-    /// detail's visible slots), the impostors' cards,
+    /// Masked surfaces' depth pre-pass of `phase`, first in its pass: the
+    /// masked meshes the phase draws and, in the first phase, the masked
+    /// placed objects, from the lists, at the levels and with the fades
+    /// their colors draw from later, their alpha tests alone. Their colors
+    /// then draw only where its depths are theirs, so each pixel shades one
+    /// masked fragment, and phase one's depths, which the occlusion test
+    /// reads, hold them as they held their colors'. Returns the draws.
+    fn draw_prepass(
+        &self,
+        state: &FrameState<'_>,
+        pass: &mut wgpu::RenderPass<'_>,
+        phase: usize,
+    ) -> u32 {
+        let meshes = if state.kind.instance_count > 0 && !self.draw_order.masked.is_empty() {
+            self.draw_meshes(state, pass, phase, true)
+        } else {
+            0
+        };
+        let placed = if phase == 0 {
+            self.draw_scatter(state, pass, true)
+        } else {
+            0
+        };
+        meshes + placed
+    }
+
+    /// The opaque meshes of `phase`, the impostors' cards,
     /// and virtual geometry's bins the visibility buffer leaves to
     /// forward drawing; returns the draws.
     fn draw_opaque(
@@ -277,87 +312,13 @@ impl Renderer {
         phase: usize,
         virtual_first: Option<usize>,
     ) -> u32 {
-        let gpu_mode = state.kind.gpu_mode;
-        let Passes {
-            opaque_kind,
-            impostor_pass,
-            ..
-        } = state.passes;
-        let temporal_pass = state
-            .packing
-            .temporal_frame
-            .as_ref()
-            .zip(self.features.temporal.get());
-        // Lit frames shade with the lit pipelines and the lights' group.
-        let lit = state.features.light_frame().zip(self.features.lights.get());
-        pass.set_bind_group(0, self.camera.group(), &[]);
-        if let Some((_, lights)) = lit {
-            pass.set_bind_group(3, lights.fragment_group(), &[]);
-        }
-        pass.set_bind_group(
-            2,
-            temporal_pass.map_or_else(
-                || self.instances.pose_group(0),
-                |(frame, temporal)| temporal.pose_group(frame),
-            ),
-            &[],
-        );
-        if !gpu_mode {
-            pass.set_vertex_buffer(1, self.instances.slots().slice(..));
-        }
-        // Debug views' draws read their records.
+        let mut draws = self.draw_meshes(state, pass, phase, false);
         let debug = self.debug_records(state);
         let casts = state.shape.shadows;
-        let mut draws = 0;
-        let mut binds = BatchBinds::default();
-        for &index in &self.draw_order.order {
-            let index = index as usize;
-            let batch = &self.plan.batches[index];
-            // Batches drawing virtual geometry draw its
-            // clusters below.
-            if self.virtual_draws.drawn.get(index) == Some(&true) {
-                continue;
-            }
-            let (mesh, draw) = self.bind_batch(pass, &mut binds, (opaque_kind, false), batch);
-            if gpu_mode {
-                // Visible slots of this group, compacted and counted
-                // on the GPU, each level of detail
-                // with its own.
-                for level in 0..lod_levels(batch, mesh, false) {
-                    // An empty level draws nothing.
-                    if level > 0 && mesh.plan[level - 1].1 == 0 {
-                        continue;
-                    }
-                    let (ids, args, offset) = self
-                        .gpu_presentation
-                        .draw_source(batch, index, phase, level);
-                    binds.bindings.ids(pass, 1, ids);
-                    bind_record(pass, debug, DrawRecord::of(DrawKind::Mesh, level, casts));
-                    let timed = self
-                        .profiler
-                        .begin_draw(pass, || draw_label(batch, phase, Some(level)));
-                    pass.draw_indexed_indirect(args, offset);
-                    self.profiler.end_draw(pass, timed);
-                    draws += 1;
-                }
-            } else {
-                bind_record(pass, debug, DrawRecord::of(DrawKind::Mesh, 0, casts));
-                let timed = self
-                    .profiler
-                    .begin_draw(pass, || draw_label(batch, phase, None));
-                pass.draw_indexed(
-                    draw.index_range(),
-                    draw.base_vertex,
-                    batch.instances.clone(),
-                );
-                self.profiler.end_draw(pass, timed);
-                draws += 1;
-            }
-        }
         // Impostors: every draw group's cards in one
         // draw, over the pose and light groups the meshes bound.
-        if gpu_mode
-            && let Some((targets, lit)) = impostor_pass
+        if state.kind.gpu_mode
+            && let Some((targets, lit)) = state.passes.impostor_pass
             && let (Some(pipeline), Some(group)) = (
                 self.impostors.pipelines.pipeline(targets, lit),
                 self.impostors.atlas.group(),
@@ -384,6 +345,110 @@ impl Renderer {
         }
         if let Some(first_bin) = virtual_first {
             draws += self.draw_virtual_bins(state, pass, first_bin);
+        }
+        draws
+    }
+
+    /// The opaque meshes of `phase` (GPU-presented frames draw each level of
+    /// detail's visible slots): their colors, masked ones' where their depth
+    /// pre-pass left their depths, or with `prepass` the masked ones'
+    /// pre-pass, from the same lists and levels; returns the draws.
+    fn draw_meshes(
+        &self,
+        state: &FrameState<'_>,
+        pass: &mut wgpu::RenderPass<'_>,
+        phase: usize,
+        prepass: bool,
+    ) -> u32 {
+        let gpu_mode = state.kind.gpu_mode;
+        let opaque_kind = state.passes.opaque_kind;
+        let temporal_pass = state
+            .packing
+            .temporal_frame
+            .as_ref()
+            .zip(self.features.temporal.get());
+        // Lit frames shade with the lit pipelines and the lights' group; the
+        // pre-pass reads no lights.
+        let lit = state
+            .features
+            .light_frame()
+            .zip(self.features.lights.get())
+            .filter(|_| !prepass);
+        pass.set_bind_group(0, self.camera.group(), &[]);
+        if let Some((_, lights)) = lit {
+            pass.set_bind_group(3, lights.fragment_group(), &[]);
+        }
+        pass.set_bind_group(
+            2,
+            temporal_pass.map_or_else(
+                || self.instances.pose_group(0),
+                |(frame, temporal)| temporal.pose_group(frame),
+            ),
+            &[],
+        );
+        if !gpu_mode {
+            pass.set_vertex_buffer(1, self.instances.slots().slice(..));
+        }
+        // Debug views' draws read their records.
+        let debug = self.debug_records(state);
+        let casts = state.shape.shadows;
+        let mut draws = 0;
+        let mut binds = BatchBinds::default();
+        let order = if prepass {
+            &self.draw_order.masked
+        } else {
+            &self.draw_order.order
+        };
+        for &index in order {
+            let index = index as usize;
+            let batch = &self.plan.batches[index];
+            // Batches drawing virtual geometry draw its clusters after the
+            // meshes, masked ones testing their own alpha.
+            if self.virtual_draws.drawn.get(index) == Some(&true) {
+                continue;
+            }
+            let bound = if prepass {
+                self.bind_prepass(pass, &mut binds, opaque_kind, batch)
+            } else {
+                Some(self.bind_batch(pass, &mut binds, (opaque_kind, false), batch))
+            };
+            let Some((mesh, draw)) = bound else {
+                continue;
+            };
+            if gpu_mode {
+                // Visible slots of this group, compacted and counted
+                // on the GPU, each level of detail
+                // with its own.
+                for level in 0..lod_levels(batch, mesh, false) {
+                    // An empty level draws nothing.
+                    if level > 0 && mesh.plan[level - 1].1 == 0 {
+                        continue;
+                    }
+                    let (ids, args, offset) = self
+                        .gpu_presentation
+                        .draw_source(batch, index, phase, level);
+                    binds.bindings.ids(pass, 1, ids);
+                    bind_record(pass, debug, DrawRecord::of(DrawKind::Mesh, level, casts));
+                    let timed = self
+                        .profiler
+                        .begin_draw(pass, || draw_label(batch, (phase, Some(level)), prepass));
+                    pass.draw_indexed_indirect(args, offset);
+                    self.profiler.end_draw(pass, timed);
+                    draws += 1;
+                }
+            } else {
+                bind_record(pass, debug, DrawRecord::of(DrawKind::Mesh, 0, casts));
+                let timed = self
+                    .profiler
+                    .begin_draw(pass, || draw_label(batch, (phase, None), prepass));
+                pass.draw_indexed(
+                    draw.index_range(),
+                    draw.base_vertex,
+                    batch.instances.clone(),
+                );
+                self.profiler.end_draw(pass, timed);
+                draws += 1;
+            }
         }
         draws
     }
@@ -548,14 +613,17 @@ impl Renderer {
 
 /// What profiling reports name a draw of `batch` by: its mesh, material,
 /// opaque phase and level of detail (`None` for exact frames' draws of
-/// every instance).
-fn draw_label(batch: &DrawBatch, phase: usize, level: Option<usize>) -> String {
+/// every instance), and whether it is masked surfaces' depth pre-pass.
+fn draw_label(batch: &DrawBatch, (phase, level): (usize, Option<usize>), prepass: bool) -> String {
     let material = batch
         .material
         .map_or_else(|| "none".to_owned(), |material| material.slot().to_string());
     let mesh = batch.mesh.slot();
+    let stage = if prepass { " depth pre-pass" } else { "" };
     match level {
-        Some(level) => format!("mesh {mesh} material {material} phase {phase} level {level}"),
-        None => format!("mesh {mesh} material {material} phase {phase}"),
+        Some(level) => {
+            format!("mesh {mesh} material {material} phase {phase} level {level}{stage}")
+        }
+        None => format!("mesh {mesh} material {material} phase {phase}{stage}"),
     }
 }

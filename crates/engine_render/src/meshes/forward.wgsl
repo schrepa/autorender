@@ -1,7 +1,27 @@
 // Forward fragment stages of meshes: opaque passes into the canvas, the
 // screen effects' targets and temporal targets, transparent accumulation
 // and reflection probe captures, unlit and lit, for meshes with and without
-// a second vertex stream.
+// a second vertex stream; and masked surfaces' depth pre-pass.
+
+// Masked surfaces' depth pre-pass, first in each opaque pass: no color,
+// only their fades and alpha tests (`masked_depth`), for meshes without a
+// second vertex stream (temporal frames' outputs begin as theirs), with one
+// (and debug views' outputs, which carry one for every mesh), and with one
+// in temporal frames, whose outputs carry it after the previous position.
+@fragment
+fn fs_masked_depth(input: VertexOutput) {
+    masked_depth(fragment(input));
+}
+
+@fragment
+fn fs_masked_depth_extended(input: ExtendedOutput) {
+    masked_depth(extended_fragment(input));
+}
+
+@fragment
+fn fs_masked_depth_temporal_extended(input: ExtendedTemporalOutput) {
+    masked_depth(extended_fragment(extended_temporal_output(input)));
+}
 
 @fragment
 fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {

@@ -126,6 +126,22 @@ impl PassKind {
             (MeshPass::Probe, true, true) => meshes::fs_probe_lit_extended,
         }
     }
+
+    /// The fragment stage of masked surfaces' depth pre-pass in this opaque
+    /// pass, for meshes with a second vertex stream (`extended`) or
+    /// without: debug views' vertex stages pass a second stream's values for
+    /// every mesh, temporal frames' theirs after the previous position.
+    pub(crate) fn prepass_entry(self, extended: bool) -> Entry {
+        match (self.targets(), extended) {
+            (Some(Targets::Debug), _) | (Some(Targets::Canvas | Targets::Post) | None, true) => {
+                meshes::fs_masked_depth_extended
+            }
+            (Some(Targets::Temporal), true) => meshes::fs_masked_depth_temporal_extended,
+            (Some(Targets::Canvas | Targets::Post | Targets::Temporal) | None, false) => {
+                meshes::fs_masked_depth
+            }
+        }
+    }
 }
 
 /// The sky: one triangle at the far plane (`meshes/sky.wgsl`).

@@ -522,9 +522,10 @@ pub(crate) fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
 }
 
 /// A material's pipeline variant: the `meshes/declarations.wgsl` override
-/// constants it sets and whether back faces draw. Materials without maps and
-/// plain opaque base color textures use [`Variant::BASIC`], the shading of
-/// every material before glTF maps.
+/// constants it sets, whether back faces draw and, for masked surfaces'
+/// depth pre-pass and their colors after it, how they draw depth. Materials
+/// without maps and plain opaque base color textures use
+/// [`Variant::BASIC`], the shading of every material before glTF maps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub(crate) struct Variant(u32);
 
@@ -568,6 +569,15 @@ impl Variant {
     // Foliage shading on materials that are not masked, which masked ones
     // have anyway.
     const FOLIAGE: u32 = constants::VARIANT_FOLIAGE;
+    // Masked surfaces' depth pre-pass in the opaque passes: their fades and
+    // alpha tests alone, writing the depths their colors then draw at and no
+    // color. A draw's, not a material's.
+    const PREPASS: u32 = 131072;
+    // Masked surfaces' colors after their depth pre-pass: drawn where its
+    // depth is theirs, without the alpha test, so early depth testing
+    // rejects every fragment but the one each pixel shows. A draw's, not a
+    // material's.
+    const PRETESTED: u32 = 262144;
 
     pub(crate) fn of(material: &Material) -> Self {
         let mode = material.alpha_mode();
@@ -640,8 +650,9 @@ impl Variant {
     }
 
     /// Override constants: fragment stages read them all, slot vertex
-    /// stages GROUNDING and FADE_LIST.
-    pub(crate) fn constants(self) -> [(&'static str, f64); 15] {
+    /// stages GROUNDING and FADE_LIST. The depth pre-pass sets none of its
+    /// own: its fragment stage is its own entry point.
+    pub(crate) fn constants(self) -> [(&'static str, f64); 16] {
         let set = |bit: u32| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("WORLD_MAPPING", set(Self::WORLD_MAPPING)),
@@ -659,6 +670,7 @@ impl Variant {
             ("PACKED_OCCLUSION", set(Self::PACKED_OCCLUSION)),
             ("UBER_MATERIALS", set(Self::UBER)),
             ("FOLIAGE", set(Self::FOLIAGE)),
+            ("PRETESTED", set(Self::PRETESTED)),
         ]
     }
 
@@ -672,6 +684,33 @@ impl Variant {
 
     pub(crate) fn alpha_mask(self) -> bool {
         self.0 & Self::ALPHA_MASK != 0
+    }
+
+    /// This variant as the opaque passes draw its colors: masked ones
+    /// after their depth pre-pass, where it left their depths, untested.
+    pub(crate) fn opaque(self) -> Self {
+        if self.alpha_mask() {
+            Self(self.0 | Self::PRETESTED)
+        } else {
+            self
+        }
+    }
+
+    /// The depth pre-pass of this masked variant in the opaque passes.
+    pub(crate) fn prepass(self) -> Self {
+        Self(self.0 & !Self::PRETESTED | Self::PREPASS)
+    }
+
+    /// Whether this variant draws masked surfaces' depth pre-pass: depth
+    /// alone.
+    pub(crate) fn depth_only(self) -> bool {
+        self.0 & Self::PREPASS != 0
+    }
+
+    /// Whether this variant draws masked surfaces' colors after their depth
+    /// pre-pass.
+    pub(crate) fn pretested(self) -> bool {
+        self.0 & Self::PRETESTED != 0
     }
 
     /// This variant drawing a mesh with a second vertex stream, or not.
