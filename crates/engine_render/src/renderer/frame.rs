@@ -2,7 +2,8 @@
 //! uploads, instance packing and writes, each feature's preparation, the
 //! frame's pipelines, encoding and submission. `prepare` prepares the
 //! frame, `encode` and `opaque` encode its render graph's passes, `submit`
-//! submits it, and `frame_stats` reports it.
+//! submits its prelude and its passes a batch at a time, and `frame_stats`
+//! reports it.
 
 use super::*;
 use crate::exposure::{ExposureFrame, ExposurePass};
@@ -63,12 +64,13 @@ pub(super) struct FrameKind {
     pub(super) instance_count: usize,
 }
 
-/// The work a frame submits before its own command buffer, in submission
-/// order: the physically based sky's light, which everything after reads;
-/// new textures' mip levels and impostor bakes; staged pose copies; GPU
-/// presentation's input copies; environment maps' and reflection probes'
-/// work. Profiling captures time each but the sky's, which times its own
-/// passes, between marks of its own.
+/// The work a frame submits first, once its features are prepared, while
+/// its passes prepare and record (`Renderer::submit_prelude`), in
+/// submission order: the physically based sky's light, which everything
+/// after reads; new textures' mip levels and impostor bakes; staged pose
+/// copies; GPU presentation's input copies; environment maps' and
+/// reflection probes' work. Profiling captures time each but the sky's,
+/// which times its own passes, between marks of its own.
 #[derive(Default)]
 pub(super) struct Prelude {
     pub(super) sky: Option<wgpu::CommandEncoder>,
@@ -87,17 +89,6 @@ impl Prelude {
         Some("pre_inputs"),
         Some("pre_environment"),
     ];
-
-    /// Whether each part holds work, in submission order.
-    fn held(&self) -> [bool; 5] {
-        [
-            self.sky.is_some(),
-            self.mips.is_some(),
-            self.poses.is_some(),
-            self.inputs.is_some(),
-            self.environment.is_some(),
-        ]
-    }
 
     /// Each part's command buffer, in submission order.
     fn finish(self) -> [Option<wgpu::CommandBuffer>; 5] {
@@ -182,7 +173,6 @@ pub(super) struct FrameState<'s> {
     pub(super) snapshot: &'s RenderSnapshot,
     pub(super) frame: RenderFrame<'s>,
     pub(super) kind: FrameKind,
-    pub(super) prelude: Prelude,
     pub(super) assets: AssetUploads,
     pub(super) packing: Packing,
     pub(super) writes: Writes,
@@ -352,17 +342,16 @@ impl Renderer {
         let drawn = features.frames.post.is_some();
         features.frames.exposure = self.prepare_exposure(snapshot, drawn, &mut prelude.inputs);
         drop(profile_writes);
+        // The GPU works on the prelude while the frame prepares and records
+        // its passes.
+        self.submit_prelude(prelude);
         // Water settling for tiles' records runs first in the frame.
         self.water_settle.prepare(&self.device, &self.queue);
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let view = surface
             .texture()
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/frame-encoder"),
-            });
+        let mut encoder = self.frame_encoder();
         self.water_settle.encode(&mut encoder);
         let passes = self.prepare_pipelines(kind, &packing.temporal_frame, &features);
         let (virtual_frame, resolving) = self.prepare_virtual_frame(
@@ -410,11 +399,10 @@ impl Renderer {
         );
         features.frames.clouds = self.prepare_cloud_composite(shape.targets);
         features.frames.debug_view = self.prepare_debug_view(snapshot, kind);
-        let mut state = FrameState {
+        let state = FrameState {
             snapshot,
             frame,
             kind,
-            prelude,
             assets,
             packing,
             writes,
@@ -440,7 +428,14 @@ impl Renderer {
             passes: graph.kept(),
             ..EncodeReport::default()
         };
+        let mut batch = 0;
         for node in graph.kept_passes() {
+            // Each batch of passes goes to the GPU before the next records.
+            let next = submit::batch(node.pass());
+            if next != batch {
+                batch = next;
+                encoder = self.submit_batch(encoder);
+            }
             // Profiling captures time every pass whole, with whatever it
             // records.
             let stage = node.pass().stage();
@@ -461,16 +456,9 @@ impl Renderer {
         self.graph = graph;
         #[cfg(feature = "dev")]
         self.encode_probe(&state, &mut encoder, surface.texture());
-        // ...and the prelude's command buffers, whose spans must exist before
-        // the frame resolves its queries.
-        for (span, held) in Prelude::SPANS.into_iter().zip(state.prelude.held()) {
-            if let (Some(span), true) = (span, held) {
-                let _ = self.profiler.span(span);
-            }
-        }
         self.profiler.end_frame(&mut encoder);
         drop(profile_encoding);
-        self.submit_frame(&mut state, surface, encoder);
+        self.submit_frame(&state, surface, encoder);
         Ok(self.frame_stats(&state, &report))
     }
 }

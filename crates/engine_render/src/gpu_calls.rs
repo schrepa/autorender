@@ -39,8 +39,8 @@ impl Queue {
 
     /// Submits `buffers` at once, counted: growth copies and uploads that
     /// later writes depend on. The queue runs submissions in order, so work
-    /// submitted while a frame records runs before every command of the
-    /// frame's own encoder, which is submitted last.
+    /// submitted while a frame prepares runs before every command of its
+    /// passes, which it submits a batch at a time as they record.
     pub(crate) fn submit_now(&self, buffers: impl IntoIterator<Item = wgpu::CommandBuffer>) {
         self.immediate.set(self.immediate.get() + 1);
         submit(&self.queue, buffers);

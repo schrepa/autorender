@@ -444,9 +444,10 @@ impl GpuPresentationPass {
         prepared
     }
 
-    /// Copies the last current poses into previous slots, submitted at once:
-    /// queued writes and staged copies of this gather take effect at the
-    /// next submission, after it.
+    /// Copies the last current poses into previous slots, submitted at once,
+    /// ahead of the frame's prelude, which follows once the frame's features
+    /// are prepared: queued writes and staged copies of this gather take
+    /// effect at the next submission, after it.
     fn submit_shift(&mut self, device: &wgpu::Device, queue: &Queue, profiler: &GpuProfiler) {
         let groups = self
             .node_groups
