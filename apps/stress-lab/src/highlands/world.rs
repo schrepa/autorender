@@ -68,12 +68,9 @@ impl StressWorld for HighlandsWorld {
         world.insert_resource(AutoExposure::default());
         // Rivers settle in meter cells, the ground's own samples, which its
         // rivers are traced along: the cook settles every watered tile at
-        // that size. Over 256 meters around the camera they run live in
-        // half-meter cells, starting from the settled water.
+        // that size, and the settled water stands everywhere.
         world.insert_resource(Water {
             simulation_cell: 1.0,
-            simulated: 256.0,
-            live_cell: 0.5,
             ..Water::default()
         });
     }
