@@ -225,7 +225,7 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
         }
         through = max(length(behind.ground - input.relative), 0.0);
     }
-    let transmit = water_transmitted(through);
+    let transmit = water_transmitted(through, 0.0);
     // Foam on crests the waves compress and along shores, in patches and
     // streaks drawn out along the sea's wind, evening out with distance.
     let heading = water.origin.xy;
@@ -256,6 +256,7 @@ fn shade_ocean(input: OceanOutput, refracts: bool) -> WaterShade {
     surface.normal = normal;
     surface.roughness = roughness;
     surface.foam = foam;
+    surface.scatter = water.color.rgb;
     surface.transmit = transmit;
     surface.glow = glow;
     let lit = water_light(surface);

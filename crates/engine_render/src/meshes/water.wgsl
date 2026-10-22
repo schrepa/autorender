@@ -5,19 +5,22 @@
 // their ground on the triangles the ground is drawn on, and the shore falls
 // where the ground rises through the water. The waves' tiles
 // (`water_waves.wgsl`) tilt it where it stands still and run with its flow
-// where it moves, carried along in two sets half a cycle apart, and what
-// they hide within a pixel roughens it. It mirrors the sky, the sun's disc
-// and, through screen-space reflections, the scene; its body scatters the
-// light entering it back toward the eye; and what lies under it shows
-// through, bent by the waves where the frame copies the scene's color, and
-// dimmed channel by channel over the light's path down to it and back, the
-// ground darker for being wet. Foam lies where the water carries it, as
-// its flow churns it up settling or simulated
-// (`engine_terrain::shallow_water`), and along shallow shores, and streaks
-// water running down chutes too steep for it to flow smoothly. The sea
-// (`meshes/ocean.wgsl`) lights its surface the same way. Where rivers leave
-// their beds, their jets fall as sheets of their own (`water_falls.rs`),
-// drawn last.
+// where it moves, carried along in sets that start over before its shear
+// stretches them, churned into chop where it runs turbulent, and what they
+// hide within a pixel roughens it; waves the bed holds still stand about
+// what the water flows past. It mirrors the sky, the sun's disc and,
+// through screen-space reflections, the scene; its body, tinted by the
+// silt its reach carries, scatters the light entering it back toward the
+// eye; and what lies under it shows through, bent by the waves where the
+// frame copies the scene's color, brighter where the waves gather the sun's
+// light on it, and dimmed channel by channel over the light's path down to
+// it and back, the ground darker for being wet. White water is born where
+// the water loses its energy, fraying as it runs; foam lies where the water
+// carries it, as its flow churns it up settling or simulated
+// (`engine_terrain::shallow_water`), and along shallow shores. However
+// thin, the water fades only at its waterline. The sea (`meshes/ocean.wgsl`)
+// lights its surface the same way. Where rivers leave their beds, their
+// jets fall as sheets of their own (`water_falls.rs`), drawn last.
 
 // Tiles' water, a block of samples for each patch holding any
 // (`terrain/water_blocks.rs`): their surfaces (terrain-local meters,
@@ -92,11 +95,12 @@ struct WaterUniform {
 const SIM_WATER_BLOCK: u32 = 8u;
 const SIM_BLOCK_GROUND: u32 = 209u;
 // The most foam water carries, as its flow churns it up
-// (`engine_terrain::shallow_water::FOAM_MOST`); the foam over which it
-// shows as lace, from the first to the second; how much of the lace its
-// most shows; and how white its most streaks water running down steeply.
+// (`engine_terrain::shallow_water::FOAM_MOST`); the shares of the most
+// over which it shows as lace, from the first to the second; how much of
+// the lace its most shows; and how white its most streaks water running
+// down steeply.
 const WATER_FOAM_MOST: f32 = 1.5;
-const WATER_FOAM_SHOWN: vec2<f32> = vec2<f32>(0.15, 1.2);
+const WATER_FOAM_SHOWN: vec2<f32> = vec2<f32>(0.1, 0.8);
 const WATER_FOAM_LACE: f32 = 0.7;
 const WATER_FOAM_STREAKED: f32 = 0.6;
 // What lies behind the water, copied from the opaque scene before it
@@ -162,9 +166,23 @@ const WATER_HORIZON: f32 = 0.02;
 // Meters the bent view runs at most to what it shows: the water hides what
 // lies farther.
 const WATER_REACH: f32 = 4.0;
-// Meters over which water fades in from its shores and around what stands
-// in it.
+// Meters over which the sea fades in from its shores and around what
+// stands in it.
 const WATER_SHORE: f32 = 0.1;
+// The pixels over which terrains' water fades in from its waterline, where
+// its depth or its height over what stands in it comes to nothing, and the
+// meters over the line past which it is all there however fast either
+// changes across a pixel: running water, however thin, is water.
+const WATER_EDGE_PIXELS: f32 = 1.5;
+const WATER_EDGE: f32 = 0.05;
+// Meters a second squared of gravity (`engine_terrain::hydraulics::GRAVITY`),
+// and the meters of depth Froude numbers read thinner water as.
+const WATER_GRAVITY: f32 = 9.81;
+const WATER_THINNEST: f32 = 0.01;
+// How much turbulence raises each of running water's two tiles of waves at
+// its most, the finer the more: turbulent water breaks into short, steep
+// chop up to three times as strong.
+const WATER_CHOP: vec2<f32> = vec2<f32>(1.0, 2.0);
 // The share of a tile's period between the corners of the grid its random
 // offsets hang on (`water_tile`).
 const WATER_PATCH: f32 = 0.5;
@@ -515,6 +533,31 @@ fn water_corner_offset(corner: vec2<i32>, tile: u32) -> vec2<f32> {
     return vec2<f32>(terrain_hash_of(key), terrain_hash_of(key ^ 0x68e31da4u));
 }
 
+// The triangle of a grid of equilateral triangles, skewed into squares,
+// holding `grid` (in its cells' sides): its three corners (in the skewed
+// grid) and the weights `grid` takes of each.
+struct WaterTriangle {
+    corners: array<vec2<i32>, 3>,
+    weights: vec3<f32>,
+}
+
+fn water_triangle(grid: vec2<f32>) -> WaterTriangle {
+    let skewed = vec2<f32>(grid.x, 1.15470054 * grid.y - 0.57735027 * grid.x);
+    let cell = floor(skewed);
+    let local = skewed - cell;
+    let base = vec2<i32>(cell);
+    let third = 1.0 - local.x - local.y;
+    var triangle: WaterTriangle;
+    triangle.weights = vec3<f32>(third, local.y, local.x);
+    triangle.corners = array<vec2<i32>, 3>(base, base + vec2<i32>(0, 1), base + vec2<i32>(1, 0));
+    if third <= 0.0 {
+        triangle.weights = vec3<f32>(-third, 1.0 - local.y, 1.0 - local.x);
+        triangle.corners = array<vec2<i32>, 3>(base + vec2<i32>(1, 1), base + vec2<i32>(1, 0),
+            base + vec2<i32>(0, 1));
+    }
+    return triangle;
+}
+
 // Tile `tile`'s waves at `uv` (in its periods), which changes by `dx` and
 // `dy` per pixel: their slopes (xy) and the variance of those finer than
 // the pixel (z), what its levels' averages lose of the slopes' square.
@@ -539,19 +582,9 @@ fn water_tile(tile: u32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec3<f3
     }
     let texels = sqrt(length(dx) * length(dy)) * blur * f32(textureDimensions(water_waves).x);
     let hidden = saturate(log2(max(texels, 1.0e-6)) + 1.0);
-    let grid = uv / WATER_PATCH;
-    let skewed = vec2<f32>(grid.x, 1.15470054 * grid.y - 0.57735027 * grid.x);
-    let cell = floor(skewed);
-    let local = skewed - cell;
-    let base = vec2<i32>(cell);
-    let third = 1.0 - local.x - local.y;
-    var weights = vec3<f32>(third, local.y, local.x);
-    var corners = array<vec2<i32>, 3>(base, base + vec2<i32>(0, 1), base + vec2<i32>(1, 0));
-    if third <= 0.0 {
-        weights = vec3<f32>(-third, 1.0 - local.y, 1.0 - local.x);
-        corners = array<vec2<i32>, 3>(base + vec2<i32>(1, 1), base + vec2<i32>(1, 0),
-            base + vec2<i32>(0, 1));
-    }
+    let triangle = water_triangle(uv / WATER_PATCH);
+    var corners = triangle.corners;
+    let weights = triangle.weights;
     var slopes = vec2<f32>(0.0);
     var variance = 0.0;
     for (var corner = 0u; corner < 3u; corner++) {
@@ -618,9 +651,29 @@ fn water_roughness(variance: f32) -> f32 {
     return min(sqrt(sqrt(calm * calm + variance)), WATER_ROUGHEST);
 }
 
-// What light keeps of each channel over `meters` of water.
-fn water_transmitted(meters: f32) -> vec3<f32> {
-    return exp(-water.absorption.rgb * meters);
+// Silt: what the fine sediment and dissolved matter a slow stream carries
+// take of each channel a meter, blue the most, so what shows through
+// shallow water turns sandy, and the color they scatter back (linear); and
+// how much of a slow stream's silt the water of each reach carries
+// (`WaterOutput.reach`): none in lakes and beyond streams' banks, the most
+// in pools and plane beds, which hold the fines steeper reaches wash out,
+// then less in steps, cascades and falls, which run clearer.
+const WATER_SILT_TAKEN: vec3<f32> = vec3<f32>(0.18, 0.22, 0.6);
+const WATER_SILT: vec3<f32> = vec3<f32>(0.05, 0.065, 0.03);
+const WATER_REACH_SILT = array<f32, 6>(0.0, 1.0, 0.75, 0.35, 0.15, 0.1);
+
+// What light keeps of each channel over `meters` of water carrying `silt`
+// of a slow stream's.
+fn water_transmitted(meters: f32, silt: f32) -> vec3<f32> {
+    return exp(-(water.absorption.rgb + WATER_SILT_TAKEN * silt) * meters);
+}
+
+// The color water carrying `silt` of a slow stream's scatters back: its
+// own, turned toward silt's by silt's share of what the water takes.
+fn water_silted(silt: f32) -> vec3<f32> {
+    let silted = luminance(WATER_SILT_TAKEN) * silt;
+    return mix(water.color.rgb, WATER_SILT,
+        silted / max(luminance(water.absorption.rgb) + silted, 1.0e-6));
 }
 
 // The normal that mirrors the eye's view along `view` no lower than
@@ -709,9 +762,9 @@ fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: 
 
 // A water surface to light: its point less the eye and how it changes per
 // pixel; its waves' normal and the roughness of what a pixel spans of them;
-// the share of it foam covers; what its body keeps of each channel of the
-// light on its way to what lies below and back; and light it adds of its
-// own (the sea's crests lit through).
+// the share of it foam covers; the color its body scatters back, and what
+// it keeps of each channel of the light on its way to what lies below and
+// back; and light it adds of its own (the sea's crests lit through).
 struct WaterSurface {
     relative: vec3<f32>,
     world_dx: vec3<f32>,
@@ -719,21 +772,25 @@ struct WaterSurface {
     normal: vec3<f32>,
     roughness: f32,
     foam: f32,
+    scatter: vec3<f32>,
     transmit: vec3<f32>,
     glow: vec3<f32>,
 }
 
-// A water surface's light, fogged and graded, and its reflectance.
+// A water surface's light, fogged and graded, its reflectance, and the
+// sun's share of the light falling on it as its shadows leave it.
 struct WaterLit {
     shaded: Shaded,
     reflectance: f32,
+    sunny: f32,
 }
 
 // The light of water surface `surface`: the sky and scene it mirrors and
 // the sun's disc, by Fresnel's share; the light its body scatters back
 // toward the eye, for as much as it stops on its way to what lies below and
 // back, through what the surface lets out; and its foam, a white layer
-// lit as diffuse ground. One shadow lookup serves the sun's three.
+// lit as diffuse ground. One shadow lookup serves the sun's three, and the
+// sun's share of the light falling on the water.
 fn water_light(surface: WaterSurface) -> WaterLit {
     let world = surface.relative + camera.position.xyz;
     let distance = length(surface.relative);
@@ -763,7 +820,7 @@ fn water_light(surface: WaterSurface) -> WaterLit {
             * (distribution(max(dot(normal, half_vector), 0.0), widened)
                 * visibility(n_v, n_l, widened) * n_l * lighting.sun_color.w);
     }
-    let body = water.color.rgb * (vec3<f32>(1.0) - surface.transmit)
+    let body = surface.scatter * (vec3<f32>(1.0) - surface.transmit)
         * water_scattered(view, sunlight) * (1.0 - reflectance);
     // Foam scatters the sun's light, as the waves it rides face it, and the
     // light around it: the sky's, of which water in its channel sees
@@ -777,7 +834,7 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     // The mirrored sky and scene come through `finish`; the sun's light is
     // the water's own.
     var point: SurfacePoint;
-    point.albedo = water.color.rgb;
+    point.albedo = surface.scatter;
     point.opacity = 1.0;
     point.emission = 0.0;
     point.emissive = vec3<f32>(0.0);
@@ -801,6 +858,8 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     var lit: WaterLit;
     lit.shaded = finish(point, mix(body + glint, foam, surface.foam) + surface.glow);
     lit.reflectance = reflectance;
+    let sunlit = luminance(sunlight) * max(sun.y, 0.0);
+    lit.sunny = sunlit / max(sunlit + luminance(sky), 1.0e-6);
     return lit;
 }
 
@@ -821,16 +880,29 @@ fn water_covering(shade: WaterShade, pixel: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(stored(shade.shaded.color + shade.behind, pixel) * shade.fade, shade.fade);
 }
 
-// Flowing water's ripples: two sets, each carried
-// along the flow for WATER_FLOW_CYCLE seconds and then starting over, half
-// a cycle apart: the seconds each has run, and how much the second shows,
-// so each restarts unseen before the flow stretches it (Vlachos's flow
-// maps).
-const WATER_FLOW_CYCLE: f32 = 1.6;
-// Where the second set lies in the noise, so the two never pulse in step,
-// and the meters across the patches of water whose sets restart together.
-const WATER_FLOW_SHIFT: vec2<f32> = vec2<f32>(17.3, 9.1);
+// Patterns carried along the flow (Vlachos's flow maps): ripples, foam's
+// lace and white water, each drawn in two sets half a cycle apart, each
+// set carried from half a cycle before its middle to half a cycle after,
+// where it starts over unseen and anew in the noise, so it shows clearest
+// where the flow has not yet stretched it (Neyret's latency). A cycle lasts
+// as long as the flow's shear takes to strain the pattern by WATER_STRAIN,
+// within its kind's bounds (seconds), in whole octaves: each place takes
+// the two octaves nearest its own, crossfading over the middle share
+// WATER_BAND_BLEND of each, so cycles change smoothly across the water.
+// Strain fades what the flow has drawn out as it runs (Chentanez and
+// Müller: e^(−Ω τ |∇u|), Ω being WATER_STRAIN_FADE).
+const WATER_STRAIN: f32 = 0.8;
+const WATER_CYCLES: vec2<f32> = vec2<f32>(0.25, 3.2);
+const WATER_BAND_BLEND: vec2<f32> = vec2<f32>(0.25, 0.75);
+const WATER_STRAIN_FADE: f32 = 1.0;
+// The meters across the patches of water whose patterns start over
+// together.
 const WATER_FLOW_PHASE: f32 = 40.0;
+// The share of the flow each of the waves' tiles moves at: long waves run
+// upstream at their own speed, √(gλ/2π), about as fast as the current
+// carries them down, and stand; the finest ride it (Gonzalez-Ochoa,
+// Uncharted 4's rapids).
+const WATER_CARRIED: vec3<f32> = vec3<f32>(0.0, 0.5, 1.0);
 // Foam's lace: the meters across its larger cells (its finer ones a third
 // of that), the width (in cells) of its lines at the waterline, the meters
 // from the waterline it reaches out and the meters of water over what
@@ -849,30 +921,63 @@ const WATER_FOAM_REACH: f32 = 1.6;
 const WATER_FOAM_SHARE: f32 = 0.22;
 const WATER_FOAM_RING: f32 = 0.2;
 const WATER_FOAM_OPACITY: f32 = 0.9;
-// Seconds each of foam's two sets of lace lives, half a life apart, on
-// still water (a wave lapping the shore every half life) and on running
-// water (shorter, so the current's turns and changes draw its lace out
-// less); the meters across which the place's clock for them varies, and
-// the lives it varies by (more would draw out the lace a current carries);
-// and the meters a wave lapping still water's shore washes its lace in.
+// Seconds each of foam's two sets of lace lives on still water, half a
+// life apart (a wave lapping the shore every half life), and the bounds of
+// the cycles of the lace running water carries, longer than ripples' as
+// foam lingers; the meters across which the place's clock for them varies,
+// and the lives it varies by (more would draw out the lace a current
+// carries); and the meters a wave lapping still water's shore washes its
+// lace in.
 const WATER_FOAM_LAPPED: f32 = 5.0;
-const WATER_FOAM_CARRIED: f32 = 3.0;
+const WATER_LACE_CYCLES: vec2<f32> = vec2<f32>(1.0, 6.4);
 const WATER_FOAM_STAGGER: f32 = 29.0;
 const WATER_FOAM_STAGGERED: f32 = 0.8;
 const WATER_FOAM_WASH: f32 = 0.35;
 
-struct WaterFlow {
+// The cycles a carried pattern of a kind cycling within `cycles` (seconds,
+// the shortest and the longest) takes where the flow strains it by
+// `strain` a second: the octave of the shortest at or below its own cycle
+// (`first`, seconds, and `index`, octaves above the shortest), and how much
+// the octave above it, twice as long, shows.
+struct WaterBands {
     first: f32,
-    second: f32,
-    blend: f32,
+    index: u32,
+    toward: f32,
 }
 
-fn water_flow(time: f32) -> WaterFlow {
-    let phase = fract(time / WATER_FLOW_CYCLE);
-    var carried: WaterFlow;
-    carried.first = phase * WATER_FLOW_CYCLE;
-    carried.second = fract(phase + 0.5) * WATER_FLOW_CYCLE;
-    carried.blend = abs(phase * 2.0 - 1.0);
+fn water_bands(strain: f32, cycles: vec2<f32>) -> WaterBands {
+    let own = clamp(WATER_STRAIN / max(strain, 1.0e-4), cycles.x, cycles.y);
+    let octave = log2(own / cycles.x);
+    let below = floor(octave);
+    var bands: WaterBands;
+    bands.first = cycles.x * exp2(below);
+    bands.index = u32(below);
+    bands.toward = smoothstep(WATER_BAND_BLEND.x, WATER_BAND_BLEND.y, octave - below);
+    return bands;
+}
+
+// One of the two sets (`which`) of a pattern carried in cycles of `cycle`
+// seconds, at `time`, the place's clock running `stagger` cycles ahead:
+// the seconds it has been carried from its middle (negative before it),
+// how much it shows, how far through its cycle it is (0 as it starts) and
+// where it lies in the noise, anew each cycle and salted by `salt` (up to
+// 64 of the noise's units along each axis).
+struct WaterSet {
+    seconds: f32,
+    weight: f32,
+    age: f32,
+    offset: vec2<f32>,
+}
+
+fn water_set(time: f32, stagger: f32, cycle: f32, which: u32, salt: u32) -> WaterSet {
+    let shifted = time / cycle + stagger + 0.5 * f32(which);
+    let life = floor(shifted);
+    var carried: WaterSet;
+    carried.age = shifted - life;
+    carried.seconds = (carried.age - 0.5) * cycle;
+    carried.weight = 1.0 - abs(2.0 * carried.age - 1.0);
+    let key = ((u32(life) * 2u + which) * 0x9e3779b9u) ^ salt;
+    carried.offset = vec2<f32>(terrain_hash_of(key), terrain_hash_of(key ^ 0x68e31da4u)) * 64.0;
     return carried;
 }
 
@@ -960,31 +1065,23 @@ fn water_foam_set(clock: f32, which: u32) -> WaterFoamSet {
     return lived;
 }
 
-// What stands for a set of foam's lace (`which`) on still water or, where
-// `running`, on running water, at `p` (meters) where its clock reads
-// `clock` (lives): the width (cells) of its lines, and its lace for a pixel
-// spanning `blur` cells where `drawn`. Along the waterline its lines are
-// `lining` wide, and where the water carries foam `plunge` of
-// WATER_PLUNGE_LACE. On running water each set forms as the current
-// (`current`, meters a second) carries it off and dissolves as the other
-// forms; on still water each is a wave lapping the shore, washing its lace
-// in toward it (against `offshore`), as big as `lapping` says, and drawing
-// it back out as it dissolves.
-fn water_foam_lace(which: u32, running: bool, p: vec2<f32>, clock: f32, lining: f32,
-        plunge: f32, current: vec2<f32>, offshore: vec2<f32>, lapping: f32, blur: f32,
-        drawn: bool) -> vec2<f32> {
+// A set of foam's lace (`which`) on still water at `p` (meters), where its
+// clock reads `clock` (lives): a wave lapping the shore, washing its lace in
+// toward it (against `offshore`), as big as `lapping` says, and drawing it
+// back out as it dissolves; its lines `lining` wide along the waterline
+// and, where the water carries foam, `plunge` of WATER_PLUNGE_LACE: the
+// width (cells) of its lines, and its lace for a pixel spanning `blur`
+// cells where `drawn`.
+fn water_lapped_lace(which: u32, p: vec2<f32>, clock: f32, lining: f32, plunge: f32,
+        offshore: vec2<f32>, lapping: f32, blur: f32, drawn: bool) -> vec2<f32> {
     let lived = water_foam_set(clock, which);
     let age = lived.age;
     let swept = 1.0 - abs(2.0 * age - 1.0);
-    var width = max(lining, WATER_PLUNGE_LACE * plunge) * swept;
-    var at = p - current * (age * WATER_FOAM_CARRIED);
-    if !running {
-        let lapped = smoothstep(0.0, 0.12, age) * (1.0 - smoothstep(0.25, 1.0, age))
-            * lived.strength * lapping;
-        width = max(lining * lapped, WATER_PLUNGE_LACE * plunge * swept);
-        at = p + offshore * (WATER_FOAM_WASH * smoothstep(0.0, 0.18, age)
-            * (1.0 - smoothstep(0.18, 1.0, age)));
-    }
+    let lapped = smoothstep(0.0, 0.12, age) * (1.0 - smoothstep(0.25, 1.0, age))
+        * lived.strength * lapping;
+    let width = max(lining * lapped, WATER_PLUNGE_LACE * plunge * swept);
+    let at = p + offshore * (WATER_FOAM_WASH * smoothstep(0.0, 0.18, age)
+        * (1.0 - smoothstep(0.18, 1.0, age)));
     var lace = 0.0;
     if drawn && width > 1.0e-3 {
         lace = water_lace_set(at / WATER_LACE_CELL + lived.offset, width, blur, age);
@@ -992,14 +1089,377 @@ fn water_foam_lace(which: u32, running: bool, p: vec2<f32>, clock: f32, lining: 
     return vec2<f32>(width, lace);
 }
 
-// The waves where water flows along `flow` (meters a second), as
-// `water_waves_at` gives them of `tiles`: two sets carried along it half a
-// cycle apart as `carried` says, blended so their slopes keep their spread.
+// Foam's lace on running water at `p` (meters), its lines `width` cells
+// wide, carried along `current` (meters a second) shearing `shear` a
+// second, at `time`, the place's clock running `stagger` cycles ahead: in
+// sets carried as ripples are, cycling within WATER_LACE_CYCLES, each
+// forming as it starts and dissolving as it ends, its lines as wide as it
+// shows, so the sets' lines together are as wide as the lace's and stay
+// sharp; and the thinner the more the flow has strained them. The width of
+// its lines (cells) altogether, and its lace for a pixel spanning `blur`
+// cells where `drawn`.
+fn water_carried_lace(p: vec2<f32>, current: vec2<f32>, shear: f32, time: f32, stagger: f32,
+        width: f32, blur: f32, drawn: bool) -> vec2<f32> {
+    let bands = water_bands(shear, WATER_LACE_CYCLES);
+    var covered = 0.0;
+    var lace = 0.0;
+    for (var band = 0u; band < 2u; band++) {
+        let shown = select(1.0 - bands.toward, bands.toward, band == 1u);
+        if shown <= 0.0 {
+            continue;
+        }
+        let cycle = bands.first * f32(1u + band);
+        let salt = ((bands.index + band) * 0x632be5abu) ^ 0x27d4eb2fu;
+        for (var which = 0u; which < 2u; which++) {
+            let carried = water_set(time, stagger, cycle, which, salt);
+            let lines = width * shown * carried.weight
+                * exp(-WATER_STRAIN_FADE * abs(carried.seconds) * shear);
+            covered += lines;
+            if drawn && lines > 1.0e-3 {
+                let at = p - current * carried.seconds;
+                lace = max(lace, water_lace_set(at / WATER_LACE_CELL + carried.offset, lines,
+                    blur, carried.age));
+            }
+        }
+    }
+    return vec2<f32>(covered, lace);
+}
+
+// The waves where water flows along `flow` (meters a second), shearing
+// `shear` a second, as `water_waves_at` gives them of `tiles`, at `time`,
+// the place's clock running `stagger` cycles ahead: each tile carried at
+// its share of the flow (WATER_CARRIED) in sets cycling as fast as the
+// strain that share takes asks, faded as the flow strains them and blended
+// keeping their spread, Σwᵢxᵢ/√Σwᵢ² of slopes whose mean is none (Yu,
+// Neyret, Bruneton and Holzschuch). What strain fades of their slopes hides
+// in the variance, roughening the water instead. Tiles the flow carries
+// none of stand.
 fn water_flowing_waves(p: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, tiles: vec3<f32>,
-        flow: vec2<f32>, carried: WaterFlow) -> vec3<f32> {
-    let first = water_waves_at(p - flow * carried.first, dx, dy, tiles);
-    let second = water_waves_at(p + WATER_FLOW_SHIFT - flow * carried.second, dx, dy, tiles);
-    return water_blended(first, second, carried.blend);
+        flow: vec2<f32>, shear: f32, time: f32, stagger: f32) -> vec3<f32> {
+    var waves = vec3<f32>(0.0);
+    // As finely as the display shows them: the mip bias.
+    let detail = material_detail();
+    let carried_shares = WATER_CARRIED;
+    for (var tile = 0u; tile < WATER_WAVE_TILES; tile++) {
+        let share = tiles[tile];
+        if share <= 0.0 {
+            continue;
+        }
+        let repeats = water.waves[tile];
+        let tile_dx = dx * (repeats * detail);
+        let tile_dy = dy * (repeats * detail);
+        let carried_share = carried_shares[tile];
+        if carried_share <= 0.0 {
+            let read = water_tile(tile, p * repeats, tile_dx, tile_dy);
+            waves += vec3<f32>(read.xy * share, read.z * share * share);
+            continue;
+        }
+        let strain = shear * carried_share;
+        let bands = water_bands(strain, WATER_CYCLES);
+        var slopes = vec2<f32>(0.0);
+        var variance = 0.0;
+        var weights = 0.0;
+        for (var band = 0u; band < 2u; band++) {
+            let shown = select(1.0 - bands.toward, bands.toward, band == 1u);
+            if shown <= 0.0 {
+                continue;
+            }
+            let cycle = bands.first * f32(1u + band);
+            let salt = (tile * 0xcb1ab31fu) ^ ((bands.index + band) * 0x632be5abu);
+            for (var which = 0u; which < 2u; which++) {
+                let carried = water_set(time, stagger, cycle, which, salt);
+                let weight = shown * carried.weight;
+                if weight <= 0.0 {
+                    continue;
+                }
+                let at = (p - flow * (carried_share * carried.seconds)) * repeats + carried.offset;
+                let read = water_tile(tile, at, tile_dx, tile_dy);
+                let fade = exp(-WATER_STRAIN_FADE * abs(carried.seconds) * strain);
+                slopes += read.xy * (weight * fade);
+                variance += (read.z + (1.0 - fade * fade) * dot(read.xy, read.xy))
+                    * weight * weight;
+                weights += weight * weight;
+            }
+        }
+        let kept = max(weights, 1.0e-6);
+        waves += vec3<f32>(slopes * (inverseSqrt(kept) * share), variance / kept * share * share);
+    }
+    return waves;
+}
+
+// Standing waves (Neyret and Praizelin; Yu, Neyret and Steed): the least
+// radius (meters) of what stands in the water, and the least speed (meters
+// a second) of the water flowing past it, that raise any; the pixels a
+// standing wave must span to show, finer ones roughening the water
+// instead; how far upstream of its obstacle's middle a pillow heaps up, how
+// long it runs along the flow and how high it rises at most, in radii (the
+// water it heaps up spills round the obstacle); a front's crest's half width,
+// in depths and at least (meters), and the radii over which fronts fall off
+// downstream; the share of the velocity head the waves standing past
+// obstacles in slower water rise by, how much their wake widens a meter
+// downstream, and the wavelengths over which trains fall off; and the
+// length and height of an undular jump's waves, in depths.
+const WATER_STANDING_LEAST: vec2<f32> = vec2<f32>(0.0625, 0.2);
+const WATER_STANDING_PIXELS: f32 = 3.0;
+const WATER_PILLOW: vec3<f32> = vec3<f32>(0.5, 0.7, 0.5);
+const WATER_CREST: vec2<f32> = vec2<f32>(2.0, 0.03);
+const WATER_FRONT_REACH: f32 = 8.0;
+const WATER_TRAIN: f32 = 0.3;
+const WATER_WAKE: f32 = 0.25;
+const WATER_TRAIN_REACH: f32 = 6.0;
+const WATER_UNDULAR: vec2<f32> = vec2<f32>(5.0, 0.2);
+// How much standing waves breathe either way as slow noise
+// WATER_BREATH_SIZE meters across passes over them, carried at
+// WATER_BREATH_CARRIED of the flow in sets cycling every WATER_BREATH_CYCLE
+// seconds.
+const WATER_BREATHING: f32 = 0.3;
+const WATER_BREATH_SIZE: f32 = 3.0;
+const WATER_BREATH_CARRIED: f32 = 0.5;
+const WATER_BREATH_CYCLE: f32 = 6.0;
+
+// How high standing waves rise at `p` (meters along x and z), as a share of
+// their height about 1, where water flows along `flow` (meters a second),
+// at `time`, the place's clock running `stagger` cycles ahead.
+fn water_breathing(p: vec2<f32>, flow: vec2<f32>, time: f32, stagger: f32) -> f32 {
+    var sum = 0.0;
+    var weights = 0.0;
+    for (var which = 0u; which < 2u; which++) {
+        let carried = water_set(time, stagger, WATER_BREATH_CYCLE, which, 0x2c1b3c6du);
+        let at = (p - flow * (WATER_BREATH_CARRIED * carried.seconds)) / WATER_BREATH_SIZE
+            + carried.offset;
+        sum += (water_noise(at).x - 0.5) * carried.weight;
+        weights += carried.weight * carried.weight;
+    }
+    return 1.0 + 2.0 * WATER_BREATHING * sum * inverseSqrt(max(weights, 1.0e-6));
+}
+
+// A standing wave's slopes `gradient` (meters a meter), its features
+// `width` meters across, as a pixel spanning `footprint` meters sees them:
+// whole where they span WATER_STANDING_PIXELS pixels, fading into the
+// roughness of what the pixel hides as they narrow below that (xy: the
+// slopes kept, z: the variance hidden).
+fn water_resolved(gradient: vec2<f32>, width: f32, footprint: f32) -> vec3<f32> {
+    let kept = saturate(width / (WATER_STANDING_PIXELS * max(footprint, 1.0e-6)));
+    return vec3<f32>(gradient * kept, dot(gradient, gradient) * (1.0 - kept * kept));
+}
+
+// The waves standing in water `depth` meters deep flowing along `flow`
+// (meters a second) at Froude number `froude`, about the obstacle nearest
+// it, `obstacle` (its offset from the point along x and z and its radius,
+// meters, and how strongly a drop or jump lies just upstream), rising
+// `breathing` of their height, for a pixel spanning `footprint` meters:
+// slopes of the surface fixed where the bed is, which the flow never
+// smears (xy, meters a meter), and the variance of those finer than the
+// pixel (z). A pillow heaps up just upstream of the obstacle, as wide as it
+// and as high as the water's velocity head U²/2g, or WATER_PILLOW.z of its
+// radius; in supercritical water, a front trails each side at the half
+// angle asin(1/Fr) (30° at Froude 2), a narrow crest falling off
+// downstream; in slower water, waves stand in its wake 2πU²/g apart, the
+// length of the waves its current holds still; and below a drop or jump,
+// where the water runs slower than Froude 1.7 as below an undular jump, a
+// train stands of waves about five depths long.
+fn water_standing(obstacle: vec4<f32>, flow: vec2<f32>, depth: f32, froude: f32,
+        breathing: f32, footprint: f32) -> vec3<f32> {
+    let radius = obstacle.z;
+    let speed = length(flow);
+    if radius < WATER_STANDING_LEAST.x || speed < WATER_STANDING_LEAST.y {
+        return vec3<f32>(0.0);
+    }
+    let heading = flow / speed;
+    let side = vec2<f32>(-heading.y, heading.x);
+    // Meters downstream of the obstacle's middle, and across the flow.
+    let apart = -obstacle.xy;
+    let along = dot(apart, heading);
+    let across = dot(apart, side);
+    let head = speed * speed / (2.0 * WATER_GRAVITY);
+    let run = WATER_PILLOW.y * radius;
+    let ahead = (along + WATER_PILLOW.x * radius) / run;
+    let wide = across / radius;
+    let pillow = min(head, WATER_PILLOW.z * radius) * breathing
+        * exp(-ahead * ahead - wide * wide);
+    var standing = water_resolved(
+        (heading * (ahead / run) + side * (wide / radius)) * (-2.0 * pillow), run, footprint);
+    let supercritical = smoothstep(1.0, 1.3, froude);
+    if supercritical > 0.0 {
+        let sine = 1.0 / max(froude, 1.0);
+        let cosine = sqrt(max(1.0 - sine * sine, 0.0));
+        // Meters out from the front's crest, and the way out.
+        let beside = (abs(across) - radius) * cosine - along * sine;
+        let outward = side * (cosine * select(-1.0, 1.0, across >= 0.0)) - heading * sine;
+        let crest = max(WATER_CREST.x * depth, WATER_CREST.y);
+        let trailing = smoothstep(-radius, 0.0, along)
+            * exp(-max(along, 0.0) / (WATER_FRONT_REACH * radius));
+        let front = min(head, depth) * breathing * supercritical * trailing
+            * exp(-(beside / crest) * (beside / crest));
+        standing += water_resolved(outward * (-2.0 * front * beside / (crest * crest)), crest,
+            footprint);
+    }
+    let subcritical = 1.0 - smoothstep(0.8, 1.0, froude);
+    let past = along - radius;
+    if subcritical > 0.0 && past > 0.0 {
+        let wavelength = 4.0 * PI * head;
+        let wake = radius + WATER_WAKE * past;
+        let height = WATER_TRAIN * head * breathing * subcritical * smoothstep(0.0, radius, past)
+            * exp(-past / (WATER_TRAIN_REACH * wavelength) - (across / wake) * (across / wake));
+        let rate = 2.0 * PI / wavelength;
+        standing += water_resolved(heading * (-height * rate * sin(rate * along)),
+            0.25 * wavelength, footprint);
+    }
+    let undular = obstacle.w * (1.0 - smoothstep(1.4, 1.7, froude));
+    if undular > 0.0 {
+        let wavelength = WATER_UNDULAR.x * max(depth, WATER_THINNEST);
+        let height = WATER_UNDULAR.y * depth * undular * breathing
+            * exp(-length(apart) / (WATER_TRAIN_REACH * wavelength));
+        let rate = 2.0 * PI / wavelength;
+        standing += water_resolved(heading * (-height * rate * sin(rate * along)),
+            0.25 * wavelength, footprint);
+    }
+    return standing;
+}
+
+// Caustics (Guardado and Sánchez-Crespo): how much brighter the sun's
+// light falls on the bed `bed` meters under the water's point `relative`
+// (less the eye) of normal `normal`, where the waves gather it as they
+// refract it down: the area a pixel's beam of sunlight lands on through a
+// level surface over the area it lands on through the waves (the inverse
+// of the Jacobian of where the refracted rays land, from its change across
+// the pixel, gathering at most a thousandfold), raised to
+// WATER_CAUSTIC_CONTRAST so its mean stays near 1 and its peaks within
+// WATER_CAUSTIC_MOST, which the graded scene holds unclipped. Its
+// derivatives need it called in uniform control flow.
+const WATER_CAUSTIC_CONTRAST: f32 = 0.3;
+const WATER_CAUSTIC_MOST: f32 = 1.5;
+// The meters of water over which caustics fade, as the light the waves
+// gather blurs and scatters on its way down; and the shares of the bed's
+// depth a pixel spans, from the first to the second, over which they fade
+// out: the waves gathering light at a depth are about a quarter of it
+// long.
+const WATER_CAUSTIC_DEPTH: f32 = 1.5;
+const WATER_CAUSTIC_PIXELS: vec2<f32> = vec2<f32>(0.03, 0.08);
+
+fn water_caustics(relative: vec3<f32>, normal: vec3<f32>, bed: f32) -> f32 {
+    let sun = lighting.sun.xyz;
+    let into = refract(-sun, normal, 1.0 / WATER_IOR);
+    let level = refract(-sun, vec3<f32>(0.0, 1.0, 0.0), 1.0 / WATER_IOR);
+    let landing = relative.xz + into.xz * (bed / max(-into.y, 0.1));
+    let level_landing = relative.xz + level.xz * (bed / max(-level.y, 0.1));
+    let spread = abs(determinant(mat2x2<f32>(dpdx(landing), dpdy(landing))));
+    let level_spread = abs(determinant(mat2x2<f32>(dpdx(level_landing), dpdy(level_landing))));
+    if level_spread <= 0.0 {
+        return 1.0;
+    }
+    let gathered = level_spread / max(spread, level_spread * 1.0e-3);
+    return min(pow(gathered, WATER_CAUSTIC_CONTRAST), WATER_CAUSTIC_MOST);
+}
+
+// How much of the water stands where `meters` (its depth, or its height
+// over what stands in it) comes to nothing at its waterline, changing by
+// `change` across a pixel: none at the line, all of it WATER_EDGE_PIXELS
+// pixels from it or WATER_EDGE meters over it.
+fn water_edge(meters: f32, change: f32) -> f32 {
+    return max(saturate(meters / max(change * WATER_EDGE_PIXELS, 1.0e-6)),
+        smoothstep(0.0, WATER_EDGE, meters));
+}
+
+// White water: falling water's map read WATER_WHITE_MAP meters across and
+// along the flow, a quarter of a fall's, so its bubbles are a few
+// centimeters across, in patches WATER_WHITE_PATCH meters across, each
+// turned to run along the flow about its own middle; how much the map's
+// strands, fibers and bubbles' walls and the clumps churning in it
+// (WATER_WHITE_CLUMPS meters across, churning WATER_WHITE_CHURN times a
+// second) make of its grain; how much more of the water stands white than
+// its birth alone says (c), how wide its edge is (s), how much wider it
+// grows as a pixel spans its bubbles (WATER_WHITE_BUBBLE meters), and the
+// birth below which none is drawn.
+const WATER_WHITE_MAP: vec2<f32> = vec2<f32>(1.0, FALL_MAP_STRETCH);
+const WATER_WHITE_PATCH: f32 = 0.6;
+const WATER_WHITE_GRAIN: vec4<f32> = vec4<f32>(0.3, 0.2, 0.2, 0.3);
+const WATER_WHITE_CLUMPS: f32 = 0.35;
+const WATER_WHITE_CHURN: f32 = 1.5;
+const WATER_WHITE_COVER: f32 = 0.1;
+const WATER_WHITE_EDGE: f32 = 0.04;
+const WATER_WHITE_SOFT: f32 = 0.5;
+const WATER_WHITE_BUBBLE: f32 = 0.06;
+const WATER_WHITE_LEAST: f32 = 0.02;
+
+// White water's grain at `p` (meters along x and z) where it runs along
+// `heading`, changing by `dx` and `dy` a pixel, less the grain's `mean`:
+// falling water's map's strands, fibers and bubbles' walls, weighed as
+// WATER_WHITE_GRAIN says, read at the three corners of the triangle of a
+// grid of WATER_WHITE_PATCH-meter patches holding it, each read turned to
+// run along the heading about its corner's middle and shifted at random
+// (salted by `salt`), and blended by their weights keeping their spread,
+// as `water_tile` reads the waves' tiles. Turning each read about a middle
+// nearby keeps it from shearing where the heading turns.
+fn water_aligned_grain(p: vec2<f32>, heading: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>,
+        mean: f32, salt: u32) -> f32 {
+    let side = vec2<f32>(-heading.y, heading.x);
+    let detail = material_detail();
+    let turned_dx = vec2<f32>(dot(dx, side), dot(dx, heading)) * detail / WATER_WHITE_MAP;
+    let turned_dy = vec2<f32>(dot(dy, side), dot(dy, heading)) * detail / WATER_WHITE_MAP;
+    let triangle = water_triangle(p / WATER_WHITE_PATCH);
+    var corners = triangle.corners;
+    let weights = triangle.weights;
+    var grain = 0.0;
+    for (var corner = 0u; corner < 3u; corner++) {
+        let skewed = vec2<f32>(corners[corner]);
+        let middle = vec2<f32>(skewed.x, (skewed.y + 0.57735027 * skewed.x) * 0.8660254)
+            * WATER_WHITE_PATCH;
+        let turned = vec2<f32>(dot(p - middle, side), dot(p - middle, heading));
+        let map = textureSampleGrad(water_fall_map, water_wave_sampler,
+            turned / WATER_WHITE_MAP + water_corner_offset(corners[corner], salt), turned_dx,
+            turned_dy);
+        grain += (dot(map.rgb, WATER_WHITE_GRAIN.xyz) - mean) * weights[corner];
+    }
+    return grain * inverseSqrt(dot(weights, weights));
+}
+
+// Active white water at `p` (meters along x and z), born there as strongly
+// as `born` says (0 to 1), where water flows along `flow` (meters a second)
+// shearing `shear` a second, changing by `dx` and `dy` a pixel spanning
+// `footprint` meters, at `time`, the place's clock running `stagger`
+// cycles ahead. Its grain n, about a half, is carried along with the flow
+// in sets as ripples are, cycling within WATER_CYCLES, and white stands
+// where its birth F and it pass a crisp edge, saturate((F + n − 1 + c) /
+// s), centred on it: all white where it is born, fraying into threads,
+// bubbles and ragged patches with dark water between as it is born less.
+// Its edge widens only as far as the pixel spans its bubbles.
+fn water_white(p: vec2<f32>, flow: vec2<f32>, shear: f32, time: f32, stagger: f32, born: f32,
+        dx: vec2<f32>, dy: vec2<f32>, footprint: f32) -> f32 {
+    let speed = length(flow);
+    let heading = select(vec2<f32>(1.0, 0.0), flow / max(speed, 1.0e-6), speed > 1.0e-4);
+    // The grain's mean, as the map's last level holds its channels' means.
+    let levels = textureNumLevels(water_fall_map);
+    let mean = dot(textureSampleLevel(water_fall_map, water_wave_sampler, vec2<f32>(0.5),
+        f32(levels - 1u)).rgb, WATER_WHITE_GRAIN.xyz);
+    let bands = water_bands(shear, WATER_CYCLES);
+    var grain = 0.0;
+    var weights = 0.0;
+    for (var band = 0u; band < 2u; band++) {
+        let shown = select(1.0 - bands.toward, bands.toward, band == 1u);
+        if shown <= 0.0 {
+            continue;
+        }
+        let cycle = bands.first * f32(1u + band);
+        let salt = ((bands.index + band) * 0x632be5abu) ^ 0x1656667bu;
+        for (var which = 0u; which < 2u; which++) {
+            let carried = water_set(time, stagger, cycle, which, salt);
+            let weight = shown * carried.weight;
+            if weight <= 0.0 {
+                continue;
+            }
+            let at = p - flow * carried.seconds + carried.offset;
+            let clumps = water_gradient_noise3(vec3<f32>(at / WATER_WHITE_CLUMPS,
+                time * WATER_WHITE_CHURN)) - 0.5;
+            let read = water_aligned_grain(at, heading, dx, dy, mean, salt)
+                + WATER_WHITE_GRAIN.w * clumps;
+            grain += read * (weight * exp(-WATER_STRAIN_FADE * abs(carried.seconds) * shear));
+            weights += weight * weight;
+        }
+    }
+    let n = 0.5 + grain * inverseSqrt(max(weights, 1.0e-6));
+    let edge = WATER_WHITE_EDGE + WATER_WHITE_SOFT * saturate(footprint / WATER_WHITE_BUBBLE);
+    return saturate((born + n - 1.0 + WATER_WHITE_COVER) / edge + 0.5);
 }
 
 // Whether water is simulated at `point` (x and z): within the middles of
@@ -1043,9 +1503,17 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
             discard;
         }
     }
+    // The water as it settled: how turbulent it runs, where white water is
+    // born in it, how fast its current shears (a second), and the silt its
+    // reach carries.
+    let turbulence = input.state.x;
+    let born = input.state.y;
+    let shear = input.state.z;
+    let silt = WATER_REACH_SILT[min(input.reach, 5u)];
     // Still water's waves run with the wind as they evolve; flowing water's
-    // run with it, carried along in two sets that cross-fade; between, the
-    // two blend, so nothing changes at once where a river meets a lake.
+    // are carried along with it in sets that start over before its shear
+    // stretches them; between, the two blend, so nothing changes at once
+    // where a river meets a lake.
     let speed = length(flow);
     let flowing = smoothstep(0.05, 0.3, speed);
     // Running water raises no swell, and breaks into finer, livelier
@@ -1053,25 +1521,45 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     let running = saturate(speed * 0.5);
     // How far the pixel spans on the water.
     let footprint = max(length(world_dx.xz), length(world_dy.xz));
-    // Each place's ripples restart at their own times, so the flow never
-    // pulses all at once (Vlachos's phase noise).
-    let carried = water_flow(time + water_noise(world.xz / WATER_FLOW_PHASE).x * WATER_FLOW_CYCLE);
+    // Each place's patterns start over at their own times, so the flow
+    // never pulses all at once (Vlachos's phase noise): the cycles its
+    // clock runs ahead by.
+    let stagger = water_noise(world.xz / WATER_FLOW_PHASE).x;
     var waves = vec3<f32>(0.0);
     if flowing < 1.0 {
         waves = water_waves_at(world.xz, world_dx.xz, world_dy.xz, vec3<f32>(1.0));
     }
     if flowing > 0.0 {
-        let tiles = vec3<f32>(0.0, mix(1.0, 0.6, running), mix(1.0, 1.5, running));
-        let moving = water_flowing_waves(world.xz, world_dx.xz, world_dy.xz, tiles, flow,
-            carried);
+        // Turbulent water churns its ripples into chop.
+        let tiles = vec3<f32>(0.0, mix(1.0, 0.6, running) * (1.0 + WATER_CHOP.x * turbulence),
+            mix(1.0, 1.5, running) * (1.0 + WATER_CHOP.y * turbulence));
+        let moving = water_flowing_waves(world.xz, world_dx.xz, world_dy.xz, tiles, flow, shear,
+            time, stagger);
         waves = water_blended(waves, moving, flowing);
     }
     let gusts = water_gusts(world.xz, time);
     let strength = water.ripples.x * mix(1.0, 1.3, running) * gusts;
-    // Its ripples ride its surface, tilting as it falls.
-    let slopes = waves.xy * strength - input.slope;
+    // Waves stand where the bed holds them, about the obstacle nearest the
+    // water's samples, which the triangles blend their offsets to: only
+    // where a pixel's samples agree on one, the obstacle staying put as the
+    // point moves across the pixel.
+    let anchor = input.relative.xz + input.obstacle.xy;
+    let anchoring = (length(dpdx(anchor)) + length(dpdy(anchor)))
+        / max(length(world_dx.xz) + length(world_dy.xz), 1.0e-6);
+    let anchored = 1.0 - smoothstep(0.1, 0.4, anchoring);
+    let froude = speed / sqrt(WATER_GRAVITY * max(depth, WATER_THINNEST));
+    var stationary = vec3<f32>(0.0);
+    if anchored > 0.0 {
+        stationary = water_standing(input.obstacle, flow, depth, froude,
+            water_breathing(world.xz, flow, time, stagger), footprint) * anchored;
+    }
+    // Its ripples and standing waves ride its surface, tilting as it falls;
+    // and the slopes they hide within a pixel roughen it, so where chop
+    // churns it, it glints sharply rather than mirroring the sky (Bruneton,
+    // Neyret and Holzschuch).
+    let slopes = waves.xy * strength + stationary.xy - input.slope;
     let normal = normalize(vec3<f32>(-slopes.x, 1.0, -slopes.y));
-    let roughness = water_roughness(waves.z * strength * strength);
+    let roughness = water_roughness(waves.z * strength * strength + stationary.z);
     let view = stable_normalize(-input.relative);
     // Under the sea, the sea's water stands instead.
     if water.ocean.y > 0.5 && input.relative.y < water.ocean.x {
@@ -1087,9 +1575,21 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     if refracts {
         behind = water_behind(input.relative, normal, view, pixel, own);
     }
+    // How far the water's surface stands over what stands in it behind the
+    // pixel, and how fast that changes across it; and the bed under the
+    // pixel, where the waves gather the sun's light.
+    let standing = max(input.relative.y - own.y, 0.0);
+    let standing_change = abs(dpdx(standing)) + abs(dpdy(standing));
+    let bed = min(depth, standing);
+    let gathered = water_caustics(input.relative, normal, bed);
+    // The water ends at its waterline, where its depth or its height over
+    // what stands in it comes to nothing: however thin, running water is
+    // all there.
+    let fade = min(water_edge(depth, fwidth(depth)), water_edge(standing, standing_change))
+        * (1.0 - falling);
     // Light comes back through the water along the view to what it shows,
     // as far as the depth lets it run, after reaching it down from the
-    // surface.
+    // surface, taken by the water and its silt.
     // Water a fall's sheet runs over (`shade_fall`) is a film over steep
     // rock: the sheet draws its white and its body.
     let steep = length(input.slope);
@@ -1097,17 +1597,17 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     let through = min(max(length(behind.ground - input.relative), 0.0),
         depth / max(view.y, 0.1));
     let down = clamp(input.relative.y - behind.ground.y, 0.0, through);
-    let transmit = water_transmitted((through + down) * (1.0 - film));
+    let transmit = water_transmitted((through + down) * (1.0 - film), silt);
     // Foam: lace along the waterline, where shores and what stands in the
     // water meet it, out to WATER_FOAM_REACH meters (as the settings' foam
     // width scales it), its lines thick at the line and thinning to threads
     // farther out; and dense lace where the water carries foam, thinning as
     // the current carries it off. Open water carries none but what its flow
-    // churned up. The water makes and moves it, in two sets half a life
-    // apart, each forming anew as the other dissolves: on running water the
-    // current carries each off as it forms, slower at the bank, drawing it
-    // out along it; on still water each is a wave lapping the shore, washing
-    // its lace in, as big as the gusts raise the waves there, and drawing it
+    // churned up. The water makes and moves it, in two sets each forming
+    // anew as the other dissolves: on running water the current carries
+    // them along as it carries ripples, slower at the bank, drawing them out
+    // along it; on still water each is a wave lapping the shore, washing its
+    // lace in, as big as the gusts raise the waves there, and drawing it
     // back out as it dissolves. Where the pixel spans most of its cells, its
     // share of the surface instead. Foam is thin: WATER_FOAM_OPACITY of it
     // hides the water.
@@ -1121,12 +1621,12 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     let rise = length(input.shore);
     let from_shore = depth / max(rise, 1.0e-3);
     let offshore = select(vec2<f32>(0.0), -input.shore / rise, rise > 1.0e-6);
+    let solid = 1.0 - smoothstep(0.03, 0.12, standing_change);
     // Narrow water holds a narrower band: no more than a share of its half
     // width.
-    let standing = max(input.relative.y - own.y, 0.0);
-    let solid = 1.0 - smoothstep(0.03, 0.12, abs(dpdx(standing)) + abs(dpdy(standing)));
-    let reach = min(WATER_FOAM_REACH * water.foam.y / 0.6, input.foam.y * WATER_FOAM_SHARE);
-    let shore = max(1.0 - smoothstep(0.0, reach, from_shore),
+    let shore_reach = min(WATER_FOAM_REACH * water.foam.y / 0.6,
+        input.foam.y * WATER_FOAM_SHARE);
+    let shore = max(1.0 - smoothstep(0.0, shore_reach, from_shore),
         select(0.0, 1.0 - smoothstep(0.0, WATER_FOAM_RING, standing), standing < depth * 0.8)
             * solid);
     // Under a fall's sheet the sheet draws the water's foam.
@@ -1134,62 +1634,43 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
         * (1.0 - input.foam.z);
     // Water shows the foam it carries as lace: where falls land, rapids
     // break and currents pile up, as its flow churns it up.
-    let plunge = smoothstep(WATER_FOAM_SHOWN.x, WATER_FOAM_SHOWN.y, input.churned)
-        * WATER_FOAM_LACE;
+    let plunge = smoothstep(WATER_FOAM_SHOWN.x, WATER_FOAM_SHOWN.y,
+        input.churned / WATER_FOAM_MOST) * WATER_FOAM_LACE;
     // Lace lies on the surface as seen from above: where the surface itself
     // falls steeply (water running down a chute), it would stretch down it,
     // so it gives way there.
     let flat = 1.0 - smoothstep(0.5, 1.0, steep);
-    // Water skimming down steep rock breaks white all across where it
-    // carries foam, as falling water does (`fall_pattern`): streaked along
-    // the current and carried down with it, in two sets half a cycle apart.
-    let cascade = smoothstep(0.2, 0.6, input.foam.x) * smoothstep(0.25, 0.6, steep);
-    // Fast water breaks white over rock just under its surface, in pillows
-    // and holes over the stones it runs across: where what stands in it
-    // rises solid to within a few tenths of a meter of its surface.
-    let shoal = (1.0 - smoothstep(0.05, 0.45, standing)) * solid * smoothstep(1.5, 4.0, speed);
-    let breaking = max(cascade, shoal) * (1.0 - film);
-    var white = 0.0;
-    let heading = flow / max(speed, 1.0e-4);
-    let side = vec2<f32>(-heading.y, heading.x);
-    let along_dx = vec2<f32>(dot(world_dx.xz, side), dot(world_dx.xz, heading));
-    let along_dy = vec2<f32>(dot(world_dy.xz, side), dot(world_dy.xz, heading));
-    if breaking > 1.0e-3 {
-        let first = world.xz - flow * carried.first;
-        let second = world.xz + WATER_FLOW_SHIFT - flow * carried.second;
-        let one = fall_pattern(vec2<f32>(dot(first, side), dot(first, heading)), along_dx,
-            along_dy, 1.0, vec2<f32>(0.0));
-        let other = fall_pattern(vec2<f32>(dot(second, side), dot(second, heading)), along_dx,
-            along_dy, 1.0, vec2<f32>(5.3, 2.9));
-        white = breaking * smoothstep(0.2, 0.45, mix(one.x, other.x, carried.blend));
-    }
     var foam = 0.0;
     if max(lining, plunge) * flat > 1.0e-3 {
         let blur = footprint / WATER_LACE_CELL;
         let far = smoothstep(0.35, 0.9, blur);
-        let stagger = water_noise(world.xz / WATER_FOAM_STAGGER).x * WATER_FOAM_STAGGERED;
-        let current = flow * mix(0.75, 1.0, smoothstep(0.0, 3.0 * reach, from_shore));
+        let lives = water_noise(world.xz / WATER_FOAM_STAGGER).x * WATER_FOAM_STAGGERED;
+        let current = flow * mix(0.75, 1.0, smoothstep(0.0, 3.0 * shore_reach, from_shore));
         let lapping = clamp(gusts, 0.3, 1.3);
-        var lace = 0.0;
-        var covered = 0.0;
-        for (var which = 0u; which < 2u; which++) {
-            var lapped = vec2<f32>(0.0);
-            var streamed = vec2<f32>(0.0);
-            if flowing < 1.0 {
-                lapped = water_foam_lace(which, false, world.xz, time / WATER_FOAM_LAPPED + stagger,
-                    lining, plunge, current, offshore, lapping, blur, far < 1.0);
+        var lapped = vec2<f32>(0.0);
+        if flowing < 1.0 {
+            for (var which = 0u; which < 2u; which++) {
+                let one = water_lapped_lace(which, world.xz, time / WATER_FOAM_LAPPED + lives,
+                    lining, plunge, offshore, lapping, blur, far < 1.0);
+                lapped = vec2<f32>(lapped.x + one.x, max(lapped.y, one.y));
             }
-            if flowing > 0.0 {
-                streamed = water_foam_lace(which, true, world.xz, time / WATER_FOAM_CARRIED + stagger,
-                    lining, plunge, current, offshore, lapping, blur, far < 1.0);
-            }
-            let both = mix(lapped, streamed, flowing);
-            covered += both.x;
-            lace = max(lace, both.y);
         }
-        foam = mix(lace, min(covered * 2.2, 0.8), far) * flat * WATER_FOAM_OPACITY;
+        var carried = vec2<f32>(0.0);
+        if flowing > 0.0 {
+            carried = water_carried_lace(world.xz, current, shear, time, lives,
+                max(lining, WATER_PLUNGE_LACE * plunge), blur, far < 1.0);
+        }
+        let lace = mix(lapped, carried, flowing);
+        foam = mix(lace.y, min(lace.x * 2.2, 0.8), far) * flat * WATER_FOAM_OPACITY;
     }
-    foam = max(foam, white);
+    // White water where the water loses its energy, at drops, jumps and
+    // rocks, carried along as it frays; under a fall's sheet the sheet
+    // draws it.
+    let white_born = born * (1.0 - film);
+    if white_born > WATER_WHITE_LEAST {
+        foam = max(foam, water_white(world.xz, flow, shear, time, stagger, white_born,
+            world_dx.xz, world_dy.xz, footprint));
+    }
     var surface: WaterSurface;
     surface.relative = input.relative;
     surface.world_dx = world_dx;
@@ -1197,22 +1678,26 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     surface.normal = normal;
     surface.roughness = roughness;
     surface.foam = foam;
+    surface.scatter = water_silted(silt);
     surface.transmit = transmit;
     surface.glow = vec3<f32>(0.0);
     let lit = water_light(surface);
+    // The waves' caustics brighten the sun's share of the light on the bed,
+    // fading as it lies deeper, as turbulence scatters the light, and as
+    // the pixel spans more of the waves gathering it.
+    let caustic = 1.0 + (gathered - 1.0) * lit.sunny * exp(-bed / WATER_CAUSTIC_DEPTH)
+        * (1.0 - turbulence) * (1.0 - smoothstep(WATER_CAUSTIC_PIXELS.x, WATER_CAUSTIC_PIXELS.y,
+            footprint / max(bed, 1.0e-3)));
     // Of what the surface lets through, the ground shows darker for being
-    // wet however thin the water; foam covers it. The water thins out to
-    // nothing where it meets the shore and around what stands in it.
+    // wet however thin the water; foam covers it.
     let wet = smoothstep(0.0, 0.03, depth) * WATER_WET;
     let let_through = (1.0 - lit.reflectance) * (1.0 - foam);
-    let fade = smoothstep(0.0, WATER_SHORE, min(depth, max(input.relative.y - own.y, 0.0)))
-        * (1.0 - falling);
     var result: WaterShade;
     result.shaded = lit.shaded;
     result.coverage = max(max(1.0 - (1.0 - lit.reflectance) * luminance(transmit), wet), foam)
         * fade;
-    result.behind = behind.color * transmit
-        * (let_through * (1.0 - wet) * (1.0 - atmospheric_cover(camera.position.xyz, world)));
+    result.behind = behind.color * transmit * (caustic * let_through * (1.0 - wet)
+        * (1.0 - atmospheric_cover(camera.position.xyz, world)));
     result.fade = fade;
     return result;
 }
