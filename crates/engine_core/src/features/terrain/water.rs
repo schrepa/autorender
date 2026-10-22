@@ -29,6 +29,13 @@ settings! {
         pub color: [f32; 3] = [0.012, 0.045, 0.05] => range(0.0, 1.0),
         /// The meters of water through which half the light passes.
         pub clarity: f32 = 2.5 => range(0.1, 100.0),
+        /// How strongly the fine sediment water carries scatters light, per
+        /// meter: light passing through fades by it as well as by what the
+        /// water's clarity takes, and the water's body scatters back
+        /// `sediment_color` by the sediment's share of the two; 0 none.
+        pub sediment: f32 = 0.15 => range(0.0, 50.0),
+        /// The color the water's sediment scatters back, linear.
+        pub sediment_color: [f32; 3] = [0.05, 0.065, 0.03] => range(0.0, 1.0),
         /// How strongly ripples tilt the surface.
         pub ripples: f32 = 0.3 => range(0.0, 1.0),
         /// The meters across the largest ripples.

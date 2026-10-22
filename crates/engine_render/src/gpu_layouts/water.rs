@@ -7,7 +7,8 @@ use super::constants::{SIM_SLOTS, WAVE_TILES};
 
 gpu_structs! {
     /// WGSL `WaterUniform` of `meshes/water.wgsl`; the sea's parts are zero
-    /// for terrains' water, whose projection is the terrain view's.
+    /// for terrains' water, whose projection is the terrain view's, and the
+    /// sea carries no sediment.
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct WaterUniform as ["WaterUniform"] {
         pub relative_view_projection: [[f32; 4]; 4],
@@ -23,6 +24,7 @@ gpu_structs! {
         pub ocean_reach: [[f32; 4]; MAX_OCEAN_WAVES / 4],
         pub sim: [f32; 4],
         pub sim_datum: [f32; 4],
+        pub sediment: [f32; 4],
     }
 
     /// WGSL `SimFrame` of `water_sim.wgsl`: the stage, the slots the

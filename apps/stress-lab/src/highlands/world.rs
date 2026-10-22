@@ -69,7 +69,21 @@ impl StressWorld for HighlandsWorld {
         // Rivers settle in meter cells, the ground's own samples, which its
         // rivers are traced along: the cook settles every watered tile at
         // that size, and the settled water stands everywhere.
+        //
+        // The water runs as glacial streams do, milky with the rock flour
+        // the ice grinds: its grains, microns across, scatter light strongly
+        // and send back blue-green, which turns mountain water turquoise.
+        // The water itself is a deep blue-green halving the light in a
+        // meter, and the flour scatters 0.8 a meter on top, a little more
+        // than the water takes, so its teal leads the body's color. Seen 30
+        // degrees down through 30 centimeters, the light runs about 0.9
+        // meters in the water: a third of the stones under it shows through
+        // a body two thirds of the way to its deep teal.
         world.insert_resource(Water {
+            color: [0.005, 0.035, 0.04],
+            clarity: 1.0,
+            sediment: 0.8,
+            sediment_color: [0.04, 0.16, 0.15],
             simulation_cell: 1.0,
             ..Water::default()
         });

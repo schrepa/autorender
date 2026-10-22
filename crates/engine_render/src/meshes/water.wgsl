@@ -10,7 +10,7 @@
 // hide within a pixel roughens it; waves the bed holds still stand about
 // what the water flows past. It mirrors the sky, the sun's disc and,
 // through screen-space reflections, the scene; its body, tinted by the
-// silt its reach carries, scatters the light entering it back toward the
+// sediment it carries, scatters the light entering it back toward the
 // eye; and what lies under it shows through, bent by the waves where the
 // frame copies the scene's color, brighter where the waves gather the sun's
 // light on it, and dimmed channel by channel over the light's path down to
@@ -60,6 +60,9 @@
 // camera (`water_sim.rs`), `sim` holds its square's first corner along x
 // and z, the meters across a cell and the cells along a side (none, zero),
 // and `sim_datum` the height its heights stand above (x, world meters).
+// `sediment` holds the color the fine sediment terrains' water carries
+// scatters back (rgb, linear) and how strongly it scatters light, per meter
+// (w); the sea carries none.
 struct WaterUniform {
     relative_view_projection: mat4x4<f32>,
     origin: vec4<f32>,
@@ -74,6 +77,7 @@ struct WaterUniform {
     ocean_reach: array<vec4<f32>, 4>,
     sim: vec4<f32>,
     sim_datum: vec4<f32>,
+    sediment: vec4<f32>,
 }
 @group(1) @binding(52) var<uniform> water: WaterUniform;
 // The waves' moments, a layer a tile, with their levels
@@ -670,29 +674,43 @@ fn water_roughness(variance: f32) -> f32 {
     return min(sqrt(sqrt(calm * calm + variance)), WATER_ROUGHEST);
 }
 
-// Silt: what the fine sediment and dissolved matter a slow stream carries
-// take of each channel a meter, blue the most, so what shows through
-// shallow water turns sandy, and the color they scatter back (linear); and
-// how much of a slow stream's silt the water of each reach carries
-// (`WaterOutput.reach`): none in lakes and beyond streams' banks, the most
-// in pools and plane beds, which hold the fines steeper reaches wash out,
-// then less in steps, cascades and falls, which run clearer.
-const WATER_SILT_TAKEN: vec3<f32> = vec3<f32>(0.18, 0.22, 0.6);
-const WATER_SILT: vec3<f32> = vec3<f32>(0.05, 0.065, 0.03);
-const WATER_REACH_SILT = array<f32, 6>(0.0, 1.0, 0.75, 0.35, 0.15, 0.1);
+// What scatters light in water's body besides the water. The fine sediment
+// it carries (`water.sediment`: silt, or the glacial flour that turns
+// mountain water turquoise), its grains microns across, larger than light's
+// wavelengths, scatters every channel about alike (Mie), w a meter, and
+// sends back the color rgb. Bubbles, where the water churns, are larger
+// still, and each takes twice its cross section out of the light (the
+// extinction paradox): air making up a share ε of the water in bubbles of
+// radius r scatters 3ε/2r a meter. Where water churns the most it scatters
+// WATER_BUBBLES, a thousandth of it air in bubbles half a millimeter in
+// radius (breaking water's are mostly under a millimeter, Deane and
+// Stokes). Bubbled water sends back WATER_BUBBLE_ALBEDO of the light, alike
+// in every channel, so it turns milky and paler: about what whitecaps send
+// back averaged over their lives, 22 %, where their fresh foam sends back
+// 55 % (Koepke).
+const WATER_BUBBLES: f32 = 3.0;
+const WATER_BUBBLE_ALBEDO: f32 = 0.2;
+// How much more of the light its body scatters water lets out at the top of
+// a crest of its chop, where that light crosses less water on its way out
+// (wave peaks lit through, as Sea of Thieves lights them): half again.
+const WATER_CREST_BODY: f32 = 0.5;
 
-// What light keeps of each channel over `meters` of water carrying `silt`
-// of a slow stream's.
-fn water_transmitted(meters: f32, silt: f32) -> vec3<f32> {
-    return exp(-(water.absorption.rgb + WATER_SILT_TAKEN * silt) * meters);
+// What light keeps of each channel over `meters` of water `aerated` (0 to
+// 1) with the bubbles churning water holds: what the water takes, and what
+// its sediment and bubbles scatter.
+fn water_transmitted(meters: f32, aerated: f32) -> vec3<f32> {
+    return exp(-(water.absorption.rgb + water.sediment.w + WATER_BUBBLES * aerated) * meters);
 }
 
-// The color water carrying `silt` of a slow stream's scatters back: its
-// own, turned toward silt's by silt's share of what the water takes.
-fn water_silted(silt: f32) -> vec3<f32> {
-    let silted = luminance(WATER_SILT_TAKEN) * silt;
-    return mix(water.color.rgb, WATER_SILT,
-        silted / max(luminance(water.absorption.rgb) + silted, 1.0e-6));
+// The color water `aerated` (0 to 1) with the bubbles churning water holds
+// scatters back: its own, its sediment's and its bubbles', each by its share
+// of what the water takes and scatters.
+fn water_body(aerated: f32) -> vec3<f32> {
+    let own = luminance(water.absorption.rgb);
+    let sediment = water.sediment.w;
+    let bubbles = WATER_BUBBLES * aerated;
+    return (water.color.rgb * own + water.sediment.rgb * sediment
+        + vec3<f32>(WATER_BUBBLE_ALBEDO * bubbles)) / max(own + sediment + bubbles, 1.0e-6);
 }
 
 // The normal that mirrors the eye's view along `view` no lower than
@@ -783,7 +801,9 @@ fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: 
 // pixel; its waves' normal and the roughness of what a pixel spans of them;
 // the share of it foam covers; the color its body scatters back, and what
 // it keeps of each channel of the light on its way to what lies below and
-// back; and light it adds of its own (the sea's crests lit through).
+// back; light it adds of its own (the sea's crests lit through); and how
+// near the top of a crest of its chop it stands (0 to 1), where the light
+// its body scatters crosses less water on its way out.
 struct WaterSurface {
     relative: vec3<f32>,
     world_dx: vec3<f32>,
@@ -794,6 +814,7 @@ struct WaterSurface {
     scatter: vec3<f32>,
     transmit: vec3<f32>,
     glow: vec3<f32>,
+    crest: f32,
 }
 
 // A water surface's light, fogged and graded, its reflectance, and the
@@ -840,7 +861,8 @@ fn water_light(surface: WaterSurface) -> WaterLit {
                 * visibility(n_v, n_l, widened) * n_l * lighting.sun_color.w);
     }
     let body = surface.scatter * (vec3<f32>(1.0) - surface.transmit)
-        * water_scattered(view, sunlight) * (1.0 - reflectance);
+        * water_scattered(view, sunlight) * (1.0 - reflectance)
+        * (1.0 + WATER_CREST_BODY * surface.crest);
     // Foam scatters the sun's light, as the waves it rides face it, and the
     // light around it: the sky's, of which water in its channel sees
     // WATER_FOAM_SKY, and the ground's around it for the rest, sunlit and
@@ -1523,12 +1545,10 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
         }
     }
     // The water as it settled: how turbulent it runs, where white water is
-    // born in it, how fast its current shears (a second), and the silt its
-    // reach carries.
+    // born in it and how fast its current shears (a second).
     let turbulence = input.state.x;
     let born = input.state.y;
     let shear = input.state.z;
-    let silt = WATER_REACH_SILT[min(input.reach, 5u)];
     // Still water's waves run with the wind as they evolve; flowing water's
     // are carried along with it in sets that start over before its shear
     // stretches them; between, the two blend, so nothing changes at once
@@ -1611,7 +1631,7 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
         * shallows * (1.0 - falling);
     // Light comes back through the water along the view to what it shows,
     // as far as the depth lets it run, after reaching it down from the
-    // surface, taken by the water and its silt.
+    // surface, taken by the water and scattered by its sediment and bubbles.
     // Water a fall's sheet runs over (`shade_fall`) is a film over steep
     // rock: the sheet draws its white and its body.
     let steep = length(input.slope);
@@ -1619,7 +1639,10 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     let through = min(max(length(behind.ground - input.relative), 0.0),
         depth / max(view.y, 0.1));
     let down = clamp(input.relative.y - behind.ground.y, 0.0, through);
-    let transmit = water_transmitted((through + down) * (1.0 - film), silt);
+    // The water holds bubbles where white water is born in it and where it
+    // carries the foam its flow churned up.
+    let aerated = max(input.state.y, saturate(input.churned / WATER_FOAM_MOST));
+    let transmit = water_transmitted((through + down) * (1.0 - film), aerated);
     // Foam: lace along the waterline, where shores and what stands in the
     // water meet it, out to WATER_FOAM_REACH meters (as the settings' foam
     // width scales it), its lines thick at the line and thinning to threads
@@ -1700,9 +1723,10 @@ fn shade_water(input: WaterOutput, refracts: bool, simulated: bool) -> WaterShad
     surface.normal = normal;
     surface.roughness = roughness;
     surface.foam = foam;
-    surface.scatter = water_silted(silt);
+    surface.scatter = water_body(aerated);
     surface.transmit = transmit;
     surface.glow = vec3<f32>(0.0);
+    surface.crest = crest;
     let lit = water_light(surface);
     // The waves' caustics brighten the sun's share of the light on the bed,
     // fading as it lies deeper, as turbulence scatters the light, and as
