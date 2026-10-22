@@ -49,7 +49,7 @@ pub use engine_core::environment_sections;
 /// (`math::sin`, not `f32::sin`).
 mod games {
     pub use engine_core::{
-        Aabb, ActionId, ActionInput, AlphaMode, AmbientOcclusion, AnimatedProperty,
+        Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, AnimatedProperty,
         AnimationChannel, AnimationClip, AnimationPlayer, AnimationPlugin, AnimationSystems, App,
         AssetBudget, AssetError, AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, ClipHandle,
         Clouds, ContactShadows, Cover, Cube, DebugView, DebugViewMode, Decal, DecalBlend,
@@ -75,7 +75,7 @@ mod games {
         WaterObstacles, WaterSample, WaterSource, WaterSources, Wind, Windows, WorldCells,
         WorldChanges, WorldStreaming, WorldStreamingPlugin, WorldSync, WorldSyncSystems, Wrap,
         edit_transform, math, remove_streamed, reset_all_interpolation, reset_interpolation,
-        set_parent, set_parents,
+        set_parent, set_parents, trim_cards,
     };
 }
 pub use games::*;

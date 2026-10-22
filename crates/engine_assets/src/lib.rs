@@ -9,6 +9,7 @@
 )]
 
 mod animation;
+mod cards;
 mod error;
 mod library;
 mod lod;
@@ -20,6 +21,7 @@ mod virtual_mesh;
 pub use animation::{
     AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, KeyInterpolation, Keyframes,
 };
+pub use cards::{AlphaImage, trim_cards};
 pub use error::AssetError;
 pub use library::{
     AssetBudget, AssetLibrary, ClipHandle, MaterialHandle, MeshHandle, TextureHandle,

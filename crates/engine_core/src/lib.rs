@@ -71,10 +71,11 @@ pub use debug_view::*;
 pub use decals::*;
 pub use effects::*;
 pub use engine_assets::{
-    Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding, LOD_RECORD,
-    LodInput, LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh,
-    MeshHandle, MeshLods, MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle,
-    TextureRef, TopLayer, Transmission, UvTransform, Wrap, lod_input,
+    Aabb, AlphaImage, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding,
+    LOD_RECORD, LodInput, LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding,
+    MaterialHandle, Mesh, MeshHandle, MeshLods, MeshVertex, Sampler, Surface, Texture,
+    TextureFormat, TextureHandle, TextureRef, TopLayer, Transmission, UvTransform, Wrap, lod_input,
+    trim_cards,
 };
 pub use engine_assets::{
     AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, ClipHandle,
