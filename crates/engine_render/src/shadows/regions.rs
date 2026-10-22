@@ -1,7 +1,7 @@
 //! Where a frame's maps look: the light basis,
-//! the far region the moving and kept maps share, the near cascades in use
-//! and the kept levels, with what caster selection and lookups read about
-//! them.
+//! the far region the moving and kept maps share, the near cascades in use,
+//! each its cache's window, and the kept levels, with what caster
+//! selection and lookups read about them.
 
 use engine_core::{
     Shadows,
@@ -15,8 +15,8 @@ use super::{
 };
 use crate::gpu_data::{CASTER_PLANES, MAX_CASCADES, MAX_LEVELS, ShadowCullUniform, ShadowUniform};
 use crate::shadow_fit::{
-    KeptLevels, LevelRefresh, LightBasis, MapRegion, Refresh, TILE_WORDS, TILES, caster_planes,
-    frustum_footprint, receivers_from, view_sphere,
+    KeptLevels, LevelRefresh, LightBasis, MapRegion, NearCaches, Refresh, TILE_WORDS, TILES,
+    caster_planes, frustum_footprint, receivers_from,
 };
 
 // Lookups move this many texels along the surface normal. Receiver planes
@@ -71,23 +71,20 @@ pub(super) struct Regions {
 
 impl Regions {
     /// The regions of `settings`' maps in light `basis` around the far
-    /// region `far`, seen through `view_projection` from `eye`. Each near
-    /// cascade is the smallest sphere around the view within
-    /// its reach, nested; a reach inside the camera's near plane covers
-    /// nothing and has no cascade.
+    /// region `far`. Each near cascade covers its cache's window in
+    /// `caches`, a square about the camera holding every receiver within
+    /// its reach, and its band.
     pub(super) fn new(
         basis: LightBasis,
         far: MapRegion,
         settings: &Shadows,
-        view_projection: engine_core::glam::Mat4,
-        eye: Vec3,
+        caches: &NearCaches,
     ) -> Self {
         let resolution = settings.resolution;
         let mut near = [(0.0, far); MAX_CASCADES];
         let mut cascades = 0;
-        for reach in settings.cascade_reaches() {
-            if let Some((center, radius)) = view_sphere(view_projection, eye, reach) {
-                let region = MapRegion::of_sphere(&basis, center, radius, resolution / 2);
+        for (index, reach) in settings.cascade_reaches().enumerate() {
+            if let Some(region) = caches.region(index) {
                 near[cascades] = (reach, region);
                 cascades += 1;
             }

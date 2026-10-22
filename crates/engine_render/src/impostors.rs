@@ -1,7 +1,8 @@
 //! Octahedral impostors: an opaque draw group whose mesh has enough
 //! triangles draws, where its instances are too small for its texels to
 //! show, as cards blending the three frames around the view
-//! (`meshes/impostors.wgsl`) of its mesh and material seen from a grid of
+//! (`meshes/impostors.wgsl`) of its mesh and material, and of its parts
+//! with theirs, seen from a grid of
 //! directions, one layer of four texture arrays. Plan batches' frames cover
 //! the sphere, eight a side at 16 texels; placed objects', which stand on
 //! the ground, the upper hemisphere, sixteen a side at 64 texels. Layers
@@ -378,7 +379,8 @@ impl Supplied {
 }
 
 /// What a bake draws: the mesh as the arena holds it, with its
-/// material's group and pipeline variant.
+/// material's group and pipeline variant, the bounds of everything it
+/// draws, and the parts drawn with it, each with a material of its own.
 pub(crate) struct BakeSource<'a> {
     pub draw: MeshDraw<'a>,
     pub extended: bool,
@@ -386,6 +388,16 @@ pub(crate) struct BakeSource<'a> {
     pub variant: Variant,
     pub bounds: (Vec3, Vec3),
     pub material: Option<Material>,
+    pub parts: Vec<BakePart<'a>>,
+}
+
+/// A part a bake draws with its mesh: its own mesh as the arena holds it,
+/// with its material's group and pipeline variant.
+pub(crate) struct BakePart<'a> {
+    pub draw: MeshDraw<'a>,
+    pub extended: bool,
+    pub group: &'a wgpu::BindGroup,
+    pub variant: Variant,
 }
 
 /// What supplying an impostor records with: the device, its queue, the

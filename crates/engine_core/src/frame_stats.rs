@@ -334,6 +334,10 @@ pub struct ShadowStats {
     pub level_tiles: u32,
     /// Kept-level tiles no level holds yet: lookups read coarser maps there.
     pub levels_pending: u32,
+    /// Tiles of the near cascades' caches of the objects terrains place
+    /// this frame redrew: the strips their windows uncovered, where objects
+    /// came or went, or all of a cache whose band moved.
+    pub cache_tiles: u32,
     /// Casters the kept levels drew, read back like the near map's.
     pub level_casters: Option<u32>,
     /// Sky occlusion's maps of still meshes seen from the sky

@@ -58,6 +58,6 @@ pub use probe::SceneReflectionProbe;
 pub use spline::SceneSpline;
 pub use terrain::{
     SceneHeightmap, SceneSurroundings, SceneTerrain, SceneTerrainAsset, SceneTerrainLayer,
-    SceneTerrainLod, SceneTerrainMaterial, SceneTerrainSurface,
+    SceneTerrainLod, SceneTerrainMaterial, SceneTerrainPart, SceneTerrainSurface,
 };
 pub use texture::SceneTexture;

@@ -2,7 +2,8 @@
 //
 // `select_casters` visits every candidate once. It transforms the candidate's
 // mesh bounds into light space and appends its slot to the instance IDs of
-// each shadow map it can darken: the near cascades that follow the camera,
+// each shadow map it can darken: the near cascades that follow the camera
+// (composed first from their caches of what terrains place, `fs_compose`),
 // the far map redrawn every frame, and the tiles of the
 // kept far map redrawn this frame. GPU-presented frames also track how many frames each slot's
 // pose stayed the same: still slots move into the kept map, which is drawn
@@ -537,9 +538,51 @@ fn vs_affine(@location(0) position: vec3<f32>, @location(2) slot: u32) -> @built
 // kept map, bounded by the scissor.
 @vertex
 fn vs_clear(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    return over_map(index);
+}
+
+fn over_map(index: u32) -> vec4<f32> {
     let x = f32((index << 1u) & 2u) * 2.0 - 1.0;
     let y = f32(index & 2u) * 2.0 - 1.0;
     return vec4<f32>(x, y, 1.0, 1.0);
+}
+
+// The near cascades' caches of the objects terrains place, one layer each
+// (`shadows/mod.rs`): each cascade is composed from its cache's depths
+// every frame, then its other casters drawn over them. Their windows move
+// a tile at a time, so a cache holds the light-space texel `(a, b)` of its
+// cascade's map at texel `(a mod size, b mod size)`, rows running down.
+// Depth passes drawing into a cache bind a placeholder.
+@group(1) @binding(3) var near_cache: texture_depth_2d_array;
+
+struct ComposeOutput {
+    @builtin(position) clip: vec4<f32>,
+    // The cache's layer, and where its cascade's window starts in its map,
+    // x and y in texels.
+    @location(0) @interpolate(flat) cache: vec3<u32>,
+}
+
+// A triangle over a near cascade, carrying its cache's layer (the
+// instance) and the window's offsets in its map, which its compose view
+// holds in its first column.
+@vertex
+fn vs_compose(@builtin(vertex_index) index: u32,
+        @builtin(instance_index) layer: u32) -> ComposeOutput {
+    var output: ComposeOutput;
+    output.clip = over_map(index);
+    output.cache = vec3<u32>(layer, u32(view.clip[0].x), u32(view.clip[0].y));
+    return output;
+}
+
+// The cascade's depth at its texel: its cache's at the same light-space
+// texel, the window's offset on in its map, wrapping.
+@fragment
+fn fs_compose(input: ComposeOutput) -> @builtin(frag_depth) f32 {
+    let size = textureDimensions(near_cache).x;
+    let texel = vec2<u32>(input.clip.xy);
+    let column = (input.cache.y + texel.x) % size;
+    let row = size - 1u - (input.cache.z + size - 1u - texel.y) % size;
+    return textureLoad(near_cache, vec2<u32>(column, row), input.cache.x, 0);
 }
 
 // Alpha-masked casters: the base color texture's alpha times

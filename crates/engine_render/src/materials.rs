@@ -322,14 +322,14 @@ impl MaterialStore {
     }
 }
 
-/// The materials of `snapshot`'s terrains' placed objects.
+/// The materials of `snapshot`'s terrains' placed objects and their parts.
 fn placed_materials(snapshot: &RenderSnapshot) -> impl Iterator<Item = &RenderMaterial> {
     snapshot
         .terrain
         .terrains
         .iter()
         .flat_map(|terrain| terrain.assets.iter().flatten())
-        .map(|asset| &asset.material)
+        .flat_map(engine_core::RenderPlacementAsset::materials)
 }
 
 /// Those materials' textures.

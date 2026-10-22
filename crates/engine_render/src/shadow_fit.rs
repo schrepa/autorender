@@ -1,6 +1,7 @@
 //! Placement of the sun's shadow maps, independent of GPU
 //! objects: the light-space basis, the regions each map covers and their
-//! orthographic projections.
+//! orthographic projections, what the kept far map and the kept levels
+//! hold, and the near cascades' caches of what terrains place.
 
 #![expect(
     clippy::expect_used,
@@ -12,7 +13,7 @@ use engine_core::{
     math,
 };
 
-use crate::gpu_data::{FAR_DEPTH, MAX_LEVELS, NEAR_DEPTH, frustum_uniform};
+use crate::gpu_data::{FAR_DEPTH, MAX_CASCADES, MAX_LEVELS, NEAR_DEPTH, frustum_uniform};
 pub(crate) use crate::gpu_layouts::constants::SHADOW_TILE_WORDS as TILE_WORDS;
 pub(crate) use crate::gpu_layouts::constants::SHADOW_TILES as TILES;
 
@@ -111,19 +112,6 @@ impl MapRegion {
         }
     }
 
-    /// The region of the sphere at `center` with `radius`, its rectangle
-    /// moved in whole texels of a `texels`-wide map so the map's texels keep
-    /// their world positions as the sphere moves.
-    pub(crate) fn of_sphere(basis: &LightBasis, center: Vec3, radius: f32, texels: u32) -> Self {
-        let center = basis.apply(center);
-        let texel = 2.0 * radius / texels as f32;
-        let x = (center.x / texel).round() * texel;
-        let y = (center.y / texel).round() * texel;
-        Self {
-            rect: [x - radius, y - radius, x + radius, y + radius],
-            depth: [center.z - radius, center.z + radius],
-        }
-    }
 }
 
 /// Light-space bounds of the part of the view frustum of `view_projection`
@@ -159,34 +147,6 @@ pub(crate) fn frustum_footprint(
         }
     }
     (low.is_finite() && high.is_finite()).then_some((low, high))
-}
-
-/// The smallest sphere around the part of the view frustum of
-/// `view_projection` (looking from `eye`) within view depth `reach`: the
-/// region the near shadow map covers. `None` for an unusable projection.
-pub(crate) fn view_sphere(view_projection: Mat4, eye: Vec3, reach: f32) -> Option<(Vec3, f32)> {
-    let inverse = view_projection.inverse();
-    let unproject = |x: f32, y: f32, z: f32| {
-        let point = inverse * Vec4::new(x, y, z, 1.0);
-        point.truncate() / point.w
-    };
-    let near_center = unproject(0.0, 0.0, NEAR_DEPTH);
-    let far_center = unproject(0.0, 0.0, FAR_DEPTH);
-    let direction = (far_center - near_center).try_normalize()?;
-    let far_depth = (far_center - eye).dot(direction);
-    let near_depth = math::max((near_center - eye).dot(direction), 0.0);
-    // Tangent of the half-diagonal angle of the view.
-    let slope = (unproject(1.0, 1.0, FAR_DEPTH) - far_center).length() / far_depth;
-    let far = math::min(reach, far_depth);
-    if !(slope.is_finite() && far > near_depth) {
-        return None;
-    }
-    // Equidistant from the slice's near and far corners, or at its far
-    // plane when wider views put that center beyond it.
-    let offset = math::min((far + near_depth) * (1.0 + slope * slope) * 0.5, far);
-    let radius = ((far - offset) * (far - offset) + far * far * slope * slope).sqrt();
-    let center = eye + direction * offset;
-    (center.is_finite() && radius.is_finite()).then_some((center, radius))
 }
 
 /// Inward planes, normalized, of the view frustum's slice up to view depth
@@ -624,34 +584,46 @@ impl KeptLevel {
         self.origin = target;
     }
 
-    /// The part of the window holding slot `slot` along an axis whose
-    /// first corner is the absolute tile `origin`: its slots, on one page,
-    /// and that page. Slots from the corner's on are on its page, those
-    /// before it on the next.
-    fn part(origin: i32, slot: u32) -> ([u32; 2], i32) {
-        let first = origin.rem_euclid(SIDE) as u32;
-        let page = origin.div_euclid(SIDE);
-        if slot >= first {
-            ([first, TILES - 1], page)
-        } else {
-            ([0, first - 1], page + 1)
-        }
-    }
-
     /// Marks dirty the slots of the window's tiles within the light-space
     /// rectangle `low`..`high`.
     fn dirty_rect(&mut self, low: Vec3, high: Vec3) {
-        let tile = |value: f32| (value / self.tile).floor() as i32;
-        let columns = tile(low.x).max(self.origin[0])..=tile(high.x).min(self.origin[0] + SIDE - 1);
-        let rows = tile(low.y).max(self.origin[1])..=tile(high.y).min(self.origin[1] + SIDE - 1);
-        for row in rows {
-            for column in columns.clone() {
-                let [column, row] = [column, row].map(|tile| tile.rem_euclid(SIDE) as u32);
-                self.dirty.set(TileRegion {
-                    columns: [column, column],
-                    rows: [row, row],
-                });
-            }
+        dirty_window(&mut self.dirty, (self.tile, self.origin), low, high);
+    }
+}
+
+/// The part of a window holding slot `slot` along an axis whose
+/// first corner is the absolute tile `origin`: its slots, on one page,
+/// and that page. Slots from the corner's on are on its page, those
+/// before it on the next.
+fn window_part(origin: i32, slot: u32) -> ([u32; 2], i32) {
+    let first = origin.rem_euclid(SIDE) as u32;
+    let page = origin.div_euclid(SIDE);
+    if slot >= first {
+        ([first, TILES - 1], page)
+    } else {
+        ([0, first - 1], page + 1)
+    }
+}
+
+/// Marks in `dirty` the slots of the tiles within the light-space
+/// rectangle `low`..`high` of a window of tiles `tile` wide whose first
+/// corner is the absolute tile `origin`.
+fn dirty_window(
+    dirty: &mut DirtyTiles,
+    (tile, origin): (f32, [i32; 2]),
+    low: Vec3,
+    high: Vec3,
+) {
+    let at = |value: f32| (value / tile).floor() as i32;
+    let columns = at(low.x).max(origin[0])..=at(high.x).min(origin[0] + SIDE - 1);
+    let rows = at(low.y).max(origin[1])..=at(high.y).min(origin[1] + SIDE - 1);
+    for row in rows {
+        for column in columns.clone() {
+            let [column, row] = [column, row].map(|tile| tile.rem_euclid(SIDE) as u32);
+            dirty.set(TileRegion {
+                columns: [column, column],
+                rows: [row, row],
+            });
         }
     }
 }
@@ -757,8 +729,8 @@ impl KeptLevels {
             let Some((column, row)) = tiles.first() else {
                 continue;
             };
-            let (columns, page_x) = KeptLevel::part(level.origin[0], column);
-            let (rows, page_y) = KeptLevel::part(level.origin[1], row);
+            let (columns, page_x) = window_part(level.origin[0], column);
+            let (rows, page_y) = window_part(level.origin[1], row);
             let region = if invalid {
                 let region = level
                     .invalid
@@ -865,5 +837,378 @@ impl KeptLevels {
                 depth: self.band(refresh.level),
             },
         )
+    }
+}
+
+/// A near cascade's width against its reach: every receiver within its
+/// reach of the camera, which stands at most [`NEAR_SLACK`] tiles from its
+/// window's middle, held inside the hundredth of its width lookups leave
+/// at each edge, with the texels their gathers read around a point.
+const NEAR_WIDTH: f32 = 2.3;
+
+/// Tiles the camera stands from a near cache's window's middle, along an
+/// axis, before the window follows it there.
+const NEAR_SLACK: f32 = 0.75;
+
+/// Regions of a near cache a frame redraws at most: the strips its window
+/// uncovered along each axis, or one of them and a region of its dirty
+/// tiles. A cache that uncovered more since it last redrew starts over.
+const NEAR_REGIONS: usize = 2;
+
+/// A rectangle of a near cache's tiles in absolute tiles: its first and
+/// last column and row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TileSpan {
+    pub columns: [i32; 2],
+    pub rows: [i32; 2],
+}
+
+impl TileSpan {
+    /// Its part within `window`, if any.
+    fn within(self, window: Self) -> Option<Self> {
+        let columns = [
+            self.columns[0].max(window.columns[0]),
+            self.columns[1].min(window.columns[1]),
+        ];
+        let rows = [
+            self.rows[0].max(window.rows[0]),
+            self.rows[1].min(window.rows[1]),
+        ];
+        (columns[0] <= columns[1] && rows[0] <= rows[1]).then_some(Self { columns, rows })
+    }
+
+    /// Its tiles.
+    pub(crate) fn tiles(self) -> u32 {
+        ((self.columns[1] - self.columns[0] + 1) * (self.rows[1] - self.rows[0] + 1)) as u32
+    }
+
+    /// Its light-space rectangle, in tiles `tile` wide, widened by
+    /// `margin`.
+    pub(crate) fn rect(self, tile: f32, margin: f32) -> [f32; 4] {
+        [
+            self.columns[0] as f32 * tile - margin,
+            self.rows[0] as f32 * tile - margin,
+            (self.columns[1] + 1) as f32 * tile + margin,
+            (self.rows[1] + 1) as f32 * tile + margin,
+        ]
+    }
+
+    /// Its parts on each page of a map holding the absolute tile `(a, b)`
+    /// at slot `(a mod TILES, b mod TILES)`: each one's slots and its page,
+    /// the absolute tiles from `page * TILES` on.
+    pub(crate) fn pieces(self) -> impl Iterator<Item = (TileRegion, [i32; 2])> {
+        let pages = |[first, last]: [i32; 2]| first.div_euclid(SIDE)..=last.div_euclid(SIDE);
+        let slots = |[first, last]: [i32; 2], page: i32| {
+            [
+                first.max(page * SIDE) - page * SIDE,
+                last.min(page * SIDE + SIDE - 1) - page * SIDE,
+            ]
+            .map(|slot| slot as u32)
+        };
+        pages(self.rows).flat_map(move |page_y| {
+            pages(self.columns).map(move |page_x| {
+                (
+                    TileRegion {
+                        columns: slots(self.columns, page_x),
+                        rows: slots(self.rows, page_y),
+                    },
+                    [page_x, page_y],
+                )
+            })
+        })
+    }
+}
+
+/// A near cascade's cache of the still objects terrains place: [`TILES`]
+/// by [`TILES`] tiles about the camera in light space, at the cascade's
+/// texels, holding the absolute tile `(a, b)` at slot `(a mod TILES, b mod
+/// TILES)` as a kept level does. Its window moves a tile at a time once the
+/// camera stands [`NEAR_SLACK`] tiles off its middle, and only the tiles it
+/// uncovers redraw; its depths span a band around the camera, which
+/// follows it, redrawing the cache whole, once the camera leaves the band's
+/// middle. Its cascade is composed from it each frame.
+#[derive(Debug)]
+struct NearCache {
+    tile: f32,
+    // The absolute tile of the window's first corner.
+    origin: [i32; 2],
+    // Light-space depth of the band's middle, and half its depth.
+    depth: f32,
+    half_depth: f32,
+    // Slots whose casters changed, the strips the window uncovered since it
+    // last redrew, and whether it redraws whole.
+    dirty: DirtyTiles,
+    uncovered: Vec<TileSpan>,
+    whole: bool,
+}
+
+impl NearCache {
+    /// A cache with its window's first corner at `origin` and its band
+    /// around `depth`, holding nothing yet.
+    fn new(tile: f32, origin: [i32; 2], depth: f32, half_depth: f32) -> Self {
+        Self {
+            tile,
+            origin,
+            depth,
+            half_depth,
+            dirty: DirtyTiles::default(),
+            uncovered: Vec::new(),
+            whole: true,
+        }
+    }
+
+    /// The window's tiles.
+    fn window(&self) -> TileSpan {
+        TileSpan {
+            columns: [self.origin[0], self.origin[0] + SIDE - 1],
+            rows: [self.origin[1], self.origin[1] + SIDE - 1],
+        }
+    }
+
+    /// Moves the window along each axis the camera, at light-space
+    /// `light`, stands more than [`NEAR_SLACK`] tiles off its middle, to
+    /// `centered`, noting the strips it uncovers.
+    fn follow(&mut self, light: Vec3, centered: [i32; 2]) {
+        let mut target = self.origin;
+        for axis in 0..2 {
+            let offset = light[axis] / self.tile - (self.origin[axis] + SIDE / 2) as f32;
+            if offset.abs() > NEAR_SLACK {
+                target[axis] = centered[axis];
+            }
+        }
+        let shift = [target[0] - self.origin[0], target[1] - self.origin[1]];
+        if shift == [0, 0] {
+            return;
+        }
+        self.origin = target;
+        if shift.iter().any(|step| step.abs() >= SIDE) {
+            self.whole = true;
+            return;
+        }
+        let window = self.window();
+        let entering = |first: i32, shift: i32| {
+            if shift > 0 {
+                [first + SIDE - shift, first + SIDE - 1]
+            } else {
+                [first, first - shift - 1]
+            }
+        };
+        if shift[0] != 0 {
+            self.uncovered.push(TileSpan {
+                columns: entering(target[0], shift[0]),
+                ..window
+            });
+        }
+        if shift[1] != 0 {
+            self.uncovered.push(TileSpan {
+                rows: entering(target[1], shift[1]),
+                ..window
+            });
+        }
+    }
+
+    /// Clears the dirty slots of `span`, whose tiles redraw.
+    fn clean(&mut self, span: TileSpan) {
+        for (region, _) in span.pieces() {
+            self.dirty.clear(region);
+        }
+    }
+
+    /// The next region of dirty slots, in absolute tiles: those of the
+    /// first row holding any within one page of the window, and those of
+    /// the rows after it while within [`REFRESH_TILES`] tiles.
+    fn take_dirty(&mut self) -> Option<TileSpan> {
+        let (column, row) = self.dirty.first()?;
+        let (columns, page_x) = window_part(self.origin[0], column);
+        let (rows, page_y) = window_part(self.origin[1], row);
+        let region = self.dirty.take_within(columns, rows, REFRESH_TILES)?;
+        let absolute = |[first, last]: [u32; 2], page: i32| {
+            [page * SIDE + first as i32, page * SIDE + last as i32]
+        };
+        Some(TileSpan {
+            columns: absolute(region.columns, page_x),
+            rows: absolute(region.rows, page_y),
+        })
+    }
+}
+
+/// The near cascades' caches, nearest first, and the light basis and
+/// settings they were placed for: other ones start them over.
+#[derive(Debug, Default)]
+pub(crate) struct NearCaches {
+    basis: Option<LightBasis>,
+    key: Option<([u32; MAX_CASCADES], u32, [u32; 2])>,
+    caches: Vec<NearCache>,
+}
+
+impl NearCaches {
+    /// Places a cache for each of `reaches`, the near cascades' view
+    /// distances, in light `basis` around the camera at `eye`, each
+    /// `texels` a side, holding what terrains place as the mean `wind`
+    /// (its velocity) bends it: each window follows the camera, uncovering
+    /// strips, and each band moves (redrawing its cache whole) once the
+    /// camera leaves the band's middle. A new basis or other reaches,
+    /// texels or wind start every cache over.
+    pub(crate) fn place(
+        &mut self,
+        basis: LightBasis,
+        eye: Vec3,
+        (reaches, texels): (&[f32], u32),
+        wind: [f32; 2],
+    ) {
+        let mut bits = [0; MAX_CASCADES];
+        for (bit, reach) in bits.iter_mut().zip(reaches) {
+            *bit = reach.to_bits();
+        }
+        let key = (bits, texels, wind.map(f32::to_bits));
+        if self.basis != Some(basis) || self.key != Some(key) {
+            self.basis = Some(basis);
+            self.key = Some(key);
+            self.caches.clear();
+        }
+        let light = basis.apply(eye);
+        for (index, &reach) in reaches.iter().enumerate() {
+            let width = NEAR_WIDTH * reach;
+            let tile = width / TILES as f32;
+            let centered = [
+                (light.x / tile).round() as i32 - SIDE / 2,
+                (light.y / tile).round() as i32 - SIDE / 2,
+            ];
+            // Receivers within its reach lie as far along the sun from the
+            // camera; the band reaches half a width more each way, which the
+            // camera crosses before the band follows it.
+            let slack = 0.5 * width;
+            let half_depth = 1.05 * reach + slack;
+            match self.caches.get_mut(index) {
+                Some(cache) if (light.z - cache.depth).abs() <= slack => {
+                    cache.follow(light, centered);
+                }
+                Some(cache) => *cache = NearCache::new(tile, centered, light.z, half_depth),
+                None => {
+                    self.caches
+                        .push(NearCache::new(tile, centered, light.z, half_depth));
+                }
+            }
+        }
+    }
+
+    /// Caches in use.
+    pub(crate) fn len(&self) -> usize {
+        self.caches.len()
+    }
+
+    /// Cache `index`'s region, which its cascade maps whole: its window's
+    /// light-space rectangle and its band.
+    pub(crate) fn region(&self, index: usize) -> Option<MapRegion> {
+        let cache = self.caches.get(index)?;
+        Some(MapRegion {
+            rect: cache.window().rect(cache.tile, 0.0),
+            depth: [
+                cache.depth - cache.half_depth,
+                cache.depth + cache.half_depth,
+            ],
+        })
+    }
+
+    /// The region of page `page` of cache `index`'s map, the absolute tiles
+    /// from `page * TILES` on, whose clip maps the page onto the whole map.
+    pub(crate) fn page(&self, index: usize, page: [i32; 2]) -> Option<MapRegion> {
+        let region = self.region(index)?;
+        let width = self.caches[index].tile * TILES as f32;
+        let corner = page.map(|page| page as f32 * width);
+        Some(MapRegion {
+            rect: [corner[0], corner[1], corner[0] + width, corner[1] + width],
+            ..region
+        })
+    }
+
+    /// The page cache `index`'s window starts on along each axis: it lies
+    /// on that page and the next.
+    pub(crate) fn first_page(&self, index: usize) -> [i32; 2] {
+        self.caches
+            .get(index)
+            .map_or([0; 2], |cache| cache.origin.map(|tile| tile.div_euclid(SIDE)))
+    }
+
+    /// Where cache `index`'s window starts in its map of `texels` texels a
+    /// side, along x and y: its first corner's texel modulo the side, which
+    /// its cascade reads its texels from.
+    pub(crate) fn offsets(&self, index: usize, texels: u32) -> [u32; 2] {
+        let per_tile = (texels / TILES) as i32;
+        self.caches.get(index).map_or([0; 2], |cache| {
+            cache
+                .origin
+                .map(|tile| (tile.rem_euclid(SIDE) * per_tile) as u32)
+        })
+    }
+
+    /// The world size of a texel of cache `index` in a map `texels` wide.
+    pub(crate) fn texel(&self, index: usize, texels: u32) -> f32 {
+        self.caches
+            .get(index)
+            .map_or(0.0, |cache| cache.tile * TILES as f32 / texels as f32)
+    }
+
+    /// The world size of a tile of cache `index`.
+    pub(crate) fn tile(&self, index: usize) -> f32 {
+        self.caches.get(index).map_or(0.0, |cache| cache.tile)
+    }
+
+    /// Every cache holds nothing current: each redraws whole.
+    pub(crate) fn invalidate(&mut self) {
+        for cache in &mut self.caches {
+            cache.whole = true;
+        }
+    }
+
+    /// Every tile needs redrawing, as after what objects cast changed.
+    pub(crate) fn dirty_all(&mut self) {
+        for cache in &mut self.caches {
+            cache.dirty = DirtyTiles::ALL;
+        }
+    }
+
+    /// Marks dirty each cache's tiles under the world box `min`..`max`,
+    /// where objects appeared or left.
+    pub(crate) fn dirty_box(&mut self, min: Vec3, max: Vec3) {
+        let Some(basis) = self.basis else {
+            return;
+        };
+        let (low, high) = basis.bounds(min, max);
+        for cache in &mut self.caches {
+            dirty_window(&mut cache.dirty, (cache.tile, cache.origin), low, high);
+        }
+    }
+
+    /// This frame's redraws, into `out`, each cache's and the tiles it
+    /// redraws, at most [`NEAR_REGIONS`] a cache: the whole window where it
+    /// starts over or uncovered more strips since it last redrew, else
+    /// those strips, then while it may a region of its dirty tiles. The
+    /// tiles they redraw then hold their casters.
+    pub(crate) fn refresh(&mut self, out: &mut Vec<(usize, TileSpan)>) {
+        out.clear();
+        for (index, cache) in self.caches.iter_mut().enumerate() {
+            let window = cache.window();
+            if cache.whole || cache.uncovered.len() > NEAR_REGIONS {
+                cache.whole = false;
+                cache.uncovered.clear();
+                cache.dirty = DirtyTiles::default();
+                out.push((index, window));
+                continue;
+            }
+            let mut regions = 0;
+            for span in std::mem::take(&mut cache.uncovered) {
+                if let Some(span) = span.within(window) {
+                    cache.clean(span);
+                    out.push((index, span));
+                    regions += 1;
+                }
+            }
+            if regions < NEAR_REGIONS
+                && let Some(span) = cache.take_dirty()
+            {
+                out.push((index, span));
+            }
+        }
     }
 }

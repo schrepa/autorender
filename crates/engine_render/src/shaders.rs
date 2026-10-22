@@ -395,9 +395,9 @@ entry_points! {
     shadow = SHADOW_SHADER {
         vertex: [
             vs_affine, vs_clear, vs_affine_masked, vs_affine_skinned, vs_affine_masked_skinned,
-            vs_impostor_card
+            vs_impostor_card, vs_compose
         ],
-        fragment: [fs_impostor_card, fs_masked],
+        fragment: [fs_impostor_card, fs_masked, fs_compose],
         compute: [select_skinned, select_casters, count_casters],
     }
     post = POST_SHADER {

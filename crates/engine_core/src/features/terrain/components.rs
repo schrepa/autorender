@@ -22,15 +22,17 @@ pub struct TerrainSurface {
 /// An object placement layers stand on a terrain: the mesh
 /// it draws and the material it draws with, the coarser meshes it draws at
 /// a distance, finest first (without them, the mesh's automatic levels of
-/// detail), how far it sways in the wind:
+/// detail), the parts it draws with materials of their own, how far it
+/// sways in the wind:
 /// meters at ten meters up in full wind, its bend growing with the square
 /// of the height, 0 (rigid) to 10, and its objects' collider,
-/// if they collide.
+/// if they collide. Shadow maps cast its coarsest mesh alone.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementAsset {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
     pub lods: Vec<PlacementLod>,
+    pub parts: Vec<PlacementPart>,
     pub sway: f32,
     pub collider: Option<PlacedCollider>,
 }
@@ -39,6 +41,42 @@ impl PlacementAsset {
     /// The rule of [`Self::sway`], which terrains check and authored
     /// placement assets' schemas state.
     pub const SWAY: Rule = Rule::range(0.0, 10.0);
+}
+
+/// A part of a placement asset its objects draw with a material of its
+/// own, such as a tree's masked needle cards over its opaque crown: its
+/// mesh at the asset's mesh and then at each of its coarser meshes, as far
+/// as it reaches; coarser levels draw without it. A part takes the asset's
+/// color, surface factors, sway and impostor, and casts no shadow.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlacementPart {
+    pub material: MaterialHandle,
+    pub meshes: Vec<MeshHandle>,
+}
+
+/// Parts a placement asset lists at most.
+pub const MAX_PLACEMENT_PARTS: usize = 2;
+
+impl PlacementPart {
+    /// Checks a placement asset's `parts`, of an asset drawing `levels`
+    /// levels (its mesh and coarser ones): at most [`MAX_PLACEMENT_PARTS`],
+    /// each with one mesh at least and one for each level at most. Errors
+    /// name the offending index (none for the count) and the rule.
+    pub fn check(parts: &[usize], levels: usize) -> Result<(), (Option<usize>, &'static str)> {
+        if parts.len() > MAX_PLACEMENT_PARTS {
+            return Err((None, "lists at most 2 parts"));
+        }
+        match parts
+            .iter()
+            .position(|&meshes| meshes == 0 || meshes > levels)
+        {
+            Some(index) => Err((
+                Some(index),
+                "needs a mesh, and one for each of the asset's levels at most",
+            )),
+            None => Ok(()),
+        }
+    }
 }
 
 /// The collider of a placement asset's objects, in the
@@ -245,6 +283,14 @@ impl TerrainSurface {
                 let path = match level {
                     Some(level) => format!("assets[{index}].lods[{level}].error"),
                     None => format!("assets[{index}].lods"),
+                };
+                return fail(path, rule);
+            }
+            let parts: Vec<usize> = asset.parts.iter().map(|part| part.meshes.len()).collect();
+            if let Err((part, rule)) = PlacementPart::check(&parts, 1 + asset.lods.len()) {
+                let path = match part {
+                    Some(part) => format!("assets[{index}].parts[{part}].meshes"),
+                    None => format!("assets[{index}].parts"),
                 };
                 return fail(path, rule);
             }

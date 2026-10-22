@@ -124,6 +124,7 @@ impl Renderer {
                             variant,
                             bounds: (bounds.min(), bounds.max()),
                             material,
+                            parts: Vec::new(),
                         };
                         let gpu = BakeGpu {
                             device: &self.device,

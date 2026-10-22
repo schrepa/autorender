@@ -95,23 +95,23 @@ pub use engine_core::{
 };
 
 /// Terrain authoring: layer stacks, masks, stamps, bakes, placement and
-/// surfaces, which a [`Terrain`] component describes, and the tile data
-/// they make.
+/// surfaces, which a [`Terrain`] component describes, the tile data they
+/// make, and conifers to place.
 pub mod terrain {
     /// Heightfield terrain data: tile pyramids, layer stacks, tiles,
     /// patches and the jobs that make tiles and bakes.
     pub use engine_core::terrain_data as data;
     pub use engine_core::{
         AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes,
-        Blend, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion, ErosionLayer, ErosionStage,
-        FarPlacement, HeightImage, HeightmapLayer, Hydrology, HydrologyLayer, HydrologySample,
-        HydrologyStage, Layer, LayerError, Layers, MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS,
-        MIN_COLLIDER_EXTENT, Mask, MotionDetail, NoiseLayer, NoiseMask, Patch, PathLayer,
-        PathProfile, PathStage, Placed, PlacedCollider, PlacedShape, PlacementAsset,
-        PlacementChoice, PlacementLayer, PlacementLod, Pyramid, PyramidError, Remap, Route,
-        RouteOptions, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Surroundings,
-        SurroundingsStatus, TerrainBakes, TerrainEdit, TerrainPrefetch, TerrainSurface, Tile,
-        TileKey,
+        Blend, Conifer, ConiferPart, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion,
+        ErosionLayer, ErosionStage, FarPlacement, HeightImage, HeightmapLayer, Hydrology,
+        HydrologyLayer, HydrologySample, HydrologyStage, Layer, LayerError, Layers,
+        MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS, MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, Mask,
+        MotionDetail, NoiseLayer, NoiseMask, Patch, PathLayer, PathProfile, PathStage, Placed,
+        PlacedCollider, PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod,
+        PlacementPart, Pyramid, PyramidError, Remap, Route, RouteOptions, Stamp, StampOp,
+        SurfaceMaterial, SurfaceProjection, Surroundings, SurroundingsStatus, TerrainBakes,
+        TerrainEdit, TerrainPrefetch, TerrainSurface, Tile, TileKey,
     };
 }
 
@@ -127,10 +127,11 @@ pub mod render {
         PAGE_WORDS, PoseRows, PresentationMode, RIM_REACH, RIM_START, RenderDecal, RenderDecals,
         RenderDeformation, RenderEmitter, RenderFrame, RenderInstance, RenderJoint, RenderLight,
         RenderLights, RenderMaterial, RenderMesh, RenderParticles, RenderPlacementAsset,
-        RenderReflectionProbe, RenderReflectionProbes, RenderSnapshot, RenderSurfaceMaps,
-        RenderTerrain, RenderTerrains, RenderTexture, STREAMING_GRIDS, StreamingGrid,
-        TerrainBounce, TerrainLighting, TransformIndex, TransformPropagation, VIRTUAL_MESH_MAGIC,
-        carve_profile, presentation_bounds, propagate_transforms, rim_profile, valid_global_matrix,
+        RenderPlacementPart, RenderReflectionProbe, RenderReflectionProbes, RenderSnapshot,
+        RenderSurfaceMaps, RenderTerrain, RenderTerrains, RenderTexture, STREAMING_GRIDS,
+        StreamingGrid, TerrainBounce, TerrainLighting, TransformIndex, TransformPropagation,
+        VIRTUAL_MESH_MAGIC, carve_profile, presentation_bounds, propagate_transforms, rim_profile,
+        valid_global_matrix,
     };
 }
 

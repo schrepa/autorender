@@ -2,7 +2,8 @@
 //! bind to look them up: the near cascades as layers of one texture, the
 //! moving and kept far maps, the kept levels as layers of another, the
 //! lookup uniform and the samplers, with placeholders while shadows (or
-//! levels) are off.
+//! levels) are off; and the near cascades' caches, layers of a third,
+//! which their cascades are composed from.
 
 use crate::cached::{Bound, Versioned};
 use crate::gpu_data::ShadowUniform;
@@ -28,13 +29,23 @@ pub(super) struct MapTextures {
     // The kept levels as one array (lookups) and each layer (drawing).
     level_array: Option<wgpu::TextureView>,
     pub(super) level_layers: Vec<wgpu::TextureView>,
+    // The near cascades' caches, while objects terrains place are
+    // resident: one array (composing) and each layer (drawing).
+    cache_texture: Option<wgpu::Texture>,
+    cache_array: Option<wgpu::TextureView>,
+    pub(super) cache_layers: Vec<wgpu::TextureView>,
 }
 
 impl Drop for MapTextures {
     fn drop(&mut self) {
         // Browsers otherwise keep the memory until garbage collection;
         // submitted work that still reads them completes first.
-        for texture in self.textures.iter().chain(&self.level_texture) {
+        for texture in self
+            .textures
+            .iter()
+            .chain(&self.level_texture)
+            .chain(&self.cache_texture)
+        {
             texture.destroy();
         }
     }
@@ -76,9 +87,14 @@ impl MapTextures {
         texture.width()
     }
 
-    /// Maps of `resolution` texels (the near cascades and kept levels half
-    /// as many) with `cascades` near layers and `levels` kept levels.
-    fn new(device: &wgpu::Device, resolution: u32, cascades: u32, levels: u32) -> Self {
+    /// Maps of `resolution` texels (the near cascades, their caches and
+    /// kept levels half as many) with `cascades` near layers, `levels` kept
+    /// levels and, where `cached`, the near cascades' caches.
+    fn new(
+        device: &wgpu::Device,
+        resolution: u32,
+        (cascades, levels, cached): (u32, u32, bool),
+    ) -> Self {
         let texture = |label, size, layers| {
             crate::targets::texture_2d(
                 device,
@@ -97,6 +113,8 @@ impl MapTextures {
         ];
         let level_texture =
             (levels > 0).then(|| texture("engine/shadow-levels", resolution / 2, levels));
+        let cache_texture =
+            cached.then(|| texture("engine/shadow-near-caches", resolution / 2, cascades));
         let moving = textures[1].create_view(&Default::default());
         let kept = textures[2].create_view(&Default::default());
         Self {
@@ -111,9 +129,24 @@ impl MapTextures {
             level_layers: level_texture
                 .as_ref()
                 .map_or_else(Vec::new, |texture| layer_views(texture, levels)),
+            cache_array: cache_texture.as_ref().map(array_view),
+            cache_layers: cache_texture
+                .as_ref()
+                .map_or_else(Vec::new, |texture| layer_views(texture, cascades)),
             textures,
             level_texture,
+            cache_texture,
         }
+    }
+
+    /// Whether it holds the near cascades' caches.
+    pub(super) fn caches(&self) -> bool {
+        self.cache_array.is_some()
+    }
+
+    /// Texels along a side of the near cascades and their caches.
+    pub(super) fn near_texels(&self) -> u32 {
+        self.textures[0].width()
     }
 }
 
@@ -220,28 +253,47 @@ impl ShadowMaps {
     pub(super) fn capacity_bytes(&self) -> u64 {
         self.textures().map_or(0, |maps| {
             let far = u64::from(maps.resolution) * u64::from(maps.resolution) * 2;
-            2 * far + u64::from(maps.cascades + maps.levels) * far / 4
+            let caches = if maps.caches() { maps.cascades } else { 0 };
+            2 * far + u64::from(maps.cascades + maps.levels + caches) * far / 4
         })
     }
 
-    /// Creates maps of `resolution` texels with `cascades` near layers
-    /// and `levels` kept levels unless they exist; returns whether it did
-    /// (new maps hold nothing).
+    /// Creates maps of `resolution` texels with `cascades` near layers,
+    /// `levels` kept levels and, where `cached`, the near cascades' caches,
+    /// unless they exist; returns whether it did (new maps hold nothing).
     pub(super) fn ensure(
         &mut self,
         device: &wgpu::Device,
         resolution: u32,
-        cascades: u32,
-        levels: u32,
+        (cascades, levels, cached): (u32, u32, bool),
     ) -> bool {
         if self.textures().is_some_and(|maps| {
-            maps.resolution == resolution && maps.cascades == cascades && maps.levels == levels
+            maps.resolution == resolution
+                && maps.cascades == cascades
+                && maps.levels == levels
+                && maps.caches() == cached
         }) {
             return false;
         }
-        self.textures
-            .replace(Some(MapTextures::new(device, resolution, cascades, levels)));
+        self.textures.replace(Some(MapTextures::new(
+            device,
+            resolution,
+            (cascades, levels, cached),
+        )));
         true
+    }
+
+    /// The near cascades' caches as composing binds them, while the maps
+    /// hold them.
+    pub(super) fn caches_bound(&self) -> Option<Bound<'_>> {
+        let caches = self.textures()?.cache_array.as_ref()?;
+        Some(Bound::of(&self.textures, view(caches)))
+    }
+
+    /// What depth passes bind in place of the caches: they may draw into
+    /// them.
+    pub(super) fn caches_placeholder(&self) -> Bound<'_> {
+        Bound::fixed(view(&self.placeholder_array))
     }
 
     /// Releases the maps while shadows are off.

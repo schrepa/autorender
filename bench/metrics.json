@@ -1213,6 +1213,17 @@
       "direction": null
     },
     {
+      "name": "shadows.cache_tiles",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "the last sampled frame's value",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "shadows.draws",
       "kind": "work",
       "rule": "shown",

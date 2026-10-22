@@ -1,5 +1,6 @@
 //! Baking an impostor no host holds the record of: its mesh drawn with its
-//! material from every frame's direction into a layer at the atlas's shape
+//! material, and its parts with theirs, from every frame's direction into a
+//! layer at the atlas's shape
 //! (the frames' nearest depths first, which the colors' bake looks up for
 //! the sky each surface sees past its mesh), then the levels below, read
 //! back as its record (`super::records`), which then loads as any record
@@ -62,9 +63,10 @@ impl ImpostorAtlas {
     }
 }
 
-/// Draws `source` from every frame's direction of `shape` into `targets`'
-/// layer, with the bake pipelines of `shader` that `pipelines` keep: the
-/// frames' nearest depths first, which the colors' bake looks up.
+/// Draws `source` and its parts from every frame's direction of `shape`
+/// into `targets`' layer, with the bake pipelines of `shader` that
+/// `pipelines` keep: the frames' nearest depths first, which the colors'
+/// bake looks up.
 fn draw_layer(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
@@ -75,32 +77,57 @@ fn draw_layer(
     shape: AtlasShape,
 ) {
     let (shade_group, color_group) = bake_groups(device, pipelines, targets, source, shape);
-    // Bakes are rare: uber variants.
-    let variant = source.variant.with_extended(source.extended).uber();
+    // The mesh, then each part: its draw, whether it reads extra streams,
+    // its material's group and its variant, an uber variant as bakes are
+    // rare.
+    let draws: Vec<(&MeshDraw<'_>, bool, &wgpu::BindGroup, Variant)> =
+        std::iter::once((&source.draw, source.extended, source.group, source.variant))
+            .chain(
+                source
+                    .parts
+                    .iter()
+                    .map(|part| (&part.draw, part.extended, part.group, part.variant)),
+            )
+            .map(|(draw, extended, group, variant)| {
+                (draw, extended, group, variant.with_extended(extended).uber())
+            })
+            .collect();
     let layout = &pipelines.bake_pipeline_layout;
-    let pipeline = pipelines
-        .bake_pipelines
-        .entry(variant)
-        .or_insert_with(|| bake_pipeline(device, shader, layout, variant, false));
-    let shade_pipeline = pipelines
-        .shade_pipelines
-        .entry(variant)
-        .or_insert_with(|| bake_pipeline(device, shader, layout, variant, true));
+    for &(_, _, _, variant) in &draws {
+        pipelines
+            .bake_pipelines
+            .entry(variant)
+            .or_insert_with(|| bake_pipeline(device, shader, layout, variant, false));
+        pipelines
+            .shade_pipelines
+            .entry(variant)
+            .or_insert_with(|| bake_pipeline(device, shader, layout, variant, true));
+    }
     let frames = shape.frames * shape.frames;
-    let draw = |pass: &mut wgpu::RenderPass<'_>| {
-        pass.set_bind_group(1, source.group, &[]);
-        pass.set_vertex_buffer(0, source.draw.vertices.slice(..));
-        if source.extended
-            && let Some(extras) = source.draw.extras
-        {
-            pass.set_vertex_buffer(1, extras.slice(..));
+    let (bake_pipelines, shade_pipelines) = (&pipelines.bake_pipelines, &pipelines.shade_pipelines);
+    let draw = |pass: &mut wgpu::RenderPass<'_>, shade: bool| {
+        for &(mesh, extended, group, variant) in &draws {
+            let kept = if shade {
+                shade_pipelines
+            } else {
+                bake_pipelines
+            };
+            let Some(pipeline) = kept.get(&variant) else {
+                continue;
+            };
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(1, group, &[]);
+            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            if extended && let Some(extras) = mesh.extras {
+                pass.set_vertex_buffer(1, extras.slice(..));
+            }
+            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(
+                mesh.first_index..mesh.first_index + mesh.index_count,
+                mesh.base_vertex,
+                0..frames,
+            );
         }
-        pass.set_index_buffer(source.draw.indices.slice(..), wgpu::IndexFormat::Uint32);
-        pass.draw_indexed(
-            source.draw.first_index..source.draw.first_index + source.draw.index_count,
-            source.draw.base_vertex,
-            0..frames,
-        );
     };
     {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -118,9 +145,8 @@ fn draw_layer(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(shade_pipeline);
         pass.set_bind_group(2, &shade_group, &[]);
-        draw(&mut pass);
+        draw(&mut pass, true);
     }
     let resolves = targets.layer.each_ref().map(first_level);
     let attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> = targets
@@ -154,9 +180,8 @@ fn draw_layer(
         occlusion_query_set: None,
         multiview_mask: None,
     });
-    pass.set_pipeline(pipeline);
     pass.set_bind_group(2, &color_group, &[]);
-    draw(&mut pass);
+    draw(&mut pass, false);
 }
 
 /// The bake's groups of `source` at `shape`: the frames' nearest depths'

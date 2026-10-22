@@ -1201,7 +1201,9 @@ tables! {
     };
 
     /// Group 1 of retained depth passes: slot poses, and slot colors and joint
-    /// palettes for masked and skinned casters.
+    /// palettes for masked and skinned casters; and the near cascades'
+    /// caches, which their composing reads (a placeholder in passes drawing
+    /// into them).
     const SHADOW_POSES: Table = Table {
         label: "engine/shadow-pose-layout",
         serves: [SHADOW_SHADER @ 1],
@@ -1209,6 +1211,7 @@ tables! {
             read_of(0, "slot_poses", POSE, V),
             read_of(1, "slot_colors", COLOR, V),
             read_of(2, "slot_palette", POSE, V),
+            texture(3, "near_cache", Depth, D2Array, F),
         ],
     };
 

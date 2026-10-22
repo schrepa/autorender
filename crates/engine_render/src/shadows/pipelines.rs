@@ -1,9 +1,10 @@
 //! The depth pipelines of shadow maps: caster
 //! selection's compute passes, slot casters plain, masked and skinned,
-//! placed objects' impostor cards and the clear of kept-map
-//! tiles, with the view matrices and selection uniform they read.
+//! placed objects' impostor cards, the clear of kept-map
+//! tiles and the near cascades' composing from their caches, with the view
+//! matrices and selection uniform they read.
 
-use super::{SHADOW_FORMAT, SKY_VIEW, VIEW_STRIDE};
+use super::{SHADOW_FORMAT, VIEWS_BYTES};
 use crate::bindings::{SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW};
 use crate::gpu_data::Vertex;
 use crate::gpu_data::{SHADOW_SHADER, ShadowCullUniform};
@@ -33,6 +34,8 @@ pub(super) struct ShadowPipelines {
     module: wgpu::ShaderModule,
     view_layout: crate::pipelines::GroupLayout,
     pub(super) clear: wgpu::RenderPipeline,
+    // A near cascade's depths from its cache, a triangle over it.
+    pub(super) compose: wgpu::RenderPipeline,
     pub(super) view_buffer: wgpu::Buffer,
     pub(super) view_group: wgpu::BindGroup,
     pub(super) pose_layout: crate::pipelines::GroupLayout,
@@ -246,8 +249,19 @@ impl ShadowPipelines {
             true,
             false,
         );
-        let view_buffer =
-            crate::buffers::uniform(device, "engine/shadow-views", SKY_VIEW + VIEW_STRIDE);
+        // Composing writes every texel's depth as it reads it, through the
+        // plain casters' layout, whose pose group binds the caches.
+        let compose = caster_pipeline(
+            device,
+            &module,
+            "engine/shadow-compose",
+            (&CASTER_PIPELINES, &[&view_layout, &pose_layout]),
+            shadow::vs_compose,
+            &[],
+            true,
+            Some(shadow::fs_compose),
+        );
+        let view_buffer = crate::buffers::uniform(device, "engine/shadow-views", VIEWS_BYTES);
         let view_group = group(
             device,
             "engine/shadow-view-group",
@@ -278,6 +292,7 @@ impl ShadowPipelines {
             module,
             view_layout,
             clear,
+            compose,
             view_buffer,
             view_group,
             pose_layout,

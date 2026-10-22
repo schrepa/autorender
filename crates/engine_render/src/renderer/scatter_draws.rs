@@ -1,7 +1,8 @@
 //! Placed objects' draws: what terrains' placement layers
 //! stand on their tiles, held in the scatter pool's slots as tiles arrive
 //! and leave, culled each frame and drawn after terrain in the first opaque
-//! phase. Draw groups, one per terrain asset, follow the assets.
+//! phase. Draw groups follow the assets: one per terrain asset, then one
+//! per part of it drawing the same objects with its own material.
 
 use engine_core::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +12,9 @@ use super::scatter_pool::{ScatterPool, TileObjects};
 use super::*;
 use crate::debug_view::{DebugViewPass, DrawKind, DrawRecord, bind_record};
 use crate::gpu_data::{ColorData, pack_color, pack_surface};
-use crate::impostors::{BakeGpu, BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord, Supplied};
+use crate::impostors::{
+    BakeGpu, BakePart, BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord, Supplied,
+};
 use crate::occupancy::{Cover, OccupancyFrame};
 use crate::scatter::{
     GroupLayout, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, RANK_MAX, RANK_SHIFT, Record,
@@ -59,23 +62,26 @@ impl ScatterDraws {
 }
 
 /// One draw group of placed objects: each level's mesh, its material, its
-/// objects' color and bounding sphere (mesh space), where its lists start,
-/// its live objects, and whether it casts shadows and tests its material's
-/// texels doing so.
+/// objects' color and bounding sphere (mesh space, around its parts' meshes
+/// too), the group whose objects it draws (its own, or for a part its
+/// asset's) and which of the asset's parts it draws, its live objects, and
+/// whether it casts shadows and tests its material's texels doing so
+/// (parts cast none).
 struct ScatterDraw {
     meshes: Vec<MeshHandle>,
     material: MaterialHandle,
     source: engine_core::Material,
     color: ColorData,
     sphere: (Vec3, f32),
-    ids: u32,
+    objects: u32,
+    part: Option<usize>,
     count: u32,
     casts: Option<bool>,
 }
 
-/// An asset as its group was built: its mesh, material and version, its
-/// coarser meshes, which of these meshes were resident, and its sway's
-/// bits.
+/// An asset as its groups were built: its mesh, material and version, its
+/// coarser meshes, which of all its meshes were resident, its sway's bits,
+/// and its parts.
 type AssetKey = (
     MeshHandle,
     MaterialHandle,
@@ -83,7 +89,12 @@ type AssetKey = (
     Vec<MeshHandle>,
     Vec<bool>,
     u32,
+    Vec<PartKey>,
 );
+
+/// A part as its group was built: its material and version, and its
+/// meshes.
+type PartKey = (MaterialHandle, u64, Vec<MeshHandle>);
 
 /// What the draw groups were built from: each terrain's identity and
 /// assets, and the meshes' layout.
@@ -165,42 +176,15 @@ impl Renderer {
                 }
             })
             .collect();
-        // How each terrain's layers thin with distance this frame:
-        // their tiles' reaches follow the view's levels of detail,
-        // and pinned levels stay resident everywhere.
-        let pinned = snapshot.environment.terrain.sanitized().pinned_levels;
-        let mut thins = vec![[0.0_f32; 4]; terrains.len() * crate::scatter::THIN_LAYERS];
-        for (index, terrain) in terrains.iter().enumerate() {
-            let levels = terrain.pyramid.levels();
-            let reach = |level: u8| {
-                if u32::from(level) + pinned >= levels {
-                    0.0
-                } else {
-                    terrain
-                        .reach
-                        .get(usize::from(level))
-                        .copied()
-                        .unwrap_or(0.0)
-                }
-            };
-            for (layer, &(near, far, share)) in terrain
-                .thinning
-                .iter()
-                .enumerate()
-                .take(crate::scatter::THIN_LAYERS)
-            {
-                thins[index * crate::scatter::THIN_LAYERS + layer] =
-                    [share, reach(near), reach(far), 1.0];
-            }
-        }
+        let thins = scatter_thinning(snapshot);
         self.features
             .scatter
             .get_mut()
             .set_thinning(&self.device, &self.queue, &thins);
         let draws = &mut self.scatter_draws;
         let (dirty, counts_changed) = draws.pool.take_changes();
-        // The kept shadow map and the occupancy maps redraw where objects
-        // came or went.
+        // The kept shadow map, its levels, the near cascades' caches and the
+        // occupancy maps redraw where objects came or went.
         for (min, max) in draws.pool.take_moved() {
             self.shadows.dirty_kept(min, max);
             self.features.occupancy.get_mut().dirty_box(min, max);
@@ -220,19 +204,26 @@ impl Renderer {
             draws.pool.uploaded(slots);
         }
         if counts_changed || std::mem::take(&mut draws.changed) {
-            let mut ids = 0;
-            for (group, &count) in draws.groups.iter_mut().zip(&draws.pool.counts) {
-                group.ids = ids;
+            // A part's group draws the objects of its asset's.
+            let counts: Vec<u32> = draws
+                .groups
+                .iter()
+                .map(|group| draws.pool.counts[group.objects as usize])
+                .collect();
+            for (group, &count) in draws.groups.iter_mut().zip(&counts) {
                 group.count = count;
-                ids += count * LEVELS;
             }
             self.features.scatter.get_mut().set_groups(
                 &self.device,
                 &self.queue,
                 &draws.layouts,
-                &draws.pool.counts,
+                &counts,
             );
         }
+        // Shadows cache the objects placed near the camera while any are
+        // resident.
+        self.shadows
+            .cache_placed(self.features.scatter.get().resident != 0);
         let sources = self.terrain.cover_sources().map(|sources| SnapSources {
             heights: sources.heights,
             control: sources.control,
@@ -280,16 +271,22 @@ impl Renderer {
         // How much of their way the camera's switches fade this frame.
         let fade = self.switch_fades.share;
         let height = self.display.size().height as f32;
-        // Frames keeping still casters cast placed objects into the kept map,
-        // not the moving one.
+        // Frames keeping still casters cast placed objects into the kept
+        // map, not the moving one, and into the near cascades' caches,
+        // which the cascades are composed from, not into the cascades.
         let keeps_still = self.shadows.keeps_still();
+        let caches = self.shadows.caches_near();
         let maps: Vec<(usize, engine_core::glam::Mat4, u32)> = self
             .shadows
             .drawn_maps()
             .iter()
-            .filter(|&&(map, _)| !(keeps_still && map == crate::shadows::MOVING_MAP))
+            .filter(|&&(map, _)| {
+                let moving = map == crate::shadows::MOVING_MAP;
+                !(keeps_still && moving) && !(caches && map < crate::shadows::MOVING_MAP)
+            })
             .map(|&(map, clip)| (map, clip, self.shadows.drawn_map_texels(map)))
             .collect();
+        let impostors = impostors.then_some(level_of_detail.impostor_pixels);
         let (device, queue, shadows) = (&self.device, &self.queue, &self.shadows);
         self.features.scatter.prepare(|scatter| {
             scatter
@@ -298,7 +295,12 @@ impl Renderer {
                     queue,
                     (snapshot.view_projection, snapshot.camera_position),
                     (pixel_error, height, impostors, fade),
-                    (&maps, shadows.kept_refresh(), shadows.level_refresh()),
+                    (
+                        &maps,
+                        shadows.kept_refresh(),
+                        shadows.level_refresh(),
+                        shadows.near_refreshes(),
+                    ),
                 )
                 .then_some(ScatterFrame)
         })
@@ -315,12 +317,12 @@ impl Renderer {
     }
 
     /// The impostors of placed draw groups on GPU-presented frames with
-    /// impostors: each group's, supplied into the placed objects' atlas
-    /// where missing (baked into `encoder` after its material's levels
-    /// where no host holds its record), zeroed where its material blends,
-    /// its mesh is too small, it is still coming or the budget the plan
-    /// batches' leave is spent. The groups' layouts take their errors and
-    /// records.
+    /// impostors: each asset's, its parts drawn into it, supplied into the
+    /// placed objects' atlas where missing (baked into `encoder` after its
+    /// materials' levels where no host holds its record), zeroed where its
+    /// material blends, its mesh is too small, it is still coming or the
+    /// budget the plan batches' leave is spent; parts' groups take none.
+    /// The groups' layouts take their errors and records.
     pub(super) fn prepare_scatter_impostors(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -342,8 +344,9 @@ impl Renderer {
             .max_impostors
             .map(|budget| budget.saturating_sub(self.impostors.atlas.live()));
         self.impostors.placed.enforce_budget(budget);
-        let mut records = Vec::with_capacity(self.scatter_draws.groups.len());
-        for group in &self.scatter_draws.groups {
+        let groups = &self.scatter_draws.groups;
+        let mut records = Vec::with_capacity(groups.len());
+        for (index, group) in groups.iter().enumerate() {
             let mut record = ImpostorRecord::default();
             let mesh = self.meshes.get(&group.meshes[0]);
             let asset = snapshot
@@ -353,6 +356,7 @@ impl Renderer {
                 .flat_map(|terrain| terrain.assets.iter().flatten())
                 .find(|asset| asset.mesh.handle == group.meshes[0]);
             let eligible = enabled
+                && group.part.is_none()
                 && !group.source.is_transparent()
                 && mesh.is_some_and(|mesh| !mesh.skinned)
                 && asset.is_some_and(|asset| {
@@ -363,26 +367,34 @@ impl Renderer {
                 record = match self.impostors.placed.record(key, Some(&group.source)) {
                     Some(resident) => resident,
                     None => {
+                        let textures = |handle: TextureHandle| {
+                            asset
+                                .textures
+                                .iter()
+                                .find(|texture| texture.handle == handle)
+                                .map(|texture| &*texture.texture)
+                        };
                         let contents = &mut self.impostors.contents;
                         let content = (
                             contents.mesh(group.meshes[0], &asset.mesh.mesh),
-                            contents.material(Some(&group.source), |handle| {
-                                asset
-                                    .textures
-                                    .iter()
-                                    .find(|texture| texture.handle == handle)
-                                    .map(|texture| &*texture.texture)
-                            }),
+                            contents.material(Some(&group.source), textures),
+                        );
+                        let bounds = asset.mesh.mesh.bounds();
+                        let (parts, content, (low, high)) = bake_parts(
+                            (groups, index, asset),
+                            (&self.meshes, &self.mesh_arena, &self.materials),
+                            contents,
+                            (content, (bounds.min(), bounds.max())),
                         );
                         let (bind_group, variant) = self.materials.binding(Some(group.material));
-                        let bounds = asset.mesh.mesh.bounds();
                         let bake = BakeSource {
                             draw: mesh.draw(&self.mesh_arena),
                             extended: mesh.extended,
                             group: bind_group,
                             variant: variant.with_extended(mesh.extended).with_skinned(false),
-                            bounds: (bounds.min(), bounds.max()),
+                            bounds: (low, high),
                             material: Some(group.source),
+                            parts,
                         };
                         let gpu = BakeGpu {
                             device: &self.device,
@@ -404,8 +416,8 @@ impl Renderer {
             records.push(record);
         }
         self.impostors.placed.release_targets();
-        // The kept shadow map casts impostors as cards: it redraws whole
-        // when they change.
+        // The kept shadow maps and caches cast impostors as cards: they
+        // redraw whole when those change.
         if records != self.scatter_draws.impostors {
             self.shadows.dirty_kept_all();
         }
@@ -432,9 +444,20 @@ impl Renderer {
                         asset.as_ref().map(|asset| {
                             let lods: Vec<MeshHandle> =
                                 asset.lods.iter().map(|(lod, _)| lod.handle).collect();
-                            let resident = std::iter::once(&asset.mesh.handle)
-                                .chain(&lods)
-                                .map(|handle| self.meshes.contains_key(handle))
+                            let resident = asset
+                                .meshes()
+                                .map(|mesh| self.meshes.contains_key(&mesh.handle))
+                                .collect();
+                            let parts = asset
+                                .parts
+                                .iter()
+                                .map(|part| {
+                                    (
+                                        part.material.handle,
+                                        part.material.version,
+                                        part.meshes.iter().map(|mesh| mesh.handle).collect(),
+                                    )
+                                })
                                 .collect();
                             (
                                 asset.mesh.handle,
@@ -443,6 +466,7 @@ impl Renderer {
                                 lods,
                                 resident,
                                 asset.sway.to_bits(),
+                                parts,
                             )
                         })
                     })
@@ -453,8 +477,9 @@ impl Renderer {
         (terrains, self.mesh_layout)
     }
 
-    /// Builds one draw group per asset of `terrains` that draws, and empties
-    /// the pool for them: every tile takes new slots.
+    /// Builds one draw group per asset of `terrains` that draws and one per
+    /// part of it whose finest mesh is resident, right after it, and
+    /// empties the pool for them: every tile takes new slots.
     fn build_scatter_groups(&mut self, terrains: &[engine_core::RenderTerrain]) {
         let mut groups = Vec::new();
         let mut layouts = Vec::new();
@@ -469,29 +494,48 @@ impl Renderer {
                 else {
                     continue;
                 };
+                let parts: Vec<(usize, Vec<(u32, u32, i32)>, Vec<MeshHandle>)> = asset
+                    .parts
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(part, rendered)| {
+                        let (levels, meshes) = self.part_levels(rendered, levels.len())?;
+                        Some((part, levels, meshes))
+                    })
+                    .collect();
                 let bounds = asset.mesh.mesh.bounds();
+                // Its bounding sphere holds its parts' meshes too.
+                let (low, high) = parts.iter().fold(
+                    (bounds.min(), bounds.max()),
+                    |(low, high), &(part, _, _)| {
+                        let part_bounds = asset.parts[part].meshes[0].mesh.bounds();
+                        (low.min(part_bounds.min()), high.max(part_bounds.max()))
+                    },
+                );
                 let material = &asset.material.material;
                 // Blending materials cast nothing; masked ones test their
                 // texels.
                 let casts = (!material.is_transparent())
                     .then(|| matches!(material.alpha_mode(), engine_core::AlphaMode::Mask { .. }));
-                indices.insert((terrain.id, asset_index), groups.len() as u32);
+                let objects = groups.len() as u32;
+                indices.insert((terrain.id, asset_index), objects);
+                // Swaying objects carry their sway in the flags skinned slots
+                // keep palettes in.
+                let color = ColorData {
+                    color: pack_color(material.color()),
+                    surface: pack_surface(material.surface()),
+                    flags: asset.sway.to_bits(),
+                };
+                let sphere = ((low + high) * 0.5, (high - low).length() * 0.5);
+                let cover = Cover::of(bounds.min(), bounds.max());
                 groups.push(ScatterDraw {
                     meshes,
                     material: asset.material.handle,
                     source: *material,
-                    // Swaying objects carry their sway in the flags skinned
-                    // slots keep palettes in.
-                    color: ColorData {
-                        color: pack_color(material.color()),
-                        surface: pack_surface(material.surface()),
-                        flags: asset.sway.to_bits(),
-                    },
-                    sphere: (
-                        (bounds.min() + bounds.max()) * 0.5,
-                        (bounds.max() - bounds.min()).length() * 0.5,
-                    ),
-                    ids: 0,
+                    color,
+                    sphere,
+                    objects,
+                    part: None,
                     count: 0,
                     casts,
                 });
@@ -501,8 +545,36 @@ impl Renderer {
                     camera,
                     errors,
                     impostor: (0.0, 0),
+                    casts: casts.is_some(),
+                    parts: parts.len() as u32,
+                    part: false,
                 });
-                covers.push(Cover::of(bounds.min(), bounds.max()));
+                covers.push(cover);
+                for (part, part_levels, part_meshes) in parts {
+                    let rendered = &asset.parts[part];
+                    layouts.push(GroupLayout {
+                        casters: part_levels.clone(),
+                        camera: part_levels.len() as u32,
+                        levels: part_levels,
+                        errors,
+                        impostor: (0.0, groups.len() as u32),
+                        casts: false,
+                        parts: 0,
+                        part: true,
+                    });
+                    groups.push(ScatterDraw {
+                        meshes: part_meshes,
+                        material: rendered.material.handle,
+                        source: rendered.material.material,
+                        color,
+                        sphere,
+                        objects,
+                        part: Some(part),
+                        count: 0,
+                        casts: None,
+                    });
+                    covers.push(cover);
+                }
             }
         }
         let draws = &mut self.scatter_draws;
@@ -576,6 +648,35 @@ impl Renderer {
         Some((levels, casters, meshes, errors, camera))
     }
 
+    /// The levels part `part` of an asset drawing `levels` levels draws:
+    /// each of its meshes' own triangles, finest first, as far as they are
+    /// resident and stream like its first; `None` while its first is not
+    /// resident or is skinned.
+    fn part_levels(
+        &self,
+        part: &engine_core::RenderPlacementPart,
+        levels: usize,
+    ) -> Option<(Vec<(u32, u32, i32)>, Vec<MeshHandle>)> {
+        let first = self.meshes.get(&part.meshes.first()?.handle)?;
+        if first.skinned {
+            return None;
+        }
+        let mut ranges = Vec::new();
+        let mut meshes = Vec::new();
+        for rendered in part.meshes.iter().take(levels) {
+            let Some(mesh) = self.meshes.get(&rendered.handle) else {
+                break;
+            };
+            if mesh.extended != first.extended || mesh.skinned {
+                break;
+            }
+            let draw = mesh.draw(&self.mesh_arena);
+            ranges.push((draw.index_count, draw.first_index, draw.base_vertex));
+            meshes.push(rendered.handle);
+        }
+        Some((ranges, meshes))
+    }
+
     /// The material group and pipeline variant of placed group `draw`,
     /// blending into the ground where its material says.
     fn scatter_binding(&self, draw: &ScatterDraw) -> (&wgpu::BindGroup, Variant) {
@@ -627,7 +728,7 @@ impl Renderer {
             };
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
-            draws += self.draw_scatter_levels(pass, (index, draw), 0, true, debug);
+            draws += self.draw_scatter_levels(pass, (index, draw), 0, debug);
         }
         // Objects fading between how the camera shows them,
         // at the levels the camera draws.
@@ -646,7 +747,7 @@ impl Renderer {
             };
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
-            draws += self.draw_scatter_levels(pass, (index, draw), fading, true, debug);
+            draws += self.draw_scatter_levels(pass, (index, draw), fading, debug);
         }
         // Impostors: every group's cards in one draw, over
         // the poses and lights the meshes bound.
@@ -671,7 +772,7 @@ impl Renderer {
     }
 
     /// The engine material of handle `handle` among `snapshot`'s placed
-    /// objects'.
+    /// objects' and their parts'.
     pub(super) fn placed_material(
         snapshot: &RenderSnapshot,
         handle: MaterialHandle,
@@ -681,14 +782,15 @@ impl Renderer {
             .terrains
             .iter()
             .flat_map(|terrain| terrain.assets.iter().flatten())
-            .find(|asset| asset.material.handle == handle)
-            .map(|asset| asset.material.material)
+            .flat_map(engine_core::RenderPlacementAsset::materials)
+            .find(|material| material.handle == handle)
+            .map(|material| material.material)
     }
 
-    /// Draws this frame's placed objects culled for shadow map `map` with
-    /// the depth passes' caster pipelines `casters`, and their impostor
-    /// cards with `cards`; the map's view is bound. Returns
-    /// the draws.
+    /// Draws this frame's placed objects culled for shadow map `map` at
+    /// their coarsest levels with the depth passes' caster pipelines
+    /// `casters`, and their impostor cards with `cards`; the map's view is
+    /// bound. Returns the draws.
     pub(super) fn draw_scatter_shadow(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -719,7 +821,7 @@ impl Renderer {
                 pass.set_pipeline(&casters[usize::from(masked)]);
                 bound = Some(masked);
             }
-            draws += self.draw_scatter_levels(pass, (index, draw), view, false, None);
+            draws += self.draw_scatter_casters(pass, (index, draw), view);
         }
         if let (Some(pipeline), Some(group)) = (cards, self.impostors.placed.group())
             && let Some((cards, args, offset)) = self.features.scatter.get().card_source(view)
@@ -734,16 +836,15 @@ impl Renderer {
     }
 
     /// Draws group `draw` (the `index`th) at each of its levels from
-    /// `view`'s lists, binding each level's mesh, with its extra stream
-    /// when `extras` and, in debug views, each level's record of `debug`'s
-    /// records, the group casting sun shadows where they say and its
-    /// casters kept; returns the draws.
+    /// `view`'s lists (the camera's, or its fading objects'), binding each
+    /// level's mesh with its extra stream and, in debug views, each level's
+    /// record of `debug`'s records, the group casting sun shadows where they
+    /// say and its casters kept; returns the draws.
     fn draw_scatter_levels(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         (index, draw): (usize, &ScatterDraw),
         view: usize,
-        extras: bool,
         debug: Option<(&DebugViewPass, bool, bool)>,
     ) -> u32 {
         let mut draws = 0;
@@ -751,16 +852,14 @@ impl Renderer {
             let Some(mesh) = self.meshes.get(handle) else {
                 continue;
             };
-            let Some((ids, args, offset)) = self.features.scatter.get().draw_source(
-                view,
-                (index, draw.ids + level as u32 * draw.count),
-                level,
-            ) else {
+            let Some((ids, args, offset)) =
+                self.features.scatter.get().draw_source(view, index, level)
+            else {
                 continue;
             };
             let source = mesh.draw(&self.mesh_arena);
             pass.set_vertex_buffer(0, source.vertices.slice(..));
-            if extras && let Some(stream) = source.extras.filter(|_| mesh.extended) {
+            if let Some(stream) = source.extras.filter(|_| mesh.extended) {
                 pass.set_vertex_buffer(2, stream.slice(..));
             }
             pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -778,6 +877,132 @@ impl Renderer {
         }
         draws
     }
+
+    /// Draws group `draw` (the `index`th) from shadow map view `view`'s
+    /// list of its casters, at its coarsest level; returns the draws.
+    fn draw_scatter_casters(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        (index, draw): (usize, &ScatterDraw),
+        view: usize,
+    ) -> u32 {
+        let Some(level) = draw.meshes.len().checked_sub(1) else {
+            return 0;
+        };
+        let Some(mesh) = self.meshes.get(&draw.meshes[level]) else {
+            return 0;
+        };
+        let Some((ids, args, offset)) = self.features.scatter.get().draw_source(view, index, level)
+        else {
+            return 0;
+        };
+        let source = mesh.draw(&self.mesh_arena);
+        pass.set_vertex_buffer(0, source.vertices.slice(..));
+        pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
+        pass.set_vertex_buffer(1, ids);
+        pass.draw_indexed_indirect(args, offset);
+        1
+    }
+}
+
+/// How each of `snapshot`'s terrains' placement layers thin with distance
+/// this frame, `THIN_LAYERS` entries a terrain: their tiles' reaches follow
+/// the view's levels of detail, and pinned levels stay resident
+/// everywhere.
+fn scatter_thinning(snapshot: &RenderSnapshot) -> Vec<[f32; 4]> {
+    let terrains = &snapshot.terrain.terrains;
+    let pinned = snapshot.environment.terrain.sanitized().pinned_levels;
+    let mut thins = vec![[0.0_f32; 4]; terrains.len() * crate::scatter::THIN_LAYERS];
+    for (index, terrain) in terrains.iter().enumerate() {
+        let levels = terrain.pyramid.levels();
+        let reach = |level: u8| {
+            if u32::from(level) + pinned >= levels {
+                0.0
+            } else {
+                terrain
+                    .reach
+                    .get(usize::from(level))
+                    .copied()
+                    .unwrap_or(0.0)
+            }
+        };
+        for (layer, &(near, far, share)) in terrain
+            .thinning
+            .iter()
+            .enumerate()
+            .take(crate::scatter::THIN_LAYERS)
+        {
+            thins[index * crate::scatter::THIN_LAYERS + layer] =
+                [share, reach(near), reach(far), 1.0];
+        }
+    }
+    thins
+}
+
+/// The parts `asset`, the asset of `groups`' draw group `index`, draws with
+/// its objects, the groups after it, as its impostor's bake draws them over
+/// its mesh: each at its finest, from `meshes` in `arena` with `materials`'
+/// groups; and the impostor's `content` and `bounds` grown by theirs, whose
+/// contents `contents` hashes.
+fn bake_parts<'a>(
+    (groups, index, asset): (&[ScatterDraw], usize, &engine_core::RenderPlacementAsset),
+    (meshes, arena, materials): (
+        &'a BTreeMap<MeshHandle, GpuMesh>,
+        &'a MeshArena,
+        &'a MaterialStore,
+    ),
+    contents: &mut Contents,
+    (mut content, (mut low, mut high)): ((u128, u128), (Vec3, Vec3)),
+) -> (Vec<BakePart<'a>>, (u128, u128), (Vec3, Vec3)) {
+    let textures = |handle: TextureHandle| {
+        asset
+            .textures
+            .iter()
+            .find(|texture| texture.handle == handle)
+            .map(|texture| &*texture.texture)
+    };
+    let mut parts = Vec::new();
+    for drawn in groups[index + 1..]
+        .iter()
+        .take_while(|drawn| drawn.objects == index as u32)
+    {
+        let (Some(part), Some(mesh)) = (drawn.part, meshes.get(&drawn.meshes[0])) else {
+            continue;
+        };
+        let Some((rendered, finest)) = asset
+            .parts
+            .get(part)
+            .and_then(|rendered| Some((rendered, &rendered.meshes.first()?.mesh)))
+        else {
+            continue;
+        };
+        content = (
+            combined(content.0, contents.mesh(drawn.meshes[0], finest)),
+            combined(
+                content.1,
+                contents.material(Some(&rendered.material.material), textures),
+            ),
+        );
+        let bounds = finest.bounds();
+        low = low.min(bounds.min());
+        high = high.max(bounds.max());
+        let (group, variant) = materials.binding(Some(drawn.material));
+        parts.push(BakePart {
+            draw: mesh.draw(arena),
+            extended: mesh.extended,
+            group,
+            variant: variant.with_extended(mesh.extended).with_skinned(false),
+        });
+    }
+    (parts, content, (low, high))
+}
+
+/// The content of an impostor of what `first` and `second` hold together.
+fn combined(first: u128, second: u128) -> u128 {
+    let mut bytes = [0_u8; 32];
+    bytes[..16].copy_from_slice(&first.to_le_bytes());
+    bytes[16..].copy_from_slice(&second.to_le_bytes());
+    engine_core::content_hash(&bytes)
 }
 
 /// The objects terrain `terrain`'s tile `tile` holds for the draw groups of

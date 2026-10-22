@@ -203,6 +203,9 @@ impl Renderer {
                 levels_pending: shadow_frame
                     .as_ref()
                     .map_or(0, crate::shadows::ShadowFrame::level_pending),
+                cache_tiles: shadow_frame
+                    .as_ref()
+                    .map_or(0, crate::shadows::ShadowFrame::cache_tiles),
                 level_casters: shadow_casters.map(|casters| casters[3]),
                 sky_maps: self.shadows.sky_counts().0,
                 sky_drawn: self.shadows.sky_counts().1,

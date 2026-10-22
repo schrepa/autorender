@@ -88,10 +88,7 @@ impl Renderer {
             .terrains
             .iter()
             .flat_map(|terrain| terrain.assets.iter().flatten())
-            .flat_map(|asset| {
-                std::iter::once(asset.mesh.handle)
-                    .chain(asset.lods.iter().map(|(lod, _)| lod.handle))
-            })
+            .flat_map(|asset| asset.meshes().map(|mesh| mesh.handle))
             .collect();
         if placed != self.scatter_meshes.0 {
             self.scatter_meshes = (placed, self.scatter_meshes.1 + 1);
@@ -248,9 +245,7 @@ impl Renderer {
                     .terrains
                     .iter()
                     .flat_map(|terrain| terrain.assets.iter().flatten())
-                    .flat_map(|asset| {
-                        std::iter::once(&asset.mesh).chain(asset.lods.iter().map(|(lod, _)| lod))
-                    })
+                    .flat_map(engine_core::RenderPlacementAsset::meshes)
                     .map(|mesh| (mesh.handle, mesh)),
             )
             .filter(|_| mesh_uploads);

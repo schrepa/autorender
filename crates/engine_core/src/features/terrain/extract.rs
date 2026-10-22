@@ -38,15 +38,24 @@ impl RenderSurfaceMaps {
 }
 
 /// A placement asset of a frame: its mesh, its material
-/// and the material's textures, its coarser meshes with their errors, and
-/// its sway.
+/// and the textures of every material it draws with, its coarser meshes
+/// with their errors, its parts, and its sway.
 #[derive(Clone, Debug)]
 pub struct RenderPlacementAsset {
     pub mesh: RenderMesh,
     pub material: RenderMaterial,
     pub textures: Vec<RenderTexture>,
     pub lods: Vec<(RenderMesh, f32)>,
+    pub parts: Vec<RenderPlacementPart>,
     pub sway: f32,
+}
+
+/// A part of a placement asset of a frame ([`PlacementPart`]): its
+/// material, and its mesh at each of the asset's levels it reaches.
+#[derive(Clone, Debug)]
+pub struct RenderPlacementPart {
+    pub material: RenderMaterial,
+    pub meshes: Vec<RenderMesh>,
 }
 
 impl RenderPlacementAsset {
@@ -55,14 +64,36 @@ impl RenderPlacementAsset {
     fn of(asset: &PlacementAsset, assets: &AssetLibrary, missing: &mut usize) -> Option<Self> {
         let found = (|| {
             let mesh = RenderMesh::of(assets, asset.mesh)?;
-            let material = assets.material(asset.material)?;
+            let material = |handle: MaterialHandle| {
+                assets.material(handle).map(|material| RenderMaterial {
+                    handle,
+                    material: *material,
+                    version: assets.material_version(handle).unwrap_or(0),
+                })
+            };
             let lods = asset
                 .lods
                 .iter()
                 .map(|lod| RenderMesh::of(assets, lod.mesh).map(|mesh| (mesh, lod.error)))
                 .collect::<Option<Vec<_>>>()?;
-            let textures = material
-                .textures()
+            let parts = asset
+                .parts
+                .iter()
+                .map(|part| {
+                    Some(RenderPlacementPart {
+                        material: material(part.material)?,
+                        meshes: part
+                            .meshes
+                            .iter()
+                            .map(|&mesh| RenderMesh::of(assets, mesh))
+                            .collect::<Option<Vec<_>>>()?,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            let material = material(asset.material)?;
+            let textures = std::iter::once(&material.material)
+                .chain(parts.iter().map(|part| &part.material.material))
+                .flat_map(Material::textures)
                 .map(|handle| {
                     assets.texture(handle).map(|texture| RenderTexture {
                         handle,
@@ -72,18 +103,27 @@ impl RenderPlacementAsset {
                 .collect::<Option<Vec<_>>>()?;
             Some(Self {
                 mesh,
-                material: RenderMaterial {
-                    handle: asset.material,
-                    material: *material,
-                    version: assets.material_version(asset.material).unwrap_or(0),
-                },
+                material,
                 textures,
                 lods,
+                parts,
                 sway: asset.sway,
             })
         })();
         *missing += usize::from(found.is_none());
         found
+    }
+
+    /// Every mesh it draws: its own, its coarser ones and its parts'.
+    pub fn meshes(&self) -> impl Iterator<Item = &RenderMesh> {
+        std::iter::once(&self.mesh)
+            .chain(self.lods.iter().map(|(lod, _)| lod))
+            .chain(self.parts.iter().flat_map(|part| &part.meshes))
+    }
+
+    /// Every material it draws with: its own, then its parts'.
+    pub fn materials(&self) -> impl Iterator<Item = &RenderMaterial> {
+        std::iter::once(&self.material).chain(self.parts.iter().map(|part| &part.material))
     }
 }
 

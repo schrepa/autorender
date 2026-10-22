@@ -696,21 +696,29 @@ fn surface(
     files: &HashMap<String, StressFile>,
     authored: Vec<AuthoredPlacement>,
 ) -> engine::Result<TerrainSurface> {
-    // The shapes and the bark atlas are records: their handles now, their
-    // content once hosts hand it back or it is built in place. Boulders
-    // come at one detail, their coarser levels their meshes' own; spruces
-    // at each of their details.
+    // The shapes and the conifers' atlas are records: their handles now,
+    // their content once hosts hand it back or it is built in place.
+    // Boulders come at one detail, their coarser levels their meshes' own;
+    // spruces, the engine's conifers, at each of their levels.
     let boulders = (0..BOULDERS as u32)
         .map(|seed| rocks::boulder_record(world, seed))
         .collect::<engine::Result<Vec<_>>>()?;
+    // Their opaque trunks and crowns, the trunks blending into the forest
+    // floor, under a fringe of needle cards cut out by the atlas's alpha.
+    let atlas = trees::atlas_record(world)?;
+    let (crown, fringe) = Conifer::materials(atlas)?;
+    let crown = crown.with_grounding(ROOTS)?;
+    let needles = {
+        let mut assets = world.resource_mut::<AssetLibrary>();
+        (assets.insert_material(crown)?, assets.insert_material(fringe)?)
+    };
     let spruces = (0..SPRUCES as u32)
         .map(|seed| {
-            (0..=trees::CONIFER_ERRORS.len())
-                .map(|detail| trees::conifer_record(world, seed, detail))
-                .collect::<engine::Result<Vec<_>>>()
+            Conifer { seed }.asset(needles, |conifer, level, part| {
+                trees::conifer_record(world, conifer, level, part)
+            })
         })
         .collect::<engine::Result<Vec<_>>>()?;
-    let atlas = trees::atlas_record(world)?;
     let materials = world.resource_scope(|world, mut records: Mut<Records>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
         let mut loaded = HashMap::default();
@@ -764,6 +772,7 @@ fn surface(
             mesh,
             material: rock,
             lods: Vec::new(),
+            parts: Vec::new(),
             sway: 0.0,
             collider: Some(PlacedCollider::new(
                 PlacedShape::Sphere { radius: 0.42 },
@@ -771,33 +780,11 @@ fn surface(
             )),
         });
     }
-    // Spruces of a few shapes over one bark and needle atlas, their needles
-    // cut out by its alpha and their trunks blending into the forest
-    // floor.
-    let needles = Material::new([1.0, 1.0, 1.0, 1.0])
-        .and_then(|material| {
-            material.with_surface(Surface {
-                roughness: 0.9,
-                ..Surface::MATTE
-            })
-        })
-        .and_then(|material| material.with_base_color_texture(TextureRef::new(atlas)))
-        .and_then(|material| material.with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 }))
-        .and_then(|material| material.with_grounding(ROOTS))
-        .and_then(|material| assets.insert_material(material))?;
-    for details in spruces {
-        let lods = details[1..]
-            .iter()
-            .zip(trees::CONIFER_ERRORS)
-            .map(|(&mesh, error)| PlacementLod { mesh, error })
-            .collect();
+    for spruce in spruces {
         // Spruces bend in the wind: a third of a meter at ten
         // meters up in full wind.
         // Their trunks collide, up to where the lowest whorls spread.
         placed.push(PlacementAsset {
-            mesh: details[0],
-            material: needles,
-            lods,
             sway: 0.35,
             collider: Some(PlacedCollider::new(
                 PlacedShape::Cuboid {
@@ -805,6 +792,7 @@ fn surface(
                 },
                 [0.0, 1.5, 0.0],
             )),
+            ..spruce
         });
     }
     // The rock the cave is hewn in, which the boulders framing its mouth

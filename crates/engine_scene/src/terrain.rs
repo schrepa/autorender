@@ -11,8 +11,8 @@ use engine_core::{
     Biome, Biomes, Blend, Cover, ErosionLayer, ErosionStage, HeightImage, HeightmapLayer,
     HydrologyLayer, HydrologyStage, Layer, Layers, MaterialHandle, MeshHandle, NoiseLayer,
     PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
-    PlacementLod, Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain,
-    TerrainSurface,
+    PlacementLod, PlacementPart, Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Surroundings,
+    Terrain, TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use engine_settings::{Rule, Setting};
@@ -131,8 +131,10 @@ pub struct SceneTerrainSurface {
 /// An object placement layers stand on a terrain: a `mesh`
 /// and a `material` of this document, by ID, up to four coarser meshes it
 /// draws at a distance, finest first (otherwise the mesh's automatic levels
-/// of detail), and how far it sways in the wind: meters at
-/// ten meters up in full wind, 0 (rigid, the default) to 10.
+/// of detail), up to two parts drawn with materials of their own, and how
+/// far it sways in the wind: meters at
+/// ten meters up in full wind, 0 (rigid, the default) to 10. Shadow maps
+/// cast its coarsest mesh alone.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -146,6 +148,8 @@ pub struct SceneTerrainAsset {
     pub material: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lods: Vec<SceneTerrainLod>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<SceneTerrainPart>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub sway: f32,
     /// Its objects' collider; without one they never
@@ -236,6 +240,19 @@ pub struct SceneTerrainLod {
     pub error: f32,
 }
 
+/// A part of a placement asset its objects draw with a `material` of its
+/// own, such as a tree's masked needle cards over its opaque crown: its
+/// meshes by ID, at the asset's mesh and then at each of its coarser
+/// meshes, as far as it reaches; coarser levels draw without it. It takes
+/// the asset's color, sway and impostor, and casts no shadow.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneTerrainPart {
+    pub material: String,
+    pub meshes: Vec<String>,
+}
+
 /// How one surface material looks: a `material` of this document whose
 /// maps and factors shade it, or a linear `color` and `roughness`; the
 /// meters its textures repeat over (0.01 to 1000); how sharply its height
@@ -308,8 +325,65 @@ pub(crate) struct PreparedTerrain {
 }
 
 /// A placement asset's document mesh, material, coarser meshes with their
-/// errors, sway and collider.
-pub(crate) type PreparedAsset = (usize, usize, Vec<(usize, f32)>, f32, Option<PlacedCollider>);
+/// errors, parts (each one's document material and meshes), sway and
+/// collider.
+pub(crate) type PreparedAsset = (
+    usize,
+    usize,
+    Vec<(usize, f32)>,
+    Vec<(usize, Vec<usize>)>,
+    f32,
+    Option<PlacedCollider>,
+);
+
+/// Each of `asset`'s parts' document material and meshes, among the
+/// document's `materials` and `meshes`, at authored path `at`; `invalid`
+/// makes the error of a field breaking its rule.
+fn prepared_parts(
+    asset: &SceneTerrainAsset,
+    (materials, meshes): (&[SceneMaterial], &[SceneMesh]),
+    (at, invalid): (&str, &dyn Fn(String, String) -> SceneError),
+) -> Result<Vec<(usize, Vec<usize>)>, SceneError> {
+    let mut prepared = Vec::with_capacity(asset.parts.len());
+    for (index, part) in asset.parts.iter().enumerate() {
+        let field = format!("{at}.parts[{index}]");
+        let material = materials
+            .iter()
+            .position(|candidate| candidate.id == part.material)
+            .ok_or_else(|| {
+                invalid(
+                    format!("{field}.material"),
+                    "must name a material of this document".into(),
+                )
+            })?;
+        let part_meshes = part
+            .meshes
+            .iter()
+            .enumerate()
+            .map(|(level, mesh)| {
+                meshes
+                    .iter()
+                    .position(|candidate| candidate.id == *mesh)
+                    .ok_or_else(|| {
+                        invalid(
+                            format!("{field}.meshes[{level}]"),
+                            "must name a mesh of this document".into(),
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        prepared.push((material, part_meshes));
+    }
+    let counts: Vec<usize> = prepared.iter().map(|(_, meshes)| meshes.len()).collect();
+    if let Err((part, rule)) = PlacementPart::check(&counts, 1 + asset.lods.len()) {
+        let field = match part {
+            Some(part) => format!("{at}.parts[{part}].meshes"),
+            None => format!("{at}.parts"),
+        };
+        return Err(invalid(field, rule.into()));
+    }
+    Ok(prepared)
+}
 
 impl PreparedTerrain {
     /// The component, its surface materials and placement assets resolved
@@ -323,7 +397,7 @@ impl PreparedTerrain {
         terrain.surface.assets = self
             .assets
             .iter()
-            .map(|(mesh, material, lods, sway, collider)| PlacementAsset {
+            .map(|(mesh, material, lods, parts, sway, collider)| PlacementAsset {
                 mesh: meshes[*mesh],
                 material: materials[*material],
                 lods: lods
@@ -331,6 +405,13 @@ impl PreparedTerrain {
                     .map(|&(mesh, error)| PlacementLod {
                         mesh: meshes[mesh],
                         error,
+                    })
+                    .collect(),
+                parts: parts
+                    .iter()
+                    .map(|(material, part)| PlacementPart {
+                        material: materials[*material],
+                        meshes: part.iter().map(|&mesh| meshes[mesh]).collect(),
                     })
                     .collect(),
                 sway: *sway,
@@ -525,6 +606,7 @@ impl SceneTerrain {
                 };
                 return Err(invalid(field, rule.into()));
             }
+            let parts = prepared_parts(asset, (materials, meshes), (&at, &invalid))?;
             if let Err(error) = asset.sway.check("sway", PlacementAsset::SWAY) {
                 return Err(invalid(format!("{at}.sway"), error.rule.into_owned()));
             }
@@ -533,7 +615,7 @@ impl SceneTerrain {
             {
                 return Err(invalid(format!("{at}.collider"), error.rule.into_owned()));
             }
-            assets.push((mesh, material, lods, asset.sway, collider));
+            assets.push((mesh, material, lods, parts, asset.sway, collider));
         }
         let biomes = Biomes {
             materials: surface
@@ -732,6 +814,18 @@ impl SceneTerrain {
                             .map(|lod| SceneTerrainLod {
                                 mesh: meshes(lod.mesh).unwrap_or_default(),
                                 error: lod.error,
+                            })
+                            .collect(),
+                        parts: asset
+                            .parts
+                            .iter()
+                            .map(|part| SceneTerrainPart {
+                                material: materials(part.material).unwrap_or_default(),
+                                meshes: part
+                                    .meshes
+                                    .iter()
+                                    .map(|&mesh| meshes(mesh).unwrap_or_default())
+                                    .collect(),
                             })
                             .collect(),
                         sway: asset.sway,
