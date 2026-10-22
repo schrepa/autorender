@@ -63,6 +63,19 @@ impl<'a> Span<'a> {
             timestamp_writes: Some(self.compute_part(!end, end)),
         });
     }
+
+    /// Writes the span's end, then `next`'s begin, from one empty compute
+    /// pass: between consecutive work the two spans of this frame time.
+    pub(crate) fn mark_until(self, next: Span<'_>, encoder: &mut wgpu::CommandEncoder) {
+        encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("engine/profile-timestamp"),
+            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                query_set: self.query_set,
+                beginning_of_pass_write_index: Some(self.begin + 1),
+                end_of_pass_write_index: Some(next.begin),
+            }),
+        });
+    }
 }
 
 /// A draw a captured frame times: its index among the frame's.

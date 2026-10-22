@@ -1,14 +1,22 @@
 //! The GPU queue and device calls the renderer makes through one function
 //! each: Clippy refuses the wgpu methods anywhere else (`clippy.toml`'s
 //! disallowed methods). Pipeline layouts and bind groups have theirs in
-//! [`crate::pipelines`].
+//! [`crate::pipelines`]. The queue's submission side (`submission`)
+//! finishes and submits the work frames hand over to it.
 
 use std::cell::Cell;
 
+mod submission;
+
+pub(crate) use submission::{Handover, Recorded};
+
 /// The renderer's GPU queue, the one way it submits work: its frames' own,
-/// and, counted, what modules submit at once.
+/// handed over to its submission side, what the host asks for between
+/// frames, and, counted, what modules submit at once.
 pub(crate) struct Queue {
     queue: wgpu::Queue,
+    /// Where the work frames hand over is finished and submitted.
+    submission: submission::Submission,
     /// Submissions made at once since [`Self::take_immediate`].
     immediate: Cell<u32>,
 }
@@ -24,24 +32,51 @@ impl std::ops::Deref for Queue {
 impl Queue {
     pub(crate) fn new(queue: wgpu::Queue) -> Self {
         Self {
+            submission: submission::Submission::new(&queue),
             queue,
             immediate: Cell::new(0),
         }
     }
 
-    /// Submits a frame's own work, or work the host asks for between frames.
+    /// Hands a frame's own work over to the submission side, which finishes
+    /// and submits it after the work handed over before: natively on its
+    /// threads while the frame records on, in browsers at once. A write
+    /// queued after a handover takes effect at the next submission, which
+    /// is the handed work's own while it is still being finished, as it was
+    /// when a frame went in one submission: passes read every write queued
+    /// before they were recorded, and rely on no later write of their frame
+    /// staying out of them. Natively, the map callbacks the submission
+    /// side's submissions completed run here, as they ran in submissions of
+    /// the renderer's own.
+    pub(crate) fn hand(&self, handover: Handover) {
+        self.submission.hand(&self.queue, handover);
+    }
+
+    /// Waits until the submission side has submitted all the work handed
+    /// over, as what reads those submissions requires: maps of what they
+    /// copy for reading back, presentation, and submissions of the
+    /// caller's own. The map callbacks those submissions completed run
+    /// then.
+    pub(crate) fn settle(&self) {
+        self.submission.settle();
+    }
+
+    /// Submits work the host asks for between frames, after the work
+    /// handed over.
     pub(crate) fn submit(
         &self,
         buffers: impl IntoIterator<Item = wgpu::CommandBuffer>,
     ) -> wgpu::SubmissionIndex {
+        self.settle();
         submit(&self.queue, buffers)
     }
 
     /// Submits `buffers` at once, counted: growth copies and uploads that
-    /// later writes depend on. The queue runs submissions in order, so work
-    /// submitted while a frame prepares runs before every command of its
-    /// passes, which it submits a batch at a time as they record.
+    /// later writes depend on. They follow the work the frame handed over
+    /// before them, which this waits for, and run before what it hands
+    /// over after.
     pub(crate) fn submit_now(&self, buffers: impl IntoIterator<Item = wgpu::CommandBuffer>) {
+        self.settle();
         self.immediate.set(self.immediate.get() + 1);
         submit(&self.queue, buffers);
     }

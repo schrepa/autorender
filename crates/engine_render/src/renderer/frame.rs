@@ -2,11 +2,12 @@
 //! uploads, instance packing and writes, each feature's preparation, the
 //! frame's pipelines, encoding and submission. `prepare` prepares the
 //! frame, `encode` and `opaque` encode its render graph's passes, `submit`
-//! submits its prelude and its passes a batch at a time, and `frame_stats`
-//! reports it.
+//! hands its prelude and its passes a batch at a time to the queue's
+//! submission side, and `frame_stats` reports it.
 
 use super::*;
 use crate::exposure::{ExposureFrame, ExposurePass};
+use crate::gpu_calls::Recorded;
 use crate::gpu_presentation::{CullingView, GpuPrepared, PresentationInputs, RecordsKey, Staging};
 use crate::ground_cover::CoverFrame;
 use crate::render_graph::{self, Effects, FeaturePass, FrameShape, Node, Pass, Phase, Resource};
@@ -64,8 +65,8 @@ pub(super) struct FrameKind {
     pub(super) instance_count: usize,
 }
 
-/// The work a frame submits first, once its features are prepared, while
-/// its passes prepare and record (`Renderer::submit_prelude`), in
+/// The work a frame hands over first, once its features are prepared, while
+/// its passes prepare and record (`Renderer::hand_prelude`), in
 /// submission order: the physically based sky's light, which everything
 /// after reads; new textures' mip levels and impostor bakes; staged pose
 /// copies; GPU presentation's input copies; environment maps' and
@@ -90,16 +91,15 @@ impl Prelude {
         Some("pre_environment"),
     ];
 
-    /// Each part's command buffer, in submission order.
-    fn finish(self) -> [Option<wgpu::CommandBuffer>; 5] {
-        let finish =
-            |encoder: Option<wgpu::CommandEncoder>| encoder.map(|encoder| encoder.finish());
+    /// Each part's recorded work, in submission order, which the submission
+    /// side finishes.
+    fn parts(self) -> [Option<Recorded>; 5] {
         [
-            finish(self.sky),
-            finish(self.mips),
-            self.poses,
-            finish(self.inputs),
-            finish(self.environment),
+            self.sky.map(Recorded::Encoder),
+            self.mips.map(Recorded::Encoder),
+            self.poses.map(Recorded::Buffer),
+            self.inputs.map(Recorded::Encoder),
+            self.environment.map(Recorded::Encoder),
         ]
     }
 }
@@ -291,6 +291,18 @@ impl Renderer {
         }
     }
 
+    /// Ends pass `end`'s span and begins pass `begin`'s, those there are, in
+    /// frames profiling captures: from one empty pass where both are.
+    fn mark_stages(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        end: Option<Pass>,
+        begin: Option<Pass>,
+    ) {
+        let span = |pass: Option<Pass>| self.profiler.span(pass?.stage());
+        submit::mark_between(encoder, span(end), span(begin));
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -346,7 +358,7 @@ impl Renderer {
         drop(profile_writes);
         // The GPU works on the prelude while the frame prepares and records
         // its passes.
-        self.submit_prelude(prelude);
+        self.hand_prelude(prelude);
         // Water settling for tiles' records runs first in the frame.
         self.water_settle.prepare(&self.device, &self.queue);
         let profile_encoding = engine_profile::span("render", "command_encoding");
@@ -427,6 +439,8 @@ impl Renderer {
         RenderFeatures::declare(&state.features.frames, &state.shape, &mut graph);
         if let Err(invalid) = graph.compile() {
             self.graph = graph;
+            // Nothing after the prelude reads it, but later work waits for it.
+            self.queue.settle();
             return Err(RenderError(invalid.to_string()));
         }
         let mut report = EncodeReport {
@@ -434,30 +448,29 @@ impl Renderer {
             ..EncodeReport::default()
         };
         let mut batch = 0;
+        // Profiling captures time every pass whole, with whatever it
+        // records: the pass recorded last, whose span ends where the next
+        // one's begins.
+        let mut timed = None;
         for node in graph.kept_passes() {
+            let pass = node.pass();
             // Each batch of passes goes to the GPU before the next records.
-            let next = submit::batch(node.pass());
+            let next = submit::batch(pass);
             if next != batch {
                 batch = next;
-                encoder = self.submit_batch(encoder);
+                self.mark_stages(&mut encoder, timed.take(), None);
+                encoder = self.hand_batch(encoder);
             }
-            // Profiling captures time every pass whole, with whatever it
-            // records.
-            let stage = node.pass().stage();
-            if let Some(span) = self.profiler.span(stage) {
-                span.mark(&mut encoder, false);
-            }
+            self.mark_stages(&mut encoder, timed.replace(pass), Some(pass));
             // GPU debuggers (PIX, RenderDoc, Xcode) name each pass's work;
             // ordinary page builds make no calls for them.
             #[cfg(any(not(target_arch = "wasm32"), feature = "profiling"))]
-            encoder.push_debug_group(node.pass().name());
+            encoder.push_debug_group(pass.name());
             self.encode_pass(node, &state, &mut encoder, &view, &mut report);
             #[cfg(any(not(target_arch = "wasm32"), feature = "profiling"))]
             encoder.pop_debug_group();
-            if let Some(span) = self.profiler.span(stage) {
-                span.mark(&mut encoder, true);
-            }
         }
+        self.mark_stages(&mut encoder, timed, None);
         self.graph = graph;
         #[cfg(feature = "dev")]
         self.encode_probe(&state, &mut encoder, surface.texture());

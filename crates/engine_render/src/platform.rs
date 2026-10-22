@@ -262,8 +262,11 @@ impl AdapterInfo {
 
 /// A map callback the platform's GPU interface accepts: the browser's runs
 /// on its own thread, native ones must be sendable, so there the callback
-/// waits in this thread's store and the interface holds its key; native
-/// interfaces run map callbacks while the renderer polls, on its thread.
+/// waits in this thread's store and the interface holds its key. Native
+/// interfaces run map callbacks on the thread polling or submitting when
+/// the map completes: on the renderer's own, the callback runs then; on
+/// the queue's submission threads, its result waits until the renderer's
+/// thread runs `run_arrived_maps`.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn map_callback(
     callback: impl FnOnce(Result<(), wgpu::BufferAsyncError>) + 'static,
@@ -280,6 +283,16 @@ thread_local! {
         std::cell::RefCell::new((0, engine_core::collections::HashMap::default()));
 }
 
+/// A map's result that arrived on another thread than its callback's
+/// store's: that thread, the callback's key there, and the result.
+#[cfg(not(target_arch = "wasm32"))]
+type Arrived = (std::thread::ThreadId, u64, Result<(), wgpu::BufferAsyncError>);
+
+/// The map results that arrived on other threads than their callbacks'
+/// stores', in the order they arrived.
+#[cfg(not(target_arch = "wasm32"))]
+static ARRIVED: std::sync::Mutex<Vec<Arrived>> = std::sync::Mutex::new(Vec::new());
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn map_callback(
     callback: impl FnOnce(Result<(), wgpu::BufferAsyncError>) + 'static,
@@ -290,11 +303,39 @@ pub(crate) fn map_callback(
         store.insert(*next, Box::new(callback));
         *next
     });
+    let parked_on = std::thread::current().id();
     move |result| {
-        let callback = PARKED.with(|parked| parked.borrow_mut().1.remove(&key));
-        if let Some(callback) = callback {
-            callback(result);
+        if std::thread::current().id() == parked_on {
+            run_parked(key, result);
+        } else if let Ok(mut arrived) = ARRIVED.lock() {
+            arrived.push((parked_on, key, result));
         }
+    }
+}
+
+/// Runs the callback this thread's store holds under `key` with `result`.
+#[cfg(not(target_arch = "wasm32"))]
+fn run_parked(key: u64, result: Result<(), wgpu::BufferAsyncError>) {
+    let callback = PARKED.with(|parked| parked.borrow_mut().1.remove(&key));
+    if let Some(callback) = callback {
+        callback(result);
+    }
+}
+
+/// Runs the map callbacks this thread's store holds whose results arrived
+/// on other threads, in the order they arrived.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn run_arrived_maps() {
+    let this = std::thread::current().id();
+    loop {
+        let next = ARRIVED.lock().ok().and_then(|mut arrived| {
+            let at = arrived.iter().position(|&(thread, _, _)| thread == this)?;
+            Some(arrived.remove(at))
+        });
+        let Some((_, key, result)) = next else {
+            return;
+        };
+        run_parked(key, result);
     }
 }
 
