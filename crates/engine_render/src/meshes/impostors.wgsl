@@ -3,10 +3,11 @@
 // over the upper hemisphere for placed objects, into one
 // layer of four texture arrays, drawn for instances too small for its
 // texels to show as a card facing the viewer that blends the three frames
-// around the view. Texels hold premultiplied coverage: albedo and coverage;
-// emissive color and emission mask; normal and depth; roughness and
-// metalness factors, occlusion and the sky the surface sees past its own
-// mesh. Normals are plain vectors, which filter and average
+// around the view, each read where the line of sight meets the surface
+// the frames' depths hold. Texels hold premultiplied coverage: albedo and
+// coverage; emissive color and emission mask; normal and depth; roughness
+// and metalness factors, occlusion and the sky the surface sees past its
+// own mesh. Normals are plain vectors, which filter and average
 // across levels as octahedral ones, folded across the lower hemisphere's
 // seams, cannot.
 //
@@ -15,6 +16,8 @@
 // The flag of records whose material is divided into rooms
 // (`far_rooms`), above the masked one.
 const IMPOSTOR_ROOMS: u32 = 0x40000u;
+// The flag of records whose meshes shade as foliage, above the frames.
+const IMPOSTOR_FOLIAGE: u32 = 0x1000000u;
 
 // One record per draw group; groups without an impostor never draw one.
 @group(1) @binding(11) var<storage, read> impostor_records: array<ImpostorRecord>;
@@ -24,13 +27,19 @@ const IMPOSTOR_ROOMS: u32 = 0x40000u;
 @group(1) @binding(15) var impostor_surface: texture_2d_array<f32>;
 @group(1) @binding(16) var impostor_sampler: sampler;
 
-// Baking: every frame renders the mesh orthographically into its cell of the
-// layer, instance `frame` for frame `frame`, the sphere filling the cell.
+// Baking: every frame renders the mesh orthographically into its cell, the
+// sphere filling the cell. A pass draws a tile of the grid's frames into
+// the cells of its own target, instance `i` the tile's `i`th frame along
+// its rows, which bakes copy into the layer; the frames' nearest depths
+// draw the whole grid as one tile.
 struct ImpostorBake {
     // Mesh-space center and radius of the frames' sphere.
     sphere: vec4<f32>,
     // The record's flags.
     flags: vec4<u32>,
+    // The tile: the grid's column and row of its first frame, its frames
+    // along each row, and the cells along each side of the pass's target.
+    tile: vec4<u32>,
 }
 @group(2) @binding(15) var<uniform> impostor_bake: ImpostorBake;
 // Each frame's nearest depth toward its viewer, at four times the layer's
@@ -60,7 +69,7 @@ fn impostor_self_visibility(position: vec3<f32>, normal: vec3<f32>) -> f32 {
     var total = 0.0;
     // Eight directions a side at most: finer grids look up every other
     // frame, or fewer.
-    let stride = max(frames / 8u, 1u);
+    let stride = (frames + 7u) / 8u;
     for (var frame = 0u; frame < frames * frames; frame++) {
         if (frame % frames) % stride != 0u || (frame / frames) % stride != 0u {
             continue;
@@ -106,20 +115,23 @@ struct BakeExtendedOutput {
     @location(4) uv1: vec2<f32>,
 }
 
-fn bake_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, uv: vec2<f32>, frame: u32)
+fn bake_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, uv: vec2<f32>, instance: u32)
         -> BakeOutput {
     let frames = impostor_frames(impostor_bake.flags.x);
+    let tile = impostor_bake.tile;
+    // The instance's cell in the pass's target, from the top left, and its
+    // frame in the grid.
+    let cell = vec2<u32>(instance % tile.z, instance / tile.z);
+    let frame = (tile.y + cell.y) * frames + tile.x + cell.x;
     let d = impostor_frame_direction(frame, frames, bake_hemisphere());
     let basis = impostor_basis(d);
     let local = (position - impostor_bake.sphere.xyz) / impostor_bake.sphere.w;
     let image = vec2<f32>(dot(local, basis.right), -dot(local, basis.up));
     let depth = clamp(dot(local, d), -1.0, 1.0);
-    // The frame's cell, from the top left.
-    let cell = vec2<f32>(f32(frame % frames), f32(frame / frames));
-    let atlas = (cell + 0.5 + image * 0.5) / f32(frames);
+    let drawn = (vec2<f32>(cell) + 0.5 + image * 0.5) / f32(tile.w);
     var output: BakeOutput;
     // Nearer the frame's viewer is greater, as reversed depth keeps it.
-    output.clip_position = vec4<f32>(atlas.x * 2.0 - 1.0, 1.0 - atlas.y * 2.0,
+    output.clip_position = vec4<f32>(drawn.x * 2.0 - 1.0, 1.0 - drawn.y * 2.0,
         0.5 + 0.5 * depth, 1.0);
     output.normal_u = vec4<f32>(octahedral_normal(encoded_normal), uv.x);
     output.local_v = vec4<f32>(position, uv.y);
@@ -129,15 +141,15 @@ fn bake_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, uv: vec2<f32>, fr
 
 @vertex
 fn vs_impostor_bake(@location(0) position: vec3<f32>, @location(1) normal: vec2<f32>,
-        @location(7) uv: vec2<f32>, @builtin(instance_index) frame: u32) -> BakeOutput {
-    return bake_vertex(position, normal, uv, frame);
+        @location(7) uv: vec2<f32>, @builtin(instance_index) instance: u32) -> BakeOutput {
+    return bake_vertex(position, normal, uv, instance);
 }
 
 @vertex
 fn vs_impostor_bake_extended(@location(0) position: vec3<f32>, @location(1) normal: vec2<f32>,
         @location(7) uv: vec2<f32>, @location(9) color: vec4<f32>, @location(10) uv1: vec2<f32>,
-        @builtin(instance_index) frame: u32) -> BakeExtendedOutput {
-    let vertex = bake_vertex(position, normal, uv, frame);
+        @builtin(instance_index) instance: u32) -> BakeExtendedOutput {
+    let vertex = bake_vertex(position, normal, uv, instance);
     var output: BakeExtendedOutput;
     output.clip_position = vertex.clip_position;
     output.normal_u = vertex.normal_u;
@@ -254,9 +266,15 @@ struct ImpostorInput {
     @location(3) batch: u32,
 }
 
+// A card point as fragments read it. Its line of sight is measured in
+// sphere radii toward the viewer from the plane through the center facing
+// the viewer, which it crosses where each blended frame shows at its layer
+// coordinates here, at the frame's own depth (its crossing); along it, each
+// frame's image moves by the frame's slope per radius.
 struct ImpostorOutput {
     @builtin(position) clip_position: vec4<f32>,
-    // Layer coordinates of the card point in the three blended frames.
+    // Layer coordinates, in the three blended frames, of where the line of
+    // sight crosses the plane through the center.
     @location(0) frames_ab: vec4<f32>,
     @location(1) frame_c: vec2<f32>,
     // The card point in world space.
@@ -266,13 +284,20 @@ struct ImpostorOutput {
     @location(3) @interpolate(flat) normal_x: vec4<f32>,
     @location(4) @interpolate(flat) normal_y: vec4<f32>,
     @location(5) @interpolate(flat) normal_z: vec3<f32>,
-    // World offset per unit of baked depth toward the viewer, and the
-    // card's own depth in those units.
+    // World offset per radius toward the viewer along the line of sight,
+    // and how far toward the viewer the card stands, in radii.
     @location(6) @interpolate(flat) depth_axis: vec4<f32>,
     // Linear color and opacity as four 16-bit fractions, the packed surface,
     // and the three frames (eight bits each).
     @location(7) @interpolate(flat) material: vec4<u32>,
     @location(8) @interpolate(flat) batch: u32,
+    // Each frame's depth toward its own viewer, in radii, where the line of
+    // sight crosses the plane.
+    @location(10) crossings: vec3<f32>,
+    // How each frame's image of the line of sight moves per radius toward
+    // the viewer, in the frame's image coordinates (-1 to 1 across it).
+    @location(11) @interpolate(flat) slopes_ab: vec4<f32>,
+    @location(12) @interpolate(flat) slope_c: vec2<f32>,
 }
 
 struct ImpostorTemporalOutput {
@@ -288,6 +313,9 @@ struct ImpostorTemporalOutput {
     @location(8) @interpolate(flat) batch: u32,
     // The unjittered previous clip position: x, y and w.
     @location(9) previous: vec3<f32>,
+    @location(10) crossings: vec3<f32>,
+    @location(11) @interpolate(flat) slopes_ab: vec4<f32>,
+    @location(12) @interpolate(flat) slope_c: vec2<f32>,
 }
 
 // Two triangles of a card, corners in its right and up.
@@ -358,22 +386,28 @@ fn impostor_card(input: ImpostorInput) -> ImpostorCard {
     let support = dot(abs(dir), half);
     let outline = vec2<f32>(dot(abs(basis.right), half), dot(abs(basis.up), half));
     let corner = IMPOSTOR_CARD[input.vertex];
-    let local = center + dir * support + basis.right * (corner.x * outline.x)
-        + basis.up * (corner.y * outline.y);
+    // Where the card point's line of sight crosses the plane through the
+    // center facing the viewer, from the center.
+    let across = basis.right * (corner.x * outline.x) + basis.up * (corner.y * outline.y);
+    let local = center + dir * support + across;
     let world = model * vec4<f32>(local, 1.0);
-    // Each frame shows the card point where the view projects it onto the
-    // frame's plane through the center.
-    let offset = local - center;
+    // Each frame's image of the line of sight: where that crossing shows,
+    // how it moves per radius toward the viewer, and its depth toward the
+    // frame's own viewer, which fragments follow to the surface the frames'
+    // depths hold.
     var uvs: array<vec2<f32>, 3>;
+    var slopes: array<vec2<f32>, 3>;
+    var crossings = vec3<f32>(0.0);
     var packed_frames = 0u;
     for (var k = 0u; k < 3u; k++) {
         let frame = corners[k].y * frames + corners[k].x;
         let d = impostor_frame_direction(frame, frames, hemisphere);
         let frame_basis = impostor_basis(d);
-        let projected = offset - dir * (dot(offset, d) / max(dot(dir, d), 1.0e-3));
-        let image = vec2<f32>(dot(projected, frame_basis.right), -dot(projected, frame_basis.up))
+        let image = vec2<f32>(dot(across, frame_basis.right), -dot(across, frame_basis.up))
             / radius;
         uvs[k] = (vec2<f32>(corners[k]) + 0.5 + image * 0.5) / f32(frames);
+        slopes[k] = vec2<f32>(dot(dir, frame_basis.right), -dot(dir, frame_basis.up));
+        crossings[k] = dot(across, d) / radius;
         packed_frames |= frame << (8u * k);
     }
     let color = colors[slot];
@@ -398,6 +432,9 @@ fn impostor_card(input: ImpostorInput) -> ImpostorCard {
     output.material = vec4<u32>(color.color, color.surface,
         packed_frames | (origin_key(model[3].xyz) & 0xff000000u));
     output.batch = input.batch;
+    output.crossings = crossings;
+    output.slopes_ab = vec4<f32>(slopes[0], slopes[1]);
+    output.slope_c = slopes[2];
     return ImpostorCard(local, output);
 }
 
@@ -437,13 +474,38 @@ fn vs_impostor_temporal(input: ImpostorInput) -> ImpostorTemporalOutput {
     output.material = vertex.material;
     output.batch = vertex.batch;
     output.previous = (camera.previous_view_projection * world).xyw;
+    output.crossings = vertex.crossings;
+    output.slopes_ab = vertex.slopes_ab;
+    output.slope_c = vertex.slope_c;
     return output;
 }
 
+// How squarely a frame faces the line of sight whose image in it moves by
+// `slope` per radius toward the viewer: the cosine between the two, kept
+// from vanishing where views from below see placed objects' frames from
+// the horizon.
+fn impostor_facing(slope: vec2<f32>) -> f32 {
+    return sqrt(max(1.0 - dot(slope, slope), 0.01));
+}
+
+// How far toward the viewer, in radii from the center, the line of sight
+// meets the surface a frame's texel holds, times the texel's coverage:
+// `sampled` its premultiplied depth (half of one more than the depth, times
+// coverage), `covered` its coverage, `crossing` the frame's depth where the
+// line of sight crosses the plane through the center, and `facing` how
+// squarely the frame faces it.
+fn impostor_met(sampled: f32, covered: f32, crossing: f32, facing: f32) -> f32 {
+    return (2.0 * sampled - covered * (1.0 + crossing)) / facing;
+}
+
 // The surface an impostor fragment shows: the three frames blended by
-// weight and coverage, unpremultiplied, on the slot's color and surface;
-// discards fragments the blend leaves under half covered, scaling coverage
-// up on coarser levels as masked materials do.
+// weight and coverage, unpremultiplied, on the slot's color and surface.
+// Each frame is read where the card point's line of sight meets the
+// surface the frames' depths hold, as their depths where it crosses the
+// plane through the center place it (parallax), so the three show the
+// same point as the view turns; discards fragments the blend leaves under
+// half covered, scaling coverage up on coarser levels as masked materials
+// do.
 fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     let record = impostor_records[impostor_index(input.batch)];
     let weights = vec3<f32>(input.normal_x.w, input.normal_y.w,
@@ -465,17 +527,45 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
         f32(countTrailingZeros(texels) - 1u));
     let inset = 0.5 * exp2(ceil(level)) / size;
     let span = 1.0 / f32(frames);
-    let unclamped = array<vec2<f32>, 3>(input.frames_ab.xy, input.frames_ab.zw, input.frame_c);
+    let scale = 1.0 + MASK_MIP_SCALE * level;
+    let crossed = array<vec2<f32>, 3>(input.frames_ab.xy, input.frames_ab.zw, input.frame_c);
+    let slopes = array<vec2<f32>, 3>(input.slopes_ab.xy, input.slopes_ab.zw, input.slope_c);
+    var cells: array<vec2<f32>, 3>;
+    var facings = vec3<f32>(0.0);
     var uvs: array<vec2<f32>, 3>;
-    var albedo = vec4<f32>(0.0);
+    var covered = vec3<f32>(0.0);
     for (var k = 0u; k < 3u; k++) {
-        let cell = vec2<f32>(f32(shown[k] % frames), f32(shown[k] / frames)) * span;
-        uvs[k] = clamp(unclamped[k], cell + inset, cell + span - inset);
-        albedo += weights[k] * textureSampleLevel(impostor_albedo, impostor_sampler, uvs[k],
-            record.layer, level);
+        cells[k] = vec2<f32>(f32(shown[k] % frames), f32(shown[k] / frames)) * span;
+        facings[k] = impostor_facing(slopes[k]);
+        uvs[k] = clamp(crossed[k], cells[k] + inset, cells[k] + span - inset);
+        covered[k] = textureSampleLevel(impostor_albedo, impostor_sampler, uvs[k],
+            record.layer, level).a;
     }
     // Most of a card around its mesh is empty: those fragments stop before
     // reading the rest.
+    let probed = dot(weights, covered);
+    if probed * scale < 1.0 / 255.0 {
+        discard;
+    }
+    // Where the line of sight meets the surfaces the frames hold there, by
+    // weight and coverage: each frame is then read where it shows that
+    // point.
+    var met = 0.0;
+    for (var k = 0u; k < 3u; k++) {
+        let sampled = textureSampleLevel(impostor_geometry, impostor_sampler, uvs[k],
+            record.layer, level).w;
+        met += weights[k] * impostor_met(sampled, covered[k], input.crossings[k], facings[k]);
+    }
+    let along = clamp(met / probed, -1.0, 1.0);
+    var albedo = vec4<f32>(0.0);
+    for (var k = 0u; k < 3u; k++) {
+        uvs[k] = clamp(crossed[k] + slopes[k] * (0.5 * span * along), cells[k] + inset,
+            cells[k] + span - inset);
+        let texel = textureSampleLevel(impostor_albedo, impostor_sampler, uvs[k], record.layer,
+            level);
+        covered[k] = texel.a;
+        albedo += weights[k] * texel;
+    }
     let coverage = albedo.a;
     // Masked materials' cards dissolve as their meshes do with hashed
     // cutoffs (`alpha_cutoff`).
@@ -484,7 +574,7 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
         fragment_pixel = input.clip_position.xy;
         cutoff = alpha_cutoff(cutoff);
     }
-    if coverage * (1.0 + MASK_MIP_SCALE * level) < cutoff {
+    if coverage * scale < cutoff {
         discard;
     }
     // Fading, a card covers the pixels its fade shows, what
@@ -498,11 +588,14 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     var emissive = vec4<f32>(0.0);
     var geometry = vec4<f32>(0.0);
     var surface = vec4<f32>(0.0);
+    var sight = 0.0;
     for (var k = 0u; k < 3u; k++) {
         emissive += weights[k] * textureSampleLevel(impostor_emissive, impostor_sampler, uvs[k],
             record.layer, level);
-        geometry += weights[k] * textureSampleLevel(impostor_geometry, impostor_sampler, uvs[k],
+        let sampled = textureSampleLevel(impostor_geometry, impostor_sampler, uvs[k],
             record.layer, level);
+        geometry += weights[k] * sampled;
+        sight += weights[k] * impostor_met(sampled.w, covered[k], input.crossings[k], facings[k]);
         surface += weights[k] * textureSampleLevel(impostor_surface, impostor_sampler, uvs[k],
             record.layer, level);
     }
@@ -510,16 +603,17 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     let mesh_normal = geometry.xyz * unpremultiply * 2.0 - 1.0;
     let geometric = stable_normalize(input.normal_x.xyz * mesh_normal.x
         + input.normal_y.xyz * mesh_normal.y + input.normal_z * mesh_normal.z);
-    // The surface behind the card point, at the blended depth.
-    let depth = geometry.w * unpremultiply * 2.0 - 1.0;
+    // The surface behind the card point: where its line of sight meets the
+    // surfaces the frames show, in radii toward the viewer from the center.
+    let depth = clamp(sight * unpremultiply, -1.0, 1.0);
     let world = input.world - input.depth_axis.xyz * (input.depth_axis.w - depth);
     // Roughness, metalness, emission over 16 and ripples.
     let slot_surface = unpack4x8unorm(input.material.z);
     let color = vec4<f32>(unpack2x16unorm(input.material.x), unpack2x16unorm(input.material.y));
     var albedo_color = albedo.rgb * unpremultiply * color.rgb;
-    // Masked foliage's leaves, tinted by their plant as their meshes are.
+    // Foliage's leaves, tinted by their plant as their meshes are.
     var leaf = 0.0;
-    if masked {
+    if (record.flags & IMPOSTOR_FOLIAGE) != 0u {
         leaf = leafiness(albedo_color);
         albedo_color *= plant_tint(packed, leaf);
     }
@@ -548,9 +642,8 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     point.view = stable_normalize(to_eye);
     point.n_v = max(dot(point.normal, point.view), 1.0e-4);
     point.world = world;
-    // Each frame measures depth along its own view, so blended frames
-    // rebuild the surface up to a few tenths of the radius off the mesh
-    // that casts its shadow: the sun is looked up a radius toward it, from
+    // The frames' depths rebuild the surface near, not on, the mesh that
+    // casts its shadow: the sun is looked up a radius toward it, from
     // outside the mesh's own shadow, with a flat receiver plane
     // (`world_dx` and `world_dy` stay zero). Placed objects' impostors
     // cast cards through their centers instead: a quarter
@@ -578,6 +671,9 @@ fn impostor_output(input: ImpostorTemporalOutput) -> ImpostorOutput {
     output.depth_axis = input.depth_axis;
     output.material = input.material;
     output.batch = input.batch;
+    output.crossings = input.crossings;
+    output.slopes_ab = input.slopes_ab;
+    output.slope_c = input.slope_c;
     return output;
 }
 

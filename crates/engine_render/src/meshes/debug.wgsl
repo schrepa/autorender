@@ -242,6 +242,9 @@ struct DebugImpostorOutput {
     @location(7) @interpolate(flat) material: vec4<u32>,
     @location(8) @interpolate(flat) batch: u32,
     @location(9) @interpolate(flat) object: vec2<u32>,
+    @location(10) crossings: vec3<f32>,
+    @location(11) @interpolate(flat) slopes_ab: vec4<f32>,
+    @location(12) @interpolate(flat) slope_c: vec2<f32>,
 }
 
 @vertex
@@ -260,6 +263,9 @@ fn vs_debug_impostor(input: ImpostorInput, @location(14) draw: vec4<u32>)
     output.material = card.material;
     output.batch = card.batch;
     output.object = vec2<u32>(draw.x, input.slot & ~MOVED_SLOT);
+    output.crossings = card.crossings;
+    output.slopes_ab = card.slopes_ab;
+    output.slope_c = card.slope_c;
     return output;
 }
 
@@ -285,6 +291,9 @@ fn fs_debug_impostor(input: DebugImpostorOutput) -> DebugImpostorTargets {
     card.depth_axis = input.depth_axis;
     card.material = input.material;
     card.batch = input.batch;
+    card.crossings = input.crossings;
+    card.slopes_ab = input.slopes_ab;
+    card.slope_c = input.slope_c;
     let point = impostor_point(card);
     let shaded = impostor_shaded(card, point, vec3<f32>(0.0));
     let fading = select(0u, DEBUG_FADING, (input.batch & IMPOSTOR_FADING) != 0u);

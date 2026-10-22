@@ -30,7 +30,8 @@ impl ImpostorDraws {
 }
 
 impl Renderer {
-    /// Impostors of this frame: drops those of retired or replaced meshes
+    /// Impostors of this frame: sizes placed objects' frames to where their
+    /// cards take over, drops those of retired or replaced meshes
     /// and materials, supplies the missing ones of opaque draw groups
     /// whose meshes have enough triangles on GPU-presented frames with
     /// them (baking into `encoder` after the materials' levels those no
@@ -42,9 +43,15 @@ impl Renderer {
         gpu_mode: bool,
         encoder: &mut Option<wgpu::CommandEncoder>,
     ) {
+        let settings = snapshot.environment.level_of_detail;
+        // Placed objects' frames hold the texels their cards span where
+        // they take over.
+        let pixels = settings.sanitized().impostor_pixels;
+        self.impostors
+            .placed
+            .fit(&self.device, AtlasShape::placed(pixels));
         // Records follow the plan, mesh residency, material groups, the
         // settings and the atlas.
-        let settings = snapshot.environment.level_of_detail;
         let key = |renderer: &Self| {
             (
                 renderer.structure_key(),

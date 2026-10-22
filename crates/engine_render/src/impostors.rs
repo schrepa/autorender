@@ -5,10 +5,14 @@
 //! with theirs, seen from a grid of
 //! directions, one layer of four texture arrays. Plan batches' frames cover
 //! the sphere, eight a side at 16 texels; placed objects', which stand on
-//! the ground, the upper hemisphere, sixteen a side at 64 texels. Layers
-//! also hold how much of the sky each texel's surface sees past its own
-//! mesh, which shades the sun on cards as the mesh's own shadows would; the
-//! light is the scene's, live.
+//! the ground, the upper hemisphere, twelve a side, each at least as many
+//! texels across as the pixels their cards span where they take over
+//! (`LevelOfDetail::impostor_pixels`), so no card shows magnified there.
+//! Layers hold each surface's color and coverage, normal and depth, and
+//! how much of the sky it sees past its own mesh, which shades the sun on
+//! cards as the mesh's own shadows would; the light is the scene's, live.
+//! Cards read each frame where the line of sight meets the surface the
+//! frames' depths hold, so the three show the same point as the view turns.
 //!
 //! Layers are records (`IMPOSTOR_RECORD`), keyed by the renderer's code,
 //! the atlas's shape and format and the content of the mesh and of the
@@ -42,10 +46,12 @@ use engine_core::{Material, MaterialHandle, MeshHandle, RecordKey};
 use crate::bindings::{IMPOSTOR_BAKE, IMPOSTOR_DRAW};
 use crate::cached::Cached;
 use crate::gpu_data::Variant;
+use crate::gpu_layouts::constants::IMPOSTOR_FOLIAGE as FOLIAGE;
 use crate::gpu_layouts::constants::IMPOSTOR_FRAMES_SHIFT as FRAMES_SHIFT;
 pub(crate) use crate::gpu_layouts::constants::IMPOSTOR_HEMISPHERE as HEMISPHERE;
 use crate::gpu_layouts::constants::IMPOSTOR_MASKED as MASKED;
 use crate::gpu_layouts::constants::IMPOSTOR_ROOMS as ROOMS;
+use crate::gpu_layouts::constants::VARIANT_FOLIAGE;
 pub(crate) use crate::gpu_layouts::impostors::ImpostorRecord;
 use crate::mesh_arena::MeshDraw;
 use crate::mipmaps::MipGenerator;
@@ -69,6 +75,15 @@ const RGBA8_SIZE: u32 = 512;
 /// once spreads their uploads over frames.
 const LOAD_BUDGET: usize = 16 << 20;
 
+/// Frames along each side of placed objects' grids over the upper
+/// hemisphere: every view falls among three of them, which cards read
+/// where the line of sight meets the surfaces their depths hold.
+const PLACED_FRAMES: u32 = 12;
+
+/// Bytes the arrays take at first: room for up to 16 small layers, for as
+/// few as one large one.
+const FIRST_BYTES: u64 = 16 << 20;
+
 /// How an atlas lays out its impostors: frames along each side of the grid,
 /// texels across a frame of the first level, and whether its frames cover
 /// only the upper hemisphere.
@@ -87,13 +102,21 @@ impl AtlasShape {
         texels: 16,
         hemisphere: false,
     };
-    /// Placed objects': sixteen frames a side of 64 texels over the upper
-    /// hemisphere, which views from below see from the horizon.
-    pub(crate) const PLACED: Self = Self {
-        frames: 16,
-        texels: 64,
-        hemisphere: true,
-    };
+
+    /// Placed objects' impostors, whose cards take over where their
+    /// bounding spheres span `pixels` of the viewport's height
+    /// (`LevelOfDetail::impostor_pixels`): [`PLACED_FRAMES`] a side over
+    /// the upper hemisphere, which views from below see from the horizon,
+    /// each as many texels across as those pixels, rounded up to a power of
+    /// two, so a card is not magnified where it takes over.
+    pub(crate) fn placed(pixels: f32) -> Self {
+        let texels = (pixels.ceil() as u32).clamp(2, 1 << 15);
+        Self {
+            frames: PLACED_FRAMES,
+            texels: texels.next_power_of_two(),
+            hemisphere: true,
+        }
+    }
 
     /// Texels across a layer's first level.
     pub(crate) fn size(self) -> u32 {
@@ -122,6 +145,21 @@ impl AtlasShape {
             },
             AtlasFormat::Bc7 | AtlasFormat::Astc | AtlasFormat::Rgba8 => self,
         }
+    }
+
+    /// The shape an atlas holding `format` on `device` holds this shape's
+    /// impostors at: [`Self::held`]'s, its frames' texels halved until a
+    /// layer fits the device's textures and a bake's read back its buffers.
+    fn held_on(self, device: &wgpu::Device, format: AtlasFormat) -> Self {
+        let limits = device.limits();
+        let mut shape = self.held(format);
+        while (shape.size() > limits.max_texture_dimension_2d
+            || records::readback_bytes(shape) > limits.max_buffer_size)
+            && shape.texels > 2
+        {
+            shape.texels /= 2;
+        }
+        shape
     }
 }
 
@@ -230,13 +268,14 @@ impl AtlasFormat {
 
 impl ImpostorRecord {
     /// The record of a mesh with bounds `min` to `max` held in `layer` of
-    /// an atlas at `shape`, whose material emits `emissive`, is `masked`
-    /// (alpha tested) and is divided into `rooms`.
+    /// an atlas at `shape`, whose material emits `emissive`, which is
+    /// `masked` (alpha tested), shades as `foliage` and is divided into
+    /// `rooms`.
     pub(crate) fn new(
         min: Vec3,
         max: Vec3,
         layer: u32,
-        (emissive, masked, rooms): ([f32; 3], bool, bool),
+        (emissive, masked, foliage, rooms): ([f32; 3], bool, bool, bool),
         shape: AtlasShape,
     ) -> Self {
         let center = (min + max) * 0.5;
@@ -249,7 +288,10 @@ impl ImpostorRecord {
             extent: half.to_array(),
             layer,
             emissive,
-            flags: shape.flags() | if masked { MASKED } else { 0 } | if rooms { ROOMS } else { 0 },
+            flags: shape.flags()
+                | if masked { MASKED } else { 0 }
+                | if foliage { FOLIAGE } else { 0 }
+                | if rooms { ROOMS } else { 0 },
         }
     }
 
@@ -306,10 +348,18 @@ impl Layers {
     }
 }
 
-/// The capacity arrays grow to for `needed` layers: powers of two from 16,
-/// never beyond `limit`.
-pub(crate) fn grown_layers(needed: u32, limit: u32) -> u32 {
-    needed.max(16).next_power_of_two().min(limit).max(needed)
+/// The capacity arrays grow to for `needed` layers of `bytes` each: powers
+/// of two from as many as [`FIRST_BYTES`] hold (one to 16), never beyond
+/// `limit`.
+pub(crate) fn grown_layers(needed: u32, bytes: u64, limit: u32) -> u32 {
+    let first = (FIRST_BYTES / bytes.max(1)).clamp(1, 16) as u32;
+    needed.max(first).next_power_of_two().min(limit).max(needed)
+}
+
+/// Whether what `variant` draws shades as foliage: masked, or of a foliage
+/// material, as meshes do.
+fn shades_as_foliage(variant: Variant) -> bool {
+    variant.alpha_mask() || variant.bits() & VARIANT_FOLIAGE != 0
 }
 
 /// The most impostors an atlas holds on `device` within `budget`.
@@ -545,7 +595,7 @@ impl ImpostorAtlas {
     pub(crate) fn new(device: &wgpu::Device, shape: AtlasShape) -> Self {
         let format = AtlasFormat::of(device);
         Self {
-            shape: shape.held(format),
+            shape: shape.held_on(device, format),
             format,
             arrays: None,
             targets: None,
@@ -574,6 +624,30 @@ impl ImpostorAtlas {
         self.cooking = cooking;
     }
 
+    /// Holds impostors of `shape` from now on. Where `device` holds those
+    /// at another shape than the atlas does, its impostors, arrays and
+    /// draws' group go, with what it asked hosts for and what it was
+    /// reading back, and draws supply them anew at that shape, whose
+    /// records are others.
+    pub(crate) fn fit(&mut self, device: &wgpu::Device, shape: AtlasShape) {
+        let shape = shape.held_on(device, self.format);
+        if shape == self.shape {
+            return;
+        }
+        self.shape = shape;
+        self.arrays = None;
+        self.targets = None;
+        self.group = Cached::default();
+        self.layers = Layers::default();
+        self.baked.clear();
+        self.supplies.clear();
+        self.supplied.clear();
+        self.wants.clear();
+        self.answers.clear();
+        self.readbacks.clear();
+        self.generation += 1;
+    }
+
     /// Advances whenever an impostor becomes resident or is dropped, and
     /// whenever hosts answer for a record or an answer waits a frame.
     pub(crate) fn generation(&self) -> u64 {
@@ -588,9 +662,12 @@ impl ImpostorAtlas {
     /// GPU bytes of the arrays and records.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         let layers = self.arrays.as_ref().map_or(0, |arrays| arrays.layers);
-        let level = self.format.level_bytes(self.shape.size()) as u64;
-        // Four arrays, a third more for the levels.
-        u64::from(layers) * level * 4 * 4 / 3 + self.records.size()
+        u64::from(layers) * self.layer_bytes() + self.records.size()
+    }
+
+    /// GPU bytes of a layer: four arrays, a third more for the levels.
+    fn layer_bytes(&self) -> u64 {
+        self.format.level_bytes(self.shape.size()) as u64 * 4 * 4 / 3
     }
 
     /// Whether the impostor of `key` is resident.
@@ -790,7 +867,9 @@ impl ImpostorAtlas {
         Some(layer)
     }
 
-    /// `key` resident in `layer`, drawing `source`.
+    /// `key` resident in `layer`, drawing `source`: its card dissolves as
+    /// masked meshes do where its mesh or a part is masked, and shades as
+    /// foliage where one is masked or of a foliage material, as they do.
     fn resident(&mut self, key: ImpostorKey, source: &BakeSource<'_>, layer: u32) {
         let emissive = source
             .material
@@ -800,11 +879,17 @@ impl ImpostorAtlas {
             .material
             .as_ref()
             .is_some_and(|material| material.windows().is_some());
+        let variants = || {
+            std::iter::once(source.variant)
+                .chain(source.parts.iter().map(|part| part.variant))
+        };
+        let masked = variants().any(Variant::alpha_mask);
+        let foliage = variants().any(shades_as_foliage);
         let record = ImpostorRecord::new(
             source.bounds.0,
             source.bounds.1,
             layer,
-            (emissive, source.variant.alpha_mask(), rooms),
+            (emissive, masked, foliage, rooms),
             self.shape,
         );
         self.baked.insert(
@@ -838,7 +923,11 @@ impl ImpostorAtlas {
         {
             return;
         }
-        let capacity = grown_layers(layers, device.limits().max_texture_array_layers);
+        let capacity = grown_layers(
+            layers,
+            self.layer_bytes(),
+            device.limits().max_texture_array_layers,
+        );
         let (size, levels) = (self.shape.size(), self.shape.levels());
         let textures = self.format.textures().map(|format| {
             crate::targets::texture_2d(

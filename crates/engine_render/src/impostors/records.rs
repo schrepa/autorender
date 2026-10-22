@@ -72,6 +72,14 @@ struct Region {
     row: u32,
 }
 
+/// Level `level` of an RGBA8 texture of `shape` in a buffer: its rows, the
+/// bytes from one row's start to the next's (padded to [`ROW`]), and those
+/// each row holds.
+fn level_rows(shape: AtlasShape, level: u32) -> (u32, u32, u32) {
+    let (row, rows) = AtlasFormat::Rgba8.rows(shape.size() >> level);
+    (rows, row.next_multiple_of(ROW), row)
+}
+
 /// The regions of the RGBA8 levels of four textures of `shape`, each row
 /// padded to [`ROW`], the first texture's levels first, and the bytes they
 /// take.
@@ -80,8 +88,7 @@ fn level_regions(shape: AtlasShape) -> (Vec<Region>, u64) {
     let mut bytes = 0_u64;
     for _ in 0..4 {
         for level in 0..shape.levels() {
-            let (row, rows) = AtlasFormat::Rgba8.rows(shape.size() >> level);
-            let stride = row.next_multiple_of(ROW);
+            let (rows, stride, row) = level_rows(shape, level);
             regions.push(Region {
                 offset: bytes,
                 rows,
@@ -92,6 +99,17 @@ fn level_regions(shape: AtlasShape) -> (Vec<Region>, u64) {
         }
     }
     (regions, bytes)
+}
+
+/// The bytes a bake's layer at `shape` reads back into: [`level_regions`]'
+/// total.
+pub(super) fn readback_bytes(shape: AtlasShape) -> u64 {
+    4 * (0..shape.levels())
+        .map(|level| {
+            let (rows, stride, _) = level_rows(shape, level);
+            u64::from(stride) * u64::from(rows)
+        })
+        .sum::<u64>()
 }
 
 /// Where a read back stands: recorded into a frame not yet submitted,

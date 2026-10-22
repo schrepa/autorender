@@ -1,8 +1,10 @@
 //! Baking an impostor no host holds the record of: its mesh drawn with its
 //! material, and its parts with theirs, from every frame's direction into a
-//! layer at the atlas's shape
-//! (the frames' nearest depths first, which the colors' bake looks up for
-//! the sky each surface sees past its mesh), then the levels below, read
+//! layer at the atlas's shape (the frames' nearest depths first, the whole
+//! grid at once, which the colors' bake looks up for the sky each surface
+//! sees past its mesh; then the colors a tile of frames at a time, each
+//! tile copied into the layer, so the multisampled targets stay a tile's
+//! size however many texels the frames hold), then the levels below, read
 //! back as its record (`super::records`), which then loads as any record
 //! does.
 
@@ -18,16 +20,28 @@ const BAKE_DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// times the layer's texels across, up to [`SHADE_MOST`].
 const SHADE_SCALE: u32 = 4;
 const SHADE_MOST: u32 = 2048;
+/// Texels across the tiles of frames whose colors a bake draws at once,
+/// or a frame's where one is wider.
+const TILE_TEXELS: u32 = 1024;
 
-/// Targets every bake renders into: the frames' nearest depths, the
-/// multisampled colors and their depth, and the layer they resolve to at
-/// the bake's shape, with its levels, which records read back.
+/// Targets every bake renders into: the frames' nearest depths, a tile's
+/// multisampled colors and their depth, the colors they resolve to, and
+/// the layer the tiles are copied into at the bake's shape, with its
+/// levels, which records read back.
 pub(super) struct BakeTargets {
     shade: wgpu::TextureView,
     colors: [wgpu::TextureView; 4],
     depth: wgpu::TextureView,
+    resolves: [wgpu::TextureView; 4],
+    resolved: [wgpu::Texture; 4],
     pub(super) layer: [wgpu::Texture; 4],
     _textures: [wgpu::Texture; 6],
+}
+
+/// Frames along each side of the tiles a bake at `shape` draws its colors
+/// in.
+fn tile_frames(shape: AtlasShape) -> u32 {
+    (TILE_TEXELS / shape.texels).clamp(1, shape.frames)
 }
 
 impl ImpostorAtlas {
@@ -63,10 +77,15 @@ impl ImpostorAtlas {
     }
 }
 
+/// What a bake draws, the mesh and then each part: its draw, whether it
+/// reads extra streams, its material's group and its variant, an uber
+/// variant as bakes are rare.
+type BakeDraw<'a> = (&'a MeshDraw<'a>, bool, &'a wgpu::BindGroup, Variant);
+
 /// Draws `source` and its parts from every frame's direction of `shape`
 /// into `targets`' layer, with the bake pipelines of `shader` that
 /// `pipelines` keep: the frames' nearest depths first, which the colors'
-/// bake looks up.
+/// bake looks up, then the colors a tile at a time.
 fn draw_layer(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
@@ -76,11 +95,7 @@ fn draw_layer(
     source: &BakeSource<'_>,
     shape: AtlasShape,
 ) {
-    let (shade_group, color_group) = bake_groups(device, pipelines, targets, source, shape);
-    // The mesh, then each part: its draw, whether it reads extra streams,
-    // its material's group and its variant, an uber variant as bakes are
-    // rare.
-    let draws: Vec<(&MeshDraw<'_>, bool, &wgpu::BindGroup, Variant)> =
+    let draws: Vec<BakeDraw<'_>> =
         std::iter::once((&source.draw, source.extended, source.group, source.variant))
             .chain(
                 source
@@ -103,33 +118,29 @@ fn draw_layer(
             .entry(variant)
             .or_insert_with(|| bake_pipeline(device, shader, layout, variant, true));
     }
-    let frames = shape.frames * shape.frames;
-    let (bake_pipelines, shade_pipelines) = (&pipelines.bake_pipelines, &pipelines.shade_pipelines);
-    let draw = |pass: &mut wgpu::RenderPass<'_>, shade: bool| {
-        for &(mesh, extended, group, variant) in &draws {
-            let kept = if shade {
-                shade_pipelines
-            } else {
-                bake_pipelines
-            };
-            let Some(pipeline) = kept.get(&variant) else {
-                continue;
-            };
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(1, group, &[]);
-            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-            if extended && let Some(extras) = mesh.extras {
-                pass.set_vertex_buffer(1, extras.slice(..));
-            }
-            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(
-                mesh.first_index..mesh.first_index + mesh.index_count,
-                mesh.base_vertex,
-                0..frames,
-            );
-        }
-    };
+    let no_shade = pipelines
+        .no_shade
+        .get_or_insert_with(|| {
+            bake_texture(
+                device,
+                1,
+                1,
+                BAKE_DEPTH,
+                wgpu::TextureUsages::TEXTURE_BINDING,
+            )
+            .create_view(&Default::default())
+        })
+        .clone();
+    let drawn = (&*pipelines, draws.as_slice());
+    let frames = shape.frames;
     {
+        let group = bake_group(
+            device,
+            drawn.0,
+            (source, shape),
+            [0, 0, frames, frames],
+            &no_shade,
+        );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("engine/impostor-shade"),
             color_attachments: &[],
@@ -145,60 +156,155 @@ fn draw_layer(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_bind_group(2, &shade_group, &[]);
-        draw(&mut pass, true);
+        pass.set_bind_group(2, &group, &[]);
+        draw_frames(&mut pass, drawn, true, frames * frames);
     }
-    let resolves = targets.layer.each_ref().map(first_level);
-    let attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> = targets
-        .colors
-        .iter()
-        .zip(&resolves)
-        .map(|(view, resolve)| {
-            Some(wgpu::RenderPassColorAttachment {
-                view,
-                depth_slice: None,
-                resolve_target: Some(resolve),
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Discard,
-                },
-            })
-        })
-        .collect();
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("engine/impostor-bake"),
-        color_attachments: &attachments,
-        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-            view: &targets.depth,
-            depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(0.0),
-                store: wgpu::StoreOp::Discard,
-            }),
-            stencil_ops: None,
-        }),
-        timestamp_writes: None,
-        occlusion_query_set: None,
-        multiview_mask: None,
-    });
-    pass.set_bind_group(2, &color_group, &[]);
-    draw(&mut pass, false);
+    let side = tile_frames(shape) as usize;
+    for row in (0..frames).step_by(side) {
+        for column in (0..frames).step_by(side) {
+            draw_tile(
+                (device, &mut *encoder),
+                drawn,
+                targets,
+                (source, shape),
+                (column, row),
+            );
+        }
+    }
 }
 
-/// The bake's groups of `source` at `shape`: the frames' nearest depths'
-/// pass, which reads none, and the colors', which reads `targets'`.
-fn bake_groups(
-    device: &wgpu::Device,
-    pipelines: &mut ImpostorPipelines,
+/// Draws `draws` into `pass` with the bake pipelines `pipelines` keep, the
+/// frames' nearest depths alone with `shade`: `frames` instances each,
+/// the frames of the pass's tile.
+fn draw_frames(
+    pass: &mut wgpu::RenderPass<'_>,
+    (pipelines, draws): (&ImpostorPipelines, &[BakeDraw<'_>]),
+    shade: bool,
+    frames: u32,
+) {
+    let kept = if shade {
+        &pipelines.shade_pipelines
+    } else {
+        &pipelines.bake_pipelines
+    };
+    for &(mesh, extended, group, variant) in draws {
+        let Some(pipeline) = kept.get(&variant) else {
+            continue;
+        };
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(1, group, &[]);
+        pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+        if extended && let Some(extras) = mesh.extras {
+            pass.set_vertex_buffer(1, extras.slice(..));
+        }
+        pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(
+            mesh.first_index..mesh.first_index + mesh.index_count,
+            mesh.base_vertex,
+            0..frames,
+        );
+    }
+}
+
+/// Draws the colors of `source` at `shape` for the tile of frames from
+/// the grid's `column` and `row` into `targets`, then copies what they
+/// resolve to into the tile's place in the layer. Tiles at the grid's far
+/// edges hold fewer frames, in the cells nearest their targets' top left.
+fn draw_tile(
+    (device, encoder): (&wgpu::Device, &mut wgpu::CommandEncoder),
+    drawn: (&ImpostorPipelines, &[BakeDraw<'_>]),
     targets: &BakeTargets,
-    source: &BakeSource<'_>,
-    shape: AtlasShape,
-) -> (wgpu::BindGroup, wgpu::BindGroup) {
+    (source, shape): (&BakeSource<'_>, AtlasShape),
+    (column, row): (u32, u32),
+) {
+    let side = tile_frames(shape);
+    let (columns, rows) = (side.min(shape.frames - column), side.min(shape.frames - row));
+    let group = bake_group(
+        device,
+        drawn.0,
+        (source, shape),
+        [column, row, columns, side],
+        &targets.shade,
+    );
+    {
+        let attachments: Vec<Option<wgpu::RenderPassColorAttachment<'_>>> = targets
+            .colors
+            .iter()
+            .zip(&targets.resolves)
+            .map(|(view, resolve)| {
+                Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: Some(resolve),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Discard,
+                    },
+                })
+            })
+            .collect();
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("engine/impostor-bake"),
+            color_attachments: &attachments,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &targets.depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(0.0),
+                    store: wgpu::StoreOp::Discard,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_bind_group(2, &group, &[]);
+        draw_frames(&mut pass, drawn, false, columns * rows);
+    }
+    for (resolved, layer) in targets.resolved.iter().zip(&targets.layer) {
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: resolved,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: layer,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: column * shape.texels,
+                    y: row * shape.texels,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: columns * shape.texels,
+                height: rows * shape.texels,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+}
+
+/// The group of a bake pass of `source` at `shape` drawing `tile` (the
+/// grid's column and row of its first frame, its frames along each row and
+/// the cells along each side of the pass's target), reading the frames'
+/// nearest depths from `shade`, or a stand-in while they are drawn.
+fn bake_group(
+    device: &wgpu::Device,
+    pipelines: &ImpostorPipelines,
+    (source, shape): (&BakeSource<'_>, AtlasShape),
+    tile: [u32; 4],
+    shade: &wgpu::TextureView,
+) -> wgpu::BindGroup {
     // The bake's own record: its sphere and the bake's flags.
     let baking = ImpostorRecord::new(
         source.bounds.0,
         source.bounds.1,
         0,
-        ([0.0; 3], false, false),
+        ([0.0; 3], false, false, false),
         shape,
     );
     let uniform = wgpu::util::DeviceExt::create_buffer_init(
@@ -208,43 +314,21 @@ fn bake_groups(
             contents: bytemuck::bytes_of(&ImpostorBakeUniform {
                 sphere: baking.sphere,
                 flags: [baking.flags, 0, 0, 0],
+                tile,
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         },
     );
-    let no_shade = pipelines.no_shade.get_or_insert_with(|| {
-        bake_texture(
-            device,
-            1,
-            1,
-            BAKE_DEPTH,
-            wgpu::TextureUsages::TEXTURE_BINDING,
-        )
-        .create_view(&Default::default())
-    });
-    let group = |shade: &wgpu::TextureView| {
-        crate::pipelines::group(
-            device,
-            "engine/impostor-bake-group",
-            &IMPOSTOR_BAKE,
-            &pipelines.bake_layout,
-            &[
-                ("impostor_bake", uniform.as_entire_binding()),
-                ("impostor_shade", crate::pipelines::view(shade)),
-            ],
-        )
-    };
-    (group(no_shade), group(&targets.shade))
-}
-
-/// The first level of `texture`, which bakes resolve into.
-fn first_level(texture: &wgpu::Texture) -> wgpu::TextureView {
-    texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some("engine/impostor-layer"),
-        base_mip_level: 0,
-        mip_level_count: Some(1),
-        ..Default::default()
-    })
+    crate::pipelines::group(
+        device,
+        "engine/impostor-bake-group",
+        &IMPOSTOR_BAKE,
+        &pipelines.bake_layout,
+        &[
+            ("impostor_bake", uniform.as_entire_binding()),
+            ("impostor_shade", crate::pipelines::view(shade)),
+        ],
+    )
 }
 
 fn bake_texture(
@@ -272,10 +356,11 @@ fn bake_texture(
 
 fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
     let size = shape.size();
-    let target = |format| {
+    let tile = tile_frames(shape) * shape.texels;
+    let sampled = |format| {
         bake_texture(
             device,
-            size,
+            tile,
             BAKE_SAMPLES,
             format,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -289,13 +374,23 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
             BAKE_DEPTH,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         ),
-        target(FORMATS[0]),
-        target(FORMATS[1]),
-        target(FORMATS[2]),
-        target(FORMATS[3]),
-        target(BAKE_DEPTH),
+        sampled(FORMATS[0]),
+        sampled(FORMATS[1]),
+        sampled(FORMATS[2]),
+        sampled(FORMATS[3]),
+        sampled(BAKE_DEPTH),
     ];
-    // The layer the colors resolve to, with its levels, which records
+    // What a tile's colors resolve to, copied into the layer.
+    let resolved = FORMATS.map(|format| {
+        bake_texture(
+            device,
+            tile,
+            1,
+            format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        )
+    });
+    // The layer the tiles are copied into, with its levels, which records
     // read back.
     let layer = FORMATS.map(|format| {
         device.create_texture(&wgpu::TextureDescriptor {
@@ -311,7 +406,8 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
             format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         })
     });
@@ -325,6 +421,8 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
             view(&textures[4]),
         ],
         depth: view(&textures[5]),
+        resolves: resolved.each_ref().map(view),
+        resolved,
         layer,
         _textures: textures,
     }

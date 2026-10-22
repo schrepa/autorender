@@ -40,7 +40,10 @@ settings! {
         pub impostors: bool = true => any,
         /// The size below which placed objects draw their impostor cards:
         /// the pixels of the viewport height their bounding spheres span.
-        /// Larger shows cards nearer; cards fade in over `fade_seconds`.
+        /// Their frames hold as many texels across, rounded up to a power
+        /// of two, so cards are not magnified where they take over, and
+        /// their atlas's memory grows with its square. Larger shows cards
+        /// nearer; cards fade in over `fade_seconds`.
         pub impostor_pixels: f32 = 128.0 => range(8.0, 4096.0),
         /// The most impostors kept resident; omitted for no budget.
         #[serde(skip_serializing_if = "Option::is_none")]

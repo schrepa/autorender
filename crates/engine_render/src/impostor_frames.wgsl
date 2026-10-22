@@ -5,7 +5,8 @@
 // The flag of records whose frames cover only the upper hemisphere, above
 // their texels across a frame.
 const IMPOSTOR_HEMISPHERE: u32 = 0x10000u;
-// The flag of records whose material is masked (alpha tested), above that.
+// The flag of records whose material, or a part's, is masked (alpha
+// tested), above that.
 const IMPOSTOR_MASKED: u32 = 0x20000u;
 // Records' frames along each side of their grid, five bits from this one.
 const IMPOSTOR_FRAMES_SHIFT: u32 = 19u;

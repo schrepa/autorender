@@ -190,7 +190,10 @@ impl Renderer {
             ImpostorPipelines::new(&device, materials.layout(), &mesh_pipelines.empty_layout);
         let impostor_atlases = (
             ImpostorAtlas::new(&device, AtlasShape::SPHERE),
-            ImpostorAtlas::new(&device, AtlasShape::PLACED),
+            ImpostorAtlas::new(
+                &device,
+                AtlasShape::placed(engine_core::LevelOfDetail::default().impostor_pixels),
+            ),
         );
         let gpu_presentation = GpuPresentationPass::new(&device);
         // Popping takes effect now; validation resolves once they compiled.

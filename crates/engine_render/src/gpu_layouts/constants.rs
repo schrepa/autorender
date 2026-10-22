@@ -133,11 +133,14 @@ gpu_consts! {
     /// The flag of records whose frames cover only the upper hemisphere, above
     /// their texels across a frame.
     pub(crate) const IMPOSTOR_HEMISPHERE: u32 = 1 << 16 => ["IMPOSTOR_HEMISPHERE"];
-    /// The flag of impostor records whose material is masked.
+    /// The flag of impostor records whose material, or a part's, is masked.
     pub(crate) const IMPOSTOR_MASKED: u32 = 1 << 17 => ["IMPOSTOR_MASKED"];
     /// The flag of impostor records whose material is divided into rooms
     /// (`Material::windows`).
     pub(crate) const IMPOSTOR_ROOMS: u32 = 1 << 18 => ["IMPOSTOR_ROOMS"];
+    /// The flag of impostor records whose meshes shade as foliage: masked,
+    /// or of foliage materials (`Material::is_foliage`); above the frames.
+    pub(crate) const IMPOSTOR_FOLIAGE: u32 = 1 << 24 => ["IMPOSTOR_FOLIAGE"];
 
     // crate::decals
     /// `DecalRecord::pose` of decals drawn from their own matrix.
