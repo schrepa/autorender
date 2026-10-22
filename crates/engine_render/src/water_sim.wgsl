@@ -1323,21 +1323,24 @@ fn sim_foam_froude(water: vec4<f32>) -> f32 {
 
 // The power (watts a square meter of bed) water standing as `upstream`
 // (its surface, depth and velocity) spends landing in a cell `dx` meters
-// across standing as `here`, `toward` the way from it into the cell: the
-// head it loses times the water it brings, where it plunges, dropping
-// SIM_FOAM_DROP or more into the cell, or jumps, running at SIM_FOAM_JUMP
-// times its waves' speed or faster into water slower than its waves; none
-// elsewhere.
-fn sim_foam_landing(upstream: vec4<f32>, here: vec4<f32>, toward: vec2<f32>, dx: f32) -> f32 {
+// across standing as `here`, the cell past it standing as `beyond` and
+// `toward` the way from it into the cell: the head it loses times the
+// water it brings, where it plunges, its surface falling into the cell
+// SIM_FOAM_DROP or more further than it falls on past it (a step, not the
+// steady fall of a slope), or jumps, running at SIM_FOAM_JUMP times its
+// waves' speed or faster into water slower than its waves; none elsewhere.
+fn sim_foam_landing(upstream: vec4<f32>, here: vec4<f32>, beyond: vec4<f32>, toward: vec2<f32>,
+        dx: f32) -> f32 {
     let drop = upstream.x - here.x;
-    let plunges = drop >= SIM_FOAM_DROP;
+    let step = drop - max(here.x - beyond.x, 0.0);
+    let plunges = step >= SIM_FOAM_DROP;
     let jumps = sim_foam_froude(upstream) >= SIM_FOAM_JUMP && sim_foam_froude(here) < 1.0;
     if !plunges && !jumps {
         return 0.0;
     }
     let brought = upstream.y * max(dot(upstream.zw, toward), 0.0);
     let speeds = dot(upstream.zw, upstream.zw) - dot(here.zw, here.zw);
-    let head = drop + speeds / (2.0 * SIM_GRAVITY);
+    let head = select(drop, step, plunges) + speeds / (2.0 * SIM_GRAVITY);
     return SIM_DENSITY * SIM_GRAVITY * brought * max(head, 0.0) / dx;
 }
 
@@ -1419,14 +1422,14 @@ fn sim_churn(
     let east = sim_moving(q, i + 1, j, here);
     let south = sim_moving(q, i, j - 1, here);
     let north = sim_moving(q, i, j + 1, here);
-    let landing = sim_foam_landing(west, here, vec2<f32>(1.0, 0.0), dx)
-        + sim_foam_landing(east, here, vec2<f32>(-1.0, 0.0), dx)
-        + sim_foam_landing(south, here, vec2<f32>(0.0, 1.0), dx)
-        + sim_foam_landing(north, here, vec2<f32>(0.0, -1.0), dx);
+    let landing = sim_foam_landing(west, here, east, vec2<f32>(1.0, 0.0), dx)
+        + sim_foam_landing(east, here, west, vec2<f32>(-1.0, 0.0), dx)
+        + sim_foam_landing(south, here, north, vec2<f32>(0.0, 1.0), dx)
+        + sim_foam_landing(north, here, south, vec2<f32>(0.0, -1.0), dx);
     let slope = length(vec2<f32>(east.x - west.x, north.x - south.x)) / (2.0 * dx);
     let swirl = abs(east.w - west.w - north.z + south.z) / (2.0 * dx);
     let converging = max(-(east.z - west.z + north.w - south.w) / (2.0 * dx), 0.0);
-    var churn = (max(sim_dissipation(q, cell.at), 0.0) + landing) / SIM_FOAM_POWER
+    var churn = (max(sim_dissipation(q, cell), 0.0) + landing) / SIM_FOAM_POWER
         + max(swirl - SIM_FOAM_SWIRL, 0.0) / SIM_FOAM_SWIRL + converging / SIM_FOAM_PILING;
     if SIM_GRAVITY * slope * length(here.zw) < SIM_FOAM_LOSS {
         churn = 0.0;

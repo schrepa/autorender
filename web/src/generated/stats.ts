@@ -710,6 +710,11 @@ export interface TerrainRenderStats {
   vt_pages: number;
   /** Pages the runtime virtual texture's sheets hold. */
   vt_slots: number;
+  /**
+   * Emitters of spray and mist white water spawned at terrains' rapids,
+   * where their settled water loses energy fastest.
+   */
+  white_water: number;
 }
 
 /** Virtual geometry, read back a few frames late. */
@@ -764,4 +769,10 @@ export interface WaterStats {
   dropped_blocks: number;
   /** Terrain patches holding water drawn. */
   patches: number;
+  /**
+   * Cells along a side of the square around the camera over which
+   * rivers run live: 0 while none do, fewer than the water settings ask
+   * where the device's storage bindings cannot hold its buffers.
+   */
+  simulated_cells: number;
 }

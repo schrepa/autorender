@@ -1008,6 +1008,12 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "white_water": {
+          "description": "Emitters of spray and mist white water spawned at terrains' rapids,\nwhere their settled water loses energy fastest.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
@@ -1038,7 +1044,8 @@
         "placed_objects",
         "placed_far_objects",
         "placed_impostors",
-        "dropped_placed_objects"
+        "dropped_placed_objects",
+        "white_water"
       ],
       "type": "object"
     },
@@ -1152,12 +1159,19 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "simulated_cells": {
+          "description": "Cells along a side of the square around the camera over which\nrivers run live: 0 while none do, fewer than the water settings ask\nwhere the device's storage bindings cannot hold its buffers.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
         "patches",
         "blocks",
-        "dropped_blocks"
+        "dropped_blocks",
+        "simulated_cells"
       ],
       "type": "object"
     }

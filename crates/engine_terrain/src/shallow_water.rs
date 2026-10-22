@@ -103,7 +103,8 @@ pub const FOAM_WET: f32 = 0.005;
 /// slope times its speed, what water running 0.4 meters a second down a
 /// riffle's half percent loses. Pools and gentle runs stay unbroken.
 pub const FOAM_LOSS: f32 = 0.02;
-/// Meters water drops into a cell to plunge: falling that far it lands at
+/// Meters further than it falls on past a cell water drops into it to
+/// plunge (a step, not a slope's steady fall): falling that far it lands at
 /// the meter a second (√(2·g·h)) past which plunging water draws air in
 /// (Ervine, McKeogh and Elsawy 1980).
 pub const FOAM_DROP: f32 = 0.05;

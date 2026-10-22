@@ -492,6 +492,7 @@
         "terrain-files",
         "terrain-surface",
         "terrain-water-sky",
+        "torrent",
         "virtual-geometry"
       ]
     },
@@ -627,7 +628,8 @@
         "terrain",
         "terrain-surface",
         "terrain-water-sky",
-        "texture"
+        "texture",
+        "torrent"
       ]
     },
     {
@@ -683,6 +685,7 @@
         "taa",
         "terrain-surface",
         "texture",
+        "torrent",
         "virtual-geometry"
       ]
     },
@@ -694,7 +697,8 @@
         "jobs",
         "lod",
         "native",
-        "surfaces"
+        "surfaces",
+        "torrent"
       ]
     },
     {
@@ -740,7 +744,8 @@
       "op": "probe",
       "smokes": [
         "debug-view",
-        "surfaces"
+        "surfaces",
+        "torrent"
       ]
     }
   ],
@@ -902,7 +907,8 @@
         "terrain",
         "terrain-files",
         "terrain-surface",
-        "terrain-water-sky"
+        "terrain-water-sky",
+        "torrent"
       ],
       "stats": true
     },
@@ -951,9 +957,11 @@
       "inspector": "Water",
       "section": "water",
       "smokes": [
+        "debug-view",
         "jobs",
         "physics",
-        "terrain-water-sky"
+        "terrain-water-sky",
+        "torrent"
       ],
       "stats": true
     },
@@ -1080,7 +1088,8 @@
         "debug-view",
         "native",
         "terrain-surface",
-        "terrain-water-sky"
+        "terrain-water-sky",
+        "torrent"
       ],
       "stats": true
     },
@@ -1098,7 +1107,8 @@
       "smokes": [
         "debug-view",
         "terrain",
-        "terrain-water-sky"
+        "terrain-water-sky",
+        "torrent"
       ],
       "stats": false
     }

@@ -140,7 +140,13 @@
         "tiles",
         "materials",
         "sky",
-        "detail"
+        "detail",
+        "water_depth",
+        "water_speed",
+        "water_froude",
+        "water_turbulence",
+        "water_white",
+        "water_reach"
       ],
       "what": "the debug view frames show in place of the shaded image, over the scene's"
     },

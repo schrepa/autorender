@@ -174,7 +174,7 @@
       ]
     },
     "Biome": {
-      "description": "A biome: where it applies (`fitness`, everywhere when omitted) and the\nlayers of its ground. Later biomes paint over earlier ones where they\nfit; the first covers wherever none of the others do.",
+      "description": "A biome: where it applies (`fitness`, everywhere when omitted), the\nlayers of its ground and how wet its ground is (`wetness`, dry when\nomitted). Later biomes paint over earlier ones where they fit; the first\ncovers wherever none of the others do.",
       "type": "object",
       "properties": {
         "fitness": {
@@ -188,6 +188,17 @@
           "items": {
             "$ref": "#/$defs/BiomeLayer"
           }
+        },
+        "wetness": {
+          "description": "How wet its ground is, from 0, dry, to 1, soaked: darker and glossier\nas water fills its pores and films it, the more so the rougher it\nis. The ground takes the wetness of each biome as far as that biome\napplies; the steep layer painted over them leaves it as they make it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Mask"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
@@ -372,6 +383,36 @@
           "description": "How much detail terrain's ground shows: green where all its\nmaterials' maps show, yellow where their color alone does, red where\ntheir means stand in, blue where it shows as its cover's canopy.",
           "type": "string",
           "const": "detail"
+        },
+        {
+          "description": "How deep terrains' water stands, tiles' and simulated alike, from\npale (none) through blue (half a meter) to navy (two meters or\nmore), on a square-root scale. The water's views draw water wherever\nit lies, however little of the pixel it covers, and show the sea,\nfalls' sheets and everything else gray, the sky dark, all unlit.",
+          "type": "string",
+          "const": "water_depth"
+        },
+        {
+          "description": "How fast the water runs, from dark violet (still) through crimson to\nyellow (six meters a second or more).",
+          "type": "string",
+          "const": "water_speed"
+        },
+        {
+          "description": "Its Froude number, its speed over its shallow waves' (√(g·depth)):\ncalm water from deep blue (0) to pale cyan, shooting water from\nyellow to red (3 or more), water running at its waves' speed (1)\nblack.",
+          "type": "string",
+          "const": "water_froude"
+        },
+        {
+          "description": "How turbulent it runs, from dark teal (0) through green to lime (1).",
+          "type": "string",
+          "const": "water_turbulence"
+        },
+        {
+          "description": "Where white water is born, from dark blue (none) to white (1).",
+          "type": "string",
+          "const": "water_white"
+        },
+        {
+          "description": "The reach of the stream it runs in, by the stream's slope: pools\nblue, plane beds cyan, steps and pools green, cascades orange, falls\nred; water no stream holds (lakes) violet.",
+          "type": "string",
+          "const": "water_reach"
         }
       ]
     },
@@ -506,7 +547,7 @@
       "type": "object",
       "properties": {
         "discharge": {
-          "description": "Cubic meters a second each square kilometer drained brings the\nchannels full to their banks: every channel carries this times the\narea draining through it, which sets its width, and with its slope\nand the roughness of its bed, its depth.",
+          "description": "Cubic meters a second each square kilometer drained brings the\nchannels full to their banks: every channel carries this times the\narea draining through it, which sets how wide and deep its channel\nstands, as channels full to their banks widen and deepen\ndownstream, shaped by the slope of its reach.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -520,21 +561,6 @@
           "default": 0,
           "maximum": 15,
           "minimum": 0
-        },
-        "roughness": {
-          "description": "Manning's roughness of riverbeds (seconds over the cube root of a\nmeter): rougher beds hold water deeper and slower.",
-          "type": "number",
-          "format": "float",
-          "maximum": 0.3,
-          "minimum": 0.01
-        },
-        "width": {
-          "description": "Meters wide a channel carrying a cubic meter a second stands at\nits banks: channels widen with the square root of what they carry,\nas channels full to their banks do (about 4.6 meters at 0.63 cubic\nmeters a second, and 21 at 21).",
-          "type": "number",
-          "format": "float",
-          "default": 5.0,
-          "maximum": 100.0,
-          "minimum": 0.1
         }
       },
       "additionalProperties": false
@@ -565,7 +591,7 @@
       ]
     },
     "Mask": {
-      "description": "A value from 0 to 1 at every sample, from the sample's height, slope,\ncurvature and position: where a biome applies, or where a material\ncovers its biome's ground. Ramps run from 0 at their first value to 1 at\ntheir second, smoothly, falling when the first is the larger.",
+      "description": "A value from 0 to 1 at every sample, from the sample's height, slope,\ncurvature and position: where a biome applies, where a material covers\nits biome's ground, or how wet a biome's ground is. Ramps run from 0 at\ntheir first value to 1 at their second, smoothly, falling when the first\nis the larger.",
       "oneOf": [
         {
           "description": "The same value everywhere.",
@@ -714,6 +740,63 @@
           "additionalProperties": false,
           "required": [
             "river"
+          ]
+        },
+        {
+          "description": "A ramp over the median size of the grains (the d50) of the bed of\nthe river holding the ground, in meters: `[0.002, 0.064]` rises from\nsand through gravel to cobbles. Outside every river's bed (which\nreaches a meter past its banks), and without rivers, it reads 0, as\nfine as any grain: a ramp falling toward fine grains covers that\nground too unless a `river` or `flood` mask keeps it to the beds.",
+          "type": "object",
+          "properties": {
+            "grain": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "grain"
+          ]
+        },
+        {
+          "description": "A ramp over the stream power of the river holding the ground at its\nbankfull flood, in watts per square meter of its bed: `[150, 400]`\ncovers the beds of torrents strong enough to roll boulders. Outside\nevery river's bed (which reaches a meter past its banks), and without\nrivers, it reads 0.",
+          "type": "object",
+          "properties": {
+            "power": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "power"
+          ]
+        },
+        {
+          "description": "A ramp over meters the ground stands above the bankfull flood level\nof the river holding it, negative below it: `[0.5, 0]` covers the\nground that river's floods reach, fading out over half a meter above\nthem. Outside every river's bed (which reaches a meter past its\nbanks), and without rivers, it reads 1e9.",
+          "type": "object",
+          "properties": {
+            "flood": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "flood"
           ]
         },
         {
@@ -6393,6 +6476,14 @@
           "maximum": 10.0,
           "minimum": 0.05
         },
+        "live_cell": {
+          "description": "The meters across the live window's cells: the square\n`simulated` asks for runs in cells this size, each starting from\nthe settled water's cells around it.",
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "maximum": 8.0,
+          "minimum": 0.25
+        },
         "ripple_size": {
           "description": "The meters across the largest ripples.",
           "type": "number",
@@ -6410,7 +6501,7 @@
           "minimum": 0.0
         },
         "simulated": {
-          "description": "The meters across the square around the camera over which\nrivers run live as the shallow-water equations say, starting\nfrom their water as it settled there and taking the settled\nwater's past its edges; 0 none, the settled water standing\neverywhere.",
+          "description": "The meters across the square around the camera over which\nrivers run live as the shallow-water equations say, in cells\n`live_cell` across, starting from their water as it settled\nthere and taking the settled water's past its edges; 0 none, the\nsettled water standing everywhere.",
           "type": "number",
           "format": "float",
           "default": 0.0,
@@ -6418,7 +6509,7 @@
           "minimum": 0.0
         },
         "simulation_cell": {
-          "description": "The meters across the cells water settles and is simulated in:\nthe cook makes the settled water's records at this size.",
+          "description": "The meters across the cells water settles in: the cook makes the\nsettled water's records at this size.",
           "type": "number",
           "format": "float",
           "default": 1.0,

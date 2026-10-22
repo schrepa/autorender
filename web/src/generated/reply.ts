@@ -488,12 +488,19 @@ export interface HostContext {
  * What a bake found about one place: the base-10 logarithm of its
  * upstream area (square meters), its wetness index, how deep water would
  * stand there in a filled pit (meters), and meters from the nearest
- * river's edge, negative in its water; [`RIVER_FAR`] beyond every river's
- * reach.
+ * river's edge, negative in its water, [`RIVER_FAR`] beyond every river's
+ * reach; and of the bed of the river holding it, the median size of its
+ * grains (d50, meters) and the river's stream power at its bankfull flood
+ * (watts per square meter of bed), 0 outside every river's bed, and meters
+ * the ground stands above that flood's level, negative below it,
+ * [`RIVER_FAR`] outside every river's bed.
  */
 export interface HydrologySample {
+  flood: number;
   flow: number;
+  grain: number;
   lake: number;
+  power: number;
   river: number;
   wetness: number;
 }
@@ -836,6 +843,12 @@ export interface ProbeResult {
   sun_index: number;
   /** What terrain's ground is made of there; `None` off terrain. */
   terrain?: TerrainProbe | null;
+  /**
+   * What terrains' water is doing there; `None` off their water. Water
+   * covering under half the pixel reads as what lies under it, unless
+   * the settings show one of the water's views.
+   */
+  water?: WaterProbe | null;
   world?: number[] | null;
 }
 
@@ -1208,6 +1221,11 @@ export interface TerrainStats {
   tunnels: number;
   /** Tiles the view wants that wait while the camera moves fast. */
   waiting_tiles: number;
+  /**
+   * Emitters of spray and mist white water spawned at terrains' rapids,
+   * where their settled water loses energy fastest.
+   */
+  white_water: number;
 }
 
 /**
@@ -1289,6 +1307,31 @@ export interface WalkResult {
  */
 export type WaterKind = "river" | "lake" | "fall" | "sea";
 
+/**
+ * What a terrain's water is doing at a pixel, tiles' or simulated, as the
+ * water's debug views show it.
+ */
+export interface WaterProbe {
+  /** Meters of water over the ground. */
+  depth: number;
+  /**
+   * Its speed over its shallow waves' (√(g·depth)): under 1 it runs
+   * calm, over 1 it shoots.
+   */
+  froude: number;
+  /**
+   * The reach of the stream it runs in; `None` where no stream holds it
+   * (lakes).
+   */
+  reach?: WaterReach | null;
+  /** Meters a second it runs. */
+  speed: number;
+  /** How turbulent it runs, 0 to 1, to 1/255. */
+  turbulence: number;
+  /** How much white water is born there, 0 to 1, to 1/255. */
+  white: number;
+}
+
 /** What `water_query` answers: the sea and ground under each point. */
 export interface WaterQueryResult {
   /** Its waves' heights summed. */
@@ -1302,6 +1345,12 @@ export interface WaterQueryResult {
   /** Its waves, longest first. */
   waves?: OceanWave[] | null;
 }
+
+/**
+ * The kind of reach a stream runs in where a pixel's water lies, by the
+ * stream's slope (`engine_terrain::Reach`), as the pixel probe reads it.
+ */
+export type WaterReach = "pool" | "plane" | "steps" | "cascade" | "falls";
 
 /** The sea and ground under one point. */
 export interface WaterSample {
