@@ -2,10 +2,12 @@
 //! the ground, a patch at a time, in two texture arrays of blocks as many
 //! samples wide as a patch's grid: their surfaces, and their packed flow,
 //! whitewater and kind (`engine_core::terrain_data::TileWater`). A tile's
-//! blocks upload as it arrives and free as it leaves or changes; the
-//! camera's patches holding water lay out each frame as instances water's
-//! pass draws on terrain's grid, with its morph and projection, so water
-//! meets the ground it covers on the same triangles (`crate::water`).
+//! blocks upload as it arrives and free as it leaves or changes, following
+//! the tiles the atlas held anew; the camera's patches holding water lay
+//! out each frame as instances water's pass draws on terrain's grid, with
+//! its morph and projection, so water meets the ground it covers on the
+//! same triangles (`crate::water`), written where they differ from the
+//! last frame's.
 
 #![expect(
     clippy::expect_used,
@@ -57,9 +59,12 @@ pub(crate) struct WaterBlocks {
     /// Blocks uploaded this frame, and dropped for want of layers.
     pub(crate) uploads: u32,
     pub(crate) dropped: u32,
-    // This frame's patches holding water, their instances, and each
-    // terrain's uniform offset and range of them.
+    // This frame's patches holding water and the last frame's, which the
+    // instances hold unless they were made since (`fresh`); their
+    // instances, and each terrain's uniform offset and range of them.
     records: Vec<WaterPatchRecord>,
+    written: Vec<WaterPatchRecord>,
+    fresh: bool,
     pub(crate) instances: wgpu::Buffer,
     pub(crate) terrains: Vec<(u32, Range<u32>)>,
 }
@@ -75,6 +80,8 @@ impl WaterBlocks {
             uploads: 0,
             dropped: 0,
             records: Vec::new(),
+            written: Vec::new(),
+            fresh: true,
             instances: instance_buffer(device, 64),
             terrains: Vec::new(),
         }
@@ -100,42 +107,41 @@ impl WaterBlocks {
     }
 
     /// Uploads the blocks of tiles `held` (by terrain and key) that arrived
-    /// or changed, and frees those of tiles gone; a tile replaced under its
-    /// key keeps the blocks of patches whose water stayed the same (its
-    /// water made again where its rivers run otherwise). Layers grow up to
-    /// `max_layers`.
+    /// or changed, and frees those of tiles gone, looking only at
+    /// `changes`, the keys whose held tile changed since the last sync; a
+    /// tile replaced under its key keeps the blocks of patches whose water
+    /// stayed the same (its water made again where its rivers run
+    /// otherwise). Layers grow up to `max_layers`.
     pub(super) fn sync(
         &mut self,
         device: &wgpu::Device,
         queue: &Queue,
         held: &HashMap<(u64, TileKey), Arc<Tile>>,
+        changes: &[(u64, TileKey)],
         max_layers: u32,
     ) {
         self.uploads = 0;
         self.dropped = 0;
-        let changed: Vec<(u64, TileKey)> = self
-            .tiles
-            .iter()
-            .filter(|(slot, blocks)| {
-                held.get(slot)
-                    .is_none_or(|tile| !Arc::ptr_eq(tile, &blocks.tile))
-            })
-            .map(|(slot, _)| *slot)
-            .collect();
         let mut replaced = Vec::new();
-        for slot in changed {
-            let Some(blocks) = self.tiles.remove(&slot) else {
-                continue;
-            };
-            match held.get(&slot) {
-                Some(tile) => replaced.push((slot, blocks, Arc::clone(tile))),
-                None => self.free.extend(
-                    blocks
-                        .blocks
-                        .iter()
-                        .copied()
-                        .filter(|&block| block != NO_WATER_BLOCK),
-                ),
+        let mut arrived = Vec::new();
+        for &slot in changes {
+            let had = self.tiles.get(&slot).map(|blocks| Arc::clone(&blocks.tile));
+            match (had, held.get(&slot)) {
+                (Some(had), Some(tile)) if Arc::ptr_eq(&had, tile) => {}
+                (Some(_), Some(tile)) => {
+                    if let Some(blocks) = self.tiles.remove(&slot) {
+                        replaced.push((slot, blocks, Arc::clone(tile)));
+                    }
+                }
+                (Some(_), None) => {
+                    if let Some(blocks) = self.tiles.remove(&slot) {
+                        let used = blocks.blocks.iter().copied();
+                        self.free
+                            .extend(used.filter(|&block| block != NO_WATER_BLOCK));
+                    }
+                }
+                (None, Some(tile)) => arrived.push((slot, Arc::clone(tile))),
+                (None, None) => {}
             }
         }
         // Lower blocks first, so the arrays stay as small as they can.
@@ -144,15 +150,21 @@ impl WaterBlocks {
             let blocks = self.upload(device, queue, tile, Some(before), max_layers);
             self.tiles.insert(slot, blocks);
         }
-        let arrived: Vec<((u64, TileKey), Arc<Tile>)> = held
-            .iter()
-            .filter(|(slot, _)| !self.tiles.contains_key(slot))
-            .map(|(slot, tile)| (*slot, Arc::clone(tile)))
-            .collect();
         for (slot, tile) in arrived {
             let blocks = self.upload(device, queue, tile, None, max_layers);
             self.tiles.insert(slot, blocks);
         }
+    }
+
+    /// Whether it holds blocks for exactly the tiles `held` holds, each of
+    /// that tile, which debug builds check.
+    #[cfg(debug_assertions)]
+    pub(super) fn follows(&self, held: &HashMap<(u64, TileKey), Arc<Tile>>) -> bool {
+        self.tiles.len() == held.len()
+            && self.tiles.iter().all(|(slot, blocks)| {
+                held.get(slot)
+                    .is_some_and(|tile| Arc::ptr_eq(tile, &blocks.tile))
+            })
     }
 
     /// `tile`'s blocks, its patches holding water uploaded: in place of
@@ -365,7 +377,9 @@ impl WaterBlocks {
 
     /// Lays out this frame's patches of `terrains` holding water that the
     /// camera sees through `culling` (eye-relative) from `eye`, as terrain
-    /// lays its own out in `parts`, and writes their instances.
+    /// lays its own out in `parts`, and writes their instances where they
+    /// differ from the last frame's. A tile's blocks, its parent's and what
+    /// its patches' records share are looked up once for each run of them.
     pub(super) fn lay_out(
         &mut self,
         device: &wgpu::Device,
@@ -374,6 +388,7 @@ impl WaterBlocks {
         (culling, eye, fades): (Mat4, DVec3, bool),
         parts: &patches::Layout<'_>,
     ) {
+        std::mem::swap(&mut self.records, &mut self.written);
         self.records.clear();
         self.terrains.clear();
         let planes = planes(culling, false);
@@ -382,45 +397,53 @@ impl WaterBlocks {
             let anchors = patches::Anchors::of(terrain, eye);
             let relative_origin = (terrain.origin.as_dvec3() - eye).as_vec3();
             let start = self.records.len() as u32;
+            // The tile of the patch before: its blocks, its parent's and
+            // what its records share.
+            let mut last: Option<TileKey> = None;
+            let (mut blocks, mut parent, mut shared) = (None, None, None);
             for patch in &terrain.patches {
-                let Some(blocks) = self.tiles.get(&(terrain.id, patch.tile)) else {
+                if last != Some(patch.tile) {
+                    last = Some(patch.tile);
+                    blocks = self.tiles.get(&(terrain.id, patch.tile));
+                    parent = (terrain.pyramid.parent(patch.tile))
+                        .and_then(|parent| self.tiles.get(&(terrain.id, parent)));
+                    shared = blocks
+                        .and_then(|_| patches::TileRecord::of(parts, terrain, patch.tile, fades));
+                }
+                let Some(tile) = blocks else {
                     continue;
                 };
                 let at = usize::from(patch.z) * patches + usize::from(patch.x);
-                let block = blocks.blocks[at];
+                let block = tile.blocks[at];
                 if block == NO_WATER_BLOCK {
                     continue;
                 }
                 // Its box up to its water's highest surface.
                 let top = Vec3::new(
                     patch.max.x,
-                    engine_core::math::max(patch.max.y, blocks.tops[at]),
+                    engine_core::math::max(patch.max.y, tile.tops[at]),
                     patch.max.z,
                 );
                 if !visible(&planes, relative_origin + patch.min, relative_origin + top) {
                     continue;
                 }
-                let Some(record) = patches::record(parts, terrain, patch, anchors, fades) else {
+                let Some(record) = shared.map(|shared| shared.record(patch, anchors)) else {
                     continue;
                 };
                 // The parent tile's block over it, and where in that
                 // block it starts.
                 let (x, z) = (u32::from(patch.x), u32::from(patch.z));
-                let parent = terrain
-                    .pyramid
-                    .parent(patch.tile)
-                    .and_then(|parent| self.tiles.get(&(terrain.id, parent)))
-                    .map_or(NO_WATER_BLOCK, |parent| {
-                        let px = u32::from(patch.tile.x % 2) * 8 + x / 2;
-                        let pz = u32::from(patch.tile.z % 2) * 8 + z / 2;
-                        parent.blocks[(pz * PATCHES_PER_TILE + px) as usize]
-                    });
+                let over = parent.map_or(NO_WATER_BLOCK, |parent| {
+                    let px = u32::from(patch.tile.x % 2) * 8 + x / 2;
+                    let pz = u32::from(patch.tile.z % 2) * 8 + z / 2;
+                    parent.blocks[(pz * PATCHES_PER_TILE + px) as usize]
+                });
                 let offset = ((x % 2) * 8) | (((z % 2) * 8) << 16);
                 self.records.push(WaterPatchRecord {
                     first: record.first,
                     shape: record.shape,
                     atlas: record.atlas,
-                    water: [block, parent, offset, 0],
+                    water: [block, over, offset, 0],
                     fade: record.fade,
                 });
             }
@@ -436,8 +459,19 @@ impl WaterBlocks {
         if bytes > self.instances.size() {
             self.instances =
                 instance_buffer(device, (self.records.len() as u64).next_power_of_two());
+            self.fresh = true;
         }
-        queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&self.records));
+        let run = if self.fresh {
+            0..self.records.len()
+        } else {
+            changed_run(&self.written, &self.records)
+        };
+        self.fresh = false;
+        if !run.is_empty() {
+            let offset = (run.start * size_of::<WaterPatchRecord>()) as u64;
+            let records = bytemuck::cast_slice(&self.records[run]);
+            queue.write_buffer(&self.instances, offset, records);
+        }
     }
 }
 

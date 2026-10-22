@@ -2,7 +2,14 @@
 //! surface's gradient at each sample), control values and meters to rivers'
 //! edges in four texture arrays, a layer each; which tile each layer holds,
 //! when it arrived, and the layers free; the GPU's normal maps and control
-//! values of tiles uploaded each frame.
+//! values of tiles uploaded each frame; and each layer's fades.
+//!
+//! A sync reads what each terrain's list gained, lost or replaced since the
+//! list it last synced (both in key order), beside the listed tiles still
+//! waiting for a layer, so its work follows what changed, not how many
+//! tiles are resident. Fades are worked out again only for the tiles whose
+//! fades can have changed: those fading in as time passes, and those whose
+//! layer, arrival or surface materials changed.
 
 #![expect(
     clippy::expect_used,
@@ -11,7 +18,9 @@
 
 use super::*;
 use crate::shaders::entry::{terrain_control, terrain_normals};
-use std::collections::BTreeMap;
+use engine_core::collections::HashSet;
+use engine_core::terrain_data::Pyramid;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The arrays: heights, control values, normals and meters to rivers'
 /// edges, a layer per tile.
@@ -27,12 +36,73 @@ struct Arrays {
     layers: u32,
 }
 
-/// What a sync of the tiles found for the tables: whether a tile replaced
-/// under its key changed its hole bits, and the resident tiles with holes,
-/// sorted.
-pub(super) struct Synced<'t> {
-    pub(super) edited: bool,
-    pub(super) holed: Vec<((u64, TileKey), &'t Arc<engine_core::Tile>)>,
+/// A terrain's tiles as last synced: their revision and list, in key
+/// order, and whether the GPU gave them control values.
+struct Listed {
+    revision: u64,
+    tiles: Arc<[Arc<engine_core::Tile>]>,
+    surface: bool,
+}
+
+/// What changed in the terrains' lists since they were last synced: the
+/// tiles that left them, those that arrived in them and those replaced
+/// under their keys.
+#[derive(Default)]
+struct Changes {
+    left: Vec<(u64, TileKey)>,
+    arrived: Vec<(u64, TileKey)>,
+    swapped: Vec<(u64, TileKey)>,
+}
+
+impl Changes {
+    /// Notes what changed from `before` to `now`, terrain `id`'s lists in
+    /// key order.
+    fn compare(
+        &mut self,
+        id: u64,
+        before: &[Arc<engine_core::Tile>],
+        now: &[Arc<engine_core::Tile>],
+    ) {
+        let (mut old, mut new) = (0, 0);
+        loop {
+            match (before.get(old), now.get(new)) {
+                (Some(was), Some(is)) => match was.key().cmp(&is.key()) {
+                    std::cmp::Ordering::Less => {
+                        self.left.push((id, was.key()));
+                        old += 1;
+                    }
+                    std::cmp::Ordering::Greater => {
+                        self.arrived.push((id, is.key()));
+                        new += 1;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        if !Arc::ptr_eq(was, is) {
+                            self.swapped.push((id, is.key()));
+                        }
+                        (old, new) = (old + 1, new + 1);
+                    }
+                },
+                (Some(was), None) => {
+                    self.left.push((id, was.key()));
+                    old += 1;
+                }
+                (None, Some(is)) => {
+                    self.arrived.push((id, is.key()));
+                    new += 1;
+                }
+                (None, None) => return,
+            }
+        }
+    }
+}
+
+/// Resident tiles replaced under their keys that upload again: the layers
+/// they leave, which they take again, and the tiles they replace, so the
+/// arrays keep what did not change.
+#[derive(Default)]
+struct Replaced {
+    layers: HashMap<(u64, TileKey), u32>,
+    tiles: HashMap<(u64, TileKey), Arc<engine_core::Tile>>,
 }
 
 pub(crate) struct TileAtlas {
@@ -48,11 +118,15 @@ pub(crate) struct TileAtlas {
     pub(super) now: f32,
     // The tile each slot holds: edits replace tiles under the
     // same key, which upload again into their layers.
-    pub(super) held: HashMap<(u64, TileKey), std::sync::Arc<engine_core::Tile>>,
+    pub(super) held: HashMap<(u64, TileKey), Arc<engine_core::Tile>>,
     pub(super) free: Vec<u32>,
     pub(super) next_layer: u32,
-    /// Tiles revision each terrain's layers were last synced to.
-    synced: HashMap<u64, u64>,
+    /// Each terrain's tiles as last synced, by id.
+    synced: HashMap<u64, Listed>,
+    /// Listed tiles that found no layer, which every sync tries again, and
+    /// the resident tiles with holes, in key order.
+    pub(super) unplaced: HashSet<(u64, TileKey)>,
+    pub(super) holed: BTreeSet<(u64, TileKey)>,
     /// Tiles uploaded this frame, resident on the GPU, and dropped for want
     /// of layers.
     pub(crate) uploads: u32,
@@ -74,10 +148,26 @@ pub(crate) struct TileAtlas {
     pub(super) sky_sampler: wgpu::Sampler,
     pub(super) control_sampler: wgpu::Sampler,
     /// The tiles that arrived, left, were replaced or finished fading in
-    /// this frame, whose pages the runtime virtual texture drops, and the
-    /// tiles fading in last frame.
+    /// this frame, whose pages the runtime virtual texture drops; those
+    /// that began fading in; and those whose held tile changed (it arrived,
+    /// left or was replaced), each once, which their water follows.
     pub(super) changed: Vec<(u64, TileKey)>,
-    fading: engine_core::collections::HashSet<(u64, TileKey)>,
+    pub(super) entered: Vec<(u64, TileKey)>,
+    pub(super) held_changes: Vec<(u64, TileKey)>,
+    /// Each layer's fades as shaders read them, the words this frame
+    /// changed, and whether frames faded and the time when they were last
+    /// worked out.
+    pub(super) fades: Vec<u32>,
+    pub(super) fades_dirty: Range<usize>,
+    pub(super) faded_with: Option<(bool, f32)>,
+    /// The resident tiles a coarser level still shows over, and those of
+    /// them whose fades move as time passes.
+    pub(super) fading: HashSet<(u64, TileKey)>,
+    moving: HashSet<(u64, TileKey)>,
+    // The tiles whose layer, arrival or surface materials' time changed
+    // since fades were last worked out, and the layers tiles left.
+    touched: Vec<(u64, TileKey)>,
+    vacated: Vec<u32>,
 }
 
 impl TileAtlas {
@@ -93,6 +183,8 @@ impl TileAtlas {
             free: Vec::new(),
             next_layer: 0,
             synced: HashMap::default(),
+            unplaced: HashSet::default(),
+            holed: BTreeSet::new(),
             uploads: 0,
             dropped: 0,
             controls: 0,
@@ -114,7 +206,15 @@ impl TileAtlas {
                 ..Default::default()
             }),
             changed: Vec::new(),
-            fading: engine_core::collections::HashSet::default(),
+            entered: Vec::new(),
+            held_changes: Vec::new(),
+            fades: Vec::new(),
+            fades_dirty: 0..0,
+            faded_with: None,
+            fading: HashSet::default(),
+            moving: HashSet::default(),
+            touched: Vec::new(),
+            vacated: Vec::new(),
         }
     }
 
@@ -144,55 +244,39 @@ impl TileAtlas {
         self.arrays.as_ref().map_or(0, |arrays| arrays.layers)
     }
 
-    /// Uploads tiles the GPU lacks and releases those no terrain lists;
-    /// `None` when every terrain's tiles stand as last synced.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
-    pub(super) fn sync<'t>(
+    /// Starts a frame at `now`, in seconds of presentation time: no tile
+    /// uploaded, given control values or changed yet.
+    pub(super) fn begin(&mut self, now: f32) {
+        (self.uploads, self.controls, self.now) = (0, 0, now);
+        self.changed.clear();
+        self.entered.clear();
+        self.held_changes.clear();
+    }
+
+    /// Uploads tiles the GPU lacks and releases those no terrain lists, from
+    /// what each terrain's list gained, lost or replaced since it was last
+    /// synced and the listed tiles still waiting for a layer: `None` when
+    /// every terrain's tiles stand as last synced, else whether a tile
+    /// replaced under its key changed its hole bits.
+    pub(super) fn sync(
         &mut self,
         device: &wgpu::Device,
         queue: &Queue,
-        terrains: &'t RenderTerrains,
+        terrains: &RenderTerrains,
         max_layers: u32,
-    ) -> Option<Synced<'t>> {
-        let ids: Vec<u64> = terrains.terrains.iter().map(|terrain| terrain.id).collect();
-        let current = terrains
-            .terrains
-            .iter()
-            .all(|terrain| self.synced.get(&terrain.id) == Some(&terrain.tiles_revision))
-            && self.synced.keys().all(|id| ids.contains(id));
+    ) -> Option<bool> {
+        let listed = |id: &u64| terrains.terrains.iter().any(|terrain| terrain.id == *id);
+        let current = terrains.terrains.iter().all(|terrain| {
+            self.synced
+                .get(&terrain.id)
+                .is_some_and(|synced| synced.revision == terrain.tiles_revision)
+        }) && self.synced.keys().all(listed);
         if current {
             return None;
         }
         self.dropped = 0;
-        // Release what no terrain lists any more.
-        let mut listed: HashMap<(u64, TileKey), &'t std::sync::Arc<engine_core::Tile>> =
-            HashMap::default();
-        for terrain in &terrains.terrains {
-            for tile in terrain.tiles.iter() {
-                listed.insert((terrain.id, tile.key()), tile);
-            }
-        }
-        let mut released = Vec::new();
-        self.slots.retain(|key, layer| {
-            let keep = listed.contains_key(key);
-            if !keep {
-                released.push((*key, *layer));
-            }
-            keep
-        });
-        // In key order, so which layers tiles take next follows no hash:
-        // layers free last are taken first.
-        released.sort_unstable();
-        for (key, layer) in released {
-            self.free.push(layer);
-            self.changed.push(key);
-        }
-        self.held.retain(|key, _| listed.contains_key(key));
-        self.arrivals.retain(|key, _| listed.contains_key(key));
-        self.surfaced.retain(|key, _| listed.contains_key(key));
+        let mut changes = self.changes(terrains);
+        self.release(&mut changes.left);
         // Terrains whose tiles' control values the GPU gives.
         let surfaces: BTreeMap<u64, &Arc<SurfaceData>> = terrains
             .terrains
@@ -200,226 +284,279 @@ impl TileAtlas {
             .filter_map(|terrain| Some((terrain.id, terrain.gpu_surface.as_ref()?)))
             .collect();
         self.sync_surfaces(device, queue, &surfaces);
-        // Tiles replaced under their keys upload again into their layers; one
-        // whose surface materials arrive with it takes them over gradually,
-        // and edits change them in place.
-        for (key, tile) in terrains.terrains.iter().flat_map(|terrain| {
-            terrain
-                .tiles
-                .iter()
-                .map(|tile| ((terrain.id, tile.key()), tile))
-        }) {
-            let key = &key;
-            let had = self.held.get(key).map(|held| held.control().is_some());
-            match (had, tile.control().is_some()) {
-                (_, false) if !surfaces.contains_key(&key.0) => {
-                    self.surfaced.remove(key);
-                }
-                (Some(false), true) => {
-                    self.surfaced.insert(*key, self.now);
-                }
-                _ => {}
-            }
-        }
-        // A tile replaced over the same ground and materials (its water made
-        // again as its rivers run now) keeps its layer as it is: only its
-        // water changes, which the water's blocks follow.
-        let same_ground: Vec<(u64, TileKey)> = self
-            .slots
-            .keys()
-            .filter(|key| {
-                self.held.get(*key).is_some_and(|held| {
-                    let tile = listed[*key];
-                    !std::sync::Arc::ptr_eq(held, tile)
-                        && held.heights() == tile.heights()
-                        && held.hole_bits() == tile.hole_bits()
-                        && held.control() == tile.control()
-                        && held.river_edges() == tile.river_edges()
-                })
-            })
-            .copied()
-            .collect();
-        for key in same_ground {
-            self.held.insert(key, std::sync::Arc::clone(listed[&key]));
-        }
-        let replaced: Vec<((u64, TileKey), u32)> = self
-            .slots
-            .iter()
-            .filter(|(key, _)| {
-                self.held
-                    .get(*key)
-                    .is_none_or(|held| !std::sync::Arc::ptr_eq(held, listed[*key]))
-            })
-            .map(|(key, layer)| (*key, *layer))
-            .collect();
-        // What they replace, so arrays keep what did not change:
-        // a tile arriving whole after its shape, or with its objects
-        // standing far away, has the same heights.
-        let mut previous: HashMap<(u64, TileKey), std::sync::Arc<engine_core::Tile>> =
-            HashMap::default();
-        for (key, _) in &replaced {
-            self.slots.remove(key);
-            if let Some(held) = self.held.remove(key) {
-                previous.insert(*key, held);
-            }
-        }
-        let mut reused: HashMap<(u64, TileKey), u32> = replaced.into_iter().collect();
-        let pyramids: HashMap<u64, engine_core::terrain_data::Pyramid> = terrains
-            .terrains
-            .iter()
-            .map(|terrain| (terrain.id, terrain.pyramid))
-            .collect();
-        // Upload the rest, coarse levels first.
-        let mut missing: Vec<(u64, TileKey)> = listed
-            .keys()
-            .filter(|key| !self.slots.contains_key(key))
-            .copied()
+        self.surface_times(terrains, &surfaces, &changes);
+        let mut replaced = self.replace(terrains, &changes.swapped);
+        // Upload the rest, coarse levels first: the tiles that arrived,
+        // those replaced and those still waiting for a layer.
+        let mut missing: Vec<(u64, TileKey)> = (self.unplaced.iter().copied())
+            .chain(changes.arrived)
+            .chain(replaced.layers.keys().copied())
             .collect();
         missing.sort_unstable_by_key(|(id, key)| (std::cmp::Reverse(key.level), *id, key.x, key.z));
+        missing.dedup();
         let needed = self.slots.len() as u32 + missing.len() as u32;
         self.ensure_arrays(device, queue, needed.min(max_layers), max_layers);
         let capacity = self.layers();
         let mut edited = false;
         for key in missing {
-            let arriving = !reused.contains_key(&key);
-            let layer = match reused.remove(&key).or_else(|| self.free.pop()) {
-                Some(layer) => layer,
-                None if self.next_layer < capacity => {
-                    self.next_layer += 1;
-                    self.next_layer - 1
-                }
-                None => {
-                    self.dropped += 1;
-                    continue;
-                }
+            let terrain = terrains.terrains.iter().find(|terrain| terrain.id == key.0);
+            let Some(terrain) = terrain else {
+                continue;
             };
-            // Tiles arriving grow out of their parents; edited ones
-            // change in place.
-            if arriving {
-                self.arrivals.insert(key, self.now);
-                if listed[&key].control().is_some() {
-                    self.surfaced.insert(key, self.now);
-                }
-            }
-            // What draws over it changes only as it uploads; tiles finding
-            // no layer leave their parents standing in.
-            self.changed.push(key);
-            let arrays = self.arrays.as_ref().expect("allocated above");
-            let tile = listed[&key];
-            let before = previous.remove(&key);
-            edited |= before
-                .as_ref()
-                .is_some_and(|held| held.hole_bits() != tile.hole_bits());
-            let layout = wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(LAYER_SIZE * 4),
-                rows_per_image: Some(LAYER_SIZE),
+            let Some(tile) = listed_tile(&terrain.tiles, key.1) else {
+                continue;
             };
-            let extent = wgpu::Extent3d {
-                width: LAYER_SIZE,
-                height: LAYER_SIZE,
-                depth_or_array_layers: 1,
-            };
-            let place = |texture| wgpu::TexelCopyTextureInfo {
-                texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: layer,
-                },
-                aspect: wgpu::TextureAspect::All,
-            };
-            let heights = before
-                .as_ref()
-                .is_none_or(|held| held.heights() != tile.heights());
-            if heights {
-                queue.write_texture(
-                    place(&arrays.texture),
-                    bytemuck::cast_slice(tile.heights()),
-                    layout,
-                    extent,
-                );
-                self.normal_jobs.push((layer, tile.spacing()));
-            }
-            // Without control values on a terrain whose surface the GPU
-            // reads, the GPU gives them as its heights or meters to
-            // rivers' edges change, from those meters it uploads, its
-            // materials then taking over from the coarser level's.
-            let gpu = tile.control().is_none() && surfaces.contains_key(&key.0);
-            let rivers = before
-                .as_ref()
-                .is_none_or(|held| held.river_edges() != tile.river_edges());
-            if gpu && (heights || rivers) {
-                let edges = tile.river_edges();
-                if let Some(edges) = edges {
-                    queue.write_texture(
-                        place(&arrays.rivers),
-                        bytemuck::cast_slice(edges),
-                        wgpu::TexelCopyBufferLayout {
-                            bytes_per_row: Some(LAYER_SIZE * 2),
-                            ..layout
-                        },
-                        extent,
-                    );
-                }
-                let surface = surfaces[&key.0];
-                let spacing = tile.spacing();
-                let first = surface.first_sample(key.1, spacing);
-                self.control_jobs.push(ControlJob {
-                    layer,
-                    terrain: key.0,
-                    first: [first[0] as i32, first[1] as i32],
-                    spacing,
-                    level: surface.level(spacing),
-                    rivers: edges.is_some(),
-                });
-                self.surfaced.insert(key, self.now);
-            }
-            // Its control values; a tile without its own yet
-            // takes its nearest ancestor's for ground cover, and without a
-            // surface, the first material everywhere.
-            let control = !gpu
-                && (tile.control().is_none()
-                    || before
-                        .as_ref()
-                        .is_none_or(|held| held.control() != tile.control()));
-            if control {
-                let borrowed;
-                let values = match tile.control() {
-                    Some(values) => values,
-                    None => {
-                        borrowed = ancestor_control(&listed, key, pyramids[&key.0]);
-                        &borrowed
-                    }
-                };
-                queue.write_texture(
-                    place(&arrays.control),
-                    bytemuck::cast_slice(values),
-                    layout,
-                    extent,
-                );
-            }
-            self.slots.insert(key, layer);
-            self.held.insert(key, tile.clone());
-            self.uploads += u32::from(heights || control);
+            let listing = (&terrain.tiles[..], terrain.pyramid);
+            let room = (&surfaces, capacity);
+            edited |= self.upload(queue, (key, tile), listing, &mut replaced, room);
         }
         self.compute_controls(device, queue);
         // Layers of replaced tiles that found no upload are free again.
-        self.free.extend(reused.into_values());
+        self.free.extend(replaced.layers.into_values());
         self.compute_normals(device, queue);
-        self.synced = terrains
-            .terrains
-            .iter()
-            .map(|terrain| (terrain.id, terrain.tiles_revision))
+        self.synced.retain(|id, _| listed(id));
+        for terrain in &terrains.terrains {
+            let synced = Listed {
+                revision: terrain.tiles_revision,
+                tiles: Arc::clone(&terrain.tiles),
+                surface: terrain.gpu_surface.is_some(),
+            };
+            self.synced.insert(terrain.id, synced);
+        }
+        Some(edited)
+    }
+
+    /// What changed in `terrains`' lists since they were last synced: each
+    /// list against the one before where its revision advanced, and every
+    /// tile of the terrains no longer listed, left.
+    fn changes(&self, terrains: &RenderTerrains) -> Changes {
+        let mut changes = Changes::default();
+        for terrain in &terrains.terrains {
+            let synced = self.synced.get(&terrain.id);
+            if synced.is_some_and(|synced| synced.revision == terrain.tiles_revision) {
+                continue;
+            }
+            let before: &[Arc<engine_core::Tile>] = match synced {
+                Some(synced) => &synced.tiles[..],
+                None => &[],
+            };
+            changes.compare(terrain.id, before, &terrain.tiles);
+        }
+        let mut gone: Vec<u64> = (self.synced.keys())
+            .filter(|id| !terrains.terrains.iter().any(|terrain| terrain.id == **id))
+            .copied()
             .collect();
-        // The tiles with holes the tables hold.
-        let mut holed: Vec<((u64, TileKey), &'t Arc<engine_core::Tile>)> = listed
-            .into_iter()
-            .filter(|(key, tile)| tile.hole_bits().is_some() && self.slots.contains_key(key))
-            .collect();
-        holed.sort_unstable_by_key(|&(key, _)| key);
-        Some(Synced { edited, holed })
+        gone.sort_unstable();
+        for id in gone {
+            if let Some(synced) = self.synced.get(&id) {
+                (changes.left).extend(synced.tiles.iter().map(|tile| (id, tile.key())));
+            }
+        }
+        changes
+    }
+
+    /// Releases the tiles of `left` holding layers, in key order, so which
+    /// layers tiles take next follows no hash: layers free last are taken
+    /// first.
+    fn release(&mut self, left: &mut [(u64, TileKey)]) {
+        left.sort_unstable();
+        for &key in left.iter() {
+            self.unplaced.remove(&key);
+            let Some(layer) = self.slots.remove(&key) else {
+                continue;
+            };
+            self.free.push(layer);
+            self.changed.push(key);
+            self.held_changes.push(key);
+            self.touched.push(key);
+            self.vacated.push(layer);
+            self.held.remove(&key);
+            self.arrivals.remove(&key);
+            self.surfaced.remove(&key);
+            self.holed.remove(&key);
+        }
+    }
+
+    /// Gives tiles their surface materials' times as the lists changed: a
+    /// resident tile replaced without control values by one with them
+    /// takes them over from now, and a tile without them on a terrain whose
+    /// surface the GPU does not read has none, every such tile of a terrain
+    /// whose surface the GPU stopped reading included.
+    fn surface_times(
+        &mut self,
+        terrains: &RenderTerrains,
+        surfaces: &BTreeMap<u64, &Arc<SurfaceData>>,
+        changes: &Changes,
+    ) {
+        for terrain in &terrains.terrains {
+            let stopped = !surfaces.contains_key(&terrain.id)
+                && (self.synced.get(&terrain.id)).is_some_and(|synced| synced.surface);
+            if !stopped {
+                continue;
+            }
+            for tile in terrain.tiles.iter().filter(|tile| tile.control().is_none()) {
+                self.unsurface((terrain.id, tile.key()));
+            }
+        }
+        for &key in changes.arrived.iter().chain(&changes.swapped) {
+            let Some(tile) = listed_in(terrains, key) else {
+                continue;
+            };
+            let had = self.held.get(&key).map(|held| held.control().is_some());
+            match (had, tile.control().is_some()) {
+                (_, false) if !surfaces.contains_key(&key.0) => self.unsurface(key),
+                (Some(false), true) => {
+                    self.surfaced.insert(key, self.now);
+                    self.touched.push(key);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Takes resident tile `key`'s surface materials' time away, if it had
+    /// one.
+    fn unsurface(&mut self, key: (u64, TileKey)) {
+        if self.surfaced.remove(&key).is_some() {
+            self.touched.push(key);
+        }
+    }
+
+    /// Of the resident tiles `swapped` replaced under their keys, keeps
+    /// those over the same ground and materials in their layers as they
+    /// are (their water made again as their rivers run now, which the
+    /// water's blocks follow), and takes the rest out of their layers to
+    /// upload again, keeping what they replace: a tile arriving whole after
+    /// its shape, or with its objects standing far away, has the same
+    /// heights.
+    fn replace(&mut self, terrains: &RenderTerrains, swapped: &[(u64, TileKey)]) -> Replaced {
+        let mut replaced = Replaced::default();
+        for &key in swapped {
+            let (Some(&layer), Some(tile)) = (self.slots.get(&key), listed_in(terrains, key))
+            else {
+                continue;
+            };
+            let same_ground = self.held.get(&key).is_some_and(|held| {
+                held.heights() == tile.heights()
+                    && held.hole_bits() == tile.hole_bits()
+                    && held.control() == tile.control()
+                    && held.river_edges() == tile.river_edges()
+            });
+            if same_ground {
+                self.held.insert(key, Arc::clone(tile));
+                self.held_changes.push(key);
+                continue;
+            }
+            self.slots.remove(&key);
+            replaced.layers.insert(key, layer);
+            if let Some(held) = self.held.remove(&key) {
+                replaced.tiles.insert(key, held);
+            }
+        }
+        replaced
+    }
+
+    /// Uploads listed tile `key`, `tile` (of a terrain listing `tiles` over
+    /// `pyramid`), into a layer: the one it left as it was replaced
+    /// (`replaced`), else a free one or a new one within `capacity`; a tile
+    /// finding none leaves its parent standing in and waits for the next
+    /// sync, dropped. The GPU gives tiles without control values on
+    /// terrains it reads the surface of (`surfaces`) theirs. Returns
+    /// whether it changed the hole bits of the tile it replaced.
+    fn upload(
+        &mut self,
+        queue: &Queue,
+        (key, tile): ((u64, TileKey), &Arc<engine_core::Tile>),
+        (tiles, pyramid): (&[Arc<engine_core::Tile>], Pyramid),
+        replaced: &mut Replaced,
+        (surfaces, capacity): (&BTreeMap<u64, &Arc<SurfaceData>>, u32),
+    ) -> bool {
+        let arriving = !replaced.layers.contains_key(&key);
+        let layer = match replaced.layers.remove(&key).or_else(|| self.free.pop()) {
+            Some(layer) => layer,
+            None if self.next_layer < capacity => {
+                self.next_layer += 1;
+                self.next_layer - 1
+            }
+            None => {
+                self.dropped += 1;
+                self.unplaced.insert(key);
+                return false;
+            }
+        };
+        self.unplaced.remove(&key);
+        // Tiles arriving grow out of their parents; edited ones
+        // change in place.
+        if arriving {
+            self.arrivals.insert(key, self.now);
+            if tile.control().is_some() {
+                self.surfaced.insert(key, self.now);
+            }
+        }
+        // What draws over it changes only as it uploads; tiles finding
+        // no layer leave their parents standing in.
+        self.changed.push(key);
+        self.held_changes.push(key);
+        self.touched.push(key);
+        let arrays = self.arrays.as_ref().expect("allocated above");
+        let before = replaced.tiles.remove(&key);
+        let edited = (before.as_ref()).is_some_and(|held| held.hole_bits() != tile.hole_bits());
+        let heights = (before.as_ref()).is_none_or(|held| held.heights() != tile.heights());
+        if heights {
+            let texels = bytemuck::cast_slice(tile.heights());
+            write_layer(queue, &arrays.texture, layer, (texels, 4));
+            self.normal_jobs.push((layer, tile.spacing()));
+        }
+        // Without control values on a terrain whose surface the GPU
+        // reads, the GPU gives them as its heights or meters to
+        // rivers' edges change, from those meters it uploads, its
+        // materials then taking over from the coarser level's.
+        let gpu = tile.control().is_none() && surfaces.contains_key(&key.0);
+        let rivers = (before.as_ref()).is_none_or(|held| held.river_edges() != tile.river_edges());
+        if gpu && (heights || rivers) {
+            let edges = tile.river_edges();
+            if let Some(edges) = edges {
+                write_layer(queue, &arrays.rivers, layer, (bytemuck::cast_slice(edges), 2));
+            }
+            let surface = surfaces[&key.0];
+            let spacing = tile.spacing();
+            let first = surface.first_sample(key.1, spacing);
+            self.control_jobs.push(ControlJob {
+                layer,
+                terrain: key.0,
+                first: [first[0] as i32, first[1] as i32],
+                spacing,
+                level: surface.level(spacing),
+                rivers: edges.is_some(),
+            });
+            self.surfaced.insert(key, self.now);
+        }
+        // Its control values; a tile without its own yet
+        // takes its nearest ancestor's for ground cover, and without a
+        // surface, the first material everywhere.
+        let control = !gpu
+            && (tile.control().is_none()
+                || (before.as_ref()).is_none_or(|held| held.control() != tile.control()));
+        if control {
+            let borrowed;
+            let values = match tile.control() {
+                Some(values) => values,
+                None => {
+                    borrowed = ancestor_control(tiles, key.1, pyramid);
+                    &borrowed
+                }
+            };
+            write_layer(queue, &arrays.control, layer, (bytemuck::cast_slice(values), 4));
+        }
+        self.slots.insert(key, layer);
+        self.held.insert(key, Arc::clone(tile));
+        if tile.hole_bits().is_some() {
+            self.holed.insert(key);
+        } else {
+            self.holed.remove(&key);
+        }
+        self.uploads += u32::from(heights || control);
+        edited
     }
 
     /// How much of a coarser level still shows of what arrived at `at`:
@@ -429,45 +566,116 @@ impl TileAtlas {
         1.0 - engine_core::math::min(since / ARRIVAL_SECONDS, 1.0)
     }
 
-    /// Each layer's fades, `count` words: how much of the next coarser
-    /// level's normals and surface materials still show over its tile's,
-    /// 0 to 255 in two bytes, two layers a word. On exact frames (without
-    /// `fades`) tiles show as they are, but one without surface materials
-    /// yet always shows the coarser level's. Tiles that finished fading in
-    /// count as changed.
-    pub(super) fn fade_words(&mut self, fades: bool, count: u32) -> Vec<u32> {
-        let mut words = vec![0_u32; count as usize];
-        let byte = |fade: f32| (engine_core::math::clamp(fade, 0.0, 1.0) * 255.0 + 0.5) as u32;
-        // Tiles that finished fading in change what pages over them hold.
-        let mut fading = engine_core::collections::HashSet::default();
-        #[expect(
-            clippy::iter_over_hash_type,
-            reason = "each tile's fades land in its own layer's word, and the fading set"
-        )]
-        for (key, &layer) in &self.slots {
-            let normals = match self.arrivals.get(key) {
-                Some(&at) if fades => self.fade_since(at),
-                _ => 0.0,
-            };
-            let materials = match self.surfaced.get(key) {
-                None => 1.0,
-                Some(&at) if fades => self.fade_since(at),
-                Some(_) => 0.0,
-            };
-            if normals > 0.0 || materials > 0.0 {
-                fading.insert(*key);
+    /// How much of the next coarser level's normals and surface materials
+    /// shows over resident tile `key` now: as it grows out of its parent on
+    /// ordinary frames (with `fades`) and none on exact ones, but the whole
+    /// of the coarser level's materials over a tile without its own yet.
+    pub(super) fn fades_of(&self, key: &(u64, TileKey), fades: bool) -> (f32, f32) {
+        let normals = match self.arrivals.get(key) {
+            Some(&at) if fades => self.fade_since(at),
+            _ => 0.0,
+        };
+        let materials = match self.surfaced.get(key) {
+            None => 1.0,
+            Some(&at) if fades => self.fade_since(at),
+            Some(_) => 0.0,
+        };
+        (normals, materials)
+    }
+
+    /// Works each layer's fades out for `count` words, noting the words that
+    /// changed: how much of the next coarser level's normals and surface
+    /// materials still show over its tile's ([`Self::fades_of`]), two
+    /// layers a word ([`fade_half`]). Only the tiles whose fades can have
+    /// changed are worked out again: those fading in as time passes and
+    /// those whose layer, arrival or surface materials changed; every tile
+    /// when the words or `fades` changed or time ran back. Tiles that
+    /// finished fading in count as changed, and those that began are noted.
+    pub(super) fn fade(&mut self, fades: bool, count: u32) {
+        let whole = self.fades.len() != count as usize
+            || (self.faded_with).is_none_or(|(faded, then)| faded != fades || self.now < then);
+        self.faded_with = Some((fades, self.now));
+        self.fades_dirty = 0..0;
+        let mut touched = std::mem::take(&mut self.touched);
+        let mut faded = Vec::new();
+        if whole {
+            self.vacated.clear();
+            self.fades.clear();
+            self.fades.resize(count as usize, 0);
+            self.fades_dirty = 0..self.fades.len();
+            let before = std::mem::take(&mut self.fading);
+            self.moving.clear();
+            touched.clear();
+            touched.extend(self.slots.keys().copied());
+            for &key in &touched {
+                self.refade(key, fades);
             }
-            let Some(word) = words.get_mut(layer as usize / 2) else {
-                continue;
-            };
-            *word |= (byte(normals) | (byte(materials) << 8)) << ((layer % 2) * 16);
+            faded.extend(before.iter().filter(|key| !self.fading.contains(*key)).copied());
+            let began = self.fading.iter().filter(|key| !before.contains(*key));
+            self.entered.extend(began.copied());
+        } else {
+            while let Some(layer) = self.vacated.pop() {
+                self.set_fade(layer, 0);
+            }
+            touched.extend(self.moving.iter().copied());
+            touched.sort_unstable();
+            touched.dedup();
+            for &key in &touched {
+                let was = self.fading.contains(&key);
+                self.refade(key, fades);
+                match (was, self.fading.contains(&key)) {
+                    (true, false) => faded.push(key),
+                    (false, true) => self.entered.push(key),
+                    (true, true) | (false, false) => {}
+                }
+            }
         }
+        touched.clear();
+        self.touched = touched;
         // Sorted: the order pages drop in follows no hash.
-        let mut faded: Vec<(u64, TileKey)> = self.fading.difference(&fading).copied().collect();
         faded.sort_unstable();
+        self.entered.sort_unstable();
         self.changed.extend(faded);
-        self.fading = fading;
-        words
+    }
+
+    /// Works tile `key`'s fades out again: its half of the word of the layer
+    /// it holds, whether a coarser level shows over it, and whether that
+    /// changes as time passes; a tile holding no layer fades in no more.
+    fn refade(&mut self, key: (u64, TileKey), fades: bool) {
+        let Some(&layer) = self.slots.get(&key) else {
+            self.fading.remove(&key);
+            self.moving.remove(&key);
+            return;
+        };
+        let (normals, materials) = self.fades_of(&key, fades);
+        if normals > 0.0 || materials > 0.0 {
+            self.fading.insert(key);
+        } else {
+            self.fading.remove(&key);
+        }
+        // Materials fading in from their own time move; a tile without its
+        // own shows the coarser level's whole until they arrive.
+        if normals > 0.0 || (materials > 0.0 && self.surfaced.contains_key(&key)) {
+            self.moving.insert(key);
+        } else {
+            self.moving.remove(&key);
+        }
+        self.set_fade(layer, fade_half(normals, materials));
+    }
+
+    /// Sets `layer`'s half of its word of fades to `half`, noting the word
+    /// where it changed; layers past the words are left out.
+    fn set_fade(&mut self, layer: u32, half: u32) {
+        let at = layer as usize / 2;
+        let shift = (layer % 2) * 16;
+        let Some(word) = self.fades.get_mut(at) else {
+            return;
+        };
+        let value = (*word & !(0xFFFF << shift)) | (half << shift);
+        if value != *word {
+            *word = value;
+            self.fades_dirty = widen(self.fades_dirty.clone(), at);
+        }
     }
 
     /// Whether terrain `id`'s tile `key` is resident and stands as it is:
@@ -823,14 +1031,72 @@ impl TileAtlas {
     }
 }
 
-/// Control values for tile `key` (of terrain `key.0`, over `pyramid`)
-/// without its own yet, for ground cover to grow from: its
-/// nearest listed ancestor's holding some, each sample its nearest sample's
-/// there; the first material everywhere without one.
-fn ancestor_control(
-    listed: &HashMap<(u64, TileKey), &std::sync::Arc<engine_core::Tile>>,
+/// A layer's half of its word of fades: how much of the coarser level's
+/// normals and surface materials show, 0 to 255 in a byte each.
+pub(super) fn fade_half(normals: f32, materials: f32) -> u32 {
+    let byte = |fade: f32| (engine_core::math::clamp(fade, 0.0, 1.0) * 255.0 + 0.5) as u32;
+    byte(normals) | (byte(materials) << 8)
+}
+
+/// Writes `texels` of `bytes` bytes each, a tile's samples with their
+/// border, into `layer` of `texture`.
+fn write_layer(
+    queue: &Queue,
+    texture: &wgpu::Texture,
+    layer: u32,
+    (texels, bytes): (&[u8], u32),
+) {
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d {
+                x: 0,
+                y: 0,
+                z: layer,
+            },
+            aspect: wgpu::TextureAspect::All,
+        },
+        texels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(LAYER_SIZE * bytes),
+            rows_per_image: Some(LAYER_SIZE),
+        },
+        wgpu::Extent3d {
+            width: LAYER_SIZE,
+            height: LAYER_SIZE,
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
+/// The tile `tiles`, a terrain's list in key order, lists under `key`.
+fn listed_tile(
+    tiles: &[Arc<engine_core::Tile>],
+    key: TileKey,
+) -> Option<&Arc<engine_core::Tile>> {
+    let at = tiles.binary_search_by_key(&key, |tile| tile.key()).ok()?;
+    tiles.get(at)
+}
+
+/// The tile `terrains` list under terrain `id`'s `key`.
+fn listed_in(
+    terrains: &RenderTerrains,
     (id, key): (u64, TileKey),
-    pyramid: engine_core::terrain_data::Pyramid,
+) -> Option<&Arc<engine_core::Tile>> {
+    let terrain = terrains.terrains.iter().find(|terrain| terrain.id == id)?;
+    listed_tile(&terrain.tiles, key)
+}
+
+/// Control values for tile `key` without its own yet, of a terrain over
+/// `pyramid` listing `tiles`, for ground cover to grow from: its nearest
+/// listed ancestor's holding some, each sample its nearest sample's there;
+/// the first material everywhere without one.
+fn ancestor_control(
+    tiles: &[Arc<engine_core::Tile>],
+    key: TileKey,
+    pyramid: Pyramid,
 ) -> Vec<u32> {
     let size = LAYER_SIZE as usize;
     let mut out = vec![0_u32; size * size];
@@ -840,7 +1106,7 @@ fn ancestor_control(
             return out;
         };
         (at, shift) = (parent, shift + 1);
-        if let Some(control) = listed.get(&(id, at)).and_then(|tile| tile.control()) {
+        if let Some(control) = listed_tile(tiles, at).and_then(|tile| tile.control()) {
             break control;
         }
     };

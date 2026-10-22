@@ -12,12 +12,20 @@
 //!   patches, and every record names resident layers and a hole run or
 //!   none;
 //! - T5 directory: every terrain's directory names the layers its
-//!   resident tiles hold and nothing else.
+//!   resident tiles hold and nothing else;
+//! - T6 listing: every resident tile is the one its terrain lists, every
+//!   listed tile holds a layer or waits for one and only listed tiles do,
+//!   and the tiles noted with holes are the resident tiles with holes;
+//! - T7 fades: each layer's fades are what its tile's arrival and surface
+//!   materials give now (none where no tile holds it), and the tiles noted
+//!   fading in are those a coarser level still shows over;
+//! - T8 water: tiles' water holds blocks for every resident tile, of that
+//!   tile, and for no other.
 
 use super::*;
 
 impl TerrainPass {
-    /// Asserts T1 to T5 over `terrains`, just prepared.
+    /// Asserts T1 to T8 over `terrains`, just prepared.
     #[expect(clippy::too_many_lines, reason = "one assertion pass over every table")]
     #[expect(
         clippy::iter_over_hash_type,
@@ -160,6 +168,74 @@ impl TerrainPass {
                 record.holes
             );
         }
+        // T6 listing.
+        let mut listed = 0;
+        for terrain in &terrains.terrains {
+            for tile in terrain.tiles.iter() {
+                let key = (terrain.id, tile.key());
+                listed += 1;
+                let waits = atlas.unplaced.contains(&key);
+                match atlas.held.get(&key) {
+                    Some(held) => debug_assert!(
+                        Arc::ptr_eq(held, tile) && !waits,
+                        "T6: resident {key:?} is another tile than listed, or also waits"
+                    ),
+                    None => debug_assert!(
+                        waits,
+                        "T6: listed {key:?} neither holds a layer nor waits for one"
+                    ),
+                }
+            }
+        }
+        debug_assert!(
+            atlas.held.len() + atlas.unplaced.len() == listed,
+            "T6: {} resident and {} waiting tiles for {listed} listed",
+            atlas.held.len(),
+            atlas.unplaced.len()
+        );
+        let holed = atlas
+            .held
+            .values()
+            .filter(|tile| tile.hole_bits().is_some())
+            .count();
+        debug_assert!(
+            atlas.holed.len() == holed
+                && atlas.holed.iter().all(|key| {
+                    atlas
+                        .held
+                        .get(key)
+                        .is_some_and(|tile| tile.hole_bits().is_some())
+                }),
+            "T6: {} tiles noted with holes, {holed} resident with holes",
+            atlas.holed.len()
+        );
+        // T7 fades.
+        if let Some((fades, _)) = atlas.faded_with {
+            let mut words = vec![0_u32; atlas.fades.len()];
+            for (key, &layer) in &atlas.slots {
+                let (normals, materials) = atlas.fades_of(key, fades);
+                debug_assert!(
+                    (normals > 0.0 || materials > 0.0) == atlas.fading.contains(key),
+                    "T7: {key:?} shows {normals}, {materials} of its parent, noted otherwise"
+                );
+                if let Some(word) = words.get_mut(layer as usize / 2) {
+                    *word |= atlas::fade_half(normals, materials) << ((layer % 2) * 16);
+                }
+            }
+            debug_assert!(
+                words == atlas.fades,
+                "T7: the layers' fades differ from what their tiles give"
+            );
+            debug_assert!(
+                atlas.fading.iter().all(|key| atlas.slots.contains_key(key)),
+                "T7: a tile noted fading in holds no layer"
+            );
+        }
+        // T8 water.
+        debug_assert!(
+            self.water.follows(&atlas.held),
+            "T8: tiles' water holds blocks for other tiles than those resident"
+        );
         // T5 directory.
         debug_assert!(
             tables.directory_bases.len() == terrains.terrains.len()

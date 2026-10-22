@@ -29,6 +29,14 @@
 //! virtual texture with its far pages (what they are baked from: `far`)
 //! and deformation map. Debug builds check what holds between them after
 //! every preparation (`invariants`).
+//!
+//! A preparation does what changed: the atlas looks at the tiles each
+//! terrain's list gained, lost or replaced since it was last synced, and
+//! works fades out again for the tiles fading in or changed; the
+//! directory rewrites the entries of the tiles that took or left layers,
+//! water the blocks of the tiles held anew, and far pages hash each tile
+//! once; the frame's records and uniforms are written where they differ
+//! from the last frame's, from vectors kept from frame to frame.
 
 use engine_core::collections::HashMap;
 use std::ops::Range;
@@ -108,6 +116,35 @@ const HOLE_WORDS: usize = ((LAYER_SIZE - 2) * (LAYER_SIZE - 2)).div_ceil(32) as 
 
 /// Bytes of a terrain's uniform.
 pub(crate) const TERRAIN_UNIFORM_BYTES: usize = size_of::<TerrainUniform>();
+
+/// `range` widened to hold `index`.
+fn widen(range: Range<usize>, index: usize) -> Range<usize> {
+    if range.is_empty() {
+        index..index + 1
+    } else {
+        range.start.min(index)..range.end.max(index + 1)
+    }
+}
+
+/// The run of `now`'s elements from the first that differs from `was`'s to
+/// the last, those past `was`'s end differing: what writing `now` over a
+/// buffer holding `was` writes; empty where none differs.
+fn changed_run<T: bytemuck::Pod>(was: &[T], now: &[T]) -> Range<usize> {
+    let same = |a: &T, b: &T| bytemuck::bytes_of(a) == bytemuck::bytes_of(b);
+    let shared = now.len().min(was.len());
+    let Some(first) = (0..now.len()).find(|&at| at >= shared || !same(&now[at], &was[at])) else {
+        return 0..0;
+    };
+    let end = if now.len() > was.len() {
+        now.len()
+    } else {
+        (first..now.len())
+            .rev()
+            .find(|&at| !same(&now[at], &was[at]))
+            .map_or(first + 1, |at| at + 1)
+    };
+    first..end
+}
 
 /// What water's pass draws tiles' water with: the height array, the views'
 /// and terrains' uniforms, the water blocks' arrays, generations advancing
@@ -346,15 +383,16 @@ impl TerrainPass {
         views: &TerrainViews<'_>,
         (max_layers, mips): (u32, &MipGenerator),
     ) -> bool {
-        let atlas = &mut self.atlas;
-        (atlas.uploads, atlas.controls, atlas.now) = (0, 0, views.now);
+        self.atlas.begin(views.now);
         self.patches.begin(views.eye);
-        atlas.changed.clear();
-        if let Some(synced) = atlas.sync(device, queue, terrains, max_layers) {
-            self.tables.write_holes(device, queue, &synced, max_layers);
+        if let Some(edited) = self.atlas.sync(device, queue, terrains, max_layers) {
+            self.tables
+                .write_holes(device, queue, (&self.atlas, edited), max_layers);
         }
-        self.water.sync(device, queue, &atlas.held, max_layers);
-        let fades = atlas.fade_words(views.fades, self.tables.fade_words);
+        let (held, changes) = (&self.atlas.held, &self.atlas.held_changes[..]);
+        self.water.sync(device, queue, held, changes, max_layers);
+        self.atlas.fade(views.fades, self.tables.fade_words);
+        let fades = (&self.atlas.fades[..], self.atlas.fades_dirty.clone());
         self.tables.write_fades(queue, fades);
         self.tables
             .write_directory(device, queue, terrains, &self.atlas);
@@ -418,12 +456,12 @@ impl TerrainPass {
             shading: self.deformation.shading(),
             textures: &textures,
         };
-        let uniforms = self.patches.lay_out(device, terrains, views, &parts);
+        self.patches.lay_out(device, terrains, views, &parts);
         let eye = views.eye.as_dvec3();
         let seen = (views.culling, eye, views.fades);
         self.water.lay_out(device, queue, terrains, seen, &parts);
-        queue.write_buffer(&self.tables.uniforms, 0, &uniforms);
-        self.patches.write(queue, views);
+        let uniforms = (&self.tables.uniforms, self.tables.uniform_generation);
+        self.patches.write(queue, views, uniforms);
         self.pipelines.ensure_group(
             device,
             &GroupSources {

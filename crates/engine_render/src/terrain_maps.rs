@@ -42,9 +42,10 @@ const DEFAULTS: [[u8; 4]; 3] = [[255; 4], [128, 128, 255, 255], [255, 255, 255, 
 pub(crate) struct TerrainMaps {
     // The layers' textures, and every material with maps the frames
     // listed, including those dropped, which rebuild nothing while they
-    // stand.
+    // stand; and those the frame lists, made in place of the last frame's.
     layers: Vec<LayerKey>,
     listed: Vec<LayerKey>,
+    listing: Vec<LayerKey>,
     arrays: [wgpu::Texture; 2],
     sheet_array: wgpu::Texture,
     // What the bakes bind for the sheets they draw into.
@@ -104,6 +105,7 @@ impl TerrainMaps {
         Self {
             layers: Vec::new(),
             listed: Vec::new(),
+            listing: Vec::new(),
             arrays,
             sheet_array,
             stand_in,
@@ -228,25 +230,23 @@ impl TerrainMaps {
         terrains: &RenderTerrains,
         pages: u32,
     ) {
-        let mut listed: Vec<(LayerKey, &RenderSurfaceMaps)> = Vec::new();
-        for maps in terrains
-            .terrains
-            .iter()
-            .flat_map(|terrain| terrain.maps.iter().flatten())
-        {
+        // The engine materials of every terrain's surface materials.
+        let every = move || {
+            terrains
+                .terrains
+                .iter()
+                .flat_map(|terrain| terrain.maps.iter().flatten())
+        };
+        self.listing.clear();
+        for maps in every() {
             let key = key(maps);
-            if key != [None; 3] && !listed.iter().any(|(listed, _)| *listed == key) {
-                listed.push((key, maps));
+            if key != [None; 3] && !self.listing.contains(&key) {
+                self.listing.push(key);
             }
         }
-        let same = listed.len() == self.listed.len()
-            && listed
-                .iter()
-                .zip(&self.listed)
-                .all(|((key, _), known)| key == known);
         // The same materials: the sheets grow to the pages asked for, and
         // drop only with them all.
-        if same && (pages > 0 || self.sheets == 0) {
+        if self.listing == self.listed && (pages > 0 || self.sheets == 0) {
             let per_sheet = self.per_sheet();
             if pages > self.pages && per_sheet > 0 {
                 let sheets = pages.div_ceil(per_sheet).min(self.sheet_room(device));
@@ -257,7 +257,13 @@ impl TerrainMaps {
             self.pages = pages;
             return;
         }
-        self.listed = listed.iter().map(|(key, _)| *key).collect();
+        // Each material listed, with the maps it was first listed with.
+        let listed: Vec<(LayerKey, &RenderSurfaceMaps)> = self
+            .listing
+            .iter()
+            .filter_map(|&wanted| Some((wanted, every().find(|maps| key(maps) == wanted)?)))
+            .collect();
+        self.listed.clone_from(&self.listing);
         let shape = listed.iter().find_map(|(_, maps)| shape_of(maps, device));
         let kept: Vec<&RenderSurfaceMaps> = listed
             .iter()

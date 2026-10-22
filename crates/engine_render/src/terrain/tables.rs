@@ -2,12 +2,14 @@
 //! of tiles with holes; the directory of every terrain's levels and
 //! resident tiles' layers, with the runtime virtual texture's windows and
 //! tables after it; every terrain's surface materials and their covers;
-//! and each terrain's uniform.
+//! and each terrain's uniform. Each is written where it changed: the
+//! directory is laid out again only as the terrains or their pyramids
+//! change, and otherwise rewrites the entries of the tiles that took or
+//! left layers.
 
-#![expect(clippy::expect_used, reason = "holed tiles have hole bits")]
-
-use super::atlas::{Synced, TileAtlas};
+use super::atlas::TileAtlas;
 use super::*;
+use engine_core::terrain_data::Pyramid;
 
 pub(crate) struct TerrainTables {
     // One uniform slot per terrain, and each frame terrain's id, whose
@@ -16,36 +18,43 @@ pub(crate) struct TerrainTables {
     pub(super) uniform_generation: u64,
     pub(super) uniform_ids: Vec<u64>,
     // Each layer's fades, then the hole bits of the tiles
-    // with holes, and where each tile's start; the fades last written and
-    // the words they take.
+    // with holes, and where each tile's start; whether the buffer holds
+    // no fades yet, and the words they take.
     pub(super) holes: crate::buffers::Growable,
     pub(super) hole_offsets: HashMap<(u64, TileKey), u32>,
     pub(super) holes_generation: u64,
-    fades_written: Vec<u32>,
+    fades_stale: bool,
     pub(super) fade_words: u32,
-    // Every terrain's levels and their resident tiles' layers, and where
-    // each terrain's start.
+    // Every terrain's levels and their resident tiles' layers, the
+    // terrains (ids and pyramids) they are laid out for, and the words
+    // they replaced, kept for the next layout.
     pub(super) directory: crate::buffers::Growable,
     pub(super) directory_written: Vec<u32>,
+    directory_layout: Vec<(u64, Pyramid)>,
+    directory_spare: Vec<u32>,
     pub(super) directory_generation: u64,
     // Advances whenever the directory's words change.
     pub(super) directory_revision: u64,
+    // Where each terrain's start.
     pub(super) directory_bases: Vec<u32>,
     // Where the virtual texture's windows and tables start in the directory
     // buffer.
     pub(super) vt_base: u32,
     // Every terrain's surface materials, where each
-    // terrain's start, and what the buffer holds.
+    // terrain's start, what the buffer holds and the entries it held
+    // before, kept for the next frame's.
     pub(super) palette: wgpu::Buffer,
     pub(super) palette_bases: Vec<u32>,
     palette_written: Vec<PaletteEntry>,
+    palette_spare: Vec<PaletteEntry>,
     /// Surface materials past the palette's capacity, which show the
     /// palette's first instead.
     pub(crate) dropped_materials: u32,
     // Every material's cover beside its palette entry,
-    // what the buffer holds, and each terrain's densest cover.
+    // what the buffer holds and the entries it held before.
     pub(super) covers: wgpu::Buffer,
     covers_written: Vec<CoverEntry>,
+    covers_spare: Vec<CoverEntry>,
     // Each terrain's densest cover and its mean blade height.
     pub(super) cover_densities: Vec<[f32; 2]>,
     // The tallest blade any material's cover grows.
@@ -66,7 +75,7 @@ impl TerrainTables {
             ),
             hole_offsets: HashMap::default(),
             holes_generation: 0,
-            fades_written: Vec::new(),
+            fades_stale: true,
             fade_words: 0,
             directory: crate::buffers::Growable::new(
                 device,
@@ -75,6 +84,8 @@ impl TerrainTables {
                 wgpu::BufferUsages::empty(),
             ),
             directory_written: Vec::new(),
+            directory_layout: Vec::new(),
+            directory_spare: Vec::new(),
             directory_generation: 0,
             directory_revision: 0,
             directory_bases: Vec::new(),
@@ -86,6 +97,7 @@ impl TerrainTables {
             ),
             palette_bases: Vec::new(),
             palette_written: Vec::new(),
+            palette_spare: Vec::new(),
             dropped_materials: 0,
             covers: crate::buffers::storage(
                 device,
@@ -94,64 +106,80 @@ impl TerrainTables {
                 wgpu::BufferUsages::empty(),
             ),
             covers_written: Vec::new(),
+            covers_spare: Vec::new(),
             cover_densities: Vec::new(),
             cover_tallest: 0.0,
         }
     }
 
-    /// Rewrites the hole bits whole when the tiles with holes `synced`
-    /// found changed, after each layer's fades for `max_layers` layers.
+    /// Rewrites the hole bits whole when `atlas`' resident tiles with holes
+    /// changed, or a tile replaced under its key changed its bits
+    /// (`edited`), after each layer's fades for `max_layers` layers.
     pub(super) fn write_holes(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        synced: &Synced<'_>,
+        (atlas, edited): (&TileAtlas, bool),
         max_layers: u32,
     ) {
         // Each layer's fades come first: two layers a word.
         let fade_words = max_layers.div_ceil(2).max(1);
-        let unchanged = !synced.edited
+        let unchanged = !edited
             && fade_words == self.fade_words
-            && synced.holed.len() == self.hole_offsets.len()
-            && synced
+            && atlas.holed.len() == self.hole_offsets.len()
+            && atlas
                 .holed
                 .iter()
-                .all(|(key, _)| self.hole_offsets.contains_key(key));
+                .all(|key| self.hole_offsets.contains_key(key));
         if unchanged {
             return;
         }
         self.fade_words = fade_words;
         self.hole_offsets.clear();
-        let mut words: Vec<u32> = Vec::with_capacity(synced.holed.len() * HOLE_WORDS);
-        for &(key, tile) in &synced.holed {
-            let bits = tile.hole_bits().expect("filtered above");
+        let mut words: Vec<u32> = Vec::with_capacity(atlas.holed.len() * HOLE_WORDS);
+        for &key in &atlas.holed {
+            let Some(bits) = atlas.held.get(&key).and_then(|tile| tile.hole_bits()) else {
+                continue;
+            };
             self.hole_offsets
                 .insert(key, fade_words + words.len() as u32);
-            let mut tile: Vec<u32> = bits
-                .iter()
-                .flat_map(|word| [*word as u32, (word >> 32) as u32])
-                .collect();
-            tile.truncate(HOLE_WORDS);
-            words.extend_from_slice(&tile);
+            words.extend(
+                bits.iter()
+                    .flat_map(|word| [*word as u32, (word >> 32) as u32])
+                    .take(HOLE_WORDS),
+            );
         }
         let start = u64::from(fade_words) * 4;
         let bytes = start + (words.len() * 4) as u64;
         if self.holes.grow(device, bytes) {
             self.holes_generation += 1;
             // A new buffer holds no fades yet.
-            self.fades_written.clear();
+            self.fades_stale = true;
         }
         if !words.is_empty() {
             queue.write_buffer(&self.holes, start, bytemuck::cast_slice(&words));
         }
     }
 
-    /// Writes each layer's fades, `words`, before the hole bits when they
-    /// changed.
-    pub(super) fn write_fades(&mut self, queue: &wgpu::Queue, words: Vec<u32>) {
-        if words != self.fades_written {
-            queue.write_buffer(&self.holes, 0, bytemuck::cast_slice(&words));
-            self.fades_written = words;
+    /// Writes each layer's fades, `words`, before the hole bits where
+    /// `dirty` changed them, or whole into a buffer holding none yet.
+    pub(super) fn write_fades(
+        &mut self,
+        queue: &wgpu::Queue,
+        (words, dirty): (&[u32], Range<usize>),
+    ) {
+        if words.is_empty() {
+            return;
+        }
+        let run = if self.fades_stale {
+            0..words.len()
+        } else {
+            dirty
+        };
+        self.fades_stale = false;
+        if let Some(changed) = words.get(run.clone()).filter(|changed| !changed.is_empty()) {
+            let offset = (run.start * 4) as u64;
+            queue.write_buffer(&self.holes, offset, bytemuck::cast_slice(changed));
         }
     }
 
@@ -166,7 +194,8 @@ impl TerrainTables {
         maps: &TerrainMaps,
     ) {
         self.write_covers(queue, terrains);
-        let mut entries: Vec<PaletteEntry> = Vec::new();
+        let mut entries = std::mem::take(&mut self.palette_spare);
+        entries.clear();
         self.palette_bases.clear();
         self.dropped_materials = maps.dropped;
         for terrain in &terrains.terrains {
@@ -188,16 +217,18 @@ impl TerrainTables {
             );
         }
         if entries.is_empty() || entries == self.palette_written {
+            self.palette_spare = entries;
             return;
         }
         queue.write_buffer(&self.palette, 0, bytemuck::cast_slice(&entries));
-        self.palette_written = entries;
+        self.palette_spare = std::mem::replace(&mut self.palette_written, entries);
     }
 
     /// Writes every terrain's materials' covers at their
     /// palette indices when they change, and notes each terrain's densest.
     fn write_covers(&mut self, queue: &wgpu::Queue, terrains: &RenderTerrains) {
-        let mut entries: Vec<CoverEntry> = Vec::new();
+        let mut entries = std::mem::take(&mut self.covers_spare);
+        entries.clear();
         self.cover_densities.clear();
         for terrain in &terrains.terrains {
             let room = PALETTE_ENTRIES - entries.len();
@@ -229,15 +260,19 @@ impl TerrainTables {
             .flat_map(|entry| [entry.shape[1], entry.shape[2]])
             .fold(0.0, engine_core::math::max);
         if entries.is_empty() || entries == self.covers_written {
+            self.covers_spare = entries;
             return;
         }
         queue.write_buffer(&self.covers, 0, bytemuck::cast_slice(&entries));
-        self.covers_written = entries;
+        self.covers_spare = std::mem::replace(&mut self.covers_written, entries);
     }
 
     /// Writes the directory of every terrain's levels and resident tiles
-    /// (`atlas`'s layers) when it changes: each level's entries start,
-    /// tiles and reach, then its entries.
+    /// (`atlas`'s layers) where it changed: each level's entries start,
+    /// tiles and reach, then its entries. The same terrains over the same
+    /// pyramids keep their layout: their levels' reach and the entries of
+    /// the tiles that took or left layers this frame are worked out again,
+    /// and only the words that changed are written.
     pub(super) fn write_directory(
         &mut self,
         device: &wgpu::Device,
@@ -245,7 +280,77 @@ impl TerrainTables {
         terrains: &RenderTerrains,
         atlas: &TileAtlas,
     ) {
-        let mut words: Vec<u32> = Vec::new();
+        let same = self.directory_layout.len() == terrains.terrains.len()
+            && self
+                .directory_layout
+                .iter()
+                .zip(&terrains.terrains)
+                .all(|(&(id, pyramid), terrain)| id == terrain.id && pyramid == terrain.pyramid);
+        if !same {
+            self.lay_out_directory(device, queue, terrains, atlas);
+            return;
+        }
+        let mut dirty = 0..0;
+        for (terrain, &base) in terrains.terrains.iter().zip(&self.directory_bases) {
+            for level in 0..terrain.pyramid.levels() {
+                let at = base as usize + 4 * level as usize + 3;
+                let bits = reach(terrain, level).to_bits();
+                set_word(&mut self.directory_written, at, bits, &mut dirty);
+            }
+        }
+        for &(id, key) in &atlas.changed {
+            let Some(index) = terrains.terrains.iter().position(|terrain| terrain.id == id) else {
+                continue;
+            };
+            let (pyramid, level) = (&terrains.terrains[index].pyramid, u32::from(key.level));
+            if level >= pyramid.levels() {
+                continue;
+            }
+            let [tiles_x, tiles_z] = pyramid.tiles(level);
+            if u32::from(key.x) >= tiles_x || u32::from(key.z) >= tiles_z {
+                continue;
+            }
+            // The level's header holds where its entries start.
+            let header = (self.directory_bases.get(index))
+                .map(|&base| base as usize + 4 * level as usize);
+            let Some(&first) = header.and_then(|header| self.directory_written.get(header)) else {
+                continue;
+            };
+            let at = first as usize + (u32::from(key.z) * tiles_x + u32::from(key.x)) as usize;
+            let layer = atlas.slots.get(&(id, key)).copied().unwrap_or(NOT_RESIDENT);
+            set_word(&mut self.directory_written, at, layer, &mut dirty);
+        }
+        let texture_words = crate::terrain_vt::VirtualTexture::words(terrains.terrains.len());
+        let bytes = ((self.vt_base as usize + texture_words) * 4) as u64;
+        let grown = self.directory.grow(device, bytes);
+        if grown {
+            self.directory_generation += 1;
+        }
+        let run = if grown {
+            0..self.directory_written.len()
+        } else {
+            dirty
+        };
+        if self.directory_written.is_empty() || run.is_empty() {
+            return;
+        }
+        let offset = (run.start * 4) as u64;
+        let words = &self.directory_written[run];
+        queue.write_buffer(&self.directory, offset, bytemuck::cast_slice(words));
+        self.directory_revision += 1;
+    }
+
+    /// Lays the directory out whole for `terrains` over `atlas`'s layers,
+    /// and writes it when it changed.
+    fn lay_out_directory(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        terrains: &RenderTerrains,
+        atlas: &TileAtlas,
+    ) {
+        let mut words = std::mem::take(&mut self.directory_spare);
+        words.clear();
         self.directory_bases.clear();
         for terrain in &terrains.terrains {
             let pyramid = &terrain.pyramid;
@@ -256,16 +361,10 @@ impl TerrainTables {
             for level in 0..pyramid.levels() {
                 let [tiles_x, tiles_z] = pyramid.tiles(level);
                 let header = base + 4 * level as usize;
-                // Without a reach, a level shades nowhere but the coarsest.
-                let reach = match terrain.reach.get(level as usize) {
-                    Some(&reach) => reach,
-                    None if level + 1 == pyramid.levels() => f32::MAX,
-                    None => 0.0,
-                };
                 words[header] = words.len() as u32;
                 words[header + 1] = tiles_x;
                 words[header + 2] = tiles_z;
-                words[header + 3] = reach.to_bits();
+                words[header + 3] = reach(terrain, level).to_bits();
                 for z in 0..tiles_z {
                     for x in 0..tiles_x {
                         let key = TileKey::new(level as u8, x as u16, z as u16);
@@ -280,6 +379,13 @@ impl TerrainTables {
                 }
             }
         }
+        self.directory_layout.clear();
+        self.directory_layout.extend(
+            terrains
+                .terrains
+                .iter()
+                .map(|terrain| (terrain.id, terrain.pyramid)),
+        );
         // The runtime virtual texture's windows and tables follow,
         // at a multiple of 64 words.
         self.vt_base = words.len().next_multiple_of(64) as u32;
@@ -290,10 +396,11 @@ impl TerrainTables {
             self.directory_generation += 1;
         }
         if words.is_empty() || (words == self.directory_written && !grown) {
+            self.directory_spare = words;
             return;
         }
         queue.write_buffer(&self.directory, 0, bytemuck::cast_slice(&words));
-        self.directory_written = words;
+        self.directory_spare = std::mem::replace(&mut self.directory_written, words);
         self.directory_revision += 1;
     }
 
@@ -309,7 +416,9 @@ impl TerrainTables {
             );
             self.uniform_generation += 1;
         }
-        self.uniform_ids = terrains.terrains.iter().map(|terrain| terrain.id).collect();
+        self.uniform_ids.clear();
+        self.uniform_ids
+            .extend(terrains.terrains.iter().map(|terrain| terrain.id));
     }
 
     /// The palette entries of the frame's terrain `index`, which has
@@ -328,6 +437,26 @@ impl TerrainTables {
             .iter()
             .position(|&known| known == id)
             .map(|index| (index as u64 * SLOT) as u32)
+    }
+}
+
+/// The meters from the eye within which `terrain`'s level `level` shades:
+/// its reach; without one, nowhere but at the coarsest level.
+fn reach(terrain: &RenderTerrain, level: u32) -> f32 {
+    match terrain.reach.get(level as usize) {
+        Some(&reach) => reach,
+        None if level + 1 == terrain.pyramid.levels() => f32::MAX,
+        None => 0.0,
+    }
+}
+
+/// Sets `words[at]` to `value`, widening `dirty` over it where it changed.
+fn set_word(words: &mut [u32], at: usize, value: u32, dirty: &mut Range<usize>) {
+    if let Some(word) = words.get_mut(at)
+        && *word != value
+    {
+        *word = value;
+        *dirty = widen(dirty.clone(), at);
     }
 }
 

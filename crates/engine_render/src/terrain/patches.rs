@@ -2,7 +2,10 @@
 //! the patches the camera, reflection probe faces and each shadow map draw,
 //! culled by their bounds (the camera's also where they face away or nearer
 //! ground hides them: `culling`), over the one shared grid with skirts; and
-//! the views they are drawn from.
+//! the views they are drawn from. What the records of a tile's patches
+//! share is looked up once for each run of them, the vectors laying them
+//! out are kept from frame to frame, and the records and uniforms are
+//! written where they differ from the last frame's.
 
 use super::atlas::TileAtlas;
 use super::culling::{self, Seen};
@@ -21,22 +24,42 @@ enum Cull {
     Hidden,
 }
 
+/// A patch as laid out: its record, its box (terrain-local) and how the
+/// camera's culling leaves it.
+type Laid = (PatchRecord, Vec3, Vec3, Cull);
+
 pub(crate) struct PatchDraws {
     indices: wgpu::Buffer,
     index_count: u32,
     instances: wgpu::Buffer,
+    // This frame's records and the last frame's, which the instances hold
+    // unless they were made since (`fresh`).
     records: Vec<PatchRecord>,
+    written: Vec<PatchRecord>,
+    fresh: bool,
+    // Every terrain's uniform, a slot each; the last frame's, and the
+    // generation of the buffer they went into.
+    uniforms: Vec<u8>,
+    written_uniforms: Vec<u8>,
+    uniforms_generation: Option<u64>,
     // The camera's view, then a reflection probe's six faces, and the
     // camera's last written.
     pub(super) views: wgpu::Buffer,
     written_views: Option<ViewUniform>,
     // How the camera's culling leaves each terrain's patches, in order
-    // over every terrain; the patches its frustum holds and where they lie
-    // in that order; and which nearer ground hides.
+    // over every terrain, and where each terrain's start; the patches its
+    // frustum holds and where they lie in that order; which nearer ground
+    // hides, and what finding them works in.
     culls: Vec<Cull>,
+    firsts: Vec<usize>,
     seen: Vec<Seen>,
     seen_at: Vec<usize>,
     hidden: Vec<bool>,
+    horizon: culling::Horizon,
+    // A terrain's patches as laid out, those with holes apart until they
+    // follow the rest.
+    laid: Vec<Laid>,
+    holed: Vec<Laid>,
     /// The eye this frame's terrain positions are relative to.
     eye: Vec3,
     pub(crate) frame: TerrainFrame,
@@ -69,12 +92,21 @@ impl PatchDraws {
             index_count: indices.len() as u32,
             instances: instance_buffer(device, 256),
             records: Vec::new(),
+            written: Vec::new(),
+            fresh: true,
+            uniforms: Vec::new(),
+            written_uniforms: Vec::new(),
+            uniforms_generation: None,
             views: crate::buffers::uniform(device, "engine/terrain-views", VIEWS * SLOT),
             written_views: None,
             culls: Vec::new(),
+            firsts: Vec::new(),
             seen: Vec::new(),
             seen_at: Vec::new(),
             hidden: Vec::new(),
+            horizon: culling::Horizon::default(),
+            laid: Vec::new(),
+            holed: Vec::new(),
             eye: Vec3::ZERO,
             frame: TerrainFrame::default(),
         }
@@ -82,7 +114,12 @@ impl PatchDraws {
 
     /// Starts a frame seen from `eye`.
     pub(super) fn begin(&mut self, eye: Vec3) {
-        self.frame = TerrainFrame::default();
+        let mut terrains = std::mem::take(&mut self.frame.terrains);
+        terrains.clear();
+        self.frame = TerrainFrame {
+            terrains,
+            ..TerrainFrame::default()
+        };
         self.eye = eye;
     }
 
@@ -103,89 +140,59 @@ impl PatchDraws {
     }
 
     /// Lays out this frame's patches of `terrains` for the camera,
-    /// reflection probe faces and the shadow maps of `views`, writing their
-    /// records and the camera's view; returns every terrain's uniform, a
-    /// slot each.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
+    /// reflection probe faces and the shadow maps of `views`, and every
+    /// terrain's uniform, a slot each, which [`Self::write`] writes.
     pub(super) fn lay_out(
         &mut self,
         device: &wgpu::Device,
         terrains: &RenderTerrains,
         views: &TerrainViews<'_>,
         parts: &Layout<'_>,
-    ) -> Vec<u8> {
-        let uniform_bytes = terrains.terrains.len() as u64 * SLOT;
+    ) {
         let eye = views.eye.as_dvec3();
+        std::mem::swap(&mut self.records, &mut self.written);
+        std::mem::swap(&mut self.uniforms, &mut self.written_uniforms);
         self.records.clear();
-        let mut uniforms = vec![0_u8; uniform_bytes as usize];
+        self.uniforms.clear();
+        self.uniforms
+            .resize(terrains.terrains.len() * SLOT as usize, 0);
         let camera_planes = planes(views.culling, false);
-        let firsts = self.cull(terrains, eye, &camera_planes);
+        self.cull(terrains, eye, &camera_planes);
         for (index, terrain) in terrains.terrains.iter().enumerate() {
-            let directory = [
-                parts
-                    .tables
-                    .directory_bases
-                    .get(index)
-                    .copied()
-                    .unwrap_or(0),
-                terrain.pyramid.levels(),
-                parts.tables.palette_bases.get(index).copied().unwrap_or(0),
-                parts.sky.layer(index),
-            ];
-            // The ground's relief.
-            let relief = [
-                views.settings.relief_distance,
-                views.settings.relief_steps as f32,
-                0.0,
-                0.0,
-            ];
-            let (mut uniform, anchors) =
-                terrain_uniform(terrain, eye, (directory, relief), parts.shading);
-            uniform.cover = match views.cover {
-                None => [0.0; 4],
-                // Surroundings grow no blades: their grassy
-                // ground shows as canopy from the eye on.
-                Some((cover, _)) if terrain.surroundings => [0.0, 0.0, cover.density, 0.0],
-                // Elsewhere as blades thin out, by their law.
-                Some((cover, pixels)) => {
-                    let blade = parts
-                        .tables
-                        .cover_densities
-                        .get(index)
-                        .copied()
-                        .unwrap_or([0.0; 2])[1];
-                    let reach = crate::ground_cover::tier_reach(&cover, blade, pixels);
-                    [cover.radius, reach, cover.density, 0.0]
-                }
-            };
-            if let Some(&(vt, vt_scale, vt_layout)) = parts.textures.get(index) {
-                uniform.vt = vt;
-                uniform.vt_scale = vt_scale;
-                uniform.vt_layout = vt_layout;
-            }
-            uniform.macro_map = [parts.macro_maps.layer(index), 0, 0, 0];
+            let (uniform, anchors) = terrain_uniform(index, terrain, eye, views, parts);
             let at = index * SLOT as usize;
-            uniforms[at..at + size_of::<TerrainUniform>()]
+            self.uniforms[at..at + size_of::<TerrainUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
             let origin = terrain.origin;
             let relative_origin = (terrain.origin.as_dvec3() - eye).as_vec3();
-            let start = self.records.len() as u32;
-            let mut all = Vec::new();
+            // Patches with holes last, each group nearest first as selected.
+            let first = self.firsts.get(index).copied().unwrap_or(0);
+            self.laid.clear();
+            self.holed.clear();
+            let mut tile: Option<(TileKey, Option<TileRecord>)> = None;
             for (at, patch) in terrain.patches.iter().enumerate() {
-                let Some(record) = record(parts, terrain, patch, anchors, views.fades) else {
+                let shared = match tile {
+                    Some((key, shared)) if key == patch.tile => shared,
+                    _ => {
+                        let shared = TileRecord::of(parts, terrain, patch.tile, views.fades);
+                        tile = Some((patch.tile, shared));
+                        shared
+                    }
+                };
+                let Some(shared) = shared else {
                     continue;
                 };
-                all.push((record, patch.min, patch.max, self.culls[firsts[index] + at]));
+                let record = shared.record(patch, anchors);
+                let laid = (record, patch.min, patch.max, self.culls[first + at]);
+                if record.holes == NO_HOLES {
+                    self.laid.push(laid);
+                } else {
+                    self.holed.push(laid);
+                }
             }
-            // Patches with holes last, each group nearest first as selected.
-            all.sort_by_key(|(record, ..)| record.holes != NO_HOLES);
-            let all_holes = all
-                .iter()
-                .filter(|(record, ..)| record.holes != NO_HOLES)
-                .count() as u32;
+            let all_holes = self.holed.len() as u32;
+            self.laid.append(&mut self.holed);
+            let start = self.records.len() as u32;
             let mut camera_holes = 0;
             let mut screen = Some([
                 f32::INFINITY,
@@ -193,7 +200,7 @@ impl PatchDraws {
                 f32::NEG_INFINITY,
                 f32::NEG_INFINITY,
             ]);
-            for &(record, min, max, cull) in &all {
+            for &(record, min, max, cull) in &self.laid {
                 if cull == Cull::Shown {
                     self.records.push(record);
                     camera_holes += u32::from(record.holes != NO_HOLES);
@@ -207,7 +214,8 @@ impl PatchDraws {
             let camera = start..self.records.len() as u32;
             let all_start = self.records.len() as u32;
             if views.probes {
-                self.records.extend(all.iter().map(|&(record, ..)| record));
+                self.records
+                    .extend(self.laid.iter().map(|&(record, ..)| record));
             }
             let all_range = all_start..self.records.len() as u32;
             let all_holes = if views.probes { all_holes } else { 0 };
@@ -221,7 +229,7 @@ impl PatchDraws {
                 }
                 let sides = caster_planes(clip, reach);
                 let first = self.records.len() as u32;
-                for &(record, min, max, _) in &all {
+                for &(record, min, max, _) in &self.laid {
                     if visible(&sides, origin + min, origin + max) {
                         self.records.push(record);
                     }
@@ -242,29 +250,27 @@ impl PatchDraws {
             });
         }
         self.frame.triangles = self.frame.patches * PATCH_TRIANGLES;
-        let culled = |cull: Cull| self.culls.iter().filter(|&&held| held == cull).count() as u32;
-        self.frame.back_facing = culled(Cull::BackFacing);
-        self.frame.hidden = culled(Cull::Hidden);
         let record_bytes = (self.records.len() * size_of::<PatchRecord>()) as u64;
         if record_bytes > self.instances.size() {
             self.instances =
                 instance_buffer(device, (self.records.len() as u64).next_power_of_two());
+            self.fresh = true;
         }
-        uniforms
     }
 
     /// Culls the camera's patches of `terrains` seen from `eye` within the
     /// frustum `camera` (the planes of eye-relative positions): those
     /// outside it, those facing away and those nearer ground hides, over
-    /// every terrain at once, as one's ground hides another's. Returns where
-    /// each terrain's patches start in the culls.
-    fn cull(&mut self, terrains: &RenderTerrains, eye: DVec3, camera: &[Vec4]) -> Vec<usize> {
+    /// every terrain at once, as one's ground hides another's; and counts
+    /// those facing away and those hidden. Notes where each terrain's
+    /// patches start in the culls.
+    fn cull(&mut self, terrains: &RenderTerrains, eye: DVec3, camera: &[Vec4]) {
         self.culls.clear();
+        self.firsts.clear();
         self.seen.clear();
         self.seen_at.clear();
-        let mut firsts = Vec::with_capacity(terrains.terrains.len());
         for terrain in &terrains.terrains {
-            firsts.push(self.culls.len());
+            self.firsts.push(self.culls.len());
             let relative_origin = (terrain.origin.as_dvec3() - eye).as_vec3();
             for patch in &terrain.patches {
                 let (min, max) = (relative_origin + patch.min, relative_origin + patch.max);
@@ -280,7 +286,9 @@ impl PatchDraws {
                     holes: patch.holes,
                 };
                 self.seen_at.push(self.culls.len());
-                self.culls.push(if culling::back_facing(&seen) {
+                let back_facing = culling::back_facing(&seen);
+                self.frame.back_facing += u32::from(back_facing);
+                self.culls.push(if back_facing {
                     Cull::BackFacing
                 } else {
                     Cull::Shown
@@ -288,20 +296,38 @@ impl PatchDraws {
                 self.seen.push(seen);
             }
         }
-        culling::hidden(&self.seen, &mut self.hidden);
+        self.horizon.hidden(&self.seen, &mut self.hidden);
         for (&at, &hidden) in self.seen_at.iter().zip(&self.hidden) {
             if hidden && self.culls[at] == Cull::Shown {
                 self.culls[at] = Cull::Hidden;
+                self.frame.hidden += 1;
             }
         }
-        firsts
     }
 
-    /// Writes the records laid out and the camera's view, after the
-    /// terrains' uniforms.
-    pub(super) fn write(&mut self, queue: &wgpu::Queue, views: &TerrainViews<'_>) {
-        if !self.records.is_empty() {
-            queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(&self.records));
+    /// Writes the records laid out where they differ from the last frame's,
+    /// every terrain's uniform into `uniforms` (of its generation) where it
+    /// changed, and the camera's view.
+    pub(super) fn write(
+        &mut self,
+        queue: &wgpu::Queue,
+        views: &TerrainViews<'_>,
+        (uniforms, generation): (&wgpu::Buffer, u64),
+    ) {
+        let run = if self.fresh {
+            0..self.records.len()
+        } else {
+            changed_run(&self.written, &self.records)
+        };
+        self.fresh = false;
+        if !run.is_empty() {
+            let offset = (run.start * size_of::<PatchRecord>()) as u64;
+            let records = bytemuck::cast_slice(&self.records[run]);
+            queue.write_buffer(&self.instances, offset, records);
+        }
+        if self.uniforms_generation != Some(generation) || self.uniforms != self.written_uniforms {
+            queue.write_buffer(uniforms, 0, &self.uniforms);
+            self.uniforms_generation = Some(generation);
         }
         let camera = ViewUniform {
             relative_view_projection: views.camera.to_cols_array_2d(),
@@ -376,57 +402,85 @@ impl PatchDraws {
     }
 }
 
-/// The instance record of `patch`, or `None` when its tile or its
-/// parent has no layer.
-pub(super) fn record(
-    parts: &Layout<'_>,
-    terrain: &RenderTerrain,
-    patch: &engine_core::Patch,
-    anchors: Anchors,
-    fades: bool,
-) -> Option<PatchRecord> {
-    let atlas = parts.atlas;
-    let key = patch.tile;
-    let level = u32::from(key.level);
-    let layer = *atlas.slots.get(&(terrain.id, key))?;
-    let spacing = terrain.pyramid.spacing(level);
-    let anchor = anchors.at(level);
-    let first = [
-        i64::from(key.x) * 256 + i64::from(patch.x) * 16 - anchor[0],
-        i64::from(key.z) * 256 + i64::from(patch.z) * 16 - anchor[1],
-    ];
-    let (parent_layer, parent_texel) = match terrain.pyramid.parent(key) {
-        Some(parent) => {
-            let parent_layer = *atlas.slots.get(&(terrain.id, parent))?;
-            let x = u32::from(key.x % 2) * 128 + u32::from(patch.x) * 8;
-            let z = u32::from(key.z % 2) * 128 + u32::from(patch.z) * 8;
-            (parent_layer, x | (z << 16))
-        }
-        None => (layer, 0),
-    };
-    let texel = (u32::from(patch.x) * 16) | ((u32::from(patch.z) * 16) << 16);
-    let holes = if patch.holes {
-        parts
-            .tables
-            .hole_offsets
-            .get(&(terrain.id, key))
+/// What the instance records of a tile's patches share: the tile, its
+/// layer and its parent's (`None` at the coarsest level), its level's
+/// spacing, its run of hole bits (`NO_HOLES` without) and how much of its
+/// parent still shows as it grows out of it.
+#[derive(Clone, Copy)]
+pub(super) struct TileRecord {
+    key: TileKey,
+    layer: u32,
+    parent: Option<u32>,
+    spacing: f32,
+    holes: u32,
+    fade: f32,
+}
+
+impl TileRecord {
+    /// What the records of `terrain`'s tile `key`'s patches share, as
+    /// `parts` hold it, fading in on frames with `fades`; `None` when the
+    /// tile or its parent has no layer.
+    pub(super) fn of(
+        parts: &Layout<'_>,
+        terrain: &RenderTerrain,
+        key: TileKey,
+        fades: bool,
+    ) -> Option<Self> {
+        let atlas = parts.atlas;
+        let layer = *atlas.slots.get(&(terrain.id, key))?;
+        let parent = match terrain.pyramid.parent(key) {
+            Some(parent) => Some(*atlas.slots.get(&(terrain.id, parent))?),
+            None => None,
+        };
+        let holes = (parts.tables.hole_offsets.get(&(terrain.id, key)))
             .copied()
-            .unwrap_or(NO_HOLES)
-    } else {
-        NO_HOLES
-    };
-    // A tile that arrived grows out of its parent.
-    let fade = match atlas.arrivals.get(&(terrain.id, key)) {
-        Some(&at) if fades => atlas.fade_since(at),
-        _ => 0.0,
-    };
-    Some(PatchRecord {
-        first: [first[0] as i32, first[1] as i32],
-        shape: [spacing, patch.morph[0], patch.morph[1], 4.0 * spacing],
-        atlas: [layer, parent_layer, texel, parent_texel],
-        holes,
-        fade,
-    })
+            .unwrap_or(NO_HOLES);
+        // A tile that arrived grows out of its parent.
+        let fade = match atlas.arrivals.get(&(terrain.id, key)) {
+            Some(&at) if fades => atlas.fade_since(at),
+            _ => 0.0,
+        };
+        Some(Self {
+            key,
+            layer,
+            parent,
+            spacing: terrain.pyramid.spacing(u32::from(key.level)),
+            holes,
+            fade,
+        })
+    }
+
+    /// The instance record of `patch`, one of the tile's, counting its
+    /// samples from `anchors`.
+    pub(super) fn record(&self, patch: &engine_core::Patch, anchors: Anchors) -> PatchRecord {
+        let key = self.key;
+        let anchor = anchors.at(u32::from(key.level));
+        let first = [
+            i64::from(key.x) * 256 + i64::from(patch.x) * 16 - anchor[0],
+            i64::from(key.z) * 256 + i64::from(patch.z) * 16 - anchor[1],
+        ];
+        let (parent_layer, parent_texel) = match self.parent {
+            Some(parent_layer) => {
+                let x = u32::from(key.x % 2) * 128 + u32::from(patch.x) * 8;
+                let z = u32::from(key.z % 2) * 128 + u32::from(patch.z) * 8;
+                (parent_layer, x | (z << 16))
+            }
+            None => (self.layer, 0),
+        };
+        let texel = (u32::from(patch.x) * 16) | ((u32::from(patch.z) * 16) << 16);
+        PatchRecord {
+            first: [first[0] as i32, first[1] as i32],
+            shape: [
+                self.spacing,
+                patch.morph[0],
+                patch.morph[1],
+                4.0 * self.spacing,
+            ],
+            atlas: [self.layer, parent_layer, texel, parent_texel],
+            holes: if patch.holes { self.holes } else { NO_HOLES },
+            fade: self.fade,
+        }
+    }
 }
 
 /// The normalized device rectangle `rect` (least x and y, then greatest)
@@ -559,12 +613,14 @@ impl Anchors {
     }
 }
 
-/// A terrain's uniform for a view from `eye`, and its levels' anchors.
+/// Terrain `index`'s uniform, `terrain`'s, for a view from `eye` as `views`
+/// see it with what `parts` hold, and its levels' anchors.
 fn terrain_uniform(
+    index: usize,
     terrain: &RenderTerrain,
     eye: DVec3,
-    (directory, relief): ([u32; 4], [f32; 4]),
-    deformation: crate::deformation::DeformationShading,
+    views: &TerrainViews<'_>,
+    parts: &Layout<'_>,
 ) -> (TerrainUniform, Anchors) {
     let pyramid = &terrain.pyramid;
     let anchors = Anchors::of(terrain, eye);
@@ -576,19 +632,50 @@ fn terrain_uniform(
             anchors.cells[1] as f64 * top,
         );
     let relative = (anchor - eye).as_vec3();
+    let tables = parts.tables;
+    let cover = match views.cover {
+        None => [0.0; 4],
+        // Surroundings grow no blades: their grassy
+        // ground shows as canopy from the eye on.
+        Some((cover, _)) if terrain.surroundings => [0.0, 0.0, cover.density, 0.0],
+        // Elsewhere as blades thin out, by their law.
+        Some((cover, pixels)) => {
+            let blade = (tables.cover_densities.get(index))
+                .copied()
+                .unwrap_or([0.0; 2])[1];
+            let reach = crate::ground_cover::tier_reach(&cover, blade, pixels);
+            [cover.radius, reach, cover.density, 0.0]
+        }
+    };
+    let (vt, vt_scale, vt_layout) = parts
+        .textures
+        .get(index)
+        .copied()
+        .unwrap_or(([0; 4], [0.0; 4], [0; 4]));
     let uniform = TerrainUniform {
         anchor: [relative.x, relative.y, relative.z, pyramid.spacing(0)],
         eye: eye.as_vec3().extend(0.0).to_array(),
         origin: terrain.origin.extend(0.0).to_array(),
-        directory,
-        relief,
-        deform_grid: deformation.grid,
-        deform: deformation.scale,
-        cover: [0.0; 4],
-        vt: [0; 4],
-        vt_scale: [0.0; 4],
-        vt_layout: [0; 4],
-        macro_map: [0; 4],
+        directory: [
+            tables.directory_bases.get(index).copied().unwrap_or(0),
+            pyramid.levels(),
+            tables.palette_bases.get(index).copied().unwrap_or(0),
+            parts.sky.layer(index),
+        ],
+        // The ground's relief.
+        relief: [
+            views.settings.relief_distance,
+            views.settings.relief_steps as f32,
+            0.0,
+            0.0,
+        ],
+        deform_grid: parts.shading.grid,
+        deform: parts.shading.scale,
+        cover,
+        vt,
+        vt_scale,
+        vt_layout,
+        macro_map: [parts.macro_maps.layer(index), 0, 0, 0],
         steep: terrain.steep.map_or([0.0; 4], |steep| {
             [
                 f32::from(steep.material) + 1.0,

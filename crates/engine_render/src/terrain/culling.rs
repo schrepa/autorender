@@ -64,41 +64,60 @@ pub(super) fn back_facing(patch: &Seen) -> bool {
     })
 }
 
-/// Marks in `hidden` which of `patches` nearer ground hides from the eye.
-pub(super) fn hidden(patches: &[Seen], hidden: &mut Vec<bool>) {
-    hidden.clear();
-    hidden.resize(patches.len(), false);
-    let reaches: Vec<(f32, f32)> = patches
-        .iter()
-        .map(|patch| reach(patch.min, patch.max))
-        .collect();
-    let mut order: Vec<usize> = (0..patches.len()).collect();
-    order.sort_by(|&a, &b| reaches[a].0.total_cmp(&reaches[b].0).then(a.cmp(&b)));
-    let mut bins = vec![f32::NEG_INFINITY; BINS];
-    // Quarters waiting to block until the patches tested lie wholly past
-    // them: their farthest reach (its bits, as reaches are positive), their
-    // patch and which quarter.
-    let mut waiting: BinaryHeap<Reverse<(u32, usize, usize)>> = BinaryHeap::new();
-    for index in order {
-        let (near, far) = reaches[index];
-        while let Some(&Reverse((farthest, patch, quarter))) = waiting.peek() {
-            if f32::from_bits(farthest) > near {
-                break;
+/// What finding the patches nearer ground hides works in, kept from frame
+/// to frame: each patch's nearest and farthest reach, the order patches go
+/// in, the horizon's bins, and the quarters waiting to block until the
+/// patches tested lie wholly past them (their farthest reach's bits, as
+/// reaches are positive, their patch and which quarter).
+#[derive(Default)]
+pub(super) struct Horizon {
+    reaches: Vec<(f32, f32)>,
+    order: Vec<usize>,
+    bins: Vec<f32>,
+    waiting: BinaryHeap<Reverse<(u32, usize, usize)>>,
+}
+
+impl Horizon {
+    /// Marks in `hidden` which of `patches` nearer ground hides from the
+    /// eye.
+    pub(super) fn hidden(&mut self, patches: &[Seen], hidden: &mut Vec<bool>) {
+        hidden.clear();
+        hidden.resize(patches.len(), false);
+        self.reaches.clear();
+        self.reaches
+            .extend(patches.iter().map(|patch| reach(patch.min, patch.max)));
+        self.order.clear();
+        self.order.extend(0..patches.len());
+        // Nearest first, ties in patch order: the same order however it
+        // sorts.
+        let reaches = &self.reaches;
+        self.order
+            .sort_unstable_by(|&a, &b| reaches[a].0.total_cmp(&reaches[b].0).then(a.cmp(&b)));
+        self.bins.clear();
+        self.bins.resize(BINS, f32::NEG_INFINITY);
+        self.waiting.clear();
+        for &index in &self.order {
+            let (near, far) = self.reaches[index];
+            while let Some(&Reverse((farthest, patch, quarter))) = self.waiting.peek() {
+                if f32::from_bits(farthest) > near {
+                    break;
+                }
+                self.waiting.pop();
+                block(&mut self.bins, &patches[patch], quarter);
             }
-            waiting.pop();
-            block(&mut bins, &patches[patch], quarter);
-        }
-        let patch = &patches[index];
-        if near > OVER {
-            let top = patch.max.y + MARGIN;
-            let rise = if top >= 0.0 { top / near } else { top / far };
-            let (first, last) = span(patch.min, patch.max);
-            hidden[index] = touched(first, last).all(|bin| bins[bin % BINS] > rise);
-        }
-        if !patch.holes {
-            for quarter in 0..4 {
-                let (low, high) = quarter_box(patch, quarter);
-                waiting.push(Reverse((reach(low, high).1.to_bits(), index, quarter)));
+            let patch = &patches[index];
+            if near > OVER {
+                let top = patch.max.y + MARGIN;
+                let rise = if top >= 0.0 { top / near } else { top / far };
+                let (first, last) = span(patch.min, patch.max);
+                hidden[index] = touched(first, last).all(|bin| self.bins[bin % BINS] > rise);
+            }
+            if !patch.holes {
+                for quarter in 0..4 {
+                    let (low, high) = quarter_box(patch, quarter);
+                    let farthest = reach(low, high).1.to_bits();
+                    self.waiting.push(Reverse((farthest, index, quarter)));
+                }
             }
         }
     }
