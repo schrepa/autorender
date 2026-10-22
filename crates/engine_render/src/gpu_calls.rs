@@ -14,9 +14,12 @@ pub(crate) use submission::{Handover, Recorded};
 /// handed over to its submission side, what the host asks for between
 /// frames, and, counted, what modules submit at once.
 pub(crate) struct Queue {
-    queue: wgpu::Queue,
-    /// Where the work frames hand over is finished and submitted.
+    /// Where the work frames hand over is finished and submitted. Declared
+    /// first, so its threads stop, and drop their handles to the queue,
+    /// before this one drops: the queue's last handle then drops here, on
+    /// the renderer's thread, before the surface and device it outlived.
     submission: submission::Submission,
+    queue: wgpu::Queue,
     /// Submissions made at once since [`Self::take_immediate`].
     immediate: Cell<u32>,
 }
